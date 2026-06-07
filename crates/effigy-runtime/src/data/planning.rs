@@ -129,15 +129,19 @@ pub(super) fn collect_global_cache_entries_from_names(
     names: Vec<String>,
     running_projects: &BTreeSet<String>,
     metadata_by_name: &BTreeMap<String, RuntimeVolumeMetadata>,
+    content_kind_by_name: &BTreeMap<String, String>,
     usage_by_mount_point: &BTreeMap<String, u64>,
 ) -> Vec<ContainerCacheGlobalEntry> {
     let mut caches = Vec::new();
     for name in names {
-        let Some(kind) = cache_kind_from_volume_name(&name) else {
+        let Some(kind) =
+            cache_kind_from_volume_name(&name).or_else(|| content_kind_by_name.get(&name).cloned())
+        else {
             continue;
         };
-        let project_name = project_name_from_volume_name(&name);
         let metadata = metadata_by_name.get(&name);
+        let project_name = project_name_from_volume_name(&name)
+            .or_else(|| metadata.and_then(|entry| volume_project_name_from_labels(&entry.labels)));
         let in_use = project_name
             .as_ref()
             .is_some_and(|project| running_projects.contains(project));
@@ -161,6 +165,21 @@ pub(super) fn collect_global_cache_entries_from_names(
     caches
 }
 
+pub(super) fn parse_volume_cache_kind_rows(stdout: &str) -> BTreeMap<String, String> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (mount_point, kind) = line.split_once('\t')?;
+            let mount_point = mount_point.trim();
+            let kind = kind.trim();
+            if mount_point.is_empty() || kind.is_empty() {
+                return None;
+            }
+            Some((mount_point.to_owned(), kind.to_owned()))
+        })
+        .collect()
+}
+
 fn data_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
     match policy.driver {
         effigy_manifest::ManifestContainerDriver::Colima => "colima",
@@ -181,6 +200,13 @@ fn project_name_from_volume_name(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn volume_project_name_from_labels(labels: &BTreeMap<String, String>) -> Option<String> {
+    labels
+        .get("com.docker.compose.project")
+        .filter(|project| !project.is_empty())
+        .cloned()
 }
 
 #[cfg(test)]
@@ -268,6 +294,7 @@ mod tests {
             &running_projects,
             &metadata,
             &BTreeMap::new(),
+            &BTreeMap::new(),
         );
 
         assert_eq!(entries.len(), 2);
@@ -301,11 +328,60 @@ mod tests {
             vec!["contact-patch-dev-workspace-cargo-git".to_owned()],
             &running_projects,
             &metadata,
+            &BTreeMap::new(),
             &usage,
         );
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].size_bytes, Some(4096));
+    }
+
+    #[test]
+    fn global_cache_entries_classify_legacy_efv_rust_targets_by_content() {
+        let mut running_projects = BTreeSet::new();
+        running_projects.insert("acowtancy-dev".to_owned());
+        let mut labels = BTreeMap::new();
+        labels.insert(
+            "com.docker.compose.project".to_owned(),
+            "acowtancy-dev".to_owned(),
+        );
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "efv-e2523d125410efb8".to_owned(),
+            RuntimeVolumeMetadata {
+                name: "efv-e2523d125410efb8".to_owned(),
+                mount_point: Some("/volumes/efv-e2523d125410efb8/_data".to_owned()),
+                size_bytes: Some(28 * 1024 * 1024 * 1024),
+                labels,
+            },
+        );
+        let mut content_kinds = BTreeMap::new();
+        content_kinds.insert("efv-e2523d125410efb8".to_owned(), "rust-target".to_owned());
+
+        let entries = collect_global_cache_entries_from_names(
+            vec!["efv-e2523d125410efb8".to_owned()],
+            &running_projects,
+            &metadata,
+            &content_kinds,
+            &BTreeMap::new(),
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "rust-target");
+        assert_eq!(entries[0].project_name.as_deref(), Some("acowtancy-dev"));
+        assert!(entries[0].in_use);
+    }
+
+    #[test]
+    fn volume_cache_kind_rows_parse_tab_separated_probe_output() {
+        let parsed =
+            parse_volume_cache_kind_rows("/volumes/one/_data\trust-target\ninvalid\n\tmissing\n");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            parsed.get("/volumes/one/_data").map(String::as_str),
+            Some("rust-target")
+        );
     }
 
     #[test]

@@ -511,7 +511,10 @@ Cache kinds Effigy recognizes:
 - `pnpm-store` — pnpm content-addressable store volumes outside the repo bind mount
 
 Cache volumes are created by catalog-generated compose files based on mount
-target heuristics. `cache list` inventories them; `cache prune` removes them.
+target heuristics. Legacy generated compose volumes with opaque `efv-*` names
+are also classified by their mounted contents, so old Rust target volumes show
+up as `rust-target` even when the volume name does not contain `target`.
+`cache list` inventories them; `cache prune` removes them.
 
 Cache volume names include the container workspace path, so moving a mount from
 `/var/www/html` to `/var/www/inventors` gives a fresh `node_modules` volume
@@ -532,12 +535,15 @@ effigy container cache list --kind rust-target
 effigy container cache prune --yes
 effigy container cache prune --kind node-modules --yes
 effigy container cache prune --global --yes
+effigy container cache prune --kind rust-target --yes
 ```
 
 Safety rules:
 
 - running projects are skipped in `--global` mode
 - prune requires confirmation unless `--yes` is passed
+- volume orphan cleanup is separate; use cache cleanup for Rust `target`
+  pressure, not `container volume prune --global --orphans`
 - cache volumes are recreated automatically on the next build
 
 ## Volume Lifecycle
@@ -604,6 +610,12 @@ When Colima exists but `docker` is not on `PATH`, Effigy falls back to:
 - `colima nerdctl -- compose`
 
 with the profile started under `containerd`.
+
+Effigy manages the default `effigy` Colima profile for workspace-heavy local
+development. New or recreated profiles are started with a 300GiB disk target,
+plus memory and swap sizing based on host memory. Existing smaller profiles may
+need a manual resize or recreate; Effigy warns when a running managed profile is
+below the target.
 
 ## Current Limits
 

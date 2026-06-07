@@ -125,6 +125,22 @@ fn volume_usage_batch_command_format() {
 }
 
 #[test]
+fn volume_cache_kind_batch_command_format() {
+    let cmd = volume_cache_kind_batch_command(&[
+        "/var/lib/docker/volumes/one/_data".to_string(),
+        "/var/lib/docker/volumes/two/_data".to_string(),
+    ]);
+    assert_eq!(cmd.program, "__effigy_volume_cache_kind_batch");
+    assert_eq!(
+        cmd.args,
+        vec![
+            "/var/lib/docker/volumes/one/_data",
+            "/var/lib/docker/volumes/two/_data"
+        ]
+    );
+}
+
+#[test]
 fn export_volume_command_format() {
     let cmd = export_volume_command("my-project-db-data", Path::new("/tmp/backup.tar.gz"));
     assert_eq!(cmd.program, "docker");

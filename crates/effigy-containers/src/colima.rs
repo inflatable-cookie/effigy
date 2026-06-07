@@ -22,6 +22,7 @@ const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
 const MAX_EFFIGY_MEMORY_GIB: u64 = 32;
 const MIN_EFFIGY_SWAP_GIB: u64 = 4;
 const MAX_EFFIGY_SWAP_GIB: u64 = 16;
+const MIN_EFFIGY_DISK_GIB: u64 = 300;
 const COLIMA_ARCH_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_ARCH";
 const COLIMA_VM_TYPE_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_VM_TYPE";
 
@@ -30,6 +31,7 @@ pub struct ColimaResourcePlan {
     pub host_memory_gib: Option<u64>,
     pub memory_gib: u64,
     pub swap_gib: u64,
+    pub disk_gib: u64,
 }
 
 /// A command specification to be executed by the runner.
@@ -79,6 +81,8 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
     if let Some(resources) = managed_colima_profile_resources(&policy.profile) {
         args.push("--memory".to_string());
         args.push(resources.memory_gib.to_string());
+        args.push("--disk".to_string());
+        args.push(resources.disk_gib.to_string());
     }
     for server in FALLBACK_COLIMA_DNS_SERVERS {
         args.push("--dns".to_string());
@@ -144,6 +148,7 @@ pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourceP
                 host_memory_gib: None,
                 memory_gib: MIN_EFFIGY_MEMORY_GIB,
                 swap_gib: MIN_EFFIGY_SWAP_GIB,
+                disk_gib: MIN_EFFIGY_DISK_GIB,
             }),
     )
 }
@@ -195,6 +200,10 @@ pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Resu
         Value::String("memory".to_owned()),
         Value::Number(Number::from(resources.memory_gib)),
     );
+    root.insert(
+        Value::String("disk".to_owned()),
+        Value::Number(Number::from(resources.disk_gib)),
+    );
     // Forward the host SSH agent into the VM at
     // `/run/host-services/ssh-auth.sock` so the workspace agent-socket bind
     // mount has a real source path. Equivalent to `colima start --ssh-agent`.
@@ -231,6 +240,7 @@ fn resource_plan_for_host_memory_bytes(host_memory_bytes: u64) -> ColimaResource
         host_memory_gib: Some(host_memory_gib),
         memory_gib,
         swap_gib,
+        disk_gib: MIN_EFFIGY_DISK_GIB,
     }
 }
 

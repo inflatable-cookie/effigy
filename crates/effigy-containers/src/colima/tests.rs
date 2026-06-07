@@ -172,6 +172,8 @@ fn colima_start_command_applies_managed_resources_for_effigy_profile() {
 
     assert!(cmd.args.contains(&"--memory".to_string()));
     assert!(cmd.args.contains(&expected.memory_gib.to_string()));
+    assert!(cmd.args.contains(&"--disk".to_string()));
+    assert!(cmd.args.contains(&expected.disk_gib.to_string()));
     assert!(!cmd.args.contains(&"--swap".to_string()));
 }
 
@@ -198,8 +200,10 @@ fn managed_colima_profile_resources_scale_with_host_memory() {
 
     assert_eq!(small.memory_gib, 4);
     assert_eq!(small.swap_gib, 4);
+    assert_eq!(small.disk_gib, 300);
     assert_eq!(large.memory_gib, 32);
     assert_eq!(large.swap_gib, 16);
+    assert_eq!(large.disk_gib, 300);
 }
 
 #[test]
@@ -241,6 +245,11 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
         root.get(serde_yaml::Value::String("memory".to_owned()))
             .and_then(serde_yaml::Value::as_u64),
         Some(32)
+    );
+    assert_eq!(
+        root.get(serde_yaml::Value::String("disk".to_owned()))
+            .and_then(serde_yaml::Value::as_u64),
+        Some(300)
     );
     let provision = root
         .get(serde_yaml::Value::String("provision".to_owned()))

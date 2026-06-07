@@ -627,13 +627,14 @@ memory = 128
         "nginx should mount the repo read-only at the workspace working dir"
     );
     assert!(
-        web_volume_strings.iter().any(|value| *value
-            == "client-project-app-var-www-html-vendor:/var/www/html/vendor:ro"),
+        web_volume_strings
+            .contains(&"client-project-app-var-www-html-vendor:/var/www/html/vendor:ro"),
         "nginx should mirror the php app vendor volume read-only: {web_volume_strings:?}"
     );
     assert!(
-        web_volume_strings.iter().any(|value| *value
-            == "client-project-app-var-www-html-node-modules:/var/www/html/node_modules:ro"),
+        web_volume_strings.contains(
+            &"client-project-app-var-www-html-node-modules:/var/www/html/node_modules:ro"
+        ),
         "nginx should mirror the php app node_modules volume read-only: {web_volume_strings:?}"
     );
 

@@ -537,6 +537,9 @@ pub(super) fn run_runtime_volume_capture(
     if command.program == "__effigy_volume_usage_batch" {
         return run_runtime_volume_usage_batch_capture(repo_root, profile, command);
     }
+    if command.program == "__effigy_volume_cache_kind_batch" {
+        return run_runtime_volume_cache_kind_batch_capture(repo_root, profile, command);
+    }
     let docker_args = runtime_args(&command.args);
     let request =
         ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
@@ -701,6 +704,90 @@ fn run_runtime_volume_usage_batch_capture(
                 )))
             }
         })
+}
+
+fn run_runtime_volume_cache_kind_batch_capture(
+    repo_root: &Path,
+    profile: &str,
+    command: &DockerCommand,
+) -> Result<Output, RunnerError> {
+    if command.args.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "runtime volume cache-kind batch command requires one or more mount-point arguments",
+        ));
+    }
+    let script = render_volume_cache_kind_script(&command.args);
+    let backend_id = detect_profile_backend(profile)?;
+    let (program, args) = if backend_id == BackendId::docker_compose() {
+        (
+            OsString::from("sh"),
+            vec![OsString::from("-lc"), OsString::from(script)],
+        )
+    } else {
+        (
+            effigy_containers::compose::resolve_host_cli_program("colima"),
+            vec![
+                OsString::from("ssh"),
+                OsString::from("--profile"),
+                OsString::from(profile),
+                OsString::from("--"),
+                OsString::from("sudo"),
+                OsString::from("sh"),
+                OsString::from("-lc"),
+                OsString::from(script),
+            ],
+        )
+    };
+
+    std::process::Command::new(&program)
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!(
+                "{} ({} {})",
+                command.description,
+                program.to_string_lossy(),
+                format_args(&args)
+            ),
+            error,
+        })
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(output)
+            } else {
+                Err(RunnerError::task_invocation(format!(
+                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    command.description,
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )))
+            }
+        })
+}
+
+fn render_volume_cache_kind_script(mount_points: &[String]) -> String {
+    let mut script = String::from(
+        r#"set -eu
+classify_cache_volume() {
+  path="$1"
+  kind=""
+  if [ -d "$path/debug/deps" ] || [ -d "$path/release/deps" ] || [ -f "$path/.rustc_info.json" ]; then
+    kind="rust-target"
+  fi
+  if [ -n "$kind" ]; then
+    printf '%s\t%s\n' "$path" "$kind"
+  fi
+}
+"#,
+    );
+    for mount_point in mount_points {
+        script.push_str("classify_cache_volume ");
+        script.push_str(&shell_quote(mount_point));
+        script.push('\n');
+    }
+    script
 }
 
 fn detect_profile_backend(profile: &str) -> Result<BackendId, RunnerError> {

@@ -10,6 +10,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - `release:linux:rehearse` now streams in-container Linux build output as it
   runs instead of buffering the full build log until the container command
   exits.
+- `effigy container cache list --global` now detects legacy opaque `efv-*`
+  volumes that contain Rust target directories, so
+  `effigy container cache prune --kind rust-target --yes` can clear old
+  container build caches instead of relying on orphan volume cleanup.
+- The managed default `effigy` Colima profile now targets a 300GiB disk for
+  new or recreated profiles, and running-profile warnings include undersized
+  disks as well as undersized memory.
 
 ## [0.8.7] - 2026-06-05
 

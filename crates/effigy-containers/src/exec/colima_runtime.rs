@@ -39,6 +39,7 @@ struct ColimaProfileEntry {
     status: String,
     cpus: u64,
     memory: u64,
+    disk: u64,
 }
 
 pub fn ensure_colima_running(
@@ -160,24 +161,33 @@ pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Pa
         return warnings;
     }
 
-    let expected_memory_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
-    if entry.memory >= expected_memory_bytes {
-        return warnings;
-    }
-
-    let actual_memory_gib = entry.memory / (1024 * 1024 * 1024);
     let host_memory = resources
         .host_memory_gib
         .map(|value| format!(" on this {value}GiB host"))
         .unwrap_or_default();
-    warnings.push(format!(
-        "Colima profile `{}` is running with {}GiB RAM; Effigy recommends {}GiB memory and {}GiB swap{} for workspace-heavy Rust builds. Stop the profile and rerun Effigy to apply the managed sizing.",
-        policy.profile,
-        actual_memory_gib.max(1),
-        resources.memory_gib,
-        resources.swap_gib,
-        host_memory,
-    ));
+    let expected_memory_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
+    if entry.memory < expected_memory_bytes {
+        let actual_memory_gib = entry.memory / (1024 * 1024 * 1024);
+        warnings.push(format!(
+            "Colima profile `{}` is running with {}GiB RAM; Effigy recommends {}GiB memory and {}GiB swap{} for workspace-heavy Rust builds. Stop the profile and rerun Effigy to apply the managed sizing.",
+            policy.profile,
+            actual_memory_gib.max(1),
+            resources.memory_gib,
+            resources.swap_gib,
+            host_memory,
+        ));
+    }
+
+    let expected_disk_bytes = resources.disk_gib.saturating_mul(1024 * 1024 * 1024);
+    if entry.disk < expected_disk_bytes {
+        let actual_disk_gib = entry.disk / (1024 * 1024 * 1024);
+        warnings.push(format!(
+            "Colima profile `{}` is running with {}GiB disk; Effigy recommends {}GiB disk for multi-repo Rust/container workspaces. Recreate or resize the profile to apply the managed disk size.",
+            policy.profile,
+            actual_disk_gib.max(1),
+            resources.disk_gib,
+        ));
+    }
     warnings
 }
 
@@ -445,6 +455,15 @@ fn parse_colima_profiles(stdout: &str) -> Result<Vec<ColimaProfileEntry>, Contai
                         stdout: stdout.to_owned(),
                         stderr: "missing `memory` in `colima list --json` row".to_owned(),
                     })?,
+                disk: value
+                    .get("disk")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| ContainerExecError::Failure {
+                        command: "colima list".to_owned(),
+                        code: None,
+                        stdout: stdout.to_owned(),
+                        stderr: "missing `disk` in `colima list --json` row".to_owned(),
+                    })?,
             })
         })
         .collect()
@@ -682,6 +701,18 @@ mod tests {
             detection.backend_override,
             Some(BackendId::docker_compose())
         );
+    }
+
+    #[test]
+    fn parse_colima_profiles_reads_disk_bytes() {
+        let entries = parse_colima_profiles(
+            r#"{"name":"effigy","status":"Running","cpus":2,"memory":34359738368,"disk":322122547200}"#,
+        )
+        .expect("parse profiles");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "effigy");
+        assert_eq!(entries[0].disk, 300 * 1024 * 1024 * 1024);
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

@@ -144,6 +144,7 @@ impl DockerCommand {
 
 const VOLUME_USAGE_PROGRAM: &str = "__effigy_volume_usage";
 const VOLUME_USAGE_BATCH_PROGRAM: &str = "__effigy_volume_usage_batch";
+const VOLUME_CACHE_KIND_BATCH_PROGRAM: &str = "__effigy_volume_cache_kind_batch";
 
 /// Build the command to list Docker volumes matching a project prefix.
 pub fn list_volumes_command(project_name: &str) -> DockerCommand {
@@ -204,6 +205,14 @@ pub fn volume_usage_batch_command(mount_points: &[String]) -> DockerCommand {
         program: VOLUME_USAGE_BATCH_PROGRAM.to_owned(),
         args: mount_points.to_vec(),
         description: "Measure volume usage for multiple mount points".to_owned(),
+    }
+}
+
+pub fn volume_cache_kind_batch_command(mount_points: &[String]) -> DockerCommand {
+    DockerCommand {
+        program: VOLUME_CACHE_KIND_BATCH_PROGRAM.to_owned(),
+        args: mount_points.to_vec(),
+        description: "Classify cache-like volume contents".to_owned(),
     }
 }
 
