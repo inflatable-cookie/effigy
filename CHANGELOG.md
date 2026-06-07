@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-06-07
+
 ### Fixed
 - `release:linux:rehearse` now streams in-container Linux build output as it
   runs instead of buffering the full build log until the container command
