@@ -17,6 +17,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The managed default `effigy` Colima profile now targets a 300GiB disk for
   new or recreated profiles, and running-profile warnings include undersized
   disks as well as undersized memory.
+- `effigy container profile status` and `effigy container profile recreate`
+  now provide an explicit inspect-and-rebuild workflow for applying managed
+  Colima profile sizing to existing local profiles.
 
 ## [0.8.7] - 2026-06-05
 

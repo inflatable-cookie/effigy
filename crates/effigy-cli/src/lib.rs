@@ -811,6 +811,9 @@ pub enum ContainerSubcommand {
     Volume {
         subcommand: ContainerVolumeSubcommand,
     },
+    Profile {
+        subcommand: ContainerProfileSubcommand,
+    },
     Data {
         name: Option<String>,
         subcommand: ContainerDataSubcommand,
@@ -818,6 +821,12 @@ pub enum ContainerSubcommand {
     Eject {
         name: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerProfileSubcommand {
+    Status { profile: Option<String> },
+    Recreate { profile: Option<String>, yes: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

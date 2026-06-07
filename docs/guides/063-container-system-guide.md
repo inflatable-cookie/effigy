@@ -106,6 +106,8 @@ effigy container <NAME> down
 effigy container status --global
 effigy container stats --global
 effigy container <NAME> status
+effigy container profile status
+effigy container profile recreate --yes
 effigy container <NAME> logs
 effigy container <NAME> shell
 effigy container <NAME> data list
@@ -616,6 +618,17 @@ development. New or recreated profiles are started with a 300GiB disk target,
 plus memory and swap sizing based on host memory. Existing smaller profiles may
 need a manual resize or recreate; Effigy warns when a running managed profile is
 below the target.
+
+Use the profile commands for that workflow:
+
+```sh
+# Inspect actual profile sizing against Effigy's managed targets
+effigy container profile status
+
+# Recreate the managed profile at the target size
+# This deletes local profile data, including containers, images, and volumes.
+effigy container profile recreate --yes
+```
 
 ## Current Limits
 

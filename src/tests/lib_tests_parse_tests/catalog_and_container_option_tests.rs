@@ -5,7 +5,8 @@ use crate::tests::prelude::{
 };
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
-    ContainerDataSubcommand, ContainerDbDumpInput, ContainerVolumeSubcommand,
+    ContainerDataSubcommand, ContainerDbDumpInput, ContainerProfileSubcommand,
+    ContainerVolumeSubcommand,
 };
 
 #[test]
@@ -572,6 +573,54 @@ fn parse_container_cache_prune_project_implies_global() {
                     yes: true,
                     project: Some("acowtancy-dev".to_owned()),
                     kind: None,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_profile_status_defaults_profile() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "status".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::Status { profile: None },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_profile_recreate_accepts_profile_and_yes() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "recreate".to_owned(),
+        "--profile".to_owned(),
+        "effigy".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::Recreate {
+                    profile: Some("effigy".to_owned()),
+                    yes: true,
                 },
             },
             repo_override: None,

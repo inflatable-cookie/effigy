@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    Command, ContainerArgs, ContainerCacheSubcommand, ContainerSubcommand,
-    ContainerVolumeSubcommand, HelpTopic,
+    Command, ContainerArgs, ContainerCacheSubcommand, ContainerProfileSubcommand,
+    ContainerSubcommand, ContainerVolumeSubcommand, HelpTopic,
 };
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
@@ -14,9 +14,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 11] = [
+    const ACTIONS: [&str; 12] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "eject",
+        "profile", "eject",
     ];
 
     let mut args = args.into_iter();
@@ -47,6 +47,7 @@ where
         "reset" => parse_container_reset(name, args),
         "cache" => parse_container_cache(name, args),
         "volume" => parse_container_volume(name, args),
+        "profile" => parse_container_profile(name, args),
         "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
         other => Err(unknown_argument(other)),
@@ -253,6 +254,32 @@ where
     }
 }
 
+fn parse_container_profile<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> profile` is not supported; use `effigy container profile status` for Colima profile sizing".to_owned(),
+        ));
+    }
+
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container profile` requires a subcommand; use `status` or `recreate`"
+                .to_owned(),
+        ));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
+        "status" => parse_container_profile_status(args),
+        "recreate" => parse_container_profile_recreate(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
 fn parse_container_volume<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -276,6 +303,78 @@ where
         "prune" => parse_container_volume_prune(args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_container_profile_status<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut profile: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile {
+            subcommand: ContainerProfileSubcommand::Status { profile },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_profile_recreate<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut profile: Option<String> = None;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--yes" => yes = true,
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile {
+            subcommand: ContainerProfileSubcommand::Recreate { profile, yes },
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_volume_list<I>(args: I) -> Result<Command, CliParseError>

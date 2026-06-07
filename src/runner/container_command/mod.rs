@@ -14,6 +14,7 @@ use lifecycle::{
     run_container_reset_command, run_container_shell, run_container_stats_command,
     run_container_status_command, run_container_up,
 };
+use profile::run_container_profile_command;
 use volume::run_container_volume_command;
 
 pub(in crate::runner) use closeout::maybe_confirm_container_shell_exit_cleanup;
@@ -31,6 +32,7 @@ mod closeout;
 mod data;
 mod gateway_registration;
 mod lifecycle;
+mod profile;
 mod secret_env;
 mod shell_prep;
 pub(in crate::runner) mod support;
@@ -148,6 +150,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ),
         ContainerSubcommand::Volume { subcommand } => {
             run_container_volume_command(args.repo_override.clone(), &subcommand, args.output_json)
+        }
+        ContainerSubcommand::Profile { subcommand } => {
+            run_container_profile_command(args.repo_override.clone(), &subcommand, args.output_json)
         }
         ContainerSubcommand::Eject { name } => {
             let context = resolve_active_command_context(args.repo_override.clone())?;

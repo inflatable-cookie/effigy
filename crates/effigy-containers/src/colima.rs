@@ -63,11 +63,15 @@ pub fn colima_status_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
 
 /// Build the command to start a Colima profile.
 pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
+    colima_start_command_for_profile(&policy.profile)
+}
+
+pub fn colima_start_command_for_profile(profile: &str) -> CommandSpec {
     let runtime = colima_start_runtime_for_policy();
     let mut args = vec![
         "start".to_string(),
         "--profile".to_string(),
-        policy.profile.clone(),
+        profile.to_owned(),
         "--runtime".to_string(),
         runtime.to_string(),
         // Forward the host's SSH agent socket to
@@ -78,7 +82,7 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
         // workspace shells.
         "--ssh-agent".to_string(),
     ];
-    if let Some(resources) = managed_colima_profile_resources(&policy.profile) {
+    if let Some(resources) = managed_colima_profile_resources(profile) {
         args.push("--memory".to_string());
         args.push(resources.memory_gib.to_string());
         args.push("--disk".to_string());
@@ -154,13 +158,17 @@ pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourceP
 }
 
 pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Result<(), String> {
-    if policy.profile != DEFAULT_COLIMA_PROFILE {
+    prepare_managed_colima_profile_name(&policy.profile)
+}
+
+pub fn prepare_managed_colima_profile_name(profile: &str) -> Result<(), String> {
+    if profile != DEFAULT_COLIMA_PROFILE {
         return Ok(());
     }
-    let Some(resources) = managed_colima_profile_resources(&policy.profile) else {
+    let Some(resources) = managed_colima_profile_resources(profile) else {
         return Ok(());
     };
-    let config_path = colima_profile_config_path(&policy.profile)?;
+    let config_path = colima_profile_config_path(profile)?;
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
