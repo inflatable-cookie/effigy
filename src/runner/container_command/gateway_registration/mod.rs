@@ -70,6 +70,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     }
     let route_table_path = gateway_route_table_path()?;
     prune_stale_container_routes_for_project(&route_table_path, repo_root, &routes)?;
+    validate_gateway_tcp_alias_bindings(&route_table_path, repo_root, &routes)?;
     for route in &routes {
         register_gateway_route_at(&route_table_path, repo_root, route)?;
     }
@@ -145,28 +146,32 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
-    let mut routes = resolve_gateway_routes(policy)?;
-    let project_alias_routes =
-        resolve_gateway_service_alias_routes(Path::new("."), policy, false, None)?;
-    let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
-        Path::new("."),
-        policy,
-        false,
-        &project_alias_routes,
-    )?;
-    routes.extend(project_alias_routes);
-    routes.extend(shared_alias_routes);
-    if routes.is_empty() {
+    let mut domains = resolve_gateway_routes(policy)?
+        .into_iter()
+        .map(|route| route.domain)
+        .collect::<Vec<_>>();
+    let project_alias_domains = declared_gateway_service_alias_domains(policy);
+    let shared_alias_domains =
+        declared_gateway_shared_service_alias_domains(policy, &project_alias_domains);
+    domains.extend(project_alias_domains);
+    domains.extend(shared_alias_domains);
+    domains.sort();
+    domains.dedup();
+    if domains.is_empty() {
         return Ok(Vec::new());
     }
     let route_table_path = gateway_route_table_path()?;
-    for route in &routes {
-        if route.tls {
-            remove_gateway_tls_cert(&route.domain)?;
+    for domain in &domains {
+        if policy
+            .dns_routes
+            .iter()
+            .any(|route| route.tls && route.domain == *domain)
+        {
+            remove_gateway_tls_cert(domain)?;
         }
-        deregister_gateway_route_at(&route_table_path, &route.domain)?;
+        deregister_gateway_route_at(&route_table_path, domain)?;
     }
-    Ok(routes.into_iter().map(|route| route.domain).collect())
+    Ok(domains)
 }
 
 fn load_gateway_route_table(route_table_path: &Path) -> Result<RouteTable, RunnerError> {
@@ -409,6 +414,54 @@ fn resolve_gateway_shared_service_alias_routes(
     Ok(routes)
 }
 
+fn declared_gateway_service_alias_domains(policy: &EffectiveContainerPolicy) -> Vec<String> {
+    if policy.service_aliases.is_empty() {
+        return Vec::new();
+    }
+    let Some(base_domain) = project_base_domain(policy) else {
+        return Vec::new();
+    };
+    let explicit_domains = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    policy
+        .service_aliases
+        .iter()
+        .filter_map(|alias| {
+            let domain = format!("{}.{}", alias.domain_label, base_domain);
+            (!explicit_domains.contains(domain.as_str())).then_some(domain)
+        })
+        .collect()
+}
+
+fn declared_gateway_shared_service_alias_domains(
+    policy: &EffectiveContainerPolicy,
+    project_alias_domains: &[String],
+) -> Vec<String> {
+    if policy.shared_services.is_empty() {
+        return Vec::new();
+    }
+    let Some(base_domain) = project_base_domain(policy) else {
+        return Vec::new();
+    };
+    let mut occupied = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    occupied.extend(project_alias_domains.iter().cloned());
+    policy
+        .shared_services
+        .iter()
+        .filter_map(|shared| {
+            let domain = format!("{}.{}", shared.domain_label, base_domain);
+            (!occupied.contains(domain.as_str())).then_some(domain)
+        })
+        .collect()
+}
+
 fn validate_gateway_routes_against_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -625,6 +678,74 @@ fn validate_gateway_routes_against_host_listeners(
     Ok(())
 }
 
+fn validate_gateway_tcp_alias_bindings(
+    route_table_path: &Path,
+    repo_root: &Path,
+    routes: &[RegisteredGatewayRoute],
+) -> Result<(), RunnerError> {
+    let project_path = repo_root.display().to_string();
+    let mut desired = std::collections::BTreeMap::<(std::net::Ipv4Addr, u16), (&str, &str)>::new();
+    for route in routes {
+        let Some(bind_ip) = route.dns_ip else {
+            continue;
+        };
+        let Some(bind_port) = route.tcp_port else {
+            continue;
+        };
+        let Some(tcp_target) = route.tcp_target.as_deref() else {
+            continue;
+        };
+        match desired.entry((bind_ip, bind_port)) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert((route.domain.as_str(), tcp_target));
+            }
+            std::collections::btree_map::Entry::Occupied(existing) => {
+                let (existing_domain, existing_target) = *existing.get();
+                if existing_target != tcp_target {
+                    return Err(gateway_runtime_target_error(format!(
+                        "gateway TCP alias bind {bind_ip}:{bind_port} is ambiguous: `{}` targets `{existing_target}` but `{}` targets `{tcp_target}`; raw TCP listeners cannot dispatch by hostname",
+                        existing_domain,
+                        route.domain,
+                    )));
+                }
+            }
+        }
+    }
+
+    if desired.is_empty() {
+        return Ok(());
+    }
+
+    let route_table = load_gateway_route_table(route_table_path)?;
+    for registered in route_table.all_routes() {
+        if registered.source != RouteSource::Container || registered.project == project_path {
+            continue;
+        }
+        let Some(bind_ip) = registered.dns_ip else {
+            continue;
+        };
+        let Some(bind_port) = registered.tcp_port else {
+            continue;
+        };
+        let Some(tcp_target) = registered.tcp_target.as_deref() else {
+            continue;
+        };
+        if let Some((desired_domain, desired_target)) = desired.get(&(bind_ip, bind_port)) {
+            if *desired_target != tcp_target {
+                return Err(gateway_runtime_target_error(format!(
+                    "gateway TCP alias bind {bind_ip}:{bind_port} already belongs to project `{}` via `{}` -> `{}`; refusing to register `{}` -> `{}` because raw TCP listeners cannot dispatch by hostname",
+                    registered.project,
+                    registered.domain,
+                    tcp_target,
+                    desired_domain,
+                    desired_target,
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_target_host_port(target: &str) -> Result<u16, RunnerError> {
     let port = target
         .rsplit(':')
@@ -653,56 +774,80 @@ fn project_base_domain(policy: &EffectiveContainerPolicy) -> Option<String> {
 }
 
 fn load_or_allocate_project_loopback_ip(
-    _repo_root: &Path,
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
         &policy.project_name,
-        &policy.project_name,
+        &repo_root.display().to_string(),
         allocate_if_missing,
     )
 }
 
 fn load_or_allocate_shared_loopback_ip(
-    _repo_root: &Path,
+    repo_root: &Path,
     shared: &SharedServiceBinding,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
         &format!("shared:{}", shared.project_name),
-        &shared.compose_file.display().to_string(),
+        &repo_root.display().to_string(),
         allocate_if_missing,
     )
 }
 
 fn load_or_allocate_loopback_ip(
     identity: &str,
-    source: &str,
+    project_path: &str,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     let path = gateway_dir()?.join("loopback-ips.json");
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| gateway_loopback_error("registry load", error.to_string()))?;
+    let route_table = load_gateway_route_table(&gateway_route_table_path()?)?;
     if prune_stale_loopback_assignments(&mut registry)? {
         registry
             .save(&path)
             .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     }
+    let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
     if let Some(existing) = registry.get(identity) {
-        return Ok(Some(existing.ip));
+        if reserved_ips.contains(&existing.ip) {
+            registry.deallocate(identity);
+        } else {
+            return Ok(Some(existing.ip));
+        }
     }
     if !allocate_if_missing {
+        if registry.get(identity).is_none() {
+            registry
+                .save(&path)
+                .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
+        }
         return Ok(None);
     }
     let assignment = registry
-        .allocate(identity, source)
+        .allocate_avoiding(identity, project_path, &reserved_ips)
         .map_err(|error| gateway_loopback_error("allocation", error.to_string()))?
         .ip;
     registry
         .save(&path)
         .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     Ok(Some(assignment))
+}
+
+fn active_loopback_ips_for_other_projects(
+    route_table: &RouteTable,
+    project_path: &str,
+) -> std::collections::HashSet<std::net::Ipv4Addr> {
+    route_table
+        .all_routes()
+        .into_iter()
+        .filter(|route| route.source == RouteSource::Container)
+        .filter(|route| route.project != project_path)
+        .filter_map(|route| route.dns_ip)
+        .collect()
 }
 
 fn prune_stale_loopback_assignments(registry: &mut LoopbackRegistry) -> Result<bool, RunnerError> {

@@ -15,7 +15,7 @@ const RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesiredTcpAlias {
-    domain: String,
+    domains: Vec<String>,
     bind_ip: Ipv4Addr,
     bind_port: u16,
     upstream: SocketAddr,
@@ -62,44 +62,44 @@ fn reconcile_tcp_aliases(
 ) {
     let desired = desired_tcp_aliases(&route_table.read().expect("route table lock poisoned"));
 
-    let stale_domains = active
+    let stale_keys = active
         .iter()
-        .filter_map(|(domain, alias)| {
+        .filter_map(|(key, alias)| {
             desired
-                .get(domain)
+                .get(key)
                 .filter(|candidate| **candidate == alias.desired)
                 .is_none()
-                .then_some(domain.clone())
+                .then_some(key.clone())
         })
         .collect::<Vec<_>>();
-    for domain in stale_domains {
-        if let Some(alias) = active.remove(&domain) {
+    for key in stale_keys {
+        if let Some(alias) = active.remove(&key) {
             let _ = alias.shutdown.send(true);
             alias.handle.abort();
         }
     }
 
-    for (domain, desired_alias) in desired {
+    for (key, desired_alias) in desired {
         let restart = active
-            .get(&domain)
+            .get(&key)
             .is_some_and(|alias| alias.handle.is_finished());
-        if active.contains_key(&domain) && !restart {
+        if active.contains_key(&key) && !restart {
             continue;
         }
-        if let Some(alias) = active.remove(&domain) {
+        if let Some(alias) = active.remove(&key) {
             let _ = alias.shutdown.send(true);
             alias.handle.abort();
         }
         let (alias_shutdown_tx, alias_shutdown_rx) = watch::channel(false);
         let desired_clone = desired_alias.clone();
-        let domain_for_task = domain.clone();
+        let listener_key = key.clone();
         let handle = tokio::spawn(async move {
             if let Err(error) = run_single_tcp_alias(desired_clone, alias_shutdown_rx).await {
-                error!(error = %error, domain = %domain_for_task, "TCP alias listener failed");
+                error!(error = %error, bind = %listener_key, "TCP alias listener failed");
             }
         });
         active.insert(
-            domain,
+            key,
             ActiveTcpAlias {
                 shutdown: alias_shutdown_tx,
                 handle,
@@ -110,22 +110,47 @@ fn reconcile_tcp_aliases(
 }
 
 fn desired_tcp_aliases(route_table: &RouteTable) -> BTreeMap<String, DesiredTcpAlias> {
-    route_table
-        .all_routes()
-        .into_iter()
-        .filter_map(|route| {
-            let domain = route.domain.clone();
-            Some((
-                domain.clone(),
-                DesiredTcpAlias {
-                    domain,
-                    bind_ip: route.dns_ip?,
-                    bind_port: route.tcp_port?,
-                    upstream: parse_tcp_target(route.tcp_target.as_deref()?).ok()?,
-                },
-            ))
-        })
-        .collect::<BTreeMap<_, _>>()
+    let mut desired = BTreeMap::<String, DesiredTcpAlias>::new();
+    for route in route_table.all_routes() {
+        let Some(bind_ip) = route.dns_ip else {
+            continue;
+        };
+        let Some(bind_port) = route.tcp_port else {
+            continue;
+        };
+        let Some(raw_target) = route.tcp_target.as_deref() else {
+            continue;
+        };
+        let Ok(upstream) = parse_tcp_target(raw_target) else {
+            continue;
+        };
+        let key = format!("{bind_ip}:{bind_port}");
+        match desired.entry(key) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(DesiredTcpAlias {
+                    domains: vec![route.domain.clone()],
+                    bind_ip,
+                    bind_port,
+                    upstream,
+                });
+            }
+            std::collections::btree_map::Entry::Occupied(mut existing) => {
+                if existing.get().upstream == upstream {
+                    existing.get_mut().domains.push(route.domain.clone());
+                } else {
+                    error!(
+                        bind = %format!("{bind_ip}:{bind_port}"),
+                        existing_domains = ?existing.get().domains,
+                        existing_upstream = %existing.get().upstream,
+                        conflicting_domain = %route.domain,
+                        conflicting_upstream = %upstream,
+                        "ignoring conflicting TCP alias route with duplicate bind tuple"
+                    );
+                }
+            }
+        }
+    }
+    desired
 }
 
 fn parse_tcp_target(raw: &str) -> Result<SocketAddr, GatewayError> {
@@ -149,7 +174,7 @@ async fn run_single_tcp_alias(
                 reason: error.to_string(),
             })?;
     info!(
-        domain = %desired.domain,
+        domains = ?desired.domains,
         bind = %bind_addr,
         upstream = %desired.upstream,
         "TCP alias listener started"
@@ -161,12 +186,12 @@ async fn run_single_tcp_alias(
                 match result {
                     Ok((stream, _peer)) => {
                         let upstream = desired.upstream;
-                        let domain = desired.domain.clone();
+                        let domains = desired.domains.clone();
                         tokio::spawn(async move {
                             if let Err(error) = proxy_tcp_alias_connection(stream, upstream).await {
                                 debug!(
                                     error = %error,
-                                    domain = %domain,
+                                    domains = ?domains,
                                     upstream = %upstream,
                                     "TCP alias connection failed"
                                 );
@@ -235,9 +260,36 @@ mod tests {
         });
 
         let desired = desired_tcp_aliases(&table);
-        let alias = desired.get("db.app.test").expect("tcp alias");
+        let alias = desired.get("127.1.0.7:5432").expect("tcp alias");
         assert_eq!(alias.bind_ip, Ipv4Addr::new(127, 1, 0, 7));
         assert_eq!(alias.bind_port, 5432);
         assert_eq!(alias.upstream, "127.0.0.1:19432".parse().unwrap());
+        assert_eq!(alias.domains, vec!["db.app.test".to_owned()]);
+    }
+
+    #[test]
+    fn desired_tcp_aliases_deduplicates_domains_with_identical_bind_and_upstream() {
+        let mut table = RouteTable::new();
+        for domain in ["db.app1.test", "db.app2.test"] {
+            table.upsert(Route {
+                domain: domain.to_owned(),
+                target: None,
+                dns_ip: Some(Ipv4Addr::new(127, 1, 0, 7)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:19432".to_owned()),
+                source: RouteSource::Container,
+                project: "/tmp/app".to_owned(),
+                tls: false,
+                registered: Utc::now(),
+            });
+        }
+
+        let desired = desired_tcp_aliases(&table);
+        let alias = desired.get("127.1.0.7:5432").expect("tcp alias");
+        assert_eq!(desired.len(), 1);
+        assert_eq!(
+            alias.domains,
+            vec!["db.app1.test".to_owned(), "db.app2.test".to_owned()]
+        );
     }
 }

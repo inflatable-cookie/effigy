@@ -842,6 +842,147 @@ fn explicit_dns_routes_win_over_derived_shared_service_alias_domains() {
 }
 
 #[test]
+fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_registry() {
+    with_test_home("deregister-service-alias-domains", || {
+        let mut policy = test_policy();
+        policy.shared_services = vec![shared_service(
+            "cache",
+            "memcached",
+            "shared-mail-dev",
+            2525,
+            2525,
+        )];
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        let project_path = "/tmp/repo";
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        register_route(
+            &route_table_path,
+            &RouteRegistration {
+                domain: "clientname.test".to_owned(),
+                target: Some("127.0.0.1:8080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: true,
+                project_path: project_path.to_owned(),
+                source: RouteSource::Container,
+            },
+        )
+        .expect("seed http route");
+        for (domain, tcp_port, target_port) in [
+            ("postgres.clientname.test", 5432, "127.0.0.1:15432"),
+            ("memcached.clientname.test", 2525, "127.0.0.1:2525"),
+        ] {
+            register_route(
+                &route_table_path,
+                &RouteRegistration {
+                    domain: domain.to_owned(),
+                    target: None,
+                    dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                    tcp_port: Some(tcp_port),
+                    tcp_target: Some(target_port.to_owned()),
+                    tls: false,
+                    project_path: project_path.to_owned(),
+                    source: RouteSource::Container,
+                },
+            )
+            .expect("seed route");
+        }
+
+        let removed = deregister_gateway_routes_for_container(&policy).expect("deregister routes");
+        let table = RouteTable::load(&route_table_path).expect("load route table");
+
+        assert!(table.lookup("postgres.clientname.test").is_none());
+        assert!(table.lookup("memcached.clientname.test").is_none());
+        assert!(removed.contains(&"postgres.clientname.test".to_owned()));
+        assert!(removed.contains(&"memcached.clientname.test".to_owned()));
+    });
+}
+
+#[test]
+fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let route_table_path = dir.path().join("routes.json");
+    let repo_root = dir.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+
+    register_route(
+        &route_table_path,
+        &RouteRegistration {
+            domain: "postgres.other.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:22132".to_owned()),
+            tls: false,
+            project_path: dir.path().join("other").display().to_string(),
+            source: RouteSource::Container,
+        },
+    )
+    .expect("seed conflicting route");
+
+    let error = validate_gateway_tcp_alias_bindings(
+        &route_table_path,
+        &repo_root,
+        &[RegisteredGatewayRoute {
+            domain: "postgres.clientname.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:22432".to_owned()),
+            tls: false,
+            service: Some("db".to_owned()),
+            external_target: false,
+        }],
+    )
+    .expect_err("conflicting bind tuple should fail");
+
+    assert!(error
+        .to_string()
+        .contains("raw TCP listeners cannot dispatch by hostname"));
+}
+
+#[test]
+fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let route_table_path = dir.path().join("routes.json");
+    let repo_root = dir.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+
+    register_route(
+        &route_table_path,
+        &RouteRegistration {
+            domain: "postgres.app1.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:22132".to_owned()),
+            tls: false,
+            project_path: dir.path().join("other").display().to_string(),
+            source: RouteSource::Container,
+        },
+    )
+    .expect("seed reusable route");
+
+    validate_gateway_tcp_alias_bindings(
+        &route_table_path,
+        &repo_root,
+        &[RegisteredGatewayRoute {
+            domain: "postgres.app2.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:22132".to_owned()),
+            tls: false,
+            service: Some("db".to_owned()),
+            external_target: false,
+        }],
+    )
+    .expect("matching upstream should be reusable");
+}
+
+#[test]
 fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
     let mut registry = LoopbackRegistry::new();
     registry
@@ -935,4 +1076,80 @@ fn runtime_not_running_errors_degrade_gateway_probe_to_not_ready() {
 
     assert!(exec_error_means_runtime_not_running(&colima_stopped));
     assert!(exec_error_means_runtime_not_running(&docker_stopped));
+}
+
+#[test]
+fn load_or_allocate_project_loopback_ip_avoids_live_route_table_ips_missing_from_registry() {
+    with_test_home("loopback-avoid-live-routes", || {
+        let policy = test_policy();
+        let repo_root = PathBuf::from("/tmp/repo");
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        register_route(
+            &route_table_path,
+            &RouteRegistration {
+                domain: "postgres.other.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:15432".to_owned()),
+                tls: false,
+                project_path: "/tmp/other".to_owned(),
+                source: RouteSource::Container,
+            },
+        )
+        .expect("seed active route");
+
+        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("allocate")
+            .expect("loopback ip");
+
+        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
+    });
+}
+
+#[test]
+fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
+    with_test_home("loopback-reassign-conflicting-saved-ip", || {
+        let policy = test_policy();
+        let repo_root = PathBuf::from("/tmp/repo");
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        register_route(
+            &route_table_path,
+            &RouteRegistration {
+                domain: "postgres.other.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:15432".to_owned()),
+                tls: false,
+                project_path: "/tmp/other".to_owned(),
+                source: RouteSource::Container,
+            },
+        )
+        .expect("seed active route");
+
+        let loopback_path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("demo-web-dev", "/tmp/repo")
+            .expect("seed conflicting assignment");
+        registry.save(&loopback_path).expect("save registry");
+
+        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("allocate")
+            .expect("loopback ip");
+        let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
+
+        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
+        assert_eq!(
+            reloaded.get("demo-web-dev").map(|entry| entry.ip),
+            Some(std::net::Ipv4Addr::new(127, 1, 0, 2))
+        );
+    });
 }

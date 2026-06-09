@@ -6,6 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- `effigy container down` now removes derived gateway TCP service-alias routes reliably after container shutdown, and gateway TCP alias registration now rejects conflicting bind tuples while deduplicating identical shared listeners.
+
 ## [0.8.9] - 2026-06-09
 
 ### Fixed

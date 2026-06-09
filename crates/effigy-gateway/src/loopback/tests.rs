@@ -99,3 +99,15 @@ fn allocate_reports_pool_exhaustion() {
         .expect_err("pool should exhaust");
     assert!(matches!(error, GatewayError::LoopbackPoolExhausted { .. }));
 }
+
+#[test]
+fn allocate_avoiding_skips_reserved_ips() {
+    let mut registry = LoopbackRegistry::new();
+    let reserved = [DEFAULT_LOOPBACK_START].into_iter().collect();
+
+    let assignment = registry
+        .allocate_avoiding("app-a", "/projects/app-a", &reserved)
+        .expect("allocate with reserved");
+
+    assert_eq!(assignment.ip, Ipv4Addr::new(127, 1, 0, 2));
+}

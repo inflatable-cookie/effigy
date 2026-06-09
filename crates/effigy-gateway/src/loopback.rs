@@ -6,6 +6,7 @@
 //! without elevated privileges during normal runtime.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::path::Path;
 
@@ -112,16 +113,27 @@ impl LoopbackRegistry {
         identity: &str,
         scope: &str,
     ) -> Result<&LoopbackAssignment, GatewayError> {
+        self.allocate_avoiding(identity, scope, &HashSet::new())
+    }
+
+    /// Allocate a stable loopback IP for an identity while avoiding reserved
+    /// IPs that are still active outside the registry snapshot.
+    pub fn allocate_avoiding(
+        &mut self,
+        identity: &str,
+        scope: &str,
+        reserved: &HashSet<Ipv4Addr>,
+    ) -> Result<&LoopbackAssignment, GatewayError> {
         if self.assignments.contains_key(identity) {
             return Ok(&self.assignments[identity]);
         }
 
-        let ip = self
-            .next_available_ip()
-            .ok_or(GatewayError::LoopbackPoolExhausted {
+        let ip = self.next_available_ip_avoiding(reserved).ok_or(
+            GatewayError::LoopbackPoolExhausted {
                 range_start: DEFAULT_LOOPBACK_START,
                 range_end: DEFAULT_LOOPBACK_END,
-            })?;
+            },
+        )?;
         let assignment = LoopbackAssignment {
             ip,
             scope: scope.to_owned(),
@@ -145,7 +157,7 @@ impl LoopbackRegistry {
         self.assignments.is_empty()
     }
 
-    fn next_available_ip(&self) -> Option<Ipv4Addr> {
+    fn next_available_ip_avoiding(&self, reserved: &HashSet<Ipv4Addr>) -> Option<Ipv4Addr> {
         let assigned: std::collections::HashSet<Ipv4Addr> =
             self.assignments.values().map(|entry| entry.ip).collect();
         let [a, b, c, _] = DEFAULT_LOOPBACK_START.octets();
@@ -153,7 +165,7 @@ impl LoopbackRegistry {
         let end = DEFAULT_LOOPBACK_END.octets()[3];
         (start..=end)
             .map(|octet| Ipv4Addr::new(a, b, c, octet))
-            .find(|candidate| !assigned.contains(candidate))
+            .find(|candidate| !assigned.contains(candidate) && !reserved.contains(candidate))
     }
 }
 
