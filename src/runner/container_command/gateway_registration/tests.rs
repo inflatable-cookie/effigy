@@ -13,7 +13,7 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
     let _guard = LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("lock test home");
+        .unwrap_or_else(|poison| poison.into_inner());
     let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-gateway-registration-home-{name}-{}",
@@ -615,7 +615,7 @@ fn load_or_allocate_loopback_ip_uses_typed_loopback_error_when_registry_is_inval
             .expect("mkdir loopback parent");
         std::fs::write(&loopback_path, "{not-json").expect("write invalid loopback registry");
 
-        let error = load_or_allocate_loopback_ip("demo-web-dev", "/tmp/demo", true)
+        let error = load_or_allocate_loopback_ip("demo-web-dev", None, "/tmp/demo", true)
             .expect_err("invalid loopback registry should fail");
         match error {
             RunnerError::GatewayLoopback { phase, detail } => {
@@ -1137,7 +1137,7 @@ fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
             .join("loopback-ips.json");
         let mut registry = LoopbackRegistry::new();
         registry
-            .allocate("demo-web-dev", "/tmp/repo")
+            .allocate("project:demo-web-dev:/tmp/repo", "/tmp/repo")
             .expect("seed conflicting assignment");
         registry.save(&loopback_path).expect("save registry");
 
@@ -1148,8 +1148,72 @@ fn load_or_allocate_project_loopback_ip_reassigns_conflicting_saved_ip() {
 
         assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
         assert_eq!(
-            reloaded.get("demo-web-dev").map(|entry| entry.ip),
+            reloaded
+                .get("project:demo-web-dev:/tmp/repo")
+                .map(|entry| entry.ip),
             Some(std::net::Ipv4Addr::new(127, 1, 0, 2))
+        );
+    });
+}
+
+#[test]
+fn load_or_allocate_project_loopback_ip_distinguishes_same_project_name_across_repos() {
+    with_test_home("loopback-distinct-repos-same-project-name", || {
+        let policy = test_policy();
+        let first_repo = PathBuf::from("/tmp/acowtancy-new");
+        let second_repo = PathBuf::from("/tmp/acowtancy-legacy");
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        register_route(
+            &route_table_path,
+            &RouteRegistration {
+                domain: "mysql.acowtancy.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(3306),
+                tcp_target: Some("127.0.0.1:22406".to_owned()),
+                tls: false,
+                project_path: first_repo.display().to_string(),
+                source: RouteSource::Container,
+            },
+        )
+        .expect("seed active first-repo route");
+
+        let second_ip = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
+            .expect("allocate second")
+            .expect("second loopback ip");
+
+        assert_eq!(second_ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
+    });
+}
+
+#[test]
+fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo() {
+    with_test_home("loopback-migrate-legacy-identity", || {
+        let policy = test_policy();
+        let repo_root = PathBuf::from("/tmp/repo");
+        let loopback_path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("demo-web-dev", "/tmp/repo")
+            .expect("seed legacy assignment");
+        registry.save(&loopback_path).expect("save registry");
+
+        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("allocate")
+            .expect("loopback ip");
+        let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
+
+        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 1));
+        assert!(reloaded.get("demo-web-dev").is_none());
+        assert_eq!(
+            reloaded
+                .get("project:demo-web-dev:/tmp/repo")
+                .map(|entry| entry.ip),
+            Some(std::net::Ipv4Addr::new(127, 1, 0, 1))
         );
     });
 }

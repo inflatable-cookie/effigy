@@ -779,7 +779,8 @@ fn load_or_allocate_project_loopback_ip(
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
-        &policy.project_name,
+        &project_loopback_identity(&policy.project_name, repo_root),
+        Some(&policy.project_name),
         &repo_root.display().to_string(),
         allocate_if_missing,
     )
@@ -791,7 +792,8 @@ fn load_or_allocate_shared_loopback_ip(
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
-        &format!("shared:{}", shared.project_name),
+        &shared_loopback_identity(&shared.project_name, repo_root),
+        Some(&format!("shared:{}", shared.project_name)),
         &repo_root.display().to_string(),
         allocate_if_missing,
     )
@@ -799,6 +801,7 @@ fn load_or_allocate_shared_loopback_ip(
 
 fn load_or_allocate_loopback_ip(
     identity: &str,
+    legacy_identity: Option<&str>,
     project_path: &str,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
@@ -812,8 +815,15 @@ fn load_or_allocate_loopback_ip(
             .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     }
     let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
+    migrate_legacy_loopback_identity(
+        &mut registry,
+        identity,
+        legacy_identity,
+        project_path,
+        &reserved_ips,
+    );
     if let Some(existing) = registry.get(identity) {
-        if reserved_ips.contains(&existing.ip) {
+        if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
             registry.deallocate(identity);
         } else {
             return Ok(Some(existing.ip));
@@ -835,6 +845,39 @@ fn load_or_allocate_loopback_ip(
         .save(&path)
         .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     Ok(Some(assignment))
+}
+
+fn project_loopback_identity(project_name: &str, repo_root: &Path) -> String {
+    format!("project:{project_name}:{}", repo_root.display())
+}
+
+fn shared_loopback_identity(project_name: &str, repo_root: &Path) -> String {
+    format!("shared:{project_name}:{}", repo_root.display())
+}
+
+fn migrate_legacy_loopback_identity(
+    registry: &mut LoopbackRegistry,
+    identity: &str,
+    legacy_identity: Option<&str>,
+    project_path: &str,
+    reserved_ips: &std::collections::HashSet<std::net::Ipv4Addr>,
+) {
+    if registry.get(identity).is_some() {
+        return;
+    }
+    let Some(legacy_identity) = legacy_identity else {
+        return;
+    };
+    let Some(existing) = registry.get(legacy_identity).cloned() else {
+        return;
+    };
+    if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
+        return;
+    }
+    let Some(existing) = registry.deallocate(legacy_identity) else {
+        return;
+    };
+    registry.assignments.insert(identity.to_owned(), existing);
 }
 
 fn active_loopback_ips_for_other_projects(
@@ -881,8 +924,18 @@ fn prune_stale_loopback_assignments_with_runtime(
 ) -> bool {
     let active_identities = rows
         .iter()
-        .filter_map(|row| row.project_name.as_deref())
-        .flat_map(|project_name| [project_name.to_owned(), format!("shared:{project_name}")])
+        .flat_map(|row| {
+            let mut identities = Vec::new();
+            if let Some(project_name) = row.project_name.as_deref() {
+                identities.push(project_name.to_owned());
+                identities.push(format!("shared:{project_name}"));
+                if let Some(working_dir) = row.working_dir.as_deref() {
+                    identities.push(format!("project:{project_name}:{working_dir}"));
+                    identities.push(format!("shared:{project_name}:{working_dir}"));
+                }
+            }
+            identities
+        })
         .collect::<std::collections::BTreeSet<_>>();
     let active_projects = rows
         .iter()
