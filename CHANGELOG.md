@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-06-09
+
 ### Fixed
 - `effigy container down` now removes derived gateway TCP service-alias routes reliably after container shutdown, and gateway TCP alias registration now rejects conflicting bind tuples while deduplicating identical shared listeners.
 - `effigy gateway status` now reports duplicate TCP bind tuples, and `effigy gateway repair [--yes]` can inspect and remove stale conflicting container TCP alias routes already left behind in local gateway state.
