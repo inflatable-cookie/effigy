@@ -65,9 +65,9 @@ jobs:
             os: ubuntu-22.04
             cross: true
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-15
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v6
