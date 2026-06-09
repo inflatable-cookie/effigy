@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-06-09
+
+### Fixed
+- The release-binaries workflow now pins macOS runners by CPU architecture so Apple Silicon and Intel release builds run their smoke checks on matching GitHub-hosted images.
+- Gateway loopback migration now persists repo-scoped identity upgrades back to the registry file instead of only updating the in-memory assignment map.
+
 ## [0.8.10] - 2026-06-09
 
 ### Fixed
