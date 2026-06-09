@@ -826,6 +826,7 @@ pub enum ContainerSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerProfileSubcommand {
     Status { profile: Option<String> },
+    Resize { profile: Option<String> },
     Recreate { profile: Option<String>, yes: bool },
 }
 

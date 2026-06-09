@@ -267,7 +267,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container profile` requires a subcommand; use `status` or `recreate`"
+            "`effigy container profile` requires a subcommand; use `status`, `resize`, or `recreate`"
                 .to_owned(),
         ));
     };
@@ -275,6 +275,7 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
         "status" => parse_container_profile_status(args),
+        "resize" => parse_container_profile_resize(args),
         "recreate" => parse_container_profile_recreate(args),
         other => Err(unknown_argument(other)),
     }
@@ -371,6 +372,41 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Profile {
             subcommand: ContainerProfileSubcommand::Recreate { profile, yes },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_profile_resize<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut profile: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile {
+            subcommand: ContainerProfileSubcommand::Resize { profile },
         },
         repo_override,
         output_json,

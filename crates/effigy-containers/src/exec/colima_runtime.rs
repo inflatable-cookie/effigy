@@ -169,7 +169,7 @@ pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Pa
     if entry.memory < expected_memory_bytes {
         let actual_memory_gib = entry.memory / (1024 * 1024 * 1024);
         warnings.push(format!(
-            "Colima profile `{}` is running with {}GiB RAM; Effigy recommends {}GiB memory and {}GiB swap{} for workspace-heavy Rust builds. Stop the profile and rerun Effigy to apply the managed sizing.",
+            "Colima profile `{}` is running with {}GiB RAM; Effigy recommends {}GiB memory and {}GiB swap{} for workspace-heavy Rust builds. Run `effigy container profile resize` to stop and restart the profile with the managed sizing.",
             policy.profile,
             actual_memory_gib.max(1),
             resources.memory_gib,
@@ -182,7 +182,7 @@ pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Pa
     if entry.disk < expected_disk_bytes {
         let actual_disk_gib = entry.disk / (1024 * 1024 * 1024);
         warnings.push(format!(
-            "Colima profile `{}` is running with {}GiB disk; Effigy recommends {}GiB disk for multi-repo Rust/container workspaces. Recreate or resize the profile to apply the managed disk size.",
+            "Colima profile `{}` is running with {}GiB disk; Effigy recommends {}GiB disk for multi-repo Rust/container workspaces. Run `effigy container profile resize` to grow the profile without deleting local runtime data.",
             policy.profile,
             actual_disk_gib.max(1),
             resources.disk_gib,

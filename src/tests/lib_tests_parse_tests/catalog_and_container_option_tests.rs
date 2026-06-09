@@ -630,6 +630,31 @@ fn parse_container_profile_recreate_accepts_profile_and_yes() {
 }
 
 #[test]
+fn parse_container_profile_resize_accepts_profile() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "resize".to_owned(),
+        "--profile".to_owned(),
+        "effigy".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::Resize {
+                    profile: Some("effigy".to_owned()),
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_container_volume_list_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),

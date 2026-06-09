@@ -49,6 +49,9 @@ pub(super) fn run_container_profile_command(
         ContainerProfileSubcommand::Status { profile } => {
             run_container_profile_status(profile.as_deref(), output_json)
         }
+        ContainerProfileSubcommand::Resize { profile } => {
+            run_container_profile_resize(profile.as_deref(), output_json)
+        }
         ContainerProfileSubcommand::Recreate { profile, yes } => {
             run_container_profile_recreate(profile.as_deref(), *yes, output_json)
         }
@@ -99,6 +102,52 @@ fn run_container_profile_recreate(
 
     let after = inspect_profile(&profile)?;
     Ok(render_profile_recreate(&before, &after, output_json))
+}
+
+fn run_container_profile_resize(
+    profile: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let profile = resolve_profile(profile);
+    let resources = managed_colima_profile_resources(&profile).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "`effigy container profile resize` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
+        ))
+    })?;
+    let before = inspect_profile(&profile)?;
+    prepare_managed_colima_profile_name(&profile).map_err(RunnerError::task_invocation)?;
+
+    let was_running = before
+        .row
+        .as_ref()
+        .is_some_and(|row| row.status.eq_ignore_ascii_case("running"));
+    if was_running {
+        run_colima(&["stop", "--profile", &profile], "colima stop")?;
+    }
+
+    let start = colima_start_command_for_profile(&profile);
+    let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_command(&start.program, &start_args, &start.label, false)?;
+
+    let after = inspect_profile(&profile)?;
+    let resized = after
+        .row
+        .as_ref()
+        .map(|row| bytes_to_gib(row.disk) >= resources.disk_gib)
+        .unwrap_or(false);
+    if !resized {
+        return Err(RunnerError::task_invocation(format!(
+            "Colima profile `{profile}` restarted but still reports disk {}GiB below the managed target {}GiB. Try `effigy container profile recreate --yes` only if you are prepared to lose local profile runtime data.",
+            after.row.as_ref().map(|row| bytes_to_gib(row.disk)).unwrap_or(0),
+            resources.disk_gib,
+        )));
+    }
+    Ok(render_profile_resize(
+        &before,
+        &after,
+        was_running,
+        output_json,
+    ))
 }
 
 fn resolve_profile(profile: Option<&str>) -> String {
@@ -172,11 +221,46 @@ fn render_profile_status(status: &ProfileStatus, output_json: bool) -> String {
         || status_below_target(row.disk, status.target_disk_gib)
     {
         lines.push(format!(
-            "next: `effigy container profile recreate --yes` will rebuild `{}` at the managed target and delete local profile data",
+            "next: `effigy container profile resize` will stop and restart `{}` with the managed sizing without deleting local profile data",
             status.profile
         ));
     }
     lines.join("\n")
+}
+
+fn render_profile_resize(
+    before: &ProfileStatus,
+    after: &ProfileStatus,
+    was_running: bool,
+    output_json: bool,
+) -> String {
+    let json = json!({
+        "schema": "effigy.container.profile-resize.v1",
+        "schema_version": 1,
+        "ok": true,
+        "profile": after.profile,
+        "was_running": was_running,
+        "before": profile_status_json(before),
+        "after": profile_status_json(after),
+    });
+    if output_json {
+        return json.to_string();
+    }
+    let Some(row) = &after.row else {
+        return format!(
+            "[warning] resized Colima profile `{}` but it was not found in `colima list --json` afterward",
+            after.profile
+        );
+    };
+    format!(
+        "[ok] resized Colima profile `{}` in place\nstatus: {}\nmemory: {}GiB{}\ndisk: {}GiB{}",
+        after.profile,
+        row.status,
+        bytes_to_gib(row.memory),
+        target_suffix(after.target_memory_gib),
+        bytes_to_gib(row.disk),
+        target_suffix(after.target_disk_gib),
+    )
 }
 
 fn render_profile_recreate(
@@ -309,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_status_renders_recreate_hint_when_disk_is_small() {
+    fn profile_status_renders_resize_hint_when_disk_is_small() {
         let status = ProfileStatus {
             profile: "effigy".to_owned(),
             row: Some(ColimaListRow {
@@ -328,6 +412,44 @@ mod tests {
         let rendered = render_profile_status(&status, false);
 
         assert!(rendered.contains("disk: 100GiB (target=300GiB)"));
-        assert!(rendered.contains("profile recreate --yes"));
+        assert!(rendered.contains("profile resize"));
+        assert!(!rendered.contains("profile recreate --yes"));
+    }
+
+    #[test]
+    fn profile_resize_renders_in_place_result() {
+        let before = ProfileStatus {
+            profile: "effigy".to_owned(),
+            row: Some(ColimaListRow {
+                name: "effigy".to_owned(),
+                status: "Running".to_owned(),
+                cpus: 2,
+                memory: 32 * BYTES_PER_GIB,
+                disk: 100 * BYTES_PER_GIB,
+                runtime: Some("containerd".to_owned()),
+            }),
+            target_memory_gib: Some(32),
+            target_swap_gib: Some(16),
+            target_disk_gib: Some(300),
+        };
+        let after = ProfileStatus {
+            profile: "effigy".to_owned(),
+            row: Some(ColimaListRow {
+                name: "effigy".to_owned(),
+                status: "Running".to_owned(),
+                cpus: 2,
+                memory: 32 * BYTES_PER_GIB,
+                disk: 300 * BYTES_PER_GIB,
+                runtime: Some("containerd".to_owned()),
+            }),
+            target_memory_gib: Some(32),
+            target_swap_gib: Some(16),
+            target_disk_gib: Some(300),
+        };
+
+        let rendered = render_profile_resize(&before, &after, true, false);
+
+        assert!(rendered.contains("resized Colima profile `effigy` in place"));
+        assert!(rendered.contains("disk: 300GiB (target=300GiB)"));
     }
 }
