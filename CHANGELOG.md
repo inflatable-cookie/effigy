@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-06-09
+
 ### Fixed
 - `effigy container profile resize` now applies managed Colima sizing by stopping and restarting the profile in place, and `container profile status` now points operators at that non-destructive path instead of only the destructive recreate workflow.
 
