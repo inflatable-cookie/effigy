@@ -10,6 +10,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy container down` now removes derived gateway TCP service-alias routes reliably after container shutdown, and gateway TCP alias registration now rejects conflicting bind tuples while deduplicating identical shared listeners.
 - `effigy gateway status` now reports duplicate TCP bind tuples, and `effigy gateway repair [--yes]` can inspect and remove stale conflicting container TCP alias routes already left behind in local gateway state.
 - Gateway TCP alias loopback assignment is now scoped by repo path, so separate repos that share the same container `project_name` can coexist without collapsing onto the same `127.1.0.x` bind IP.
+- When multiple repos ask a local Effigy checkout to build the shared Linux workspace artifact at the same time, later callers now wait for the in-progress `workspace:linux:artifact` task to finish and reuse its output instead of failing on the task lock.
 
 ## [0.8.9] - 2026-06-09
 

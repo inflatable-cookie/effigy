@@ -11,12 +11,13 @@ use crate::runner::system_command::workspace_provisioning::render_workspace_perm
 use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
-    expected_workspace_effigy_install_identity, linux_workspace_effigy_artifact_needs_refresh,
-    linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
-    read_trimmed_workspace_effigy_active_version, render_workspace_effigy_install_command,
-    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
-    sibling_effigy_repo_root, workspace_effigy_active_version_file,
+    expected_workspace_effigy_install_identity, linux_workspace_artifact_lock_path,
+    linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
+    linux_workspace_effigy_release_url, read_trimmed_workspace_effigy_active_version,
+    render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
+    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
+    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
+    wait_for_in_progress_linux_workspace_artifact_build, workspace_effigy_active_version_file,
     workspace_effigy_install_identity_file, workspace_effigy_install_is_current,
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
@@ -305,6 +306,80 @@ fn linux_workspace_artifact_build_runs_built_in_task_with_target_env() {
 
     assert_eq!(args.trim(), "workspace:linux:artifact");
     assert_eq!(env.trim(), "x86_64-unknown-linux-gnu");
+}
+
+#[test]
+fn wait_for_in_progress_linux_workspace_artifact_build_reuses_completed_artifact() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-linux-artifact-wait-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let artifacts_dir = root.join(".effigy/linux-release/artifacts");
+    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
+    let freshness_anchor = root.join("target/debug/effigy");
+    std::fs::create_dir_all(freshness_anchor.parent().expect("anchor parent"))
+        .expect("mkdir target");
+    std::fs::write(&freshness_anchor, "host").expect("write host");
+    let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
+    let receipt = artifacts_dir.join("rehearsal.txt");
+    let lock_path = linux_workspace_artifact_lock_path(&root);
+    std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("mkdir locks");
+    std::fs::write(&lock_path, "{}").expect("write lock");
+
+    let lock_path_clone = lock_path.clone();
+    let artifact_clone = artifact.clone();
+    let receipt_clone = receipt.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&artifact_clone, "artifact").expect("write artifact");
+        std::fs::write(
+            &receipt_clone,
+            "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-06-09T00:00:00Z\n",
+        )
+        .expect("write receipt");
+        let _ = std::fs::remove_file(lock_path_clone);
+    });
+
+    let reused = wait_for_in_progress_linux_workspace_artifact_build(
+        &root,
+        &freshness_anchor,
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+    )
+    .expect("wait succeeds");
+
+    assert!(reused);
+}
+
+#[test]
+fn wait_for_in_progress_linux_workspace_artifact_build_returns_false_without_lock() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-linux-artifact-no-wait-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let artifacts_dir = root.join(".effigy/linux-release/artifacts");
+    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
+    let freshness_anchor = root.join("target/debug/effigy");
+    std::fs::create_dir_all(freshness_anchor.parent().expect("anchor parent"))
+        .expect("mkdir target");
+    std::fs::write(&freshness_anchor, "host").expect("write host");
+    let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
+
+    let reused = wait_for_in_progress_linux_workspace_artifact_build(
+        &root,
+        &freshness_anchor,
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+    )
+    .expect("wait succeeds");
+
+    assert!(!reused);
 }
 
 #[test]

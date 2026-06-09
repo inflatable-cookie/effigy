@@ -19,6 +19,10 @@ const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie
 pub(super) const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str =
     "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
 static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
+const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(300);
+const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LinuxWorkspaceTarget {
@@ -585,11 +589,41 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
         linux_workspace_effigy_artifact_needs_refresh(&freshness_anchor, &artifact_path, target);
 
     if needs_refresh {
+        if wait_for_in_progress_linux_workspace_artifact_build(
+            effigy_repo_root,
+            &freshness_anchor,
+            &artifact_path,
+            target,
+        )? {
+            ensure_workspace_effigy_active_version_file(
+                &artifact_path,
+                &effigy_core::build_info::active_version(),
+            )?;
+            ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+            return Ok(artifact_path);
+        }
         workspace::emit_workspace_info(
             "building linux effigy artifact for workspace container access",
             false,
         );
-        run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)?;
+        if let Err(error) =
+            run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)
+        {
+            if wait_for_in_progress_linux_workspace_artifact_build(
+                effigy_repo_root,
+                &freshness_anchor,
+                &artifact_path,
+                target,
+            )? {
+                ensure_workspace_effigy_active_version_file(
+                    &artifact_path,
+                    &effigy_core::build_info::active_version(),
+                )?;
+                ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+                return Ok(artifact_path);
+            }
+            return Err(error);
+        }
     }
 
     if !artifact_path.is_file() {
@@ -604,6 +638,45 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     )?;
     ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
     Ok(artifact_path)
+}
+
+pub(super) fn linux_workspace_artifact_lock_path(effigy_repo_root: &Path) -> PathBuf {
+    effigy_repo_root
+        .join(".effigy/locks")
+        .join("task-workspace-linux-artifact.lock")
+}
+
+pub(super) fn wait_for_in_progress_linux_workspace_artifact_build(
+    effigy_repo_root: &Path,
+    freshness_anchor: &Path,
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+) -> Result<bool, RunnerError> {
+    let lock_path = linux_workspace_artifact_lock_path(effigy_repo_root);
+    if !lock_path.exists() {
+        return Ok(false);
+    }
+    let deadline = std::time::Instant::now() + LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT;
+    loop {
+        if !linux_workspace_effigy_artifact_needs_refresh(freshness_anchor, artifact_path, target) {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(RunnerError::task_invocation(format!(
+                "timed out waiting for in-progress linux workspace artifact build in `{}` to finish; lock `{}` is still present",
+                effigy_repo_root.display(),
+                lock_path.display()
+            )));
+        }
+        if !lock_path.exists() {
+            return Ok(!linux_workspace_effigy_artifact_needs_refresh(
+                freshness_anchor,
+                artifact_path,
+                target,
+            ));
+        }
+        std::thread::sleep(LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL);
+    }
 }
 
 pub(super) fn resolve_local_workspace_effigy_freshness_anchor(
