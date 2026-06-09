@@ -815,7 +815,7 @@ fn load_or_allocate_loopback_ip(
             .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     }
     let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
-    migrate_legacy_loopback_identity(
+    let migrated_legacy_identity = migrate_legacy_loopback_identity(
         &mut registry,
         identity,
         legacy_identity,
@@ -826,6 +826,11 @@ fn load_or_allocate_loopback_ip(
         if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
             registry.deallocate(identity);
         } else {
+            if migrated_legacy_identity {
+                registry
+                    .save(&path)
+                    .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
+            }
             return Ok(Some(existing.ip));
         }
     }
@@ -861,23 +866,24 @@ fn migrate_legacy_loopback_identity(
     legacy_identity: Option<&str>,
     project_path: &str,
     reserved_ips: &std::collections::HashSet<std::net::Ipv4Addr>,
-) {
+) -> bool {
     if registry.get(identity).is_some() {
-        return;
+        return false;
     }
     let Some(legacy_identity) = legacy_identity else {
-        return;
+        return false;
     };
     let Some(existing) = registry.get(legacy_identity).cloned() else {
-        return;
+        return false;
     };
     if existing.scope != project_path || reserved_ips.contains(&existing.ip) {
-        return;
+        return false;
     }
     let Some(existing) = registry.deallocate(legacy_identity) else {
-        return;
+        return false;
     };
     registry.assignments.insert(identity.to_owned(), existing);
+    true
 }
 
 fn active_loopback_ips_for_other_projects(
