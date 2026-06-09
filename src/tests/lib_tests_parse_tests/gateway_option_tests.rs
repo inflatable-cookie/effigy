@@ -61,3 +61,22 @@ fn parse_gateway_setup_tls_supports_json() {
         })
     );
 }
+
+#[test]
+fn parse_gateway_repair_accepts_yes_and_json() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "repair".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::Repair { yes: true },
+            output_json: true,
+        })
+    );
+}

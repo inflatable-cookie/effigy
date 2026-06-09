@@ -175,3 +175,117 @@ fn build_gateway_elevated_shell_command_includes_gateway_env_and_subcommand() {
     assert!(!shell_command.contains("PATH="));
     assert!(shell_command.contains("gateway setup-tls --json"));
 }
+
+#[test]
+fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let live_project = root.path().join("live");
+    let stale_project = root.path().join("stale");
+    std::fs::create_dir_all(&live_project).expect("mkdir live");
+    std::fs::create_dir_all(&stale_project).expect("mkdir stale");
+
+    let table = RouteTable {
+        routes: [
+            (
+                "postgres.live.test".to_owned(),
+                Route {
+                    domain: "postgres.live.test".to_owned(),
+                    target: None,
+                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                    tcp_port: Some(5432),
+                    tcp_target: Some("127.0.0.1:15432".to_owned()),
+                    source: RouteSource::Container,
+                    project: live_project.display().to_string(),
+                    tls: false,
+                    registered: Utc::now(),
+                },
+            ),
+            (
+                "postgres.stale.test".to_owned(),
+                Route {
+                    domain: "postgres.stale.test".to_owned(),
+                    target: None,
+                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                    tcp_port: Some(5432),
+                    tcp_target: Some("127.0.0.1:25432".to_owned()),
+                    source: RouteSource::Container,
+                    project: stale_project.display().to_string(),
+                    tls: false,
+                    registered: Utc::now(),
+                },
+            ),
+            (
+                "postgres.missing.test".to_owned(),
+                Route {
+                    domain: "postgres.missing.test".to_owned(),
+                    target: None,
+                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                    tcp_port: Some(5432),
+                    tcp_target: None,
+                    source: RouteSource::Container,
+                    project: "/tmp/missing".to_owned(),
+                    tls: false,
+                    registered: Utc::now(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    let active = [live_project.display().to_string()].into_iter().collect();
+    let plan = gateway_repair_plan(&table, Some(active));
+
+    assert_eq!(plan.conflicts.len(), 1);
+    assert!(plan
+        .repairable_domains
+        .contains(&"postgres.stale.test".to_owned()));
+    assert!(plan
+        .repairable_domains
+        .contains(&"postgres.missing.test".to_owned()));
+    assert!(!plan
+        .repairable_domains
+        .contains(&"postgres.live.test".to_owned()));
+}
+
+#[test]
+fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
+    let table = RouteTable {
+        routes: [
+            (
+                "postgres.app1.test".to_owned(),
+                Route {
+                    domain: "postgres.app1.test".to_owned(),
+                    target: None,
+                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                    tcp_port: Some(5432),
+                    tcp_target: Some("127.0.0.1:15432".to_owned()),
+                    source: RouteSource::Container,
+                    project: "/tmp/app1".to_owned(),
+                    tls: false,
+                    registered: Utc::now(),
+                },
+            ),
+            (
+                "postgres.app2.test".to_owned(),
+                Route {
+                    domain: "postgres.app2.test".to_owned(),
+                    target: None,
+                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                    tcp_port: Some(5432),
+                    tcp_target: Some("127.0.0.1:15432".to_owned()),
+                    source: RouteSource::Container,
+                    project: "/tmp/app2".to_owned(),
+                    tls: false,
+                    registered: Utc::now(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    let plan = gateway_repair_plan(&table, None);
+    assert!(plan.conflicts.is_empty());
+    assert!(plan.repairable_domains.is_empty());
+}

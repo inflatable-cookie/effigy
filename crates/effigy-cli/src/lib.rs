@@ -763,6 +763,7 @@ pub enum GatewaySubcommand {
     Up,
     Down,
     Status,
+    Repair { yes: bool },
     SetupTls,
 }
 

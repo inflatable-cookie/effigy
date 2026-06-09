@@ -18,11 +18,13 @@ where
     };
 
     let mut output_json = false;
-    let subcommand = match subcmd.as_str() {
+    let mut yes = false;
+    let mut subcommand = match subcmd.as_str() {
         "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
         "up" => GatewaySubcommand::Up,
         "down" => GatewaySubcommand::Down,
         "status" => GatewaySubcommand::Status,
+        "repair" => GatewaySubcommand::Repair { yes: false },
         "setup-tls" => GatewaySubcommand::SetupTls,
         other => return Err(unknown_argument(other)),
     };
@@ -30,9 +32,14 @@ where
     for arg in args {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--yes" if matches!(subcommand, GatewaySubcommand::Repair { .. }) => yes = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
             other => return Err(unknown_argument(other)),
         }
+    }
+
+    if matches!(subcommand, GatewaySubcommand::Repair { .. }) {
+        subcommand = GatewaySubcommand::Repair { yes };
     }
 
     Ok(Command::Gateway(GatewayArgs {

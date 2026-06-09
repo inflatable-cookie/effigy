@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 use effigy_cli::{GatewayArgs, GatewaySubcommand, InternalGatewayArgs};
+use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{self, GatewayConfig, GatewayStatus};
 use effigy_gateway::tls::TlsConfig;
@@ -39,6 +40,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Up => run_gateway_up(args.output_json),
         GatewaySubcommand::Down => run_gateway_down(args.output_json),
         GatewaySubcommand::Status => run_gateway_status(args.output_json),
+        GatewaySubcommand::Repair { yes } => run_gateway_repair(yes, args.output_json),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls(args.output_json),
     }
 }
@@ -205,6 +207,7 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = gateway_tls_summary(&config, &route_table);
     let routes = gateway_route_dashboard(&config, &route_table, &tls);
+    let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
     let status = server::get_status(&config).ok();
 
     if output_json {
@@ -222,6 +225,8 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
             "gateway_dir": config_dir_display(&config),
             "tls": render_tls_json(&tls),
             "route_count": routes.len(),
+            "tcp_bind_conflict_count": repair.conflicts.len(),
+            "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&repair.conflicts),
             "routes": render_routes_json(&routes),
         })
         .to_string());
@@ -267,9 +272,280 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
         }
         lines.push(format!("live_routes: {}", running.route_count));
     }
+    if !repair.conflicts.is_empty() {
+        lines.push(format!(
+            "[warn] found {} duplicate TCP bind tuple(s); run `effigy gateway repair` to inspect",
+            repair.conflicts.len()
+        ));
+        lines.extend(
+            repair
+                .conflicts
+                .iter()
+                .flat_map(render_gateway_tcp_conflict_lines),
+        );
+    }
     lines.extend(routes.iter().map(render_route_line));
 
     Ok(lines.join("\n"))
+}
+
+fn run_gateway_repair(yes: bool, output_json: bool) -> Result<String, RunnerError> {
+    let config = gateway_config()?;
+    let mut route_table = RouteTable::load(&config.route_table_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let plan = gateway_repair_plan(&route_table, detect_active_gateway_projects());
+    let mut removed = Vec::new();
+
+    if yes && !plan.repairable_domains.is_empty() {
+        for domain in &plan.repairable_domains {
+            let _ = route_table.deregister(domain);
+        }
+        route_table
+            .save(&config.route_table_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        removed = plan.repairable_domains.clone();
+    }
+
+    let after = if yes {
+        gateway_repair_plan(&route_table, detect_active_gateway_projects())
+    } else {
+        plan.clone()
+    };
+
+    if output_json {
+        return Ok(json!({
+            "schema": "effigy.gateway.repair.v1",
+            "schema_version": 1,
+            "ok": true,
+            "applied": yes,
+            "gateway_dir": config_dir_display(&config),
+            "repairable_count": plan.repairable_domains.len(),
+            "repairable_domains": plan.repairable_domains,
+            "removed_count": removed.len(),
+            "removed_domains": removed,
+            "unresolved_count": after.conflicts.len(),
+            "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&after.conflicts),
+        })
+        .to_string());
+    }
+
+    let mut lines = vec![format!(
+        "[gateway] duplicate TCP bind tuples: {}",
+        plan.conflicts.len()
+    )];
+    if !yes {
+        if plan.repairable_domains.is_empty() {
+            lines.push("[info] no repairable stale conflicting routes were identified".to_owned());
+        } else {
+            lines.push(format!(
+                "[check] repair would remove {} stale conflicting route(s)",
+                plan.repairable_domains.len()
+            ));
+            lines.extend(
+                plan.repairable_domains
+                    .iter()
+                    .map(|domain| format!("- {domain}")),
+            );
+            lines.push(
+                "[next] rerun `effigy gateway repair --yes` to apply this cleanup".to_owned(),
+            );
+        }
+        if !plan.conflicts.is_empty() {
+            lines.extend(
+                plan.conflicts
+                    .iter()
+                    .flat_map(render_gateway_tcp_conflict_lines),
+            );
+        }
+        return Ok(lines.join("\n"));
+    }
+
+    lines.push(format!(
+        "[ok] removed {} stale conflicting route(s)",
+        removed.len()
+    ));
+    lines.extend(removed.iter().map(|domain| format!("- {domain}")));
+    if !after.conflicts.is_empty() {
+        lines.push(format!(
+            "[warn] {} duplicate TCP bind tuple(s) remain; they still belong to live or unresolved routes",
+            after.conflicts.len()
+        ));
+        lines.extend(
+            after
+                .conflicts
+                .iter()
+                .flat_map(render_gateway_tcp_conflict_lines),
+        );
+    }
+    Ok(lines.join("\n"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayTcpBindConflict {
+    bind_ip: std::net::Ipv4Addr,
+    bind_port: u16,
+    routes: Vec<GatewayTcpConflictRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayTcpConflictRoute {
+    domain: String,
+    project: String,
+    target: Option<String>,
+    repairable: bool,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayRepairPlan {
+    conflicts: Vec<GatewayTcpBindConflict>,
+    repairable_domains: Vec<String>,
+}
+
+fn gateway_repair_plan(
+    route_table: &RouteTable,
+    active_projects: Option<std::collections::BTreeSet<String>>,
+) -> GatewayRepairPlan {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut grouped =
+        BTreeMap::<(std::net::Ipv4Addr, u16), Vec<&effigy_gateway::routes::Route>>::new();
+    for route in route_table.all_routes() {
+        let Some(bind_ip) = route.dns_ip else {
+            continue;
+        };
+        let Some(bind_port) = route.tcp_port else {
+            continue;
+        };
+        grouped.entry((bind_ip, bind_port)).or_default().push(route);
+    }
+
+    let mut conflicts = Vec::new();
+    let mut repairable_domains = BTreeSet::new();
+
+    for ((bind_ip, bind_port), routes) in grouped {
+        let distinct_targets = routes
+            .iter()
+            .map(|route| route.tcp_target.as_deref().unwrap_or(""))
+            .collect::<BTreeSet<_>>();
+        if distinct_targets.len() <= 1 {
+            continue;
+        }
+
+        let mut conflict_routes = Vec::new();
+        for route in routes {
+            let (repairable, reason) =
+                classify_gateway_conflict_route(route, active_projects.as_ref());
+            if repairable {
+                repairable_domains.insert(route.domain.clone());
+            }
+            conflict_routes.push(GatewayTcpConflictRoute {
+                domain: route.domain.clone(),
+                project: route.project.clone(),
+                target: route.tcp_target.clone(),
+                repairable,
+                reason,
+            });
+        }
+        conflicts.push(GatewayTcpBindConflict {
+            bind_ip,
+            bind_port,
+            routes: conflict_routes,
+        });
+    }
+
+    GatewayRepairPlan {
+        conflicts,
+        repairable_domains: repairable_domains.into_iter().collect(),
+    }
+}
+
+fn classify_gateway_conflict_route(
+    route: &effigy_gateway::routes::Route,
+    active_projects: Option<&std::collections::BTreeSet<String>>,
+) -> (bool, Option<String>) {
+    if route.source != effigy_gateway::routes::RouteSource::Container {
+        return (false, Some("non-container route".to_owned()));
+    }
+    if route
+        .tcp_target
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return (true, Some("missing tcp_target".to_owned()));
+    }
+    if route
+        .tcp_target
+        .as_deref()
+        .is_some_and(|value| value.parse::<SocketAddr>().is_err())
+    {
+        return (true, Some("invalid tcp_target".to_owned()));
+    }
+    if !std::path::Path::new(&route.project).exists() {
+        return (true, Some("project path missing".to_owned()));
+    }
+    if let Some(active_projects) = active_projects {
+        if !active_projects.contains(route.project.as_str()) {
+            return (true, Some("project not active".to_owned()));
+        }
+    }
+    (false, None)
+}
+
+fn detect_active_gateway_projects() -> Option<std::collections::BTreeSet<String>> {
+    let rows = list_running_compose_containers().ok()?;
+    Some(
+        rows.into_iter()
+            .filter_map(|row| row.working_dir)
+            .collect::<std::collections::BTreeSet<_>>(),
+    )
+}
+
+fn render_gateway_tcp_conflicts_json(
+    conflicts: &[GatewayTcpBindConflict],
+) -> Vec<serde_json::Value> {
+    conflicts
+        .iter()
+        .map(|conflict| {
+            json!({
+                "bind_ip": conflict.bind_ip.to_string(),
+                "bind_port": conflict.bind_port,
+                "routes": conflict.routes.iter().map(|route| json!({
+                    "domain": route.domain,
+                    "project": route.project,
+                    "tcp_target": route.target,
+                    "repairable": route.repairable,
+                    "reason": route.reason,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+fn render_gateway_tcp_conflict_lines(conflict: &GatewayTcpBindConflict) -> Vec<String> {
+    let mut lines = vec![format!(
+        "[warn] duplicate TCP bind {}:{}",
+        conflict.bind_ip, conflict.bind_port
+    )];
+    lines.extend(conflict.routes.iter().map(|route| {
+        let suffix = route
+            .reason
+            .as_deref()
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
+        format!(
+            "  - {} -> {} [{}]{}",
+            route.domain,
+            route.target.as_deref().unwrap_or("<missing>"),
+            if route.repairable {
+                "repairable"
+            } else {
+                "kept"
+            },
+            suffix
+        )
+    }));
+    lines
 }
 
 fn emit_gateway_startup_notice() {
