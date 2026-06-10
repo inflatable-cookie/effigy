@@ -1,7 +1,8 @@
 # g08.017 - Workspace SSH-Agent Mount Resilience
 
-Status: Ready
+Status: Batch A complete; Batches B+C ready
 Depends on: `g08.016`
+Batch A completed: 2026-06-10
 
 ## Goal
 
@@ -62,12 +63,18 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
 
 ## Execution Plan
 
-- [ ] **Batch A — Agent-socket preflight.** In
-  [`crates/effigy-containers/src/workspace/host_integration.rs`](../../../crates/effigy-containers/src/workspace/host_integration.rs),
-  add a check that resolves the configured agent-socket source and tests for a
-  live socket before the workspace mount is committed. Return a typed
-  health result (`Healthy` / `Stale { resolved_target }` / `Absent`). Unit-cover
-  the resolution + classification with fixtures.
+- [x] **Batch A — Agent-socket preflight.** Added
+  [`crates/effigy-containers/src/exec/ssh_agent_preflight.rs`](../../../crates/effigy-containers/src/exec/ssh_agent_preflight.rs)
+  with a typed `SshAgentSocketHealth` (`Healthy`/`Stale`/`Absent`/`Unknown`),
+  a pure VM-side probe script, an output classifier, and
+  `inspect_colima_ssh_agent_socket(policy, repo_root)` that runs the probe via
+  `colima ssh`. **Placement correction:** the milestone first targeted
+  `host_integration.rs`, but the forwarded socket lives inside the colima VM,
+  not on the host where Effigy runs — so the check is VM-side in the runtime
+  `exec` layer, not the host-side mount builder. Probe failures classify as
+  `Unknown` (never blocks). Unit-tested (classifier, partition helpers, probe
+  shape); live-validated against the real profile (returns `healthy`, and
+  `stale` against the dangling-symlink condition).
 - [ ] **Batch B — Resilient bring-up behavior.** When the preflight reports
   stale/absent, drop the agent-socket bind from the generated workspace compose
   and inject a loud warning into bring-up output that names the cause and the
@@ -100,6 +107,9 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
 
 ## Next Task
 
-Batch A (agent-socket preflight) is the ready entry point — bounded,
-contract-covered, no approval needed. On completion the workspace bring-up
-survives a rotated host SSH-agent socket.
+Batch A (agent-socket preflight) is complete. Batch B wires
+`inspect_colima_ssh_agent_socket` into the workspace bring-up path: when the
+verdict is `Stale`/`Absent`, drop the agent mount from the generated compose and
+emit a loud warning naming the `colima restart <profile>` remediation, so
+bring-up degrades instead of crashing. Batch C adds preflight/`doctor`
+visibility and docs.

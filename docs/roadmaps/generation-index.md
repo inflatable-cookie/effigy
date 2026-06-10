@@ -158,7 +158,11 @@ positives.
 mount step. The milestone makes the workspace bring-up survive a rotated host
 SSH-agent socket (preflight + degrade-and-warn + remediation).
 
-Active ready card: `g08.017` Batch A (agent-socket preflight). `g08` stays open.
+`g08.017` Batch A (agent-socket preflight) is complete:
+`inspect_colima_ssh_agent_socket` detects a stale/absent forwarded socket VM-side
+(typed `SshAgentSocketHealth`, probe via `colima ssh`, unit-tested + live).
+
+Active ready card: `g08.017` Batch B (degrade-and-warn bring-up). `g08` stays open.
 
 ## Research Roadmaps
 

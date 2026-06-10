@@ -80,7 +80,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 Ready card: [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)
-Batch A — agent-socket preflight, so a rotated host SSH-agent socket no longer
+Batch B — degrade-and-warn bring-up (drop the mount + remediation) using the
+Batch A agent-socket preflight, so a rotated host SSH-agent socket no longer
 crashes `container up`.
 [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
 (suppression hygiene + dead-code precision) is complete. The
