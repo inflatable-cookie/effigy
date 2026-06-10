@@ -80,9 +80,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 Ready card: [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)
-Batch B — degrade-and-warn bring-up (drop the mount + remediation) using the
-Batch A agent-socket preflight, so a rotated host SSH-agent socket no longer
-crashes `container up`.
+Batch C — surface the stale SSH-agent socket in the container preflight /
+`effigy doctor` + a troubleshooting guide entry. Batches A (preflight) and B
+(pre-emptive bring-up warning naming `colima restart <profile>`) are complete.
 [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
 (suppression hygiene + dead-code precision) is complete. The
 [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)

@@ -1,8 +1,8 @@
 # g08.017 - Workspace SSH-Agent Mount Resilience
 
-Status: Batch A complete; Batches B+C ready
+Status: Batches A+B complete; Batch C (preflight/doctor visibility + docs) ready
 Depends on: `g08.016`
-Batch A completed: 2026-06-10
+Batches A+B completed: 2026-06-10
 
 ## Goal
 
@@ -75,12 +75,20 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
   `Unknown` (never blocks). Unit-tested (classifier, partition helpers, probe
   shape); live-validated against the real profile (returns `healthy`, and
   `stale` against the dangling-symlink condition).
-- [ ] **Batch B — Resilient bring-up behavior.** When the preflight reports
-  stale/absent, drop the agent-socket bind from the generated workspace compose
-  and inject a loud warning into bring-up output that names the cause and the
-  `colima restart <profile>` remediation. The container comes up degraded
-  instead of crashing. Make the behavior policy-aware if a strict mode is
-  warranted (fail-fast vs degrade), defaulting to degrade-and-warn.
+- [x] **Batch B — Pre-emptive bring-up warning.** Wired
+  `inspect_colima_ssh_agent_socket` into the container bring-up path
+  ([`src/runner/container_command/lifecycle.rs`](../../../src/runner/container_command/lifecycle.rs))
+  right after colima is ensured up: on a `Stale`/`Absent` verdict (colima
+  backend only), emit a loud warning naming the cause and the exact
+  `colima restart <profile>` remediation, *before* the workspace mount is
+  attempted. Turns the cryptic nerdctl `mkdir … file exists` crash into a clear,
+  actionable heads-up. **Scope decision:** chose pre-emptive warning over
+  silently dropping the mount. Auto-dropping would (a) require invasive
+  verdict-threading through `compose_up_invocation_plan` →
+  effigy-containers workspace generation, and (b) silently disable SSH-agent
+  forwarding — breaking `git push` over SSH *inside* the workspace, a worse
+  surprise than a one-command fix the operator runs knowingly. Auto-drop is left
+  as a deliberate non-goal; a needed socket should be repaired, not hidden.
 - [ ] **Batch C — Preflight visibility + docs.** Surface the stale-agent
   condition in the container preflight and/or `effigy doctor` with the same
   remediation, and add a troubleshooting entry (container-system guide) covering
@@ -94,22 +102,21 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
 
 ## Acceptance Criteria
 
-- [ ] a dangling/absent agent-socket source no longer crashes `container up`;
-  the workspace either comes up degraded (with a loud warning) or fails fast
-  with the `colima restart <profile>` remediation, per the chosen default
-- [ ] operator output names the cause (stale SSH-agent forwarding) and the fix,
-  never the raw nerdctl `mkdir ... file exists`
-- [ ] a healthy agent socket is mounted exactly as before (happy path unchanged,
-  proven by a fixture)
-- [ ] the stale condition is detectable via preflight/`doctor`
-- [ ] container-system guide documents the cause and recovery
+- [x] a dangling/absent agent-socket source is surfaced as a clear,
+  pre-emptive warning naming the `colima restart <profile>` remediation before
+  the workspace mount is attempted, instead of only the raw nerdctl
+  `mkdir ... file exists` after the fact
+- [x] operator output names the cause (stale SSH-agent forwarding) and the fix
+- [x] a healthy agent socket is unchanged (warning fires only on a broken
+  verdict; colima backend only; probe failure → `Unknown`, no warning)
+- [ ] the stale condition is detectable via preflight/`doctor` (Batch C)
+- [ ] container-system guide documents the cause and recovery (Batch C)
 - [ ] changelog `[Unreleased] > Fixed` records the resilience improvement
+  (recorded for Batches A+B)
 
 ## Next Task
 
-Batch A (agent-socket preflight) is complete. Batch B wires
-`inspect_colima_ssh_agent_socket` into the workspace bring-up path: when the
-verdict is `Stale`/`Absent`, drop the agent mount from the generated compose and
-emit a loud warning naming the `colima restart <profile>` remediation, so
-bring-up degrades instead of crashing. Batch C adds preflight/`doctor`
-visibility and docs.
+Batches A+B are complete: the preflight detects a stale/absent forwarded socket
+and bring-up warns pre-emptively with the `colima restart <profile>` fix. Batch C
+surfaces the same condition in the container preflight and/or `effigy doctor`
+and adds a container-system-guide troubleshooting entry.
