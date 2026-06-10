@@ -42,6 +42,7 @@ This generation should help agents and maintainers answer questions like:
 - [`014-gateway-route-table-trust-model.md`](./014-gateway-route-table-trust-model.md)
 - [`015-docs-spine-compaction.md`](./015-docs-spine-compaction.md)
 - [`016-suppression-hygiene-and-dead-code-precision.md`](./016-suppression-hygiene-and-dead-code-precision.md)
+- [`017-workspace-ssh-agent-mount-resilience.md`](./017-workspace-ssh-agent-mount-resilience.md)
 
 ## Design Posture
 

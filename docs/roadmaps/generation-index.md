@@ -146,18 +146,19 @@ compaction (656 logs archived, logs index 677 → 21 entries).
 `g08` remains the **active** generation — open for further scope. No `g09`
 rollover is implied by closing this tranche.
 
-`g08.016` (Suppression Hygiene and Dead-Code Precision) is planned from the
-2026-06-10 post-hardening scan sweep: consolidate the workspace clippy allows
-into `[workspace.lints]`, clear residual suppressions and one dead function, and
-fix the dead-code scanner's `use`-edge/test-entrypoint false positives.
-
 `g08.016` (Suppression Hygiene and Dead-Code Precision) is **complete**: clippy
 allows consolidated into `[workspace.lints]` (33 per-site allows removed; plain
 `cargo clippy` matches CI), one dead function removed, suppression floor 44 → 11,
 and the dead-code scanner now refuses a stale index instead of emitting false
 positives.
 
-Active ready card: none. `g08` stays open for the next scope.
+`g08.017` (Workspace SSH-Agent Mount Resilience) is planned from the 2026-06-10
+`acowtancy` bring-up incident: a long-running colima VM's dangling
+`/run/host-services/ssh-auth.sock` symlink crashed `container up` at the nerdctl
+mount step. The milestone makes the workspace bring-up survive a rotated host
+SSH-agent socket (preflight + degrade-and-warn + remediation).
+
+Active ready card: `g08.017` Batch A (agent-socket preflight). `g08` stays open.
 
 ## Research Roadmaps
 
