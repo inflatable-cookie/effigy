@@ -124,9 +124,9 @@ impl GraphStore {
                 record.schema_version,
                 record.started_at.as_str(),
                 record.finished_at.as_deref(),
-                record.file_count,
-                record.symbol_count,
-                record.edge_count,
+                record.file_count as i64,
+                record.symbol_count as i64,
+                record.edge_count as i64,
             ],
         )?;
         Ok(())
@@ -143,7 +143,7 @@ impl GraphStore {
                 record.path.as_str(),
                 record.content_hash.as_str(),
                 record.language_id.as_str(),
-                record.byte_size,
+                record.byte_size as i64,
                 serde_json::to_string(&record.status)?,
             ],
         )?;
@@ -262,9 +262,9 @@ impl GraphStore {
                 schema_version: row.get(2)?,
                 started_at: row.get(3)?,
                 finished_at: row.get(4)?,
-                file_count: row.get(5)?,
-                symbol_count: row.get(6)?,
-                edge_count: row.get(7)?,
+                file_count: row.get::<_, i64>(5)? as u64,
+                symbol_count: row.get::<_, i64>(6)? as u64,
+                edge_count: row.get::<_, i64>(7)? as u64,
             })
         })?;
         collect_rows(rows)
@@ -283,7 +283,7 @@ impl GraphStore {
                 path: row.get(1)?,
                 content_hash: row.get(2)?,
                 language_id: row.get(3)?,
-                byte_size: row.get(4)?,
+                byte_size: row.get::<_, i64>(4)? as u64,
                 status: serde_json::from_str(&row.get::<_, String>(5)?)
                     .map_err(to_sql_conversion_error)?,
             })
@@ -423,7 +423,7 @@ impl GraphStore {
                 record.content_hash.as_str(),
                 record.language_id.as_str(),
                 record.modified_unix_ms.to_string(),
-                record.byte_size,
+                record.byte_size as i64,
             ],
         )?;
         Ok(())
@@ -474,7 +474,7 @@ impl GraphStore {
                 content_hash: row.get(1)?,
                 language_id: row.get(2)?,
                 modified_unix_ms: modified.parse::<u128>().map_err(to_sql_conversion_error)?,
-                byte_size: row.get(4)?,
+                byte_size: row.get::<_, i64>(4)? as u64,
             })
         })?;
         let mut map = std::collections::BTreeMap::new();
@@ -553,7 +553,7 @@ impl GraphStore {
                         path: row.get(1)?,
                         content_hash: row.get(2)?,
                         language_id: row.get(3)?,
-                        byte_size: row.get(4)?,
+                        byte_size: row.get::<_, i64>(4)? as u64,
                         status: serde_json::from_str(&row.get::<_, String>(5)?)
                             .map_err(to_sql_conversion_error)?,
                     })

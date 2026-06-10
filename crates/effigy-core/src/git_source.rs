@@ -58,7 +58,7 @@ pub fn sanitize_cache_segment(value: &str) -> String {
 pub fn sha256_hex(input: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 fn normalize_git_repo_path(path: &str) -> String {
