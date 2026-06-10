@@ -6,13 +6,11 @@ use std::time::{Duration, Instant};
 use super::super::signal;
 
 pub(super) fn terminate_child_graceful(child: &Arc<Mutex<Child>>, timeout: Duration) {
-    signal::send_terminate(&mut child.lock().expect("child lock"));
+    signal::send_terminate(&mut crate::locks::lock_tolerant(child));
 
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let exited = child
-            .lock()
-            .expect("child lock")
+        let exited = crate::locks::lock_tolerant(child)
             .try_wait()
             .ok()
             .flatten()
@@ -23,5 +21,5 @@ pub(super) fn terminate_child_graceful(child: &Arc<Mutex<Child>>, timeout: Durat
         thread::sleep(Duration::from_millis(30));
     }
 
-    signal::send_kill(&mut child.lock().expect("child lock"));
+    signal::send_kill(&mut crate::locks::lock_tolerant(child));
 }

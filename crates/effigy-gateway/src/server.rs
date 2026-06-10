@@ -420,7 +420,11 @@ fn reload_route_table_and_maybe_schedule_shutdown(
     idle_shutdown_generation: &Arc<AtomicU64>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<(), GatewayError> {
-    let new_table = RouteTable::load(path)?;
+    // Enforce the read-path trust gate (contract 033). An untrusted file keeps
+    // the last-known-good in-memory table rather than being adopted.
+    let Some(new_table) = crate::trust::load_trusted(path)? else {
+        return Ok(());
+    };
     let action = apply_reloaded_route_table(table, new_table, dns_cache);
     debug!("route table reloaded, DNS cache cleared");
     match action {
@@ -449,7 +453,7 @@ fn apply_reloaded_route_table(
     dns_cache: &Arc<DnsCache>,
 ) -> IdleShutdownAction {
     let action = {
-        let mut guard = table.write().expect("route table lock poisoned");
+        let mut guard = crate::locks::write_tolerant(table);
         let was_empty = guard.is_empty();
         let is_empty = new_table.is_empty();
         *guard = new_table;
@@ -475,7 +479,7 @@ fn schedule_idle_shutdown(
         if idle_shutdown_generation.load(Ordering::SeqCst) != generation {
             return;
         }
-        if table.read().expect("route table lock poisoned").is_empty() {
+        if crate::locks::read_tolerant(&table).is_empty() {
             info!("route table stayed empty through idle timeout; stopping gateway");
             let _ = shutdown_tx.send(true);
         }
@@ -534,7 +538,7 @@ fn reconcile_route_resolver_files_from_table(
     config: &GatewayConfig,
 ) {
     let domains: Vec<String> = {
-        let guard = table.read().expect("route table lock poisoned");
+        let guard = crate::locks::read_tolerant(table);
         guard
             .all_routes()
             .into_iter()

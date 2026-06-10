@@ -94,7 +94,8 @@ Updated: 2026-06-05
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is complete through `g08.009` with no ready card.
+`g08` is active. Milestones `g08.001` through `g08.009` are complete; the
+`g08.010` security and posture hardening tranche is open.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
@@ -107,8 +108,38 @@ Updated: 2026-06-05
   repo-marker/root-rule convergence, selected duplicate-block reduction,
   boundary/dead-code scan self-adoption, dead-code Rust signal repair, residual
   false-positive precision, and the final burn-down to 0 dead-code findings.
+- `g08.010` opens the 2026-06-10 security and posture hardening tranche from the
+  architecture assessment: `g08.011` discovery/doctor correctness,
+  `g08.012` supply-chain and CI security gates, `g08.013` daemon panic-safety
+  and secret egress hardening, `g08.014` gateway route-table trust model, and
+  `g08.015` docs spine compaction.
 
-Active ready card: none.
+`g08.011` (Discovery and Doctor Correctness) is complete: fixture manifests are
+excluded from ambient discovery via `[catalog.discovery] ignore`, the doctor
+schema validator now recognizes `[catalog.discovery]`, and `effigy doctor`
+reports `err:0` on this repo.
+
+`g08.012` (Supply-Chain and CI Security Gates) is complete through Batches A+B:
+`deny.toml` policy authored and `cargo deny check` green locally (advisories,
+bans, licenses, sources all ok). Batch C (CI workflow wiring + dependabot) is
+held on explicit human workflow-edit approval.
+
+`g08.013` (Daemon Panic-Safety and Secret Egress Hardening) is complete: panic
+audit + lock-poison conversion across the gateway and process supervisor,
+documented invariants on all eight proxy builder sites, and a redacting
+`SecretValue::Serialize` with the vault as the sole explicit-exposure path.
+
+`g08.014` (Gateway Route-Table Trust Model) is complete: contract `033`
+promoted; read-path integrity gate (owner-only `0o600` + managed marker; daemon
+fails closed keeping last-known-good); and trust state surfaced in `effigy
+gateway status` and `effigy doctor`.
+
+`g08.012` (Supply-Chain and CI Security Gates) is complete: the `cargo deny`
+policy, the CI `supply-chain` job (workflow-edit approval granted 2026-06-10),
+and Dependabot weekly updates are all in place.
+
+The g08.010 security tranche is complete through `g08.014`. Active ready card:
+`g08.015` (Docs Spine Compaction) — the final milestone of the suite.
 
 ## Research Roadmaps
 

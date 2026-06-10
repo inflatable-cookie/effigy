@@ -259,11 +259,43 @@ impl fmt::Display for SecretValue {
 }
 
 impl Serialize for SecretValue {
+    /// Serializes as `[REDACTED]`, never the plaintext.
+    ///
+    /// This is deliberate: a `SecretValue` reachable through a generic
+    /// `serde_json::to_string`/`to_vec` of some enclosing struct (logs, JSON
+    /// output, debug dumps) must not leak the secret. The only place that needs
+    /// the real bytes serialized — the encrypted vault payload — opts in
+    /// explicitly via [`secret_plaintext_serde`] on `VaultSecretRecord::value`.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.expose())
+        serializer.serialize_str("[REDACTED]")
+    }
+}
+
+/// Explicit plaintext (de)serialization for a `SecretValue`.
+///
+/// Used **only** by the vault payload, where the real secret bytes must be
+/// serialized so they can be encrypted. Every other serialization of a
+/// `SecretValue` goes through its redacting [`Serialize`] impl, so a secret can
+/// only reach serialized output through this deliberate, vault-internal path.
+pub(crate) mod secret_plaintext_serde {
+    use super::SecretValue;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &SecretValue, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(value.expose())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SecretValue, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(SecretValue::new)
     }
 }
 
@@ -385,6 +417,7 @@ fn xnonce_from_cipher(cipher: &VaultCipher) -> Result<&XNonce, VaultFileError> {
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultSecretRecord {
+    #[serde(with = "secret_plaintext_serde")]
     pub value: SecretValue,
 }
 
@@ -490,6 +523,50 @@ mod tests {
         let debug = format!("{record:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("hunter2"));
+    }
+
+    #[test]
+    fn secret_value_serialize_redacts_plaintext() {
+        let secret = SecretValue::new("sk-live-do-not-leak");
+        let json = serde_json::to_string(&secret).expect("serialize");
+        assert_eq!(json, "\"[REDACTED]\"");
+        assert!(!json.contains("sk-live-do-not-leak"));
+    }
+
+    #[test]
+    fn enclosing_struct_serialize_does_not_leak_secret() {
+        // A struct that derives Serialize and happens to hold a SecretValue —
+        // the exact accidental-egress shape the redacting impl guards against.
+        #[derive(Serialize)]
+        struct Diagnostic {
+            name: String,
+            token: SecretValue,
+        }
+
+        let payload = Diagnostic {
+            name: "api".to_owned(),
+            token: SecretValue::new("sk-live-do-not-leak"),
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        assert!(json.contains("[REDACTED]"));
+        assert!(
+            !json.contains("sk-live-do-not-leak"),
+            "generic serialization must not emit plaintext: {json}"
+        );
+    }
+
+    #[test]
+    fn vault_secret_record_serializes_plaintext_for_encryption() {
+        // The one deliberate exposure path: the vault payload must serialize the
+        // real bytes (so they can be encrypted), via the explicit field serde.
+        let record = VaultSecretRecord::new(SecretValue::new("plaintext-for-vault"));
+        let json = serde_json::to_string(&record).expect("serialize");
+        assert!(
+            json.contains("plaintext-for-vault"),
+            "vault record must expose plaintext for encryption: {json}"
+        );
+        let back: VaultSecretRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.value.expose(), "plaintext-for-vault");
     }
 
     #[test]

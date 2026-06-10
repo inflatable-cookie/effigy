@@ -82,3 +82,19 @@ jobs:
 
       - name: Run released-surface regression lane
         run: cargo run --bin effigy -- qa:released-surface --repo .
+
+  supply-chain:
+    name: Supply-chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Run cargo-deny (advisories, licenses, bans, sources)
+        run: cargo deny check

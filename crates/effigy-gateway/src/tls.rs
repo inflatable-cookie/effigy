@@ -345,19 +345,19 @@ impl SniCertResolver {
 
     /// Add a certificate for a domain.
     pub fn add_cert(&self, domain: String, cert: Arc<CertifiedKey>) {
-        let mut certs = self.certs.write().expect("cert resolver lock poisoned");
+        let mut certs = crate::locks::write_tolerant(&self.certs);
         certs.insert(domain, cert);
     }
 
     /// Remove a certificate for a domain.
     pub fn remove_cert(&self, domain: &str) {
-        let mut certs = self.certs.write().expect("cert resolver lock poisoned");
+        let mut certs = crate::locks::write_tolerant(&self.certs);
         certs.remove(domain);
     }
 
     /// Remove all registered certificates.
     pub fn clear(&self) {
-        let mut certs = self.certs.write().expect("cert resolver lock poisoned");
+        let mut certs = crate::locks::write_tolerant(&self.certs);
         certs.clear();
     }
 
@@ -375,18 +375,12 @@ impl SniCertResolver {
 
     /// Number of registered certificates.
     pub fn cert_count(&self) -> usize {
-        self.certs
-            .read()
-            .expect("cert resolver lock poisoned")
-            .len()
+        crate::locks::read_tolerant(&self.certs).len()
     }
 
     /// Check if a domain has a registered certificate.
     pub fn has_cert(&self, domain: &str) -> bool {
-        self.certs
-            .read()
-            .expect("cert resolver lock poisoned")
-            .contains_key(domain)
+        crate::locks::read_tolerant(&self.certs).contains_key(domain)
     }
 
     /// Build a `rustls::ServerConfig` using this resolver.
@@ -579,7 +573,7 @@ impl ResolvesServerCert for SniCertResolver {
         let sni = client_hello.server_name()?;
 
         // Look up the cert for this domain.
-        let certs = self.certs.read().expect("cert resolver lock poisoned");
+        let certs = crate::locks::read_tolerant(&self.certs);
         if let Some(cert) = certs.get(sni) {
             return Some(Arc::clone(cert));
         }

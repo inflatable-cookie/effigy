@@ -15,7 +15,7 @@ impl ProcessSupervisor {
         on_progress(ShutdownProgress::SendingTerm);
         let children = self.all_child_handles();
         for child in &children {
-            let mut child = child.lock().expect("child lock");
+            let mut child = crate::locks::lock_tolerant(child);
             signal::send_terminate(&mut child);
         }
 
@@ -23,9 +23,7 @@ impl ProcessSupervisor {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let all_exited = children.iter().all(|child| {
-                child
-                    .lock()
-                    .expect("child lock")
+                crate::locks::lock_tolerant(child)
                     .try_wait()
                     .ok()
                     .flatten()
@@ -44,7 +42,7 @@ impl ProcessSupervisor {
         on_progress(ShutdownProgress::ForceKilling);
         let mut forced = 0usize;
         for child in &children {
-            let mut child = child.lock().expect("child lock");
+            let mut child = crate::locks::lock_tolerant(child);
             let still_running = child.try_wait().ok().flatten().is_none();
             if !still_running {
                 continue;

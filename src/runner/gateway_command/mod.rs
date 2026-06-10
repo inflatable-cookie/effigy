@@ -201,6 +201,18 @@ fn keep_gateway_resolver_on_down() -> bool {
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
 }
 
+/// Map a route-table trust verdict to a status label and optional reason.
+fn route_table_trust_fields(
+    trust: &effigy_gateway::trust::RouteTableTrust,
+) -> (&'static str, Option<String>) {
+    use effigy_gateway::trust::RouteTableTrust;
+    match trust {
+        RouteTableTrust::Absent => ("absent", None),
+        RouteTableTrust::Trusted => ("trusted", None),
+        RouteTableTrust::Untrusted { reason } => ("untrusted", Some(reason.clone())),
+    }
+}
+
 fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
     let route_table = RouteTable::load(&config.route_table_path)
@@ -209,6 +221,9 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let routes = gateway_route_dashboard(&config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
     let status = server::get_status(&config).ok();
+    let (trust_state, trust_reason) = route_table_trust_fields(
+        &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
+    );
 
     if output_json {
         return Ok(json!({
@@ -224,6 +239,8 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
             "https_addr": tls.https_addr.map(|value| value.to_string()),
             "gateway_dir": config_dir_display(&config),
             "tls": render_tls_json(&tls),
+            "route_table_trust": trust_state,
+            "route_table_trust_reason": trust_reason,
             "route_count": routes.len(),
             "tcp_bind_conflict_count": repair.conflicts.len(),
             "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&repair.conflicts),
@@ -263,8 +280,14 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
                 .unwrap_or_else(|| "disabled".to_owned())
         ),
         format!("tls: {}", render_tls_status_line(&tls)),
+        format!("route_table_trust: {trust_state}"),
         format!("route_count: {}", routes.len()),
     ];
+    if let Some(reason) = trust_reason.as_deref() {
+        lines.push(format!(
+            "[warn] route table untrusted: {reason}; gateway keeps last-known-good routes. Restore owner-only permissions or re-register routes with `effigy container up`."
+        ));
+    }
     if let Some(ref running) = status {
         lines.push(format!("pid: {}", running.pid));
         if let Some(version) = running.binary_version.as_deref() {

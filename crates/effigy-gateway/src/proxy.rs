@@ -342,7 +342,7 @@ fn handle_gateway_endpoint(
                     .header("content-type", "application/json")
                     .header("x-effigy-gateway", "true")
                     .body(full_body(Bytes::from(body.to_string())))
-                    .unwrap(),
+                    .expect("static JSON gateway response builds from a valid status, literal headers, and an owned body"),
             )
         }
         "/_effigy/stats" => {
@@ -353,11 +353,11 @@ fn handle_gateway_endpoint(
                     .header("content-type", "application/json")
                     .header("x-effigy-gateway", "true")
                     .body(full_body(Bytes::from(json.to_string())))
-                    .unwrap(),
+                    .expect("static JSON gateway response builds from a valid status, literal headers, and an owned body"),
             )
         }
         "/_effigy/routes" => {
-            let table = route_table.read().expect("route table lock poisoned");
+            let table = crate::locks::read_tolerant(route_table);
             let routes: Vec<serde_json::Value> = table
                 .all_routes()
                 .iter()
@@ -384,7 +384,7 @@ fn handle_gateway_endpoint(
                     .header("content-type", "application/json")
                     .header("x-effigy-gateway", "true")
                     .body(full_body(Bytes::from(body.to_string())))
-                    .unwrap(),
+                    .expect("static JSON gateway response builds from a valid status, literal headers, and an owned body"),
             )
         }
         _ => Some(error_response(
@@ -453,7 +453,7 @@ async fn handle_request(
 
     // Look up the route.
     let route = {
-        let table = route_table.read().expect("route table lock poisoned");
+        let table = crate::locks::read_tolerant(route_table);
         table.lookup(&host).cloned()
     };
 
@@ -542,7 +542,7 @@ fn maybe_redirect_http_to_https<B>(
             .header("location", location)
             .header("x-effigy-gateway", "true")
             .body(empty_body())
-            .unwrap(),
+            .expect("redirect response builds from a validated route domain and a parsed request path-and-query"),
     )
 }
 
@@ -660,7 +660,7 @@ async fn handle_websocket_upgrade(
         .method(req.method().clone())
         .uri(req.uri().clone())
         .body(Empty::<Bytes>::new())
-        .unwrap();
+        .expect("upstream request builds from the already-parsed inbound method and URI");
 
     // Copy relevant headers.
     for (name, value) in req.headers() {
@@ -736,7 +736,9 @@ async fn handle_websocket_upgrade(
         }
     });
 
-    let response = response_builder.body(empty_body()).unwrap();
+    let response = response_builder.body(empty_body()).expect(
+        "upgrade response builds from the upstream response's already-parsed status and headers",
+    );
 
     Ok(response)
 }
@@ -829,7 +831,7 @@ fn error_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
         .header("content-type", "text/html; charset=utf-8")
         .header("x-effigy-gateway", "true")
         .body(full_body(Bytes::from(body)))
-        .unwrap()
+        .expect("static HTML gateway response builds from a valid status, literal headers, and an owned body")
 }
 
 /// Generate a response for domains with no registered route.
@@ -851,7 +853,7 @@ fn no_route_response(host: &str) -> Response<ProxyBody> {
         .header("content-type", "text/html; charset=utf-8")
         .header("x-effigy-gateway", "true")
         .body(full_body(Bytes::from(body)))
-        .unwrap()
+        .expect("static HTML gateway response builds from a valid status, literal headers, and an owned body")
 }
 
 #[cfg(test)]

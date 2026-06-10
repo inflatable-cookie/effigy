@@ -47,6 +47,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Unified task runner with nested catalog resolution"
+# Effigy ships as a prebuilt binary (brew / GitHub releases / `cargo install
+# --git`), not as a crates.io publish. Matches the `publish = false` set on
+# every workspace member crate.
+publish = false
 
 [dependencies]
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }

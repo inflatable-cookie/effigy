@@ -15,7 +15,7 @@ This folder contains both:
 
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
-`030`, `031`, and `032`.
+`030`, `031`, `032`, and `033`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -130,6 +130,11 @@ new reusable-core work.
   separation, the built-in human-gated vault posture, secret declarations,
   runtime injection, consumer-repo config conventions, and Varlock adapter
   positioning.
+- [`033-gateway-route-table-trust-contract.md`](./033-gateway-route-table-trust-contract.md):
+  `g08` gateway route-table trust boundary covering the elevated daemon's
+  threat model, read-path integrity verification (ownership/permission +
+  managed marker), the fail-closed behavior on an untrusted table, and operator
+  visibility in gateway status and doctor.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -163,6 +168,7 @@ new reusable-core work.
 | `030-low-risk-deduplication-contract.md` | Platform maintainers | Docs-policy test ownership, CLI help topic normalization, private fixture-builder boundaries, and no-behavior-change duplication cleanup rules | Planning review against `g04.038` plus focused docs-policy, help, fixture, and duplicate-block scan proofs once implementation starts |
 | `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
 | `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, consumer-repo config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
+| `033-gateway-route-table-trust-contract.md` | Platform maintainers | Gateway route-table trust boundary, read-path integrity mechanism (ownership/permission + managed marker), fail-closed failure mode, and operator visibility in gateway status/doctor | Planning review against `g08.014` plus focused trust-verification fixtures (well-formed, tampered, wrong-permission, foreign-marked) once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 

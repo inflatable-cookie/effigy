@@ -5,6 +5,7 @@ use toml::Value;
 use crate::FindingSink;
 
 mod bootstrap_section;
+mod catalog_section;
 mod containers_section;
 mod demos_section;
 mod diagnostics;
@@ -27,6 +28,7 @@ mod values;
 mod tests;
 
 use bootstrap_section::validate_bootstrap_section;
+use catalog_section::validate_catalog_section;
 use containers_section::validate_containers_section;
 use demos_section::validate_demos_section;
 use diagnostics::SchemaContext;
@@ -57,7 +59,7 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
         validate_manifest_section(&mut context, manifest);
     }
     if let Some(catalog) = table.get("catalog") {
-        validate_known_table(&mut context, "catalog", catalog, &["alias"]);
+        validate_catalog_section(&mut context, catalog);
     }
     if let Some(defer) = table.get("defer") {
         validate_known_table(&mut context, "defer", defer, &["run", "builtins"]);

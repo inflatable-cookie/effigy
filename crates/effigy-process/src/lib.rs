@@ -7,6 +7,7 @@ use std::time::Duration;
 
 mod diagnostics;
 mod lifecycle;
+mod locks;
 mod signal;
 mod streams;
 mod supervisor_control;
@@ -134,7 +135,7 @@ impl ProcessSupervisor {
     }
 
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
-        let process_map = self.processes.lock().expect("process map lock");
+        let process_map = crate::locks::lock_tolerant(&self.processes);
         collect_exit_diagnostics(&self.specs, &process_map)
     }
 }

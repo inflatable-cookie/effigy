@@ -228,9 +228,7 @@ fn handle_dns_query(
         let (has_route, route_dns_ip) = if let Some(cached) = cache.get(&query_domain) {
             cached
         } else {
-            let result = route_table
-                .read()
-                .expect("route table lock poisoned")
+            let result = crate::locks::read_tolerant(route_table)
                 .lookup(&query_domain)
                 .map(|route| (true, route.dns_ip))
                 .unwrap_or((false, None));
