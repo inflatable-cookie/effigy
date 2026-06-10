@@ -3199,9 +3199,9 @@ dependencies = [
 
 [[package]]
 name = "reqx"
-version = "0.1.34"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "272db0a7a08dfe31a7f52c3ba110766d4fa4c8fc3a9f6ab501977faf81301ddb"
+checksum = "5b65998c8e91cf2fe922572745b100ba812d6ec2fc004c9080fcfe5703e34521"
 dependencies = [
  "brotli",
  "bytes",
@@ -3229,6 +3229,7 @@ dependencies = [
  "tracing",
  "ureq",
  "url",
+ "webpki-root-certs",
  "webpki-roots",
  "zstd",
 ]
