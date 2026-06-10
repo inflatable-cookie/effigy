@@ -36,7 +36,7 @@ Capture the lean-down baseline before any deletion batches start.
 ## Completed
 
 - Captured the baseline log at
-  [`../../../logs/2026-05/14-200500-g06-baseline-size-and-duplication.md`](../../../logs/2026-05/14-200500-g06-baseline-size-and-duplication.md).
+  [`../../../logs/archive/2026-05/14-200500-g06-baseline-size-and-duplication.md`](../../../logs/archive/2026-05/14-200500-g06-baseline-size-and-duplication.md).
 - Recorded Rust LOC at `233,544`.
 - Recorded broader source/config surface LOC at `236,893`.
 - Confirmed warning-level god files remain:

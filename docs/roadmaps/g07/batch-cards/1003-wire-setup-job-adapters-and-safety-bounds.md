@@ -26,7 +26,7 @@ rules before non-interactive action execution widens the lane.
 
 ## Evidence
 
-- [`2026-05/19-124506-setup-job-adapters-and-safety-bounds.md`](../../../logs/2026-05/19-124506-setup-job-adapters-and-safety-bounds.md)
+- [`2026-05/19-124506-setup-job-adapters-and-safety-bounds.md`](../../../logs/archive/2026-05/19-124506-setup-job-adapters-and-safety-bounds.md)
 
 ## Next Task
 

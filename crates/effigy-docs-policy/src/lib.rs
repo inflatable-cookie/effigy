@@ -219,9 +219,13 @@ pub fn resolve_docs_index_spec(
         dir,
         index,
         section: configured.and_then(|(_, entry)| entry.section.clone()),
+        // The default logs index excludes the archive subtree: closed-generation
+        // logs live under `docs/logs/archive/**` and are intentionally dropped
+        // from the active index (see the retention convention in the logs
+        // README). A named `[docs_policy.indexes.<name>]` keeps its own excludes.
         exclude: configured
             .map(|(_, entry)| entry.exclude.clone())
-            .unwrap_or_default(),
+            .unwrap_or_else(|| vec!["archive/**".to_owned()]),
     })
 }
 

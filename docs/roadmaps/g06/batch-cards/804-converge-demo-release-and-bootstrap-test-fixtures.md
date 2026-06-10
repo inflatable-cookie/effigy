@@ -39,7 +39,7 @@ builders behind clearer private support owners.
 - Reduced duplicate-block findings from `96` to `93`.
 - Reduced high duplicate-block findings from `8` to `6`.
 - Logged the slice in
-  [`../../../logs/2026-05/14-213500-shared-deploy-test-fixtures.md`](../../../logs/2026-05/14-213500-shared-deploy-test-fixtures.md).
+  [`../../../logs/archive/2026-05/14-213500-shared-deploy-test-fixtures.md`](../../../logs/archive/2026-05/14-213500-shared-deploy-test-fixtures.md).
 
 ## Suggested Validation
 

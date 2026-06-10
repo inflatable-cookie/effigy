@@ -47,7 +47,7 @@ quickly and predictably.
 
 ## Evidence
 
-- [`2026-05/18-144300-fts-backed-source-evidence.md`](../logs/2026-05/18-144300-fts-backed-source-evidence.md)
+- [`2026-05/18-144300-fts-backed-source-evidence.md`](../logs/archive/2026-05/18-144300-fts-backed-source-evidence.md)
 
 ## Next Task
 

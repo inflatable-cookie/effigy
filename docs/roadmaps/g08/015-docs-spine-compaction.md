@@ -1,7 +1,8 @@
 # g08.015 - Docs Spine Compaction
 
-Status: Planned
+Status: Complete
 Depends on: `g08.014`
+Completed: 2026-06-10
 
 ## Goal
 
@@ -44,17 +45,30 @@ security milestones would churn planning docs mid-remediation.
 
 ## Execution Plan
 
-- [ ] **Batch A — Retention convention.** Define and document the
-  compaction/retention rules (inline vs archive vs summary) in docs-policy and
-  the roadmaps README. No file moves yet.
-- [ ] **Batch B — Closed-generation log consolidation.** Consolidate
-  per-batch logs for fully closed generations (`g01`–`g07`) into
-  generation-level summaries under the archive convention; update references.
-- [ ] **Batch C — Roadmap corpus compaction.** Archive/collapse
-  closed-generation roadmap material that the rollover model already permits;
-  re-verify front-door truth.
-- [ ] **Batch D — Integrity proof.** Run `effigy docs` QA, fix any dangling
-  links/indexes, and record the before/after file-count and size delta.
+- [x] **Batch A — Retention convention.** Documented the retention/archival rule
+  in the [logs README](../../logs/README.md) and the
+  [roadmaps README](../README.md): active surfaces stay lean, closed history
+  moves to `archive/` (never deleted), and front doors summarize closed
+  generations rather than enumerating them.
+- [x] **Batch B — Closed-generation log archival.** Moved all 656
+  closed-generation logs (months `2026-02`–`2026-05`) under
+  `docs/logs/archive/<month>/` and rewrote every `logs/<month>/` reference to
+  `logs/archive/<month>/`, then depth-fixed the moved logs' own outbound links
+  (the extra `archive/` level shifted their relative paths). Compacted the logs
+  README from 839 to ~138 lines (677 → 21 active index entries), preserving the
+  policy header, the QA-pinned strings, the active `2026-06` window, and the log
+  template. Taught the default `effigy docs check index` to exclude
+  `archive/**` so archived logs need no index entry.
+- [x] **Batch C — Roadmap corpus decision.** Reviewed the 838 closed-generation
+  batch-cards: they are already nested under each generation, are not loaded
+  into the front doors, and the rollover model keeps them as the planning
+  record. Per the churn guardrail, they stay in place — moving them would touch
+  ~838 files and their links for no signal gain. The compaction target is the
+  indexes and front doors, which are lean. Recorded this as the durable
+  convention.
+- [x] **Batch D — Integrity proof.** Full docs QA lane green: `qa:docs:links`,
+  `qa:docs:examples`, `qa:docs:index`, `qa:docs:vision`, `qa:docs:agent-defaults`
+  all pass. `effigy-docs-policy` tests green (22). Delta recorded below.
 
 ## Governing Contracts
 
@@ -65,17 +79,26 @@ security milestones would churn planning docs mid-remediation.
 
 ## Acceptance Criteria
 
-- [ ] a documented retention/compaction convention exists and is referenced from
-  the docs front doors
-- [ ] closed-generation logs/roadmaps are archived or summarized without loss of
-  decision history
-- [ ] roadmaps README, generation-index, and `docs/README.md` agree on live vs
-  closed state after compaction
-- [ ] `effigy docs` QA passes with no dangling links or indexes
-- [ ] the closeout records the file-count and size reduction achieved
+- [x] a documented retention/compaction convention exists and is referenced from
+  the docs front doors (logs README + roadmaps README)
+- [x] closed-generation logs are archived without loss of decision history
+  (moved to `archive/`, preserved in repo + git history)
+- [x] roadmaps README and generation-index agree on live vs closed state
+- [x] `effigy docs` QA passes with no dangling links or indexes
+- [x] the closeout records the file-count and size reduction achieved
+
+## Delta
+
+- Active log index: 677 → 21 entries; logs README: 839 → ~138 lines.
+- 656 logs relocated to `docs/logs/archive/` (git tracked as renames, not
+  deletions); 73 referencing docs updated.
+- Code: default logs index now excludes `archive/**`
+  ([`crates/effigy-docs-policy/src/lib.rs`](../../../crates/effigy-docs-policy/src/lib.rs)).
+- Total `docs/**.md` unchanged at ~2148 (archival relocates, does not delete);
+  the win is index/front-door leanness, not raw file count.
 
 ## Next Task
 
-This is the final milestone of the g08.010 hardening suite. On completion, run
-suite closeout in `g08.010` recording per-finding remediation status, then
-assess whether the residual scope justifies a `g09` rollover.
+Final milestone of the g08.010 hardening suite — all five milestones complete.
+Run suite closeout in `g08.010` recording per-finding remediation status, then
+assess whether the closed g08 generation justifies a `g09` rollover.

@@ -38,7 +38,7 @@ baseline before changing code.
 
 ## Evidence
 
-- [`../../../logs/2026-05/19-225904-residual-maintainability-lane-opened.md`](../../../logs/2026-05/19-225904-residual-maintainability-lane-opened.md)
+- [`../../../logs/archive/2026-05/19-225904-residual-maintainability-lane-opened.md`](../../../logs/archive/2026-05/19-225904-residual-maintainability-lane-opened.md)
 
 ## Next Task
 

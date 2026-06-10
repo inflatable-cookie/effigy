@@ -397,7 +397,7 @@ contract is the job list, not the raw context dump.
 
 ## Evidence
 
-- [`2026-05/19-120509-init-checklist-contract.md`](../../logs/2026-05/19-120509-init-checklist-contract.md)
+- [`2026-05/19-120509-init-checklist-contract.md`](../../logs/archive/2026-05/19-120509-init-checklist-contract.md)
 
 ## Next Task
 

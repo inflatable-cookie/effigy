@@ -33,7 +33,7 @@ Reduce `language/manifest/semantic.rs` into clearer semantic owners.
 
 ## Evidence
 
-- [`../../../logs/2026-05/19-230843-manifest-semantic-owner-split.md`](../../../logs/2026-05/19-230843-manifest-semantic-owner-split.md)
+- [`../../../logs/archive/2026-05/19-230843-manifest-semantic-owner-split.md`](../../../logs/archive/2026-05/19-230843-manifest-semantic-owner-split.md)
 
 ## Next Task
 

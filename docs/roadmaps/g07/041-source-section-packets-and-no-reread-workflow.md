@@ -42,7 +42,7 @@ first-pass agent reasoning without opening the same files immediately.
 
 ## Evidence
 
-- [`2026-05/18-160609-source-section-packets.md`](../logs/2026-05/18-160609-source-section-packets.md)
+- [`2026-05/18-160609-source-section-packets.md`](../logs/archive/2026-05/18-160609-source-section-packets.md)
 
 ## Next Task
 

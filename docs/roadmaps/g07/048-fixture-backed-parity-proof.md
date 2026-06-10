@@ -32,7 +32,7 @@ permanent placeholders.
 
 ## Evidence
 
-- [`2026-05/18-183615-fixture-backed-parity-proof.md`](../../logs/2026-05/18-183615-fixture-backed-parity-proof.md)
+- [`2026-05/18-183615-fixture-backed-parity-proof.md`](../../logs/archive/2026-05/18-183615-fixture-backed-parity-proof.md)
 
 ## Next Task
 

@@ -33,7 +33,7 @@ built or validated in more than one place.
   prepare, execute, resume, gate, and verify-install surfaces.
 - Removed all `json!` builders from the release JSON render module.
 - Logged the slice in
-  [`../../../logs/2026-05/14-223500-typed-release-json-wire-models.md`](../../../logs/2026-05/14-223500-typed-release-json-wire-models.md).
+  [`../../../logs/archive/2026-05/14-223500-typed-release-json-wire-models.md`](../../../logs/archive/2026-05/14-223500-typed-release-json-wire-models.md).
 
 ## Suggested Validation
 

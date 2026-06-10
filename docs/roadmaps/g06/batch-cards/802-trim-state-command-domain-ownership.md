@@ -33,7 +33,7 @@ composed state config schema and stack-selection logic into `effigy-state`.
 - Rewired `src/runner/state_command.rs` to use the shared owner.
 - Reduced `state_command.rs` from `2150` lines to `1918` lines.
 - Logged the slice in
-  [`../../../logs/2026-05/14-202500-state-command-config-owner-extraction.md`](../../../logs/2026-05/14-202500-state-command-config-owner-extraction.md).
+  [`../../../logs/archive/2026-05/14-202500-state-command-config-owner-extraction.md`](../../../logs/archive/2026-05/14-202500-state-command-config-owner-extraction.md).
 
 ## Next Task
 

@@ -101,8 +101,8 @@ surface. They should not become hardcoded defaults for every Effigy-adopting
 repo.
 
 Design note:
-- [`../logs/2026-03/12-093000-docs-policy-config-boundary.md`](../logs/2026-03/12-093000-docs-policy-config-boundary.md)
-- [`../logs/2026-03/12-094500-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
+- [`../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md`](../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md)
+- [`../logs/archive/2026-03/12-094500-minimal-docs-policy-config-design.md`](../logs/archive/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
 Proposed config direction:
 - generic docs engines continue to work with useful defaults

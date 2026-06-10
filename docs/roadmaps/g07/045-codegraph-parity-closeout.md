@@ -46,7 +46,7 @@ lags CodeGraph for agent navigation.
 
 ## Evidence
 
-- [`2026-05/18-174500-codegraph-parity-closeout.md`](../../logs/2026-05/18-174500-codegraph-parity-closeout.md)
+- [`2026-05/18-174500-codegraph-parity-closeout.md`](../../logs/archive/2026-05/18-174500-codegraph-parity-closeout.md)
 
 ## Next Task
 

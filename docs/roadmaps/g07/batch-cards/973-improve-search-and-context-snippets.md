@@ -25,7 +25,7 @@ records.
 - search output has actionable path/name metadata
 - docs still position `rg` as better for exact text
 - evidence log exists:
-  [`18-184500-graph-search-and-context-snippet-usefulness.md`](../../../logs/2026-05/18-184500-graph-search-and-context-snippet-usefulness.md)
+  [`18-184500-graph-search-and-context-snippet-usefulness.md`](../../../logs/archive/2026-05/18-184500-graph-search-and-context-snippet-usefulness.md)
 
 ## Next Task
 

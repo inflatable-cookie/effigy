@@ -30,7 +30,7 @@ use correctly.
 
 ## Evidence
 
-- [`2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md`](../../../logs/2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md)
+- [`2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md`](../../../logs/archive/2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md)
 
 ## Next Task
 

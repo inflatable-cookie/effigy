@@ -50,7 +50,7 @@ The goal is not "rewrite bash in Rust." The goal is:
 
 This roadmap is based on the classification and migration analysis in:
 
-- [`../../logs/2026-03/11-202500-script-surface-builtins-migration-plan.md`](../../logs/2026-03/11-202500-script-surface-builtins-migration-plan.md)
+- [`../../logs/archive/2026-03/11-202500-script-surface-builtins-migration-plan.md`](../../logs/archive/2026-03/11-202500-script-surface-builtins-migration-plan.md)
 
 That log captures the per-script classification. This roadmap turns that
 analysis into executable milestone waves.
@@ -264,7 +264,7 @@ Completion note:
   docs-policy enforcement and should only migrate further behind a minimal
   config boundary instead of being hardcoded into generic built-ins.
 - Follow-on design note:
-  [`../../logs/2026-03/12-093000-docs-policy-config-boundary.md`](../../logs/2026-03/12-093000-docs-policy-config-boundary.md)
+  [`../../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md`](../../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md)
 
 ## Non-Goals
 

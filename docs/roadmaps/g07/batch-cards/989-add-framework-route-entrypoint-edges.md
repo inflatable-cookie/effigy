@@ -30,7 +30,7 @@ can traverse.
 
 ## Evidence
 
-- [`2026-05/18-155956-route-entrypoint-edges.md`](../../../logs/2026-05/18-155956-route-entrypoint-edges.md)
+- [`2026-05/18-155956-route-entrypoint-edges.md`](../../../logs/archive/2026-05/18-155956-route-entrypoint-edges.md)
 
 ## Next Task
 

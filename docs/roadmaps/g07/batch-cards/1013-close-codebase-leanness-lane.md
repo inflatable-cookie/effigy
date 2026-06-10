@@ -34,7 +34,7 @@ Close the cleanup lane with proof, remaining debt, and no stale active card.
 
 ## Evidence
 
-- [`../../../logs/2026-05/19-195111-codebase-leanness-closeout.md`](../../../logs/2026-05/19-195111-codebase-leanness-closeout.md)
+- [`../../../logs/archive/2026-05/19-195111-codebase-leanness-closeout.md`](../../../logs/archive/2026-05/19-195111-codebase-leanness-closeout.md)
 
 ## Next Task
 

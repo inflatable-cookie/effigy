@@ -231,5 +231,5 @@ all landed. The lane now has both sides of the real-project proof:
 service aliases.
 
 `g02.007` and `g02.019` are queued behind this lane as of 2026-04-22. See
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`
+`docs/logs/archive/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`
 for the re-sequencing rationale.

@@ -28,7 +28,7 @@ without hiding tests, docs, examples, or fixtures when they are requested.
 - scoring remains deterministic
 - focused tests cover role behavior and repeated-symbol caps
 - evidence log exists:
-  [`18-181500-role-aware-graph-context-ranking.md`](../../../logs/2026-05/18-181500-role-aware-graph-context-ranking.md)
+  [`18-181500-role-aware-graph-context-ranking.md`](../../../logs/archive/2026-05/18-181500-role-aware-graph-context-ranking.md)
 
 ## Next Task
 

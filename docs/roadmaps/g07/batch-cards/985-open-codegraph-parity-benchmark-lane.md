@@ -19,7 +19,7 @@ Open the parity lane with measurements before adding more graph features.
 - record expected files and acceptable alternates for each query
 - build or document a repeatable benchmark runner
 - run the current `effigy graph explore` baseline
-- write the baseline log under `docs/logs/2026-05/`
+- write the baseline log under `docs/logs/archive/2026-05/`
 - update lane/front-door state if the benchmark changes the work order
 
 ## Acceptance
@@ -32,7 +32,7 @@ Open the parity lane with measurements before adding more graph features.
 ## Evidence
 
 - [`codegraph-parity-gold-queries.toml`](../codegraph-parity-gold-queries.toml)
-- [`2026-05/18-142849-codegraph-parity-benchmark-baseline.md`](../../../logs/2026-05/18-142849-codegraph-parity-benchmark-baseline.md)
+- [`2026-05/18-142849-codegraph-parity-benchmark-baseline.md`](../../../logs/archive/2026-05/18-142849-codegraph-parity-benchmark-baseline.md)
 
 ## Next Task
 

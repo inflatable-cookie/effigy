@@ -119,7 +119,7 @@ claims.
 ## Next Task
 
 This lane is queued behind `g02.020` as of 2026-04-22 (see
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+`docs/logs/archive/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 
 Release execution stays gated on explicit operator intent regardless of lane
 ordering. If release execution is requested now, this lane resumes ahead of

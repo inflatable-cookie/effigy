@@ -26,7 +26,7 @@ blockers left by `g07.045`.
 
 ## Evidence
 
-- [`2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md`](../../../logs/2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md)
+- [`2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md`](../../../logs/archive/2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md)
 
 ## Next Task
 

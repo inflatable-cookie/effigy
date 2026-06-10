@@ -31,7 +31,7 @@ only returning independently ranked files.
 
 ## Evidence
 
-- [`2026-05/18-154154-traversal-aware-explore.md`](../../../logs/2026-05/18-154154-traversal-aware-explore.md)
+- [`2026-05/18-154154-traversal-aware-explore.md`](../../../logs/archive/2026-05/18-154154-traversal-aware-explore.md)
 
 ## Next Task
 
