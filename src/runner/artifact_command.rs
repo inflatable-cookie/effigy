@@ -109,7 +109,6 @@ fn run_artifact_stage(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_artifact_capture(
     source: &str,
     destination: &str,
@@ -139,7 +138,6 @@ fn run_artifact_capture(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::runner) fn capture_artifact_report(
     source: &str,
     destination: &str,
@@ -163,7 +161,6 @@ pub(in crate::runner) fn capture_artifact_report(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::runner) fn capture_artifact_report_with_adapter(
     source: &str,
     destination: &str,

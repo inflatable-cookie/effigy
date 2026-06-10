@@ -7,3 +7,6 @@ publish = false
 description = "Typed runtime activation planning substrate for Effigy"
 
 [dependencies]
+
+[lints]
+workspace = true

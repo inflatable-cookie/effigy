@@ -144,8 +144,15 @@ panic-safety + secret egress, gateway route-table trust, and docs-spine
 compaction (656 logs archived, logs index 677 → 21 entries).
 
 `g08` remains the **active** generation — open for further scope. No `g09`
-rollover is implied by closing this tranche. Active ready card: none; next
-milestone continues at `g08.016` when new work is planned.
+rollover is implied by closing this tranche.
+
+`g08.016` (Suppression Hygiene and Dead-Code Precision) is planned from the
+2026-06-10 post-hardening scan sweep: consolidate the workspace clippy allows
+into `[workspace.lints]`, clear residual suppressions and one dead function, and
+fix the dead-code scanner's `use`-edge/test-entrypoint false positives.
+
+Active ready card: `g08.016` Batch A (workspace lint consolidation; no workflow
+edit). Batch C's CI-flag retirement is approval-gated.
 
 ## Research Roadmaps
 

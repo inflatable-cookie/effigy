@@ -128,7 +128,6 @@ struct JsWalkState {
     call_refs: BTreeSet<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn walk_js(
     node: Node<'_>,
     file: &SourceFile,
@@ -298,7 +297,6 @@ fn walk_js(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn walk_children(
     node: Node<'_>,
     file: &SourceFile,
@@ -325,7 +323,6 @@ fn walk_children(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn index_import_statement(
     node: Node<'_>,
     file: &SourceFile,
@@ -380,7 +377,6 @@ fn index_import_statement(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn index_export_statement(
     node: Node<'_>,
     file: &SourceFile,
@@ -474,7 +470,6 @@ fn index_export_statement(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn index_variable_declaration(
     node: Node<'_>,
     file: &SourceFile,
@@ -512,7 +507,6 @@ fn index_variable_declaration(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn index_call_reference(
     node: Node<'_>,
     file: &SourceFile,
@@ -579,7 +573,6 @@ fn push_parse_diagnostic(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn unresolved_edge(
     owner_id: &GraphId,
     kind: &str,

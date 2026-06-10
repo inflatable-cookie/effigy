@@ -117,7 +117,6 @@ struct PythonWalkState {
     call_edges: BTreeSet<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn walk_python(
     node: Node<'_>,
     file: &SourceFile,
@@ -359,7 +358,6 @@ fn walk_python(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn walk_children(
     node: Node<'_>,
     file: &SourceFile,
@@ -386,7 +384,6 @@ fn walk_children(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn push_import_edge(
     owner_id: &GraphId,
     specifier: &str,
@@ -665,7 +662,6 @@ fn push_parse_diagnostic(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn reference_record(
     owner_id: &GraphId,
     kind: &str,
@@ -691,7 +687,6 @@ fn reference_record(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn unresolved_edge(
     owner_id: &GraphId,
     kind: &str,

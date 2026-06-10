@@ -51,7 +51,6 @@ macro_rules! walk_scoped_owned_symbol {
 
 pub(super) use walk_scoped_owned_symbol;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn push_parse_diagnostic(
     node: Node<'_>,
     file: &SourceFile,
@@ -83,7 +82,6 @@ pub(super) fn push_parse_diagnostic(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn push_parse_diagnostic_once(
     diagnostics: &mut BTreeSet<usize>,
     language_prefix: &str,
@@ -115,7 +113,6 @@ pub(super) fn push_parse_diagnostic_once(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn symbol_record(
     language_prefix: &str,
     canonical: &str,
@@ -147,7 +144,6 @@ pub(super) fn symbol_record(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn declare_owned_symbol(
     language_prefix: &str,
     canonical: &str,
@@ -186,7 +182,6 @@ pub(super) fn declare_owned_symbol(
     Ok(symbol_id)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn push_contains_edge(
     owner_id: &GraphId,
     child_id: &GraphId,
@@ -218,7 +213,6 @@ pub(super) fn push_contains_edge(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn push_reference_record(
     reference_id: String,
     kind: &str,
@@ -249,7 +243,6 @@ pub(super) fn push_reference_record(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn push_unresolved_edge(
     edge_id: String,
     owner_id: &GraphId,

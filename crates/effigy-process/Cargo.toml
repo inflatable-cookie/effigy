@@ -8,3 +8,6 @@ description = "Process supervision subsystem for Effigy (spawn, stdio streaming,
 
 [dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+
+[lints]
+workspace = true

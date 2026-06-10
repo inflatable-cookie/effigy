@@ -131,7 +131,6 @@ impl PersistedDemoActiveAttempt {
     /// rendered paths, and initial terminal size — all derived from the
     /// runner's task plan. This keeps runtime-shape classification in
     /// `effigy-demo` while the runner produces the plan-level inputs.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_concurrent_runner_backed(
         attempt_id: String,
         demo_id: &str,
@@ -188,7 +187,6 @@ impl PersistedDemoActiveAttempt {
     /// Shapes the persistence payload for a demo whose entrypoint is a
     /// shell run command, with a known target pid, terminal transport, and
     /// optional input/resize handoff paths.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_run_backed(
         attempt_id: String,
         demo_id: &str,

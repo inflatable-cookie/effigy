@@ -12,3 +12,6 @@ effigy-manifest = { path = "../effigy-manifest" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
+
+[lints]
+workspace = true

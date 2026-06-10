@@ -298,6 +298,8 @@ struct StateManifestStackConfig {
     layers: Vec<StateManifestStackLayerConfig>,
     #[serde(default)]
     captures: BTreeMap<String, StateManifestCaptureProfile>,
+    // Parsed from the manifest to preserve round-trip shape, but not read by the
+    // current state planner; kept so deserialization stays lossless.
     #[serde(default)]
     #[allow(dead_code)]
     targets: BTreeMap<String, toml::Value>,

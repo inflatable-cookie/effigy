@@ -489,15 +489,6 @@ pub fn compose_logs_follow_tail_args(
     compose_args(policy, ["logs", "--follow", "--tail", tail, service])
 }
 
-/// Build compose args for fetching recent logs.
-pub fn compose_logs_tail_args<'a>(
-    policy: &EffectiveContainerPolicy,
-    service: &'a str,
-    tail: &'a str,
-) -> Vec<OsString> {
-    compose_args(policy, ["logs", "--tail", tail, service])
-}
-
 /// Build compose args for exec into a service with a shell.
 pub fn compose_exec_shell_args(
     policy: &EffectiveContainerPolicy,
