@@ -1,6 +1,13 @@
 [catalog]
 alias = "effigy"
 
+# Test fixtures under tests/ ship intentionally partial or malformed
+# effigy.toml manifests as scan/graph benchmark inputs. They are not live
+# catalogs of this repo. Exclude the tree so ambient catalog discovery and
+# `effigy doctor` never treat fixture manifests as real catalogs.
+[catalog.discovery]
+ignore = ["tests"]
+
 [manifest]
 minimum_effigy_version = "0.7.0"
 include = [

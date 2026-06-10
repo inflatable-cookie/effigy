@@ -604,6 +604,19 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
+### Route-table trust
+
+The gateway daemon can run elevated (to bind `:80`/`:443` and write resolver
+files), and it reverse-proxies to whatever upstream each route names. So it
+verifies its route table before trusting it: Effigy writes `routes.json`
+owner-only (`0o600`) with a managed marker, and the daemon refuses a
+group/other-writable or unmarked table, keeping its last-known-good routes
+instead. `effigy gateway status` reports `route_table_trust` and
+`effigy doctor` warns when the table is untrusted. If you upgrade from a build
+that predates this and see an "untrusted" warning, re-run `effigy container up`
+(or re-register routes) once to re-stamp the table. The full model is in
+[`033-gateway-route-table-trust-contract.md`](../contracts/033-gateway-route-table-trust-contract.md).
+
 ## Host Runtime Fallback
 
 On hosts with Docker CLI installed, Effigy uses `docker compose`.

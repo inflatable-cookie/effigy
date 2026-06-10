@@ -1,7 +1,8 @@
 # g08 Roadmaps
 
-Status: Complete
-Theme: Graph-aware scan intelligence and code quality boundary follow-through
+Status: Active
+Theme: Graph-aware scan intelligence and code quality boundary follow-through,
+extended with the 2026-06-10 security and posture hardening tranche
 
 ## Purpose
 
@@ -33,6 +34,12 @@ This generation should help agents and maintainers answer questions like:
 - [`007-agent-docs-json-and-benchmark-proof.md`](./007-agent-docs-json-and-benchmark-proof.md)
 - [`008-graph-aware-scan-closeout.md`](./008-graph-aware-scan-closeout.md)
 - [`009-code-quality-boundary-sweep-suite.md`](./009-code-quality-boundary-sweep-suite.md)
+- [`010-security-and-posture-hardening-suite.md`](./010-security-and-posture-hardening-suite.md)
+- [`011-discovery-and-doctor-correctness.md`](./011-discovery-and-doctor-correctness.md)
+- [`012-supply-chain-and-ci-security-gates.md`](./012-supply-chain-and-ci-security-gates.md)
+- [`013-daemon-panic-safety-and-secret-egress-hardening.md`](./013-daemon-panic-safety-and-secret-egress-hardening.md)
+- [`014-gateway-route-table-trust-model.md`](./014-gateway-route-table-trust-model.md)
+- [`015-docs-spine-compaction.md`](./015-docs-spine-compaction.md)
 
 ## Design Posture
 

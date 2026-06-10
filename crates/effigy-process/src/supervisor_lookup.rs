@@ -5,7 +5,7 @@ use super::{lifecycle, ProcessManagerError, ProcessSupervisor, PROCESS_GRACEFUL_
 
 impl ProcessSupervisor {
     pub(super) fn child_handle(&self, process: &str) -> Option<Arc<Mutex<Child>>> {
-        let processes = self.processes.lock().expect("process map lock");
+        let processes = crate::locks::lock_tolerant(&self.processes);
         processes.get(process).cloned()
     }
 
@@ -20,7 +20,7 @@ impl ProcessSupervisor {
     }
 
     pub(super) fn all_child_handles(&self) -> Vec<Arc<Mutex<Child>>> {
-        let processes = self.processes.lock().expect("process map lock");
+        let processes = crate::locks::lock_tolerant(&self.processes);
         processes.values().cloned().collect()
     }
 

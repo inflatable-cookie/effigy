@@ -8,7 +8,7 @@ impl ProcessSupervisor {
         let Some(child) = child else {
             return Ok(());
         };
-        let mut child = child.lock().expect("child lock");
+        let mut child = crate::locks::lock_tolerant(&child);
         let Some(stdin) = child.stdin.as_mut() else {
             return Err(ProcessManagerError::MissingStdio {
                 process: process.to_owned(),
@@ -26,7 +26,7 @@ impl ProcessSupervisor {
     pub fn terminate_all(&self) {
         let children = self.all_child_handles();
         for child in children {
-            signal::send_kill(&mut child.lock().expect("child lock"));
+            signal::send_kill(&mut crate::locks::lock_tolerant(&child));
         }
     }
 
@@ -46,7 +46,7 @@ impl ProcessSupervisor {
         let mut restart_spec = spec;
         restart_spec.start_after_ms = 0;
         let replacement = lifecycle::spawn_process_instance(&restart_spec, &self.events_tx, false)?;
-        let mut processes = self.processes.lock().expect("process map lock");
+        let mut processes = crate::locks::lock_tolerant(&self.processes);
         processes.insert(process.to_owned(), replacement);
         Ok(())
     }

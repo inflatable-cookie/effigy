@@ -154,6 +154,56 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
 }
 
 #[test]
+fn validate_manifest_schema_accepts_catalog_discovery_config() {
+    let manifest: Value = toml::from_str(
+        r###"
+[catalog]
+alias = "app"
+
+[catalog.discovery]
+enabled = true
+ignore = ["tests", "fixtures"]
+"###,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected catalog.discovery config to validate cleanly, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_catalog_discovery_key() {
+    let manifest: Value = toml::from_str(
+        r###"
+[catalog]
+alias = "app"
+
+[catalog.discovery]
+ignore = ["tests"]
+unknown = true
+"###,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("catalog.discovery.unknown")),
+        "expected unknown catalog.discovery key to be flagged, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_catalog_backed_container_services() {
     let manifest: Value = toml::from_str(
         r#"

@@ -20,6 +20,43 @@ use serde::{Deserialize, Serialize};
 use crate::atomic_write;
 use crate::error::GatewayError;
 
+/// Provenance marker Effigy stamps into the route table envelope on save.
+///
+/// The gateway's read-path trust check (see [`crate::trust`]) requires this
+/// marker before an elevated daemon will trust the file. See
+/// `docs/contracts/033-gateway-route-table-trust-contract.md`.
+pub const ROUTE_TABLE_MANAGED_MARKER: &str = "effigy-gateway-route-table-v1";
+
+/// On-disk envelope: routes plus the Effigy-managed provenance marker.
+///
+/// Serialized on save so the trust check can confirm Effigy wrote the file.
+/// `RouteTable` itself only models `routes`; the marker is read separately by
+/// the trust inspector, and `RouteTable::load` ignores it as an unknown field.
+#[derive(Serialize)]
+struct ManagedRouteTableRef<'a> {
+    #[serde(rename = "_managed_by")]
+    managed_by: &'static str,
+    routes: &'a HashMap<String, Route>,
+}
+
+/// Restrict the route table to owner-only access so a non-owner local user
+/// cannot tamper with the table the (possibly elevated) gateway daemon trusts.
+#[cfg(unix)]
+fn set_owner_only_permissions(path: &Path) -> Result<(), GatewayError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
+        GatewayError::RouteTableWriteError {
+            path: path.to_path_buf(),
+            reason: format!("failed to set owner-only permissions: {e}"),
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_permissions(_path: &Path) -> Result<(), GatewayError> {
+    Ok(())
+}
+
 /// A single route entry mapping a domain to an upstream target.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Route {
@@ -124,11 +161,16 @@ impl RouteTable {
             })?;
         }
 
-        let content =
-            serde_json::to_string_pretty(self).map_err(|e| GatewayError::RouteTableWriteError {
+        let envelope = ManagedRouteTableRef {
+            managed_by: ROUTE_TABLE_MANAGED_MARKER,
+            routes: &self.routes,
+        };
+        let content = serde_json::to_string_pretty(&envelope).map_err(|e| {
+            GatewayError::RouteTableWriteError {
                 path: path.to_path_buf(),
                 reason: format!("failed to serialize: {e}"),
-            })?;
+            }
+        })?;
 
         // Write to a temp file in the same directory, then rename.
         // This ensures atomic replacement.
@@ -137,6 +179,10 @@ impl RouteTable {
             path: temp_path.clone(),
             reason: e.to_string(),
         })?;
+
+        // Set owner-only permissions on the temp file before the rename so the
+        // published file is never briefly group/other-writable.
+        set_owner_only_permissions(&temp_path)?;
 
         std::fs::rename(&temp_path, path).map_err(|e| GatewayError::RouteTableWriteError {
             path: path.to_path_buf(),
@@ -222,7 +268,9 @@ impl LiveRouteTable {
     /// Loads the current contents from disk. If the file doesn't exist,
     /// starts with an empty table.
     pub fn new(path: PathBuf) -> Result<Self, GatewayError> {
-        let table = RouteTable::load(&path)?;
+        // Enforce the read-path trust gate (contract 033). An untrusted file at
+        // startup yields an empty table — there is no last-known-good yet.
+        let table = crate::trust::load_trusted(&path)?.unwrap_or_default();
         Ok(Self {
             path,
             table: Arc::new(RwLock::new(table)),
@@ -231,16 +279,18 @@ impl LiveRouteTable {
 
     /// Get a read handle to the route table.
     pub fn read(&self) -> std::sync::RwLockReadGuard<'_, RouteTable> {
-        self.table.read().expect("route table lock poisoned")
+        crate::locks::read_tolerant(&self.table)
     }
 
     /// Reload the route table from disk.
     ///
     /// Called by the file watcher when the route table file changes.
     pub fn reload(&self) -> Result<(), GatewayError> {
-        let new_table = RouteTable::load(&self.path)?;
-        let mut guard = self.table.write().expect("route table lock poisoned");
-        *guard = new_table;
+        // Untrusted file: keep the last-known-good in-memory table (contract 033).
+        if let Some(new_table) = crate::trust::load_trusted(&self.path)? {
+            let mut guard = crate::locks::write_tolerant(&self.table);
+            *guard = new_table;
+        }
         Ok(())
     }
 

@@ -63,20 +63,29 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   agent-adoption follow-through focused on cross-repo freshness trust,
   behavioral query ranking, edit-target packets, benchmark proof, and agent
   guidance.
-- `g08` is complete through
-  [`g08.009`](./g08/009-code-quality-boundary-sweep-suite.md). The first tranche
-  covered graph-aware scan intelligence: preserving deterministic filesystem
-  scans, adding optional graph enrichment, and introducing graph-native scans
-  for boundaries, isolated code, hotspots, and validation gaps. The follow-up
-  tranche lives under one code-quality boundary sweep roadmap with batch cards:
-  command/Rhai descriptor convergence, container bring-up phase cleanup,
-  repo-marker convergence, duplicate-block follow-through, boundary/dead-code
-  scan self-adoption, dead-code Rust signal repair, residual false-positive
-  precision, and the final dead-code burn-down to 0 findings.
+- `g08` is active. Milestones `g08.001` through
+  [`g08.009`](./g08/009-code-quality-boundary-sweep-suite.md) are complete: the
+  first tranche covered graph-aware scan intelligence (preserving deterministic
+  filesystem scans, adding optional graph enrichment, and graph-native scans for
+  boundaries, isolated code, hotspots, and validation gaps); the follow-up
+  tranche covered the code-quality boundary sweep (descriptor convergence,
+  container bring-up cleanup, repo-marker convergence, duplicate-block
+  follow-through, boundary/dead-code self-adoption, and the dead-code burn-down
+  to 0 findings). The current
+  [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) tranche
+  remediates the 2026-06-10 security and posture assessment across discovery
+  correctness, supply-chain gates, daemon panic-safety, secret egress, gateway
+  trust, and docs compaction.
 
 ## Active Strict Lane
 
-No active ready card.
+Ready card: [`g08.015`](./g08/015-docs-spine-compaction.md) — Docs Spine
+Compaction, the final milestone of the g08.010 hardening suite. The four
+security milestones are complete:
+[`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
+[`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
+[`g08.013`](./g08/013-daemon-panic-safety-and-secret-egress-hardening.md), and
+[`g08.014`](./g08/014-gateway-route-table-trust-model.md).
 
 ## Research Program
 
@@ -112,7 +121,13 @@ Before rollover:
 
 ## Next Task
 
-No current dead-code residual batch remains.
+Execute [`g08.015`](./g08/015-docs-spine-compaction.md): the docs-spine
+compaction lane (retention convention, closed-generation log/roadmap
+consolidation, front-door integrity proof via `effigy docs`). It is the final
+milestone of the suite; the four security milestones are complete. Full tranche
+sequenced in
+[`g08.010`](./g08/010-security-and-posture-hardening-suite.md). Only
+[`g08.015`](./g08/015-docs-spine-compaction.md) remains beyond g08.014.
 
 ## Historical language boundary
 

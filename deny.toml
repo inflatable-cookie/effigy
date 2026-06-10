@@ -1,0 +1,88 @@
+# cargo-deny supply-chain policy for Effigy.
+#
+# Roadmap: docs/roadmaps/g08/012-supply-chain-and-ci-security-gates.md
+#
+# Run locally:  cargo deny check
+# Subsets:      cargo deny check advisories | licenses | bans | sources
+#
+# Policy intent:
+# - advisories: a known RUSTSEC vulnerability or unmaintained crate fails the
+#   check. Any accepted exception goes in `[advisories] ignore` with the advisory
+#   id, a one-line justification, and the date it was reviewed.
+# - licenses: only OSI-permissive (plus file-level-copyleft MPL-2.0) licenses are
+#   allowed. A new license appearing in the tree fails until it is reviewed and
+#   added here on purpose.
+# - bans: duplicate versions are a warning, not an error (a 500+ crate transitive
+#   tree carries unavoidable duplicates); wildcard version requirements are
+#   denied to keep the lockfile meaningful.
+# - sources: every crate must come from crates.io; an unknown registry or git
+#   source fails.
+
+[graph]
+all-features = true
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+# Reviewed exceptions. Each is an *unmaintained* advisory (not a vulnerability),
+# reaches Effigy only transitively, and has no safe upgrade today. Re-check on
+# each dependency bump and drop the entry once the upstream stack moves off it.
+ignore = [
+    # rustls-pemfile is archived; reached via the rustls / rustls-native-certs
+    # stack used by the gateway's TLS. PEM parsing now lives in rustls-pki-types,
+    # but our transitive graph still pulls the wrapper. No vuln. Reviewed 2026-06-10.
+    { id = "RUSTSEC-2025-0134", reason = "reviewed 2026-06-10: unmaintained-only; transitive via rustls stack; no safe upgrade yet" },
+    # proc-macro-error2 is unmaintained; transitive build-time proc-macro dep,
+    # not shipped at runtime. No vuln. Reviewed 2026-06-10.
+    { id = "RUSTSEC-2026-0173", reason = "reviewed 2026-06-10: unmaintained-only; transitive build-time proc-macro dep; no runtime exposure" },
+]
+
+[licenses]
+# OSI-permissive licenses present in the current dependency tree, plus MPL-2.0
+# (weak, file-level copyleft — no obligation on Effigy's own MIT sources).
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+# Effigy's own workspace crates are MIT; nothing unpublished to special-case.
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Effigy's 34 internal workspace crates are declared as `{ path = ... }` without
+# a version, which reads as a wildcard. Those are intentional and carry no
+# supply-chain risk; registry wildcards remain denied.
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

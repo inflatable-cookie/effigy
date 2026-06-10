@@ -33,7 +33,7 @@ pub(super) fn attach_child_stream_threads(
 
     let tx = events_tx.clone();
     thread::spawn(move || loop {
-        let status = child.lock().expect("child lock").try_wait();
+        let status = crate::locks::lock_tolerant(&child).try_wait();
         match status {
             Ok(Some(status)) => {
                 let _ = tx.send(ProcessEvent {

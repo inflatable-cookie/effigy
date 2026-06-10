@@ -76,15 +76,20 @@ fn runner_to_doctor(error: RunnerError) -> DoctorError {
 fn collect_runtime_diagnostics(
     resolved_root: &Path,
 ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+    let mut diagnostics = DoctorRuntimeDiagnostics::default();
+
+    // Gateway route-table trust is machine-global and independent of container
+    // policies, so surface it before any container-policy early return.
+    append_route_table_trust_diagnostics(&mut diagnostics);
+
     let policies = match load_all_container_policies(resolved_root) {
         Ok(value) => value,
-        Err(_) => return Ok(DoctorRuntimeDiagnostics::default()),
+        Err(_) => return Ok(diagnostics),
     };
     if policies.is_empty() {
-        return Ok(DoctorRuntimeDiagnostics::default());
+        return Ok(diagnostics);
     }
 
-    let mut diagnostics = DoctorRuntimeDiagnostics::default();
     let mut profiles = policies
         .iter()
         .filter(|policy| policy.driver == ManifestContainerDriver::Colima)
@@ -145,6 +150,29 @@ fn collect_runtime_diagnostics(
     }
 
     Ok(diagnostics)
+}
+
+/// Surface gateway route-table trust state (contract 033) as a doctor runtime
+/// diagnostic: an evidence line when trusted, a remediation warning when not.
+fn append_route_table_trust_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
+    use effigy_gateway::server::GatewayConfig;
+    use effigy_gateway::trust::{inspect_route_table_trust, RouteTableTrust};
+
+    let Ok(gateway_dir) = crate::runner::gateway_command::gateway_dir() else {
+        return;
+    };
+    let route_table_path = GatewayConfig::standard(gateway_dir).route_table_path;
+
+    match inspect_route_table_trust(&route_table_path) {
+        // No table yet — nothing to report.
+        RouteTableTrust::Absent => {}
+        RouteTableTrust::Trusted => diagnostics
+            .evidence
+            .push("gateway-route-table-trust: trusted".to_string()),
+        RouteTableTrust::Untrusted { reason } => diagnostics.warnings.push(format!(
+            "gateway route table is untrusted ({reason}); the gateway keeps its last-known-good routes. Restore owner-only permissions (no group/other write) or re-register routes with `effigy container up` to re-stamp it."
+        )),
+    }
 }
 
 fn docker_context_mismatch_warning(

@@ -1,0 +1,21 @@
+# Dependency update automation.
+#
+# Roadmap: docs/roadmaps/g08/012-supply-chain-and-ci-security-gates.md
+# Paired with the cargo-deny supply-chain gate in ci.yml and deny.toml.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "ci"

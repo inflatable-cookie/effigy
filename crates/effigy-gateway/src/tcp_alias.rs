@@ -60,7 +60,7 @@ fn reconcile_tcp_aliases(
     route_table: &Arc<RwLock<RouteTable>>,
     active: &mut HashMap<String, ActiveTcpAlias>,
 ) {
-    let desired = desired_tcp_aliases(&route_table.read().expect("route table lock poisoned"));
+    let desired = desired_tcp_aliases(&crate::locks::read_tolerant(route_table));
 
     let stale_keys = active
         .iter()

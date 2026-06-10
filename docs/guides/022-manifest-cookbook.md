@@ -1132,11 +1132,17 @@ See [`074-deployment-guide.md`](./074-deployment-guide.md).
 
 ```toml
 [catalog.discovery]
-ignore = ["data", "storage"]
+ignore = ["tests"]
 ```
 
-  Use this for repo-local generated trees that should never become ambient
-  task catalogs.
+  Use this for repo-local trees that should never become ambient task catalogs:
+  generated/snapshot directories, and `tests`/fixture trees that ship partial or
+  intentionally malformed `effigy.toml` manifests as test inputs. Without it,
+  fixture manifests are discovered as live catalogs and can make `effigy doctor`
+  report a schema error on an otherwise clean tree. `ignore` matches directory
+  names at any depth. An alternative for a self-contained nested project is
+  `[manifest] root = true` in that subtree's manifest, which prunes it and its
+  children from the parent's ambient discovery.
 - Catalog aliases must be unique across discovered manifests.
 - Useful interpolation tokens in run commands:
   - `{project}` catalog root path (shell-quoted alias of `{repo}`)

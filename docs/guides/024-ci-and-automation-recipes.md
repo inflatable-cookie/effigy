@@ -419,6 +419,44 @@ Warm-hit consistency check:
     jq -e '.result.cache_age_ms <= .result.effective_cache_ttl_ms' completion-candidates-second.json >/dev/null
 ```
 
+## 13) Supply-Chain Policy: `cargo deny`
+
+Effigy's dependency supply chain is gated by [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/)
+using the repo-root [`deny.toml`](../../deny.toml).
+
+Run locally before pushing dependency changes:
+
+```bash
+cargo deny check                       # advisories + licenses + bans + sources
+cargo deny check advisories            # RUSTSEC vulnerabilities / unmaintained
+cargo deny check licenses              # allowed-license enforcement
+```
+
+What fails the check:
+
+- **advisories** — a RUSTSEC vulnerability or unmaintained advisory against any
+  crate in the lockfile.
+- **licenses** — a dependency whose license is not on the `[licenses] allow`
+  list (OSI-permissive plus file-level-copyleft MPL-2.0).
+- **bans** — a wildcard (`*`) version requirement on a *registry* crate.
+  Duplicate versions are warnings, not failures. Internal workspace path deps
+  are allowed (`allow-wildcard-paths`; the root binary and every member crate
+  set `publish = false`).
+- **sources** — a crate from any registry or git source other than crates.io.
+
+How exceptions are recorded:
+
+- An accepted advisory goes in `[advisories] ignore` as
+  `{ id = "RUSTSEC-...", reason = "reviewed YYYY-MM-DD: why it is acceptable" }`.
+  Exceptions are for *unmaintained-only* advisories with no safe upgrade, never
+  for live vulnerabilities. Re-check on each dependency bump and drop the entry
+  once upstream moves off the crate.
+- A new license requires a deliberate addition to `[licenses] allow` after
+  review, not an inline ignore.
+
+CI enforcement of this policy is wired in `.github/workflows/` only after
+explicit human approval (workflow edits are gated by the release protocol).
+
 ## Expected Outcome
 
 After this guide, you should be able to:

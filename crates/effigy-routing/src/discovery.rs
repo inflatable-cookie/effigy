@@ -441,6 +441,46 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    // Regression for g08.011: a repo whose `tests/` tree carries fixture
+    // manifests (intentionally partial/malformed scan or graph benchmark
+    // inputs) must be able to exclude that tree via the existing
+    // `[catalog.discovery] ignore` convention, so fixture manifests never
+    // surface as live catalogs or trip `effigy doctor` on a clean tree.
+    #[test]
+    fn discover_manifest_paths_excludes_ignored_fixture_tree() {
+        let root = temp_root("effigy-routing-ignored-fixtures");
+        let fixture = root.join("tests/fixtures/graph-benchmark/split-owner");
+        let app = root.join("apps/demo");
+        fs::create_dir_all(&fixture).expect("fixture dir");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = \"root\"\n\n[catalog.discovery]\nignore = [\"tests\"]\n",
+        )
+        .expect("root");
+        // Intentionally fixture-shaped: a task plus an unsupported key, the
+        // same pattern that previously leaked through discovery.
+        fs::write(
+            fixture.join("effigy.toml"),
+            "[tasks.test]\nrun = \"cargo test\"\n\n[scan.validation_gaps]\ndoctor = false\n",
+        )
+        .expect("fixture manifest");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover");
+
+        assert!(manifests.contains(&root.join("effigy.toml")));
+        assert!(
+            manifests.contains(&app.join("effigy.toml")),
+            "an intentional nested catalog must still resolve while the fixture tree is excluded: {manifests:?}"
+        );
+        assert!(
+            !manifests.contains(&fixture.join("effigy.toml")),
+            "fixture manifests under an ignored tree must not become ambient catalogs: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn discover_manifest_paths_can_disable_ambient_child_discovery() {
         let root = temp_root("effigy-routing-discovery-disabled");

@@ -14,7 +14,7 @@ pub(super) fn collect_exit_diagnostics(
         .keys()
         .map(|name| {
             let diagnostic = if let Some(child) = process_map.get(name) {
-                match child.lock().expect("child lock").try_wait() {
+                match crate::locks::lock_tolerant(child).try_wait() {
                     Ok(Some(status)) => format_exit_diagnostic(status),
                     Ok(None) => "running".to_owned(),
                     Err(err) => format!("wait-error={err}"),
