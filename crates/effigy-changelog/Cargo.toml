@@ -8,3 +8,6 @@ description = "Northstar changelog parsing, formatting, validation, and analysis
 
 [dependencies]
 semver = "1"
+
+[lints]
+workspace = true

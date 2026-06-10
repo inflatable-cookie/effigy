@@ -41,6 +41,7 @@ This generation should help agents and maintainers answer questions like:
 - [`013-daemon-panic-safety-and-secret-egress-hardening.md`](./013-daemon-panic-safety-and-secret-egress-hardening.md)
 - [`014-gateway-route-table-trust-model.md`](./014-gateway-route-table-trust-model.md)
 - [`015-docs-spine-compaction.md`](./015-docs-spine-compaction.md)
+- [`016-suppression-hygiene-and-dead-code-precision.md`](./016-suppression-hygiene-and-dead-code-precision.md)
 
 ## Design Posture
 

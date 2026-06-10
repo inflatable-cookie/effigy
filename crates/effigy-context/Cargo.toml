@@ -8,3 +8,6 @@ description = "Boot-time runtime context and path authority for Effigy"
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }
+
+[lints]
+workspace = true

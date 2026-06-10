@@ -7,3 +7,6 @@ publish = false
 description = "Typed data seed and dump planning substrate for Effigy"
 
 [dependencies]
+
+[lints]
+workspace = true

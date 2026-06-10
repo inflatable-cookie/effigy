@@ -10,3 +10,6 @@ description = "Task catalog discovery and selection routing for Effigy"
 effigy-core = { path = "../effigy-core" }
 effigy-manifest = { path = "../effigy-manifest" }
 toml = "1"
+
+[lints]
+workspace = true

@@ -5,7 +5,6 @@ use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 use crate::{plan, profiles, ManagedError, ManagedTaskPlan};
 
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_managed_task_plan<'a>(
     selector: &TaskSelector,
     catalog: &'a LoadedCatalog,

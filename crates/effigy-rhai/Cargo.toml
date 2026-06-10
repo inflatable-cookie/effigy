@@ -33,3 +33,6 @@ signal-hook = "0.4"
 toml = "1"
 url = "2"
 walkdir = "2"
+
+[lints]
+workspace = true

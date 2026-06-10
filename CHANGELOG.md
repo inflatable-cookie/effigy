@@ -12,7 +12,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - The gateway now verifies route-table integrity before the (possibly elevated) daemon trusts it: the route table is written owner-only (`0o600`) with an Effigy-managed provenance marker, and the daemon's read path refuses a group/other-writable or unmarked/foreign-marked table, keeping its last-known-good in-memory routes instead. `effigy gateway status` reports `route_table_trust` and `effigy doctor` warns when the table is untrusted. (Migration: a `routes.json` written by an older Effigy lacks the marker and will be treated as untrusted until the next route registration re-stamps it — re-run `effigy container up` or re-register routes once after upgrading.)
 
+### Changed
+- The repo-wide clippy allows (`result_large_err`, `too_many_arguments`, `type_complexity`) now live in `[workspace.lints.clippy]` instead of CLI `-A` flags, and the 33 redundant per-site `#[allow(clippy::too_many_arguments)]` attributes were removed. A plain `cargo clippy` now matches CI with no extra flags.
+
 ### Fixed
+- `effigy scan dead-code` now refuses a stale graph index (not just an unusable one) and points to `effigy graph index`, instead of reporting false positives from drifted symbol positions and missing edges.
 - `SecretValue` now serializes as `[REDACTED]` instead of plaintext. A secret accidentally included in a `Serialize`-derived struct (logs, JSON output, diagnostics) can no longer leak; the encrypted vault payload is the only path that serializes real secret bytes, and it now opts in explicitly.
 - The local gateway daemon and the process supervisor no longer cascade a panic across every subsequent request or child-reap when a lock is poisoned by an unrelated thread panic. Poisoned route-table, TLS-cert, and child/process-map locks now recover the inner guard and keep serving instead of aborting.
 - `effigy doctor` no longer reports a schema error on this repo's own clean tree. Test-fixture manifests under `tests/` are excluded from ambient catalog discovery via `[catalog.discovery] ignore`, so partial/malformed fixture `effigy.toml` files are no longer treated as live catalogs.

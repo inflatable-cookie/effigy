@@ -75,7 +75,7 @@
 ]
 "qa:ci:local" = [
   { task = "fmt:check" },
-  "cargo clippy --all-targets -- -D warnings -A clippy::result_large_err -A clippy::too_many_arguments -A clippy::type_complexity",
+  "cargo clippy --all-targets -- -D warnings",
   "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --no-fail-fast\" >&2; cargo test --no-fail-fast; fi'",
   "cargo test --doc",
   { task = "qa:released-surface" },

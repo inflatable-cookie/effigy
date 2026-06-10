@@ -79,7 +79,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-No active ready card. The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
+No active ready card.
+[`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
+(suppression hygiene + dead-code precision) is complete. The
+[`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
 security and posture hardening suite is complete across all five milestones
 ([`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
 [`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
@@ -141,9 +144,8 @@ Before rollover:
 
 ## Next Task
 
-The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) suite is
-complete. `g08` stays open for further scope; the next milestone continues at
-`g08.016` when new work is planned. No `g09` rollover at this time.
+No active milestone. `g08` stays open for the next scope; the post-hardening
+sweep findings are all closed through `g08.016`. No `g09` rollover at this time.
 
 ## Historical language boundary
 

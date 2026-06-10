@@ -87,7 +87,6 @@ pub fn resolve_task_reference_step<'a>(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_task_reference<'a, FInvalid, FResolve, FMissing>(
     task_ref: &str,
     args_rendered: &str,

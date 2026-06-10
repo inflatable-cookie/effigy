@@ -375,7 +375,6 @@ fn merge_values(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn merge_value_inner(
     path: &str,
     current: &mut Value,

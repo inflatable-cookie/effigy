@@ -747,7 +747,6 @@ fn render_export_result(
     render_command_result(output_json, true, payload, text)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_import_result(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,

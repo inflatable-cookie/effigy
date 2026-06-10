@@ -9,3 +9,6 @@ description = "Bootstrap request resolution and execution contracts for Effigy"
 [dependencies]
 effigy-manifest = { path = "../effigy-manifest" }
 serde_json = "1"
+
+[lints]
+workspace = true

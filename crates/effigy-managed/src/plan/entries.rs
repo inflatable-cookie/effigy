@@ -75,7 +75,6 @@ pub fn resolve_concurrent_process_entries<'a>(
     Ok(resolved)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_process_setup<'a>(
     selector: &TaskSelector,
     task: &ManifestTask,

@@ -11,11 +11,12 @@ usually tasks the repo defines.
 ```bash
 cargo test                    # run all tests
 cargo fmt --all -- --check    # format check
-cargo clippy --all-targets -- -D warnings \
-  -A clippy::result_large_err \
-  -A clippy::too_many_arguments \
-  -A clippy::type_complexity   # lint check
+cargo clippy --all-targets -- -D warnings   # lint check
 ```
+
+The repo-wide clippy allows (`result_large_err`, `too_many_arguments`,
+`type_complexity`) live in `[workspace.lints.clippy]` in the root `Cargo.toml`,
+so a plain `cargo clippy` matches CI — no `-A` flags needed.
 
 If `effigy` is on PATH, this repository's own Effigy tasks are available
 (including **`qa:*`** aggregators defined only here):

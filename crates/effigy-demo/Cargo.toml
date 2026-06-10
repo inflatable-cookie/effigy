@@ -13,3 +13,6 @@ effigy-ui = { path = "../effigy-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 crossterm = "0.29"
+
+[lints]
+workspace = true

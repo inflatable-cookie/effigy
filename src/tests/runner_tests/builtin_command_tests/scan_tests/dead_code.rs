@@ -50,6 +50,40 @@ allow_paths = ["src/bin/**"]
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_dead_code_refuses_stale_index() {
+    // Regression for g08.016: a stale graph index reports drifted symbol
+    // positions and missing edges, which surface as false-positive dead-code
+    // findings. The scan must refuse on a stale index and direct the operator
+    // to refresh, rather than presenting stale results as authoritative.
+    let root = setup_scan_workspace(
+        "builtin-scan-dead-code-stale-index",
+        Some("[scan.dead_code]\ndoctor = false\n"),
+        &["src/live"],
+    );
+    fs::write(root.join("src/lib.rs"), "pub mod live;\n").expect("write lib");
+    fs::write(
+        root.join("src/live/mod.rs"),
+        "pub fn lonely() -> usize { 1 }\n",
+    )
+    .expect("write live");
+    seed_graph_index(&root);
+
+    // Mutate a source file after indexing so the graph index goes stale.
+    fs::write(
+        root.join("src/live/mod.rs"),
+        "pub fn lonely() -> usize { 1 }\npub fn added_after_index() -> usize { 2 }\n",
+    )
+    .expect("rewrite live");
+
+    let error = run_builtin_err(root, "scan", &["dead-code"]);
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("requires a fresh graph index"),
+        "stale index should be refused with remediation, got: {rendered}"
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_dead_code_respects_symbol_allowlist() {
     let root = setup_scan_workspace(
         "builtin-scan-dead-code-allow-symbol",
