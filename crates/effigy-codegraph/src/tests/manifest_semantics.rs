@@ -94,7 +94,7 @@ default_workspace = "api"
 container = "app"
 
 [containers.app]
-primary-service = "web"
+primary_service = "web"
 
 [containers.app.services.web]
 catalog = "php-fpm"
