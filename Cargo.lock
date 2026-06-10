@@ -3473,9 +3473,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s3"
-version = "0.1.27"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abbead71ea8e31af51e90a4c6eca0562b8865652f52529c3d8f9169985c78062"
+checksum = "bb545af297bfea90df29024d9ad5d5a0a71fc27ba6c87705e477a717c3155ace"
 dependencies = [
  "base64",
  "bytes",
