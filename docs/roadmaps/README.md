@@ -79,9 +79,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Ready card: [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
-Batch A — consolidate the workspace clippy allows into `[workspace.lints]` (no
-workflow edit). The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
+No active ready card.
+[`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
+(suppression hygiene + dead-code precision) is complete. The
+[`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
 security and posture hardening suite is complete across all five milestones
 ([`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
 [`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
@@ -143,11 +144,8 @@ Before rollover:
 
 ## Next Task
 
-Execute [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
-Batch A: add `[workspace.lints.clippy]`, opt all 35 packages into workspace
-lints, remove the 33 redundant per-site `too_many_arguments` allows, and drop
-the now-redundant `-A` flags from the non-workflow command surfaces. No `g09`
-rollover at this time.
+No active milestone. `g08` stays open for the next scope; the post-hardening
+sweep findings are all closed through `g08.016`. No `g09` rollover at this time.
 
 ## Historical language boundary
 

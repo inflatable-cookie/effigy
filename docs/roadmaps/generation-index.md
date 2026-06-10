@@ -151,8 +151,13 @@ rollover is implied by closing this tranche.
 into `[workspace.lints]`, clear residual suppressions and one dead function, and
 fix the dead-code scanner's `use`-edge/test-entrypoint false positives.
 
-Active ready card: `g08.016` Batch A (workspace lint consolidation; no workflow
-edit). Batch C's CI-flag retirement is approval-gated.
+`g08.016` (Suppression Hygiene and Dead-Code Precision) is **complete**: clippy
+allows consolidated into `[workspace.lints]` (33 per-site allows removed; plain
+`cargo clippy` matches CI), one dead function removed, suppression floor 44 → 11,
+and the dead-code scanner now refuses a stale index instead of emitting false
+positives.
+
+Active ready card: none. `g08` stays open for the next scope.
 
 ## Research Roadmaps
 

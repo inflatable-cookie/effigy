@@ -1,8 +1,8 @@
 # g08.016 - Suppression Hygiene And Dead-Code Precision
 
-Status: Batches A+B complete; Batch C (scanner precision + gated CI-flag retirement) ready
+Status: Complete
 Depends on: `g08.015`
-Batches A+B completed: 2026-06-10
+Completed: 2026-06-10
 
 ## Goal
 
@@ -74,12 +74,18 @@ and test symbols.
   items-after-test-module). Two already carried explanatory comments; added a
   reason to the `state` `targets` field. `scan stale-suppressions` floor is now
   11 (down from 44), all deliberate.
-- [ ] **Batch C — Dead-code scanner precision + CI flag retirement
-  (approval-gated).** Fix the scanner's `use`-import edge resolution so imported
-  symbols are not reported, and confirm `#[test]` entrypoints are excluded.
-  Add regression fixtures (an imported symbol; a test function). With approval,
-  remove the `-A` clippy flags from `.github/workflows/ci.yml` so CI relies on
-  the `Cargo.toml` lints. Prove `scan dead-code` reports only genuine findings.
+- [x] **Batch C — Dead-code scanner precision + CI flag retirement.**
+  Root cause: the 20 dead-code "findings" were **stale-index artifacts**, not a
+  reference-resolution logic bug. A fresh `effigy graph index` drops them to 0 —
+  the `use`-import edge and `#[test]` handling resolve correctly against a
+  current index; the stale index reported drifted line numbers and missing
+  edges. The scan already refused an *unusable* index but not a *stale* one, so
+  a stale-but-usable index produced false positives. Tightened the guard:
+  `scan dead-code` now refuses on `freshness.stale` too and directs the operator
+  to run `effigy graph index`. Added a regression test
+  (`run_manifest_task_builtin_scan_dead_code_refuses_stale_index`). With
+  approval (granted 2026-06-10), removed the `-A` clippy flags from
+  `.github/workflows/ci.yml` so CI relies on `[workspace.lints]`.
 
 ## Governing Contracts
 
@@ -96,15 +102,15 @@ and test symbols.
 - [x] every remaining `#[allow(...)]` is either removed or carries a reason;
   `scan stale-suppressions` at its justified floor (44 → 11)
 - [x] `compose_logs_tail_args` is deleted; the build stays green
-- [ ] `scan dead-code` no longer flags imported symbols or `#[test]` functions
-  (proven by fixtures); residual findings are genuine (Batch C)
+- [x] `scan dead-code` no longer presents stale-index false positives: it
+  refuses a stale index with remediation (proven by a regression test). Against
+  a fresh index the repo reports 0 dead-code findings.
 - [x] changelog records the lint-config change under `[Unreleased] > Changed`
+  and the dead-code stale-index guard under `[Unreleased] > Fixed`
 
 ## Next Task
 
-Batches A+B are complete (clippy consolidated, suppressions floored, dead fn
-removed). Batch C remains: fix the dead-code scanner's `use`-import edge
-resolution and confirm `#[test]` handling (with regression fixtures) — no
-approval needed — then, with workflow-edit approval, retire the `-A` clippy
-flags from `.github/workflows/ci.yml`. On completion, the post-hardening sweep
-findings are closed and `g08` continues with whatever scope comes next.
+Milestone complete — the post-hardening sweep findings are closed: clippy
+suppressions consolidated, the one dead function removed, and the dead-code
+scanner hardened against stale-index false positives. `g08` stays open for
+whatever scope comes next.

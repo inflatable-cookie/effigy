@@ -28,9 +28,14 @@ pub(super) fn run_dead_code_scan(
 
     let graph_status =
         status(target_root).map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    if !graph_status.freshness.usable {
+    // Dead-code findings are only trustworthy against a current index: a stale
+    // index reports drifted symbol positions and missing edges, which surface as
+    // false positives (the exact failure g08.016 set out to fix). Refuse on a
+    // stale or unusable index and direct the operator to refresh, rather than
+    // presenting stale results as authoritative.
+    if !graph_status.freshness.usable || graph_status.freshness.stale {
         return Err(BuiltinError::task_invocation(format!(
-            "`scan dead-code` requires a usable graph index ({})",
+            "`scan dead-code` requires a fresh graph index ({}); run `effigy graph index` first",
             graph_status.freshness.summary
         )));
     }

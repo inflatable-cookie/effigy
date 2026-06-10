@@ -16,6 +16,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - The repo-wide clippy allows (`result_large_err`, `too_many_arguments`, `type_complexity`) now live in `[workspace.lints.clippy]` instead of CLI `-A` flags, and the 33 redundant per-site `#[allow(clippy::too_many_arguments)]` attributes were removed. A plain `cargo clippy` now matches CI with no extra flags.
 
 ### Fixed
+- `effigy scan dead-code` now refuses a stale graph index (not just an unusable one) and points to `effigy graph index`, instead of reporting false positives from drifted symbol positions and missing edges.
 - `SecretValue` now serializes as `[REDACTED]` instead of plaintext. A secret accidentally included in a `Serialize`-derived struct (logs, JSON output, diagnostics) can no longer leak; the encrypted vault payload is the only path that serializes real secret bytes, and it now opts in explicitly.
 - The local gateway daemon and the process supervisor no longer cascade a panic across every subsequent request or child-reap when a lock is poisoned by an unrelated thread panic. Poisoned route-table, TLS-cert, and child/process-map locks now recover the inner guard and keep serving instead of aborting.
 - `effigy doctor` no longer reports a schema error on this repo's own clean tree. Test-fixture manifests under `tests/` are excluded from ambient catalog discovery via `[catalog.discovery] ignore`, so partial/malformed fixture `effigy.toml` files are no longer treated as live catalogs.

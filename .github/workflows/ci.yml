@@ -30,11 +30,9 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: >
-          cargo clippy --all-targets -- -D warnings
-          -A clippy::result_large_err
-          -A clippy::too_many_arguments
-          -A clippy::type_complexity
+        # Repo-wide allows live in [workspace.lints.clippy] (root Cargo.toml),
+        # so no -A flags are needed here — a plain clippy matches local runs.
+        run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
