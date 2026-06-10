@@ -8,9 +8,9 @@
 //! because it cannot bind-mount a dangling-symlink source.
 //!
 //! The socket lives inside the VM, not on the host where Effigy runs, so the
-//! check is performed VM-side via `colima ssh`. Callers use the verdict to
-//! degrade gracefully (drop the mount + warn) or guide the operator toward
-//! `colima restart <profile>` (g08.017).
+//! check is performed VM-side via `colima ssh`. Callers use the verdict to warn
+//! pre-emptively at `container up` and to surface a `doctor` finding, both
+//! naming the `colima restart <profile>` remediation (g08.017).
 
 use std::path::Path;
 
@@ -77,11 +77,21 @@ pub fn inspect_colima_ssh_agent_socket(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> SshAgentSocketHealth {
+    inspect_colima_ssh_agent_socket_for_profile(&policy.profile, repo_root)
+}
+
+/// Probe the forwarded SSH-agent socket for a named colima profile. The caller
+/// is responsible for only probing a profile that is running (`colima ssh`
+/// against a stopped profile fails and yields [`SshAgentSocketHealth::Unknown`]).
+pub fn inspect_colima_ssh_agent_socket_for_profile(
+    profile: &str,
+    repo_root: &Path,
+) -> SshAgentSocketHealth {
     let probe = ssh_agent_socket_probe_script();
     let args = [
         "ssh",
         "--profile",
-        policy.profile.as_str(),
+        profile,
         "--",
         "sh",
         "-c",

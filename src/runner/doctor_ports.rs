@@ -14,6 +14,7 @@ use effigy_cli::TaskInvocation;
 use effigy_containers::{
     colima::parse_colima_running,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
+    exec::{inspect_colima_ssh_agent_socket_for_profile, SshAgentSocketHealth},
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
 };
 use effigy_doctor::{DoctorError, DoctorRuntimeDiagnostics, DoctorRuntimePorts};
@@ -109,10 +110,15 @@ fn collect_runtime_diagnostics(
         ));
         for profile in &profiles {
             match colima_profile_running(profile) {
-                Ok(running) => diagnostics.evidence.push(format!(
-                    "colima-profile `{profile}`: {}",
-                    if running { "running" } else { "stopped" }
-                )),
+                Ok(running) => {
+                    diagnostics.evidence.push(format!(
+                        "colima-profile `{profile}`: {}",
+                        if running { "running" } else { "stopped" }
+                    ));
+                    if running {
+                        append_ssh_agent_socket_warning(profile, resolved_root, &mut diagnostics);
+                    }
+                }
                 Err(error) => diagnostics
                     .warnings
                     .push(format!("colima profile `{profile}` probe failed: {error}")),
@@ -173,6 +179,27 @@ fn append_route_table_trust_diagnostics(diagnostics: &mut DoctorRuntimeDiagnosti
             "gateway route table is untrusted ({reason}); the gateway keeps its last-known-good routes. Restore owner-only permissions (no group/other write) or re-register routes with `effigy container up` to re-stamp it."
         )),
     }
+}
+
+/// Flag a stale colima SSH-agent forwarding socket for a running profile. A
+/// dangling `/run/host-services/ssh-auth.sock` (host agent socket rotated on a
+/// long-running VM) makes `effigy container up` fail with `mkdir ... file
+/// exists`; surface it here with the `colima restart` remediation (g08.017).
+fn append_ssh_agent_socket_warning(
+    profile: &str,
+    repo_root: &Path,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    let detail = match inspect_colima_ssh_agent_socket_for_profile(profile, repo_root) {
+        SshAgentSocketHealth::Stale => "is stale (host SSH-agent socket rotated)",
+        SshAgentSocketHealth::Absent => "is not set up",
+        SshAgentSocketHealth::Healthy | SshAgentSocketHealth::Unknown => return,
+    };
+    diagnostics.warnings.push(format!(
+        "colima profile `{profile}`: workspace SSH-agent forwarding {detail}; `effigy container \
+         up` can fail with `mkdir /run/host-services/ssh-auth.sock: file exists`. \
+         Fix: `colima restart {profile}`."
+    ));
 }
 
 fn docker_context_mismatch_warning(

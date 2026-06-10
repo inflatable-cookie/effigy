@@ -158,13 +158,13 @@ positives.
 mount step. The milestone makes the workspace bring-up survive a rotated host
 SSH-agent socket (preflight + degrade-and-warn + remediation).
 
-`g08.017` Batches A+B are complete: `inspect_colima_ssh_agent_socket` detects a
-stale/absent forwarded socket VM-side, and container bring-up warns
-pre-emptively with the `colima restart <profile>` fix before the workspace mount
-is attempted (instead of the cryptic nerdctl `mkdir ... file exists`).
+`g08.017` (Workspace SSH-Agent Mount Resilience) is **complete**: a VM-side
+preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
+`effigy container up` and `effigy doctor` pre-empt it with the
+`colima restart <profile>` remediation (instead of the cryptic nerdctl
+`mkdir ... file exists`); the cause/recovery is documented.
 
-Active ready card: `g08.017` Batch C (preflight/`doctor` visibility + docs).
-`g08` stays open.
+Active ready card: none. `g08` stays open for the next scope.
 
 ## Research Roadmaps
 

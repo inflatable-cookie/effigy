@@ -617,6 +617,33 @@ that predates this and see an "untrusted" warning, re-run `effigy container up`
 (or re-register routes) once to re-stamp the table. The full model is in
 [`033-gateway-route-table-trust-contract.md`](../contracts/033-gateway-route-table-trust-contract.md).
 
+## Troubleshooting: stale SSH-agent forwarding
+
+Symptom: `effigy container up` fails the workspace container with
+
+```
+fatal: failed to mkdir "/run/host-services/ssh-auth.sock": ... file exists
+```
+
+Cause: Colima's `--ssh-agent` forwarding points a symlink at
+`/run/host-services/ssh-auth.sock` inside the VM to the host's SSH-agent
+socket. On a long-running VM the host agent socket can rotate, leaving that
+symlink **dangling**. The container runtime cannot bind-mount a dangling-symlink
+source, so the workspace container never starts. (Not an Effigy regression — the
+compose is unchanged.)
+
+Fix: restart the profile so Colima re-forwards a live socket, then bring the
+workspace back up:
+
+```bash
+colima restart <profile>
+effigy container up
+```
+
+Effigy pre-empts this: `container up` warns when the forwarded socket is stale
+before attempting the mount, and `effigy doctor` flags it for any running colima
+profile — both naming the `colima restart <profile>` remediation.
+
 ## Host Runtime Fallback
 
 On hosts with Docker CLI installed, Effigy uses `docker compose`.
