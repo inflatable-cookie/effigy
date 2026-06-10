@@ -43,8 +43,8 @@ use effigy_containers::{
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
     effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
-        colima_profile_warnings, ensure_runtime_backend_running,
-        shutdown_container as shutdown_container_via_exec,
+        colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
+        shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
     },
     load_container_exec_working_dir, load_container_policy, up_detached_report,
     validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
@@ -163,6 +163,7 @@ fn prepare_container_up(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
+    emit_ssh_agent_socket_warning(&policy, repo_root);
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
         repo_root,
@@ -757,6 +758,34 @@ fn run_runtime_shell_exec(
 fn emit_warning_lines(warnings: &[String]) {
     for warning in warnings {
         eprintln!("[warn] {warning}");
+    }
+}
+
+/// Pre-empt the cryptic nerdctl `mkdir /run/host-services/ssh-auth.sock: file
+/// exists` crash. On a long-running colima VM the forwarded host SSH-agent
+/// socket can go stale (the host agent socket rotated), leaving a dangling
+/// symlink that the workspace container cannot bind-mount. We check the socket
+/// once colima is up and, if it is broken, warn with the exact remediation so
+/// the operator fixes it instead of decoding a runtime error (g08.017).
+fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &Path) {
+    // The probe runs inside the VM via `colima ssh`; only meaningful for the
+    // colima backend.
+    if resolve_compose_backend_for_repo(repo_root, policy) != ComposeBackend::ColimaNerdctl {
+        return;
+    }
+    let health = inspect_colima_ssh_agent_socket(policy, repo_root);
+    if health.is_broken() {
+        let detail = match health {
+            SshAgentSocketHealth::Stale => "is stale (the host SSH-agent socket rotated)",
+            SshAgentSocketHealth::Absent => "is not set up",
+            _ => "is unavailable",
+        };
+        emit_warning_lines(&[format!(
+            "workspace SSH-agent forwarding {detail} on colima profile `{profile}`. The \
+             workspace container can fail to start with `mkdir /run/host-services/ssh-auth.sock: \
+             file exists`. Fix: run `colima restart {profile}`, then re-run this command.",
+            profile = policy.profile,
+        )]);
     }
 }
 

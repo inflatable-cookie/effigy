@@ -17,6 +17,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Updated dependencies (regex, s3, reqx, tabled, sha2 0.11, rusqlite 0.40) and pinned the toolchain to Rust 1.96 via `rust-toolchain.toml`. The newer `sha2`/`rusqlite` releases require rustc ≥ 1.95; this raises the project's effective minimum supported Rust to 1.96.
 
 ### Fixed
+- Container bring-up now warns pre-emptively when the colima-forwarded host SSH-agent socket is stale (a dangling `/run/host-services/ssh-auth.sock` after the host agent socket rotates on a long-running VM), naming the `colima restart <profile>` fix — instead of failing later with the cryptic nerdctl `mkdir /run/host-services/ssh-auth.sock: file exists`.
 - `effigy scan dead-code` now refuses a stale graph index (not just an unusable one) and points to `effigy graph index`, instead of reporting false positives from drifted symbol positions and missing edges.
 - `SecretValue` now serializes as `[REDACTED]` instead of plaintext. A secret accidentally included in a `Serialize`-derived struct (logs, JSON output, diagnostics) can no longer leak; the encrypted vault payload is the only path that serializes real secret bytes, and it now opts in explicitly.
 - The local gateway daemon and the process supervisor no longer cascade a panic across every subsequent request or child-reap when a lock is poisoned by an unrelated thread panic. Poisoned route-table, TLS-cert, and child/process-map locks now recover the inner guard and keep serving instead of aborting.
