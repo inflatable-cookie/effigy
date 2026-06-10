@@ -85,8 +85,8 @@ security and posture hardening suite is complete across all five milestones
 [`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
 [`g08.013`](./g08/013-daemon-panic-safety-and-secret-egress-hardening.md),
 [`g08.014`](./g08/014-gateway-route-table-trust-model.md),
-[`g08.015`](./g08/015-docs-spine-compaction.md)). Next planning move is a `g08`
-closeout / `g09` rollover assessment.
+[`g08.015`](./g08/015-docs-spine-compaction.md)). `g08` remains the active
+generation, open for further scope — no `g09` rollover is implied.
 
 ## Research Program
 
@@ -142,9 +142,8 @@ Before rollover:
 ## Next Task
 
 The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) suite is
-complete. Next planning move is a `g08` generation closeout and a `g09` rollover
-assessment per the rollover guardrail (close/summarize live g08 surfaces and
-purge stale specs before opening g09).
+complete. `g08` stays open for further scope; the next milestone continues at
+`g08.016` when new work is planned. No `g09` rollover at this time.
 
 ## Historical language boundary
 

@@ -18,8 +18,9 @@ All six assessment findings remediated across five milestones:
 6. Docs spine sprawl → g08.015 (logs archived + index compacted + convention).
 
 No deferred findings. Residual by deliberate decision: closed-generation
-batch-cards remain nested (churn guardrail). With g08 now closed through this
-suite, a `g09` rollover can be considered per the rollover guardrail.
+batch-cards remain nested (churn guardrail). This suite is complete, but the
+`g08` generation stays **open** for further scope — no rollover is implied by
+closing this tranche.
 
 ## Goal
 
@@ -135,5 +136,6 @@ Each finding cluster is owned by a themed milestone. Sequence runs correctness
 
 ## Next Task
 
-Suite complete — all five milestones (g08.011–g08.015) closed. Next planning
-move is a `g08` generation closeout / `g09` rollover assessment.
+Suite complete — all five milestones (g08.011–g08.015) closed. The `g08`
+generation stays open for further scope; the next milestone continues at
+`g08.016` when new work is planned.

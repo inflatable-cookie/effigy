@@ -100,5 +100,5 @@ security milestones would churn planning docs mid-remediation.
 ## Next Task
 
 Final milestone of the g08.010 hardening suite — all five milestones complete.
-Run suite closeout in `g08.010` recording per-finding remediation status, then
-assess whether the closed g08 generation justifies a `g09` rollover.
+Suite closeout recorded in `g08.010`. The `g08` generation stays open for
+further scope; new work continues at `g08.016`.

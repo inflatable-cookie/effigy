@@ -143,8 +143,9 @@ The g08.010 security and posture hardening tranche is **complete** through
 panic-safety + secret egress, gateway route-table trust, and docs-spine
 compaction (656 logs archived, logs index 677 → 21 entries).
 
-Active ready card: none. Next planning move is a `g08` closeout / `g09` rollover
-assessment.
+`g08` remains the **active** generation — open for further scope. No `g09`
+rollover is implied by closing this tranche. Active ready card: none; next
+milestone continues at `g08.016` when new work is planned.
 
 ## Research Roadmaps
 
