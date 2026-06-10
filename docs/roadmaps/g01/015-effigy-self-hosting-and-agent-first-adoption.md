@@ -240,10 +240,10 @@ Agent docs should also define:
 - [x] `zsh -ic 'effigy tasks'`
 - [x] `zsh -ic 'effigy-dev qa:docs'`
 - [x] `zsh -ic 'effigy-dev --json tasks | jq -r .schema'`
-- [x] `./scripts/check-doc-links.sh docs/logs/README.md docs/logs/2026-03/06-101500-remaining-helper-surface-classification.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
+- [x] `./scripts/check-doc-links.sh docs/logs/README.md docs/logs/archive/2026-03/06-101500-remaining-helper-surface-classification.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
 - [x] `./scripts/check-doc-logs-index.sh`
 - [x] `./scripts/check-doc-links.sh docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md docs/logs/README.md`
-- [x] `git diff --check -- docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/logs/README.md docs/logs/2026-03/06-103500-agent-and-cross-repo-adoption-contract.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
+- [x] `git diff --check -- docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/logs/README.md docs/logs/archive/2026-03/06-103500-agent-and-cross-repo-adoption-contract.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
 - [ ] follow-on implementation batches must add command-level validation logs as
   they land
 

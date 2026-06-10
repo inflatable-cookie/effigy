@@ -171,7 +171,7 @@ The command should allow CLI overrides for:
 - [x] `cargo test cli_json_mode_scan_attention_markers_ --test cli_output_tests`
 - [x] `bash docs/scripts/check-vision-metadata.sh`
 - [x] Validation logs:
-  - `docs/logs/2026-03/06-091500-scan-attention-markers-envelope-and-doctor-validation.md`
+  - `docs/logs/archive/2026-03/06-091500-scan-attention-markers-envelope-and-doctor-validation.md`
 
 ## 11) Next Task
 

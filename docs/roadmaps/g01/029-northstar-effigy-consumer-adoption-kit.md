@@ -57,22 +57,22 @@ goal is to make the shared semantics portable:
 
 This roadmap is based on the consumer-repo scan:
 
-- [`../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md)
+- [`../../logs/archive/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/archive/2026-03/12-135650-consumer-adoption-landscape-scan.md)
 - [`../../guides/056-northstar-effigy-consumer-repo-contract.md`](../../guides/056-northstar-effigy-consumer-repo-contract.md)
-- [`../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
-- [`../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
-- [`../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
-- [`../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
-- [`../../logs/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md`](../../logs/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md)
-- [`../../logs/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md`](../../logs/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md)
-- [`../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
-- [`../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md`](../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md)
-- [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
-- [`../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
-- [`../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
-- [`../../logs/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/2026-03/12-233000-contract-drift-path-check-layer.md)
-- [`../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
-- [`../../logs/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/2026-03/12-235900-source-of-truth-consolidation.md)
+- [`../../logs/archive/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/archive/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
+- [`../../logs/archive/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/archive/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
+- [`../../logs/archive/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/archive/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
+- [`../../logs/archive/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/archive/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
+- [`../../logs/archive/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md`](../../logs/archive/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md)
+- [`../../logs/archive/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md`](../../logs/archive/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md)
+- [`../../logs/archive/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](../../logs/archive/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
+- [`../../logs/archive/2026-03/12-214500-songsprout-root-delegation-follow-up.md`](../../logs/archive/2026-03/12-214500-songsprout-root-delegation-follow-up.md)
+- [`../../logs/archive/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/archive/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+- [`../../logs/archive/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/archive/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+- [`../../logs/archive/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/archive/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+- [`../../logs/archive/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/archive/2026-03/12-233000-contract-drift-path-check-layer.md)
+- [`../../logs/archive/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/archive/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+- [`../../logs/archive/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/archive/2026-03/12-235900-source-of-truth-consolidation.md)
 
 Key scan findings:
 
@@ -450,33 +450,33 @@ Acceptance:
 ## Validation Evidence
 
 - consumer scan log:
-  [`../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md)
+  [`../../logs/archive/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/archive/2026-03/12-135650-consumer-adoption-landscape-scan.md)
 - `pilot-repo-a` gap assessment:
-  [`../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
+  [`../../logs/archive/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/archive/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
 - `pilot-repo-a` Wave 1 pilot and released-surface gap:
-  [`../../logs/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md`](../../logs/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md)
+  [`../../logs/archive/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md`](../../logs/archive/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md)
 - `pilot-repo-b` workspace + docs-authority pilot:
-  [`../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
+  [`../../logs/archive/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/archive/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
 - `underlay` single-repo foundation pilot:
-  [`../../logs/2026-03/12-163200-underlay-single-repo-pilot.md`](../../logs/2026-03/12-163200-underlay-single-repo-pilot.md)
+  [`../../logs/archive/2026-03/12-163200-underlay-single-repo-pilot.md`](../../logs/archive/2026-03/12-163200-underlay-single-repo-pilot.md)
 - `example-app` workspace + ledger-authority pilot:
-  [`../../logs/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md`](../../logs/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md)
+  [`../../logs/archive/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md`](../../logs/archive/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md)
 - `pilot-repo-d` released-surface pilot:
-  [`../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
+  [`../../logs/archive/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/archive/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
 - `pilot-repo-e` released-surface pilot:
-  [`../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
+  [`../../logs/archive/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/archive/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
 - rollout closeout matrix:
-  [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+  [`../../logs/archive/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/archive/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
 - product boundary + verify-install SSH closeout:
-  [`../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+  [`../../logs/archive/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/archive/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
 - starter docs-policy bundle proof:
-  [`../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+  [`../../logs/archive/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/archive/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
 - contract-drift path-check layer:
-  [`../../logs/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/2026-03/12-233000-contract-drift-path-check-layer.md)
+  [`../../logs/archive/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/archive/2026-03/12-233000-contract-drift-path-check-layer.md)
 - workspace bundle proof + bootstrap boundary:
-  [`../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+  [`../../logs/archive/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/archive/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
 - source-of-truth consolidation:
-  [`../../logs/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/2026-03/12-235900-source-of-truth-consolidation.md)
+  [`../../logs/archive/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/archive/2026-03/12-235900-source-of-truth-consolidation.md)
 
 ## Next Task
 

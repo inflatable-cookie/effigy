@@ -658,12 +658,12 @@ Status: complete
 
 Closeout note:
 
-- `docs/logs/2026-03/12-131500-release-checkpoint-v0-2-5.md` records the first
+- `docs/logs/archive/2026-03/12-131500-release-checkpoint-v0-2-5.md` records the first
   real production Effigy release through the built-in release path.
-- `docs/logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md`
+- `docs/logs/archive/2026-03/11-183500-release-workflow-cutover-hosted-validation.md`
   records the hosted validation for `.github/workflows/release-binaries.yml`
   using `effigy changelog extract`.
-- `docs/logs/2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md`
+- `docs/logs/archive/2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md`
   records the later retirement of the legacy release compatibility wrappers.
 - The remaining release work is no longer roadmap `027` implementation work. It
   is normal operator use of the shipped release surface once `g02.010` is fully

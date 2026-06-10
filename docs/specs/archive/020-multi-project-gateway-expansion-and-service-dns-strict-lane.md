@@ -32,7 +32,7 @@ gateway/container architecture.
 - `docs/roadmaps/g02/README.md`
 - `docs/roadmaps/g02/020-multi-project-gateway-expansion-and-service-dns.md`
 - `docs/architecture/020-container-infrastructure-design.md`
-- `docs/logs/2026-04/20-120000-multi-project-gateway-expansion-handoff.md`
+- `docs/logs/archive/2026-04/20-120000-multi-project-gateway-expansion-handoff.md`
 
 ## Lane Focus
 
@@ -62,7 +62,7 @@ The product substrate this lane builds on is already real:
 This lane was re-sequenced ahead of `g02.007` and `g02.019` on 2026-04-22
 because the multi-project port-collision and TCP service DNS gaps are causing
 concrete, daily consumer-repo friction (see
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+`docs/logs/archive/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 The route-model and loopback-setup batches have now landed, so execution
 resumes from the HTTP registration follow-up without reconstructing earlier
 foundations.

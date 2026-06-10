@@ -138,8 +138,14 @@ gateway status` and `effigy doctor`.
 policy, the CI `supply-chain` job (workflow-edit approval granted 2026-06-10),
 and Dependabot weekly updates are all in place.
 
-The g08.010 security tranche is complete through `g08.014`. Active ready card:
-`g08.015` (Docs Spine Compaction) — the final milestone of the suite.
+The g08.010 security and posture hardening tranche is **complete** through
+`g08.015`: discovery/doctor correctness, supply-chain + CI gates, daemon
+panic-safety + secret egress, gateway route-table trust, and docs-spine
+compaction (656 logs archived, logs index 677 → 21 entries).
+
+`g08` remains the **active** generation — open for further scope. No `g09`
+rollover is implied by closing this tranche. Active ready card: none; next
+milestone continues at `g08.016` when new work is planned.
 
 ## Research Roadmaps
 

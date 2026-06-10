@@ -3,6 +3,7 @@
 Status: Active
 Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
+(g08.010–g08.015, complete). Generation remains open for further scope.
 
 ## Purpose
 

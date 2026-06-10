@@ -54,7 +54,7 @@ the user through relevant setup jobs with short, bounded yes/no prompts.
 
 ## Evidence
 
-- [`2026-05/19-122703-tty-init-wizard-engine.md`](../../logs/2026-05/19-122703-tty-init-wizard-engine.md)
+- [`2026-05/19-122703-tty-init-wizard-engine.md`](../../logs/archive/2026-05/19-122703-tty-init-wizard-engine.md)
 
 ## Next Task
 

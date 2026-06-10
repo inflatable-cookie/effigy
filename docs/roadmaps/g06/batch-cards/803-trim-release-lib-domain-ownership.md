@@ -34,7 +34,7 @@ release-domain slice into its own owner module.
 - Reduced `crates/effigy-release/src/lib.rs` from `1622` lines to `1314`.
 - Removed `effigy-release/src/lib.rs` from the god-file warning set.
 - Logged the slice in
-  [`../../../logs/2026-05/14-210000-release-model-owner-extraction.md`](../../../logs/2026-05/14-210000-release-model-owner-extraction.md).
+  [`../../../logs/archive/2026-05/14-210000-release-model-owner-extraction.md`](../../../logs/archive/2026-05/14-210000-release-model-owner-extraction.md).
 
 ## Suggested Validation
 

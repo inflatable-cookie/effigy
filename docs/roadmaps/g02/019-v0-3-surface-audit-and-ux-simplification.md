@@ -211,7 +211,7 @@ discoverable without inventing a new product scope.
 ## Next Task
 
 `g02.020` is the active lane as of 2026-04-22 (see
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+`docs/logs/archive/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 `g02.007` release-prep stays queued, still gated on explicit operator intent.
 
 Wait for `g02.020` to land the gateway/DNS surface changes, then wait for the

@@ -34,7 +34,7 @@ the ranking gains from the parity suite.
 
 ## Evidence
 
-- [`2026-05/18-182146-warm-query-latency-and-release-ranking.md`](../../logs/2026-05/18-182146-warm-query-latency-and-release-ranking.md)
+- [`2026-05/18-182146-warm-query-latency-and-release-ranking.md`](../../logs/archive/2026-05/18-182146-warm-query-latency-and-release-ranking.md)
 
 ## Next Task
 

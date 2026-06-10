@@ -32,7 +32,7 @@ without centralizing the topic content itself.
   that shared layout path while keeping topic copy local.
 - Reduced high duplicate-block findings from `6` to `4`.
 - Logged the slice in
-  [`../../../logs/2026-05/14-220500-cli-help-layout-deduplication.md`](../../../logs/2026-05/14-220500-cli-help-layout-deduplication.md).
+  [`../../../logs/archive/2026-05/14-220500-cli-help-layout-deduplication.md`](../../../logs/archive/2026-05/14-220500-cli-help-layout-deduplication.md).
 
 ## Suggested Validation
 

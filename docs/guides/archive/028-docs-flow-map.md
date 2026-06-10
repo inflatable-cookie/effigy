@@ -64,4 +64,4 @@ Use this if you are new to Effigy and need a practical starting route.
 
 For the latest DAG/watch/onboarding delivery summary:
 
-- [`../logs/2026-02/28-090000-dag-watch-onboarding-release-note.md`](../logs/2026-02/28-090000-dag-watch-onboarding-release-note.md)
+- [`../logs/archive/2026-02/28-090000-dag-watch-onboarding-release-note.md`](../logs/archive/2026-02/28-090000-dag-watch-onboarding-release-note.md)

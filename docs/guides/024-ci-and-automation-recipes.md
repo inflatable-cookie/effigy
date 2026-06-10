@@ -62,8 +62,8 @@ Task-composition note:
   cases live in Rust tests
 
 Design notes:
-- [`2026-03-12-docs-policy-config-boundary.md`](../logs/2026-03/12-093000-docs-policy-config-boundary.md)
-- [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
+- [`2026-03-12-docs-policy-config-boundary.md`](../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md)
+- [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/archive/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
 Intentional remaining shell scripts:
 - none

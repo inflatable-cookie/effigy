@@ -30,7 +30,7 @@ leave performance or fixture proof ambiguous.
 
 ## Evidence
 
-- [`2026-05/18-184912-codegraph-parity-follow-up-closeout.md`](../../logs/2026-05/18-184912-codegraph-parity-follow-up-closeout.md)
+- [`2026-05/18-184912-codegraph-parity-follow-up-closeout.md`](../../logs/archive/2026-05/18-184912-codegraph-parity-follow-up-closeout.md)
 
 ## Next Task
 

@@ -43,7 +43,7 @@ agent navigation.
 
 ## Evidence
 
-- [`2026-05/18-154729-python-extractor-slice.md`](../logs/2026-05/18-154729-python-extractor-slice.md)
+- [`2026-05/18-154729-python-extractor-slice.md`](../logs/archive/2026-05/18-154729-python-extractor-slice.md)
 
 ## Next Task
 

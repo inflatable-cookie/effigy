@@ -28,7 +28,7 @@ Close the graph explore lane with evidence, not a feature claim.
 
 ## Evidence
 
-- [`2026-05/18-133020-graph-explore-implementation-closeout.md`](../../../logs/2026-05/18-133020-graph-explore-implementation-closeout.md)
+- [`2026-05/18-133020-graph-explore-implementation-closeout.md`](../../../logs/archive/2026-05/18-133020-graph-explore-implementation-closeout.md)
 
 ## Next Task
 

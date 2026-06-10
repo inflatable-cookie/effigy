@@ -23,14 +23,14 @@ Measure the current agent navigation workflow before implementing
 
 ## Acceptance
 
-- baseline log exists under `docs/logs/2026-05/`
+- baseline log exists under `docs/logs/archive/2026-05/`
 - contract sketch is explicit enough to implement
 - benchmark tasks and metrics are stable
 - `982` is ready with concrete implementation targets
 
 ## Evidence
 
-- [`2026-05/18-132133-graph-explore-baseline.md`](../../../logs/2026-05/18-132133-graph-explore-baseline.md)
+- [`2026-05/18-132133-graph-explore-baseline.md`](../../../logs/archive/2026-05/18-132133-graph-explore-baseline.md)
 
 ## Next Task
 

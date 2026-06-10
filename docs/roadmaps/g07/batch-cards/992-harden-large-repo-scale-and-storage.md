@@ -30,7 +30,7 @@ Make the graph surface predictable on repos larger than Effigy.
 
 ## Evidence
 
-- [`2026-05/18-172629-large-repo-scale-and-storage-hardening.md`](../../../logs/2026-05/18-172629-large-repo-scale-and-storage-hardening.md)
+- [`2026-05/18-172629-large-repo-scale-and-storage-hardening.md`](../../../logs/archive/2026-05/18-172629-large-repo-scale-and-storage-hardening.md)
 
 ## Next Task
 

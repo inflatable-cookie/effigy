@@ -42,7 +42,7 @@ surface, adapted to Effigy's task runner responsibilities.
 
 ## Evidence
 
-- [`2026-05/18-171905-affected-test-impact-workflow.md`](../../logs/2026-05/18-171905-affected-test-impact-workflow.md)
+- [`2026-05/18-171905-affected-test-impact-workflow.md`](../../logs/archive/2026-05/18-171905-affected-test-impact-workflow.md)
 
 ## Next Task
 

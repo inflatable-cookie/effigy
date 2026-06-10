@@ -64,7 +64,7 @@ implementation changes.
 
 ## Evidence
 
-- [`2026-05/18-132133-graph-explore-baseline.md`](../../logs/2026-05/18-132133-graph-explore-baseline.md)
+- [`2026-05/18-132133-graph-explore-baseline.md`](../../logs/archive/2026-05/18-132133-graph-explore-baseline.md)
 
 ## Next Task
 

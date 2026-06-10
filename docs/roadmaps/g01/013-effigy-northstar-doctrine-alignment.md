@@ -82,7 +82,7 @@ Northstar contract.
 - [x] `docs/roadmaps/g01/013-effigy-northstar-doctrine-alignment.md`
 - [x] `docs/roadmaps/g01/README.md`
 - [x] `docs/roadmaps/generation-index.md`
-- [x] `docs/logs/2026-03/05-201451-effigy-northstar-doctrine-alignment.md`
+- [x] `docs/logs/archive/2026-03/05-201451-effigy-northstar-doctrine-alignment.md`
 
 ## 8) Validation
 

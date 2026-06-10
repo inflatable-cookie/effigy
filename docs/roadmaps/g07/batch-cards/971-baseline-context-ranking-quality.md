@@ -22,7 +22,7 @@ ranker.
 ## Acceptance
 
 - baseline log exists:
-  [`18-173500-graph-context-ranking-baseline.md`](../../../logs/2026-05/18-173500-graph-context-ranking-baseline.md)
+  [`18-173500-graph-context-ranking-baseline.md`](../../../logs/archive/2026-05/18-173500-graph-context-ranking-baseline.md)
 - expected top-file sets are explicit
 - implementation tasks, docs tasks, and test-intent tasks are covered
 - `972` has a concrete failure set to close

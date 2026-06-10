@@ -1,8 +1,26 @@
 # g08.010 - Security And Posture Hardening Suite
 
-Status: Active
+Status: Complete
 Depends on: `g08.009`
 Opened: 2026-06-10
+Completed: 2026-06-10
+
+## Closeout
+
+All six assessment findings remediated across five milestones:
+
+1. Discovery fixture leak → g08.011 (fixed; doctor green on clean tree).
+2. Gateway route-table trust → g08.014 (contract 033 + read-path integrity gate
+   + operator visibility).
+3. CI supply-chain gap → g08.012 (deny.toml + CI gate + Dependabot).
+4. Daemon panic-safety → g08.013 (lock-poison cascade removed).
+5. SecretValue serialize egress → g08.013 (redacted by default).
+6. Docs spine sprawl → g08.015 (logs archived + index compacted + convention).
+
+No deferred findings. Residual by deliberate decision: closed-generation
+batch-cards remain nested (churn guardrail). This suite is complete, but the
+`g08` generation stays **open** for further scope — no rollover is implied by
+closing this tranche.
 
 ## Goal
 
@@ -62,8 +80,11 @@ Each finding cluster is owned by a themed milestone. Sequence runs correctness
   marker on save; daemon fails closed on a group/other-writable or
   unmarked/foreign table, keeping last-known-good); trust state surfaced in
   `effigy gateway status` and `effigy doctor`. Complete 2026-06-10.
-- [ ] **g08.015 — Docs Spine Compaction** (finding 6): bounded compaction of the
-  roadmap/log corpus under the docs-policy and roadmap generation model.
+- [x] **g08.015 — Docs Spine Compaction** (finding 6): complete. Archived 656
+  closed-generation logs to `docs/logs/archive/`, compacted the logs index
+  (677 → 21 entries; 839 → ~138 lines), taught the default docs index to exclude
+  `archive/**`, and documented the retention convention. Closed-gen batch-cards
+  left in place by the churn guardrail. Complete 2026-06-10.
 
 ## Guardrails
 
@@ -115,5 +136,6 @@ Each finding cluster is owned by a themed milestone. Sequence runs correctness
 
 ## Next Task
 
-Open `g08.011` (Discovery and Doctor Correctness) — the only finding that is
-bounded and contract-covered enough to execute without further planning.
+Suite complete — all five milestones (g08.011–g08.015) closed. The `g08`
+generation stays open for further scope; the next milestone continues at
+`g08.016` when new work is planned.

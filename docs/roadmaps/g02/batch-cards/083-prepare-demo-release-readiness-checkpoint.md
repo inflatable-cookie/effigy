@@ -51,7 +51,7 @@ release prep.
 ## Outcome
 
 - release-readiness checkpoint recorded in
-  [`../../logs/2026-04/13-173500-demo-release-readiness-checkpoint.md`](../../logs/2026-04/13-173500-demo-release-readiness-checkpoint.md)
+  [`../../logs/archive/2026-04/13-173500-demo-release-readiness-checkpoint.md`](../../logs/archive/2026-04/13-173500-demo-release-readiness-checkpoint.md)
 - ready card opened:
   [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md)
 

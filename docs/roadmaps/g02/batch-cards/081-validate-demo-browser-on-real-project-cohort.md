@@ -57,7 +57,7 @@ proof, not only repo-local fixtures.
 ## Outcome
 
 - validation log recorded in
-  [`../../logs/2026-04/13-165446-demo-browser-real-project-cohort-validation.md`](../../logs/2026-04/13-165446-demo-browser-real-project-cohort-validation.md)
+  [`../../logs/archive/2026-04/13-165446-demo-browser-real-project-cohort-validation.md`](../../logs/archive/2026-04/13-165446-demo-browser-real-project-cohort-validation.md)
 - ready card opened:
   [`082-decide-demo-release-readiness-after-signal-proof.md`](./082-decide-demo-release-readiness-after-signal-proof.md)
 

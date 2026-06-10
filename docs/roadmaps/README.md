@@ -79,13 +79,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Ready card: [`g08.015`](./g08/015-docs-spine-compaction.md) — Docs Spine
-Compaction, the final milestone of the g08.010 hardening suite. The four
-security milestones are complete:
-[`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
+No active ready card. The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
+security and posture hardening suite is complete across all five milestones
+([`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
 [`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
-[`g08.013`](./g08/013-daemon-panic-safety-and-secret-egress-hardening.md), and
-[`g08.014`](./g08/014-gateway-route-table-trust-model.md).
+[`g08.013`](./g08/013-daemon-panic-safety-and-secret-egress-hardening.md),
+[`g08.014`](./g08/014-gateway-route-table-trust-model.md),
+[`g08.015`](./g08/015-docs-spine-compaction.md)). `g08` remains the active
+generation, open for further scope — no `g09` rollover is implied.
 
 ## Research Program
 
@@ -105,6 +106,25 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 - Execute milestones in meaningful batches.
 - Create logs per completed batch or update cycle, not per individual task.
 
+## Retention and archival convention
+
+Keep the session-loaded surfaces lean; let closed history rest in archives.
+
+- **Logs.** The active log index ([`../logs/README.md`](../logs/README.md))
+  carries only the current generation's month window. When a generation closes,
+  move its month directories under `docs/logs/archive/<month>/` and trim the
+  index. Archived logs stay in the repo (and git history) as durable evidence;
+  the default `effigy docs check index` excludes `archive/**`. Never delete a
+  log to compact — move it.
+- **Roadmaps.** Closed-generation milestone files and their nested
+  `batch-cards/` stay in place: they are the planning record, are not loaded
+  into the front doors, and moving them would churn hundreds of files and links
+  for no signal gain. Compaction targets the indexes and front doors, not the
+  per-generation history.
+- **Front doors.** This README, `generation-index.md`, and the generation
+  READMEs are the navigable surface. Keep them pointed at the live generation
+  with closed generations summarized, not enumerated card-by-card.
+
 ## Rollover guardrail
 
 Do not open `gNN+1` while the current generation still has live roadmap files
@@ -121,13 +141,9 @@ Before rollover:
 
 ## Next Task
 
-Execute [`g08.015`](./g08/015-docs-spine-compaction.md): the docs-spine
-compaction lane (retention convention, closed-generation log/roadmap
-consolidation, front-door integrity proof via `effigy docs`). It is the final
-milestone of the suite; the four security milestones are complete. Full tranche
-sequenced in
-[`g08.010`](./g08/010-security-and-posture-hardening-suite.md). Only
-[`g08.015`](./g08/015-docs-spine-compaction.md) remains beyond g08.014.
+The [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) suite is
+complete. `g08` stays open for further scope; the next milestone continues at
+`g08.016` when new work is planned. No `g09` rollover at this time.
 
 ## Historical language boundary
 
