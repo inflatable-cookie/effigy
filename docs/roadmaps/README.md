@@ -79,7 +79,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-No active ready card.
+Ready card: [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)
+Batch A — agent-socket preflight, so a rotated host SSH-agent socket no longer
+crashes `container up`.
 [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
 (suppression hygiene + dead-code precision) is complete. The
 [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
@@ -144,8 +146,11 @@ Before rollover:
 
 ## Next Task
 
-No active milestone. `g08` stays open for the next scope; the post-hardening
-sweep findings are all closed through `g08.016`. No `g09` rollover at this time.
+Execute [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md) Batch A:
+add an agent-socket preflight in `effigy-containers` workspace host-integration
+so a dangling `/run/host-services/ssh-auth.sock` (rotated host SSH-agent socket
+on a long-running VM) is detected before bring-up instead of crashing nerdctl.
+No `g09` rollover at this time.
 
 ## Historical language boundary
 
