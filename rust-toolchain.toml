@@ -1,0 +1,5 @@
+# Pin the toolchain so local dev and CI agree. Bumped to 1.96 for dependency
+# updates (sha2 0.11, rusqlite 0.40, s3/reqx) that require rustc >= 1.95.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

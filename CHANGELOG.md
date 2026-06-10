@@ -14,6 +14,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 - The repo-wide clippy allows (`result_large_err`, `too_many_arguments`, `type_complexity`) now live in `[workspace.lints.clippy]` instead of CLI `-A` flags, and the 33 redundant per-site `#[allow(clippy::too_many_arguments)]` attributes were removed. A plain `cargo clippy` now matches CI with no extra flags.
+- Updated dependencies (regex, s3, reqx, tabled, sha2 0.11, rusqlite 0.40) and pinned the toolchain to Rust 1.96 via `rust-toolchain.toml`. The newer `sha2`/`rusqlite` releases require rustc ≥ 1.95; this raises the project's effective minimum supported Rust to 1.96.
 
 ### Fixed
 - `effigy scan dead-code` now refuses a stale graph index (not just an unusable one) and points to `effigy graph index`, instead of reporting false positives from drifted symbol positions and missing edges.
