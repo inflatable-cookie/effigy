@@ -300,7 +300,7 @@ patch_alias() {
   ip="$(getent hosts "$service" | awk 'NR == 1 { print $1 }')"
   if [ -z "$ip" ]; then
     printf '[effigy] could not resolve service `%s` for alias `%s`\n' "$service" "$alias" >&2
-    exit 1
+    return 0
   fi
   tmp="$(mktemp)"
   awk -v alias="$alias" '{
@@ -1003,6 +1003,7 @@ mod tests {
             render_tcp_alias_hosts_script(&[("db.demo.test".to_owned(), "postgres".to_owned())]);
 
         assert!(script.contains("patch_alias 'db.demo.test' 'postgres'"));
+        assert!(script.contains("return 0"));
         assert!(script.contains("awk -v alias=\"$alias\""));
         assert!(script.contains("printf '%s %s\\n' \"$ip\" \"$alias\" >> /etc/hosts"));
     }

@@ -6,6 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Workspace/container handoff no longer fails when a TCP alias domain maps to a service name that is not resolvable inside the primary container yet. Effigy now warns and skips that `/etc/hosts` patch instead of aborting `docker compose exec tcp alias hosts`, so optional sidecars like `memcached` do not block container bring-up.
+
 ## [0.8.12] - 2026-06-11
 
 ### Added
