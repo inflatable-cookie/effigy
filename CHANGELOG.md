@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-06-11
+
 ### Added
 - Supply-chain policy via `cargo-deny` (`deny.toml`): enforces RUSTSEC advisories, an OSI-permissive license allowlist, registry-wildcard bans, and a crates.io-only source rule. Enforced in CI by a `cargo deny check` job and paired with Dependabot weekly cargo + GitHub-Actions update PRs. Run `cargo deny check` locally before changing dependencies.
 
