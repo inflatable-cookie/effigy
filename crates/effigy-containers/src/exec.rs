@@ -23,4 +23,7 @@ pub use parse::{
     RunningContainerStatsCapture,
 };
 pub use process::{run_command_capture, run_command_capture_allow_failure};
-pub use ssh_agent_preflight::{inspect_colima_ssh_agent_socket, SshAgentSocketHealth};
+pub use ssh_agent_preflight::{
+    inspect_colima_ssh_agent_socket, inspect_colima_ssh_agent_socket_for_profile,
+    SshAgentSocketHealth,
+};

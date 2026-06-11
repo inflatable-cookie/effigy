@@ -79,10 +79,11 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Ready card: [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)
-Batch C — surface the stale SSH-agent socket in the container preflight /
-`effigy doctor` + a troubleshooting guide entry. Batches A (preflight) and B
-(pre-emptive bring-up warning naming `colima restart <profile>`) are complete.
+No active ready card.
+[`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md) (workspace
+SSH-agent mount resilience) is complete: `container up` and `doctor` both
+pre-empt a stale colima SSH-agent socket with the `colima restart <profile>`
+fix. `g08` stays open for the next scope.
 [`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
 (suppression hygiene + dead-code precision) is complete. The
 [`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
@@ -147,10 +148,9 @@ Before rollover:
 
 ## Next Task
 
-Execute [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md) Batch A:
-add an agent-socket preflight in `effigy-containers` workspace host-integration
-so a dangling `/run/host-services/ssh-auth.sock` (rotated host SSH-agent socket
-on a long-running VM) is detected before bring-up instead of crashing nerdctl.
+No active milestone. The post-incident SSH-agent resilience work
+([`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)) is complete.
+`g08` stays open for the next scope. No `g09` rollover at this time.
 No `g09` rollover at this time.
 
 ## Historical language boundary

@@ -1,8 +1,8 @@
 # g08.017 - Workspace SSH-Agent Mount Resilience
 
-Status: Batches A+B complete; Batch C (preflight/doctor visibility + docs) ready
+Status: Complete
 Depends on: `g08.016`
-Batches A+B completed: 2026-06-10
+Completed: 2026-06-10
 
 ## Goal
 
@@ -89,10 +89,13 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
   forwarding — breaking `git push` over SSH *inside* the workspace, a worse
   surprise than a one-command fix the operator runs knowingly. Auto-drop is left
   as a deliberate non-goal; a needed socket should be repaired, not hidden.
-- [ ] **Batch C — Preflight visibility + docs.** Surface the stale-agent
-  condition in the container preflight and/or `effigy doctor` with the same
-  remediation, and add a troubleshooting entry (container-system guide) covering
-  the dangling `/run/host-services/ssh-auth.sock` symlink on long-running VMs.
+- [x] **Batch C — Doctor visibility + docs.** Added a profile-based
+  `inspect_colima_ssh_agent_socket_for_profile` and wired it into the runner's
+  doctor runtime diagnostics: for each *running* colima profile, a stale/absent
+  forwarded socket emits a warning naming `colima restart <profile>`. Added a
+  troubleshooting section to the container-system guide covering the dangling
+  `/run/host-services/ssh-auth.sock` symlink. Live-validated: the doctor warning
+  fires against a deliberately-broken profile socket and is silent when healthy.
 
 ## Governing Contracts
 
@@ -109,14 +112,13 @@ entrypoint runs. This milestone moves that same tolerance up to the mount layer.
 - [x] operator output names the cause (stale SSH-agent forwarding) and the fix
 - [x] a healthy agent socket is unchanged (warning fires only on a broken
   verdict; colima backend only; probe failure → `Unknown`, no warning)
-- [ ] the stale condition is detectable via preflight/`doctor` (Batch C)
-- [ ] container-system guide documents the cause and recovery (Batch C)
-- [ ] changelog `[Unreleased] > Fixed` records the resilience improvement
-  (recorded for Batches A+B)
+- [x] the stale condition is surfaced as an `effigy doctor` warning for any
+  running colima profile
+- [x] container-system guide documents the cause and recovery
+- [x] changelog `[Unreleased] > Fixed` records the resilience improvement
 
 ## Next Task
 
-Batches A+B are complete: the preflight detects a stale/absent forwarded socket
-and bring-up warns pre-emptively with the `colima restart <profile>` fix. Batch C
-surfaces the same condition in the container preflight and/or `effigy doctor`
-and adds a container-system-guide troubleshooting entry.
+Milestone complete — `effigy container up` and `effigy doctor` both pre-empt a
+stale colima SSH-agent socket with the `colima restart <profile>` remediation,
+and the cause/recovery is documented. `g08` stays open for the next scope.
