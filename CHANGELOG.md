@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-06-15
+
 ### Fixed
 - Bootstrap and catalog discovery now ignore `catalog.alias` values supplied only by bundle defaults. Repos without an explicit project alias use the repo/folder name, so bootstrapping a repo like `git@github.com:acowtancy/acowtancy.git` keeps the `acowtancy` destination instead of renaming it to an inherited `root`.
 - Bootstrap's built-in database seed fallback now prepares the default container runtime before importing SQL dumps, so bundle-backed repos without an explicit `bootstrap:db-seed` task do not fail with `container service ... is not running` immediately after root setup.
