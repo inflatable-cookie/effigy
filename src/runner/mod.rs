@@ -47,6 +47,7 @@ mod system_command;
 mod tasks_command;
 #[cfg(test)]
 mod test_support;
+mod uninstall_command;
 mod util;
 
 pub(in crate::runner) use artifact_command::run_artifact;
@@ -77,6 +78,7 @@ pub(in crate::runner) use service_command::run_service;
 pub(in crate::runner) use state_command::run_state;
 pub(in crate::runner) use system_command::{run_system, run_workspace};
 pub(in crate::runner) use tasks_command::run_tasks;
+pub(in crate::runner) use uninstall_command::run_uninstall;
 
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]

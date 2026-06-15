@@ -32,7 +32,7 @@ use crate::{
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
     InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand,
-    TaskInvocation, TasksArgs,
+    TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -84,6 +84,7 @@ where
         "artifact" | "artefact" => parse_artifact_command(args),
         "container" => parse_container_command(args),
         "bootstrap" => parse_bootstrap_command(args),
+        "uninstall" => parse_uninstall_command(args),
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
         "tasks" => parse_tasks(args),
@@ -95,6 +96,37 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_uninstall_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut plan = false;
+    let mut yes = false;
+    let mut output_json = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--plan" => plan = true,
+            "--yes" => yes = true,
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Uninstall)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if plan && yes {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy uninstall` does not accept both `--plan` and `--yes`".to_owned(),
+        ));
+    }
+
+    Ok(Command::Uninstall(UninstallArgs {
+        plan,
+        yes,
+        output_json,
+    }))
 }
 
 fn parse_rhai_command<I>(args: I) -> Result<Command, CliParseError>

@@ -244,6 +244,14 @@ database services; `data export` still exports raw named-volume archives.
 Use `[data.targets.<name>]` when a sidecar DB should participate in
 bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
 
+### Local Effigy Cleanup
+
+```sh
+effigy uninstall [--json]
+effigy uninstall --plan [--json]
+effigy uninstall --yes [--json]
+```
+
 ### Bundles, Bootstrap, and Demos
 
 ```sh

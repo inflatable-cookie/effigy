@@ -1,7 +1,7 @@
 use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, DeferArgs, ExecArgs, HelpTopic,
     PathBuf, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
-    WorkspaceArgs,
+    UninstallArgs, WorkspaceArgs,
 };
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
@@ -21,6 +21,54 @@ fn parse_bundle_help_is_scoped() {
     let cmd = parse_command(vec!["bundle".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Bundle));
+}
+
+#[test]
+fn parse_uninstall_defaults_to_plan_mode() {
+    let cmd = parse_command(vec!["uninstall".to_owned()]).expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Uninstall(UninstallArgs {
+            plan: false,
+            yes: false,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_uninstall_accepts_plan_and_json() {
+    let cmd = parse_command(vec![
+        "uninstall".to_owned(),
+        "--plan".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Uninstall(UninstallArgs {
+            plan: true,
+            yes: false,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_uninstall_accepts_yes() {
+    let cmd = parse_command(vec!["uninstall".to_owned(), "--yes".to_owned()])
+        .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Uninstall(UninstallArgs {
+            plan: false,
+            yes: true,
+            output_json: false,
+        })
+    );
 }
 
 #[test]

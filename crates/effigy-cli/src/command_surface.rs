@@ -148,6 +148,13 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         deferred_builtin: Some("bootstrap"),
     },
     CommandDescriptor {
+        topic: HelpTopic::Uninstall,
+        command_name: Some("uninstall"),
+        general_help_command: Some("effigy uninstall"),
+        general_help_description: Some("Plan or remove Effigy-owned local machine state"),
+        deferred_builtin: None,
+    },
+    CommandDescriptor {
         topic: HelpTopic::Release,
         command_name: Some("release"),
         general_help_command: Some("effigy release"),
@@ -268,6 +275,7 @@ mod tests {
         HelpTopic::Test,
         HelpTopic::Watch,
         HelpTopic::Init,
+        HelpTopic::Uninstall,
         HelpTopic::Migrate,
     ];
 
@@ -298,6 +306,7 @@ mod tests {
         ("test", HelpTopic::Test),
         ("watch", HelpTopic::Watch),
         ("init", HelpTopic::Init),
+        ("uninstall", HelpTopic::Uninstall),
     ];
 
     #[test]

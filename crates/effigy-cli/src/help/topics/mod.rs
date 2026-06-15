@@ -24,6 +24,7 @@ mod state;
 mod system;
 mod tasks;
 mod test;
+mod uninstall;
 mod watch;
 mod workspace;
 
@@ -52,5 +53,6 @@ pub(crate) use state::render_state_help;
 pub(crate) use system::render_system_help;
 pub(crate) use tasks::render_tasks_help;
 pub(crate) use test::render_test_help;
+pub(crate) use uninstall::render_uninstall_help;
 pub(crate) use watch::render_watch_help;
 pub(crate) use workspace::render_workspace_help;

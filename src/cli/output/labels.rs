@@ -29,6 +29,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
         HelpTopic::Watch => "watch",
         HelpTopic::Init => "init",
         HelpTopic::Migrate => "migrate",
+        HelpTopic::Uninstall => "uninstall",
     }
 }
 
@@ -55,6 +56,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Artifact(_) => ("artifact", "artifact".to_owned()),
         Command::Container(_) => ("container", "container".to_owned()),
         Command::Bootstrap(_) => ("bootstrap", "bootstrap".to_owned()),
+        Command::Uninstall(_) => ("uninstall", "uninstall".to_owned()),
         Command::Release(_) => ("release", "release".to_owned()),
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
         Command::Tasks(_) => ("tasks", "tasks".to_owned()),

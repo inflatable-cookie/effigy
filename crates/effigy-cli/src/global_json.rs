@@ -175,6 +175,7 @@ pub fn apply_global_cli_options(
             }
             Command::Version
             | Command::Bootstrap(_)
+            | Command::Uninstall(_)
             | Command::Gateway(_)
             | Command::InternalGateway(_)
             | Command::InternalScriptRun(_)
@@ -254,6 +255,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Artifact(args) => args.output_json = true,
         Command::Container(args) => args.output_json = true,
         Command::Bootstrap(args) => args.output_json = true,
+        Command::Uninstall(args) => args.output_json = true,
         Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
         Command::Doctor(args) => args.output_json = true,
@@ -292,6 +294,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Artifact(args) => args.output_json,
         Command::Container(args) => args.output_json,
         Command::Bootstrap(args) => args.output_json,
+        Command::Uninstall(args) => args.output_json,
         Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,

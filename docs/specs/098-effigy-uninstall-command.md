@@ -1,6 +1,6 @@
 # 098 - Effigy Uninstall Command
 
-Status: Draft
+Status: Initial implementation
 Owner: Platform
 Created: 2026-06-15
 
@@ -20,21 +20,17 @@ effigy uninstall [--yes] [--json]
 effigy uninstall --plan [--json]
 ```
 
-Initial scope should stay machine-local. It should not edit repos unless a
-future explicit repo-scoped flag is added.
+Initial scope stays machine-local. It does not edit repos unless a future
+explicit repo-scoped flag is added.
 
 ## Cleanup Targets
 
-`effigy uninstall --plan` should report:
+`effigy uninstall --plan` reports:
 
 - user-global config path: `~/.effigy/config.toml`
 - user-global catalog directory: `~/.effigy/catalog/`
-- user-global Effigy home state that is clearly Effigy-owned
 - managed Colima profile state, equivalent to
   `effigy container profile purge`
-- local gateway resolver/routes state that Effigy can prove it owns
-- installed shell completions or hooks only when Effigy can identify the exact
-  files it created
 
 Repo-local `.effigy/` directories are out of initial scope because a top-level
 machine uninstall cannot safely enumerate every repo the user has ever used.
@@ -50,11 +46,18 @@ permission rules. The command may print follow-up uninstall hints later.
 - JSON mode must never prompt
 - deletion must be limited to Effigy-owned paths or state with an ownership
   marker
-- gateway resolver cleanup must preserve foreign resolver config
 - Colima profile cleanup must use the same managed-profile guard as
   `container profile purge`
 - failures should be itemized; one failed cleanup target should not hide the
   rest of the plan/result
+
+Deferred cleanup targets:
+
+- user-global Effigy home state beyond config/catalog that is clearly
+  Effigy-owned
+- local gateway resolver/routes state that Effigy can prove it owns
+- installed shell completions or hooks only when Effigy can identify the exact
+  files it created
 
 ## Output Contract Sketch
 

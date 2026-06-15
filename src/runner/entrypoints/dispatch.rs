@@ -28,6 +28,7 @@ use super::super::run_service;
 use super::super::run_state;
 use super::super::run_system;
 use super::super::run_tasks;
+use super::super::run_uninstall;
 use super::super::run_workspace;
 use crate::runner::error::RunnerError;
 
@@ -74,6 +75,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Bootstrap(args) => {
             super::super::bootstrap_command::run_bootstrap_with_cwd(args, cwd.to_path_buf())
         }
+        Command::Uninstall(args) => run_uninstall(args),
         Command::Release(args) => run_release(args),
         Command::Doctor(args) => {
             let ports = RunnerDoctorPorts::new();

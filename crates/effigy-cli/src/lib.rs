@@ -40,6 +40,7 @@ pub enum Command {
     Artifact(ArtifactArgs),
     Container(ContainerArgs),
     Bootstrap(BootstrapArgs),
+    Uninstall(UninstallArgs),
     Release(ReleaseArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
@@ -127,6 +128,7 @@ pub enum HelpTopic {
     Watch,
     Init,
     Migrate,
+    Uninstall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -678,6 +680,13 @@ pub struct WorkspaceArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapArgs {
     pub subcommand: BootstrapSubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UninstallArgs {
+    pub plan: bool,
+    pub yes: bool,
     pub output_json: bool,
 }
 

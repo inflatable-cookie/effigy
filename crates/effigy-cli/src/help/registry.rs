@@ -113,6 +113,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_init,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Uninstall),
+        render: render_uninstall,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Migrate),
         render: render_migrate,
     },
@@ -260,6 +264,10 @@ fn render_watch(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRe
 
 fn render_init(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_init_help(renderer)
+}
+
+fn render_uninstall(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_uninstall_help(renderer)
 }
 
 fn render_migrate(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
