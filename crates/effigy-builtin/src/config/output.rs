@@ -36,8 +36,10 @@ pub(super) fn render_config_request(
     }
     if request.set_container_backend.is_some()
         || request.set_container_profile.is_some()
+        || request.set_container_profile_disk_gib.is_some()
         || request.unset_container_backend
         || request.unset_container_profile
+        || request.unset_container_profile_disk_gib
     {
         return render_user_update_payload(request);
     }
@@ -117,6 +119,12 @@ fn render_user_update_payload(request: ConfigRequest) -> Result<Option<String>, 
     }
     if request.unset_container_profile {
         config.containers.profile = None;
+    }
+    if let Some(disk_gib) = request.set_container_profile_disk_gib {
+        config.containers.profile_disk_gib = Some(disk_gib);
+    }
+    if request.unset_container_profile_disk_gib {
+        config.containers.profile_disk_gib = None;
     }
 
     let removed_file = if config.is_empty() {
@@ -801,6 +809,13 @@ fn render_user_config_text(
         "profile: {}\n",
         config.preferred_container_profile().unwrap_or("(unset)")
     ));
+    out.push_str(&format!(
+        "profile_disk_gib: {}\n",
+        config
+            .preferred_container_profile_disk_gib()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(unset)".to_owned())
+    ));
 
     if !config.bundle.is_empty() {
         out.push('\n');
@@ -826,6 +841,9 @@ fn render_user_config_key_value(config: &UserConfig, key: UserConfigKey) -> Opti
             .map(render_backend_preference)
             .map(str::to_owned),
         UserConfigKey::ContainersProfile => config.preferred_container_profile().map(str::to_owned),
+        UserConfigKey::ContainersProfileDiskGib => config
+            .preferred_container_profile_disk_gib()
+            .map(|value| value.to_string()),
     }
 }
 

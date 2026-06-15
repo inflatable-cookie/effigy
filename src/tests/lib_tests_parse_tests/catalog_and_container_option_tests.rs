@@ -610,6 +610,8 @@ fn parse_container_profile_recreate_accepts_profile_and_yes() {
         "recreate".to_owned(),
         "--profile".to_owned(),
         "effigy".to_owned(),
+        "--disk".to_owned(),
+        "180".to_owned(),
         "--yes".to_owned(),
     ])
     .expect("parse should succeed");
@@ -619,6 +621,34 @@ fn parse_container_profile_recreate_accepts_profile_and_yes() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Profile {
                 subcommand: ContainerProfileSubcommand::Recreate {
+                    profile: Some("effigy".to_owned()),
+                    disk_gib: Some(180),
+                    yes: true,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_profile_purge_accepts_profile_and_yes() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "purge".to_owned(),
+        "--profile".to_owned(),
+        "effigy".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::Purge {
                     profile: Some("effigy".to_owned()),
                     yes: true,
                 },

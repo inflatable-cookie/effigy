@@ -108,7 +108,8 @@ effigy container stats --global
 effigy container <NAME> status
 effigy container profile status
 effigy container profile resize
-effigy container profile recreate --yes
+effigy container profile purge --yes
+effigy container profile recreate --disk 180 --yes
 effigy container <NAME> logs
 effigy container <NAME> shell
 effigy container <NAME> data list
@@ -655,9 +656,10 @@ When Colima exists but `docker` is not on `PATH`, Effigy falls back to:
 with the profile started under `containerd`.
 
 Effigy manages the default `effigy` Colima profile for workspace-heavy local
-development. New or recreated profiles are started with a 300GiB disk target,
-plus memory and swap sizing based on host memory. Existing smaller profiles may
-need a manual resize or recreate; Effigy warns when a running managed profile is
+development. New or recreated profiles use the configured
+`containers.profile_disk_gib` user-global target, falling back to 300GiB, plus
+memory and swap sizing based on host memory. Existing smaller profiles may need
+a manual resize or recreate; Effigy warns when a running managed profile is
 below the target and points at the non-destructive resize path first.
 
 Use the profile commands for that workflow:
@@ -669,10 +671,20 @@ effigy container profile status
 # Apply the managed sizing in place by stopping and restarting the profile
 effigy container profile resize
 
+# Persist a different managed disk target
+effigy config set containers.profile_disk_gib 180
+
+# Delete the managed profile and all profile runtime data without restarting it
+effigy container profile purge --yes
+
 # Recreate only if resize cannot get the profile to the managed target
 # This deletes local profile data, including containers, images, and volumes.
-effigy container profile recreate --yes
+effigy container profile recreate --disk 180 --yes
 ```
+
+When `container profile recreate` runs interactively without `--disk`, Effigy
+prompts for the disk size before continuing. Non-interactive runs use the
+configured/default target unless `--disk` is supplied.
 
 ## Current Limits
 

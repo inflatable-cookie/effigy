@@ -37,8 +37,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: None,
             set_container_backend: None,
             set_container_profile: None,
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 
@@ -59,8 +61,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: None,
             set_container_backend: None,
             set_container_profile: None,
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 
@@ -90,8 +94,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: None,
             set_container_backend: None,
             set_container_profile: None,
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 
@@ -113,8 +119,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: None,
             set_container_backend: None,
             set_container_profile: None,
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 
@@ -139,8 +147,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: Some("containers.backend"),
             set_container_backend: None,
             set_container_profile: None,
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 
@@ -170,8 +180,10 @@ fn builtin_config_parser_contracts_are_stable() {
             user_get: None,
             set_container_backend: Some("containerd"),
             set_container_profile: Some("effigy".to_owned()),
+            set_container_profile_disk_gib: None,
             unset_container_backend: false,
             unset_container_profile: false,
+            unset_container_profile_disk_gib: false,
         }
     );
 

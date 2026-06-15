@@ -22,7 +22,7 @@ const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
 const MAX_EFFIGY_MEMORY_GIB: u64 = 32;
 const MIN_EFFIGY_SWAP_GIB: u64 = 4;
 const MAX_EFFIGY_SWAP_GIB: u64 = 16;
-const MIN_EFFIGY_DISK_GIB: u64 = 300;
+const DEFAULT_EFFIGY_DISK_GIB: u64 = 300;
 const COLIMA_ARCH_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_ARCH";
 const COLIMA_VM_TYPE_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_VM_TYPE";
 
@@ -67,6 +67,13 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
 }
 
 pub fn colima_start_command_for_profile(profile: &str) -> CommandSpec {
+    colima_start_command_for_profile_with_disk(profile, None)
+}
+
+pub fn colima_start_command_for_profile_with_disk(
+    profile: &str,
+    disk_gib: Option<u64>,
+) -> CommandSpec {
     let runtime = colima_start_runtime_for_policy();
     let mut args = vec![
         "start".to_string(),
@@ -82,7 +89,7 @@ pub fn colima_start_command_for_profile(profile: &str) -> CommandSpec {
         // workspace shells.
         "--ssh-agent".to_string(),
     ];
-    if let Some(resources) = managed_colima_profile_resources(profile) {
+    if let Some(resources) = managed_colima_profile_resources_with_disk(profile, disk_gib) {
         args.push("--memory".to_string());
         args.push(resources.memory_gib.to_string());
         args.push("--disk".to_string());
@@ -142,17 +149,30 @@ pub fn parse_colima_running(stdout: &str, stderr: &str) -> bool {
 }
 
 pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourcePlan> {
+    managed_colima_profile_resources_with_disk(
+        profile,
+        crate::user_global_colima_profile_disk_gib(),
+    )
+}
+
+pub fn managed_colima_profile_resources_with_disk(
+    profile: &str,
+    disk_gib: Option<u64>,
+) -> Option<ColimaResourcePlan> {
     if profile != DEFAULT_COLIMA_PROFILE {
         return None;
     }
+    let disk_gib = disk_gib
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_EFFIGY_DISK_GIB);
     Some(
         detect_host_memory_bytes()
-            .map(resource_plan_for_host_memory_bytes)
+            .map(|bytes| resource_plan_for_host_memory_bytes(bytes, disk_gib))
             .unwrap_or_else(|| ColimaResourcePlan {
                 host_memory_gib: None,
                 memory_gib: MIN_EFFIGY_MEMORY_GIB,
                 swap_gib: MIN_EFFIGY_SWAP_GIB,
-                disk_gib: MIN_EFFIGY_DISK_GIB,
+                disk_gib,
             }),
     )
 }
@@ -162,10 +182,20 @@ pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Resu
 }
 
 pub fn prepare_managed_colima_profile_name(profile: &str) -> Result<(), String> {
+    prepare_managed_colima_profile_name_with_disk(
+        profile,
+        crate::user_global_colima_profile_disk_gib(),
+    )
+}
+
+pub fn prepare_managed_colima_profile_name_with_disk(
+    profile: &str,
+    disk_gib: Option<u64>,
+) -> Result<(), String> {
     if profile != DEFAULT_COLIMA_PROFILE {
         return Ok(());
     }
-    let Some(resources) = managed_colima_profile_resources(profile) else {
+    let Some(resources) = managed_colima_profile_resources_with_disk(profile, disk_gib) else {
         return Ok(());
     };
     let config_path = colima_profile_config_path(profile)?;
@@ -239,7 +269,10 @@ pub fn prepare_managed_colima_profile_name(profile: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn resource_plan_for_host_memory_bytes(host_memory_bytes: u64) -> ColimaResourcePlan {
+fn resource_plan_for_host_memory_bytes(
+    host_memory_bytes: u64,
+    disk_gib: u64,
+) -> ColimaResourcePlan {
     let host_memory_gib = bytes_to_gib_floor(host_memory_bytes).max(1);
     let quarter_host_gib = bytes_to_gib_ceil(host_memory_bytes / 4);
     let memory_gib = quarter_host_gib.clamp(MIN_EFFIGY_MEMORY_GIB, MAX_EFFIGY_MEMORY_GIB);
@@ -248,7 +281,7 @@ fn resource_plan_for_host_memory_bytes(host_memory_bytes: u64) -> ColimaResource
         host_memory_gib: Some(host_memory_gib),
         memory_gib,
         swap_gib,
-        disk_gib: MIN_EFFIGY_DISK_GIB,
+        disk_gib,
     }
 }
 

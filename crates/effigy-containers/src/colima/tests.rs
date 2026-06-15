@@ -207,6 +207,52 @@ fn managed_colima_profile_resources_scale_with_host_memory() {
 }
 
 #[test]
+fn managed_colima_profile_resources_honor_configured_disk_target() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join(".effigy-home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::write(
+        home.join("config.toml"),
+        "[containers]\nprofile_disk_gib = 180\n",
+    )
+    .expect("write config");
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (64u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+
+    let resources = with_test_user_config_home(&home, || {
+        managed_colima_profile_resources("effigy").expect("managed resources")
+    });
+
+    unsafe {
+        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    }
+    assert_eq!(resources.disk_gib, 180);
+}
+
+#[test]
+fn managed_colima_profile_resources_accept_explicit_disk_override() {
+    let _lock = env_lock();
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (64u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+    let resources =
+        managed_colima_profile_resources_with_disk("effigy", Some(220)).expect("resources");
+    unsafe {
+        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    }
+
+    assert_eq!(resources.disk_gib, 220);
+}
+
+#[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     let _lock = env_lock();
     let root = std::env::temp_dir().join(format!(

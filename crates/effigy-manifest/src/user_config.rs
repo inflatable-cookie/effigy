@@ -13,6 +13,7 @@
 //! [containers]
 //! backend = "containerd"
 //! profile = "effigy"
+//! profile_disk_gib = 300
 //!
 //! [bundle.php_app]
 //! library_mounts = [
@@ -53,6 +54,8 @@ pub struct UserContainersConfig {
     pub backend: Option<UserContainerBackendPreference>,
     #[serde(default)]
     pub profile: Option<String>,
+    #[serde(default)]
+    pub profile_disk_gib: Option<u64>,
 }
 
 /// User-global backend preference for runtime/container operations.
@@ -122,11 +125,17 @@ impl UserConfig {
     pub fn preferred_container_profile(&self) -> Option<&str> {
         self.containers.preferred_profile()
     }
+
+    pub fn preferred_container_profile_disk_gib(&self) -> Option<u64> {
+        self.containers.preferred_profile_disk_gib()
+    }
 }
 
 impl UserContainersConfig {
     pub fn is_empty(&self) -> bool {
-        self.backend.is_none() && self.preferred_profile().is_none()
+        self.backend.is_none()
+            && self.preferred_profile().is_none()
+            && self.preferred_profile_disk_gib().is_none()
     }
 
     pub fn preferred_profile(&self) -> Option<&str> {
@@ -134,6 +143,10 @@ impl UserContainersConfig {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
+    }
+
+    pub fn preferred_profile_disk_gib(&self) -> Option<u64> {
+        self.profile_disk_gib.filter(|value| *value > 0)
     }
 }
 
@@ -323,6 +336,7 @@ library_mounts = ["~/Dev/u-libs"]
 [containers]
 backend = "containerd"
 profile = "effigy"
+profile_disk_gib = 180
 "#,
         )
         .expect("write");
@@ -332,6 +346,7 @@ profile = "effigy"
             Some(UserContainerBackendPreference::Containerd)
         );
         assert_eq!(cfg.preferred_container_profile(), Some("effigy"));
+        assert_eq!(cfg.preferred_container_profile_disk_gib(), Some(180));
     }
 
     #[test]

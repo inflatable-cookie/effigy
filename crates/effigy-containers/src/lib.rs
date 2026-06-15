@@ -133,6 +133,11 @@ pub fn user_global_colima_profile() -> Option<String> {
     user_config.preferred_container_profile().map(str::to_owned)
 }
 
+pub fn user_global_colima_profile_disk_gib() -> Option<u64> {
+    let user_config = effigy_manifest::load_user_config().ok()?;
+    user_config.preferred_container_profile_disk_gib()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RuntimeBackendMetadata {
     #[serde(default)]

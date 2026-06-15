@@ -1,10 +1,12 @@
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use effigy_cli::ContainerProfileSubcommand;
 use effigy_containers::colima::{
-    colima_start_command_for_profile, managed_colima_profile_resources,
-    prepare_managed_colima_profile_name,
+    colima_start_command_for_profile, colima_start_command_for_profile_with_disk,
+    managed_colima_profile_resources, managed_colima_profile_resources_with_disk,
+    prepare_managed_colima_profile_name, prepare_managed_colima_profile_name_with_disk,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -52,9 +54,14 @@ pub(super) fn run_container_profile_command(
         ContainerProfileSubcommand::Resize { profile } => {
             run_container_profile_resize(profile.as_deref(), output_json)
         }
-        ContainerProfileSubcommand::Recreate { profile, yes } => {
-            run_container_profile_recreate(profile.as_deref(), *yes, output_json)
+        ContainerProfileSubcommand::Purge { profile, yes } => {
+            run_container_profile_purge(profile.as_deref(), *yes, output_json)
         }
+        ContainerProfileSubcommand::Recreate {
+            profile,
+            disk_gib,
+            yes,
+        } => run_container_profile_recreate(profile.as_deref(), *disk_gib, *yes, output_json),
     }
 }
 
@@ -69,20 +76,30 @@ fn run_container_profile_status(
 
 fn run_container_profile_recreate(
     profile: Option<&str>,
+    disk_gib: Option<u64>,
     yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let profile = resolve_profile(profile);
-    if managed_colima_profile_resources(&profile).is_none() {
+    let Some(default_resources) = managed_colima_profile_resources(&profile) else {
         return Err(RunnerError::task_invocation(format!(
             "`effigy container profile recreate` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
         )));
-    }
-    let before = inspect_profile(&profile)?;
+    };
+    let disk_gib = resolve_profile_recreate_disk_gib(
+        &profile,
+        disk_gib,
+        default_resources.disk_gib,
+        output_json,
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+    )?;
+    let before = inspect_profile_with_disk(&profile, disk_gib)?;
     maybe_confirm_destructive_container_action(
         "`effigy container profile recreate`",
         &format!(
-            "Recreate Colima profile `{profile}` with Effigy's managed sizing. This deletes the profile VM, container runtime state, images, containers, and volumes. Export database/object-store data first if you need it."
+            "Recreate Colima profile `{profile}` with Effigy's managed sizing ({disk}GiB disk target). This deletes the profile VM, container runtime state, images, containers, and volumes. Export database/object-store data first if you need it.",
+            disk = disk_gib.unwrap_or(default_resources.disk_gib)
         ),
         output_json,
         yes,
@@ -95,13 +112,47 @@ fn run_container_profile_recreate(
             "colima delete",
         )?;
     }
-    prepare_managed_colima_profile_name(&profile).map_err(RunnerError::task_invocation)?;
-    let start = colima_start_command_for_profile(&profile);
+    prepare_managed_colima_profile_name_with_disk(&profile, disk_gib)
+        .map_err(RunnerError::task_invocation)?;
+    let start = colima_start_command_for_profile_with_disk(&profile, disk_gib);
     let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
     run_command(&start.program, &start_args, &start.label, false)?;
 
-    let after = inspect_profile(&profile)?;
+    let after = inspect_profile_with_disk(&profile, disk_gib)?;
     Ok(render_profile_recreate(&before, &after, output_json))
+}
+
+fn run_container_profile_purge(
+    profile: Option<&str>,
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let profile = resolve_profile(profile);
+    if managed_colima_profile_resources(&profile).is_none() {
+        return Err(RunnerError::task_invocation(format!(
+            "`effigy container profile purge` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
+        )));
+    }
+    let before = inspect_profile(&profile)?;
+    maybe_confirm_destructive_container_action(
+        "`effigy container profile purge`",
+        &format!(
+            "Purge Colima profile `{profile}`. This deletes the profile VM, container runtime state, images, containers, and volumes. Effigy will not recreate or restart the profile."
+        ),
+        output_json,
+        yes,
+    )?;
+
+    if before.row.is_some() {
+        run_colima_allow_failure(&["stop", "--profile", &profile], "colima stop")?;
+        run_colima(
+            &["delete", "--profile", &profile, "--force", "--data"],
+            "colima delete",
+        )?;
+    }
+
+    let after = inspect_profile(&profile)?;
+    Ok(render_profile_purge(&before, &after, output_json))
 }
 
 fn run_container_profile_resize(
@@ -137,8 +188,9 @@ fn run_container_profile_resize(
         .unwrap_or(false);
     if !resized {
         return Err(RunnerError::task_invocation(format!(
-            "Colima profile `{profile}` restarted but still reports disk {}GiB below the managed target {}GiB. Try `effigy container profile recreate --yes` only if you are prepared to lose local profile runtime data.",
+            "Colima profile `{profile}` restarted but still reports disk {}GiB below the managed target {}GiB. Try `effigy container profile recreate --disk {} --yes` only if you are prepared to lose local profile runtime data.",
             after.row.as_ref().map(|row| bytes_to_gib(row.disk)).unwrap_or(0),
+            resources.disk_gib,
             resources.disk_gib,
         )));
     }
@@ -158,9 +210,16 @@ fn resolve_profile(profile: Option<&str>) -> String {
 }
 
 fn inspect_profile(profile: &str) -> Result<ProfileStatus, RunnerError> {
+    inspect_profile_with_disk(profile, None)
+}
+
+fn inspect_profile_with_disk(
+    profile: &str,
+    disk_gib: Option<u64>,
+) -> Result<ProfileStatus, RunnerError> {
     let rows = list_colima_profiles()?;
     let row = rows.into_iter().find(|row| row.name == profile);
-    let resources = managed_colima_profile_resources(profile);
+    let resources = managed_colima_profile_resources_with_disk(profile, disk_gib);
     Ok(ProfileStatus {
         profile: profile.to_owned(),
         row,
@@ -168,6 +227,59 @@ fn inspect_profile(profile: &str) -> Result<ProfileStatus, RunnerError> {
         target_swap_gib: resources.map(|value| value.swap_gib),
         target_disk_gib: resources.map(|value| value.disk_gib),
     })
+}
+
+fn resolve_profile_recreate_disk_gib(
+    profile: &str,
+    explicit_disk_gib: Option<u64>,
+    default_disk_gib: u64,
+    output_json: bool,
+    stdin_is_tty: bool,
+    stdout_is_tty: bool,
+) -> Result<Option<u64>, RunnerError> {
+    if explicit_disk_gib.is_some() || output_json || !stdin_is_tty || !stdout_is_tty {
+        return Ok(explicit_disk_gib);
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    prompt_profile_recreate_disk_gib(profile, default_disk_gib, &mut stdin, &mut stdout).map(Some)
+}
+
+fn prompt_profile_recreate_disk_gib<R: BufRead, W: Write>(
+    profile: &str,
+    default_disk_gib: u64,
+    input: &mut R,
+    output: &mut W,
+) -> Result<u64, RunnerError> {
+    write!(
+        output,
+        "Disk size for Colima profile `{profile}` in GiB [{default_disk_gib}]: "
+    )
+    .map_err(|error| RunnerError::task_invocation(format!("failed to write prompt: {error}")))?;
+    output.flush().map_err(|error| {
+        RunnerError::task_invocation(format!("failed to flush prompt: {error}"))
+    })?;
+
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .map_err(|error| RunnerError::task_invocation(format!("failed to read prompt: {error}")))?;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(default_disk_gib);
+    }
+    let value = trimmed.parse::<u64>().map_err(|_| {
+        RunnerError::task_invocation(format!(
+            "invalid Colima profile disk size `{trimmed}`; expected a positive integer GiB value"
+        ))
+    })?;
+    if value == 0 {
+        return Err(RunnerError::task_invocation(
+            "invalid Colima profile disk size `0`; expected a positive integer GiB value",
+        ));
+    }
+    Ok(value)
 }
 
 fn list_colima_profiles() -> Result<Vec<ColimaListRow>, RunnerError> {
@@ -296,6 +408,40 @@ fn render_profile_recreate(
     )
 }
 
+fn render_profile_purge(
+    before: &ProfileStatus,
+    after: &ProfileStatus,
+    output_json: bool,
+) -> String {
+    let json = json!({
+        "schema": "effigy.container.profile-purge.v1",
+        "schema_version": 1,
+        "ok": true,
+        "profile": after.profile,
+        "before": profile_status_json(before),
+        "after": profile_status_json(after),
+    });
+    if output_json {
+        return json.to_string();
+    }
+    if before.row.is_none() {
+        return format!(
+            "[info] Colima profile `{}` was already absent",
+            after.profile
+        );
+    }
+    if after.row.is_some() {
+        return format!(
+            "[warning] purged Colima profile `{}` but it still appears in `colima list --json`",
+            after.profile
+        );
+    }
+    format!(
+        "[ok] purged Colima profile `{}` and deleted profile runtime data",
+        after.profile
+    )
+}
+
 fn profile_status_json(status: &ProfileStatus) -> serde_json::Value {
     let memory_gib = status.row.as_ref().map(|row| bytes_to_gib(row.memory));
     let disk_gib = status.row.as_ref().map(|row| bytes_to_gib(row.disk));
@@ -413,7 +559,7 @@ mod tests {
 
         assert!(rendered.contains("disk: 100GiB (target=300GiB)"));
         assert!(rendered.contains("profile resize"));
-        assert!(!rendered.contains("profile recreate --yes"));
+        assert!(!rendered.contains("profile recreate --disk"));
     }
 
     #[test]
@@ -451,5 +597,74 @@ mod tests {
 
         assert!(rendered.contains("resized Colima profile `effigy` in place"));
         assert!(rendered.contains("disk: 300GiB (target=300GiB)"));
+    }
+
+    #[test]
+    fn profile_purge_renders_deleted_result() {
+        let before = ProfileStatus {
+            profile: "effigy".to_owned(),
+            row: Some(ColimaListRow {
+                name: "effigy".to_owned(),
+                status: "Stopped".to_owned(),
+                cpus: 2,
+                memory: 32 * BYTES_PER_GIB,
+                disk: 300 * BYTES_PER_GIB,
+                runtime: Some("containerd".to_owned()),
+            }),
+            target_memory_gib: Some(32),
+            target_swap_gib: Some(16),
+            target_disk_gib: Some(300),
+        };
+        let after = ProfileStatus {
+            profile: "effigy".to_owned(),
+            row: None,
+            target_memory_gib: Some(32),
+            target_swap_gib: Some(16),
+            target_disk_gib: Some(300),
+        };
+
+        let rendered = render_profile_purge(&before, &after, false);
+
+        assert!(rendered.contains("purged Colima profile `effigy`"));
+    }
+
+    #[test]
+    fn profile_purge_renders_absent_as_info() {
+        let status = ProfileStatus {
+            profile: "effigy".to_owned(),
+            row: None,
+            target_memory_gib: Some(32),
+            target_swap_gib: Some(16),
+            target_disk_gib: Some(300),
+        };
+
+        let rendered = render_profile_purge(&status, &status, false);
+
+        assert!(rendered.contains("already absent"));
+    }
+
+    #[test]
+    fn profile_recreate_disk_prompt_uses_default_on_blank() {
+        let mut input = std::io::Cursor::new(b"\n".as_slice());
+        let mut output = Vec::new();
+
+        let disk = prompt_profile_recreate_disk_gib("effigy", 180, &mut input, &mut output)
+            .expect("prompt");
+
+        assert_eq!(disk, 180);
+        assert!(String::from_utf8(output)
+            .expect("utf8")
+            .contains("Disk size for Colima profile `effigy` in GiB [180]:"));
+    }
+
+    #[test]
+    fn profile_recreate_disk_prompt_accepts_positive_value() {
+        let mut input = std::io::Cursor::new(b"220\n".as_slice());
+        let mut output = Vec::new();
+
+        let disk = prompt_profile_recreate_disk_gib("effigy", 300, &mut input, &mut output)
+            .expect("prompt");
+
+        assert_eq!(disk, 220);
     }
 }

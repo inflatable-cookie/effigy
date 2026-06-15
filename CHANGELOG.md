@@ -6,6 +6,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Managed Colima profile disk sizing is now configurable via `effigy config set containers.profile_disk_gib <GiB>` and `effigy container profile recreate --disk <GiB>`. Interactive `profile recreate` runs prompt for the disk size when `--disk` is omitted.
+- `effigy container profile purge` deletes the managed Colima profile and its runtime data without recreating or restarting it.
+
 ## [0.8.14] - 2026-06-15
 
 ### Fixed

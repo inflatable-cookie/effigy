@@ -24,13 +24,20 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
             "config",
             &["set", "containers.profile", "effigy"],
         );
+        let set_disk = run_builtin_ok(
+            root.clone(),
+            "config",
+            &["set", "containers.profile_disk_gib", "180"],
+        );
         let rendered = std::fs::read_to_string(&config_path).expect("user config written");
 
         assert_output_contains_all(&out, &["User Config", "backend: containerd"]);
         assert_output_contains_all(&set_profile, &["User Config", "profile: effigy"]);
+        assert_output_contains_all(&set_disk, &["User Config", "profile_disk_gib: 180"]);
         assert!(rendered.contains("[containers]"));
         assert!(rendered.contains("backend = \"containerd\""));
         assert!(rendered.contains("profile = \"effigy\""));
+        assert!(rendered.contains("profile_disk_gib = 180"));
 
         let inspect = run_builtin_ok(root.clone(), "config", &["path"]);
         assert_eq!(inspect.trim(), config_path.display().to_string());
@@ -43,6 +50,7 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
                 "Status: present",
                 "backend: containerd",
                 "profile: effigy",
+                "profile_disk_gib: 180",
             ],
         );
 
@@ -50,12 +58,24 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
         assert_eq!(get_backend.trim(), "containerd");
         let get_profile = run_builtin_ok(root.clone(), "config", &["get", "containers.profile"]);
         assert_eq!(get_profile.trim(), "effigy");
+        let get_disk = run_builtin_ok(
+            root.clone(),
+            "config",
+            &["get", "containers.profile_disk_gib"],
+        );
+        assert_eq!(get_disk.trim(), "180");
 
         let unset = run_builtin_ok(root.clone(), "config", &["unset", "containers.backend"]);
         assert_output_contains_all(&unset, &["backend: (unset)"]);
         let unset_profile =
             run_builtin_ok(root.clone(), "config", &["unset", "containers.profile"]);
         assert_output_contains_all(&unset_profile, &["profile: (unset)"]);
+        let unset_disk = run_builtin_ok(
+            root.clone(),
+            "config",
+            &["unset", "containers.profile_disk_gib"],
+        );
+        assert_output_contains_all(&unset_disk, &["profile_disk_gib: (unset)"]);
         let inspect_after = run_builtin_ok(root.clone(), "config", &["--user-inspect"]);
         assert_output_contains_all(
             &inspect_after,
@@ -64,6 +84,7 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
                 "Status: not yet created",
                 "backend: (unset)",
                 "profile: (unset)",
+                "profile_disk_gib: (unset)",
             ],
         );
         assert!(

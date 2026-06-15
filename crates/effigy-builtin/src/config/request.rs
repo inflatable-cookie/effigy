@@ -18,14 +18,17 @@ pub(super) struct ConfigRequest {
     pub(super) user_get: Option<UserConfigKey>,
     pub(super) set_container_backend: Option<UserContainerBackendPreference>,
     pub(super) set_container_profile: Option<String>,
+    pub(super) set_container_profile_disk_gib: Option<u64>,
     pub(super) unset_container_backend: bool,
     pub(super) unset_container_profile: bool,
+    pub(super) unset_container_profile_disk_gib: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UserConfigKey {
     ContainersBackend,
     ContainersProfile,
+    ContainersProfileDiskGib,
 }
 
 impl UserConfigKey {
@@ -33,6 +36,7 @@ impl UserConfigKey {
         match self {
             Self::ContainersBackend => "containers.backend",
             Self::ContainersProfile => "containers.profile",
+            Self::ContainersProfileDiskGib => "containers.profile_disk_gib",
         }
     }
 }
@@ -125,8 +129,10 @@ pub(super) fn parse_config_request(
     let mut user_get: Option<UserConfigKey> = None;
     let mut set_container_backend: Option<UserContainerBackendPreference> = None;
     let mut set_container_profile: Option<String> = None;
+    let mut set_container_profile_disk_gib: Option<u64> = None;
     let mut unset_container_backend = false;
     let mut unset_container_profile = false;
+    let mut unset_container_profile_disk_gib = false;
     match args.first().map(String::as_str) {
         Some("inspect") => {
             let _ = parser.next();
@@ -144,7 +150,7 @@ pub(super) fn parse_config_request(
             let _ = parser.next();
             let key = parser.required_subcommand(
                 "config get",
-                "`containers.backend` or `containers.profile`",
+                "`containers.backend`, `containers.profile`, or `containers.profile_disk_gib`",
             )?;
             user_get = Some(parse_user_config_key("config get", key)?);
         }
@@ -152,7 +158,7 @@ pub(super) fn parse_config_request(
             let _ = parser.next();
             let key = parser.required_subcommand(
                 "config set",
-                "`containers.backend` or `containers.profile`",
+                "`containers.backend`, `containers.profile`, or `containers.profile_disk_gib`",
             )?;
             match parse_user_config_key("config set", key)? {
                 UserConfigKey::ContainersBackend => {
@@ -182,17 +188,26 @@ pub(super) fn parse_config_request(
                         |_| "invalid `containers.profile` value".to_owned(),
                     )?);
                 }
+                UserConfigKey::ContainersProfileDiskGib => {
+                    set_container_profile_disk_gib = Some(parser.positive_u64_flag_value(
+                        "containers.profile_disk_gib",
+                        "`config set containers.profile_disk_gib` requires a value",
+                    )?);
+                }
             }
         }
         Some("unset") => {
             let _ = parser.next();
             let key = parser.required_subcommand(
                 "config unset",
-                "`containers.backend` or `containers.profile`",
+                "`containers.backend`, `containers.profile`, or `containers.profile_disk_gib`",
             )?;
             match parse_user_config_key("config unset", key)? {
                 UserConfigKey::ContainersBackend => unset_container_backend = true,
                 UserConfigKey::ContainersProfile => unset_container_profile = true,
+                UserConfigKey::ContainersProfileDiskGib => {
+                    unset_container_profile_disk_gib = true;
+                }
             }
         }
         _ => {}
@@ -209,6 +224,10 @@ pub(super) fn parse_config_request(
                 ("--user-path", &mut user_path),
                 ("--unset-container-backend", &mut unset_container_backend),
                 ("--unset-container-profile", &mut unset_container_profile),
+                (
+                    "--unset-container-profile-disk",
+                    &mut unset_container_profile_disk_gib,
+                ),
             ],
         ) {
             return Ok(ParseLoopAction::Handled);
@@ -265,6 +284,13 @@ pub(super) fn parse_config_request(
             )?);
             return Ok(ParseLoopAction::Handled);
         }
+        if arg == "--set-container-profile-disk" {
+            set_container_profile_disk_gib = Some(parser.positive_u64_flag_value(
+                "--set-container-profile-disk",
+                "`--set-container-profile-disk` requires a value",
+            )?);
+            return Ok(ParseLoopAction::Handled);
+        }
         Ok(ParseLoopAction::Unknown)
     })?;
     if inspect && schema {
@@ -297,8 +323,10 @@ pub(super) fn parse_config_request(
         || user_get.is_some()
         || set_container_backend.is_some()
         || set_container_profile.is_some()
+        || set_container_profile_disk_gib.is_some()
         || unset_container_backend
-        || unset_container_profile;
+        || unset_container_profile
+        || unset_container_profile_disk_gib;
     if user_mode && (inspect || schema) {
         return Err(BuiltinError::task_invocation(
             "user-global config flags cannot be combined with `--inspect` or `--schema` for built-in `config`",
@@ -319,8 +347,10 @@ pub(super) fn parse_config_request(
             || user_get.is_some()
             || set_container_backend.is_some()
             || set_container_profile.is_some()
+            || set_container_profile_disk_gib.is_some()
             || unset_container_backend
-            || unset_container_profile)
+            || unset_container_profile
+            || unset_container_profile_disk_gib)
     {
         return Err(BuiltinError::task_invocation(
             "`--user-inspect` cannot be combined with other user-global config operations for built-in `config`",
@@ -330,8 +360,10 @@ pub(super) fn parse_config_request(
         && (user_get.is_some()
             || set_container_backend.is_some()
             || set_container_profile.is_some()
+            || set_container_profile_disk_gib.is_some()
             || unset_container_backend
-            || unset_container_profile)
+            || unset_container_profile
+            || unset_container_profile_disk_gib)
     {
         return Err(BuiltinError::task_invocation(
             "`path`/`--user-path` cannot be combined with other user-global config operations for built-in `config`",
@@ -340,8 +372,10 @@ pub(super) fn parse_config_request(
     if user_get.is_some()
         && (set_container_backend.is_some()
             || set_container_profile.is_some()
+            || set_container_profile_disk_gib.is_some()
             || unset_container_backend
-            || unset_container_profile)
+            || unset_container_profile
+            || unset_container_profile_disk_gib)
     {
         return Err(BuiltinError::task_invocation(
             "`get` cannot be combined with user-global config update flags for built-in `config`",
@@ -355,6 +389,11 @@ pub(super) fn parse_config_request(
     if set_container_profile.is_some() && unset_container_profile {
         return Err(BuiltinError::task_invocation(
             "`--set-container-profile` cannot be combined with `--unset-container-profile` for built-in `config`",
+        ));
+    }
+    if set_container_profile_disk_gib.is_some() && unset_container_profile_disk_gib {
+        return Err(BuiltinError::task_invocation(
+            "`--set-container-profile-disk` cannot be combined with `--unset-container-profile-disk` for built-in `config`",
         ));
     }
 
@@ -371,8 +410,10 @@ pub(super) fn parse_config_request(
         user_get,
         set_container_backend,
         set_container_profile,
+        set_container_profile_disk_gib,
         unset_container_backend,
         unset_container_profile,
+        unset_container_profile_disk_gib,
     })
 }
 
@@ -391,8 +432,10 @@ pub struct ConfigParseContract {
     pub user_get: Option<&'static str>,
     pub set_container_backend: Option<&'static str>,
     pub set_container_profile: Option<String>,
+    pub set_container_profile_disk_gib: Option<u64>,
     pub unset_container_backend: bool,
     pub unset_container_profile: bool,
+    pub unset_container_profile_disk_gib: bool,
 }
 
 pub fn parse_config_contract_request(
@@ -417,8 +460,10 @@ pub fn parse_config_contract_request(
             UserContainerBackendPreference::Docker => "docker",
         }),
         set_container_profile: parsed.set_container_profile,
+        set_container_profile_disk_gib: parsed.set_container_profile_disk_gib,
         unset_container_backend: parsed.unset_container_backend,
         unset_container_profile: parsed.unset_container_profile,
+        unset_container_profile_disk_gib: parsed.unset_container_profile_disk_gib,
     })
 }
 
@@ -426,8 +471,9 @@ fn parse_user_config_key(context: &str, key: &str) -> Result<UserConfigKey, Buil
     match key {
         "containers.backend" => Ok(UserConfigKey::ContainersBackend),
         "containers.profile" => Ok(UserConfigKey::ContainersProfile),
+        "containers.profile_disk_gib" => Ok(UserConfigKey::ContainersProfileDiskGib),
         _ => Err(BuiltinError::task_invocation(format!(
-            "unknown {context} key `{key}` (expected `containers.backend` or `containers.profile`)"
+            "unknown {context} key `{key}` (expected `containers.backend`, `containers.profile`, or `containers.profile_disk_gib`)"
         ))),
     }
 }

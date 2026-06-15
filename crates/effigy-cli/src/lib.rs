@@ -826,9 +826,21 @@ pub enum ContainerSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerProfileSubcommand {
-    Status { profile: Option<String> },
-    Resize { profile: Option<String> },
-    Recreate { profile: Option<String>, yes: bool },
+    Status {
+        profile: Option<String>,
+    },
+    Resize {
+        profile: Option<String>,
+    },
+    Purge {
+        profile: Option<String>,
+        yes: bool,
+    },
+    Recreate {
+        profile: Option<String>,
+        disk_gib: Option<u64>,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

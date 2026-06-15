@@ -267,7 +267,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container profile` requires a subcommand; use `status`, `resize`, or `recreate`"
+            "`effigy container profile` requires a subcommand; use `status`, `resize`, `purge`, or `recreate`"
                 .to_owned(),
         ));
     };
@@ -276,6 +276,7 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
         "status" => parse_container_profile_status(args),
         "resize" => parse_container_profile_resize(args),
+        "purge" => parse_container_profile_purge(args),
         "recreate" => parse_container_profile_recreate(args),
         other => Err(unknown_argument(other)),
     }
@@ -349,6 +350,49 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut profile: Option<String> = None;
+    let mut disk_gib: Option<u64> = None;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--yes" => yes = true,
+            "--disk" => disk_gib = Some(parse_positive_u64(&mut args, "--disk")?),
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile {
+            subcommand: ContainerProfileSubcommand::Recreate {
+                profile,
+                disk_gib,
+                yes,
+            },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_profile_purge<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut profile: Option<String> = None;
     let mut yes = false;
 
     while let Some(arg) = args.next() {
@@ -371,11 +415,32 @@ where
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Profile {
-            subcommand: ContainerProfileSubcommand::Recreate { profile, yes },
+            subcommand: ContainerProfileSubcommand::Purge { profile, yes },
         },
         repo_override,
         output_json,
     }))
+}
+
+fn parse_positive_u64<I>(args: &mut I, flag: &str) -> Result<u64, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let raw = next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: flag.to_owned(),
+        },
+    )?;
+    let value = raw.parse::<u64>().map_err(|_| {
+        CliParseError::InvalidArguments(format!("`{flag}` must be a positive integer, got `{raw}`"))
+    })?;
+    if value == 0 {
+        return Err(CliParseError::InvalidArguments(format!(
+            "`{flag}` must be a positive integer, got `0`"
+        )));
+    }
+    Ok(value)
 }
 
 fn parse_container_profile_resize<I>(args: I) -> Result<Command, CliParseError>

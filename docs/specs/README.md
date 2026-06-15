@@ -43,8 +43,10 @@ Archived strict lanes:
 
 Active lane:
 
-- none
+- [`098-effigy-uninstall-command.md`](./098-effigy-uninstall-command.md) -
+  draft top-level uninstall command scope and safety rules
 
 ## Next Task
 
-Planning only.
+Promote uninstall ownership rules into a durable contract before implementing
+`effigy uninstall`.
