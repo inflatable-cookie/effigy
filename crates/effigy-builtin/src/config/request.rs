@@ -26,17 +26,17 @@ pub(super) struct ConfigRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UserConfigKey {
-    ContainersBackend,
-    ContainersProfile,
-    ContainersProfileDiskGib,
+    Backend,
+    Profile,
+    ProfileDiskGib,
 }
 
 impl UserConfigKey {
     pub(super) fn as_str(self) -> &'static str {
         match self {
-            Self::ContainersBackend => "containers.backend",
-            Self::ContainersProfile => "containers.profile",
-            Self::ContainersProfileDiskGib => "containers.profile_disk_gib",
+            Self::Backend => "containers.backend",
+            Self::Profile => "containers.profile",
+            Self::ProfileDiskGib => "containers.profile_disk_gib",
         }
     }
 }
@@ -161,7 +161,7 @@ pub(super) fn parse_config_request(
                 "`containers.backend`, `containers.profile`, or `containers.profile_disk_gib`",
             )?;
             match parse_user_config_key("config set", key)? {
-                UserConfigKey::ContainersBackend => {
+                UserConfigKey::Backend => {
                     set_container_backend = Some(parser.builtin_choice_flag_value(
                         "config set",
                         "containers.backend",
@@ -174,7 +174,7 @@ pub(super) fn parse_config_request(
                         },
                     )?);
                 }
-                UserConfigKey::ContainersProfile => {
+                UserConfigKey::Profile => {
                     set_container_profile = Some(parser.mapped_flag_value(
                         "`config set containers.profile` requires a value",
                         |value| {
@@ -188,7 +188,7 @@ pub(super) fn parse_config_request(
                         |_| "invalid `containers.profile` value".to_owned(),
                     )?);
                 }
-                UserConfigKey::ContainersProfileDiskGib => {
+                UserConfigKey::ProfileDiskGib => {
                     set_container_profile_disk_gib = Some(parser.positive_u64_flag_value(
                         "containers.profile_disk_gib",
                         "`config set containers.profile_disk_gib` requires a value",
@@ -203,9 +203,9 @@ pub(super) fn parse_config_request(
                 "`containers.backend`, `containers.profile`, or `containers.profile_disk_gib`",
             )?;
             match parse_user_config_key("config unset", key)? {
-                UserConfigKey::ContainersBackend => unset_container_backend = true,
-                UserConfigKey::ContainersProfile => unset_container_profile = true,
-                UserConfigKey::ContainersProfileDiskGib => {
+                UserConfigKey::Backend => unset_container_backend = true,
+                UserConfigKey::Profile => unset_container_profile = true,
+                UserConfigKey::ProfileDiskGib => {
                     unset_container_profile_disk_gib = true;
                 }
             }
@@ -469,9 +469,9 @@ pub fn parse_config_contract_request(
 
 fn parse_user_config_key(context: &str, key: &str) -> Result<UserConfigKey, BuiltinError> {
     match key {
-        "containers.backend" => Ok(UserConfigKey::ContainersBackend),
-        "containers.profile" => Ok(UserConfigKey::ContainersProfile),
-        "containers.profile_disk_gib" => Ok(UserConfigKey::ContainersProfileDiskGib),
+        "containers.backend" => Ok(UserConfigKey::Backend),
+        "containers.profile" => Ok(UserConfigKey::Profile),
+        "containers.profile_disk_gib" => Ok(UserConfigKey::ProfileDiskGib),
         _ => Err(BuiltinError::task_invocation(format!(
             "unknown {context} key `{key}` (expected `containers.backend`, `containers.profile`, or `containers.profile_disk_gib`)"
         ))),

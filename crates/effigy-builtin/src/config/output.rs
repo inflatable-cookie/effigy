@@ -836,12 +836,12 @@ fn render_backend_preference(backend: UserContainerBackendPreference) -> &'stati
 
 fn render_user_config_key_value(config: &UserConfig, key: UserConfigKey) -> Option<String> {
     match key {
-        UserConfigKey::ContainersBackend => config
+        UserConfigKey::Backend => config
             .preferred_container_backend()
             .map(render_backend_preference)
             .map(str::to_owned),
-        UserConfigKey::ContainersProfile => config.preferred_container_profile().map(str::to_owned),
-        UserConfigKey::ContainersProfileDiskGib => config
+        UserConfigKey::Profile => config.preferred_container_profile().map(str::to_owned),
+        UserConfigKey::ProfileDiskGib => config
             .preferred_container_profile_disk_gib()
             .map(|value| value.to_string()),
     }
