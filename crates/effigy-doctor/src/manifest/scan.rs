@@ -2,7 +2,7 @@ use std::path::Path;
 
 use effigy_core::data_loading::{parse_toml, read_utf8};
 use effigy_manifest::config_sections::ManifestJsPackageManager;
-use effigy_manifest::{load_task_manifest_with_inspection, LoadedCatalog, TaskManifest};
+use effigy_manifest::{load_task_manifest_with_inspection, LoadedCatalog, LoadedTaskManifest};
 use effigy_routing::{default_alias, discover_manifest_paths};
 use toml::Value;
 
@@ -49,10 +49,10 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         if !self.validate_manifest_syntax_and_schema(manifest_path, &source) {
             return;
         }
-        let Some(manifest) = self.parse_manifest_strict(manifest_path) else {
+        let Some(loaded) = self.parse_manifest_strict(manifest_path) else {
             return;
         };
-        self.capture_manifest_catalog(manifest_path, manifest);
+        self.capture_manifest_catalog(manifest_path, loaded);
     }
 
     fn read_manifest_source(&mut self, manifest_path: &Path) -> Option<String> {
@@ -84,9 +84,9 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         }
     }
 
-    fn parse_manifest_strict(&mut self, manifest_path: &Path) -> Option<TaskManifest> {
+    fn parse_manifest_strict(&mut self, manifest_path: &Path) -> Option<LoadedTaskManifest> {
         match load_task_manifest_with_inspection(manifest_path) {
-            Ok(loaded) => Some(loaded.manifest),
+            Ok(loaded) => Some(loaded),
             Err(error) => {
                 self.push_manifest_parse_error(ManifestParseFinding::strict_parse_failure(
                     manifest_path,
@@ -97,21 +97,20 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         }
     }
 
-    fn capture_manifest_catalog(&mut self, manifest_path: &Path, manifest: TaskManifest) {
+    fn capture_manifest_catalog(&mut self, manifest_path: &Path, loaded: LoadedTaskManifest) {
         self.parse_ok_any = true;
-        if self.preferred_js_pm.is_none() {
-            self.preferred_js_pm = manifest.package_manager.as_ref().and_then(|pm| pm.js);
-        }
-
         let catalog_root = manifest_path
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| self.resolved_root.to_path_buf());
-        let alias = manifest
-            .catalog
-            .as_ref()
-            .and_then(|catalog| catalog.alias.clone())
+        let alias = loaded
+            .manifest_defined_catalog_alias()
+            .map(str::to_owned)
             .unwrap_or_else(|| default_alias(&catalog_root, self.resolved_root));
+        let manifest = loaded.manifest;
+        if self.preferred_js_pm.is_none() {
+            self.preferred_js_pm = manifest.package_manager.as_ref().and_then(|pm| pm.js);
+        }
         let depth = catalog_root
             .strip_prefix(self.resolved_root)
             .map(|rel| rel.components().count())

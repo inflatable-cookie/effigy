@@ -160,6 +160,58 @@ primary_service = "app"
 }
 
 #[test]
+fn load_container_policy_uses_repo_name_when_alias_only_comes_from_bundle_defaults() {
+    let root = temp_repo("single-container-bundle-root-alias");
+    let bundle = root.with_file_name("single-container-bundle-root-alias-bundle");
+    fs::create_dir_all(&bundle).expect("mkdir bundle");
+    fs::write(
+        bundle.join("bundle.toml"),
+        r#"
+[bundle]
+name = "legacy-site"
+description = "legacy site fixture"
+"#,
+    )
+    .expect("write bundle descriptor");
+    fs::write(
+        bundle.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "root"
+"#,
+    )
+    .expect("write bundle defaults");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[bundle]
+base = {{ type = "path", dir = "{}" }}
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+            bundle.display()
+        ),
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let expected = format!(
+        "{}-dev",
+        root.file_name().and_then(|name| name.to_str()).unwrap()
+    );
+
+    assert_eq!(policy.project_name, expected);
+}
+
+#[test]
 fn load_container_policy_rejects_duplicate_effective_project_names() {
     let root = temp_repo("duplicate-project-names");
     fs::write(

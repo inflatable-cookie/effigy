@@ -18,20 +18,15 @@ pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, Ro
     let mut alias_map: HashMap<String, PathBuf> = HashMap::new();
 
     for manifest_path in manifest_paths {
+        let catalog_root = catalog_root_for(&manifest_path, workspace_root);
         let loaded =
             load_task_manifest_with_inspection(&manifest_path).map_err(RoutingError::from)?;
+        let alias = loaded
+            .manifest_defined_catalog_alias()
+            .map(str::to_owned)
+            .unwrap_or_else(|| default_alias(&catalog_root, workspace_root));
         let bundle_root = loaded.bundle_root;
         let manifest = loaded.manifest;
-
-        let catalog_root = manifest_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| workspace_root.to_path_buf());
-        let alias = manifest
-            .catalog
-            .as_ref()
-            .and_then(|meta| meta.alias.clone())
-            .unwrap_or_else(|| default_alias(&catalog_root, workspace_root));
 
         if let Some(first_path) = alias_map.insert(alias.clone(), manifest_path.clone()) {
             return Err(RoutingError::TaskCatalogAliasConflict {
@@ -58,6 +53,13 @@ pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, Ro
     }
 
     Ok(catalogs)
+}
+
+fn catalog_root_for(manifest_path: &Path, workspace_root: &Path) -> PathBuf {
+    manifest_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
 pub fn discover_catalogs_allow_missing(
@@ -353,7 +355,7 @@ fn manifest_declares_root(manifest_path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_alias, discover_manifest_paths};
+    use super::{default_alias, discover_catalogs, discover_manifest_paths};
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
@@ -374,6 +376,54 @@ mod tests {
                 Path::new("/tmp/dev/cbs")
             ),
             "api"
+        );
+    }
+
+    #[test]
+    fn discover_catalogs_uses_directory_name_when_alias_only_comes_from_bundle_defaults() {
+        let root = temp_root("acowtancy");
+        let bundle = root.with_file_name("acowtancy-bundle-defaults");
+        fs::create_dir_all(&bundle).expect("bundle dir");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"
+[bundle]
+base = {{ type = "path", dir = "{}" }}
+"#,
+                bundle.display()
+            ),
+        )
+        .expect("root manifest");
+        fs::write(
+            bundle.join("bundle.toml"),
+            r#"
+[bundle]
+name = "legacy-site"
+description = "legacy site fixture"
+"#,
+        )
+        .expect("bundle descriptor");
+        fs::write(
+            bundle.join("effigy.toml"),
+            r#"
+[catalog]
+alias = "root"
+
+[tasks.dev]
+run = "printf dev"
+"#,
+        )
+        .expect("bundle defaults");
+
+        let catalogs = discover_catalogs(&root).expect("discover catalogs");
+        let root_catalog = catalogs
+            .iter()
+            .find(|catalog| catalog.catalog_root == root)
+            .expect("root catalog");
+        assert_eq!(
+            root_catalog.alias,
+            root.file_name().and_then(|name| name.to_str()).unwrap()
         );
     }
 

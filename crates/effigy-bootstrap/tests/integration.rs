@@ -144,6 +144,64 @@ fn create_catalog_alias_root_remote() -> PathBuf {
     create_catalog_alias_remote("contact-patch")
 }
 
+fn create_bundle_default_root_alias_remote() -> PathBuf {
+    let worktree = temp_dir("bundle-default-root-alias-worktree");
+    let bundle = temp_dir("bundle-default-root-alias-bundle");
+    fs::create_dir_all(&bundle).expect("mkdir bundle");
+    fs::write(
+        worktree.join("effigy.toml"),
+        format!(
+            r#"
+[bundle]
+base = {{ type = "path", dir = "{}" }}
+
+[bootstrap]
+run = "sh ./scripts/root-setup.sh"
+"#,
+            bundle.display()
+        ),
+    )
+    .expect("write manifest");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("scripts/root-setup.sh"),
+        "#!/bin/sh\nset -eu\nprintf bundled > root-setup.txt\n",
+    )
+    .expect("write root setup");
+    let script = worktree.join("scripts/root-setup.sh");
+    let mut perms = fs::metadata(&script)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod script");
+    fs::write(
+        bundle.join("bundle.toml"),
+        r#"
+[bundle]
+name = "legacy-site"
+description = "legacy site fixture"
+"#,
+    )
+    .expect("write bundle descriptor");
+    fs::write(
+        bundle.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "root"
+
+[tasks.bundle]
+run = "printf bundle"
+"#,
+    )
+    .expect("write bundle defaults");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init bundled root alias");
+    let remote = bare_remote_path("acowtancy");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 /// Parse the manifest at `path` and surface its `[bootstrap]` section.
 fn load_bootstrap_from_manifest(
     path: &Path,
@@ -587,6 +645,39 @@ fn execute_bootstrap_request_honors_explicit_root_catalog_alias_for_default_dest
     assert_eq!(result.request.destination, destination);
     assert!(destination.is_dir());
     assert!(!cwd.join("remote").exists());
+}
+
+#[test]
+fn execute_bootstrap_request_ignores_bundle_default_root_alias_for_default_destination() {
+    let remote = create_bundle_default_root_alias_remote();
+    let cwd = temp_dir("bootstrap-bundle-default-root-alias");
+    let request = BootstrapResolution {
+        repo_url: remote.display().to_string(),
+        repo_name: "acowtancy".to_owned(),
+        destination: cwd.join("acowtancy"),
+        destination_source: "cwd-default",
+        branch: None,
+        db_seeds: Vec::new(),
+        fresh: false,
+        start_requested: false,
+    };
+
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+
+    let destination = cwd.join("acowtancy");
+    assert_eq!(result.request.destination, destination);
+    assert!(destination.is_dir());
+    assert!(!cwd.join("root").exists());
+    assert_eq!(
+        fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
+        "bundled"
+    );
 }
 
 #[test]

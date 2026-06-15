@@ -596,6 +596,7 @@ pub(in crate::runner) fn run_db_seed_task(
             })
         });
     }
+    prepare_builtin_db_seed_runtime(repo_root)?;
     run_builtin_db_seed_task(repo_root, &manifest, env_overrides)
 }
 
@@ -659,6 +660,23 @@ fn prepare_db_seed_runtime(
             container_name: plan.request.container_name.as_deref(),
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
+            session_context,
+        },
+    )?;
+    Ok(())
+}
+
+fn prepare_builtin_db_seed_runtime(repo_root: &Path) -> Result<(), RunnerError> {
+    let policy = effigy_containers::load_container_policy(repo_root, None)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let session_context = data_seed_runtime_session_context();
+    activate_container_runtime_for_task(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: Some(policy.name.as_str()),
+            repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::DataSeed,
             session_context,
         },
     )?;

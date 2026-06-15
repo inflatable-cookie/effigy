@@ -2,20 +2,13 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
-use effigy_manifest::{ManifestContainerConfig, ManifestContainersConfig};
+use effigy_manifest::{LoadedTaskManifest, ManifestContainerConfig, ManifestContainersConfig};
 
 use super::model::ContainerPolicyError;
 
-pub(crate) fn default_project_name_base(
-    manifest: &effigy_manifest::TaskManifest,
-    repo_root: &Path,
-) -> String {
-    manifest
-        .catalog
-        .as_ref()
-        .and_then(|catalog| catalog.alias.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+pub(crate) fn default_project_name_base(loaded: &LoadedTaskManifest, repo_root: &Path) -> String {
+    loaded
+        .manifest_defined_catalog_alias()
         .map(sanitize_project_name_component)
         .unwrap_or_else(|| {
             let repo = repo_root

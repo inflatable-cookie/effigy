@@ -2,8 +2,9 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{
-    config_sections::ManifestBootstrapChildConfig, load_task_manifest, ManifestBootstrapConfig,
-    ManifestBootstrapRun, ManifestBootstrapSubmodulesPolicy, TASK_MANIFEST_FILE,
+    config_sections::ManifestBootstrapChildConfig, load_task_manifest,
+    load_task_manifest_with_inspection, ManifestBootstrapConfig, ManifestBootstrapRun,
+    ManifestBootstrapSubmodulesPolicy, TASK_MANIFEST_FILE,
 };
 use serde_json::json;
 
@@ -518,17 +519,16 @@ where
 fn preferred_bootstrap_destination_name(
     manifest_path: &Path,
 ) -> Result<Option<String>, BootstrapError> {
-    let manifest = load_task_manifest(manifest_path).map_err(|error| BootstrapError::Read {
-        path: manifest_path.to_path_buf(),
-        error: std::io::Error::other(error.to_string()),
+    let loaded = load_task_manifest_with_inspection(manifest_path).map_err(|error| {
+        BootstrapError::Read {
+            path: manifest_path.to_path_buf(),
+            error: std::io::Error::other(error.to_string()),
+        }
     })?;
-    let Some(alias) = manifest.catalog.and_then(|catalog| catalog.alias) else {
+    let Some(alias) = loaded.manifest_defined_catalog_alias() else {
         return Ok(None);
     };
     let alias = alias.trim();
-    if alias.is_empty() {
-        return Ok(None);
-    }
     if alias == "." || alias == ".." || alias.contains('/') || alias.contains('\\') {
         return Err(BootstrapError::task_invocation(format!(
             "bootstrap catalog alias `{alias}` is not a valid destination name"

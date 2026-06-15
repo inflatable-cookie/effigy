@@ -26,6 +26,29 @@ pub struct LoadedTaskManifest {
     pub bundle_root: Option<PathBuf>,
 }
 
+impl LoadedTaskManifest {
+    pub fn manifest_defined_catalog_alias(&self) -> Option<&str> {
+        let alias = self
+            .manifest
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.alias.as_deref())?
+            .trim();
+        if alias.is_empty() {
+            return None;
+        }
+
+        let source = self
+            .value_sources
+            .iter()
+            .find(|source| source.path == "catalog.alias")?;
+        self.evaluation_order
+            .iter()
+            .any(|path| path == &source.source)
+            .then_some(alias)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ManifestCompositionEdge {
     pub parent: PathBuf,
@@ -717,6 +740,84 @@ mod tests {
             .iter()
             .map(|item| item.as_str().expect("string").to_owned())
             .collect()
+    }
+
+    fn write_bundle_with_catalog_alias(dir: &Path, alias: &str) {
+        let bundle = dir.join("bundle");
+        std::fs::create_dir_all(&bundle).expect("mkdir bundle");
+        write_manifest(
+            &bundle,
+            "bundle.toml",
+            r#"
+[bundle]
+name = "default-catalog-alias"
+description = "default catalog alias fixture"
+"#,
+        );
+        write_manifest(
+            &bundle,
+            "effigy.toml",
+            &format!(
+                r#"
+[catalog]
+alias = "{alias}"
+
+[tasks.bundle]
+run = "printf bundle"
+"#
+            ),
+        );
+    }
+
+    #[test]
+    fn manifest_defined_catalog_alias_ignores_bundle_default_alias() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        write_bundle_with_catalog_alias(dir, "root");
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[bundle]
+base = { type = "path", dir = "bundle" }
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded
+                .manifest
+                .catalog
+                .as_ref()
+                .and_then(|catalog| catalog.alias.as_deref()),
+            Some("root")
+        );
+        assert_eq!(loaded.manifest_defined_catalog_alias(), None);
+    }
+
+    #[test]
+    fn manifest_defined_catalog_alias_accepts_included_alias() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["catalog.toml"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "catalog.toml",
+            r#"
+[catalog]
+alias = "acowtancy"
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(loaded.manifest_defined_catalog_alias(), Some("acowtancy"));
     }
 
     #[test]

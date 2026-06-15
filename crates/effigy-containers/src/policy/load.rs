@@ -110,7 +110,7 @@ pub fn load_container_policy_with_workspace(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
+    let default_project_name_base = default_project_name_base(&loaded, repo_root);
     validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
     let name = resolve_container_name(containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
@@ -148,7 +148,7 @@ pub fn load_all_container_policies(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
+    let default_project_name_base = default_project_name_base(&loaded, repo_root);
     validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
     let library_mounts = resolve_library_mounts(&loaded.manifest, loaded.bundle_root.as_deref())?;
 
