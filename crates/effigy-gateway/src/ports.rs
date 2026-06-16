@@ -38,6 +38,9 @@ const DEFAULT_BASE: u16 = 8100;
 /// Default range size per project.
 const DEFAULT_RANGE: u16 = 100;
 
+/// One past the highest valid TCP/UDP port.
+const MAX_PORT_EXCLUSIVE: u32 = u16::MAX as u32 + 1;
+
 /// Standard service port offsets within a project's allocated range.
 #[derive(Debug, Clone, Copy)]
 pub struct ServicePortOffsets;
@@ -180,12 +183,20 @@ impl PortRegistry {
     ///
     /// If the project already has an allocation, returns it unchanged.
     /// Otherwise, finds the next available base port and allocates a range.
-    pub fn allocate(&mut self, project_name: &str, project_path: &str) -> &PortAllocation {
+    pub fn allocate(
+        &mut self,
+        project_name: &str,
+        project_path: &str,
+    ) -> Result<&PortAllocation, GatewayError> {
         if self.allocations.contains_key(project_name) {
-            return &self.allocations[project_name];
+            return Ok(&self.allocations[project_name]);
         }
 
-        let base = self.next_available_base(DEFAULT_RANGE);
+        let base =
+            self.next_available_base(DEFAULT_RANGE)
+                .ok_or(GatewayError::PortRegistryExhausted {
+                    range: DEFAULT_RANGE,
+                })?;
         let alloc = PortAllocation {
             base,
             range: DEFAULT_RANGE,
@@ -193,7 +204,7 @@ impl PortRegistry {
             assigned_ports: HashMap::new(),
         };
         self.allocations.insert(project_name.to_string(), alloc);
-        &self.allocations[project_name]
+        Ok(&self.allocations[project_name])
     }
 
     /// Allocate with a specific base port.
@@ -239,37 +250,47 @@ impl PortRegistry {
 
     /// Find the next available base port that doesn't conflict with any
     /// existing allocation.
-    fn next_available_base(&self, range: u16) -> u16 {
+    fn next_available_base(&self, range: u16) -> Option<u16> {
+        let range = u32::from(range);
+        let fits = |base: u32| {
+            base.checked_add(range)
+                .is_some_and(|end| end <= MAX_PORT_EXCLUSIVE)
+        };
+
         if self.allocations.is_empty() {
-            return DEFAULT_BASE;
+            return fits(u32::from(DEFAULT_BASE)).then_some(DEFAULT_BASE);
         }
 
         // Collect all allocated ranges and sort by base.
         let mut ranges: Vec<(u32, u32)> = self
             .allocations
             .values()
-            .map(|a| (u32::from(a.base), a.end_u32()))
+            .map(|a| (u32::from(a.base), a.end_u32().min(MAX_PORT_EXCLUSIVE)))
             .collect();
         ranges.sort_by_key(|&(base, _)| base);
 
         // Try to fit before the first range.
         let default_base = u32::from(DEFAULT_BASE);
-        let range = u32::from(range);
-        if ranges[0].0 >= default_base + range {
-            return DEFAULT_BASE;
+        if fits(default_base) && ranges[0].0 >= default_base + range {
+            return Some(DEFAULT_BASE);
         }
 
         // Try to fit between ranges.
         for window in ranges.windows(2) {
             let gap_start = window[0].1;
             let gap_end = window[1].0;
-            if gap_end.saturating_sub(gap_start) >= range {
-                return gap_start.min(u32::from(u16::MAX)) as u16;
+            if gap_end.saturating_sub(gap_start) >= range && fits(gap_start) {
+                return u16::try_from(gap_start).ok();
             }
         }
 
         // Fit after the last range.
-        ranges.last().unwrap().1.min(u32::from(u16::MAX)) as u16
+        let candidate = ranges.last().unwrap().1;
+        if fits(candidate) {
+            return u16::try_from(candidate).ok();
+        }
+
+        None
     }
 
     /// Generate a port mapping table for a project.
@@ -315,7 +336,7 @@ impl PortRegistry {
         container_port: u16,
     ) -> Result<u16, GatewayError> {
         if !self.allocations.contains_key(project_name) {
-            let _ = self.allocate(project_name, project_path);
+            self.allocate(project_name, project_path)?;
         }
         let allocation = self
             .allocations
@@ -352,7 +373,8 @@ impl PortRegistry {
             }
         }
 
-        let host_port = (allocation.base..allocation.end())
+        let host_port = (u32::from(allocation.base)..allocation.end_u32().min(MAX_PORT_EXCLUSIVE))
+            .filter_map(|port| u16::try_from(port).ok())
             .find(|port| {
                 !allocation
                     .assigned_ports

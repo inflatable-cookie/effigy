@@ -6,6 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Port auto-allocation now fails with an explicit registry-exhausted error when no full project range remains, instead of creating a truncated `65535..65535` allocation that later breaks container bootstrap.
+
 ## [0.8.15] - 2026-06-15
 
 ### Added

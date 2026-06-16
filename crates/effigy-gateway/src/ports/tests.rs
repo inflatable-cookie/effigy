@@ -83,7 +83,7 @@ fn empty_registry() {
 #[test]
 fn auto_allocate_first_project() {
     let mut reg = PortRegistry::new();
-    let alloc = reg.allocate("client-a", "/projects/a");
+    let alloc = reg.allocate("client-a", "/projects/a").unwrap();
     assert_eq!(alloc.base, DEFAULT_BASE);
     assert_eq!(alloc.range, DEFAULT_RANGE);
 }
@@ -91,8 +91,8 @@ fn auto_allocate_first_project() {
 #[test]
 fn auto_allocate_second_project_no_overlap() {
     let mut reg = PortRegistry::new();
-    reg.allocate("client-a", "/projects/a");
-    let alloc_b = reg.allocate("client-b", "/projects/b");
+    reg.allocate("client-a", "/projects/a").unwrap();
+    let alloc_b = reg.allocate("client-b", "/projects/b").unwrap();
     assert_eq!(alloc_b.base, DEFAULT_BASE + DEFAULT_RANGE);
 
     let a = reg.get("client-a").unwrap();
@@ -103,8 +103,8 @@ fn auto_allocate_second_project_no_overlap() {
 #[test]
 fn auto_allocate_idempotent() {
     let mut reg = PortRegistry::new();
-    let base1 = reg.allocate("client-a", "/projects/a").base;
-    let base2 = reg.allocate("client-a", "/projects/a").base;
+    let base1 = reg.allocate("client-a", "/projects/a").unwrap().base;
+    let base2 = reg.allocate("client-a", "/projects/a").unwrap().base;
     assert_eq!(base1, base2);
     assert_eq!(reg.len(), 1);
 }
@@ -142,7 +142,7 @@ fn allocate_at_adjacent_no_conflict() {
 #[test]
 fn deallocate_removes_project() {
     let mut reg = PortRegistry::new();
-    reg.allocate("client-a", "/a");
+    reg.allocate("client-a", "/a").unwrap();
     assert_eq!(reg.len(), 1);
 
     let removed = reg.deallocate("client-a");
@@ -159,19 +159,49 @@ fn deallocate_nonexistent_returns_none() {
 #[test]
 fn auto_allocate_fills_gaps() {
     let mut reg = PortRegistry::new();
-    reg.allocate("a", "/a"); // 8100-8199
-    reg.allocate("b", "/b"); // 8200-8299
-    reg.allocate("c", "/c"); // 8300-8399
+    reg.allocate("a", "/a").unwrap(); // 8100-8199
+    reg.allocate("b", "/b").unwrap(); // 8200-8299
+    reg.allocate("c", "/c").unwrap(); // 8300-8399
     reg.deallocate("b"); // Free 8200-8299
 
-    let d = reg.allocate("d", "/d");
+    let d = reg.allocate("d", "/d").unwrap();
     assert_eq!(d.base, 8200); // Should fill the gap.
+}
+
+#[test]
+fn auto_allocate_errors_when_no_full_range_fits() {
+    let mut reg = PortRegistry::new();
+    let mut base = DEFAULT_BASE;
+    let mut index = 0;
+    while u32::from(base) + u32::from(DEFAULT_RANGE) <= MAX_PORT_EXCLUSIVE {
+        reg.allocate_at(
+            &format!("client-{index}"),
+            &format!("/projects/{index}"),
+            base,
+            DEFAULT_RANGE,
+        )
+        .unwrap();
+        let Some(next_base) = base.checked_add(DEFAULT_RANGE) else {
+            break;
+        };
+        base = next_base;
+        index += 1;
+    }
+
+    let err = reg.allocate("overflow", "/projects/overflow").unwrap_err();
+    assert!(matches!(
+        err,
+        GatewayError::PortRegistryExhausted {
+            range: DEFAULT_RANGE
+        }
+    ));
+    assert!(reg.get("overflow").is_none());
 }
 
 #[test]
 fn port_map_generation() {
     let mut reg = PortRegistry::new();
-    reg.allocate("client", "/projects/client");
+    reg.allocate("client", "/projects/client").unwrap();
 
     let map = reg.port_map("client").unwrap();
     assert_eq!(map.http, DEFAULT_BASE);
@@ -254,7 +284,7 @@ fn assign_port_falls_back_to_first_open_slot_when_preferred_offset_overflows_ran
 #[test]
 fn assign_port_migrates_legacy_container_port_keys_to_first_service_binding() {
     let mut reg = PortRegistry::new();
-    reg.allocate("client", "/projects/client");
+    reg.allocate("client", "/projects/client").unwrap();
 
     let allocation = reg.allocations.get_mut("client").expect("allocation");
     allocation.assigned_ports.insert("80".to_owned(), 8100);
@@ -284,8 +314,8 @@ fn save_and_load_roundtrip() {
     let path = dir.path().join("ports.json");
 
     let mut reg = PortRegistry::new();
-    reg.allocate("client-a", "/projects/a");
-    reg.allocate("client-b", "/projects/b");
+    reg.allocate("client-a", "/projects/a").unwrap();
+    reg.allocate("client-b", "/projects/b").unwrap();
     reg.save(&path).unwrap();
 
     let loaded = PortRegistry::load(&path).unwrap();

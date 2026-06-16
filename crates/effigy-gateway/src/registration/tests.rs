@@ -150,7 +150,7 @@ fn build_registration_with_default_port() {
 #[test]
 fn build_registration_with_port_registry() {
     let mut registry = PortRegistry::new();
-    registry.allocate("myapp", "/projects/myapp");
+    registry.allocate("myapp", "/projects/myapp").unwrap();
 
     let reg = build_registration(
         "myapp.test",

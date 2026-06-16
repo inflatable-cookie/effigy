@@ -95,6 +95,10 @@ pub enum GatewayError {
         range: u16,
     },
 
+    /// No full port range remains available for a new project allocation.
+    #[error("port registry exhausted: no free {range}-port range remains")]
+    PortRegistryExhausted { range: u16 },
+
     /// The bounded loopback-IP pool is exhausted.
     #[error("loopback pool exhausted for range {range_start}–{range_end}")]
     LoopbackPoolExhausted {
