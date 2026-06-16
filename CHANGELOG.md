@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.16] - 2026-06-16
+
 ### Fixed
 - Port auto-allocation now fails with an explicit registry-exhausted error when no full project range remains, instead of creating a truncated `65535..65535` allocation that later breaks container bootstrap.
 - Explicit and implicit container deferrals run from inside a managed container no longer re-resolve host-side external mount paths against the container repo root, so mounts like `host = "../../libraries"` remain host-relative instead of failing under `/var/www/...`.
