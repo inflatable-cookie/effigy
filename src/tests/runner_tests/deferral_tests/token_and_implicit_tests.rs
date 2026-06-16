@@ -3,6 +3,9 @@ use crate::runner::tests::prelude::{
     run_task_expect_empty_output, temp_workspace, workspace_with_optional_defer_manifest,
     write_executable, write_root_manifest, DeferredTaskCase, DeferredTaskFailureCase, EnvGuard,
 };
+use effigy_cli::{DeferArgs, TaskInvocation};
+use effigy_context::{CapturedEnv, EffigyRuntimeContext};
+use effigy_execution::{ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequestBuilder};
 
 fn setup_fake_docker_deferral_runtime(
     root: &std::path::Path,
@@ -109,6 +112,51 @@ fn php_library_fixture_dir() -> std::path::PathBuf {
 fn setup_php_library_path_bundle(root: &std::path::Path) {
     let bundle_dir = root.join("bundles/php-library");
     copy_dir_all(&php_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
+}
+
+fn write_container_handoff_external_mount_defer_manifest(root: &std::path::Path) {
+    write_root_manifest(
+        root,
+        r#"[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+
+[[containers.web.host.mounts]]
+host = "../../libraries"
+container = "/var/www/libraries"
+external = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[defer]
+run = "printf deferred > handoff-marker.txt"
+run_in = "container"
+"#,
+    );
+}
+
+fn container_handoff_context(root: &std::path::Path) -> EffigyRuntimeContext {
+    EffigyRuntimeContext::builder()
+        .cwd_override(Some(root.to_path_buf()))
+        .captured_env(CapturedEnv {
+            container_handoff: Some("1".into()),
+            ..Default::default()
+        })
+        .capture()
+        .expect("capture context")
 }
 
 #[test]
@@ -286,6 +334,55 @@ base = { type = "path", dir = "bundles/php-library" }
         docker.contains("\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"),
         "expected handoff-local deferral to invoke composer-home effigy inside container, got {docker}"
     );
+}
+
+#[test]
+fn run_manifest_task_container_handoff_deferral_skips_host_mount_validation() {
+    let _guard = lock_test();
+    let root = temp_workspace("container-deferral-handoff-external-mount");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(&root);
+    let context = container_handoff_context(&root);
+    let output = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::run_defer(DeferArgs {
+            task: TaskInvocation {
+                name: "true".to_owned(),
+                args: Vec::new(),
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    })
+    .expect("container handoff deferral should skip host mount validation");
+    assert_eq!(output, "");
+
+    let marker = fs::read_to_string(root.join("handoff-marker.txt")).expect("read marker");
+    assert_eq!(marker, "deferred");
+}
+
+#[test]
+fn run_manifest_task_container_handoff_implicit_deferral_skips_host_mount_validation() {
+    let _guard = lock_test();
+    let root = temp_workspace("container-implicit-deferral-handoff-external-mount");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(&root);
+    let context = container_handoff_context(&root);
+    let request = TaskExecutionRequestBuilder::new()
+        .runtime_context(context.clone())
+        .task("missing-task", Vec::new())
+        .surface(ExecutionSurface::DirectCli)
+        .environment(ExecutionEnvironmentPlan::default().cwd(root.clone()))
+        .build()
+        .expect("build request");
+
+    let output = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::execute::api::run_manifest_task_request(request)
+    })
+    .expect("implicit container handoff deferral should skip host mount validation");
+    assert_eq!(output, "");
+
+    let marker = fs::read_to_string(root.join("handoff-marker.txt")).expect("read marker");
+    assert_eq!(marker, "deferred");
 }
 
 #[test]

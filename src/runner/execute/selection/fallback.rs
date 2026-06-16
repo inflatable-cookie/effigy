@@ -4,6 +4,7 @@ use super::super::planning::ExecutionPreflight;
 use super::super::selection::result;
 use super::super::selection::SelectionResolution;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;
+use crate::runner::command_context::active_runtime_context;
 use crate::runner::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::try_run_exec_alias;
@@ -21,13 +22,27 @@ pub(super) fn resolve_selection_error<'a>(
     if let Some(output) = resolve_builtin_selection_output(task, preflight)? {
         return Ok(result::output(output));
     }
+
+    let prefer_deferral = should_try_deferral_before_exec_alias();
+    if prefer_deferral {
+        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
+            return Ok(result::output(output));
+        }
+    }
+
     if let Some(output) = resolve_exec_alias_output(task, preflight, &error)? {
         return Ok(result::output(output));
     }
-    if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
-        return Ok(result::output(output));
+    if !prefer_deferral {
+        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
+            return Ok(result::output(output));
+        }
     }
     Err(error)
+}
+
+fn should_try_deferral_before_exec_alias() -> bool {
+    active_runtime_context().is_some_and(|context| context.container().inside_container_handoff)
 }
 
 fn resolve_builtin_selection_output(

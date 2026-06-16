@@ -7,7 +7,10 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::container_detection::process_is_inside_container;
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
-use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn, TASK_MANIFEST_FILE};
+use effigy_manifest::{
+    load_task_manifest, ManifestContainerSecretDelivery, ManifestTask, ManifestTaskRunIn,
+    TaskManifest, TASK_MANIFEST_FILE,
+};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
 use super::policy::DEFER_DEPTH_ENV;
@@ -225,6 +228,25 @@ fn run_deferred_request_with_binding(
             )))
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
+            if let Some(local_working_dir) = local_container_deferral_working_dir() {
+                let command =
+                    build_deferred_command(task, runtime_args, deferral, &local_working_dir)?;
+                let rendered_command = render_deferred_runtime_command(
+                    &command,
+                    local_container_secret_runtime_env_path(&manifest, binding),
+                );
+                let output = run_deferred_request_locally(
+                    task,
+                    runtime_args,
+                    deferral,
+                    cause,
+                    current_depth,
+                    &rendered_command,
+                    &local_working_dir,
+                )?;
+                return Ok(DeferredExecutionPlan::Completed(output));
+            }
+
             let exec_working_dir = binding_resolution
                 .exec_working_dir(&deferral.working_dir)?
                 .ok_or_else(|| {
@@ -246,18 +268,6 @@ fn run_deferred_request_with_binding(
                 &command,
                 container_secret_runtime_env_path(&policy),
             );
-            if let Some(local_working_dir) = local_container_deferral_working_dir() {
-                let output = run_deferred_request_locally(
-                    task,
-                    runtime_args,
-                    deferral,
-                    cause,
-                    current_depth,
-                    &rendered_command,
-                    &local_working_dir,
-                )?;
-                return Ok(DeferredExecutionPlan::Completed(output));
-            }
             validate_running_container_runtime_match(&deferral.working_dir, &policy)?;
             let session_context = current_runtime_session_context();
             let plan = deferral_runtime_activation_plan(
@@ -327,6 +337,28 @@ fn local_container_deferral_working_dir() -> Option<std::path::PathBuf> {
         return Some(context.invocation_cwd().to_path_buf());
     }
     None
+}
+
+fn local_container_secret_runtime_env_path(
+    manifest: &TaskManifest,
+    binding: &ContainerExecutionBinding,
+) -> Option<String> {
+    let ContainerExecutionBinding::Container { name, .. } = binding else {
+        return None;
+    };
+    let containers = manifest.containers.as_ref()?;
+    let name = name.as_ref().or(containers.default.as_ref())?;
+    let config = containers.environments.get(name)?;
+    let secrets = config.secrets.as_ref()?;
+    if secrets.delivery != Some(ManifestContainerSecretDelivery::RuntimeFiles)
+        || !secrets.source_for_deferrals.unwrap_or(false)
+    {
+        return None;
+    }
+    secrets
+        .runtime_dir
+        .as_ref()
+        .map(|dir| format!("{dir}/runtime.env"))
 }
 
 fn should_run_container_deferral_locally(
