@@ -124,8 +124,6 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
                 "manifest",
                 "fetch",
                 "--descriptor",
-                "--format",
-                "json",
                 request.reference.reference(),
             ])
             .output()
