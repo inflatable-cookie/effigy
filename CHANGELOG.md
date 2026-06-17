@@ -14,6 +14,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - Generated asset scans now ignore Effigy's internal `.effigy` state, so catalog cache files do not inflate scan counts or trip generated-assets reports.
+- Container project names are normalized before backend calls, so bundle-derived names from mixed-case paths such as `r7-webCore` no longer fail Docker/nerdctl project-name validation.
 
 ## [0.8.16] - 2026-06-16
 

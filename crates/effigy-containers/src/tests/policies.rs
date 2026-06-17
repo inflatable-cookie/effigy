@@ -160,6 +160,56 @@ primary_service = "app"
 }
 
 #[test]
+fn load_container_policy_sanitizes_default_project_name_components() {
+    let root = temp_repo("R7-webCore");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "R7-webCore"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.project_name, "r7-webcore-dev");
+}
+
+#[test]
+fn load_container_policy_sanitizes_explicit_project_name() {
+    let root = temp_repo("explicit-project-name");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+project_name = "r7-webCore-decodelabs-library"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.project_name, "r7-webcore-decodelabs-library");
+}
+
+#[test]
 fn load_container_policy_uses_repo_name_when_alias_only_comes_from_bundle_defaults() {
     let root = temp_repo("single-container-bundle-root-alias");
     let bundle = root.with_file_name("single-container-bundle-root-alias-bundle");

@@ -20,7 +20,22 @@ pub(crate) fn default_project_name_base(loaded: &LoadedTaskManifest, repo_root: 
 }
 
 fn sanitize_project_name_component(value: &str) -> String {
-    value.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+    let sanitized = value
+        .chars()
+        .map(|ch| match ch {
+            ch if ch.is_ascii_alphanumeric() => ch.to_ascii_lowercase(),
+            '-' | '_' => ch,
+            _ => '-',
+        })
+        .collect::<String>()
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+        .to_owned();
+
+    if sanitized.is_empty() {
+        "repo".to_owned()
+    } else {
+        sanitized
+    }
 }
 
 pub(crate) fn resolve_project_name(
@@ -34,7 +49,10 @@ pub(crate) fn resolve_project_name(
         .project_name
         .clone()
         .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
-    apply_bootstrap_fresh_session_suffix(repo_root, project_name)
+    sanitize_project_name_component(&apply_bootstrap_fresh_session_suffix(
+        repo_root,
+        project_name,
+    ))
 }
 
 fn default_project_name(

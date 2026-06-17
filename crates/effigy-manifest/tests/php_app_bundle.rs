@@ -653,7 +653,10 @@ base = {{ type = "path", dir = "{}" }}
 
     let containers = manifest.containers.expect("containers");
     let web = containers.environments.get("web").expect("web container");
-    assert_eq!(web.project_name.as_deref(), Some("collections-php-library"));
+    assert_eq!(
+        web.project_name.as_deref(),
+        Some("php-library-collections-dev")
+    );
     assert_eq!(web.working_dir.as_deref(), Some("/workspace-root"));
     let app = web.services.get("app").expect("app service");
     assert_eq!(app.catalog, "php-fpm");
