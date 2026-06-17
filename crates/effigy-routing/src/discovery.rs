@@ -1,10 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, FileType};
+use std::io;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use super::error::RoutingError;
 use super::manifest_load::TASK_MANIFEST_FILE;
 use effigy_manifest::{load_task_manifest_with_inspection, LoadedCatalog};
+use serde::{Deserialize, Serialize};
+
+const CATALOG_DISCOVERY_CACHE_SCHEMA: &str = "effigy.catalog.discovery.cache.v1";
+const CATALOG_DISCOVERY_CACHE_VERSION: u8 = 1;
+const CATALOG_DISCOVERY_CACHE_PATH: &str = ".effigy/cache/catalog-discovery-v1.json";
+const EMPTY_SUBTREE_CACHE_MIN_DIRS: usize = 64;
 
 pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, RoutingError> {
     let manifest_paths = discover_manifest_paths(workspace_root)?;
@@ -82,17 +90,41 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
         return Ok(vec![workspace_root.join(TASK_MANIFEST_FILE)]);
     }
 
-    let root_skip_dirs = discovery.ignore;
-    let mut pending = vec![workspace_root.to_path_buf()];
-    pending.extend(discover_system_mount_catalog_roots(workspace_root));
+    let root_skip_dirs = discovery.ignore.clone();
+    let system_mount_roots = discover_system_mount_catalog_roots(workspace_root);
+    if let Some(paths) = load_cached_manifest_paths(workspace_root, &discovery, &system_mount_roots)
+    {
+        return Ok(paths);
+    }
+    let cached_empty_subtrees =
+        load_cached_empty_subtrees(workspace_root, &discovery, &system_mount_roots);
+    let cached_empty_subtree_set = cached_empty_subtrees
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut pending = vec![(workspace_root.to_path_buf(), None)];
+    pending.extend(
+        system_mount_roots
+            .iter()
+            .cloned()
+            .map(|path| (path, None::<PathBuf>)),
+    );
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
+    let mut dir_stats: HashMap<PathBuf, DirDiscoveryStats> = HashMap::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
 
-    while let Some(dir) = pending.pop() {
-        let canonical_dir = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-        if !visited_dirs.insert(canonical_dir) {
+    while let Some((dir, parent)) = pending.pop() {
+        let canonical_dir = stable_path(&dir);
+        if !visited_dirs.insert(canonical_dir.clone()) {
             continue;
         }
+        dir_stats
+            .entry(canonical_dir.clone())
+            .or_insert(DirDiscoveryStats {
+                parent,
+                contains_manifest: false,
+                descendant_dirs: 1,
+            });
         let entries =
             fs::read_dir(&dir).map_err(|error| task_catalog_read_dir_error(&dir, error))?;
 
@@ -108,10 +140,16 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
                 if should_skip_dir(&path, &root_skip_dirs) {
                     continue;
                 }
+                if !cached_empty_subtree_set.is_empty() {
+                    let stable_child = stable_path(&path);
+                    if cached_empty_subtree_set.contains(&stable_child) {
+                        continue;
+                    }
+                }
                 if declares_nested_root_boundary(&path, workspace_root) {
                     continue;
                 }
-                pending.push(path);
+                pending.push((path, Some(canonical_dir.clone())));
                 continue;
             }
 
@@ -120,6 +158,9 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
                 if is_starter_asset_dir(&catalog_root) {
                     continue;
                 }
+                if let Some(stats) = dir_stats.get_mut(&canonical_dir) {
+                    stats.contains_manifest = true;
+                }
                 manifests_by_catalog.insert(catalog_root, path);
             }
         }
@@ -127,6 +168,14 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
 
     let mut manifests: Vec<PathBuf> = manifests_by_catalog.into_values().collect();
     manifests.sort();
+    let ignored_empty_subtrees = ignored_empty_subtrees(dir_stats, cached_empty_subtrees);
+    save_cached_manifest_paths(
+        workspace_root,
+        &discovery,
+        &system_mount_roots,
+        &manifests,
+        &ignored_empty_subtrees,
+    );
     Ok(manifests)
 }
 
@@ -223,6 +272,7 @@ fn is_internal_skip_dir(name: &str) -> bool {
     )
 }
 
+#[derive(Clone)]
 struct RootCatalogDiscoveryConfig {
     enabled: bool,
     ignore: HashSet<String>,
@@ -320,6 +370,233 @@ fn has_root_manifest(workspace_root: &Path) -> bool {
     workspace_root.join(TASK_MANIFEST_FILE).is_file()
 }
 
+#[derive(Deserialize, Serialize)]
+struct CatalogDiscoveryCache {
+    schema: String,
+    schema_version: u8,
+    workspace_root: PathBuf,
+    root_manifest: FileStamp,
+    discovery_enabled: bool,
+    discovery_ignore: Vec<String>,
+    system_mount_roots: Vec<PathBuf>,
+    ignored_empty_subtrees: Vec<PathBuf>,
+    manifests: Vec<CachedManifestPath>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CachedManifestPath {
+    path: PathBuf,
+    stamp: FileStamp,
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+struct FileStamp {
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+struct DirDiscoveryStats {
+    parent: Option<PathBuf>,
+    contains_manifest: bool,
+    descendant_dirs: usize,
+}
+
+fn load_cached_manifest_paths(
+    workspace_root: &Path,
+    discovery: &RootCatalogDiscoveryConfig,
+    system_mount_roots: &[PathBuf],
+) -> Option<Vec<PathBuf>> {
+    let cache = read_catalog_discovery_cache(workspace_root)?;
+    if !cache_matches_inputs(&cache, workspace_root, discovery, system_mount_roots) {
+        return None;
+    }
+    if cache.root_manifest != file_stamp(&workspace_root.join(TASK_MANIFEST_FILE))? {
+        return None;
+    }
+    let mut paths = Vec::with_capacity(cache.manifests.len());
+    for manifest in cache.manifests {
+        if file_stamp(&manifest.path)? != manifest.stamp {
+            return None;
+        }
+        paths.push(manifest.path);
+    }
+    Some(paths)
+}
+
+fn save_cached_manifest_paths(
+    workspace_root: &Path,
+    discovery: &RootCatalogDiscoveryConfig,
+    system_mount_roots: &[PathBuf],
+    manifests: &[PathBuf],
+    ignored_empty_subtrees: &[PathBuf],
+) {
+    let Some(root_manifest) = file_stamp(&workspace_root.join(TASK_MANIFEST_FILE)) else {
+        return;
+    };
+    let Some(cached_manifests) = manifests
+        .iter()
+        .map(|path| {
+            Some(CachedManifestPath {
+                path: path.clone(),
+                stamp: file_stamp(path)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let cache = CatalogDiscoveryCache {
+        schema: CATALOG_DISCOVERY_CACHE_SCHEMA.to_owned(),
+        schema_version: CATALOG_DISCOVERY_CACHE_VERSION,
+        workspace_root: stable_path(workspace_root),
+        root_manifest,
+        discovery_enabled: discovery.enabled,
+        discovery_ignore: sorted_ignore(&discovery.ignore),
+        system_mount_roots: system_mount_roots
+            .iter()
+            .map(|path| stable_path(path))
+            .collect(),
+        ignored_empty_subtrees: ignored_empty_subtrees
+            .iter()
+            .map(|path| stable_path(path))
+            .collect(),
+        manifests: cached_manifests,
+    };
+    let Ok(encoded) = serde_json::to_string_pretty(&cache) else {
+        return;
+    };
+    let path = catalog_discovery_cache_path(workspace_root);
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let _ = fs::write(path, encoded);
+}
+
+fn read_catalog_discovery_cache(workspace_root: &Path) -> Option<CatalogDiscoveryCache> {
+    let raw = fs::read_to_string(catalog_discovery_cache_path(workspace_root)).ok()?;
+    serde_json::from_str::<CatalogDiscoveryCache>(&raw).ok()
+}
+
+fn load_cached_empty_subtrees(
+    workspace_root: &Path,
+    discovery: &RootCatalogDiscoveryConfig,
+    system_mount_roots: &[PathBuf],
+) -> Vec<PathBuf> {
+    let Some(cache) = read_catalog_discovery_cache(workspace_root) else {
+        return Vec::new();
+    };
+    if !cache_matches_inputs(&cache, workspace_root, discovery, system_mount_roots) {
+        return Vec::new();
+    }
+    cache.ignored_empty_subtrees
+}
+
+fn cache_matches_inputs(
+    cache: &CatalogDiscoveryCache,
+    workspace_root: &Path,
+    discovery: &RootCatalogDiscoveryConfig,
+    system_mount_roots: &[PathBuf],
+) -> bool {
+    cache.schema == CATALOG_DISCOVERY_CACHE_SCHEMA
+        && cache.schema_version == CATALOG_DISCOVERY_CACHE_VERSION
+        && cache.workspace_root == stable_path(workspace_root)
+        && cache.discovery_enabled == discovery.enabled
+        && cache.discovery_ignore == sorted_ignore(&discovery.ignore)
+        && cache.system_mount_roots
+            == system_mount_roots
+                .iter()
+                .map(|path| stable_path(path))
+                .collect::<Vec<_>>()
+}
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some(FileStamp {
+        len: metadata.len(),
+        modified_secs: modified.as_secs(),
+        modified_nanos: modified.subsec_nanos(),
+    })
+}
+
+fn sorted_ignore(ignore: &HashSet<String>) -> Vec<String> {
+    let mut values = ignore.iter().cloned().collect::<Vec<_>>();
+    values.sort();
+    values
+}
+
+fn stable_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn catalog_discovery_cache_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(CATALOG_DISCOVERY_CACHE_PATH)
+}
+
+pub fn catalog_discovery_cache_file(workspace_root: &Path) -> PathBuf {
+    catalog_discovery_cache_path(workspace_root)
+}
+
+pub fn clear_catalog_discovery_cache(workspace_root: &Path) -> io::Result<bool> {
+    let path = catalog_discovery_cache_path(workspace_root);
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn ignored_empty_subtrees(
+    mut dir_stats: HashMap<PathBuf, DirDiscoveryStats>,
+    mut cached_empty_subtrees: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut by_depth = dir_stats.keys().cloned().collect::<Vec<_>>();
+    by_depth.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+
+    for path in &by_depth {
+        let Some(stats) = dir_stats.get(path) else {
+            continue;
+        };
+        let parent = stats.parent.clone();
+        let contains_manifest = stats.contains_manifest;
+        let descendant_dirs = stats.descendant_dirs;
+        if let Some(parent) = parent {
+            if let Some(parent_stats) = dir_stats.get_mut(&parent) {
+                parent_stats.contains_manifest |= contains_manifest;
+                parent_stats.descendant_dirs += descendant_dirs;
+            }
+        }
+    }
+
+    let mut candidates = dir_stats
+        .into_iter()
+        .filter_map(|(path, stats)| {
+            (!stats.contains_manifest && stats.descendant_dirs >= EMPTY_SUBTREE_CACHE_MIN_DIRS)
+                .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    candidates.append(&mut cached_empty_subtrees);
+    candidates.sort_by_key(|path| path.components().count());
+
+    let mut ignored = Vec::<PathBuf>::new();
+    for candidate in candidates {
+        if ignored
+            .iter()
+            .any(|existing| candidate.starts_with(existing))
+        {
+            continue;
+        }
+        if !ignored.contains(&candidate) {
+            ignored.push(candidate);
+        }
+    }
+    ignored
+}
+
 fn declares_nested_root_boundary(path: &Path, workspace_root: &Path) -> bool {
     if path == workspace_root {
         return false;
@@ -355,7 +632,10 @@ fn manifest_declares_root(manifest_path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_alias, discover_catalogs, discover_manifest_paths};
+    use super::{
+        catalog_discovery_cache_path, default_alias, discover_catalogs, discover_manifest_paths,
+        EMPTY_SUBTREE_CACHE_MIN_DIRS,
+    };
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
@@ -591,6 +871,96 @@ run = "printf dev"
         assert!(
             !manifests.contains(&nested_child.join("effigy.toml")),
             "nested root boundaries should prune nested child catalogs: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_cache_invalidates_when_cached_manifest_disappears() {
+        let root = temp_root("effigy-routing-cache-missing-manifest");
+        let app = root.join("apps/demo");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n").expect("root");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover first");
+        assert!(manifests.contains(&app.join("effigy.toml")));
+
+        fs::remove_file(app.join("effigy.toml")).expect("remove app manifest");
+        let manifests = discover_manifest_paths(&root).expect("discover second");
+
+        assert!(manifests.contains(&root.join("effigy.toml")));
+        assert!(
+            !manifests.contains(&app.join("effigy.toml")),
+            "missing cached manifests should force a fresh discovery walk: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_cache_refreshes_when_root_manifest_changes() {
+        let root = temp_root("effigy-routing-cache-root-change");
+        let app = root.join("apps/demo");
+        let admin = root.join("apps/admin");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::create_dir_all(&admin).expect("admin dir");
+        fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n").expect("root");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover first");
+        assert!(manifests.contains(&app.join("effigy.toml")));
+        assert!(!manifests.contains(&admin.join("effigy.toml")));
+
+        fs::write(admin.join("effigy.toml"), "[catalog]\nalias = \"admin\"\n")
+            .expect("admin manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = \"root\"\n\n# refresh discovery cache\n",
+        )
+        .expect("touch root manifest");
+        let manifests = discover_manifest_paths(&root).expect("discover second");
+
+        assert!(
+            manifests.contains(&admin.join("effigy.toml")),
+            "root manifest changes should invalidate catalog discovery cache: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_cache_prunes_large_empty_subtrees_until_cache_cleared() {
+        let root = temp_root("effigy-routing-cache-empty-subtree");
+        let app = root.join("apps/demo");
+        let archive = root.join("farmyard/runtime");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::create_dir_all(&archive).expect("archive dir");
+        for index in 0..EMPTY_SUBTREE_CACHE_MIN_DIRS {
+            fs::create_dir_all(archive.join(format!("shard-{index}/leaf"))).expect("archive shard");
+        }
+        fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n").expect("root");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover first");
+        assert!(manifests.contains(&app.join("effigy.toml")));
+
+        let hidden = archive.join("shard-0/leaf/effigy.toml");
+        fs::write(&hidden, "[catalog]\nalias = \"hidden\"\n").expect("hidden manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = \"root\"\n\n# refresh discovery cache\n",
+        )
+        .expect("touch root manifest");
+        let manifests = discover_manifest_paths(&root).expect("discover second");
+        assert!(
+            !manifests.contains(&hidden),
+            "large no-catalog subtrees should stay pruned until the discovery cache is cleared: {manifests:?}"
+        );
+
+        fs::remove_file(catalog_discovery_cache_path(&root)).expect("clear discovery cache");
+        let manifests = discover_manifest_paths(&root).expect("discover after clear");
+        assert!(
+            manifests.contains(&hidden),
+            "clearing the discovery cache should allow large subtrees to be inspected again: {manifests:?}"
         );
         let _ = fs::remove_dir_all(root);
     }

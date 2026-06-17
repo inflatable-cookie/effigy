@@ -20,7 +20,8 @@ use effigy_core::task_selection::TaskSelector;
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 
 pub use discovery::{
-    default_alias, discover_catalogs, discover_catalogs_allow_missing, discover_manifest_paths,
+    catalog_discovery_cache_file, clear_catalog_discovery_cache, default_alias, discover_catalogs,
+    discover_catalogs_allow_missing, discover_manifest_paths,
 };
 pub use error::RoutingError;
 pub use manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};

@@ -4,6 +4,7 @@ mod bootstrap_command;
 mod builtin_ports;
 mod bundle_command;
 mod cache;
+mod catalog_command;
 mod changelog_command;
 mod command_context;
 mod container_command;
@@ -52,6 +53,7 @@ mod util;
 
 pub(in crate::runner) use artifact_command::run_artifact;
 pub(in crate::runner) use bundle_command::run_bundle;
+pub(in crate::runner) use catalog_command::run_catalog;
 pub(in crate::runner) use changelog_command::run_changelog;
 pub use command_context::command_repo_override_for_context;
 pub(in crate::runner) use container_command::run_container;

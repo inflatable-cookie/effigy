@@ -4,9 +4,9 @@ use crate::tests::prelude::{
     UninstallArgs, WorkspaceArgs,
 };
 use effigy_cli::{
-    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
-    ContainerDataSubcommand, ContainerDbDumpInput, ContainerProfileSubcommand,
-    ContainerVolumeSubcommand,
+    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, CatalogArgs, CatalogCacheSubcommand,
+    CatalogSubcommand, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
+    ContainerProfileSubcommand, ContainerVolumeSubcommand,
 };
 
 #[test]
@@ -21,6 +21,30 @@ fn parse_bundle_help_is_scoped() {
     let cmd = parse_command(vec!["bundle".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Bundle));
+}
+
+#[test]
+fn parse_catalog_cache_clear_is_supported() {
+    let cmd = parse_command(vec![
+        "catalog".to_owned(),
+        "cache".to_owned(),
+        "clear".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/demo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Catalog(CatalogArgs {
+            subcommand: CatalogSubcommand::Cache {
+                subcommand: CatalogCacheSubcommand::Clear,
+            },
+            repo_override: Some(PathBuf::from("/tmp/demo")),
+            output_json: true,
+        })
+    );
 }
 
 #[test]
@@ -195,19 +219,13 @@ fn parse_service_extract_supports_dir_override() {
 }
 
 #[test]
-fn parse_catalog_aliases_fall_back_to_task_routing() {
-    let catalog = parse_command(vec!["catalog".to_owned(), "list".to_owned()])
-        .expect("catalog token should route as a task selector");
+fn parse_catalog_rejects_unknown_subcommand_and_catalogue_falls_back_to_task_routing() {
+    let catalog_error = parse_command(vec!["catalog".to_owned(), "list".to_owned()])
+        .expect_err("catalog is a scoped built-in command");
     let catalogue = parse_command(vec!["catalogue".to_owned(), "list".to_owned()])
         .expect("catalogue token should route as a task selector");
 
-    assert_eq!(
-        catalog,
-        Command::Task(crate::tests::prelude::TaskInvocation {
-            name: "catalog".to_owned(),
-            args: vec!["list".to_owned()],
-        })
-    );
+    assert!(catalog_error.to_string().contains("unknown argument: list"));
     assert_eq!(
         catalogue,
         Command::Task(crate::tests::prelude::TaskInvocation {

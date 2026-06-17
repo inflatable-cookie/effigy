@@ -1188,6 +1188,8 @@ version = "0.8.16"
 dependencies = [
  "effigy-core",
  "effigy-manifest",
+ "serde",
+ "serde_json",
  "toml",
 ]
 

@@ -6,6 +6,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
     match cmd {
         Command::Version => None,
         Command::Bundle(args) => args.repo_override.clone(),
+        Command::Catalog(args) => args.repo_override.clone(),
         Command::Changelog(args) => args.repo_override.clone(),
         Command::Deploy(args) => args.repo_override.clone(),
         Command::Secrets(args) => args.repo_override.clone(),
@@ -70,6 +71,7 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Doctor(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Tasks(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Bundle(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Catalog(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Changelog(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Version
         | Command::Gateway(_)

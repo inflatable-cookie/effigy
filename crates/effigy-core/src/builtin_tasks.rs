@@ -10,6 +10,7 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
         "Clone or update repos, sync dependencies and children, and run bootstrap flows",
     ),
     ("bundle", "Inspect and sync bundle sources"),
+    ("catalog", "Manage repo catalog discovery state"),
     ("changelog", "Inspect and extract changelog release notes"),
     ("config", "Show supported project effigy.toml configuration keys/examples and machine-level config helpers"),
     (

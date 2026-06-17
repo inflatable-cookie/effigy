@@ -21,6 +21,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_bundle,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Catalog),
+        render: render_catalog,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Deploy),
         render: render_deploy,
     },
@@ -168,6 +172,10 @@ fn render_general(
 
 fn render_bundle(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_bundle_help(renderer)
+}
+
+fn render_catalog(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_catalog_help(renderer)
 }
 
 fn render_changelog(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

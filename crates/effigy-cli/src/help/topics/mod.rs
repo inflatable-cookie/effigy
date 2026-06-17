@@ -1,6 +1,7 @@
 mod artifact;
 mod bootstrap;
 mod bundle;
+mod catalog;
 mod changelog;
 mod container;
 mod contracts;
@@ -31,6 +32,7 @@ mod workspace;
 pub(crate) use artifact::render_artifact_help;
 pub(crate) use bootstrap::render_bootstrap_help;
 pub(crate) use bundle::render_bundle_help;
+pub(crate) use catalog::render_catalog_help;
 pub(crate) use changelog::render_changelog_help;
 pub(crate) use container::render_container_help;
 pub(crate) use contracts::render_contracts_help;

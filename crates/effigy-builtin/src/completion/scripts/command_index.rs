@@ -24,6 +24,7 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
     match command {
         "help" => &["--json", "--help", "-h"],
         "version" => &["--json", "--help", "-h"],
+        "catalog" => &["cache", "clear", "--repo", "--json", "--help", "-h"],
         "tasks" => &[
             "--repo",
             "--task",

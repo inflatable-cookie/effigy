@@ -256,19 +256,17 @@ fn parse_service_help_alias_is_scoped() {
 }
 
 #[test]
-fn parse_catalog_and_catalogue_help_aliases_fall_back_to_task_routing() {
+fn parse_catalog_help_is_scoped() {
     let catalog = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
-        .expect("catalog token should route as a task selector");
+        .expect("parse should succeed");
+    assert_eq!(catalog, Command::Help(HelpTopic::Catalog));
+}
+
+#[test]
+fn parse_catalogue_help_alias_falls_back_to_task_routing() {
     let catalogue = parse_command(vec!["catalogue".to_owned(), "--help".to_owned()])
         .expect("catalogue token should route as a task selector");
 
-    assert_eq!(
-        catalog,
-        Command::Task(TaskInvocation {
-            name: "catalog".to_owned(),
-            args: vec!["--help".to_owned()],
-        })
-    );
     assert_eq!(
         catalogue,
         Command::Task(TaskInvocation {

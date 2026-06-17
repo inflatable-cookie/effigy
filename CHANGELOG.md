@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy catalog cache clear` removes the repo-local catalog discovery cache, forcing the next catalog walk to inspect previously pruned large empty subtrees.
+
+### Changed
+- Catalog discovery now caches discovered manifest paths and large no-catalog subtrees under `.effigy/cache`, avoiding repeated full-tree walks in repos with large generated data directories.
+
 ## [0.8.16] - 2026-06-16
 
 ### Fixed

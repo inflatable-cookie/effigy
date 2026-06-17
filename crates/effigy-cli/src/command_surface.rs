@@ -25,6 +25,13 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         deferred_builtin: Some("bundle"),
     },
     CommandDescriptor {
+        topic: HelpTopic::Catalog,
+        command_name: Some("catalog"),
+        general_help_command: Some("effigy catalog"),
+        general_help_description: Some("Manage repo catalog discovery state"),
+        deferred_builtin: Some("catalog"),
+    },
+    CommandDescriptor {
         topic: HelpTopic::Deploy,
         command_name: Some("deploy"),
         general_help_command: Some("effigy deploy"),
@@ -251,6 +258,7 @@ mod tests {
     const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
         HelpTopic::General,
         HelpTopic::Bundle,
+        HelpTopic::Catalog,
         HelpTopic::Changelog,
         HelpTopic::Deploy,
         HelpTopic::Secrets,
@@ -282,6 +290,7 @@ mod tests {
     const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
         ("version", HelpTopic::General),
         ("bundle", HelpTopic::Bundle),
+        ("catalog", HelpTopic::Catalog),
         ("changelog", HelpTopic::Changelog),
         ("deploy", HelpTopic::Deploy),
         ("secrets", HelpTopic::Secrets),
