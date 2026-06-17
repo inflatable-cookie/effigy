@@ -137,16 +137,24 @@ fn storage_ls(
 
     let mut request = client.objects().list_v2(&bucket);
     if let Some(prefix) = prefix {
-        request = request.prefix(prefix);
+        request = request
+            .prefix(prefix)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     if let Some(delimiter) = delimiter {
-        request = request.delimiter(delimiter);
+        request = request
+            .delimiter(delimiter)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     if let Some(token) = continuation_token {
-        request = request.continuation_token(token);
+        request = request
+            .continuation_token(token)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     if let Some(max_keys) = max_keys {
-        request = request.max_keys(max_keys);
+        request = request
+            .max_keys(max_keys)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     let output = request
         .send()
@@ -285,11 +293,15 @@ fn storage_put(
 
     let mut request = client.objects().put(&bucket, &key).body_bytes(body);
     if let Some(content_type) = content_type {
-        request = request.content_type(content_type);
+        request = request
+            .content_type(content_type)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     if let Some(metadata) = metadata {
         for (name, value) in metadata {
-            request = request.metadata(name, value);
+            request = request
+                .metadata(name, value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
         }
     }
     let output = request
@@ -469,6 +481,7 @@ fn raw_head_object_map(
         .objects()
         .presign_head(bucket, key)
         .expires_in(Duration::from_secs(60))
+        .map_err(|error| rhai_runtime_error(error.to_string()))?
         .build()
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
 
