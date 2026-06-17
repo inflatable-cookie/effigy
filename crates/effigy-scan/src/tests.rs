@@ -6,7 +6,7 @@ use super::model::{
 use super::render::render_stale_suppression_text;
 use super::support::{
     attention_marker_matches_line, comment_ratio_counts, count_code_lines, is_generated_artifact,
-    normalize_rel_path, stale_suppression_matches_line,
+    normalize_rel_path, should_skip_generated_asset_path, stale_suppression_matches_line,
 };
 use std::path::{Path, PathBuf};
 
@@ -83,6 +83,16 @@ fn generated_artifact_detection_uses_markers_and_minified_names() {
     assert!(!is_generated_artifact(
         Path::new("src/app.rs"),
         "fn main() {\n    println!(\"ok\");\n}\n"
+    ));
+}
+
+#[test]
+fn generated_asset_scan_skips_effigy_internal_state() {
+    assert!(should_skip_generated_asset_path(
+        Path::new(".effigy/cache/catalog-discovery-v1.json"),
+        ".effigy/cache/catalog-discovery-v1.json",
+        None,
+        None,
     ));
 }
 

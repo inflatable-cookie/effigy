@@ -42,10 +42,10 @@ pub fn should_skip_generated_asset_path(
     if exclude.is_some_and(|set| set.is_match(rel_str)) {
         return true;
     }
-    if rel
-        .components()
-        .any(|component| component.as_os_str() == OsStr::new(".git"))
-    {
+    if rel.components().any(|component| {
+        let name = component.as_os_str();
+        name == OsStr::new(".git") || name == OsStr::new(".effigy")
+    }) {
         return true;
     }
     if let Some(set) = include {
