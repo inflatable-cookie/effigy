@@ -91,6 +91,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
 
