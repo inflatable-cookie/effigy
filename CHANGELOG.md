@@ -12,6 +12,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 - Catalog discovery now caches discovered manifest paths and large no-catalog subtrees under `.effigy/cache`, avoiding repeated full-tree walks in repos with large generated data directories.
 
+### Fixed
+- Generated asset scans now ignore Effigy's internal `.effigy` state, so catalog cache files do not inflate scan counts or trip generated-assets reports.
+
 ## [0.8.16] - 2026-06-16
 
 ### Fixed
