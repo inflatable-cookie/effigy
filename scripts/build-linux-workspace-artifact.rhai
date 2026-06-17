@@ -42,9 +42,9 @@ build_script += "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n"
 
 let shell_error = "";
 try {
-    let output = container::shell(container_name, build_script);
-    if output.trim() != "" {
-        log(output);
+    let output = container::exec_stream(container_name, ["sh", "-lc", build_script]);
+    if !output["success"] {
+        throw "container build command exited with status " + output["status"].to_string();
     }
 } catch (error) {
     shell_error = error.to_string();

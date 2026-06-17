@@ -161,6 +161,27 @@ fn first_party_rhai_scripts_use_exec_run_for_container_commands() {
 }
 
 #[test]
+fn linux_workspace_artifact_build_streams_container_output() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root")
+        .to_path_buf();
+    let script = repo_root.join("scripts/build-linux-workspace-artifact.rhai");
+    let contents = fs::read_to_string(script).expect("read script");
+
+    assert!(
+        contents
+            .contains("container::exec_stream(container_name, [\"sh\", \"-lc\", build_script])"),
+        "workspace artifact build must stream in-container cargo output"
+    );
+    assert!(
+        !contents.contains("container::shell(container_name, build_script)"),
+        "workspace artifact build must not capture in-container cargo output"
+    );
+}
+
+#[test]
 fn first_party_rhai_scripts_do_not_use_legacy_module_dot_calls() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
