@@ -7,6 +7,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: json-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docs-links:
     name: Validate docs links
@@ -14,6 +18,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Validate docs QA bundle
         run: cargo run --bin effigy -- qa:docs
