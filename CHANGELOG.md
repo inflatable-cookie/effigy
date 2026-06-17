@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.17] - 2026-06-17
+
 ### Added
 - `effigy catalog cache clear` removes the repo-local catalog discovery cache, forcing the next catalog walk to inspect previously pruned large empty subtrees.
 
