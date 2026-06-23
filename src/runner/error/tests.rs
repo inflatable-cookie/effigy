@@ -73,6 +73,31 @@ fn container_runtime_state_loss_maps_to_task_invocation() {
 }
 
 #[test]
+fn container_runtime_no_space_maps_to_storage_remediation() {
+    let error = RunnerError::from(ContainerExecError::Failure {
+        command: "docker compose up".to_owned(),
+        code: Some(1),
+        stdout: "Loaded image: docker.io/library/demo:latest".to_owned(),
+        stderr: "failed to write bundle spec: open /run/containerd/io.containerd.runtime.v2.task/default/demo/config.json: no space left on device".to_owned(),
+    });
+
+    match error {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("out of space or inodes"), "got: {message}");
+            assert!(
+                message.contains("effigy container profile resize"),
+                "got: {message}"
+            );
+            assert!(
+                message.contains("effigy container cache prune --global --yes"),
+                "got: {message}"
+            );
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
 fn container_runtime_policy_constructor_preserves_phase_and_detail() {
     let err =
         RunnerError::container_runtime_policy("backend validation", "compose backend mismatch");

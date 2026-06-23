@@ -713,6 +713,11 @@ fn map_container_exec_failure(
             "Colima profile runtime state is corrupted and Effigy could not recover it automatically.\nprofile command: `{command}`\nnext: restart or delete the affected Colima profile, then retry the Effigy command.\ndetails:\n{stderr}"
         ));
     }
+    if lowered.contains("no space left on device") {
+        return RunnerError::TaskInvocation(format!(
+            "Container runtime storage is out of space or inodes while running `{command}`.\nnext: run `effigy container profile resize` to restart the managed Colima profile without deleting runtime data, then retry the Effigy command. If disk pressure remains, inspect `effigy container cache list --global` and prune purge-safe caches with `effigy container cache prune --global --yes`.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
 
     RunnerError::TaskCommandFailure {
         command,

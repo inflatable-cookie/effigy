@@ -8,6 +8,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - Linux workspace artifact builds now stream in-container Cargo output while refreshing the managed container binary, instead of buffering the log until the build exits.
+- Container runtime failures caused by `no space left on device` now report targeted Colima profile restart and cache-prune remediation instead of only dumping raw compose output.
 
 ## [0.8.17] - 2026-06-17
 
