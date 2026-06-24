@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -70,7 +70,7 @@ jobs:
             os: macos-15-intel
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -116,7 +116,7 @@ jobs:
       has-tap-token: ${{ steps.check-token.outputs.has-token }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download all binaries
         uses: actions/download-artifact@v8
@@ -209,7 +209,7 @@ jobs:
           echo "linux_arm_sha=$LINUX_ARM_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: inflatable-cookie/homebrew-tap
           token: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
