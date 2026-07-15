@@ -929,6 +929,7 @@ dependencies = [
 name = "effigy-codegraph"
 version = "0.8.17"
 dependencies = [
+ "aho-corasick",
  "effigy-manifest",
  "hex",
  "ignore",

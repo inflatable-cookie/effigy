@@ -7,6 +7,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `effigy graph affected` now indexes resolved graph adjacency once and evaluates unresolved references once per query, avoiding runaway CPU on large indexes with many changed symbols.
 - Linux workspace artifact builds now stream in-container Cargo output while refreshing the managed container binary, instead of buffering the log until the build exits.
 - Container runtime failures caused by `no space left on device` now report targeted Colima profile restart and cache-prune remediation instead of only dumping raw compose output.
 

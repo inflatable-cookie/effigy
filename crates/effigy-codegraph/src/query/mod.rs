@@ -285,7 +285,7 @@ pub fn affected(
     )
 }
 
-fn affected_from_graph(
+pub(crate) fn affected_from_graph(
     files: &[FileRecord],
     symbols: &[SymbolRecord],
     edges: &[EdgeRecord],
@@ -315,6 +315,24 @@ fn affected_from_graph(
         .iter()
         .map(|symbol| (symbol.id.as_str().to_owned(), symbol))
         .collect::<BTreeMap<_, _>>();
+    let mut resolved_edges_by_node = BTreeMap::<&str, Vec<(&EdgeRecord, bool)>>::new();
+    let mut unresolved_edges = Vec::new();
+    for edge in edges {
+        if let Some(to_id) = &edge.to_id {
+            resolved_edges_by_node
+                .entry(edge.from_id.as_str())
+                .or_default()
+                .push((edge, true));
+            if to_id != &edge.from_id {
+                resolved_edges_by_node
+                    .entry(to_id.as_str())
+                    .or_default()
+                    .push((edge, false));
+            }
+        } else if edge.unresolved_target.is_some() {
+            unresolved_edges.push(edge);
+        }
+    }
 
     let changed_paths = changed_paths
         .iter()
@@ -359,50 +377,25 @@ fn affected_from_graph(
         })
         .map(|symbol| symbol.display_name.clone())
         .collect::<BTreeSet<_>>();
+    let changed_symbol_matcher = (!changed_symbol_names.is_empty())
+        .then(|| aho_corasick::AhoCorasick::new(changed_symbol_names.iter()))
+        .transpose()
+        .map_err(|error| {
+            CodeGraphError::validation(format!("failed to build changed-symbol matcher: {error}"))
+        })?;
 
-    while let Some((node_id, current_depth)) = queue.pop_front() {
-        if current_depth >= depth {
-            continue;
-        }
-        for edge in edges {
-            if edge.from_id.as_str() == node_id {
-                if let Some(to_id) = &edge.to_id {
-                    let next_id = to_id.as_str().to_owned();
-                    if visited.insert(next_id.clone()) {
-                        queue.push_back((next_id.clone(), current_depth + 1));
-                        record_affected_reason(
-                            &next_id,
-                            &file_by_id,
-                            &symbol_by_id,
-                            &mut file_reasons,
-                            format!("reachable via `{}` from changed node", edge.kind),
-                        );
-                    }
-                }
-            } else if edge
-                .to_id
-                .as_ref()
-                .is_some_and(|to_id| to_id.as_str() == node_id)
-            {
-                let next_id = edge.from_id.as_str().to_owned();
-                if visited.insert(next_id.clone()) {
-                    queue.push_back((next_id.clone(), current_depth + 1));
-                    record_affected_reason(
-                        &next_id,
-                        &file_by_id,
-                        &symbol_by_id,
-                        &mut file_reasons,
-                        format!("incoming `{}` reaches changed node", edge.kind),
-                    );
-                }
-            } else if let Some(target) = &edge.unresolved_target {
-                if changed_symbol_names
-                    .iter()
-                    .any(|name| target.contains(name))
+    if !queue.is_empty() {
+        if let Some(changed_symbol_matcher) = changed_symbol_matcher {
+            for edge in unresolved_edges {
+                let target = edge
+                    .unresolved_target
+                    .as_deref()
+                    .expect("unresolved edge should carry a target");
+                if changed_symbol_matcher.is_match(target)
                     && visited.insert(edge.from_id.as_str().to_owned())
                 {
                     let next_id = edge.from_id.as_str().to_owned();
-                    queue.push_back((next_id.clone(), current_depth + 1));
+                    queue.push_back((next_id.clone(), 1));
                     record_affected_reason(
                         &next_id,
                         &file_by_id,
@@ -411,6 +404,43 @@ fn affected_from_graph(
                         format!("unresolved `{}` references changed symbol", edge.kind),
                     );
                 }
+            }
+        }
+    }
+
+    while let Some((node_id, current_depth)) = queue.pop_front() {
+        if current_depth >= depth {
+            continue;
+        }
+        for (edge, outbound) in resolved_edges_by_node
+            .get(node_id.as_str())
+            .into_iter()
+            .flat_map(|items| items.iter())
+        {
+            let next_id = if *outbound {
+                edge.to_id
+                    .as_ref()
+                    .expect("resolved edge should carry a target")
+                    .as_str()
+                    .to_owned()
+            } else {
+                let next_id = edge.from_id.as_str().to_owned();
+                next_id
+            };
+            if visited.insert(next_id.clone()) {
+                queue.push_back((next_id.clone(), current_depth + 1));
+                let reason = if *outbound {
+                    format!("reachable via `{}` from changed node", edge.kind)
+                } else {
+                    format!("incoming `{}` reaches changed node", edge.kind)
+                };
+                record_affected_reason(
+                    &next_id,
+                    &file_by_id,
+                    &symbol_by_id,
+                    &mut file_reasons,
+                    reason,
+                );
             }
         }
     }

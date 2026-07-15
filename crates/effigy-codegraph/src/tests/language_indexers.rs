@@ -595,3 +595,63 @@ fn helper_works() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn graph_affected_large_unresolved_slice_does_not_rescan_edges_per_changed_symbol() {
+    let file = FileRecord {
+        id: GraphId::new("file:src/lib.rs").expect("file id"),
+        path: "src/lib.rs".to_owned(),
+        content_hash: "abc123".to_owned(),
+        language_id: "rust".to_owned(),
+        byte_size: 128,
+        status: FileIndexStatus::Indexed,
+    };
+    let symbols = (0..200)
+        .map(|index| SymbolRecord {
+            id: GraphId::new(format!("symbol:changed:{index}")).expect("symbol id"),
+            kind: "function".to_owned(),
+            display_name: format!("changed_symbol_{index}"),
+            canonical_name: format!("crate::changed_symbol_{index}"),
+            file_id: file.id.clone(),
+            span: span(),
+            provenance: provenance(),
+        })
+        .collect::<Vec<_>>();
+    let edges = (0..8_000)
+        .map(|index| EdgeRecord {
+            id: GraphId::new(format!("edge:unresolved:{index}")).expect("edge id"),
+            kind: "call".to_owned(),
+            from_id: GraphId::new(format!("symbol:external:{index}")).expect("source id"),
+            to_id: None,
+            unresolved_target: Some(format!("unrelated_target_{index}")),
+            provenance: provenance(),
+        })
+        .collect::<Vec<_>>();
+    let freshness = crate::json::GraphFreshnessPayload {
+        state: "ready".to_owned(),
+        summary: "graph index is current".to_owned(),
+        usable: true,
+        stale: false,
+        stale_path_count: 0,
+        failed_path_count: 0,
+        stale_paths: vec![],
+    };
+
+    let started = std::time::Instant::now();
+    let payload = crate::query::affected_from_graph(
+        &[file],
+        &symbols,
+        &edges,
+        freshness,
+        &["src/lib.rs".to_owned()],
+        2,
+        20,
+    )
+    .expect("affected");
+
+    assert_eq!(payload.affected_files.len(), 1);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "large unresolved slices should be evaluated once, not once per queued symbol"
+    );
+}
