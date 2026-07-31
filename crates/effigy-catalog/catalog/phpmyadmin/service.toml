@@ -4,8 +4,8 @@ description = "phpMyAdmin web UI for local MariaDB and MySQL access"
 
 [params.version]
 type = "string"
-default = "latest"
-description = "phpMyAdmin image tag"
+default = "5.2.3"
+description = "phpMyAdmin image tag (pinned; 5.2.3 is the digest-verified `latest` as of 2026-07)"
 
 [params.database_host]
 type = "string"

@@ -45,8 +45,14 @@ fn resolve_workspace_rust_bun_fragment() {
         "Dockerfile should build on the pinned Rust base image"
     );
     assert!(
-        dockerfile.contains("https://bun.sh/install"),
-        "Dockerfile should install Bun"
+        !dockerfile.contains("https://bun.sh/install"),
+        "Dockerfile should not pipe the unpinned bun installer script into bash"
+    );
+    assert!(
+        dockerfile.contains("bun-v${BUN_VERSION}")
+            && dockerfile.contains("SHASUMS256.txt")
+            && dockerfile.contains("sha256sum --check"),
+        "Dockerfile should install a pinned bun release with SHA256 verification"
     );
     assert!(
         dockerfile.contains("useradd --uid \"${WORKSPACE_UID}\""),
@@ -80,6 +86,11 @@ fn workspace_rust_bun_assembles_with_defaults() {
     assert_eq!(args.get("WORKSPACE_UID").unwrap().as_str().unwrap(), "1000");
     assert_eq!(args.get("WORKSPACE_GID").unwrap().as_str().unwrap(), "1000");
     assert_eq!(args.get("RUST_VERSION").unwrap().as_str().unwrap(), "1.91");
+    assert_eq!(
+        args.get("BUN_VERSION").unwrap().as_str().unwrap(),
+        "1.3.14",
+        "bun should default to a pinned version"
+    );
 
     // sleep infinity command (long-running shell target, not a real service).
     let command = workspace.get("command").expect("command");
@@ -418,7 +429,14 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
     assert!(result.dockerfiles.contains_key("workspace"));
     let dockerfile = &result.dockerfiles["workspace"];
     assert!(dockerfile.contains("FROM rust:"));
-    assert!(dockerfile.contains("bun.sh/install"));
+    assert!(
+        !dockerfile.contains("bun.sh/install"),
+        "Dockerfile should not pipe the unpinned bun installer script into bash"
+    );
+    assert!(
+        dockerfile.contains("bun-v${BUN_VERSION}") && dockerfile.contains("SHASUMS256.txt"),
+        "Dockerfile should install a pinned bun release with SHA256 verification"
+    );
 }
 
 // --- End-to-end: full pipeline write to disk and validate ─────────────

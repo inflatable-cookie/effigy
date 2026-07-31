@@ -18,6 +18,33 @@ use crate::{
     SHARED_SERVICE_HOST,
 };
 
+/// Host address used for generated compose port bindings when the manifest
+/// does not declare `[containers.<name>.host].publish_address`. Loopback keeps
+/// generated dev services (dbgate, postgres, minio, mailpit, ...) reachable
+/// from the local machine — including through the gateway's TCP aliases and
+/// proxy, which already target `127.0.0.1` — without exposing them to the LAN.
+const DEFAULT_PUBLISH_ADDRESS: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;
+
+fn resolve_publish_address(
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<std::net::Ipv4Addr, ContainerPolicyError> {
+    let Some(raw) = config
+        .host
+        .as_ref()
+        .and_then(|host| host.publish_address.as_deref())
+    else {
+        return Ok(DEFAULT_PUBLISH_ADDRESS);
+    };
+    raw.trim()
+        .parse::<std::net::Ipv4Addr>()
+        .map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` has invalid `host.publish_address` `{raw}`: {error}"
+            ))
+        })
+}
+
 #[cfg(test)]
 thread_local! {
     static TEST_EFFIGY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
@@ -220,7 +247,8 @@ pub(crate) fn resolve_compose_source(
         )));
     }
 
-    let shared_services = resolve_shared_service_bindings(repo_root, config)?;
+    let publish_address = resolve_publish_address(container_name, config)?;
+    let shared_services = resolve_shared_service_bindings(repo_root, config, publish_address)?;
     let local_services = config
         .services
         .iter()
@@ -301,6 +329,7 @@ pub(crate) fn resolve_compose_source(
         project_name,
         &configured_bindings,
         &project_loopback_port_rules(repo_root, project_name, config)?,
+        publish_address,
         &mut compose_document,
     )?;
     compose_document.write_back(
@@ -446,6 +475,7 @@ fn render_service_config_path(
 fn resolve_shared_service_bindings(
     repo_root: &Path,
     config: &ManifestContainerConfig,
+    publish_address: std::net::Ipv4Addr,
 ) -> Result<Vec<SharedServiceBinding>, ContainerPolicyError> {
     let mut bindings = Vec::new();
     for (service_name, service) in &config.services {
@@ -492,6 +522,7 @@ fn resolve_shared_service_bindings(
                 service_name,
                 service,
             )?,
+            publish_address,
             &mut compose_document,
         )?;
         compose_document.write_back(
@@ -514,7 +545,10 @@ fn resolve_shared_service_bindings(
             .find(|binding| binding.host != binding.container)
             .unwrap_or(parsed_bindings[0]);
         let output = ComposeOutput::new(output_dir);
-        let write = output.write(&assembly, &shared_project_name)?;
+        let write = output.write(
+            &assembly,
+            &format!("{shared_project_name}\n# publish_address={publish_address}"),
+        )?;
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
@@ -620,6 +654,7 @@ fn apply_generated_compose_port_policy(
     project_name: &str,
     explicit_bindings: &[PortBinding],
     loopback_rules: &[LoopbackPortRule],
+    publish_address: std::net::Ipv4Addr,
     compose_document: &mut GeneratedComposeDocument,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
@@ -673,7 +708,7 @@ fn apply_generated_compose_port_policy(
                     .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
             };
             rewritten_ports.push(GeneratedComposePort::String(format!(
-                "{host_port}:{}",
+                "{publish_address}:{host_port}:{}",
                 binding.container
             )));
             effective_ports.push(format!("{host_port}:{}", binding.container));
@@ -1324,6 +1359,7 @@ services:
                     container: 80,
                 }],
                 &[],
+                std::net::Ipv4Addr::LOCALHOST,
                 &mut compose_document,
             )
             .expect("apply port policy");
@@ -1338,9 +1374,53 @@ services:
             assert_eq!(ports.len(), 2);
             assert!(matches!(
                 &ports[0],
-                GeneratedComposePort::String(raw) if raw == "18080:80"
+                GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
             ));
             assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
+        });
+    }
+
+    #[test]
+    fn typed_generated_compose_port_policy_honours_custom_publish_address() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        with_test_effigy_home(tempdir.path(), || {
+            let mut compose_document = GeneratedComposeDocument::parse(
+                "acme",
+                "test parse",
+                r#"
+services:
+  app:
+    image: php:8.4-fpm
+    ports:
+      - "8080:80"
+"#,
+            )
+            .expect("parse generated compose");
+
+            let effective_ports = apply_generated_compose_port_policy(
+                Path::new("/tmp/acme"),
+                "acme",
+                &[PortBinding {
+                    host: 18080,
+                    container: 80,
+                }],
+                &[],
+                std::net::Ipv4Addr::UNSPECIFIED,
+                &mut compose_document,
+            )
+            .expect("apply port policy");
+
+            assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+
+            let ports = compose_document
+                .services
+                .get("app")
+                .and_then(|service| service.ports.clone())
+                .expect("service ports");
+            assert!(matches!(
+                &ports[0],
+                GeneratedComposePort::String(raw) if raw == "0.0.0.0:18080:80"
+            ));
         });
     }
 

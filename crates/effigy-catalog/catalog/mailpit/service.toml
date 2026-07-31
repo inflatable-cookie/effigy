@@ -4,8 +4,8 @@ description = "Email testing tool — catches all outgoing SMTP and provides a w
 
 [params.version]
 type = "string"
-default = "latest"
-description = "Mailpit version tag"
+default = "v1.30.6"
+description = "Mailpit version tag (pinned; v1.30.6 is the digest-verified `latest` as of 2026-07)"
 
 [params.smtp_port]
 type = "integer"

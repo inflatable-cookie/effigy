@@ -329,9 +329,9 @@ fn mailpit_fragment_assembles() {
     let mail = validate_service(&doc, "mail");
 
     let image = mail.get("image").unwrap().as_str().unwrap();
-    assert!(
-        image.contains("mailpit"),
-        "image should be mailpit: {image}"
+    assert_eq!(
+        image, "axllent/mailpit:v1.30.6",
+        "mailpit image should be pinned to a concrete version tag"
     );
     assert!(mail.get("ports").is_some(), "mailpit should expose ports");
     assert!(
@@ -369,9 +369,9 @@ fn phpmyadmin_fragment_assembles() {
     let admin = validate_service(&doc, "dbadmin");
 
     let image = admin.get("image").unwrap().as_str().unwrap();
-    assert!(
-        image.contains("phpmyadmin"),
-        "image should be phpmyadmin: {image}"
+    assert_eq!(
+        image, "phpmyadmin:5.2.3",
+        "phpmyadmin image should be pinned to a concrete version tag"
     );
     assert!(
         result.compose_yaml.contains("PMA_HOST: db"),
@@ -510,7 +510,10 @@ fn pgweb_fragment_assembles_for_postgres() {
     let pgweb = validate_service(&doc, "pgweb");
 
     let image = pgweb.get("image").unwrap().as_str().unwrap();
-    assert!(image.contains("pgweb"), "image should be pgweb: {image}");
+    assert_eq!(
+        image, "sosedoff/pgweb:0.17.0",
+        "pgweb image should be pinned to a concrete version tag"
+    );
     assert!(
         result
             .compose_yaml
@@ -579,7 +582,10 @@ fn dbgate_fragment_assembles_for_postgres() {
     let dbgate = validate_service(&doc, "dbgate");
 
     let image = dbgate.get("image").unwrap().as_str().unwrap();
-    assert!(image.contains("dbgate"), "image should be dbgate: {image}");
+    assert_eq!(
+        image, "dbgate/dbgate:7.2.3",
+        "dbgate image should be pinned to a concrete version tag"
+    );
     assert!(
         dbgate.get("depends_on").is_some(),
         "dbgate should depend on postgres when referenced"
@@ -602,6 +608,10 @@ fn dbgate_fragment_assembles_for_postgres() {
         "postgres"
     );
     assert_eq!(env.get("LABEL_pg").unwrap().as_str().unwrap(), "Acme dev");
+    assert!(
+        env.get("LOGIN").is_none() && env.get("PASSWORD").is_none(),
+        "dbgate should not emit LOGIN/PASSWORD unless the `login` param is set"
+    );
 
     // dbgate persists settings via the named `data` volume.
     let vol_names: std::collections::BTreeSet<&str> =
@@ -609,6 +619,43 @@ fn dbgate_fragment_assembles_for_postgres() {
     assert!(
         vol_names.contains("test-dbgate-data"),
         "missing dbgate data volume; got {vol_names:?}"
+    );
+}
+
+#[test]
+fn dbgate_fragment_emits_login_env_when_credentials_are_set() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "dbgate".to_string(),
+        catalog: "dbgate".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert("login".to_string(), toml::Value::String("dev".to_string()));
+            p.insert(
+                "password".to_string(),
+                toml::Value::String("from-the-vault".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let dbgate = validate_service(&doc, "dbgate");
+    let env = dbgate
+        .get("environment")
+        .expect("dbgate service declares environment block");
+
+    assert_eq!(env.get("LOGIN").unwrap().as_str().unwrap(), "dev");
+    assert_eq!(
+        env.get("PASSWORD").unwrap().as_str().unwrap(),
+        "from-the-vault"
     );
 }
 
@@ -632,7 +679,10 @@ fn minio_fragment_assembles_with_volume() {
     let storage = validate_service(&doc, "storage");
 
     let image = storage.get("image").unwrap().as_str().unwrap();
-    assert!(image.contains("minio"), "image should be minio: {image}");
+    assert_eq!(
+        image, "minio/minio:RELEASE.2025-09-07T16-13-09Z",
+        "minio image should be pinned to a concrete version tag"
+    );
     assert!(
         storage.get("healthcheck").is_some(),
         "minio should have a healthcheck"

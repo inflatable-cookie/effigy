@@ -4,8 +4,8 @@ description = "pgweb browser UI for local PostgreSQL access"
 
 [params.version]
 type = "string"
-default = "latest"
-description = "pgweb image tag"
+default = "0.17.0"
+description = "pgweb image tag (pinned; 0.17.0 is the digest-verified `latest` as of 2026-07)"
 
 [params.database_host]
 type = "string"

@@ -19,6 +19,18 @@ services:
       PASSWORD_pg: "{{ resolved_password }}"
       DATABASE_pg: "{{ resolved_database }}"
       ENGINE_pg: "{{ engine }}"
+{% if login %}
+      # DbGate web-UI login (LOGIN/PASSWORD env contract, see
+      # https://docs.dbgate.io/dbgate/customization/env-variables/).
+      # When `login` is empty no credentials are emitted: DbGate then serves
+      # the UI without authentication. That is only acceptable because the
+      # generated compose binds published ports to 127.0.0.1 by default
+      # (containers.*.host.publish_address). If you publish DbGate beyond
+      # loopback, set `login`/`password` — source them from your effigy
+      # secrets vault rather than hardcoding them in the manifest.
+      LOGIN: "{{ login }}"
+      PASSWORD: "{{ password }}"
+{% endif %}
 {% if services[database_host] %}
     depends_on:
       {{ services[database_host].name }}:

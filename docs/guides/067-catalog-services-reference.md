@@ -62,7 +62,10 @@ Long-running Rust + Bun workspace container. Used by `[bundle].base =
 - Image: custom Dockerfile (Rust + Bun base).
 - Parameters:
   - `rust_version` (default `"1.88"`) — Rust base image tag.
-  - `bun_version` (default `""` = latest) — pinnable Bun release.
+  - `bun_version` (default `"1.3.14"`) — pinned Bun release; the
+    Dockerfile downloads the matching `bun-v<version>` GitHub release
+    archive and verifies its SHA256 against the release's
+    `SHASUMS256.txt`. The build fails when the version is empty.
   - `workspace_mount` (default `"/workspace-root"`) — in-container mount
     point for the workspace root.
   - `working_subdir` (default `""`) — subdirectory of `workspace_mount` used
@@ -103,12 +106,16 @@ row editing, foreign-key lookups, form view for wide tables, and a SQL
 editor with history. This is the default database UI in the shipped
 `workspace-app` bundle.
 
-- Image: `dbgate/dbgate:latest` (override via `version`).
-- Parameters: `version` (`"latest"`), `database_host` (`"postgres"`),
+- Image: `dbgate/dbgate:7.2.3` (override via `version`).
+- Parameters: `version` (`"7.2.3"`), `database_host` (`"postgres"`),
   `database_port` (`5432`), `database` (`"postgres"`),
   `database_user` (`"postgres"`), `database_password` (`""`),
   `engine` (`"postgres@dbgate-plugin-postgres"`),
-  `connection_label` (`"Postgres"`).
+  `connection_label` (`"Postgres"`), `login` (`""`), `password` (`""`).
+- Auth: no web-UI login by default. That is only acceptable because
+  generated compose binds published ports to `127.0.0.1`; set `login` /
+  `password` (DbGate's `LOGIN` / `PASSWORD` env contract) when publishing
+  beyond loopback, and source them from the effigy secrets vault.
 - Exposed port: `3000`.
 - Volume: persistent `data` volume at `/root/.dbgate` for saved queries
   and settings.
@@ -129,8 +136,8 @@ row editor, write operations happen through the built-in SQL query tab.
 Kept in the catalog as a lean alternative to `dbgate` when the heavier
 UI is not needed.
 
-- Image: `sosedoff/pgweb:latest` (override via `version`).
-- Parameters: `version` (`"latest"`), `database_host` (`"postgres"`),
+- Image: `sosedoff/pgweb:0.17.0` (override via `version`).
+- Parameters: `version` (`"0.17.0"`), `database_host` (`"postgres"`),
   `database_port` (`5432`), `database` (`"postgres"`),
   `database_user` (`"postgres"`), `database_password` (`""`).
 - Exposed port: `8081`.
@@ -186,8 +193,8 @@ Memcached in-memory cache.
 
 Local SMTP catcher and web UI for development email.
 
-- Image: `axllent/mailpit:latest` (override via `version`).
-- Parameters: `version` (`"latest"`), `smtp_port` (`1025`), `ui_port`
+- Image: `axllent/mailpit:v1.30.6` (override via `version`).
+- Parameters: `version` (`"v1.30.6"`), `smtp_port` (`1025`), `ui_port`
   (`8025`).
 - Exposed ports: SMTP on `1025`, web UI on `8025`.
 - Volumes: none.
@@ -205,10 +212,11 @@ listener by default.
 
 Local S3-compatible object storage and console.
 
-- Image: `minio/minio:latest` (override via `version`).
-- Parameters: `version` (`"latest"`), `root_user` (`"minioadmin"`),
-  `root_password` (`"minioadmin"`), `api_port` (`9000`), `console_port`
-  (`9001`).
+- Image: `minio/minio:RELEASE.2025-09-07T16-13-09Z` (override via
+  `version`; upstream stopped moving `latest` after 2025-09).
+- Parameters: `version` (`"RELEASE.2025-09-07T16-13-09Z"`),
+  `root_user` (`"minioadmin"`), `root_password` (`"minioadmin"`),
+  `api_port` (`9000`), `console_port` (`9001`).
 - Exposed ports: S3 API on `9000`, console on `9001`.
 - Volume: persistent `data` volume at `/data`.
 - Healthcheck: `mc ready local`.
@@ -232,8 +240,8 @@ Elasticsearch search engine.
 
 Web UI for MariaDB/MySQL.
 
-- Image: `phpmyadmin:latest` (override via `version`).
-- Parameters: `version` (`"latest"`), `database_host` (`"db"`),
+- Image: `phpmyadmin:5.2.3` (override via `version`).
+- Parameters: `version` (`"5.2.3"`), `database_host` (`"db"`),
   `database_port` (`3306`), `database_password` (`""`).
 - Exposed port: `80`.
 - Volumes: none.

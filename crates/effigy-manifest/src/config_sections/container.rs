@@ -369,6 +369,12 @@ pub struct ManifestContainerHostConfig {
     pub ports: Vec<String>,
     #[serde(default)]
     pub mounts: Vec<ManifestContainerHostMount>,
+    /// Host address used when publishing generated compose ports.
+    /// Defaults to `127.0.0.1` so generated services are only reachable
+    /// from the local machine. Set to `0.0.0.0` to publish on all
+    /// interfaces (previous behavior).
+    #[serde(default)]
+    pub publish_address: Option<String>,
 }
 
 /// A host -> container bind mount declaration on `[containers.<name>.host]`.

@@ -4,8 +4,8 @@ description = "S3-compatible object storage for local development"
 
 [params.version]
 type = "string"
-default = "latest"
-description = "MinIO version tag"
+default = "RELEASE.2025-09-07T16-13-09Z"
+description = "MinIO version tag (pinned; this release is the digest-verified `latest` as of 2026-07 — upstream stopped publishing `latest` updates after 2025-09)"
 
 [params.root_user]
 type = "string"

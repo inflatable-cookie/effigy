@@ -95,7 +95,10 @@ variant = "default"
             .find(|(_, container)| *container == "80")
             .map(|(host, _)| host.to_owned())
             .expect("generated compose should expose a host port for container port 80");
-        assert!(compose.contains(&format!("{http_port}:80")));
+        assert!(
+            compose.contains(&format!("127.0.0.1:{http_port}:80")),
+            "generated compose should bind published ports to loopback: {compose}"
+        );
     });
 }
 
@@ -260,8 +263,8 @@ variant = "default"
             fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
                 .expect("compose");
 
-        assert!(compose.contains("18080:80"));
-        assert!(compose.contains("13306:3306"));
+        assert!(compose.contains("127.0.0.1:18080:80"), "{compose}");
+        assert!(compose.contains("127.0.0.1:13306:3306"), "{compose}");
         assert!(policy.ports_declared_explicitly);
         assert!(policy
             .declared_ports
@@ -271,6 +274,82 @@ variant = "default"
             .declared_ports
             .iter()
             .any(|value| value == "13306:3306"));
+    });
+}
+
+#[test]
+fn generated_compose_publish_address_can_opt_back_into_public_binding() {
+    with_temp_effigy_home("catalog-public-publish-address", |_| {
+        let root = temp_repo("catalog-public-publish-address");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+ports = ["18080:80"]
+publish_address = "0.0.0.0"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let compose =
+            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+                .expect("compose");
+
+        assert!(compose.contains("0.0.0.0:18080:80"), "{compose}");
+        assert!(
+            !compose.contains("127.0.0.1:18080:80"),
+            "public publish address should replace the loopback default: {compose}"
+        );
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "18080:80"));
+    });
+}
+
+#[test]
+fn generated_compose_rejects_invalid_publish_address() {
+    with_temp_effigy_home("catalog-invalid-publish-address", |_| {
+        let root = temp_repo("catalog-invalid-publish-address");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+publish_address = "not-an-ip"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+"#,
+        )
+        .expect("write manifest");
+
+        let error = load_container_policy(&root, None).expect_err("should fail");
+        assert!(
+            error.to_string().contains("host.publish_address"),
+            "unexpected error: {error}"
+        );
     });
 }
 
@@ -410,8 +489,8 @@ catalog = "phpmyadmin"
         );
         for port in &http_ports {
             assert!(
-                compose.contains(&format!("- {port}:80")),
-                "generated compose should include HTTP port {port}:\n{compose}"
+                compose.contains(&format!("- 127.0.0.1:{port}:80")),
+                "generated compose should include HTTP port {port} bound to loopback:\n{compose}"
             );
         }
     });
@@ -458,6 +537,19 @@ catalog = "minio"
         assert!(!compose.contains("127.1.0.1:9000:9000"), "{compose}");
         assert!(compose.contains(":8025"), "{compose}");
         assert!(compose.contains(":9001"), "{compose}");
+        for container_port in ["5432", "1025", "9000"] {
+            let host_port = policy
+                .declared_ports
+                .iter()
+                .filter_map(|value| value.split_once(':'))
+                .find(|(_, container)| *container == container_port)
+                .map(|(host, _)| host.to_owned())
+                .unwrap_or_else(|| panic!("expected declared port for {container_port}"));
+            assert!(
+                compose.contains(&format!("127.0.0.1:{host_port}:{container_port}")),
+                "tcp-alias service port {container_port} should stay published on loopback:\n{compose}"
+            );
+        }
         assert!(policy
             .declared_ports
             .iter()
@@ -854,7 +946,10 @@ variant = "default"
 
         assert!(shared.compose_file.exists());
         let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
-        assert!(shared_compose.contains(&format!("{}:3306", shared.host_port)));
+        assert!(
+            shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
+            "shared compose should bind the runtime host port to loopback: {shared_compose}"
+        );
         assert!(home
             .join("shared-services")
             .join(&shared.project_name)
@@ -929,8 +1024,8 @@ variant = "default"
             "{shared_compose}"
         );
         assert!(
-            shared_compose.contains(&format!("{}:3306", shared.host_port)),
-            "{shared_compose}"
+            shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
+            "shared compose should bind the runtime host port to loopback: {shared_compose}"
         );
         assert!(home.join("gateway").join("loopback-ips.json").exists());
     });

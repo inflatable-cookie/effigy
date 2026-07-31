@@ -4,7 +4,10 @@ FROM rust:${RUST_VERSION}-bookworm
 ARG WORKSPACE_UID=1000
 ARG WORKSPACE_GID=1000
 ARG WORKSPACE_MOUNT=/workspace-root
-ARG BUN_VERSION=""
+# Mandatory: the bun release to install (e.g. 1.3.14). No default on
+# purpose — the build fails fast when it is unset instead of silently
+# pulling whatever `latest` happens to be.
+ARG BUN_VERSION
 
 # ── System tools ──────────────────────────────────────────────────────
 # Tools every Rust/Bun workspace tends to need: build toolchain, TLS,
@@ -48,12 +51,31 @@ RUN set -eux; \
     fi
 
 # ── Bun ───────────────────────────────────────────────────────────────
+# Pinned install: BUN_VERSION selects the exact GitHub release
+# (bun-v${BUN_VERSION}) and the archive is verified against the release's
+# published SHA256 checksums before anything is executed. The upstream
+# installer script is deliberately not piped into bash — no unversioned,
+# unverified code path.
 ENV BUN_INSTALL=/usr/local/bun
-RUN if [ -n "${BUN_VERSION}" ]; then \
-        curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"; \
-    else \
-        curl -fsSL https://bun.sh/install | bash; \
-    fi \
+RUN set -eux; \
+    if [ -z "${BUN_VERSION}" ]; then \
+        echo "BUN_VERSION build arg is required (e.g. BUN_VERSION=1.3.14); refusing to install an unpinned bun" >&2; \
+        exit 1; \
+    fi; \
+    case "$(uname -m)" in \
+        x86_64) bun_arch="x64" ;; \
+        aarch64) bun_arch="aarch64" ;; \
+        *) echo "unsupported architecture for bun: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    release_base="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}"; \
+    curl -fsSL "${release_base}/bun-linux-${bun_arch}.zip" -o "/tmp/bun-linux-${bun_arch}.zip"; \
+    curl -fsSL "${release_base}/SHASUMS256.txt" -o /tmp/bun-SHASUMS256.txt; \
+    grep "bun-linux-${bun_arch}\.zip\$" /tmp/bun-SHASUMS256.txt | (cd /tmp && sha256sum --check --strict -); \
+    unzip -q "/tmp/bun-linux-${bun_arch}.zip" -d /tmp/bun-unpack; \
+    mkdir -p "${BUN_INSTALL}/bin"; \
+    install -m 0755 "/tmp/bun-unpack/bun-linux-${bun_arch}/bun" "${BUN_INSTALL}/bin/bun"; \
+    ln -sf bun "${BUN_INSTALL}/bin/bunx"; \
+    rm -rf "/tmp/bun-linux-${bun_arch}.zip" /tmp/bun-SHASUMS256.txt /tmp/bun-unpack \
     && ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun \
     && ln -sf /usr/local/bun/bin/bunx /usr/local/bin/bunx
 

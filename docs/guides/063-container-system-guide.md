@@ -270,6 +270,18 @@ Effigy generates runtime-owned compose output under:
 
 Treat that directory as runtime output, not repo-owned source.
 
+Generated compose binds every published port to loopback by default —
+the port policy rewrites fragment entries like `"3000:3000"` into
+`"127.0.0.1:<allocated-host-port>:3000"`, so dev services (dbgate,
+postgres, minio, mailpit, ...) are reachable from the local machine and
+the gateway's TCP aliases but not from the LAN. Opt back into public
+binding per container environment:
+
+```toml
+[containers.web.host]
+publish_address = "0.0.0.0"
+```
+
 ### Repo-Owned `compose_file`
 
 ```toml
