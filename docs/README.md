@@ -46,6 +46,7 @@ installing them directly on your machine.
 - [`guides/065-external-bundle-adoption.md`](./guides/065-external-bundle-adoption.md) — typed external bundle source adoption
 - [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md) — postgres, redis, and more
 - [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md) — sibling repo mounts and Docker/Colima coexistence
+- [`guides/077-apple-containers-prototype-status.md`](./guides/077-apple-containers-prototype-status.md) — watch-only Apple Containers 1.2 prototype outcome and reassessment gate
 
 **Use these when cleanup starts to matter:**
 - [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md) — `container cache list/prune`, `container volume list/prune`

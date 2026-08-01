@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_DB: effigy
+      POSTGRES_PASSWORD: effigy
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+
+  web:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:${WEB_PORT:-18088}:80"
+    depends_on:
+      app:
+        condition: service_started
+
+volumes:
+  db-data:

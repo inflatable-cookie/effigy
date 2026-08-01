@@ -78,6 +78,9 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/01-144647-apple-containers-parity-decision.md`](./2026-08/01-144647-apple-containers-parity-decision.md)
+- [`2026-08/01-143249-apple-native-stack-lifecycle.md`](./2026-08/01-143249-apple-native-stack-lifecycle.md)
+- [`2026-08/01-125307-apple-containers-stack-plan-foundation.md`](./2026-08/01-125307-apple-containers-stack-plan-foundation.md)
 - [`2026-06/05-080226-g08-roadmap-consolidation.md`](./2026-06/05-080226-g08-roadmap-consolidation.md)
 - [`2026-06/04-233355-dead-code-final-burn-down.md`](./2026-06/04-233355-dead-code-final-burn-down.md)
 - [`2026-06/04-232355-dead-code-rust-impl-call-precision.md`](./2026-06/04-232355-dead-code-rust-impl-call-precision.md)

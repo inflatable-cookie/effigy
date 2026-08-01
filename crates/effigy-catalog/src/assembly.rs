@@ -17,6 +17,7 @@ use serde_yaml::Value as YamlValue;
 
 use crate::error::CatalogError;
 use crate::fragment::{CatalogFragment, CatalogResolver};
+use crate::stack_plan::EffectiveStackPlan;
 use crate::template::{toml_to_minijinja, SiblingService, SystemContext, TemplateRenderer};
 
 /// A service declaration from the manifest.
@@ -54,6 +55,14 @@ pub struct AssemblyResult {
 
     /// Named volumes that were declared by fragments.
     pub volumes: Vec<VolumeInfo>,
+}
+
+/// Generated Compose artifacts plus the backend-neutral service plan built
+/// from the same resolved catalog definitions.
+#[derive(Debug)]
+pub struct StackAssemblyResult {
+    pub compose: AssemblyResult,
+    pub stack_plan: EffectiveStackPlan,
 }
 
 /// Information about a named volume.
@@ -103,6 +112,30 @@ impl ComposeAssembler {
         host_uid: u32,
         host_gid: u32,
     ) -> Result<AssemblyResult, CatalogError> {
+        self.assemble_with_stack_plan(
+            services,
+            project_name,
+            repo_root,
+            catalog_root,
+            host_uid,
+            host_gid,
+        )
+        .map(|result| result.compose)
+    }
+
+    /// Assemble both the existing Compose artifacts and a bounded semantic
+    /// stack plan. Catalog fragments remain the authoring format for now, but
+    /// unmodelled service behavior fails explicitly instead of being silently
+    /// dropped by a native backend.
+    pub fn assemble_with_stack_plan(
+        &self,
+        services: &[ServiceDeclaration],
+        project_name: &str,
+        repo_root: &str,
+        catalog_root: &str,
+        host_uid: u32,
+        host_gid: u32,
+    ) -> Result<StackAssemblyResult, CatalogError> {
         if services.is_empty() {
             return Err(CatalogError::EmptyServiceList);
         }
@@ -132,6 +165,7 @@ impl ComposeAssembler {
 
         // 3. Render each fragment, parse the YAML, and collect artifacts.
         let mut merged_services = serde_yaml::Mapping::new();
+        let mut stack_services = IndexMap::new();
         let mut all_dockerfiles: HashMap<String, String> = HashMap::new();
         let mut all_configs: HashMap<String, String> = HashMap::new();
         let mut all_volumes: Vec<VolumeInfo> = Vec::new();
@@ -167,6 +201,7 @@ impl ComposeAssembler {
             // Parse the rendered YAML and extract the service definition.
             let service_def = Self::extract_service_definition(&rendered, name, &fragment.name)?;
             merged_services.insert(YamlValue::String(name.clone()), service_def.clone());
+            stack_services.insert(name.clone(), service_def.clone());
 
             // Collect Dockerfiles.
             if let Some(ref dockerfile) = fragment.dockerfile {
@@ -229,14 +264,19 @@ impl ComposeAssembler {
         }
 
         // 4. Build the final compose document.
+        let stack_plan =
+            EffectiveStackPlan::from_service_definitions(project_name, &stack_services)?;
         let compose_yaml =
             Self::build_compose_document(merged_services, project_name, repo_root, &all_volumes)?;
 
-        Ok(AssemblyResult {
-            compose_yaml,
-            dockerfiles: all_dockerfiles,
-            config_files: all_configs,
-            volumes: all_volumes,
+        Ok(StackAssemblyResult {
+            compose: AssemblyResult {
+                compose_yaml,
+                dockerfiles: all_dockerfiles,
+                config_files: all_configs,
+                volumes: all_volumes,
+            },
+            stack_plan,
         })
     }
 

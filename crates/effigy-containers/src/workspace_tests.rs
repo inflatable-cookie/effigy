@@ -643,18 +643,21 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn mkcert_ca_mount_skipped_for_node_catalog_without_entrypoint_hook() {
-        // `node` is git-aware but has no Dockerfile entrypoint that runs
-        // `update-ca-certificates`, so mounting the cert there would be a
-        // silent no-op. Pin the narrower trust-catalog boundary.
+    fn mkcert_ca_mount_renders_for_node_catalog_with_entrypoint_hook() {
+        // The node image now runs `update-ca-certificates` in its entrypoint
+        // and advertises `installs_mkcert_ca`, so it shares the trust mount.
         let dir = temp_dir("mkcert-node");
         let pem = dir.join("rootCA.pem");
         fs::write(&pem, "ignored").expect("write");
         let config = make_config("node", enabled_params());
         let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
             build_host_mkcert_ca_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
+        })
+        .expect("node mkcert mount");
+        assert_eq!(
+            mount.target,
+            "/usr/local/share/ca-certificates/effigy-mkcert.crt"
+        );
     }
 
     #[test]

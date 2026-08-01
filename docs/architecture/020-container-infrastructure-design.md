@@ -1,7 +1,7 @@
 # Container Infrastructure Design
 
 Status: background design reference
-Updated: 2026-04-16
+Updated: 2026-08-01
 
 ## Purpose
 
@@ -884,8 +884,53 @@ When `g02.010` finishes, these crates wire into the runner:
 - `docs/guides/050-env-schema-integration.md` — environment variable handling
 - `docs/guides/012-dev-process-manager-tui.md` — TUI process manager
 
+## Apple Containers 1.2 Reassessment
+
+Apple Containers is a credible optional macOS backend candidate after its 1.2
+release, but it is not Compose-compatible. Each container runs in its own
+lightweight VM and the CLI supplies the required low-level OCI build,
+lifecycle, exec, network, volume, and port primitives. Service-stack
+orchestration remains Effigy-owned.
+
+The current catalog-to-generated-Compose flow must therefore evolve into:
+
+```text
+manifest + catalog + overrides
+             |
+             v
+    typed effective stack plan
+        /                 \
+       v                   v
+Compose renderer      native operation plan
+(Docker/Colima)       (Apple Containers)
+```
+
+The typed plan, not Compose YAML or backend command construction, is the
+durable semantic boundary. It carries service identity, build/image, command,
+environment, mounts, ports, networks, dependencies, readiness, execution
+target, gateway metadata, and data lifecycle policy.
+
+The prototype established this stack-plan boundary and a bounded native
+executor. Its disposition is watch-only. Direct `compose_file` input and
+arbitrary Compose overrides remain Docker/Colima-only, and Apple is not
+registered or auto-detected.
+
+The blocking architectural gap is boot-time service discovery. Project-local
+host reconciliation works after containers start, but Apple 1.2 supplies no
+bare service-name DNS or static address assignment. A service whose boot
+process requires a peer alias can therefore fail before Effigy can repair
+`/etc/hosts`. Gateway/runtime-prep integration, secret delivery, SSH/Rosetta
+policy, and project-scoped data operations also remain incomplete.
+
+Current authority remains the live contracts:
+
+- `docs/contracts/006-compose-backend-compatibility.md`
+- `docs/contracts/012-container-manager-contract.md`
+- `docs/research/translation-memos/017-apple-containers-runtime-backend.md`
+
 ## Next Task
 
-Library crates are ready for integration. Remaining pre-integration work:
-gateway SNI resolver for multi-domain HTTPS, and `g02.013` dev front door
-library logic. Integration into the runner starts after `g02.010` completes.
+Treat this document as background. Keep Apple Containers watch-only and retain
+Docker/Colima as the supported runtime paths. Reopen implementation planning
+only when the boot-time discovery boundary or an equivalent safe Effigy repair
+has changed; Translation Memo 017 holds the prototype matrix.

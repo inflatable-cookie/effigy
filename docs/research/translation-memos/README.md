@@ -25,6 +25,14 @@ Translation memos bridge research findings and Effigy action. They:
 | 009-cross-platform-strategy.md | Draft | Track 09 | Native shell + platform conditionals |
 | 010-environment-strategy.md | Draft | Track 10 | TOML env + .env loading + secret providers |
 | 011-remote-execution-strategy.md | Draft | Track 11 | S3-compatible remote cache, scale later |
+| 012-ci-cd-integration.md | Draft | Track 12 | Keep execution CI-agnostic |
+| 013-ide-integration.md | Draft | Track 13 | Prefer standard machine-readable interfaces |
+| 014-plugin-architecture.md | Draft | Track 14 | Stable, function-based extension surface |
+| 015-telemetry-and-observability.md | Draft | Track 15 | Transparent, consent-based telemetry |
+| 016-secure-secrets-management.md | Draft | Track 16 | Offline-first secure secret providers |
+| 016b-external-provider-secrets.md | Draft | Track 16 | Reference external provider secrets |
+| 016c-varlock-integration.md | Draft | Track 16 | Integrate Varlock as an external dependency |
+| 017-apple-containers-runtime-backend.md | Complete | Runtime | Watch-only native prototype; boot-time discovery blocks support |
 
 ## Memo Lifecycle
 
@@ -41,9 +49,8 @@ Translation memos bridge research findings and Effigy action. They:
 **Phase 1 ✅ COMPLETE** — 5 memos (001-005)
 **Phase 2 ✅ COMPLETE** — 5 memos (006-010)
 
-**TOTAL: 10 translation memos**
+**TOTAL: 19 translation memos**
 
-**Next:**
-- Option 1: Phase 3 — 5 more memos (011-015)
-- Option 2: Begin implementation — Promote memos to roadmaps
-
+**Next:** Promote complete memos only when their owner and evidence plan are
+explicit. Reassess Apple Containers when boot-time service discovery or an
+equivalent safe repair becomes available.

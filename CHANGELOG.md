@@ -6,8 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Added a backend-neutral generated-stack plan and an explicit, unregistered Apple Containers 1.2 native adapter prototype covering image preparation, project networks, deterministic containers, readiness, service discovery, exec, logs, published ports, named volumes, restart recovery, and scoped cleanup. The prototype is watch-only and does not change the supported or automatically detected backend set.
+
 ### Fixed
 - `effigy secrets doctor` now prompts for the vault passphrase in interactive terminals so it can validate stored values; non-interactive runs still report the vault as locked without blocking.
+- The Postgres catalog now places `PGDATA` below the named-volume mount root, avoiding `lost+found` initialization failures on ext4-backed runtimes such as Apple Containers.
 - `effigy graph affected` now indexes resolved graph adjacency once and evaluates unresolved references once per query, avoiding runaway CPU on large indexes with many changed symbols.
 - Linux workspace artifact builds now stream in-container Cargo output while refreshing the managed container binary, instead of buffering the log until the build exits.
 - Container runtime failures caused by `no space left on device` now report targeted Colima profile restart and cache-prune remediation instead of only dumping raw compose output.

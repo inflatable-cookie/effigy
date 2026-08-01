@@ -1,7 +1,7 @@
 # Effigy Research Master Index
 
 Status: Active
-Last updated: 2026-03-07
+Last updated: 2026-08-01
 Purpose: Navigate from architecture or delivery questions to the most relevant research artifacts.
 
 ## Quick Reference: Delivery Area -> Research
@@ -18,6 +18,7 @@ Purpose: Navigate from architecture or delivery questions to the most relevant r
 | Monorepo and workspace discovery | 008 | 08-monorepo-workspaces | Rush, Nx | `docs/guides/047-agent-and-cross-repo-adoption.md`, `src/runner/catalog.rs` |
 | Cross-platform behavior | 009 | 09-cross-platform-portability | Just, Deno | `docs/guides/010-path-installation-and-release.md` |
 | Environment and secrets | 010 | 10-environment-and-secret-management | direnv, 1Password CLI | `docs/guides/README.md#env-resolution-cheatsheet`, `src/runner/managed/run_spec/sequence/env_resolution/` |
+| Local container backends | 017 | runtime reassessment | Apple Containers 1.2 official surface | `docs/contracts/006-compose-backend-compatibility.md`, `docs/contracts/012-container-manager-contract.md` |
 
 ## By Architecture Doc
 
@@ -26,6 +27,7 @@ Purpose: Navigate from architecture or delivery questions to the most relevant r
 | `docs/architecture/000-overview.md` | Memos 001-004, 008-010 | configuration, caching, watch, DAG, workspaces, portability, env |
 | `docs/architecture/010-package-map.md` | Memos 001-010 | package and module ownership map for delivery work |
 | `docs/architecture/011-multiprocess-tui-config-contract.md` | Memo 005 | process management and TUI patterns |
+| `docs/architecture/020-container-infrastructure-design.md` | Memo 017 | backend-neutral stack planning and Apple Containers candidate direction |
 
 ## By Active Research Phase
 
@@ -34,6 +36,7 @@ Purpose: Navigate from architecture or delivery questions to the most relevant r
 | Phase 1 | Core execution | Tracks 01-05, Memos 001-005 |
 | Phase 2 | Developer experience | Tracks 06-10, Memos 006-010 |
 | Phase 3 | Scale and integration | roadmap `g01.022`, future tracks 11-15 |
+| Runtime reassessment | Optional local backends | Memo 017 and container contracts 006/012 |
 
 ## By Tool Dossier
 
@@ -55,4 +58,6 @@ Purpose: Navigate from architecture or delivery questions to the most relevant r
 
 ## Next Task
 
-Extend this index when Phase 3 research opens new memo families for remote execution, CI/CD integration, or plugin architecture.
+Keep Memo 017 as the Apple Containers watch-only decision record. Do not change
+the supported backend set until its failed and incomplete gates are replanned
+and proved.

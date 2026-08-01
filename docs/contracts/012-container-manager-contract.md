@@ -3,7 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-05-07
+Last Updated: 2026-08-01
 
 ## Purpose
 
@@ -12,8 +12,8 @@ caller-local Docker, Colima, or nerdctl branching.
 
 The manager owns backend selection, backend capability reporting, operation
 shape, and interrupt-aware closeout. Runner code may describe the operation it
-needs, but it must not know the process details for Docker Compose or
-Colima/nerdctl.
+needs, but it must not know the process details for Docker Compose,
+Colima/nerdctl, or any future native runtime.
 
 ## Manager Owner
 
@@ -49,11 +49,43 @@ Backend-specific behavior must stay behind `ContainerBackend`.
 
 Backend-owned details include:
 
-- compose invocation construction
+- runtime invocation construction, including Compose only where the backend
+  uses Compose
 - container/service id and name resolution
 - exec, copy, logs, status, stats, up, and down command shape
 - Colima repair and retry hooks
 - attached-session signal handling and closeout
+
+## Candidate Backend Direction
+
+Apple Containers 1.2 is a prototype candidate with the future id
+`apple-container`. This contract does not add it to the supported registry.
+
+The prototype removed mandatory Compose invocation from `ContainerBackend` and
+introduced a typed, backend-neutral effective stack plan plus semantic stack
+operation identity. Docker and Colima retain Compose adapters; a native backend
+does not need to invent one.
+
+This is only the planning seam. The Apple executor is not registered and does
+not yet implement the complete manager operation family. Attach, copy,
+streaming logs, runtime repair, gateway activation, secrets, SSH-agent policy,
+Rosetta selection, stats reports, and project data operations remain outside
+its advertised capabilities.
+
+Required manager-owned semantic operations include:
+
+- materialize, start, stop, remove, and inspect a project stack
+- exec, logs, copy, stats, image, volume, and published-port operations
+- runtime capability reporting and unsupported-input diagnostics
+- readiness, recovery, attached-session, and cleanup reports
+
+Docker and Colima adapters may render the plan to Compose. An Apple adapter may
+render it to native `container` operations. Direct Compose files remain outside
+the Apple candidate scope.
+
+No automatic detection selects Apple Containers. The completed prototype is
+watch-only because the compatibility gates in
+`006-compose-backend-compatibility.md` do not all pass.
 
 ## Runner Rules
 
@@ -63,7 +95,7 @@ Runner code must call `ContainerManager` or an approved
 Runner code must not:
 
 - call `resolve_compose_backend()` after migration
-- construct local `docker`, `colima`, or `nerdctl` commands
+- construct local `docker`, `colima`, `nerdctl`, or Apple `container` commands
 - duplicate backend selection with env or manifest matches
 - own Ctrl+C shutdown policy for attached container sessions
 
@@ -132,6 +164,15 @@ Minimum proof:
 - copy, exec, status, logs, and stats route through the manager
 - runner drift guards reject caller-local backend branching
 - operation plans expose operation kind, side-effect class, and safety policy
+
+Future Apple promotion additionally requires:
+
+- stack-plan operations do not require a Compose invocation from native
+  backends
+- explicit candidate selection cannot affect Docker/Colima detection
+- unsupported Compose-only inputs fail before side effects
+- native lifecycle, readiness, recovery, and cleanup reports match the manager
+  contract
 
 Lightweight drift check:
 

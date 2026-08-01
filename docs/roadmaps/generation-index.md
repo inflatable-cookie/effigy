@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-06-05
+Updated: 2026-08-01
 
 ## Generation history
 
@@ -164,7 +164,10 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 `colima restart <profile>` remediation (instead of the cryptic nerdctl
 `mkdir ... file exists`); the cause/recovery is documented.
 
-Active ready card: none. `g08` stays open for the next scope.
+`g08.018` (Apple Containers Native Backend Prototype) is paused watch-only. It introduces
+a backend-neutral generated-stack plan, then proves a bounded Apple Containers
+1.2 lifecycle and comparative compatibility/resource evidence before any
+support claim. `1051` through `1053` are complete; no execution card is ready.
 
 ## Research Roadmaps
 
@@ -197,4 +200,5 @@ closeout there first.
 
 ## Next Task
 
-No current dead-code residual batch remains.
+Keep `g08.018` paused until guide `077`'s boot-time discovery reassessment gate
+is met.

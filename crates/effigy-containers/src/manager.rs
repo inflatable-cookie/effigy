@@ -2,6 +2,8 @@ use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use effigy_catalog::EffectiveStackPlan;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BackendId(String);
 
@@ -16,6 +18,10 @@ impl BackendId {
 
     pub fn colima_nerdctl() -> Self {
         Self::new("colima-nerdctl")
+    }
+
+    pub fn apple_container() -> Self {
+        Self::new("apple-container")
     }
 
     pub fn as_str(&self) -> &str {
@@ -137,6 +143,16 @@ pub struct ContainerRuntimeInvocationPlan {
     pub label: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStackOperationPlan {
+    pub backend_id: BackendId,
+    pub repo_root: PathBuf,
+    pub action: ContainerAction,
+    pub project_name: String,
+    pub network_name: String,
+    pub services: Vec<String>,
+}
+
 impl ContainerRuntimeInvocationPlan {
     pub fn command_line(&self) -> String {
         format!(
@@ -240,22 +256,35 @@ pub enum ContainerCleanupResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerBackendCapabilities {
+    pub execution_model: ContainerBackendExecutionModel,
+    pub can_execute_stack_plan: bool,
     pub can_attach: bool,
     pub can_repair_runtime: bool,
     pub can_copy: bool,
     pub can_stream_logs: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerBackendExecutionModel {
+    Compose,
+    Native,
+}
+
 pub trait ContainerBackend: Send + Sync {
     fn id(&self) -> BackendId;
     fn capabilities(&self) -> ContainerBackendCapabilities;
 
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String>;
+    fn compose_invocation(&self, _repo_root: &Path) -> Option<Vec<String>> {
+        None
+    }
+
     fn compose_process_invocation(
         &self,
-        profile: &str,
-        args: &[OsString],
-    ) -> (OsString, Vec<OsString>);
+        _profile: &str,
+        _args: &[OsString],
+    ) -> Option<(OsString, Vec<OsString>)> {
+        None
+    }
 
     fn status(&self, request: &ContainerManagerRequest) -> ContainerOperationReport {
         ContainerOperationReport::new(
@@ -278,6 +307,8 @@ impl ContainerBackend for DockerComposeBackend {
 
     fn capabilities(&self) -> ContainerBackendCapabilities {
         ContainerBackendCapabilities {
+            execution_model: ContainerBackendExecutionModel::Compose,
+            can_execute_stack_plan: true,
             can_attach: true,
             can_repair_runtime: false,
             can_copy: true,
@@ -285,21 +316,21 @@ impl ContainerBackend for DockerComposeBackend {
         }
     }
 
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String> {
-        vec![
+    fn compose_invocation(&self, repo_root: &Path) -> Option<Vec<String>> {
+        Some(vec![
             "docker".to_owned(),
             "compose".to_owned(),
             "--project-directory".to_owned(),
             repo_root.display().to_string(),
-        ]
+        ])
     }
 
     fn compose_process_invocation(
         &self,
         _profile: &str,
         args: &[OsString],
-    ) -> (OsString, Vec<OsString>) {
-        (OsString::from("docker"), args.to_vec())
+    ) -> Option<(OsString, Vec<OsString>)> {
+        Some((OsString::from("docker"), args.to_vec()))
     }
 }
 
@@ -313,6 +344,8 @@ impl ContainerBackend for ColimaNerdctlBackend {
 
     fn capabilities(&self) -> ContainerBackendCapabilities {
         ContainerBackendCapabilities {
+            execution_model: ContainerBackendExecutionModel::Compose,
+            can_execute_stack_plan: true,
             can_attach: true,
             can_repair_runtime: true,
             can_copy: true,
@@ -320,20 +353,20 @@ impl ContainerBackend for ColimaNerdctlBackend {
         }
     }
 
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String> {
-        vec![
+    fn compose_invocation(&self, repo_root: &Path) -> Option<Vec<String>> {
+        Some(vec![
             "nerdctl".to_owned(),
             "compose".to_owned(),
             "--project-directory".to_owned(),
             repo_root.display().to_string(),
-        ]
+        ])
     }
 
     fn compose_process_invocation(
         &self,
         profile: &str,
         args: &[OsString],
-    ) -> (OsString, Vec<OsString>) {
+    ) -> Option<(OsString, Vec<OsString>)> {
         let mut resolved = vec![
             OsString::from("nerdctl"),
             OsString::from("--profile"),
@@ -341,7 +374,7 @@ impl ContainerBackend for ColimaNerdctlBackend {
             OsString::from("--"),
         ];
         resolved.extend(args.iter().cloned());
-        (OsString::from("colima"), resolved)
+        Some((OsString::from("colima"), resolved))
     }
 }
 
@@ -484,7 +517,12 @@ impl ContainerManager {
                 .ok_or(ContainerManagerError::UnknownBackend {
                     backend_id: backend_id.clone(),
                 })?;
-        Ok(backend.compose_process_invocation(profile, args))
+        backend.compose_process_invocation(profile, args).ok_or(
+            ContainerManagerError::UnsupportedBackendOperation {
+                backend_id,
+                operation: "compose invocation",
+            },
+        )
     }
 
     pub fn compose_invocation_plan(
@@ -507,7 +545,12 @@ impl ContainerManager {
                 .ok_or(ContainerManagerError::UnknownBackend {
                     backend_id: backend_id.clone(),
                 })?;
-        let (program, args) = backend.compose_process_invocation(profile, args);
+        let (program, args) = backend.compose_process_invocation(profile, args).ok_or(
+            ContainerManagerError::UnsupportedBackendOperation {
+                backend_id: backend_id.clone(),
+                operation: "compose invocation",
+            },
+        )?;
         Ok(ContainerComposeInvocationPlan {
             backend_id,
             repo_root: request.repo_root.clone(),
@@ -539,6 +582,29 @@ impl ContainerManager {
         ];
         resolved.extend(docker_args.iter().cloned());
         Ok((OsString::from("colima"), resolved))
+    }
+
+    pub fn stack_operation_plan(
+        &self,
+        request: &ContainerManagerRequest,
+        stack: &EffectiveStackPlan,
+        action: ContainerAction,
+    ) -> Result<ContainerStackOperationPlan, ContainerManagerError> {
+        let backend = self.selected_backend(request)?;
+        if !backend.capabilities().can_execute_stack_plan {
+            return Err(ContainerManagerError::UnsupportedBackendOperation {
+                backend_id: backend.id(),
+                operation: "effective stack plan",
+            });
+        }
+        Ok(ContainerStackOperationPlan {
+            backend_id: backend.id(),
+            repo_root: request.repo_root.clone(),
+            action,
+            project_name: stack.project_name.clone(),
+            network_name: stack.network_name.clone(),
+            services: stack.services.keys().cloned().collect(),
+        })
     }
 
     pub fn runtime_invocation_plan(
@@ -595,7 +661,13 @@ impl ContainerManager {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerManagerError {
     NoBackendsRegistered,
-    UnknownBackend { backend_id: BackendId },
+    UnknownBackend {
+        backend_id: BackendId,
+    },
+    UnsupportedBackendOperation {
+        backend_id: BackendId,
+        operation: &'static str,
+    },
 }
 
 impl fmt::Display for ContainerManagerError {
@@ -605,6 +677,13 @@ impl fmt::Display for ContainerManagerError {
             Self::UnknownBackend { backend_id } => {
                 write!(f, "unknown container backend `{backend_id}`")
             }
+            Self::UnsupportedBackendOperation {
+                backend_id,
+                operation,
+            } => write!(
+                f,
+                "container backend `{backend_id}` does not support {operation}"
+            ),
         }
     }
 }
@@ -692,10 +771,31 @@ mod tests {
 
     use super::{
         backend_override_from_env_value, BackendId, ColimaNerdctlBackend, ContainerAction,
-        ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry,
-        ContainerInterruptPolicy, ContainerManager, ContainerManagerError, ContainerManagerRequest,
-        ContainerRuntimeState, DockerComposeBackend,
+        ContainerBackend, ContainerBackendCapabilities, ContainerBackendDetection,
+        ContainerBackendExecutionModel, ContainerBackendRegistry, ContainerInterruptPolicy,
+        ContainerManager, ContainerManagerError, ContainerManagerRequest, ContainerRuntimeState,
+        DockerComposeBackend,
     };
+    use effigy_catalog::EffectiveStackPlan;
+
+    struct NativeTestBackend;
+
+    impl ContainerBackend for NativeTestBackend {
+        fn id(&self) -> BackendId {
+            BackendId::new("native-test")
+        }
+
+        fn capabilities(&self) -> ContainerBackendCapabilities {
+            ContainerBackendCapabilities {
+                execution_model: ContainerBackendExecutionModel::Native,
+                can_execute_stack_plan: true,
+                can_attach: true,
+                can_repair_runtime: true,
+                can_copy: true,
+                can_stream_logs: true,
+            }
+        }
+    }
 
     #[test]
     fn default_registry_exposes_docker_and_colima_backends() {
@@ -790,11 +890,21 @@ mod tests {
 
         assert_eq!(
             DockerComposeBackend.compose_invocation(&repo),
-            vec!["docker", "compose", "--project-directory", "/tmp/repo"]
+            Some(vec![
+                "docker".to_owned(),
+                "compose".to_owned(),
+                "--project-directory".to_owned(),
+                "/tmp/repo".to_owned()
+            ])
         );
         assert_eq!(
             ColimaNerdctlBackend.compose_invocation(&repo),
-            vec!["nerdctl", "compose", "--project-directory", "/tmp/repo"]
+            Some(vec![
+                "nerdctl".to_owned(),
+                "compose".to_owned(),
+                "--project-directory".to_owned(),
+                "/tmp/repo".to_owned()
+            ])
         );
     }
 
@@ -804,11 +914,11 @@ mod tests {
 
         assert_eq!(
             DockerComposeBackend.compose_process_invocation("effigy", &args),
-            (OsString::from("docker"), args.clone())
+            Some((OsString::from("docker"), args.clone()))
         );
         assert_eq!(
             ColimaNerdctlBackend.compose_process_invocation("effigy", &args),
-            (
+            Some((
                 OsString::from("colima"),
                 vec![
                     OsString::from("nerdctl"),
@@ -818,7 +928,45 @@ mod tests {
                     OsString::from("compose"),
                     OsString::from("ps"),
                 ]
+            ))
+        );
+    }
+
+    #[test]
+    fn native_backend_plans_semantic_stack_without_compose_methods() {
+        let manager =
+            ContainerManager::new(ContainerBackendRegistry::new().register(NativeTestBackend));
+        let request = ContainerManagerRequest::new("/tmp/repo")
+            .backend_override(BackendId::new("native-test"));
+        let stack = EffectiveStackPlan {
+            project_name: "demo".to_owned(),
+            network_name: "demo-default".to_owned(),
+            services: Default::default(),
+        };
+
+        let plan = manager
+            .stack_operation_plan(&request, &stack, ContainerAction::Activate)
+            .expect("native stack plan");
+        let compose_error = manager
+            .compose_invocation_plan(
+                &request,
+                &ContainerBackendDetection::new(false)
+                    .backend_override(BackendId::new("native-test")),
+                "effigy",
+                &[],
+                ContainerAction::Activate,
+                "native compose",
             )
+            .unwrap_err();
+
+        assert_eq!(plan.backend_id, BackendId::new("native-test"));
+        assert_eq!(plan.project_name, "demo");
+        assert_eq!(
+            compose_error,
+            ContainerManagerError::UnsupportedBackendOperation {
+                backend_id: BackendId::new("native-test"),
+                operation: "compose invocation",
+            }
         );
     }
 

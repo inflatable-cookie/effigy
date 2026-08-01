@@ -77,9 +77,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   correctness, supply-chain gates, daemon panic-safety, secret egress, gateway
   trust, and docs compaction.
 
-## Active Strict Lane
+## Paused Strict Lane
 
-No active ready card.
+[`g08.018`](./g08/018-apple-containers-native-backend-prototype.md) is paused
+watch-only.
+[`1051`](./g08/batch-cards/1051-establish-apple-runtime-and-stack-plan.md) is
+complete. [`1052`](./g08/batch-cards/1052-add-apple-native-stack-lifecycle.md)
+is complete with a passing four-service native lifecycle. [`1053`](./g08/batch-cards/1053-prove-apple-parity-and-decide-support.md)
+is complete with a watch-only decision. No execution card is ready.
+
 [`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md) (workspace
 SSH-agent mount resilience) is complete: `container up` and `doctor` both
 pre-empt a stale colima SSH-agent socket with the `colima restart <profile>`
@@ -148,9 +154,8 @@ Before rollover:
 
 ## Next Task
 
-No active milestone. The post-incident SSH-agent resilience work
-([`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)) is complete.
-`g08` stays open for the next scope. No `g09` rollover at this time.
+Keep `g08.018` paused until guide `077`'s boot-time discovery reassessment gate
+is met.
 No `g09` rollover at this time.
 
 ## Historical language boundary

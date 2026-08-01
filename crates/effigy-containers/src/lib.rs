@@ -1,3 +1,4 @@
+pub mod apple;
 pub mod colima;
 pub mod compose;
 pub mod exec;

@@ -38,7 +38,8 @@ new reusable-core work.
   handoff semantics, alias scope, and backend-fallback ownership.
 - [`006-compose-backend-compatibility.md`](./006-compose-backend-compatibility.md):
   compose-backend capability matrix for the supported local runtime paths,
-  including backend-required versus Effigy-repaired behavior.
+  including backend-required versus Effigy-repaired behavior and the gated
+  native-backend boundary for Apple Containers.
 - [`007-render-export-contract.md`](./007-render-export-contract.md):
   provider-package export proof contract for Render, defining the bounded
   `render.yaml` mapping used by the external Render package.
@@ -58,7 +59,8 @@ new reusable-core work.
   container handoff state.
 - [`012-container-manager-contract.md`](./012-container-manager-contract.md):
   manager-facade contract for backend selection, container operations, and
-  interrupt-aware closeout.
+  interrupt-aware closeout, including the backend-neutral stack-plan
+  prerequisite for native runtimes.
 - [`013-task-execution-request-contract.md`](./013-task-execution-request-contract.md):
   canonical request/plan contract for direct, embedded, Rhai, deferral, demo,
   and managed task execution.
@@ -143,11 +145,11 @@ new reusable-core work.
 | Artifact | Owner | Update triggers | Validation command |
 | --- | --- | --- | --- |
 | `005-container-runtime-contract.md` | Platform maintainers | Container-backed handoff semantics, runtime prep ordering, alias guarantee scope, backend fallback ownership | Targeted runtime compatibility tests on the supported local backend path |
-| `006-compose-backend-compatibility.md` | Platform maintainers | Supported backend set, backend-required versus repaired capability boundary, named compatibility cases | Targeted runtime compatibility tests on the supported local backend path |
+| `006-compose-backend-compatibility.md` | Platform maintainers | Supported backend set, backend-required versus repaired capability boundary, native-backend candidate gates, named compatibility cases | Targeted runtime compatibility tests on supported paths plus recorded live prototype evidence before candidate promotion |
 | `009-execution-surface-convergence.md` | Platform maintainers | Execution-surface parity rules, repo-targeting propagation, activation/session ownership, embedded command re-entry semantics | Targeted parity tests across explicit tasks, deferred execution, exec, bootstrap, workspace, and embedded command surfaces |
 | `010-decodelabs-production-strategy.md` | Platform maintainers | Historical Decodelabs production boundary, provider-readiness claims, operator-owned production concerns, and future widening target for that product family | Review only when explicitly revisiting Decodelabs-specific deployment planning |
 | `011-runtime-context-contract.md` | Platform maintainers | Cwd/root resolution, repo override propagation, boot-time host facts, container handoff marker semantics | `cargo test -p effigy-context` plus targeted runner context tests |
-| `012-container-manager-contract.md` | Platform maintainers | Supported backend ids, backend capability boundaries, interrupt/shutdown policy, manager report fields, public report exposure if added | `cargo test -p effigy-containers` plus targeted runner container migration tests |
+| `012-container-manager-contract.md` | Platform maintainers | Supported backend ids, backend-neutral stack-plan boundary, backend capabilities, interrupt/shutdown policy, manager report fields, public report exposure if added | `cargo test -p effigy-containers` plus targeted runner container migration tests |
 | `013-task-execution-request-contract.md` | Platform maintainers | Execution request fields, route selection rules, Rhai execution helper behavior, embedded task dispatch behavior, public plan exposure if added | `cargo test -p effigy-execution` plus targeted embedded dispatch parity tests |
 | `014-artifact-substrate-contract.md` | Platform maintainers | Artifact ref syntax, metadata schema, OCI pull/push behavior, seed/dump integration, UAT apply/capture semantics, operation ledger fields | Artifact crate tests plus targeted bootstrap/container data seed and dump integration tests |
 | `015-runtime-operation-pipeline-contract.md` | Platform maintainers | Pipeline ownership, request/plan/report boundaries, runner adapter boundaries, drift guards, runtime/container proof matrix | `effigy qa:architecture:runtime-container-drift` plus focused runtime/container proof tests |

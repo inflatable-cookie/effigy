@@ -1,5 +1,8 @@
 # 006 - Compose Backend Compatibility
 
+Status: Active
+Last Updated: 2026-08-01
+
 This contract defines the local compose-backend capability model that Effigy
 expects for container-backed execution.
 
@@ -27,6 +30,29 @@ The second path is supported because Effigy owns fallback behavior for known
 gaps, not because `nerdctl compose` is assumed to be behavior-identical to
 Docker Compose.
 
+## Native backend candidate posture
+
+Apple Containers 1.2 is a prototype candidate for a separate native backend
+class. It is not currently supported, registered, auto-detected, or accepted as
+a Compose implementation.
+
+Prototype disposition: **watch-only**. The native primitive and lifecycle
+proofs pass, but boot-time service discovery and manager/gateway integration do
+not yet satisfy the supported-backend contract.
+
+The candidate boundary is:
+
+- backend id, if promoted: `apple-container`
+- host: Apple silicon on macOS 26 or later
+- input: Effigy-generated catalog stacks expressed as a typed effective stack
+  plan
+- excluded input: direct `compose_file` use and arbitrary Compose overrides
+- fallback: select Docker Compose or Colima when excluded features are present
+
+The prototype must not add Apple support by silently ignoring Compose fields.
+Unsupported input fails before runtime mutation and names the supported backend
+remedy.
+
 ## Capability classes
 
 Effigy should classify backend-sensitive runtime behavior into three buckets:
@@ -35,7 +61,7 @@ Effigy should classify backend-sensitive runtime behavior into three buckets:
 - Effigy-repaired
 - unsupported
 
-### Backend-required
+### Compose-backend required
 
 These must work from the backend/runtime itself for Effigy to function:
 
@@ -47,6 +73,23 @@ These must work from the backend/runtime itself for Effigy to function:
 
 If these fail, Effigy should stop rather than layering more repair logic on
 top.
+
+### Native-backend required
+
+A native backend does not parse Compose. It must instead provide primitives
+for Effigy to execute the same effective stack plan:
+
+- OCI image pull and Dockerfile-compatible build
+- deterministic create, start, stop, delete, and inspect operations
+- exec, logs, copy, stats, and published-port inspection
+- repo bind mounts and named data volumes
+- project network creation and membership
+- enough stable addressing for Effigy-owned service discovery
+
+Effigy owns orchestration above those primitives: dependency order, readiness,
+project naming, recovery, gateway registration, service mappings, and cleanup.
+If the runtime primitives cannot support those repairs without machine-global
+mutation, the backend remains unsupported.
 
 ### Effigy-repaired
 
@@ -72,6 +115,8 @@ Effigy does not currently promise:
 - alias visibility inside every compose service regardless of whether Effigy
   dispatches work there
 - zero-repair semantics on the Colima + `nerdctl compose` path
+- arbitrary Compose-file translation on a native backend
+- Apple Containers support before its prototype gates pass
 
 Those may widen later, but they are not current contract.
 
@@ -177,6 +222,30 @@ The first useful coverage set is:
 - one proof that container-local alias reconciliation runs on the supported
   Colima-sensitive path
 
+Before Apple Containers may enter the supported set, add live proofs for:
+
+- service discovery across all containers in a representative Effigy stack
+  without Apple system DNS as a required dependency
+- dependency readiness, interrupted bring-up recovery, and idempotent restart
+- gateway port discovery across runtime and host-network restarts
+- named-volume preservation, reset, and destructive cleanup
+- bind mounts, SSH-agent rotation, and Rosetta diagnostics
+- cold/warm startup, idle memory, disk, and I/O against the same Docker and
+  Colima stack
+- early rejection of direct Compose files and unsupported override features
+
+The `g08.018` prototype recorded these results:
+
+| Proof area | State |
+| --- | --- |
+| generated-stack planning, lifecycle, readiness, exec, logs, bind mounts, ports, cleanup | pass |
+| stale-state and full runtime restart recovery | pass |
+| named-volume preserve/reset/destructive cleanup | pass |
+| boot-time service aliases | blocked: post-start host reconciliation cannot protect a process that needs a peer during boot |
+| gateway registration and VPN/host-network churn | incomplete |
+| secret, SSH-agent, Rosetta, copy, stats, and streaming-log manager operations | incomplete; selected raw Apple primitives pass |
+| four-service resource comparison | caution: about 240 MiB Apple guest memory versus 64 MiB Docker and 31 MiB Colima on the measured host |
+
 Where live backend behavior is hard to reproduce in unit tests, coverage may
 combine:
 
@@ -191,9 +260,9 @@ Update this contract when Effigy changes:
 - which capability gaps are repaired by shared runtime prep
 - the alias guarantee scope for Effigy-owned execution targets
 - the expected compatibility cases used to prove backend-sensitive behavior
+- the native-backend candidate scope or adoption gates
 
 ## Next Task
 
-Turn the named compatibility cases in this document into executable regression
-coverage, then decide whether any gateway-route derivation and runtime-alias
-derivation should split into separate ownership helpers in code.
+Keep the Apple candidate out of the supported backend registry. Translation
+Memo 017 records the completed prototype and the conditions for reassessment.

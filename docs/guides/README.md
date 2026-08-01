@@ -220,6 +220,7 @@ This section is inventory, not a recommended reading order.
 - [`074-deployment-guide.md`](./074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`077-apple-containers-prototype-status.md`](./077-apple-containers-prototype-status.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)

@@ -188,9 +188,14 @@ fn reset_commands_from_classification() {
     let vols = test_volumes();
     let class = classify_for_reset(&vols, true);
     let cmds = reset_commands(&class);
-    // Only the non-persistent volume should be removed.
-    assert_eq!(cmds.len(), 1);
-    assert!(cmds[0].args.contains(&"proj-cache-data".to_string()));
+    // Both non-persistent cache volumes should be removed.
+    assert_eq!(cmds.len(), 2);
+    assert!(cmds
+        .iter()
+        .any(|cmd| cmd.args.contains(&"proj-cache-data".to_string())));
+    assert!(cmds
+        .iter()
+        .any(|cmd| cmd.args.contains(&"proj-pnpm-store".to_string())));
 }
 
 #[test]

@@ -1,7 +1,7 @@
 # Research-to-Architecture Cross-Reference
 
 Status: Active
-Last updated: 2026-03-07
+Last updated: 2026-08-01
 Purpose: Map translation memo findings to Effigy architecture, guides, and roadmap work so promotion status stays explicit.
 
 ## Gap Analysis Results
@@ -44,6 +44,15 @@ Each memo below is read against the current docs surface and classified as `Alig
 | --- | --- | --- | --- |
 | retain multi-pane TUI with targeted refinements | `docs/architecture/011-multiprocess-tui-config-contract.md`, `docs/guides/012-dev-process-manager-tui.md` | Aligned | The current TUI docs already reflect this direction. |
 
+### Memo 017: Apple Containers Runtime Backend
+
+| Research Finding | Primary Docs | Alignment | Gap Description |
+| --- | --- | --- | --- |
+| Apple Containers is a viable native runtime candidate, not a Compose backend | `docs/architecture/020-container-infrastructure-design.md`, `docs/contracts/006-compose-backend-compatibility.md` | Aligned | The watch-only boundary is explicit; the supported backend set is unchanged. |
+| backend semantics must be expressed as a typed stack plan before native execution | `docs/contracts/012-container-manager-contract.md`, `crates/effigy-catalog`, `crates/effigy-containers` | Aligned | Generated catalog assembly and native planning now share `EffectiveStackPlan`; full manager operation integration remains deliberately unclaimed. |
+| service discovery, readiness, recovery, and resource cost gate adoption | `docs/research/translation-memos/017-apple-containers-runtime-backend.md` | Prototype complete | Recovery and lifecycle pass; boot-time aliases and gateway integration keep the backend watch-only. |
+| direct Compose files should remain on Docker or Colima | `docs/contracts/006-compose-backend-compatibility.md` | Aligned | The candidate scope is limited to Effigy-generated catalog stacks. |
+
 ## Critical Gaps
 
 | Gap | Related Research | Primary Area | Status |
@@ -51,6 +60,7 @@ Each memo below is read against the current docs surface and classified as `Alig
 | research-backed schema/parse diagnostics need clearer promotion into docs | Memo 001, Memo 007 | guides, doctor, manifest contract | Open |
 | cache strategy is still draft despite active implementation and operator impact | Memo 002 | cache code, guides, roadmap | Open |
 | watch strategy remains draft and needs explicit docs alignment | Memo 003 | watch implementation and guide | Open |
+| Apple Containers lacks safe boot-time service aliases and complete gateway/runtime-prep integration | Memo 017 | container manager, runtime prep, upstream networking | Watch only |
 
 ## Areas Already Aligned
 
@@ -62,4 +72,6 @@ Each memo below is read against the current docs surface and classified as `Alig
 
 ## Next Task
 
-Update this cross-reference as draft memos either promote into settled docs or are revised based on implementation evidence.
+Update Memo 017 after an approved live prototype records pass/fail evidence for
+service discovery, readiness, recovery, gateway networking, data lifecycle, and
+multi-service resource cost.

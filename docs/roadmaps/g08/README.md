@@ -43,6 +43,14 @@ This generation should help agents and maintainers answer questions like:
 - [`015-docs-spine-compaction.md`](./015-docs-spine-compaction.md)
 - [`016-suppression-hygiene-and-dead-code-precision.md`](./016-suppression-hygiene-and-dead-code-precision.md)
 - [`017-workspace-ssh-agent-mount-resilience.md`](./017-workspace-ssh-agent-mount-resilience.md)
+- [`018-apple-containers-native-backend-prototype.md`](./018-apple-containers-native-backend-prototype.md)
+
+## Generation Runway
+
+`g08.018` now opens the Apple Containers native-backend prototype. Its runway
+is stack-plan foundation, bounded native lifecycle, then compatibility/resource
+evidence and a support decision. The generation remains open after that
+checkpoint; no `g09` rollover is implied.
 
 ## Design Posture
 
@@ -99,15 +107,20 @@ later scan work.
 - [`1048-classify-dto-render-config-dead-code-roots.md`](./batch-cards/1048-classify-dto-render-config-dead-code-roots.md)
 - [`1049-classify-rust-impl-and-associated-call-dead-code.md`](./batch-cards/1049-classify-rust-impl-and-associated-call-dead-code.md)
 - [`1050-complete-dead-code-false-positive-burn-down.md`](./batch-cards/1050-complete-dead-code-false-positive-burn-down.md)
+- [`1051-establish-apple-runtime-and-stack-plan.md`](./batch-cards/1051-establish-apple-runtime-and-stack-plan.md)
+- [`1052-add-apple-native-stack-lifecycle.md`](./batch-cards/1052-add-apple-native-stack-lifecycle.md)
+- [`1053-prove-apple-parity-and-decide-support.md`](./batch-cards/1053-prove-apple-parity-and-decide-support.md)
 
 ## Current State
 
 `g07` is closed through `g07.078`.
 
-`g08` is complete through `g08.009`.
+`g08` is complete through `g08.017`.
 
-No active ready card.
+`g08.018` is paused watch-only. `1051` through `1053` are complete. No
+execution card is ready.
 
 ## Next Task
 
-No current dead-code residual batch remains.
+Keep `g08.018` paused until guide `077`'s boot-time discovery reassessment gate
+is met.

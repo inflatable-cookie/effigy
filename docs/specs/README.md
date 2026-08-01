@@ -26,9 +26,10 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-Active strict lane:
+Paused strict lane:
 
-- none
+- [`099-apple-containers-native-backend-prototype.md`](./099-apple-containers-native-backend-prototype.md)
+  - prototype complete; watch-only; no ready card
 
 Queued strict lanes:
 
@@ -48,5 +49,6 @@ Active lane:
 
 ## Next Task
 
-Promote uninstall ownership rules into a durable contract before implementing
-`effigy uninstall`.
+No Apple Containers execution card is ready. Reassess only from guide `077`'s
+boot-time discovery gate. The uninstall spec remains separate and does not
+govern this lane.

@@ -824,9 +824,11 @@ fn full_stack_with_all_services() {
         },
     ];
 
-    let result = assembler
-        .assemble(&services, "full-stack", ".", ".effigy-catalog", 1000, 1000)
+    let assembled = assembler
+        .assemble_with_stack_plan(&services, "full-stack", ".", ".effigy-catalog", 1000, 1000)
         .unwrap();
+    let plan = assembled.stack_plan;
+    let result = assembled.compose;
     let doc = validate_compose_structure(&result.compose_yaml);
 
     // All 8 services should be present.
@@ -851,4 +853,19 @@ fn full_stack_with_all_services() {
         "should have a named mariadb data volume:\n{}",
         result.compose_yaml
     );
+
+    assert_eq!(plan.project_name, "full-stack");
+    assert_eq!(plan.network_name, "full-stack-default");
+    assert_eq!(plan.services.len(), services.len());
+    assert!(plan.services["app"].build.is_some());
+    assert_eq!(plan.services["web"].image.as_deref(), Some("nginx:alpine"));
+    assert!(plan.services["db"].readiness.is_some());
+    assert!(plan.services["cache"]
+        .mounts
+        .iter()
+        .any(|mount| mount.target == "/data"));
+    assert!(plan.services["app"]
+        .dependencies
+        .iter()
+        .any(|dependency| dependency.service == "db"));
 }

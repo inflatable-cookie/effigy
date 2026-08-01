@@ -68,6 +68,11 @@ pub enum CatalogError {
     #[error("duplicate service name '{name}' — each service must have a unique name")]
     DuplicateServiceName { name: String },
 
+    /// A generated catalog service uses behavior outside the native stack-plan
+    /// contract.
+    #[error("service '{service}' cannot be represented in the effective stack plan: {reason}")]
+    UnsupportedStackPlan { service: String, reason: String },
+
     /// An I/O error occurred.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
