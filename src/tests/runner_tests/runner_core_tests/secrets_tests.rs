@@ -752,6 +752,7 @@ fn secret_test_env_with_new_passphrase(
 fn secret_test_env_clear() -> EnvGuard {
     EnvGuard::set_many(&[
         ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
         ("EFFIGY_TEST_SECRETS_VALUE", None),
         ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
     ])

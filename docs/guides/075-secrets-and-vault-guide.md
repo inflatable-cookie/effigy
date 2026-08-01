@@ -170,7 +170,10 @@ printed.
 effigy secrets doctor
 ```
 
-Checks vault health, missing required values, and declaration consistency.
+Prompts for the vault passphrase when run interactively, then checks vault
+health, missing required values, and declaration consistency. Non-interactive
+runs do not prompt and report the vault as locked when no passphrase is
+available.
 
 ### Export (compatibility bridge)
 

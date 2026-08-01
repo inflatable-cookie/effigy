@@ -93,7 +93,7 @@ fn run_secrets_doctor(
     secrets: Option<&ManifestSecretsConfig>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let (warnings, blockers, vault_state) = doctor_findings(repo_root, secrets);
+    let (warnings, blockers, vault_state) = doctor_findings(repo_root, secrets)?;
     let ok = blockers.is_empty();
     let mut payload = secrets_payload(repo_root, secrets, warnings.clone(), blockers.clone());
     if let Some(object) = payload.as_object_mut() {
@@ -1071,9 +1071,9 @@ impl VaultDoctorState {
 fn doctor_findings(
     repo_root: &Path,
     secrets: Option<&ManifestSecretsConfig>,
-) -> (Vec<String>, Vec<String>, VaultDoctorState) {
+) -> Result<(Vec<String>, Vec<String>, VaultDoctorState), RunnerError> {
     let Some(secrets) = secrets else {
-        return (Vec::new(), Vec::new(), VaultDoctorState::none());
+        return Ok((Vec::new(), Vec::new(), VaultDoctorState::none()));
     };
     let mut warnings = Vec::new();
     let mut blockers = Vec::new();
@@ -1113,10 +1113,10 @@ fn doctor_findings(
     if matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault))
         && secrets.vault.is_some()
     {
-        vault_state = inspect_vault_doctor_state(repo_root, secrets, &mut warnings, &mut blockers);
+        vault_state = inspect_vault_doctor_state(repo_root, secrets, &mut warnings, &mut blockers)?;
     }
 
-    (warnings, blockers, vault_state)
+    Ok((warnings, blockers, vault_state))
 }
 
 fn inspect_vault_doctor_state(
@@ -1124,9 +1124,9 @@ fn inspect_vault_doctor_state(
     secrets: &ManifestSecretsConfig,
     warnings: &mut Vec<String>,
     blockers: &mut Vec<String>,
-) -> VaultDoctorState {
+) -> Result<VaultDoctorState, RunnerError> {
     let Ok(vault_path) = resolve_vault_path(repo_root, Some(secrets)) else {
-        return VaultDoctorState::none();
+        return Ok(VaultDoctorState::none());
     };
     let path = Some(vault_path.display().to_string());
     if !vault_path.exists() {
@@ -1134,13 +1134,13 @@ fn inspect_vault_doctor_state(
             "secrets vault is missing at {}",
             vault_path.display()
         ));
-        return VaultDoctorState {
+        return Ok(VaultDoctorState {
             status: "missing",
             path,
             stored_keys: None,
             missing_required: Vec::new(),
             undeclared_stored: Vec::new(),
-        };
+        });
     }
 
     match inspect_vault_permissions(&vault_path) {
@@ -1154,19 +1154,16 @@ fn inspect_vault_doctor_state(
         )),
     }
 
-    let Some(passphrase) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE")
-        .ok()
-        .map(SecretValue::new)
-    else {
+    let Some(passphrase) = read_optional_vault_passphrase("Vault passphrase: ")? else {
         warnings
             .push("secrets vault is locked; set a passphrase to validate stored values".to_owned());
-        return VaultDoctorState {
+        return Ok(VaultDoctorState {
             status: "locked",
             path,
             stored_keys: None,
             missing_required: Vec::new(),
             undeclared_stored: Vec::new(),
-        };
+        });
     };
 
     let raw = match fs::read_to_string(&vault_path) {
@@ -1176,39 +1173,39 @@ fn inspect_vault_doctor_state(
                 "failed to read secrets vault {}: {error}",
                 vault_path.display()
             ));
-            return VaultDoctorState {
+            return Ok(VaultDoctorState {
                 status: "corrupt",
                 path,
                 stored_keys: None,
                 missing_required: Vec::new(),
                 undeclared_stored: Vec::new(),
-            };
+            });
         }
     };
     let envelope = match VaultEnvelope::from_json(&raw) {
         Ok(envelope) => envelope,
         Err(error) => {
             blockers.push(format!("failed to parse secrets vault: {error}"));
-            return VaultDoctorState {
+            return Ok(VaultDoctorState {
                 status: "corrupt",
                 path,
                 stored_keys: None,
                 missing_required: Vec::new(),
                 undeclared_stored: Vec::new(),
-            };
+            });
         }
     };
     let payload = match envelope.decrypt_with_passphrase(passphrase.expose()) {
         Ok(payload) => payload,
         Err(error) => {
             blockers.push(format!("failed to unlock secrets vault: {error}"));
-            return VaultDoctorState {
+            return Ok(VaultDoctorState {
                 status: "corrupt",
                 path,
                 stored_keys: None,
                 missing_required: Vec::new(),
                 undeclared_stored: Vec::new(),
-            };
+            });
         }
     };
 
@@ -1244,13 +1241,31 @@ fn inspect_vault_doctor_state(
         ));
     }
 
-    VaultDoctorState {
+    Ok(VaultDoctorState {
         status: "unlocked",
         path,
         stored_keys: Some(stored_keys),
         missing_required,
         undeclared_stored,
+    })
+}
+
+fn read_optional_vault_passphrase(prompt: &str) -> Result<Option<SecretValue>, RunnerError> {
+    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
+        return Ok(Some(SecretValue::new(value)));
     }
+    if let Ok(value) =
+        std::env::var(crate::runner::secret_session::internal_secret_passphrase_env())
+    {
+        return Ok(Some(SecretValue::new(value)));
+    }
+    if !std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let value = rpassword::prompt_password(prompt).map_err(|error| {
+        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
+    })?;
+    Ok(Some(SecretValue::new(value)))
 }
 
 fn render_secrets_list_text(repo_root: &Path, secrets: Option<&ManifestSecretsConfig>) -> String {
