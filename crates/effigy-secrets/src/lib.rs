@@ -342,7 +342,8 @@ impl VaultPlaintextPayload {
         let key = derive_vault_key(passphrase, &kdf)?;
         let plaintext = serde_json::to_vec(self).map_err(VaultFileError::PayloadJson)?;
         let nonce = xnonce_from_cipher(&cipher)?;
-        let aead = XChaCha20Poly1305::new(Key::from_slice(&key));
+        let key = Key::from(key);
+        let aead = XChaCha20Poly1305::new(&key);
         let ciphertext = aead
             .encrypt(nonce, plaintext.as_ref())
             .map_err(|_| VaultFileError::Encrypt)?;
@@ -363,7 +364,8 @@ impl VaultEnvelope {
         self.validate()?;
         let key = derive_vault_key(passphrase, &self.kdf)?;
         let nonce = xnonce_from_cipher(&self.cipher)?;
-        let aead = XChaCha20Poly1305::new(Key::from_slice(&key));
+        let key = Key::from(key);
+        let aead = XChaCha20Poly1305::new(&key);
         let plaintext = aead
             .decrypt(nonce, self.payload.ciphertext.as_ref())
             .map_err(|_| VaultFileError::Decrypt)?;
@@ -406,13 +408,10 @@ fn xnonce_from_cipher(cipher: &VaultCipher) -> Result<&XNonce, VaultFileError> {
             actual: cipher.name.clone(),
         });
     }
-    if cipher.nonce.len() != XCHACHA20POLY1305_NONCE_LEN {
-        return Err(VaultFileError::InvalidNonceLength {
-            expected: XCHACHA20POLY1305_NONCE_LEN,
-            actual: cipher.nonce.len(),
-        });
-    }
-    Ok(XNonce::from_slice(&cipher.nonce))
+    <&XNonce>::try_from(cipher.nonce.as_slice()).map_err(|_| VaultFileError::InvalidNonceLength {
+        expected: XCHACHA20POLY1305_NONCE_LEN,
+        actual: cipher.nonce.len(),
+    })
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
