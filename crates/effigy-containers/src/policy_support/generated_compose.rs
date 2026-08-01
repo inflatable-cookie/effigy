@@ -36,13 +36,11 @@ fn resolve_publish_address(
     else {
         return Ok(DEFAULT_PUBLISH_ADDRESS);
     };
-    raw.trim()
-        .parse::<std::net::Ipv4Addr>()
-        .map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` has invalid `host.publish_address` `{raw}`: {error}"
-            ))
-        })
+    raw.trim().parse::<std::net::Ipv4Addr>().map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` has invalid `host.publish_address` `{raw}`: {error}"
+        ))
+    })
 }
 
 #[cfg(test)]
