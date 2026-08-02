@@ -87,6 +87,7 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
         &plan,
         policy,
         ensure_container_runtime_prepared,
+        crate::runner::system_command::ensure_workspace_permissions_ready,
         ensure_runtime_gateway_readiness_stage,
         refresh_host_container_lease_for_task_activation,
     )
@@ -142,6 +143,12 @@ fn activate_container_runtime_plan_for_task_using(
         Option<&str>,
         Option<PathBuf>,
     ) -> Result<bool, RunnerError>,
+    ensure_workspace_permissions: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        Option<&str>,
+        Option<PathBuf>,
+    ) -> Result<(), RunnerError>,
     ensure_gateway_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
     refresh_host_container_lease: impl FnOnce(
         &Path,
@@ -151,6 +158,12 @@ fn activate_container_runtime_plan_for_task_using(
 ) -> Result<ContainerTaskActivation, RunnerError> {
     let repo_root = plan.request.repo_root.as_path();
     let system_was_running = ensure_runtime_prepared(
+        repo_root,
+        policy,
+        plan.request.container_name.as_deref(),
+        plan.request.repo_override.clone(),
+    )?;
+    ensure_workspace_permissions(
         repo_root,
         policy,
         plan.request.container_name.as_deref(),

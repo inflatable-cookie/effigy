@@ -1029,6 +1029,17 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
         },
         {
             let events = Arc::clone(&events);
+            move |repo_root, policy, container_name, _repo_override| {
+                events.lock().expect("events lock").push(format!(
+                    "permissions:{container_name:?}:{}:{}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+        {
+            let events = Arc::clone(&events);
             move |repo_root, policy| {
                 events.lock().expect("events lock").push(format!(
                     "gateway:{}:{}",
@@ -1058,6 +1069,11 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
             format!(
                 "prepare:Some(\"web\"):Some(\"{}\"):{}:{}",
                 repo_root.display(),
+                repo_root.display(),
+                policy.name
+            ),
+            format!(
+                "permissions:Some(\"web\"):{}:{}",
                 repo_root.display(),
                 policy.name
             ),
@@ -1110,6 +1126,13 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
         },
         {
             let events = Arc::clone(&events);
+            move |_, _, _, _| {
+                events.lock().expect("events lock").push("permissions");
+                Ok(())
+            }
+        },
+        {
+            let events = Arc::clone(&events);
             move |_, _| {
                 events.lock().expect("events lock").push("gateway");
                 Ok(())
@@ -1125,7 +1148,10 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
     )
     .expect("activate container runtime");
 
-    assert_eq!(*events.lock().expect("events lock"), vec!["prepare"]);
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec!["prepare", "permissions"]
+    );
     assert_eq!(
         activation,
         ContainerTaskActivation {
@@ -1141,10 +1167,14 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
     for (lease_refresh_policy, expected_events, expected_refreshed_lease) in [
         (
             LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "lease"],
+            vec!["prepare", "permissions", "lease"],
             true,
         ),
-        (LeaseRefreshPolicy::SkipRefresh, vec!["prepare"], false),
+        (
+            LeaseRefreshPolicy::SkipRefresh,
+            vec!["prepare", "permissions"],
+            false,
+        ),
     ] {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = test_policy(PathBuf::from("docker-compose.yml"));
@@ -1171,6 +1201,13 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
                 move |_, _, _, _| {
                     events.lock().expect("events lock").push("prepare");
                     Ok(true)
+                }
+            },
+            {
+                let events = Arc::clone(&events);
+                move |_, _, _, _| {
+                    events.lock().expect("events lock").push("permissions");
+                    Ok(())
                 }
             },
             {
@@ -1203,4 +1240,63 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
             }
         );
     }
+}
+
+#[test]
+fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+    let plan = runtime_activation_plan_from_request(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: Some("web"),
+            repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
+            session_context: RuntimeSessionContext::default(),
+        },
+    );
+    let error = activate_container_runtime_plan_for_task_using(
+        &plan,
+        &policy,
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _, _| {
+                events.lock().expect("events lock").push("prepare");
+                Ok(false)
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _, _| {
+                events.lock().expect("events lock").push("permissions");
+                Err(RunnerError::task_invocation(
+                    "workspace permission prep failed",
+                ))
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _| {
+                events.lock().expect("events lock").push("gateway");
+                Ok(())
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |_, _, _| {
+                events.lock().expect("events lock").push("lease");
+                Ok(true)
+            }
+        },
+    )
+    .expect_err("workspace permission failure should surface");
+
+    assert_eq!(error.to_string(), "workspace permission prep failed");
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec!["prepare", "permissions"]
+    );
 }

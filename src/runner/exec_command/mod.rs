@@ -386,6 +386,9 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     capture: bool,
 ) -> Result<Output, RunnerError> {
     let raw_command = vec!["sh".to_owned(), "-lc".to_owned(), command.to_owned()];
+    if routed_task_exec_requires_workspace_effigy(policy, service) {
+        ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
+    }
     let capabilities = transport::probe_container_capabilities(repo_root, policy, service)?;
     let selector_name = render_task_selector(selector);
     let strategy = determine_strategy(
@@ -419,6 +422,13 @@ pub(super) fn strategy_requires_workspace_effigy_install(
     strategy: &effigy_exec::ExecStrategy,
 ) -> bool {
     matches!(strategy, effigy_exec::ExecStrategy::Handoff { .. })
+}
+
+pub(super) fn routed_task_exec_requires_workspace_effigy(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> bool {
+    policy.workspace_user.is_some() && service == policy.primary_service
 }
 
 fn map_host_cwd(

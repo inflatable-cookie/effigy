@@ -11,6 +11,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy graph affected` now indexes resolved graph adjacency once and evaluates unresolved references once per query, avoiding runaway CPU on large indexes with many changed symbols.
 - Linux workspace artifact builds now stream in-container Cargo output while refreshing the managed container binary, instead of buffering the log until the build exits.
 - Container runtime failures caused by `no space left on device` now report targeted Colima profile restart and cache-prune remediation instead of only dumping raw compose output.
+- Routed container tasks on workspace containers now install the workspace effigy binary before probing container exec capabilities, so a container that has only seen `container up` and routed tasks no longer degrades to running host-rendered commands through raw exec.
+- Task-time container activation now repairs workspace volume ownership (cargo/git caches, isolated dirs, workspace home) even when no workspace shell session has run yet, so fresh or recreated named volumes no longer fail with permission errors.
+- Invoking a `run_in = "container"` task from a child catalog directory now falls back to the nearest ancestor catalog's `[containers]` registry instead of failing with `no container target is defined`.
 
 ## [0.8.17] - 2026-06-17
 

@@ -131,7 +131,7 @@ pub(super) fn run_workspace_permission_prep(
         repo_root,
         policy,
         &args,
-        false,
+        true,
         "docker compose exec",
     )?;
     if output.status.success() {

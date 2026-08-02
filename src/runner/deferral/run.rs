@@ -286,12 +286,6 @@ fn run_deferred_request_with_binding(
                     session_context,
                 },
             )?;
-            crate::runner::system_command::ensure_workspace_permissions_ready(
-                &deferral.working_dir,
-                &policy,
-                None,
-                None,
-            )?;
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
                 &policy,

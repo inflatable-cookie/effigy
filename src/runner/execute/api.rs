@@ -146,7 +146,7 @@ pub(in crate::runner) fn effective_task_binding_inputs<'a>(
         selection.catalog.manifest.systems.as_ref(),
     );
     let containers = merge_containers_config(
-        scope_catalog.and_then(|catalog| catalog.manifest.containers.as_ref()),
+        scope_containers_config_from_catalogs(invocation_cwd, catalogs),
         selection.catalog.manifest.containers.as_ref(),
     );
     (default_run_in, systems, containers)
@@ -170,6 +170,20 @@ fn scope_root_catalog_from_catalogs<'a>(
         .iter()
         .filter(|catalog| invocation_cwd.starts_with(&catalog.catalog_root))
         .max_by_key(|catalog| catalog.depth)
+}
+
+fn scope_containers_config_from_catalogs<'a>(
+    invocation_cwd: &Path,
+    catalogs: &'a [LoadedCatalog],
+) -> Option<&'a ManifestContainersConfig> {
+    catalogs
+        .iter()
+        .filter(|catalog| {
+            invocation_cwd.starts_with(&catalog.catalog_root)
+                && catalog.manifest.containers.is_some()
+        })
+        .max_by_key(|catalog| catalog.depth)
+        .and_then(|catalog| catalog.manifest.containers.as_ref())
 }
 
 fn merge_systems_config(
@@ -455,5 +469,56 @@ run = "cargo run -p farmyard-db --bin migrate_dev_db"
         assert_eq!(containers.default.as_deref(), Some("stack"));
         assert!(containers.environments.contains_key("stack"));
         assert!(containers.environments.contains_key("services"));
+    }
+
+    #[test]
+    fn effective_task_binding_inputs_fall_back_to_ancestor_containers_from_child_scope() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace-root/acowtancy",
+            manifest_from_toml(
+                r#"
+[containers]
+default = "workspace"
+
+[containers.workspace]
+primary_service = "workspace"
+"#,
+            ),
+            0,
+        );
+        let child = loaded_catalog(
+            "cp-api",
+            "/workspace-root/acowtancy/cp-api",
+            manifest_from_toml(
+                r#"
+[tasks.build]
+run_in = "container"
+run = "cargo test"
+"#,
+            ),
+            1,
+        );
+        let catalogs = vec![root, child];
+        let selection = TaskSelection {
+            catalog: &catalogs[1],
+            task: catalogs[1]
+                .manifest
+                .tasks
+                .get("build")
+                .expect("child task exists"),
+            mode: CatalogSelectionMode::RootShallowest,
+            evidence: vec!["test".to_owned()],
+        };
+
+        let (_default_run_in, _systems, containers) = effective_task_binding_inputs(
+            Path::new("/workspace-root/acowtancy/cp-api"),
+            &catalogs,
+            &selection,
+        );
+
+        let containers = containers.expect("ancestor containers should fill the child scope");
+        assert_eq!(containers.default.as_deref(), Some("workspace"));
+        assert!(containers.environments.contains_key("workspace"));
     }
 }

@@ -18,7 +18,8 @@ use crate::runner::exec_command::transport::{
     resolve_host_program,
 };
 use crate::runner::exec_command::{
-    activate_exec_surface_with, strategy_requires_workspace_effigy_install,
+    activate_exec_surface_with, routed_task_exec_requires_workspace_effigy,
+    strategy_requires_workspace_effigy_install,
 };
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
@@ -471,6 +472,16 @@ fn handoff_strategy_requires_workspace_effigy_install() {
             command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
         }
     ));
+}
+
+#[test]
+fn routed_task_exec_requires_workspace_effigy_only_for_workspace_primary_service() {
+    let mut policy = test_policy();
+    assert!(!routed_task_exec_requires_workspace_effigy(&policy, "app"));
+
+    policy.workspace_user = Some("dev".to_owned());
+    assert!(routed_task_exec_requires_workspace_effigy(&policy, "app"));
+    assert!(!routed_task_exec_requires_workspace_effigy(&policy, "db"));
 }
 
 #[test]
