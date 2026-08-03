@@ -57,7 +57,9 @@ pub use execution_binding::{
     ResolvedInlineWorkspaceContainer, ResolvedTaskExecutionBinding, ResolvedWorkspaceBinding,
     ResolvedWorkspaceContainer,
 };
-pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
+pub use loaded_catalog::{
+    env_schema_declaring_catalog, DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection,
+};
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestInlineTaskDefinition,

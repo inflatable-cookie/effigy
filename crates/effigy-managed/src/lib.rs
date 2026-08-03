@@ -294,3 +294,20 @@ pub(crate) fn resolve_catalog_env_schema_from_manifest(
     )
     .map_err(Into::into)
 }
+
+/// Resolves the env schema for `catalog_root`, falling back to the nearest
+/// ancestor catalog that declares `[env_schema]` when the catalog itself
+/// does not. The schema path still resolves against the catalog that
+/// declared it, and a runtime override still wins everywhere.
+pub(crate) fn resolve_catalog_env_schema_with_ancestors(
+    catalogs: &[effigy_manifest::LoadedCatalog],
+    catalog_root: &Path,
+    runtime_override: Option<&Path>,
+) -> Result<Option<effigy_env::resolver::ResolvedEnv>, ManagedError> {
+    let declaring = effigy_manifest::env_schema_declaring_catalog(catalogs, catalog_root);
+    resolve_catalog_env_schema_from_manifest(
+        declaring.map_or(catalog_root, |catalog| catalog.catalog_root.as_path()),
+        declaring.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
+        runtime_override,
+    )
+}

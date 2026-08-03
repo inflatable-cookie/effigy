@@ -8,7 +8,7 @@ use effigy_manifest::{
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
 use crate::profiles::has_concurrent_schema;
 use crate::run_spec::{render_builtin_reference_invocation, render_task_run_spec, RunSpecContext};
-use crate::{resolve_catalog_env_schema_from_manifest, ManagedError};
+use crate::{resolve_catalog_env_schema_with_ancestors, ManagedError};
 
 pub enum ReferenceTarget<'a> {
     Builtin,
@@ -128,9 +128,9 @@ fn render_selected_task_run<'a>(
     depth: usize,
     resolver: TaskResolverFn<'a>,
 ) -> Result<String, ManagedError> {
-    let env_schema_resolved = resolve_catalog_env_schema_from_manifest(
+    let env_schema_resolved = resolve_catalog_env_schema_with_ancestors(
+        catalogs,
         &selection.catalog.catalog_root,
-        selection.catalog.manifest.env_schema.as_ref(),
         runtime_env_schema_override,
     )?;
     let mut task_env = env_schema_resolved

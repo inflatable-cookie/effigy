@@ -58,9 +58,9 @@ pub fn resolve_env_schema_entry(
             env_schema_cache.insert(normalized_root.clone(), None);
             return Ok(None);
         };
-        let resolved = crate::resolve_catalog_env_schema_from_manifest(
+        let resolved = crate::resolve_catalog_env_schema_with_ancestors(
+            catalogs,
             &target_catalog.catalog_root,
-            target_catalog.manifest.env_schema.as_ref(),
             runtime_env_schema_override,
         )?;
         env_schema_cache.insert(normalized_root.clone(), resolved.map(|env| env.plain_env()));

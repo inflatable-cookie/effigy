@@ -61,10 +61,16 @@ pub(in crate::runner) fn run_standard_task(
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
 ) -> Result<String, RunnerError> {
-    let env_schema_resolved = resolve_env_schema_if_present(
+    let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
+        &preflight.catalogs,
         &selection.catalog.catalog_root,
+    );
+    let env_schema_resolved = resolve_env_schema_if_present(
+        env_schema_catalog.map_or(selection.catalog.catalog_root.as_path(), |catalog| {
+            catalog.catalog_root.as_path()
+        }),
         preflight.runtime_args_raw.env_schema_override.as_deref(),
-        selection.catalog.manifest.env_schema.as_ref(),
+        env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
     )?;
 
     let context = ExecutionTaskContext::new(

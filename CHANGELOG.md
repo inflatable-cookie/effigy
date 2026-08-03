@@ -14,6 +14,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Routed container tasks on workspace containers now install the workspace effigy binary before probing container exec capabilities, so a container that has only seen `container up` and routed tasks no longer degrades to running host-rendered commands through raw exec.
 - Task-time container activation now repairs workspace volume ownership (cargo/git caches, isolated dirs, workspace home) even when no workspace shell session has run yet, so fresh or recreated named volumes no longer fail with permission errors.
 - Invoking a `run_in = "container"` task from a child catalog directory now falls back to the nearest ancestor catalog's `[containers]` registry instead of failing with `no container target is defined`.
+- Tasks in child catalogs without their own `[env_schema]` now inherit the nearest ancestor catalog's env schema (resolved against the ancestor's catalog root), so bundle/workspace-level dev env reaches app processes in child catalogs.
 
 ## [0.8.17] - 2026-06-17
 

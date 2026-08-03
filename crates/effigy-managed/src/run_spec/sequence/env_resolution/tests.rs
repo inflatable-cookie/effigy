@@ -191,3 +191,53 @@ fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
         Some("from-env-schema")
     );
 }
+
+#[test]
+fn apply_from_step_profile_resolution_inherits_ancestor_catalog_env_schema() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_repo("env-schema-ancestor");
+    let child = root.join("cp-api");
+    fs::create_dir_all(&child).expect("mkdir child catalog");
+    fs::write(
+        root.join("effigy.toml"),
+        "[env_schema]\nschema = \"dev.env.schema\"\n",
+    )
+    .expect("root manifest");
+    fs::write(root.join("dev.env.schema"), "MY_VAR=from-ancestor-schema\n").expect("write schema");
+    fs::write(
+        child.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf ok\"\n",
+    )
+    .expect("child manifest");
+    let _env = EnvGuard::set("MY_VAR", None);
+
+    let load = |catalog_root: &std::path::Path, alias: &str, depth: usize| {
+        let manifest_path = catalog_root.join("effigy.toml");
+        LoadedCatalog {
+            alias: alias.to_owned(),
+            catalog_root: catalog_root.to_path_buf(),
+            manifest: effigy_manifest::load_task_manifest(&manifest_path).expect("manifest"),
+            manifest_path,
+            bundle_root: None,
+            defer_run: None,
+            deferred_builtins: std::collections::BTreeSet::new(),
+            depth,
+        }
+    };
+    let catalogs = vec![load(&root, "root", 0), load(&child, "cp-api", 1)];
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
+    accumulator
+        .apply_from_step(
+            "dev",
+            &profile_step("MY_VAR"),
+            &BTreeMap::new(),
+            &child,
+            &catalogs,
+        )
+        .expect("apply env profile");
+
+    assert_eq!(
+        accumulator.chained_env().get("MY_VAR").map(String::as_str),
+        Some("from-ancestor-schema")
+    );
+}

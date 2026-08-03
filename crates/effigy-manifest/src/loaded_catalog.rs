@@ -54,10 +54,185 @@ pub struct TaskSelection<'a> {
     pub evidence: Vec<String>,
 }
 
+/// Returns the deepest catalog whose root contains `catalog_root` and whose
+/// manifest declares an `[env_schema]` section, including the catalog at
+/// `catalog_root` itself. Child catalogs without their own `env_schema`
+/// inherit the nearest ancestor's; the schema path still resolves against
+/// the catalog that declared it.
+pub fn env_schema_declaring_catalog<'a>(
+    catalogs: &'a [LoadedCatalog],
+    catalog_root: &Path,
+) -> Option<&'a LoadedCatalog> {
+    catalogs
+        .iter()
+        .filter(|catalog| {
+            catalog_root.starts_with(&catalog.catalog_root) && catalog.manifest.env_schema.is_some()
+        })
+        .max_by_key(|catalog| catalog.depth)
+}
+
 #[derive(Debug, Clone)]
 pub struct DeferredCommand {
     pub template: String,
     pub working_dir: PathBuf,
     pub source: String,
     pub run_in: ManifestTaskRunIn,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn loaded_catalog(alias: &str, root: &str, manifest_body: &str, depth: usize) -> LoadedCatalog {
+        let root = PathBuf::from(root);
+        LoadedCatalog {
+            alias: alias.to_owned(),
+            catalog_root: root.clone(),
+            manifest_path: root.join("effigy.toml"),
+            bundle_root: None,
+            manifest: toml::from_str(manifest_body).expect("parse manifest"),
+            defer_run: None,
+            deferred_builtins: BTreeSet::new(),
+            depth,
+        }
+    }
+
+    #[test]
+    fn env_schema_declaring_catalog_falls_back_to_nearest_ancestor() {
+        let catalogs = vec![
+            loaded_catalog(
+                "root",
+                "/workspace-root/acme",
+                r#"
+[env_schema]
+schema = "env/dev.env.schema"
+"#,
+                0,
+            ),
+            loaded_catalog(
+                "cp-api",
+                "/workspace-root/acme/cp-api",
+                r#"
+[tasks.build]
+run = "cargo test"
+"#,
+                1,
+            ),
+        ];
+
+        let declaring =
+            env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme/cp-api"))
+                .expect("ancestor env schema should fill the child scope");
+
+        assert_eq!(declaring.alias, "root");
+        assert_eq!(
+            declaring.catalog_root,
+            PathBuf::from("/workspace-root/acme")
+        );
+    }
+
+    #[test]
+    fn env_schema_declaring_catalog_prefers_nearest_ancestor() {
+        let catalogs = vec![
+            loaded_catalog(
+                "root",
+                "/workspace-root/acme",
+                r#"
+[env_schema]
+schema = "env/root.env.schema"
+"#,
+                0,
+            ),
+            loaded_catalog(
+                "services",
+                "/workspace-root/acme/services",
+                r#"
+[env_schema]
+schema = "env/services.env.schema"
+"#,
+                1,
+            ),
+            loaded_catalog(
+                "cp-api",
+                "/workspace-root/acme/services/cp-api",
+                r#"
+[tasks.build]
+run = "cargo test"
+"#,
+                2,
+            ),
+        ];
+
+        let declaring = env_schema_declaring_catalog(
+            &catalogs,
+            Path::new("/workspace-root/acme/services/cp-api"),
+        )
+        .expect("nearest ancestor env schema should win");
+
+        assert_eq!(declaring.alias, "services");
+    }
+
+    #[test]
+    fn env_schema_declaring_catalog_prefers_own_schema_over_ancestor() {
+        let catalogs = vec![
+            loaded_catalog(
+                "root",
+                "/workspace-root/acme",
+                r#"
+[env_schema]
+schema = "env/root.env.schema"
+"#,
+                0,
+            ),
+            loaded_catalog(
+                "cp-api",
+                "/workspace-root/acme/cp-api",
+                r#"
+[env_schema]
+schema = "env/cp-api.env.schema"
+
+[tasks.build]
+run = "cargo test"
+"#,
+                1,
+            ),
+        ];
+
+        let declaring =
+            env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme/cp-api"))
+                .expect("own env schema should win");
+
+        assert_eq!(declaring.alias, "cp-api");
+    }
+
+    #[test]
+    fn env_schema_declaring_catalog_returns_none_without_any_schema() {
+        let catalogs = vec![
+            loaded_catalog(
+                "root",
+                "/workspace-root/acme",
+                r#"
+[tasks.build]
+run = "cargo test"
+"#,
+                0,
+            ),
+            loaded_catalog(
+                "cp-api",
+                "/workspace-root/acme/cp-api",
+                r#"
+[tasks.build]
+run = "cargo test"
+"#,
+                1,
+            ),
+        ];
+
+        assert!(
+            env_schema_declaring_catalog(&catalogs, Path::new("/workspace-root/acme/cp-api"))
+                .is_none()
+        );
+    }
 }
