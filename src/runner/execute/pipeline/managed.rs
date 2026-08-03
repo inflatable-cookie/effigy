@@ -193,6 +193,16 @@ pub(in crate::runner) fn run_managed_task(
         container_handoff,
         &managed_task_secret_pairs,
     )?;
+    let role_schema_env = managed_role_schema_env(
+        &preflight.catalogs,
+        &selection.catalog.catalog_root,
+        preflight.runtime_args_raw.env_schema_override.as_deref(),
+    )?;
+    apply_schema_env_to_managed_role_processes(
+        &mut plan,
+        &role_schema_env,
+        &selection.catalog.catalog_root,
+    );
 
     let repo_for_task = selection.catalog.catalog_root.clone();
     let mut lock_scopes = vec![crate::runner::manifest::task_lock_scope(
@@ -779,6 +789,47 @@ fn wrap_with_managed_secret_env(
     wrap_command_with_env(command, &env, repo_root)
 }
 
+/// Resolves the catalog env schema plain env for shell/lifecycle role
+/// processes, inheriting the nearest ancestor catalog's `[env_schema]` when
+/// the selection catalog declares none (same rule as task rendering).
+fn managed_role_schema_env(
+    catalogs: &[effigy_manifest::LoadedCatalog],
+    catalog_root: &std::path::Path,
+    runtime_env_schema_override: Option<&std::path::Path>,
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    let declaring = effigy_manifest::env_schema_declaring_catalog(catalogs, catalog_root);
+    let resolved = super::standard::resolve_env_schema_if_present(
+        declaring.map_or(catalog_root, |catalog| catalog.catalog_root.as_path()),
+        runtime_env_schema_override,
+        declaring.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
+    )?;
+    Ok(resolved
+        .map(|resolved| resolved.plain_env())
+        .unwrap_or_default())
+}
+
+/// Shell and lifecycle role processes are not task references, so they never
+/// pass through task-render env. Fold the resolved schema env into their run
+/// commands with the same `env 'KEY=VALUE' ...` prefix used for vault
+/// secrets; standard (task) processes already carry schema env from render.
+fn apply_schema_env_to_managed_role_processes(
+    plan: &mut effigy_managed::ManagedTaskPlan,
+    schema_env: &BTreeMap<String, String>,
+    repo_root: &std::path::Path,
+) {
+    if schema_env.is_empty() {
+        return;
+    }
+    for process in &mut plan.processes {
+        if matches!(
+            process.role,
+            ManagedProcessRole::Shell | ManagedProcessRole::Lifecycle
+        ) {
+            process.run = wrap_command_with_env(process.run.clone(), schema_env, repo_root);
+        }
+    }
+}
+
 fn managed_ready_message(
     explicit_ready_message: Option<&str>,
     policy: Option<&EffectiveContainerPolicy>,
@@ -889,10 +940,11 @@ fn default_handoff_managed_shell_run() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
+        apply_schema_env_to_managed_role_processes, default_handoff_managed_shell_run,
+        finish_managed_task, managed_dns_route_lines, managed_role_schema_env,
         managed_runtime_activation_plan, render_handoff_managed_standard_command,
         render_managed_lifecycle_cleanup_notice, should_open_workspace_shell_for_non_managed_task,
-        ContainerExecutionBinding,
+        ContainerExecutionBinding, ManagedProcessRole,
     };
     use crate::runner::error::RunnerError;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
@@ -904,11 +956,14 @@ mod tests {
         EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
     };
     use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
+        LoadedCatalog, ManifestContainerDriver, ManifestContainerOnTaskExit,
+        ManifestContainerShutdownMode, ManifestContainerStartup,
     };
     use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
+    use std::collections::BTreeMap;
+    use std::fs;
     use std::path::Path;
+    use std::path::PathBuf;
 
     #[test]
     fn finish_managed_task_preserves_primary_failure_without_running_cleanup() {
@@ -1142,6 +1197,162 @@ mod tests {
                 "https://admin.project.test".to_owned(),
             ]
         );
+    }
+
+    fn managed_role_schema_test_repo(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "effigy-managed-role-schema-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("mkdir temp repo");
+        root
+    }
+
+    fn load_schema_test_catalog(catalog_root: &Path, alias: &str, depth: usize) -> LoadedCatalog {
+        let manifest_path = catalog_root.join("effigy.toml");
+        LoadedCatalog {
+            alias: alias.to_owned(),
+            catalog_root: catalog_root.to_path_buf(),
+            manifest: effigy_manifest::load_task_manifest(&manifest_path).expect("manifest"),
+            manifest_path,
+            bundle_root: None,
+            defer_run: None,
+            deferred_builtins: std::collections::BTreeSet::new(),
+            depth,
+        }
+    }
+
+    #[test]
+    fn managed_role_schema_env_inherits_ancestor_catalog_env_schema() {
+        let root = managed_role_schema_test_repo("ancestor");
+        let child = root.join("cp-api");
+        fs::create_dir_all(&child).expect("mkdir child catalog");
+        fs::write(
+            root.join("effigy.toml"),
+            "[env_schema]\nschema = \"dev.env.schema\"\n",
+        )
+        .expect("root manifest");
+        fs::write(root.join("dev.env.schema"), "ENVIRONMENT=effigy\n").expect("write schema");
+        fs::write(
+            child.join("effigy.toml"),
+            "[tasks.dev]\nrun = \"printf ok\"\n",
+        )
+        .expect("child manifest");
+        let catalogs = vec![
+            load_schema_test_catalog(&root, "root", 0),
+            load_schema_test_catalog(&child, "cp-api", 1),
+        ];
+
+        let env = managed_role_schema_env(&catalogs, &child, None).expect("resolve schema env");
+
+        assert_eq!(env.get("ENVIRONMENT").map(String::as_str), Some("effigy"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_role_schema_env_is_empty_without_any_schema() {
+        let root = managed_role_schema_test_repo("none");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.dev]\nrun = \"printf ok\"\n",
+        )
+        .expect("manifest");
+        let catalogs = vec![load_schema_test_catalog(&root, "root", 0)];
+
+        let env = managed_role_schema_env(&catalogs, &root, None).expect("resolve schema env");
+
+        assert!(env.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn role_process(
+        name: &str,
+        role: ManagedProcessRole,
+        run: &str,
+    ) -> effigy_managed::ManagedProcessSpec {
+        effigy_managed::ManagedProcessSpec {
+            name: name.to_owned(),
+            role,
+            run: run.to_owned(),
+            setup: None,
+            setup_steps: Vec::new(),
+            cwd: PathBuf::from("/tmp/repo"),
+            service: None,
+            start_after_ms: 0,
+            shutdown_on_exit: false,
+            run_on_host: false,
+        }
+    }
+
+    fn role_process_plan(
+        processes: Vec<effigy_managed::ManagedProcessSpec>,
+    ) -> effigy_managed::ManagedTaskPlan {
+        effigy_managed::ManagedTaskPlan {
+            mode: "tui".to_owned(),
+            profile: "dev".to_owned(),
+            processes,
+            tab_order: Vec::new(),
+            fail_on_non_zero: false,
+            passthrough: Vec::new(),
+            gateway_auto_start: false,
+            readiness: effigy_managed::ManagedTaskReadiness::default(),
+        }
+    }
+
+    #[test]
+    fn shell_and_lifecycle_role_processes_gain_schema_env_prefix() {
+        let mut plan = role_process_plan(vec![
+            role_process(
+                "shell",
+                ManagedProcessRole::Shell,
+                "exec ${SHELL:-/bin/zsh} -i",
+            ),
+            role_process(
+                "lifecycle",
+                ManagedProcessRole::Lifecycle,
+                "effigy container up --detach",
+            ),
+            role_process("api", ManagedProcessRole::Standard, "cargo run -p cp-api"),
+        ]);
+        let env = BTreeMap::from([("ENVIRONMENT".to_owned(), "effigy".to_owned())]);
+
+        apply_schema_env_to_managed_role_processes(&mut plan, &env, Path::new("/tmp/repo"));
+
+        let shell = &plan.processes[0].run;
+        assert!(
+            shell.starts_with("env 'ENVIRONMENT=effigy' sh -c"),
+            "got: {shell}"
+        );
+        assert!(shell.contains("exec ${SHELL:-/bin/zsh} -i"), "got: {shell}");
+        let lifecycle = &plan.processes[1].run;
+        assert!(
+            lifecycle.starts_with("env 'ENVIRONMENT=effigy' sh -c"),
+            "got: {lifecycle}"
+        );
+        assert_eq!(plan.processes[2].run, "cargo run -p cp-api");
+    }
+
+    #[test]
+    fn role_processes_stay_unchanged_without_schema_env() {
+        let mut plan = role_process_plan(vec![role_process(
+            "shell",
+            ManagedProcessRole::Shell,
+            "exec ${SHELL:-/bin/zsh} -i",
+        )]);
+
+        apply_schema_env_to_managed_role_processes(
+            &mut plan,
+            &BTreeMap::new(),
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(plan.processes[0].run, "exec ${SHELL:-/bin/zsh} -i");
     }
 
     fn test_policy() -> EffectiveContainerPolicy {
