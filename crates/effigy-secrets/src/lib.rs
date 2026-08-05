@@ -12,7 +12,6 @@ use std::path::Path;
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
-use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::Zeroizing;
 
@@ -63,6 +62,8 @@ pub enum VaultFileError {
     Encrypt,
     #[error("failed to decrypt vault payload")]
     Decrypt,
+    #[error("failed to obtain operating-system randomness")]
+    Randomness,
     #[error("failed to decode vault payload: {0}")]
     PayloadJson(serde_json::Error),
 }
@@ -325,9 +326,9 @@ impl VaultPlaintextPayload {
         passphrase: &str,
     ) -> Result<VaultEnvelope, VaultFileError> {
         let mut salt = vec![0; DEFAULT_SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
+        getrandom::fill(&mut salt).map_err(|_| VaultFileError::Randomness)?;
         let mut nonce = vec![0; XCHACHA20POLY1305_NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce);
+        getrandom::fill(&mut nonce).map_err(|_| VaultFileError::Randomness)?;
         self.encrypt_with_material(passphrase, salt, nonce)
     }
 

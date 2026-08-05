@@ -41,7 +41,7 @@ effigy-core = { path = "../effigy-core" }
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json = "1"
 
 [lints]

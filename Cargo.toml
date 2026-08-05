@@ -124,7 +124,7 @@ semver = "1"
 regex = "1"
 signal-hook = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 minijinja = "2"
 rpassword = "7"
 
