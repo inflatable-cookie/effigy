@@ -416,6 +416,7 @@ include = [
 | Build demos and proofs | [`docs/guides/058-demo-system-guide.md`](./docs/guides/058-demo-system-guide.md) |
 | Cut releases | [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md) |
 | Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md) |
+| Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](./docs/guides/077-local-dependency-linking.md) |
 | Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md) |
 | Full guide map | [`docs/guides/README.md`](./docs/guides/README.md) |
 

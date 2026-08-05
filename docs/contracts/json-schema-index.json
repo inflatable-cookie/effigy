@@ -19,6 +19,28 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
+      "command": "effigy --json deps --repo <fixture_task_success>",
+      "surface": "top-level command",
+      "status": "active",
+      "payload_schema": "effigy.deps.status.v1"
+    },
+    {
+      "schema": "effigy.deps.link.v1",
+      "schema_version": 1,
+      "command": "effigy --json deps link cargo <fixture_deps_library> --dry-run --repo <fixture_deps_consumer>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.deps.unlink.v1",
+      "schema_version": 1,
+      "command": "effigy --json deps unlink cargo <fixture_deps_library> --dry-run --repo <fixture_deps_consumer>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
       "command": "effigy --json doctor --repo <fixture_task_success>",
       "surface": "top-level command",
       "status": "active"

@@ -1,7 +1,7 @@
 # Effigy Architecture Overview
 
 Status: active
-Updated: 2026-05-02
+Updated: 2026-08-05
 
 Effigy is a Rust CLI task runner with two responsibility layers:
 
@@ -40,6 +40,8 @@ Use these docs intentionally:
   is longer-form container design background, not the live runtime ownership map
 - [021-production-deployment-export-architecture.md](./021-production-deployment-export-architecture.md)
   is the deploy/export architecture anchor
+- [023-local-dependency-linking-architecture.md](./023-local-dependency-linking-architecture.md)
+  is the active Cargo/Bun machine-local dependency-linking boundary
 
 For runtime/container behavior rules, prefer the active contracts:
 

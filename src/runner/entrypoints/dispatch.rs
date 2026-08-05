@@ -13,6 +13,7 @@ use super::super::run_contracts;
 use super::super::run_defer;
 use super::super::run_demo;
 use super::super::run_deploy;
+use super::super::run_deps;
 use super::super::run_docs;
 use super::super::run_exec;
 use super::super::run_gateway;
@@ -60,6 +61,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Deploy(args) => run_deploy(args),
+        Command::Deps(args) => run_deps(args),
         Command::Secrets(args) => run_secrets(args),
         Command::Defer(args) => run_defer(args),
         Command::Exec(args) => run_exec(args),

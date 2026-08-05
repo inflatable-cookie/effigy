@@ -48,6 +48,7 @@ fn is_top_level_builtin_command(name: &str) -> bool {
             | "defer"
             | "demo"
             | "deploy"
+            | "deps"
             | "distribution"
             | "docs"
             | "doctor"

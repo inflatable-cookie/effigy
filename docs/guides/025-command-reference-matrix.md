@@ -73,6 +73,8 @@ For narrative workflow guidance instead of lookup, start with:
   proof evidence: use `effigy release`.
 - Need to inspect the planned schema/seed/import/capture layer order for a
   repo state stack: use `effigy state plan`.
+- Need pinned dependencies to resolve from a local Cargo or Bun library
+  checkout without manifest churn: use `effigy deps`.
 
 ## Primary Commands
 
@@ -81,6 +83,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks` | List discovered catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
+| `effigy deps` | Inspect machine-local Cargo and Bun links; apply and remove verified full closures | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1` | [`077-local-dependency-linking.md`](./077-local-dependency-linking.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
@@ -142,6 +145,8 @@ effigy version [--json]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]
 effigy tasks status <SELECTOR> [--repo <PATH>] [--json]
 effigy tasks status --all [--repo <PATH>] [--json]
+effigy deps [--repo <PATH>] [--json]
+effigy deps status [cargo|bun] [--repo <PATH>] [--json]
 effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]
 effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]
 effigy doctor <task> <args> [--json]
@@ -334,6 +339,13 @@ effigy state history [<STACK>] [--kind plan|apply|capture] [--limit <N>] [--line
 Use the deeper guides for full surface detail. The main sharp edges here are:
 
 - `tasks --pretty false` is valid only with `--json`
+- `deps` and `deps status` are the same read-only inspection path; manager
+  filtering is optional; `deps link cargo` applies the verified full closure
+  and `deps unlink cargo` proves committed-source and lock recovery; `deps
+  link bun` applies one explicit save-less full-closure link; `deps unlink bun`
+  removes exact local symlinks and releases only safe registration ownership;
+  `bun install` can drift a desired link, so inspect with status/doctor and
+  re-run the same link command to repair it
 - `watch --owner` is required
 - `watch --json` requires bounded mode such as `--once` or `--max-runs`
 - `exec` runs inside the manifest default system workspace container and

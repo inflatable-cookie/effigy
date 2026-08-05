@@ -45,7 +45,10 @@ pub(super) fn doctor_json_payload(
 fn renderable_sections(sections: &[DoctorFindingSection]) -> Vec<&DoctorFindingSection> {
     sections
         .iter()
-        .filter(|section| section.severity != DoctorSeverity::Info)
+        .filter(|section| {
+            section.severity != DoctorSeverity::Info
+                || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
+        })
         .collect::<Vec<&DoctorFindingSection>>()
 }
 

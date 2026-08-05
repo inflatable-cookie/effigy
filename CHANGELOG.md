@@ -6,7 +6,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy deps` and `effigy deps status [cargo|bun]` expose read-only machine-local Cargo/Bun link state. `effigy deps link cargo <PATH>` plans, atomically applies, and verifies full-closure repo-local Cargo patches. `effigy deps unlink cargo <PATH>` removes only owned state, re-resolves exact committed Git sources, and rejects unrelated lockfile drift without Git restore commands. `effigy deps link bun <PATH>` registers and links the full local package closure through explicit `--no-save` operations, verifies every symlink, diagnoses duplicate peer resolution, and rejects manifest/lock churn. `effigy deps unlink bun <PATH>` removes only exact matching consumer symlinks and unregisters only provably unshared Effigy-owned packages. All operations support exact dry-run plans and versioned JSON reports.
+
+### Changed
+- `effigy deps status` now reports typed warning/error severity, exact evidence, and remediation for Cargo config/lock hygiene, Bun closure and saved-link drift, registration conflicts, and duplicate peer resolution; text and JSON use the same dependency-domain observations.
+- `effigy doctor` now surfaces healthy machine-local dependency links as information, repairable Bun link loss as a warning, and closure, config, lock, registration, saved-link, and duplicate-peer failures as errors using the same evidence and remediation as `effigy deps status`.
+
 ### Fixed
+- Managed Bun re-link now repairs a partial local package closure left by `bun install`; the same partial shape remains rejected when no Effigy desired-state record proves ownership.
+- Cargo dependency discovery, dry-run, status, and verification now ignore archived reference trees and non-member workspace manifests, keep planning/status metadata locked and read-only, scope post-link inspection to persisted consumer roots, and classify owned `patch.unused` lock entries as active-link state. Nested repositories no longer rewrite unrelated workspace lockfiles while linking or observing local dependencies.
 - `effigy secrets doctor` now prompts for the vault passphrase in interactive terminals so it can validate stored values; non-interactive runs still report the vault as locked without blocking.
 - `effigy graph affected` now indexes resolved graph adjacency once and evaluates unresolved references once per query, avoiding runaway CPU on large indexes with many changed symbols.
 - Linux workspace artifact builds now stream in-container Cargo output while refreshing the managed container binary, instead of buffering the log until the build exits.

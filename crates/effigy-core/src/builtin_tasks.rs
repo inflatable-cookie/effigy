@@ -24,6 +24,7 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ),
     ("demo", "Inspect and control configured demos"),
     ("deploy", "Inspect, plan, apply, and export deployment flows"),
+    ("deps", "Inspect and manage machine-local dependency links"),
     ("help", "Show general help (same as --help)"),
     (
         "doctor",

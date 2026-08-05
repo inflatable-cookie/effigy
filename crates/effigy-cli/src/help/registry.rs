@@ -29,6 +29,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_deploy,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Deps),
+        render: render_deps,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Secrets),
         render: render_secrets,
     },
@@ -184,6 +188,10 @@ fn render_changelog(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> He
 
 fn render_deploy(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_deploy_help(renderer)
+}
+
+fn render_deps(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_deps_help(renderer)
 }
 
 fn render_secrets(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

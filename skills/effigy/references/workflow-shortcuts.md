@@ -45,6 +45,20 @@ effigy container down
 For deeper container ops: `docs/guides/063-container-system-guide.md` and
 `docs/guides/064-system-workspace-and-dev-contract.md`.
 
+## Test against local library edits
+
+```bash
+effigy deps link cargo ../signal --dry-run
+effigy deps link cargo ../signal
+effigy --json deps status cargo
+effigy deps unlink cargo ../signal
+```
+
+Use `bun` for a Bun package library. Re-run the same Bun link after
+`bun install` if status reports symlink drift. Never edit the committed
+manifest or use Bun `--save`. Guide:
+`docs/guides/077-local-dependency-linking.md`.
+
 ## Pre-push validation
 
 ```bash

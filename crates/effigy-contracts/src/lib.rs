@@ -788,6 +788,14 @@ fn is_heavy_json_contract_schema(schema: &str) -> bool {
 
 fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
     let mut expanded = command.replace("<name>", "test");
+    if expanded.contains("<fixture_deps_consumer>") || expanded.contains("<fixture_deps_library>") {
+        let (consumer, library) = create_deps_contract_fixtures()?;
+        expanded = expanded.replace(
+            "<fixture_deps_consumer>",
+            consumer.to_string_lossy().as_ref(),
+        );
+        expanded = expanded.replace("<fixture_deps_library>", library.to_string_lossy().as_ref());
+    }
     if expanded.contains("<fixture_task_success>") {
         let fixture = create_contract_fixture("[tasks.build]\nrun = \"printf build-ok\"\n")
             .map_err(|error| error.to_string())?;
@@ -801,6 +809,67 @@ fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
         expanded = expanded.replace("<fixture_task_failure>", fixture.to_string_lossy().as_ref());
     }
     Ok(expanded)
+}
+
+fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
+    let fixture_root = std::env::temp_dir().join(format!(
+        "effigy-deps-contract-fixture-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    let consumer = fixture_root.join("consumer");
+    let library = fixture_root.join("library");
+    std::fs::create_dir_all(library.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        library.join("Cargo.toml"),
+        "[package]\nname='effigy-contract-link-fixture'\nversion='0.1.0'\nedition='2021'\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(library.join("src/lib.rs"), "pub fn value() {}\n")
+        .map_err(|error| error.to_string())?;
+    run_fixture_command(&library, "git", &["init", "-q"])?;
+    run_fixture_command(
+        &library,
+        "git",
+        &["config", "user.email", "effigy-fixture@example.test"],
+    )?;
+    run_fixture_command(&library, "git", &["config", "user.name", "Effigy Fixture"])?;
+    run_fixture_command(&library, "git", &["add", "."])?;
+    run_fixture_command(&library, "git", &["commit", "-qm", "fixture"])?;
+
+    std::fs::create_dir_all(consumer.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(consumer.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        consumer.join("Cargo.toml"),
+        format!(
+            "[package]\nname='effigy-contract-link-consumer'\nversion='0.1.0'\nedition='2021'\n[dependencies]\neffigy-contract-link-fixture={{git='file://{}'}}\n",
+            library.display()
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(consumer.join("src/lib.rs"), "pub fn consumer() {}\n")
+        .map_err(|error| error.to_string())?;
+    run_fixture_command(&consumer, "cargo", &["generate-lockfile"])?;
+    run_fixture_command(&consumer, "git", &["init", "-q"])?;
+    Ok((consumer, library))
+}
+
+fn run_fixture_command(cwd: &Path, program: &str, args: &[&str]) -> Result<(), String> {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .map_err(|error| format!("failed to run {program} fixture command: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{program} fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 fn create_contract_fixture(manifest: &str) -> Result<PathBuf, std::io::Error> {

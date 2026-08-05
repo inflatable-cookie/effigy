@@ -126,6 +126,7 @@ fn explain_row_value<'a>(rows: &'a [(String, String)], key: &str) -> &'a str {
 }
 
 mod core;
+mod dependency_health;
 mod duplicate_and_comment;
 mod explain;
 mod markers;

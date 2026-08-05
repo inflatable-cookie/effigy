@@ -78,6 +78,20 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/05-231121-dependency-linking-suite-closeout.md`](./2026-08/05-231121-dependency-linking-suite-closeout.md)
+- [`2026-08/05-230446-bun-closure-drift-repair-proof.md`](./2026-08/05-230446-bun-closure-drift-repair-proof.md)
+- [`2026-08/05-225229-signal-cargo-portfolio-proof.md`](./2026-08/05-225229-signal-cargo-portfolio-proof.md)
+- [`2026-08/05-222527-dependency-health-doctor-closeout.md`](./2026-08/05-222527-dependency-health-doctor-closeout.md)
+- [`2026-08/05-221113-dependency-health-status-parity.md`](./2026-08/05-221113-dependency-health-status-parity.md)
+- [`2026-08/05-215153-bun-unlink-peer-diagnostics-closeout.md`](./2026-08/05-215153-bun-unlink-peer-diagnostics-closeout.md)
+- [`2026-08/05-212620-bun-link-apply-verification.md`](./2026-08/05-212620-bun-link-apply-verification.md)
+- [`2026-08/05-212619-bun-full-closure-planning.md`](./2026-08/05-212619-bun-full-closure-planning.md)
+- [`2026-08/05-201254-cargo-unlink-and-milestone-closeout.md`](./2026-08/05-201254-cargo-unlink-and-milestone-closeout.md)
+- [`2026-08/05-172006-cargo-link-apply-verification.md`](./2026-08/05-172006-cargo-link-apply-verification.md)
+- [`2026-08/05-165735-cargo-full-closure-planning.md`](./2026-08/05-165735-cargo-full-closure-planning.md)
+- [`2026-08/05-163456-deps-cli-json-foundation-closeout.md`](./2026-08/05-163456-deps-cli-json-foundation-closeout.md)
+- [`2026-08/05-162005-read-only-dependency-inventory-status.md`](./2026-08/05-162005-read-only-dependency-inventory-status.md)
+- [`2026-08/05-155727-dependency-domain-state-foundation.md`](./2026-08/05-155727-dependency-domain-state-foundation.md)
 - [`2026-06/05-080226-g08-roadmap-consolidation.md`](./2026-06/05-080226-g08-roadmap-consolidation.md)
 - [`2026-06/04-233355-dead-code-final-burn-down.md`](./2026-06/04-233355-dead-code-final-burn-down.md)
 - [`2026-06/04-232355-dead-code-rust-impl-call-precision.md`](./2026-06/04-232355-dead-code-rust-impl-call-precision.md)
@@ -133,6 +147,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Keep the active evidence window aligned to the current strict-lane planning
-state so `continue` resolves through the live `g02.010` thread, not a false
-pause boundary.
+Select the next substantial g08 scope separately. No release or generation
+rollover is implied.

@@ -47,6 +47,7 @@ Pick the first Effigy command that matches the job.
 | Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
+| Inspect local dependency links | Cargo/Bun desired state, drift, or lock/peer hygiene is the task | `effigy --json deps status` |
 | Execute work | A task or built-in already covers the operation | `effigy <selector>` |
 | Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
@@ -100,6 +101,7 @@ for generic repo orientation.
 | Fast pre-push check | `effigy qa:ci:fast` (if defined) |
 | Full local QA | `effigy qa` or `effigy qa:ci:local` |
 | Repo health scan | `effigy doctor --verbose` |
+| Local dependency link health | `effigy --json deps status` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
@@ -163,6 +165,11 @@ Guide: `docs/guides/073-state-stack-guide.md`.
 **Deployment** — `effigy deploy plan`, `apply`, `status` (human-gated apply).
 Guide: `docs/guides/074-deployment-guide.md`.
 
+**Local dependencies** — `effigy deps link <cargo|bun> <PATH> --dry-run`,
+`link`, `status`, then `unlink`. Status and doctor are read-only; never edit
+committed manifests or restore linked locks through Git.
+Guide: `docs/guides/077-local-dependency-linking.md`.
+
 **Release** — never mutate without explicit human instruction.
 Sequence: `references/release-protocol.md`.
 
@@ -178,6 +185,7 @@ Sequence: `references/release-protocol.md`.
 | JSON contracts | `docs/guides/017-json-output-contracts.md` |
 | Quick start | `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
+| Local dependency linking | `docs/guides/077-local-dependency-linking.md` |
 | Distribution evidence | `docs/guides/062-distribution-system-guide.md` |
 | Containers / dev | `docs/guides/063-container-system-guide.md` |
 | Release | `docs/guides/051-release-orchestration.md` |

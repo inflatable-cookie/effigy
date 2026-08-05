@@ -27,6 +27,7 @@ pub(super) fn run_doctor_checks(
         state,
         progress,
     );
+    crate::dependency_health::run_dependency_health_check(resolved_root, state);
 }
 
 #[cfg(test)]

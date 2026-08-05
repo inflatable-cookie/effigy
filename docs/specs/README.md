@@ -39,14 +39,14 @@ Archived strict lanes:
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
 - `076` through `096` are archived
-- `097` is complete and awaiting archive on the next planning sweep
+- `097` and `099` are complete and awaiting archive on the next planning sweep
 
-Active lane:
+Other provisional spec:
 
 - [`098-effigy-uninstall-command.md`](./098-effigy-uninstall-command.md) -
   draft top-level uninstall command scope and safety rules
 
 ## Next Task
 
-Promote uninstall ownership rules into a durable contract before implementing
-`effigy uninstall`.
+Select the next substantial g08 scope separately. Keep the unrelated `098`
+uninstall draft paused unless it is explicitly resumed.

@@ -30,9 +30,9 @@ mod state;
 use crate::{
     BundleArgs, BundleSubcommand, CatalogArgs, CatalogCacheSubcommand, CatalogSubcommand, Command,
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs,
-    DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
-    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
-    RhaiSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
+    DepsArgs, DepsManager, DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs,
+    InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
+    InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -69,6 +69,7 @@ where
         "catalog" => parse_catalog_command(args),
         "changelog" => parse_changelog_command(args),
         "deploy" => parse_deploy_command(args),
+        "deps" => parse_deps_command(args),
         "secrets" => parse_secrets_command(args),
         "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),
@@ -96,6 +97,117 @@ where
         "__host-process-stop" => parse_internal_host_process_stop_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
+    }
+}
+
+fn parse_deps_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter().peekable();
+    let subcommand = match args.peek().map(String::as_str) {
+        None | Some("--repo" | "--json") => DepsSubcommand::Status { manager: None },
+        Some("--help" | "-h") => return Ok(Command::Help(HelpTopic::Deps)),
+        Some("status") => {
+            args.next();
+            let manager = match args.peek().map(String::as_str) {
+                Some("cargo" | "bun") => Some(parse_deps_manager(&args.next().unwrap())?),
+                _ => None,
+            };
+            DepsSubcommand::Status { manager }
+        }
+        Some("link" | "unlink") => {
+            let action = args.next().unwrap();
+            let manager = args.next().ok_or_else(|| {
+                CliParseError::InvalidArguments(format!(
+                    "`effigy deps {action}` requires a package manager (`cargo` or `bun`)"
+                ))
+            })?;
+            let manager = parse_deps_manager(&manager)?;
+            let library_path = args.next().ok_or_else(|| {
+                CliParseError::InvalidArguments(format!(
+                    "`effigy deps {action} {}` requires a library path",
+                    manager.as_str()
+                ))
+            })?;
+            if library_path.starts_with('-') {
+                return Err(CliParseError::InvalidArguments(format!(
+                    "`effigy deps {action} {}` requires a library path before flags",
+                    manager.as_str()
+                )));
+            }
+            if action == "link" {
+                DepsSubcommand::Link {
+                    manager,
+                    library_path: PathBuf::from(library_path),
+                    dry_run: false,
+                }
+            } else {
+                DepsSubcommand::Unlink {
+                    manager,
+                    library_path: PathBuf::from(library_path),
+                    dry_run: false,
+                }
+            }
+        }
+        Some(other) => return Err(unknown_argument(other)),
+    };
+
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut dry_run = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--dry-run" => dry_run = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deps)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let subcommand = match subcommand {
+        DepsSubcommand::Status { manager: _ } if dry_run => {
+            return Err(CliParseError::InvalidArguments(
+                "`--dry-run` is accepted only by `effigy deps link` and `effigy deps unlink`"
+                    .to_owned(),
+            ));
+        }
+        DepsSubcommand::Status { manager } => DepsSubcommand::Status { manager },
+        DepsSubcommand::Link {
+            manager,
+            library_path,
+            ..
+        } => DepsSubcommand::Link {
+            manager,
+            library_path,
+            dry_run,
+        },
+        DepsSubcommand::Unlink {
+            manager,
+            library_path,
+            ..
+        } => DepsSubcommand::Unlink {
+            manager,
+            library_path,
+            dry_run,
+        },
+    };
+
+    Ok(Command::Deps(DepsArgs {
+        subcommand,
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_deps_manager(value: &str) -> Result<DepsManager, CliParseError> {
+    match value {
+        "cargo" => Ok(DepsManager::Cargo),
+        "bun" => Ok(DepsManager::Bun),
+        other => Err(CliParseError::InvalidArguments(format!(
+            "invalid dependency package manager `{other}` (expected `cargo` or `bun`)"
+        ))),
     }
 }
 

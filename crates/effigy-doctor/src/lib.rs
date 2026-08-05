@@ -25,6 +25,7 @@ mod checks;
 mod command;
 mod comment_ratio;
 mod conflicts;
+mod dependency_health;
 mod duplicate_blocks;
 mod environment;
 mod explain;
@@ -48,6 +49,7 @@ mod workflow;
 
 pub use command::run_doctor;
 pub use contracts::{check_id, install_tool, remediation, schema_supported_value, ALL_CHECK_IDS};
+pub use dependency_health::dependency_health_findings;
 pub use error::DoctorError;
 pub use finding::{DoctorFinding, DoctorSeverity, FindingSink};
 pub use ports::{DoctorRuntimeDiagnostics, DoctorRuntimePorts};

@@ -35,6 +35,9 @@ Start with the family that matches your job:
   `Bootstrap`, `Deploy Model`, `Init`, `Migrate`, `Config`, `Unlock`
 - secret declarations and diagnostics:
   `Secrets`
+- machine-local dependency links:
+  `Dependency Status`, `Cargo Dependency Link`, `Bun Dependency Link`, and
+  Cargo/Bun unlink
 - layered state, seed, and migration planning:
   `State Stack Lineage`
 - shell completion or editor integration:
@@ -47,6 +50,476 @@ Companion references:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+
+### Dependency Status (`effigy.deps.status.v1`)
+
+```json
+{
+  "schema": "effigy.deps.status.v1",
+  "schema_version": 1,
+  "command": "deps status",
+  "repo_root": "/workspace/app",
+  "manager": "cargo",
+  "summary": {
+    "total": 1,
+    "missing": 0,
+    "healthy": 1,
+    "drifted": 0,
+    "conflict": 0,
+    "warnings": 0,
+    "errors": 0
+  },
+  "links": [
+    {
+      "manager": "cargo",
+      "desired": {
+        "key": {
+          "manager": "cargo",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/signal"
+        },
+        "mechanism": "cargo-patch",
+        "consumer_roots": [
+          { "canonical_path": "/workspace/app" }
+        ],
+        "packages": [
+          {
+            "name": "signal-core",
+            "local_path": "/workspace/signal/crates/signal-core",
+            "committed_sources": [
+              {
+                "kind": "git",
+                "identity": "https://github.com/example/signal.git"
+              }
+            ]
+          }
+        ],
+        "cargo_resolutions": [
+          {
+            "consumer_root": "/workspace/app",
+            "package": "signal-core",
+            "committed_source": {
+              "kind": "git",
+              "identity": "https://github.com/example/signal.git"
+            },
+            "local_path": "/workspace/signal/crates/signal-core"
+          }
+        ],
+        "cargo_ownership": {
+          "config_created_by_effigy": true,
+          "cargo_dir_created_by_effigy": true
+        }
+      },
+      "observed": {
+        "state": "healthy",
+        "packages": [
+          {
+            "name": "signal-core",
+            "local_path": "/workspace/signal/crates/signal-core",
+            "committed_sources": [
+              {
+                "kind": "git",
+                "identity": "https://github.com/example/signal.git"
+              }
+            ]
+          }
+        ],
+        "drift": []
+      },
+      "plan": null,
+      "verification": {
+        "status": "passed",
+        "evidence": [
+          {
+            "package": "signal-core",
+            "committed_sources": [
+              {
+                "kind": "git",
+                "identity": "https://github.com/example/signal.git"
+              }
+            ],
+            "expected_source": "/workspace/signal/crates/signal-core",
+            "observed_source": "/workspace/signal/crates/signal-core",
+            "methods": ["cargo-metadata"]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+### Cargo Dependency Link (`effigy.deps.link.v1`)
+
+```json
+{
+  "schema": "effigy.deps.link.v1",
+  "schema_version": 1,
+  "command": "deps link cargo",
+  "repo_root": "/workspace/app",
+  "manager": "cargo",
+  "library_path": "/workspace/signal",
+  "dry_run": false,
+  "report": {
+    "outcome": "applied",
+    "applied_files": [
+      "/workspace/app/.cargo/config.toml",
+      "/workspace/app/.gitignore",
+      "/workspace/app/.effigy/local/dependency-links.json"
+    ],
+    "plan": {
+      "desired": {
+        "key": {
+          "manager": "cargo",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/signal"
+        },
+        "mechanism": "cargo-patch",
+        "consumer_roots": [{ "canonical_path": "/workspace/app" }],
+        "packages": [
+          {
+            "name": "signal-core",
+            "local_path": "/workspace/signal/crates/signal-core",
+            "committed_sources": [
+              { "kind": "git", "identity": "https://github.com/example/signal.git" }
+            ]
+          }
+        ],
+        "cargo_ownership": {
+          "config_created_by_effigy": true,
+          "cargo_dir_created_by_effigy": true
+        }
+      },
+      "operation": {
+        "action": "link",
+        "dry_run": false,
+        "key": {
+          "manager": "cargo",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/signal"
+        },
+        "changes": [
+          {
+            "target": "/workspace/app/.cargo/config.toml",
+            "action": "create",
+            "description": "refresh the Effigy-managed Cargo patch block",
+            "before": null,
+            "after": "# >>> effigy deps cargo /workspace/signal >>>\n[patch.\"https://github.com/example/signal.git\"]\n\"signal-core\" = { path = \"/workspace/signal/crates/signal-core\" }\n# <<< effigy deps cargo /workspace/signal <<<\n"
+          }
+        ],
+        "warnings": [
+          "Cargo verification or builds may rewrite affected Cargo.lock entries to local path sources; do not commit that linked lock state"
+        ]
+      },
+      "expected_resolutions": [
+        {
+          "consumer_root": "/workspace/app",
+          "package": "signal-core",
+          "committed_source": {
+            "kind": "git",
+            "identity": "https://github.com/example/signal.git"
+          },
+          "local_path": "/workspace/signal/crates/signal-core"
+        }
+      ],
+      "affected_lockfiles": ["/workspace/app/Cargo.lock"],
+      "lockfile_guard_packages": [],
+      "remaining_linked_packages": [],
+      "remove_empty_directories": []
+    },
+    "verification": {
+      "status": "passed",
+      "evidence": [
+        {
+          "package": "signal-core",
+          "consumer_root": "/workspace/app",
+          "committed_sources": [
+            { "kind": "git", "identity": "https://github.com/example/signal.git" }
+          ],
+          "expected_source": "/workspace/signal/crates/signal-core",
+          "observed_source": "/workspace/signal/crates/signal-core",
+          "methods": ["cargo-metadata", "cargo-tree"]
+        }
+      ]
+    },
+    "rollback": {
+      "attempted": false,
+      "restored": [],
+      "failures": []
+    },
+    "errors": []
+  }
+}
+```
+
+### Bun Dependency Link (`effigy.deps.link.v1`)
+
+```json
+{
+  "schema": "effigy.deps.link.v1",
+  "schema_version": 1,
+  "command": "deps link bun",
+  "repo_root": "/workspace/app",
+  "manager": "bun",
+  "library_path": "/workspace/poodle",
+  "dry_run": true,
+  "report": {
+    "outcome": "dry-run",
+    "applied_processes": [],
+    "plan": {
+      "desired": {
+        "key": {
+          "manager": "bun",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/poodle"
+        },
+        "mechanism": "bun-link",
+        "consumer_roots": [{ "canonical_path": "/workspace/app" }],
+        "packages": [
+          {
+            "name": "@poodle/core",
+            "local_path": "/workspace/poodle/packages/core",
+            "committed_sources": [{ "kind": "registry", "identity": "1.2.3" }]
+          },
+          {
+            "name": "@poodle/protocol",
+            "local_path": "/workspace/poodle/packages/protocol",
+            "committed_sources": [{ "kind": "registry", "identity": "1.2.3" }]
+          }
+        ]
+      },
+      "operation": {
+        "action": "link",
+        "dry_run": true,
+        "key": {
+          "manager": "bun",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/poodle"
+        },
+        "changes": [],
+        "warnings": [
+          "Bun process intents explicitly use --no-save; package.json and Bun lockfiles must remain byte-for-byte unchanged"
+        ]
+      },
+      "packages": [
+        {
+          "name": "@poodle/core",
+          "local_path": "/workspace/poodle/packages/core",
+          "depth": "direct",
+          "committed_version": "1.2.3",
+          "registration": "absent",
+          "consumer_link": "registry"
+        },
+        {
+          "name": "@poodle/protocol",
+          "local_path": "/workspace/poodle/packages/protocol",
+          "depth": "transitive",
+          "committed_version": "1.2.3",
+          "registration": "absent",
+          "consumer_link": "registry"
+        }
+      ],
+      "process_intents": [
+        {
+          "action": "register",
+          "packages": ["@poodle/core"],
+          "cwd": "/workspace/poodle/packages/core",
+          "program": "bun",
+          "args": ["link", "--no-save"]
+        },
+        {
+          "action": "register",
+          "packages": ["@poodle/protocol"],
+          "cwd": "/workspace/poodle/packages/protocol",
+          "program": "bun",
+          "args": ["link", "--no-save"]
+        },
+        {
+          "action": "link-consumer",
+          "packages": ["@poodle/core", "@poodle/protocol"],
+          "cwd": "/workspace/app",
+          "program": "bun",
+          "args": ["link", "@poodle/core", "@poodle/protocol", "--no-save"]
+        }
+      ],
+      "symlink_intents": [],
+      "physical_preconditions": [],
+      "state_preconditions": [],
+      "immutable_files": [
+        { "path": "/workspace/app/package.json", "contents": [123, 125, 10] },
+        { "path": "/workspace/app/bun.lock", "contents": null },
+        { "path": "/workspace/app/bun.lockb", "contents": null }
+      ]
+    },
+    "immutable_files": [
+      { "path": "/workspace/app/package.json", "unchanged": true },
+      { "path": "/workspace/app/bun.lock", "unchanged": true },
+      { "path": "/workspace/app/bun.lockb", "unchanged": true }
+    ],
+    "verification": { "status": "not-run", "evidence": [] },
+    "peer_diagnostics": [],
+    "rollback": {
+      "attempted": false,
+      "restored_consumer_links": [],
+      "removed_registrations": [],
+      "restored_files": [],
+      "failures": []
+    },
+    "errors": []
+  }
+}
+```
+
+### Cargo Dependency Unlink (`effigy.deps.unlink.v1`)
+
+```json
+{
+  "schema": "effigy.deps.unlink.v1",
+  "schema_version": 1,
+  "command": "deps unlink cargo",
+  "repo_root": "/workspace/app",
+  "manager": "cargo",
+  "library_path": "/workspace/signal",
+  "dry_run": false,
+  "report": {
+    "outcome": "unlinked",
+    "applied_files": [
+      "/workspace/app/.cargo/config.toml",
+      "/workspace/app/.effigy/local/dependency-links.json"
+    ],
+    "removed_directories": ["/workspace/app/.cargo"],
+    "plan": {
+      "desired": null,
+      "operation": {
+        "action": "unlink",
+        "dry_run": false,
+        "key": {
+          "manager": "cargo",
+          "consumer_repo": "/workspace/app",
+          "library_path": "/workspace/signal"
+        },
+        "changes": [],
+        "warnings": [
+          "unlink apply must re-resolve affected lockfiles from committed git sources without Git restore commands"
+        ]
+      },
+      "expected_resolutions": [
+        {
+          "consumer_root": "/workspace/app",
+          "package": "signal-core",
+          "committed_source": {
+            "kind": "git",
+            "identity": "https://github.com/example/signal.git"
+          },
+          "local_path": "/workspace/signal/crates/signal-core"
+        }
+      ],
+      "affected_lockfiles": ["/workspace/app/Cargo.lock"],
+      "lockfile_guard_packages": ["signal-core"],
+      "remaining_linked_packages": [],
+      "remove_empty_directories": ["/workspace/app/.cargo"]
+    },
+    "verification": {
+      "status": "passed",
+      "evidence": [
+        {
+          "package": "signal-core",
+          "consumer_root": "/workspace/app",
+          "committed_sources": [
+            { "kind": "git", "identity": "https://github.com/example/signal.git" }
+          ],
+          "expected_source": "https://github.com/example/signal.git",
+          "observed_source": "https://github.com/example/signal.git",
+          "methods": ["cargo-metadata", "cargo-tree"]
+        }
+      ]
+    },
+    "lockfiles": [
+      {
+        "path": "/workspace/app/Cargo.lock",
+        "before_state": "active-links",
+        "after_state": "clean",
+        "remaining_linked_packages": []
+      }
+    ],
+    "rollback": {
+      "attempted": false,
+      "restored": [],
+      "failures": []
+    },
+    "errors": []
+  }
+}
+```
+
+### Bun Dependency Unlink (`effigy.deps.unlink.v1`)
+
+```json
+{
+  "schema": "effigy.deps.unlink.v1",
+  "schema_version": 1,
+  "command": "deps unlink bun",
+  "repo_root": "/workspace/app",
+  "manager": "bun",
+  "library_path": "/workspace/poodle",
+  "dry_run": false,
+  "report": {
+    "outcome": "unlinked",
+    "removed_consumer_links": [
+      "/workspace/app/node_modules/@poodle/core",
+      "/workspace/app/node_modules/@poodle/protocol"
+    ],
+    "applied_processes": [
+      {
+        "action": "unregister",
+        "packages": ["@poodle/core"],
+        "cwd": "/workspace/poodle/packages/core",
+        "program": "bun",
+        "args": ["unlink", "--no-save"]
+      },
+      {
+        "action": "unregister",
+        "packages": ["@poodle/protocol"],
+        "cwd": "/workspace/poodle/packages/protocol",
+        "program": "bun",
+        "args": ["unlink", "--no-save"]
+      }
+    ],
+    "immutable_files": [
+      { "path": "/workspace/app/package.json", "unchanged": true },
+      { "path": "/workspace/app/bun.lock", "unchanged": true },
+      { "path": "/workspace/app/bun.lockb", "unchanged": true }
+    ],
+    "verification": {
+      "status": "passed",
+      "evidence": [
+        {
+          "package": "@poodle/core",
+          "consumer_root": "/workspace/app/node_modules/@poodle/core",
+          "expected_source": "missing",
+          "observed_source": "missing",
+          "methods": ["bun-consumer-unlink"]
+        },
+        {
+          "package": "@poodle/protocol",
+          "consumer_root": "/workspace/app/node_modules/@poodle/protocol",
+          "expected_source": "missing",
+          "observed_source": "missing",
+          "methods": ["bun-consumer-unlink"]
+        }
+      ]
+    },
+    "rollback": {
+      "attempted": false,
+      "relinked_consumer_packages": [],
+      "restored_registrations": [],
+      "restored_files": [],
+      "failures": []
+    },
+    "errors": []
+  }
+}
+```
 
 ### 4) Graph Status (`effigy.graph.status.v1`)
 

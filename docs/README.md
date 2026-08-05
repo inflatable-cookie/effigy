@@ -51,6 +51,10 @@ installing them directly on your machine.
 - [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md) — `container cache list/prune`, `container volume list/prune`
 - [`guides/057-bootstrap-repo-bringup.md`](./guides/057-bootstrap-repo-bringup.md) — backend choice during repo bring-up
 
+### I want to test a consumer against local library edits
+
+- [`guides/077-local-dependency-linking.md`](./guides/077-local-dependency-linking.md) — Cargo patches and save-less Bun links without committed manifest churn
+
 ### I want to automate, integrate, or go deeper
 
 **For CI and scripts:**

@@ -15,7 +15,7 @@ This folder contains both:
 
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
-`030`, `031`, `032`, and `033`.
+`030`, `031`, `032`, `033`, and `034`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -135,6 +135,10 @@ new reusable-core work.
   threat model, read-path integrity verification (ownership/permission +
   managed marker), the fail-closed behavior on an untrusted table, and operator
   visibility in gateway status and doctor.
+- [`034-local-dependency-linking-contract.md`](./034-local-dependency-linking-contract.md):
+  `g08` machine-local dependency-linking contract covering the `effigy deps`
+  grammar, Cargo patch and save-less Bun link mechanisms, desired state,
+  closure, verification, drift, and lock/manifest hygiene.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -169,6 +173,7 @@ new reusable-core work.
 | `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
 | `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, consumer-repo config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
 | `033-gateway-route-table-trust-contract.md` | Platform maintainers | Gateway route-table trust boundary, read-path integrity mechanism (ownership/permission + managed marker), fail-closed failure mode, and operator visibility in gateway status/doctor | Planning review against `g08.014` plus focused trust-verification fixtures (well-formed, tampered, wrong-permission, foreign-marked) once implementation starts |
+| `034-local-dependency-linking-contract.md` | Platform maintainers | `effigy deps` grammar, Cargo/Bun mechanism behavior, closure rules, desired-state schema/location, manifest/lock invariants, doctor severity, and JSON payload shape | Planning review against `g08.018` through `g08.023`; focused manager, state, doctor, and portfolio proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -179,7 +184,7 @@ new reusable-core work.
 3. Include `Vision Target Delta` notes in release/log artifacts for contract-impacting updates.
 4. Keep schema IDs/version values additive unless a deliberate compatibility break is documented.
 
-## Next Task
+## Retained Contract Posture
 
 Keep both the machine contracts and the active working-rules contract aligned
 to the real validation commands and live execution posture, and use
@@ -223,3 +228,8 @@ deduplication contract, `031-artifact-and-crate-boundary-contract.md` as the
 `g04.039` artifact and crate-boundary contract, and
 `032-secret-and-local-config-management-contract.md` as the active `g05.001`
 secret and local configuration contract.
+
+## Next Task
+
+Keep contract `034` aligned with active strict spec `099`. Execute batch card
+`1055` for the first verified dependency-link mutation.

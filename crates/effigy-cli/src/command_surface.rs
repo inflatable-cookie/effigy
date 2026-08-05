@@ -41,6 +41,15 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         deferred_builtin: Some("deploy"),
     },
     CommandDescriptor {
+        topic: HelpTopic::Deps,
+        command_name: Some("deps"),
+        general_help_command: Some("effigy deps"),
+        general_help_description: Some(
+            "Inspect and manage machine-local Cargo and Bun dependency links",
+        ),
+        deferred_builtin: Some("deps"),
+    },
+    CommandDescriptor {
         topic: HelpTopic::Secrets,
         command_name: Some("secrets"),
         general_help_command: Some("effigy secrets"),
@@ -261,6 +270,7 @@ mod tests {
         HelpTopic::Catalog,
         HelpTopic::Changelog,
         HelpTopic::Deploy,
+        HelpTopic::Deps,
         HelpTopic::Secrets,
         HelpTopic::Defer,
         HelpTopic::Exec,
@@ -293,6 +303,7 @@ mod tests {
         ("catalog", HelpTopic::Catalog),
         ("changelog", HelpTopic::Changelog),
         ("deploy", HelpTopic::Deploy),
+        ("deps", HelpTopic::Deps),
         ("secrets", HelpTopic::Secrets),
         ("defer", HelpTopic::Defer),
         ("exec", HelpTopic::Exec),

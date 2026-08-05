@@ -16,7 +16,10 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
     let sections = crate::doctor_finding_sections(report);
     let actionable_sections = sections
         .iter()
-        .filter(|section| section.severity != DoctorSeverity::Info)
+        .filter(|section| {
+            section.severity != DoctorSeverity::Info
+                || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
+        })
         .collect::<Vec<&DoctorFindingSection>>();
     if actionable_sections.is_empty() {
         renderer

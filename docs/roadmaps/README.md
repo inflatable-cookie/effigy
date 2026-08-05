@@ -20,8 +20,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g08/` current graph-aware scan intelligence and code quality boundary
-  follow-through generation
+- `g08/` current graph-aware scan, hardening, and local dependency management
+  generation
 - `g07/` previous native code graph intelligence generation
 - `g06/` previous codebase lean-down and ownership simplification generation
 - `g05/` previous secret and reusable-core hardening generation
@@ -75,25 +75,18 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) tranche
   remediates the 2026-06-10 security and posture assessment across discovery
   correctness, supply-chain gates, daemon panic-safety, secret egress, gateway
-  trust, and docs compaction.
+  trust, and docs compaction. Milestones `g08.016` and `g08.017` are also
+  complete. The completed
+  [`g08.018`](./g08/018-local-dependency-management-suite.md) suite added the
+  shared `effigy deps` foundation, Cargo and Bun local links, doctor hygiene,
+  and portfolio proof through `g08.023`.
 
 ## Active Strict Lane
 
-No active ready card.
-[`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md) (workspace
-SSH-agent mount resilience) is complete: `container up` and `doctor` both
-pre-empt a stale colima SSH-agent socket with the `colima restart <profile>`
-fix. `g08` stays open for the next scope.
-[`g08.016`](./g08/016-suppression-hygiene-and-dead-code-precision.md)
-(suppression hygiene + dead-code precision) is complete. The
-[`g08.010`](./g08/010-security-and-posture-hardening-suite.md)
-security and posture hardening suite is complete across all five milestones
-([`g08.011`](./g08/011-discovery-and-doctor-correctness.md),
-[`g08.012`](./g08/012-supply-chain-and-ci-security-gates.md),
-[`g08.013`](./g08/013-daemon-panic-safety-and-secret-egress-hardening.md),
-[`g08.014`](./g08/014-gateway-route-table-trust-model.md),
-[`g08.015`](./g08/015-docs-spine-compaction.md)). `g08` remains the active
-generation, open for further scope — no `g09` rollover is implied.
+None. Strict spec `099` and cards `1051` through `1064` are complete;
+[`g08.018`](./g08/018-local-dependency-management-suite.md) through
+[`g08.023`](./g08/023-dependency-link-portfolio-proof-and-closeout.md) are
+closed.
 
 ## Research Program
 
@@ -148,10 +141,8 @@ Before rollover:
 
 ## Next Task
 
-No active milestone. The post-incident SSH-agent resilience work
-([`g08.017`](./g08/017-workspace-ssh-agent-mount-resilience.md)) is complete.
-`g08` stays open for the next scope. No `g09` rollover at this time.
-No `g09` rollover at this time.
+Select the next substantial g08 scope separately. No `g09` rollover at this
+time.
 
 ## Historical language boundary
 

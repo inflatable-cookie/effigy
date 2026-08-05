@@ -38,6 +38,18 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "-h",
         ],
         "doctor" => &["--repo", "--fix", "--verbose", "--json", "--help", "-h"],
+        "deps" => &[
+            "status",
+            "link",
+            "unlink",
+            "cargo",
+            "bun",
+            "--dry-run",
+            "--repo",
+            "--json",
+            "--help",
+            "-h",
+        ],
         "test" => &[
             "--plan",
             "--verbose-results",
@@ -86,5 +98,30 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
         "cache" => &["inspect", "invalidate", "--all", "--json", "--help", "-h"],
         "completion" => COMPLETION_COMMAND_OPTIONS,
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deps_completion_exposes_only_the_contract_surface() {
+        assert!(command_names().contains(&"deps"));
+        assert_eq!(
+            command_options("deps"),
+            [
+                "status",
+                "link",
+                "unlink",
+                "cargo",
+                "bun",
+                "--dry-run",
+                "--repo",
+                "--json",
+                "--help",
+                "-h",
+            ]
+        );
     }
 }

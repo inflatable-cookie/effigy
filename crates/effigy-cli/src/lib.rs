@@ -25,6 +25,7 @@ pub enum Command {
     Catalog(CatalogArgs),
     Changelog(ChangelogArgs),
     Deploy(DeployArgs),
+    Deps(DepsArgs),
     Secrets(SecretsArgs),
     Defer(DeferArgs),
     Exec(ExecArgs),
@@ -107,6 +108,7 @@ pub enum HelpTopic {
     Catalog,
     Changelog,
     Deploy,
+    Deps,
     Secrets,
     Defer,
     Exec,
@@ -166,6 +168,45 @@ pub struct DeployArgs {
     pub repo_override: Option<PathBuf>,
     /// Emit the command result as a versioned JSON payload.
     pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepsArgs {
+    pub subcommand: DepsSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DepsSubcommand {
+    Status {
+        manager: Option<DepsManager>,
+    },
+    Link {
+        manager: DepsManager,
+        library_path: PathBuf,
+        dry_run: bool,
+    },
+    Unlink {
+        manager: DepsManager,
+        library_path: PathBuf,
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepsManager {
+    Cargo,
+    Bun,
+}
+
+impl DepsManager {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo",
+            Self::Bun => "bun",
+        }
+    }
 }
 
 /// Parsed `effigy deploy` subcommands.

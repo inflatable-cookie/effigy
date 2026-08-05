@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-06-05
+Updated: 2026-08-05
 
 ## Generation history
 
@@ -94,8 +94,8 @@ Updated: 2026-06-05
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is active. Milestones `g08.001` through `g08.009` are complete; the
-`g08.010` security and posture hardening tranche is open.
+`g08` is active. Milestones `g08.001` through `g08.023` are complete. No
+milestone or strict lane is currently active.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
@@ -152,19 +152,18 @@ allows consolidated into `[workspace.lints]` (33 per-site allows removed; plain
 and the dead-code scanner now refuses a stale index instead of emitting false
 positives.
 
-`g08.017` (Workspace SSH-Agent Mount Resilience) is planned from the 2026-06-10
-`acowtancy` bring-up incident: a long-running colima VM's dangling
-`/run/host-services/ssh-auth.sock` symlink crashed `container up` at the nerdctl
-mount step. The milestone makes the workspace bring-up survive a rotated host
-SSH-agent socket (preflight + degrade-and-warn + remediation).
-
 `g08.017` (Workspace SSH-Agent Mount Resilience) is **complete**: a VM-side
 preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 `effigy container up` and `effigy doctor` pre-empt it with the
 `colima restart <profile>` remediation (instead of the cryptic nerdctl
 `mkdir ... file exists`); the cause/recovery is documented.
 
-Active ready card: none. `g08` stays open for the next scope.
+`g08.018` through `g08.023` complete the local dependency management suite:
+the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
+portfolio proof, and operator closeout.
+
+Cards `1051` through `1064` and strict spec `099` are complete. No active ready
+card remains.
 
 ## Research Roadmaps
 
@@ -197,4 +196,5 @@ closeout there first.
 
 ## Next Task
 
-No current dead-code residual batch remains.
+Select the next substantial g08 scope separately. No generation rollover is
+implied.

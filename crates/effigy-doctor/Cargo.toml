@@ -9,6 +9,7 @@ description = "Doctor policy contracts, report model, and runner orchestration f
 [dependencies]
 effigy-cli = { path = "../effigy-cli" }
 effigy-core = { path = "../effigy-core" }
+effigy-deps = { path = "../effigy-deps" }
 effigy-manifest = { path = "../effigy-manifest" }
 effigy-routing = { path = "../effigy-routing" }
 effigy-scan = { path = "../effigy-scan" }

@@ -3,7 +3,8 @@
 Status: Active
 Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
-(g08.010–g08.015, complete). Generation remains open for further scope.
+(g08.010–g08.015, complete), and the active machine-local dependency
+management suite (g08.018–g08.023).
 
 ## Purpose
 
@@ -15,6 +16,10 @@ declarations and mixed ownership boundaries.
 The goal is not to replace deterministic filesystem scans. The goal is to add
 relation-aware findings where graph data is the missing signal, and to enrich
 current scan output when a ready index already exists.
+
+The active tranche adds a package-manager-aware `effigy deps` domain for
+reversible machine-local Cargo and Bun links while committed dependency
+manifests remain authoritative.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -43,6 +48,12 @@ This generation should help agents and maintainers answer questions like:
 - [`015-docs-spine-compaction.md`](./015-docs-spine-compaction.md)
 - [`016-suppression-hygiene-and-dead-code-precision.md`](./016-suppression-hygiene-and-dead-code-precision.md)
 - [`017-workspace-ssh-agent-mount-resilience.md`](./017-workspace-ssh-agent-mount-resilience.md)
+- [`018-local-dependency-management-suite.md`](./018-local-dependency-management-suite.md)
+- [`019-dependency-inventory-and-command-foundation.md`](./019-dependency-inventory-and-command-foundation.md)
+- [`020-cargo-local-dependency-linking.md`](./020-cargo-local-dependency-linking.md)
+- [`021-bun-local-dependency-linking.md`](./021-bun-local-dependency-linking.md)
+- [`022-dependency-link-doctor-and-hygiene.md`](./022-dependency-link-doctor-and-hygiene.md)
+- [`023-dependency-link-portfolio-proof-and-closeout.md`](./023-dependency-link-portfolio-proof-and-closeout.md)
 
 ## Design Posture
 
@@ -53,6 +64,9 @@ This generation should help agents and maintainers answer questions like:
 - prefer repo-agnostic rules, fixtures, and configuration over Effigy-specific
   assumptions
 - keep exact-token proof and final code inspection outside graph claims
+- keep committed dependency manifests authoritative while local links remain
+  machine-local, inspectable, and reversible
+- select local-link mechanisms by package manager, not source language
 
 ## Non-Goals
 
@@ -66,14 +80,48 @@ This generation should help agents and maintainers answer questions like:
 - no public command behavior changes while reducing declaration drift
 - no speculative macro framework or generated command surface
 - no broad code deletion from advisory scan findings
+- no dependency manifest edits or Bun `--save` behavior from local linking
+- no package managers beyond Cargo and Bun in the first dependency tranche
+
+## Generation Runway
+
+- Runway goal: make local dependency switching a deterministic Effigy-owned
+  operator workflow without weakening committed source identity.
+- Foundation complete: `g08.019` established shared inventory, desired state,
+  status, and JSON foundations through cards `1051` to `1053`.
+- Cargo planning complete: `1054` established the pure full-closure and safety
+  plan.
+- Cargo milestone complete: cards `1054` through `1056` plan, apply, verify,
+  and safely unlink full Cargo closures.
+- Bun planning complete: `1057` established full-closure, immutable-file,
+  explicit `--no-save`, and registration-ownership plans without mutation.
+- Bun link apply complete: `1058` added exact-precondition application,
+  rollback, immutable-file guards, full symlink verification, CLI/JSON, and
+  real Bun `1.3.14` proof.
+- Bun milestone complete: `1059` added exact unlink, ownership-safe
+  registration release, peer diagnostics, rollback, and real round-trip proof.
+- Status health complete: `1060` added manager-neutral Cargo/Bun findings,
+  exact evidence, remediation, peer diagnostics, and text/JSON parity.
+- Doctor/hygiene complete: `1061` adapted the shared report into doctor
+  information/warning/error findings with text/JSON parity and closed
+  `g08.022`.
+- Cargo portfolio proof complete: `1062` proved flat Soundcheck and nested
+  Loophole closure, edit propagation, lock-neutral observation, and exact
+  unlink recovery in disposable clones.
+- Bun proof complete: `1063` proved save-less full closure, real install drift,
+  managed repair, exact peer paths, and owned-registration cleanup.
+- Dependency suite complete: `1064` published operator/agent guidance, kept
+  command/JSON references current, passed full QA, and closed `g08.018`,
+  `g08.023`, and strict lane `099`.
+- Visible milestones: `g08.020` Cargo mutation, `g08.021` Bun mutation,
+  `g08.022` doctor/hygiene, and `g08.023` portfolio proof/closeout.
+- Planning checkpoint: after `g08.023`, select the next substantial g08 scope;
+  completion of this suite does not imply generation rollover.
 
 ## Execution Rule
 
-Open a strict lane and batch cards only when implementation starts.
-
-The first execution batch should record the current scan and graph command
-contracts, then add the smallest additive graph-readiness contract needed for
-later scan work.
+The dependency suite completed under strict spec `099`. No dependency-link
+ready card remains.
 
 ## Batch Cards
 
@@ -99,15 +147,32 @@ later scan work.
 - [`1048-classify-dto-render-config-dead-code-roots.md`](./batch-cards/1048-classify-dto-render-config-dead-code-roots.md)
 - [`1049-classify-rust-impl-and-associated-call-dead-code.md`](./batch-cards/1049-classify-rust-impl-and-associated-call-dead-code.md)
 - [`1050-complete-dead-code-false-positive-burn-down.md`](./batch-cards/1050-complete-dead-code-false-positive-burn-down.md)
+- [`1051-establish-dependency-domain-and-state-foundation.md`](./batch-cards/1051-establish-dependency-domain-and-state-foundation.md)
+- [`1052-add-read-only-dependency-inventory-and-status.md`](./batch-cards/1052-add-read-only-dependency-inventory-and-status.md)
+- [`1053-wire-deps-cli-json-and-foundation-closeout.md`](./batch-cards/1053-wire-deps-cli-json-and-foundation-closeout.md)
+- [`1054-plan-cargo-full-closure-and-managed-config.md`](./batch-cards/1054-plan-cargo-full-closure-and-managed-config.md)
+- [`1055-apply-and-verify-cargo-links.md`](./batch-cards/1055-apply-and-verify-cargo-links.md)
+- [`1056-apply-cargo-unlink-and-closeout.md`](./batch-cards/1056-apply-cargo-unlink-and-closeout.md)
+- [`1057-plan-bun-full-closure-and-registration-ownership.md`](./batch-cards/1057-plan-bun-full-closure-and-registration-ownership.md)
+- [`1058-apply-and-verify-bun-links.md`](./batch-cards/1058-apply-and-verify-bun-links.md)
+- [`1059-apply-bun-unlink-peer-diagnostics-and-closeout.md`](./batch-cards/1059-apply-bun-unlink-peer-diagnostics-and-closeout.md)
+- [`1060-observe-dependency-hygiene-and-status-parity.md`](./batch-cards/1060-observe-dependency-hygiene-and-status-parity.md)
+- [`1061-integrate-dependency-health-with-doctor-and-closeout.md`](./batch-cards/1061-integrate-dependency-health-with-doctor-and-closeout.md)
+- [`1062-prove-signal-links-across-flat-and-nested-consumers.md`](./batch-cards/1062-prove-signal-links-across-flat-and-nested-consumers.md)
+- [`1063-prove-bun-closure-drift-and-repair.md`](./batch-cards/1063-prove-bun-closure-drift-and-repair.md)
+- [`1064-publish-dependency-link-guidance-and-close-suite.md`](./batch-cards/1064-publish-dependency-link-guidance-and-close-suite.md)
 
 ## Current State
 
 `g07` is closed through `g07.078`.
 
-`g08` is complete through `g08.009`.
+`g08` is complete through `g08.017`.
 
-No active ready card.
+`g08.018` through `g08.023` are complete.
+
+Cards `1051` through `1064` are complete. No active ready card remains.
 
 ## Next Task
 
-No current dead-code residual batch remains.
+Select the next substantial g08 scope separately. No release or generation
+rollover is implied.

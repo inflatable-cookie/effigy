@@ -92,6 +92,7 @@ Current authority surfaces:
 | `effigy-doctor` | doctor findings and diagnostics model |
 | `effigy-env` | env-schema integration and env contract helpers |
 | `effigy-demo` | demo model and execution helpers |
+| `effigy-deps` | machine-local dependency-link identities, Cargo/Bun inventory, Cargo and Bun planning/application/verification, observed status, and atomic desired-state stores |
 | `effigy-scan` | repository scans used by doctor/policy surfaces |
 | `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers |
 
@@ -235,6 +236,7 @@ Current retained small-crate rationale:
 | `effigy-exec` | Keep. Owns pure container-exec routing, cwd mapping, and alias logic without runtime side effects. |
 | `effigy-routing` | Keep. Selector routing and catalog lookup order stay independent from CLI and runner orchestration. |
 | `effigy-runtime-plan` | Keep. Pure activation request/plan/report model; small by design because side effects stay in runtime adapters. |
+| `effigy-deps` | Keep. Shared dependency-link state and report owner consumed by command and doctor surfaces without importing either shell. |
 | `effigy-process` | Keep. Host process primitives are reused across runner surfaces without importing container/runtime crates. |
 | `effigy-gateway` | Keep. Local gateway registry and route primitives are consumed by runtime/container code without dragging command-shell behavior down. |
 | `effigy-ui` | Keep. Renderer abstraction and output primitives keep domain crates out of top-level CLI rendering details. |

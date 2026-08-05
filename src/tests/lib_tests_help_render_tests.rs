@@ -8,6 +8,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy version"));
     assert!(rendered.contains("effigy exec"));
     assert!(rendered.contains("effigy deploy"));
+    assert!(rendered.contains("effigy deps"));
     assert!(rendered.contains("effigy graph"));
     assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
@@ -35,6 +36,22 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("--version"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_deps_help_shows_available_cargo_and_bun_link_operations() {
+    let rendered = render_help_text(HelpTopic::Deps);
+    assert!(rendered.contains("deps Help"));
+    assert!(rendered.contains("effigy deps status [cargo|bun]"));
+    assert!(rendered.contains("effigy deps link <cargo|bun> <LIBRARY_PATH>"));
+    assert!(rendered.contains("effigy deps unlink <cargo|bun> <LIBRARY_PATH>"));
+    assert!(rendered.contains("Cargo and Bun link/unlink operations are available"));
+    assert!(rendered.contains("Apply or preview a verified local Cargo patch closure"));
+    assert!(rendered.contains("Remove a local Cargo patch and verify committed-source recovery"));
+    assert!(rendered.contains("Apply or preview one verified save-less Bun package closure"));
+    assert!(rendered.contains("--dry-run"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
 }
 
 #[test]

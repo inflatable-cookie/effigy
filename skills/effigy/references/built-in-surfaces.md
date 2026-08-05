@@ -27,6 +27,7 @@ Details: `agent-operating-loop.md`, `graph-assist.md`.
 | `scan` | Repo scanners (`god-files`, `attention-markers`, …) |
 | `config` | Inspect merged manifest; schema snippets; `config get/set` |
 | `config completion` | Shell completion + selector candidates |
+| `deps` | Inspect, link, and unlink full Cargo/Bun local dependency closures |
 
 ## Code graph
 

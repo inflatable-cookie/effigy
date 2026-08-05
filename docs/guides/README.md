@@ -61,6 +61,16 @@ Use when:
 
 Use `071` only when you are changing the shipped catalog itself.
 
+### Develop against a local library checkout
+
+Read:
+- [`077-local-dependency-linking.md`](./077-local-dependency-linking.md)
+
+Use when:
+- a consumer is pinned to a Cargo Git tag or published Bun package
+- local library edits must be reflected without manifest or lockfile churn
+- you need full-closure link, drift, doctor, and unlink recovery guidance
+
 ### Build and manage environment state
 
 Read:
@@ -107,6 +117,7 @@ Use when:
 Read:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`077-local-dependency-linking.md`](./077-local-dependency-linking.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)

@@ -815,6 +815,7 @@ dependencies = [
  "effigy-core",
  "effigy-data",
  "effigy-demo",
+ "effigy-deps",
  "effigy-distribution",
  "effigy-docs-policy",
  "effigy-doctor",
@@ -1016,6 +1017,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "effigy-deps"
+version = "0.8.17"
+dependencies = [
+ "fs2",
+ "globset",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
 name = "effigy-distribution"
 version = "0.8.17"
 dependencies = [
@@ -1045,6 +1059,7 @@ dependencies = [
  "anstream",
  "effigy-cli",
  "effigy-core",
+ "effigy-deps",
  "effigy-manifest",
  "effigy-routing",
  "effigy-scan",
@@ -1437,6 +1452,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

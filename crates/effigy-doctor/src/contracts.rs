@@ -6,6 +6,7 @@ pub mod check_id {
     pub const MANIFEST_SCHEMA_UNSUPPORTED_VALUE: &str = "manifest.schema.unsupported_value";
     pub const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
+    pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
     pub const SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate-blocks";
     pub const SCAN_COMMENT_RATIO: &str = "scan.comment-ratio";
@@ -17,7 +18,7 @@ pub mod check_id {
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
 }
 
-pub const ALL_CHECK_IDS: [&str; 16] = [
+pub const ALL_CHECK_IDS: [&str; 17] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -25,6 +26,7 @@ pub const ALL_CHECK_IDS: [&str; 16] = [
     check_id::MANIFEST_SCHEMA_UNSUPPORTED_VALUE,
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
+    check_id::DEPENDENCY_LINK_HEALTH,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
     check_id::SCAN_COMMENT_RATIO,

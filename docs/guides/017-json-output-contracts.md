@@ -103,6 +103,11 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.tasks.filtered.v1`
 - `effigy.tasks-status.v1`
 - `effigy.tasks-status-all.v1`
+- `effigy.deps.status.v1`
+- `effigy.deps.link.v1`
+- `effigy.deps.unlink.v1`
+
+Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-dependency-linking.md).
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
 - `effigy.scan.god-files.v1`
