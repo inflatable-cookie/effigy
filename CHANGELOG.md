@@ -14,6 +14,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy doctor` now surfaces healthy machine-local dependency links as information, repairable Bun link loss as a warning, and closure, config, lock, registration, saved-link, and duplicate-peer failures as errors using the same evidence and remediation as `effigy deps status`.
 
 ### Fixed
+- S3 XML responses now resolve through `quick-xml 0.41`, avoiding the CPU and memory denial-of-service vulnerabilities reported as RUSTSEC-2026-0194 and RUSTSEC-2026-0195 while upstream `s3` remains constrained to the vulnerable 0.40 line.
 - Managed Bun re-link now repairs a partial local package closure left by `bun install`; the same partial shape remains rejected when no Effigy desired-state record proves ownership.
 - Cargo dependency discovery, dry-run, status, and verification now ignore archived reference trees and non-member workspace manifests, keep planning/status metadata locked and read-only, scope post-link inspection to persisted consumer roots, and classify owned `patch.unused` lock entries as active-link state. Nested repositories no longer rewrite unrelated workspace lockfiles while linking or observing local dependencies.
 - `effigy secrets doctor` now prompts for the vault passphrase in interactive terminals so it can validate stored values; non-interactive runs still report the vault as locked without blocking.

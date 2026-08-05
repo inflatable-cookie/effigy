@@ -1,0 +1,119 @@
+[package]
+name = "s3"
+version = "0.1.36"
+description = "A lean, modern, unofficial S3-compatible client for Rust."
+readme = "README.md"
+repository = "https://github.com/lvillis/s3-rs"
+homepage = "https://github.com/lvillis/s3-rs"
+documentation = "https://docs.rs/s3"
+keywords = ["s3", "object-storage", "aws", "minio", "sigv4"]
+categories = ["api-bindings", "web-programming::http-client"]
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+include = [
+  "Cargo.toml",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "src/**",
+  "benches/**",
+  "examples/**",
+  "tests/**"
+]
+
+[dependencies]
+# Core protocol and shared types
+bytes = { version = "1.11.1", default-features = false, features = ["std"] }
+http = { version = "1.4.0", default-features = false, features = ["std"] }
+httpdate = { version = "1.0.3", default-features = false }
+time = { version = "0.3.47", default-features = false, features = ["std", "parsing"] }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
+
+# SigV4 signing and hashing
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
+hex = { version = "0.4.3", default-features = false, features = ["std"] }
+graviola = { version = "0.3.4", default-features = false }
+md-5 = { version = "0.11.0", default-features = false }
+
+# Transport backend (feature-gated)
+reqx = { version = "0.1.40", default-features = false, optional = true }
+http-body-util = { version = "0.1.3", default-features = false, optional = true }
+
+# XML and data decoding
+quick-xml = { version = "0.41.0", default-features = false, features = ["serialize"] }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.149", default-features = false, features = ["std"], optional = true }
+
+# Async runtime and stream utils (feature-gated)
+futures-core = { version = "0.3.32", default-features = false, features = ["std"], optional = true }
+futures-io = { version = "0.3.32", default-features = false, features = ["std"], optional = true }
+futures-util = { version = "0.3.32", default-features = false, features = ["std", "io"], optional = true }
+tokio = { version = "1.52.1", default-features = false, features = ["time", "sync", "io-util"], optional = true }
+
+# Optional capabilities
+crc-fast = { version = "1.10.0", default-features = false, features = ["std"], optional = true }
+sha1 = { version = "0.11.0", default-features = false, optional = true }
+metrics = { version = "0.24.3", default-features = false, optional = true }
+tracing = { version = "0.1.44", default-features = false, features = ["std"], optional = true }
+
+[dev-dependencies]
+# Benchmarks
+criterion = { version = "0.8.2" }
+
+# Compatibility and integration tests
+reqwest = { version = "0.13.2", default-features = false, features = ["stream"] }
+tokio = { version = "1.52.1", default-features = false, features = ["macros", "rt-multi-thread", "time", "io-util"] }
+ureq = { version = "3.3.0", default-features = false }
+
+[features]
+default = ["async", "rustls"]
+
+# Core modes
+async = [
+  "dep:reqx",
+  "dep:futures-core",
+  "dep:futures-io",
+  "dep:futures-util",
+  "dep:tokio",
+  "dep:http-body-util",
+]
+blocking = ["dep:reqx"]
+
+# Observability
+tracing = ["dep:tracing"]
+metrics = ["dep:metrics"]
+
+# Optional capabilities
+checksums = ["dep:crc-fast", "dep:sha1"]
+multipart = []
+providers = []
+credentials-profile = []
+credentials-imds = ["dep:serde_json"]
+credentials-sts = []
+
+# TLS selection
+rustls = [
+  "reqx?/async-tls-rustls-ring",
+  "reqx?/blocking-tls-rustls-ring",
+]
+native-tls = ["reqx?/async-tls-native", "reqx?/blocking-tls-native"]
+
+# Optional escape hatch
+allow-both-tls = []
+unstable-raw = []
+
+[[bench]]
+name = "bench"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[package.metadata.release]
+tag-prefix = ""
+tag-name = "{{prefix}}{{version}}"
+pre-release-commit-message = "chore: release {{crate_name}} version {{version}}"
+tag-message = "chore: release {{crate_name}} version {{version}}"
+pre-release-hook = ["git", "cliff", "-o", "CHANGELOG.md", "--tag", "{{version}}"]

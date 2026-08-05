@@ -1,0 +1,370 @@
+//! Endpoint presets for common S3-compatible services.
+//!
+//! Presets only provide endpoint, region, and addressing defaults. Supply [`crate::Auth`]
+//! separately when building a client.
+//!
+//! Start with:
+//!
+//! - [`aws_s3`](crate::providers::aws_s3) or [`aws::s3`](crate::providers::aws::s3) for AWS S3
+//! - [`cloudflare_r2`](crate::providers::cloudflare_r2) for Cloudflare R2
+//! - [`minio_local`](crate::providers::minio_local) for local MinIO development
+
+use crate::{AddressingStyle, Error, Result};
+
+/// Common AWS regions for presets.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AwsRegion {
+    /// us-east-1
+    UsEast1,
+    /// us-west-2
+    UsWest2,
+    /// eu-west-1
+    EuWest1,
+    /// ap-southeast-1
+    ApSoutheast1,
+    /// Custom region string.
+    Other(String),
+}
+
+impl AwsRegion {
+    /// Creates a custom region variant.
+    pub fn other(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        validate_region_id(&value)?;
+        Ok(Self::Other(value))
+    }
+
+    /// Returns the region identifier.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::UsEast1 => "us-east-1",
+            Self::UsWest2 => "us-west-2",
+            Self::EuWest1 => "eu-west-1",
+            Self::ApSoutheast1 => "ap-southeast-1",
+            Self::Other(v) => v,
+        }
+    }
+}
+
+impl std::str::FromStr for AwsRegion {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        validate_region_id(value)?;
+        Ok(match value {
+            "us-east-1" => Self::UsEast1,
+            "us-west-2" => Self::UsWest2,
+            "eu-west-1" => Self::EuWest1,
+            "ap-southeast-1" => Self::ApSoutheast1,
+            other => Self::Other(other.to_string()),
+        })
+    }
+}
+
+/// Jurisdictions supported by Cloudflare R2.
+///
+/// Buckets created with Jurisdictional Restrictions are only accessible through an endpoint that
+/// includes the jurisdiction in the host.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum R2Jurisdiction {
+    /// `eu` (European Union).
+    Eu,
+    /// `fedramp` (FedRAMP).
+    Fedramp,
+}
+
+impl R2Jurisdiction {
+    /// Returns the jurisdiction identifier.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Eu => "eu",
+            Self::Fedramp => "fedramp",
+        }
+    }
+}
+
+impl std::str::FromStr for R2Jurisdiction {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        if value.trim() != value {
+            return Err(Error::invalid_config(
+                "R2 jurisdiction must not include leading or trailing whitespace",
+            ));
+        }
+        match value.to_ascii_lowercase().as_str() {
+            "eu" => Ok(Self::Eu),
+            "fedramp" => Ok(Self::Fedramp),
+            _ => Err(Error::invalid_config(
+                "unknown R2 jurisdiction (expected: eu, fedramp)",
+            )),
+        }
+    }
+}
+
+/// Cloudflare R2 endpoint selection.
+///
+/// When using a jurisdiction endpoint, you cannot access buckets outside that jurisdiction.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum R2Endpoint {
+    /// Global endpoint: `https://<account_id>.r2.cloudflarestorage.com`
+    Global,
+    /// Jurisdiction endpoint: `https://<account_id>.<jurisdiction>.r2.cloudflarestorage.com`
+    Jurisdiction(R2Jurisdiction),
+}
+
+impl R2Endpoint {
+    /// Shortcut for the global endpoint.
+    pub const GLOBAL: Self = Self::Global;
+    /// Shortcut for the `eu` jurisdiction endpoint.
+    pub const EU: Self = Self::Jurisdiction(R2Jurisdiction::Eu);
+    /// Shortcut for the `fedramp` jurisdiction endpoint.
+    pub const FEDRAMP: Self = Self::Jurisdiction(R2Jurisdiction::Fedramp);
+}
+
+/// A preconfigured endpoint + region + addressing style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preset {
+    endpoint: String,
+    region: String,
+    addressing_style: AddressingStyle,
+}
+
+impl Preset {
+    /// Returns the service endpoint URL.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Returns the signing region.
+    pub fn region(&self) -> &str {
+        &self.region
+    }
+
+    /// Returns the addressing style to use.
+    pub fn addressing_style(&self) -> AddressingStyle {
+        self.addressing_style
+    }
+
+    /// Builds an async client builder from the preset.
+    #[cfg(feature = "async")]
+    pub fn async_client_builder(&self) -> Result<crate::ClientBuilder> {
+        crate::Client::builder(&self.endpoint).map(|b| {
+            b.region(self.region.clone())
+                .addressing_style(self.addressing_style)
+        })
+    }
+
+    /// Builds a blocking client builder from the preset.
+    #[cfg(feature = "blocking")]
+    pub fn blocking_client_builder(&self) -> Result<crate::BlockingClientBuilder> {
+        crate::BlockingClient::builder(&self.endpoint).map(|b| {
+            b.region(self.region.clone())
+                .addressing_style(self.addressing_style)
+        })
+    }
+}
+
+/// Builds a preset for AWS S3.
+pub fn aws_s3(region: impl AsRef<str>) -> Result<Preset> {
+    let region = region.as_ref();
+    validate_region_id(region)?;
+
+    let suffix = if region.starts_with("cn-") {
+        "amazonaws.com.cn"
+    } else {
+        "amazonaws.com"
+    };
+
+    let endpoint = if region == "us-east-1" && suffix == "amazonaws.com" {
+        "https://s3.amazonaws.com".to_string()
+    } else {
+        format!("https://s3.{region}.{suffix}")
+    };
+
+    Ok(Preset {
+        endpoint,
+        region: region.to_string(),
+        addressing_style: AddressingStyle::Auto,
+    })
+}
+
+/// Builds a preset for AWS S3 using a typed region.
+pub fn aws_s3_region(region: AwsRegion) -> Result<Preset> {
+    aws_s3(region.as_str())
+}
+
+/// Builds a Cloudflare R2 preset.
+///
+/// Use [`R2Endpoint::Global`] for normal buckets, and [`R2Endpoint::Jurisdiction`] (for example
+/// [`R2Endpoint::EU`]) for buckets created with Jurisdictional Restrictions.
+///
+/// This preset uses region `auto` and path-style addressing.
+pub fn cloudflare_r2(account_id: impl AsRef<str>, endpoint: R2Endpoint) -> Result<Preset> {
+    let account_id = account_id.as_ref();
+    if account_id.is_empty() {
+        return Err(Error::invalid_config("account_id must not be empty"));
+    }
+    if account_id.trim() != account_id {
+        return Err(Error::invalid_config(
+            "account_id must not include leading or trailing whitespace",
+        ));
+    }
+
+    let invalid = account_id.len() > 63
+        || account_id.starts_with('-')
+        || account_id.ends_with('-')
+        || !account_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-');
+    if invalid {
+        return Err(Error::invalid_config("account_id must be a DNS label"));
+    }
+
+    let account_id = account_id.to_ascii_lowercase();
+    let endpoint = match endpoint {
+        R2Endpoint::Global => format!("https://{account_id}.r2.cloudflarestorage.com"),
+        R2Endpoint::Jurisdiction(jurisdiction) => format!(
+            "https://{account_id}.{}.r2.cloudflarestorage.com",
+            jurisdiction.as_str()
+        ),
+    };
+
+    Ok(Preset {
+        endpoint,
+        region: "auto".to_string(),
+        addressing_style: AddressingStyle::Path,
+    })
+}
+
+fn validate_region_id(region: &str) -> Result<()> {
+    if region.is_empty() {
+        return Err(Error::invalid_config("AWS region must not be empty"));
+    }
+    if region.trim() != region {
+        return Err(Error::invalid_config(
+            "AWS region must not include leading or trailing whitespace",
+        ));
+    }
+    if !region
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(Error::invalid_config(
+            "AWS region must contain only lowercase ASCII letters, digits, or '-'",
+        ));
+    }
+    Ok(())
+}
+
+/// Local MinIO preset for development.
+pub fn minio_local() -> Preset {
+    Preset {
+        endpoint: "http://127.0.0.1:9000".to_string(),
+        region: "us-east-1".to_string(),
+        addressing_style: AddressingStyle::Path,
+    }
+}
+
+/// Convenience aliases and preset constructors for AWS S3 regions.
+pub mod aws {
+    use super::{AwsRegion, Preset, Result, aws_s3_region};
+
+    /// us-east-1.
+    pub const US_EAST_1: AwsRegion = AwsRegion::UsEast1;
+    /// us-west-2.
+    pub const US_WEST_2: AwsRegion = AwsRegion::UsWest2;
+    /// eu-west-1.
+    pub const EU_WEST_1: AwsRegion = AwsRegion::EuWest1;
+    /// ap-southeast-1.
+    pub const AP_SOUTHEAST_1: AwsRegion = AwsRegion::ApSoutheast1;
+
+    /// Builds an AWS S3 preset from a typed region.
+    pub fn s3(region: AwsRegion) -> Result<Preset> {
+        aws_s3_region(region)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloudflare_r2_uses_path_and_auto_region() {
+        let preset = cloudflare_r2("123", R2Endpoint::Global).unwrap();
+        assert_eq!(preset.endpoint(), "https://123.r2.cloudflarestorage.com");
+        assert_eq!(preset.region(), "auto");
+        assert_eq!(preset.addressing_style(), AddressingStyle::Path);
+    }
+
+    #[test]
+    fn cloudflare_r2_endpoint_eu_uses_jurisdiction_host() {
+        let preset = cloudflare_r2("123", R2Endpoint::EU).unwrap();
+        assert_eq!(preset.endpoint(), "https://123.eu.r2.cloudflarestorage.com");
+        assert_eq!(preset.region(), "auto");
+        assert_eq!(preset.addressing_style(), AddressingStyle::Path);
+    }
+
+    #[test]
+    fn cloudflare_r2_endpoint_fedramp_uses_jurisdiction_host() {
+        let preset = cloudflare_r2("123", R2Endpoint::FEDRAMP).unwrap();
+        assert_eq!(
+            preset.endpoint(),
+            "https://123.fedramp.r2.cloudflarestorage.com"
+        );
+        assert_eq!(preset.region(), "auto");
+        assert_eq!(preset.addressing_style(), AddressingStyle::Path);
+    }
+
+    #[test]
+    fn aws_s3_uses_us_east_1_global_endpoint() {
+        let preset = aws_s3("us-east-1").unwrap();
+        assert_eq!(preset.endpoint(), "https://s3.amazonaws.com");
+        assert_eq!(preset.region(), "us-east-1");
+        assert_eq!(preset.addressing_style(), AddressingStyle::Auto);
+    }
+
+    #[test]
+    fn aws_s3_cn_uses_cn_suffix() {
+        let preset = aws_s3("cn-north-1").unwrap();
+        assert_eq!(preset.endpoint(), "https://s3.cn-north-1.amazonaws.com.cn");
+    }
+
+    #[test]
+    fn aws_region_parses_common_ids() {
+        assert_eq!(
+            "us-east-1".parse::<AwsRegion>().unwrap(),
+            AwsRegion::UsEast1
+        );
+        assert_eq!(
+            "unknown-1".parse::<AwsRegion>().unwrap(),
+            AwsRegion::Other("unknown-1".to_string())
+        );
+        assert!(AwsRegion::other(" custom-1 ").is_err());
+        assert!(AwsRegion::other("custom 1").is_err());
+        assert!(AwsRegion::other("custom/1").is_err());
+        assert!(AwsRegion::other("US-EAST-1").is_err());
+        assert!(AwsRegion::other("us_east_1").is_err());
+        assert!(" custom-1 ".parse::<AwsRegion>().is_err());
+        assert!("custom\n1".parse::<AwsRegion>().is_err());
+    }
+
+    #[test]
+    fn aws_s3_region_works() {
+        let preset = aws_s3_region(AwsRegion::UsEast1).unwrap();
+        assert_eq!(preset.endpoint(), "https://s3.amazonaws.com");
+    }
+
+    #[test]
+    fn presets_reject_outer_whitespace() {
+        assert!(aws_s3(" us-east-1").is_err());
+        assert!(aws_s3("us east 1").is_err());
+        assert!(aws_s3("us/east/1").is_err());
+        assert!(cloudflare_r2(" 123", R2Endpoint::Global).is_err());
+        assert!(cloudflare_r2("a".repeat(64), R2Endpoint::Global).is_err());
+        assert!(" eu".parse::<R2Jurisdiction>().is_err());
+    }
+}

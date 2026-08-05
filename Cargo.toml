@@ -50,6 +50,12 @@ result_large_err = "allow"
 too_many_arguments = "allow"
 type_complexity = "allow"
 
+[patch.crates-io]
+# Temporary security patch for RUSTSEC-2026-0194 and RUSTSEC-2026-0195.
+# Upstream s3 0.1.36 still constrains quick-xml to 0.40; remove this vendored
+# patch once s3 publishes a release that accepts quick-xml 0.41 or newer.
+s3 = { path = "vendor/s3" }
+
 [package]
 name = "effigy"
 version.workspace = true
