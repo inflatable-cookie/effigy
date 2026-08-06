@@ -12,7 +12,7 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         context,
         "release",
         release,
-        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, sync_files, gates, tag_format",
+        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format",
     ) else {
         return;
     };
@@ -28,6 +28,8 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
             "version-path",
             "changelog",
             "pre-1-0",
+            "initial_tag_current_version",
+            "initial-tag-current-version",
             "sync_files",
             "sync-files",
             "gates",
@@ -56,6 +58,13 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         "release.changelog",
     );
     validate_optional_boolean_field(context, release_table.get("pre-1-0"), "release.pre-1-0");
+    validate_optional_boolean_field(
+        context,
+        release_table
+            .get("initial_tag_current_version")
+            .or_else(|| release_table.get("initial-tag-current-version")),
+        "release.initial_tag_current_version",
+    );
     validate_optional_string_array_field(
         context,
         release_table

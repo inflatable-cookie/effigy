@@ -13,38 +13,21 @@ use effigy_release::{
     load_release_context as load_release_context_via_release,
     resolve_verify_install_tag as resolve_verify_install_tag_via_release,
     run_release_gates_with_progress,
-    run_release_verify_install as run_release_verify_install_via_release, GateExecutionReport,
-    ReleaseContext, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun, ReleasePreparePlan,
-    ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
+    run_release_verify_install as run_release_verify_install_via_release,
+    validate_planned_release_version, GateExecutionReport, ReleaseContext, ReleaseExecutePlan,
+    ReleaseExecuted, ReleaseGateRun, ReleasePreparePlan, ReleasePrepared, ReleaseSimulation,
+    ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
 };
 
 use super::*;
 
 pub(super) fn validate_prepare_version_override(
     context: &ReleaseContext,
-    suggested_version: &semver::Version,
     raw_version: &str,
 ) -> Result<semver::Version, String> {
     let version = semver::Version::parse(raw_version.trim())
         .map_err(|error| format!("`{}` is not valid semver: {error}", raw_version.trim()))?;
-    if version <= context.current_version {
-        return Err(format!(
-            "{version} must be greater than current version {}",
-            context.current_version
-        ));
-    }
-    if context
-        .parsed_changelog
-        .find_version(&version.to_string())
-        .is_some()
-    {
-        return Err(format!(
-            "changelog already contains release version {version}"
-        ));
-    }
-    if version == *suggested_version {
-        return Ok(version);
-    }
+    validate_planned_release_version(context, &version)?;
     Ok(version)
 }
 
@@ -57,17 +40,16 @@ pub(super) fn parse_release_version_override(
         return Ok(None);
     };
     let context = load_release_context_via_release(repo_root)?;
-    let suggested_version = context.next_version.clone().ok_or_else(|| {
+    context.next_version.as_ref().ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "release {subcommand} `--version` requires a changelog-derived suggested version"
         ))
     })?;
-    let version = validate_prepare_version_override(&context, &suggested_version, raw_version)
-        .map_err(|message| {
-            RunnerError::task_invocation(format!(
-                "invalid `release {subcommand} --version`: {message}"
-            ))
-        })?;
+    let version = validate_prepare_version_override(&context, raw_version).map_err(|message| {
+        RunnerError::task_invocation(format!(
+            "invalid `release {subcommand} --version`: {message}"
+        ))
+    })?;
     Ok(Some(version))
 }
 

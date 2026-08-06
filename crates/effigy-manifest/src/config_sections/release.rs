@@ -13,6 +13,8 @@ pub struct ManifestReleaseConfig {
     #[serde(default, rename = "pre-1-0")]
     pub pre_1_0: Option<bool>,
     #[serde(default)]
+    pub initial_tag_current_version: Option<bool>,
+    #[serde(default)]
     pub sync_files: Vec<String>,
     #[serde(default)]
     pub gates: BTreeMap<String, ManifestReleaseGateConfig>,

@@ -1,11 +1,14 @@
 use super::{
-    compare_release_state_fingerprints, format_release_tag, gate_blockers, load_release_config,
-    load_release_prepared_state, normalized_expected_files, snapshot_mutation_paths, test_support,
-    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
-    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints,
+    build_release_prepare_plan, compare_release_state_fingerprints, format_release_tag,
+    gate_blockers, load_release_config, load_release_context, load_release_prepared_state,
+    normalized_expected_files, snapshot_mutation_paths, test_support,
+    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
+    FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
+    ReleasePreparedSourceFingerprints,
 };
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn temp_repo(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -16,6 +19,36 @@ fn temp_repo(name: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(&root).expect("mkdir");
+    root
+}
+
+fn write_initial_release_repo(name: &str, opt_in: bool) -> PathBuf {
+    let root = temp_repo(name);
+    let initial_mode = if opt_in {
+        "initial-tag-current-version = true\n"
+    } else {
+        ""
+    };
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n{initial_mode}"
+        ),
+    )
+    .expect("manifest");
+    fs::write(root.join("VERSION"), "0.1.0\n").expect("version");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n- Initial release\n",
+    )
+    .expect("changelog");
+    let status = Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(&root)
+        .status()
+        .expect("git init");
+    assert!(status.success());
     root
 }
 
@@ -61,6 +94,87 @@ description = "Run tests"
     assert!(error
         .to_string()
         .contains("`Cargo.lock` is only supported when the release version file is Cargo.toml"));
+}
+
+#[test]
+fn initial_tag_current_version_selects_current_and_omits_version_mutation() {
+    let root = write_initial_release_repo("initial-current", true);
+    let context = load_release_context(&root).expect("release context");
+
+    assert_eq!(context.next_version, Some(semver::Version::new(0, 1, 0)));
+    assert_eq!(context.suggested_bump, super::BumpKind::None);
+    assert_eq!(context.tag.as_deref(), Some("v0.1.0"));
+    assert!(context.blockers.is_empty(), "{:?}", context.blockers);
+
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    assert!(plan.ready, "{:?}", plan.blockers);
+    assert_eq!(
+        plan.mutations
+            .iter()
+            .map(|mutation| mutation.kind)
+            .collect::<Vec<_>>(),
+        vec!["changelog"]
+    );
+}
+
+#[test]
+fn current_version_release_requires_the_first_tag_opt_in() {
+    let root = write_initial_release_repo("initial-disabled", false);
+    let context = load_release_context(&root).expect("release context");
+    let current = semver::Version::new(0, 1, 0);
+    let lower = semver::Version::new(0, 0, 9);
+
+    assert!(validate_planned_release_version(&context, &current)
+        .expect_err("current version should be rejected")
+        .contains("must be greater than current version"));
+    assert!(validate_planned_release_version(&context, &lower)
+        .expect_err("lower version should be rejected")
+        .contains("must be greater than current version"));
+}
+
+#[test]
+fn initial_tag_current_version_rejects_an_existing_local_tag() {
+    let root = write_initial_release_repo("initial-existing-tag", true);
+    let object = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["hash-object", "-w", "VERSION"])
+        .output()
+        .expect("hash version file");
+    assert!(object.status.success());
+    let object_id = String::from_utf8(object.stdout).expect("object id");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["update-ref", "refs/tags/v0.1.0", object_id.trim()])
+        .status()
+        .expect("write tag ref");
+    assert!(status.success());
+
+    let context = load_release_context(&root).expect("release context");
+    assert!(context
+        .blockers
+        .iter()
+        .any(|blocker| blocker == "initial release tag already exists locally: v0.1.0"));
+}
+
+#[test]
+fn initial_tag_current_version_closes_after_the_first_changelog_release() {
+    let root = write_initial_release_repo("initial-after-release", true);
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Follow-up\n\n## [0.1.0] - 2026-08-05\n\n### Added\n- Initial release\n",
+    )
+    .expect("changelog");
+
+    let context = load_release_context(&root).expect("release context");
+    assert_eq!(context.next_version, Some(semver::Version::new(0, 1, 1)));
+    assert!(
+        validate_planned_release_version(&context, &semver::Version::new(0, 1, 0))
+            .expect_err("released current version should be rejected")
+            .contains("must be greater than current version")
+    );
 }
 
 #[test]

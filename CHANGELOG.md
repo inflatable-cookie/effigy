@@ -8,6 +8,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 - `effigy deps` and `effigy deps status [cargo|bun]` expose read-only machine-local Cargo/Bun link state. `effigy deps link cargo <PATH>` plans, atomically applies, and verifies full-closure repo-local Cargo patches. `effigy deps unlink cargo <PATH>` removes only owned state, re-resolves exact committed Git sources, and rejects unrelated lockfile drift without Git restore commands. `effigy deps link bun <PATH>` registers and links the full local package closure through explicit `--no-save` operations, verifies every symlink, diagnoses duplicate peer resolution, and rejects manifest/lock churn. `effigy deps unlink bun <PATH>` removes only exact matching consumer symlinks and unregisters only provably unshared Effigy-owned packages. All operations support exact dry-run plans and versioned JSON reports.
+- Release configuration can opt into `initial-tag-current-version` so a repository that already declares its intended first version can prepare that exact tag without a fake prior version. The exception is limited to changelogs with no released versions and refuses an existing matching tag.
 
 ### Changed
 - Refreshed the Rust and CI dependency graph, including `base64 0.23`, `reqwest 0.13`, current compatible transitive releases, direct OS randomness through `getrandom 0.4` for vault salt and nonce generation, and `actions/checkout` plus `actions/setup-node` v7.

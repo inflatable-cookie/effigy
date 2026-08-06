@@ -155,6 +155,13 @@ Supported `[release]` fields:
   - optional boolean
   - when `true`, breaking unreleased changes in `0.x` releases produce a minor
     bump policy instead of forcing a major bump
+- `initial-tag-current-version`
+  - optional boolean; defaults to `false`
+  - permits the first changelog release to tag the version already declared in
+    the version file
+  - applies only while the changelog has no released versions and the matching
+    local tag does not exist
+  - does not permit a lower version or a repeated release
 - `sync-files`
   - optional list of extra files Effigy should keep in sync during prepare
   - currently supported:
@@ -183,6 +190,22 @@ fmt = "cargo fmt --all -- --check"
 command = "cargo test"
 description = "Run the Rust test suite"
 ```
+
+For a new project that already declares its intended first release version,
+opt in explicitly:
+
+```toml
+[release]
+version-file = "Cargo.toml"
+changelog = "CHANGELOG.md"
+tag-format = "v{version}"
+initial-tag-current-version = true
+```
+
+In this mode, `release status`, `release simulate`, and `release prepare`
+select the current version. Prepare promotes `[Unreleased]` without rewriting
+the version file. The exception closes as soon as the changelog contains a
+released version or the matching local tag exists.
 
 ## 4) Version File Formats
 

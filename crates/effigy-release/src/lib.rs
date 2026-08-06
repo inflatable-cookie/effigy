@@ -174,6 +174,9 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
         pre_1_0: manifest_release
             .and_then(|config| config.pre_1_0)
             .unwrap_or(true),
+        initial_tag_current_version: manifest_release
+            .and_then(|config| config.initial_tag_current_version)
+            .unwrap_or(false),
         sync_files,
         gates,
         tag_format,
@@ -501,8 +504,18 @@ pub fn load_release_context(root: &Path) -> Result<ReleaseContext, ReleaseError>
         .collect::<Vec<_>>();
     let unreleased_counts = unreleased_counts(&parsed_changelog);
     let unreleased_empty = unreleased_counts.values().copied().sum::<usize>() == 0;
-    let suggested_bump = suggested_bump(&parsed_changelog, &current_version, config.pre_1_0);
-    let next_version = apply_bump(&current_version, suggested_bump);
+    let initial_tag_current_version =
+        config.initial_tag_current_version && parsed_changelog.latest_version().is_none();
+    let suggested_bump = if initial_tag_current_version {
+        BumpKind::None
+    } else {
+        suggested_bump(&parsed_changelog, &current_version, config.pre_1_0)
+    };
+    let next_version = if initial_tag_current_version {
+        Some(current_version.clone())
+    } else {
+        apply_bump(&current_version, suggested_bump)
+    };
     let tag = next_version
         .as_ref()
         .map(|version| format_release_tag(&config.tag_format, version));
@@ -527,6 +540,14 @@ pub fn load_release_context(root: &Path) -> Result<ReleaseContext, ReleaseError>
     if unreleased_empty {
         blockers.push("unreleased changelog section has no entries".to_owned());
     }
+    if initial_tag_current_version {
+        let selected_tag = format_release_tag(&config.tag_format, &current_version);
+        if git_tag_exists(root, &selected_tag)? {
+            blockers.push(format!(
+                "initial release tag already exists locally: {selected_tag}"
+            ));
+        }
+    }
 
     Ok(ReleaseContext {
         repo_root: root.to_path_buf(),
@@ -541,6 +562,35 @@ pub fn load_release_context(root: &Path) -> Result<ReleaseContext, ReleaseError>
         tag,
         blockers,
     })
+}
+
+pub fn permits_initial_current_version(context: &ReleaseContext) -> bool {
+    context.config.initial_tag_current_version
+        && context.parsed_changelog.latest_version().is_none()
+}
+
+pub fn validate_planned_release_version(
+    context: &ReleaseContext,
+    version: &semver::Version,
+) -> Result<(), String> {
+    if version < &context.current_version
+        || (version == &context.current_version && !permits_initial_current_version(context))
+    {
+        return Err(format!(
+            "{version} must be greater than current version {}",
+            context.current_version
+        ));
+    }
+    if context
+        .parsed_changelog
+        .find_version(&version.to_string())
+        .is_some()
+    {
+        return Err(format!(
+            "changelog already contains release version {version}"
+        ));
+    }
+    Ok(())
 }
 
 pub fn collect_release_status(
@@ -611,25 +661,20 @@ pub fn build_release_prepare_plan(
     };
     let selected_tag = format_release_tag(&context.config.tag_format, &next_version);
 
-    if context
-        .parsed_changelog
-        .find_version(&next_version.to_string())
-        .is_some()
+    if let Err(blocker) = validate_planned_release_version(context, &next_version) {
+        blockers.push(blocker);
+    }
+    if next_version == context.current_version
+        && permits_initial_current_version(context)
+        && git_tag_exists(&context.repo_root, &selected_tag)?
     {
-        blockers.push(format!(
-            "changelog already contains release version {}",
-            next_version
-        ));
+        let blocker = format!("initial release tag already exists locally: {selected_tag}");
+        if !blockers.contains(&blocker) {
+            blockers.push(blocker);
+        }
     }
 
     if blockers.is_empty() {
-        let version_before =
-            std::fs::read_to_string(&context.config.version_source.path).map_err(|error| {
-                ReleaseError::TaskInvocation(format!(
-                    "failed to read release version file {}: {error}",
-                    context.config.version_source.path.display()
-                ))
-            })?;
         let changelog_before =
             std::fs::read_to_string(&context.config.changelog_path).map_err(|error| {
                 ReleaseError::TaskInvocation(format!(
@@ -637,40 +682,49 @@ pub fn build_release_prepare_plan(
                     context.config.changelog_path.display()
                 ))
             })?;
-        let version_after =
-            render_updated_version_contents(&context.config.version_source, &next_version)?;
         let changelog_after = render_prepared_changelog_contents(
             &context.parsed_changelog,
             &next_version,
             &release_date,
         )?;
 
-        mutations.push(FileMutationPlan {
-            path: context.config.version_source.path.clone(),
-            kind: "version-file",
-            summary: format!(
-                "update version from {} to {}",
-                context.current_version, next_version
-            ),
-            before_preview: render_version_preview_line(
-                &context.config.version_source,
-                &version_before,
-                &context.current_version.to_string(),
-            ),
-            after_preview: render_version_preview_line(
-                &context.config.version_source,
-                &version_after,
-                &next_version.to_string(),
-            ),
-            detail_lines: build_version_mutation_detail_lines(
-                &context.config.version_source,
-                &next_version,
-            ),
-            diff_preview: build_diff_preview(&version_before, &version_after),
-            apply: FileMutationApply::Write {
-                after_contents: version_after.clone(),
-            },
-        });
+        if next_version != context.current_version {
+            let version_before = std::fs::read_to_string(&context.config.version_source.path)
+                .map_err(|error| {
+                    ReleaseError::TaskInvocation(format!(
+                        "failed to read release version file {}: {error}",
+                        context.config.version_source.path.display()
+                    ))
+                })?;
+            let version_after =
+                render_updated_version_contents(&context.config.version_source, &next_version)?;
+            mutations.push(FileMutationPlan {
+                path: context.config.version_source.path.clone(),
+                kind: "version-file",
+                summary: format!(
+                    "update version from {} to {}",
+                    context.current_version, next_version
+                ),
+                before_preview: render_version_preview_line(
+                    &context.config.version_source,
+                    &version_before,
+                    &context.current_version.to_string(),
+                ),
+                after_preview: render_version_preview_line(
+                    &context.config.version_source,
+                    &version_after,
+                    &next_version.to_string(),
+                ),
+                detail_lines: build_version_mutation_detail_lines(
+                    &context.config.version_source,
+                    &next_version,
+                ),
+                diff_preview: build_diff_preview(&version_before, &version_after),
+                apply: FileMutationApply::Write {
+                    after_contents: version_after,
+                },
+            });
+        }
         mutations.push(FileMutationPlan {
             path: context.config.changelog_path.clone(),
             kind: "changelog",

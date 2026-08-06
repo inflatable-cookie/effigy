@@ -116,6 +116,7 @@ next-step = "Review evidence and publish release sign-off notes."
 version-file = "Cargo.toml"
 changelog = "CHANGELOG.md"
 tag-format = "v{version}"
+initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
 
 [release.gates]
@@ -149,6 +150,28 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
     assert!(
         sink.findings.is_empty(),
         "expected repo manifest to validate cleanly, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_non_boolean_initial_tag_current_version() {
+    let manifest: Value = toml::from_str(
+        r#"
+[release]
+initial-tag-current-version = "yes"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("release.initial_tag_current_version")),
+        "expected invalid initial tag mode to be flagged, got: {:?}",
         sink.findings
     );
 }

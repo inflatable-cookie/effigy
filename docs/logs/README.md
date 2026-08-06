@@ -78,6 +78,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/06-111534-initial-current-version-release-tag.md`](./2026-08/06-111534-initial-current-version-release-tag.md)
 - [`2026-08/05-231121-dependency-linking-suite-closeout.md`](./2026-08/05-231121-dependency-linking-suite-closeout.md)
 - [`2026-08/05-230446-bun-closure-drift-repair-proof.md`](./2026-08/05-230446-bun-closure-drift-repair-proof.md)
 - [`2026-08/05-225229-signal-cargo-portfolio-proof.md`](./2026-08/05-225229-signal-cargo-portfolio-proof.md)

@@ -490,7 +490,7 @@ fn prompt_prepare_version_selection_from_menu(
             response
         };
 
-        match validate_prepare_version_override(context, &selected_version, &candidate) {
+        match validate_prepare_version_override(context, &candidate) {
             Ok(version) => return Ok(version),
             Err(message) => print_release_interactive_notice(&format!(
                 "Invalid custom release version: {message}"

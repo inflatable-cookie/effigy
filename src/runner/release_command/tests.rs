@@ -209,7 +209,7 @@ fn validate_prepare_version_override_rejects_non_incrementing_versions() {
         "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Fix release output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
     )
     .expect("parse changelog");
-    let context = ReleaseContext {
+    let mut context = ReleaseContext {
         repo_root: std::env::temp_dir(),
         config: ReleaseConfig {
             version_source: ResolvedVersionSource {
@@ -219,6 +219,7 @@ fn validate_prepare_version_override_rejects_non_incrementing_versions() {
             },
             changelog_path: std::env::temp_dir().join("CHANGELOG.md"),
             pre_1_0: false,
+            initial_tag_current_version: false,
             sync_files: Vec::new(),
             gates: Vec::new(),
             tag_format: "v{version}".to_owned(),
@@ -237,9 +238,20 @@ fn validate_prepare_version_override_rejects_non_incrementing_versions() {
         blockers: Vec::new(),
     };
 
-    let err = validate_prepare_version_override(&context, &semver::Version::new(0, 2, 5), "0.2.4")
+    let err = validate_prepare_version_override(&context, "0.2.4")
         .expect_err("current version should be rejected");
     assert!(err.contains("must be greater than current version"));
+
+    context.config.initial_tag_current_version = true;
+    context.parsed_changelog =
+        effigy_changelog::parse("# Changelog\n\n## [Unreleased]\n\n### Fixed\n- First release\n")
+            .expect("parse initial changelog");
+    context.next_version = Some(semver::Version::new(0, 2, 4));
+    assert_eq!(
+        validate_prepare_version_override(&context, "0.2.4")
+            .expect("initial current version should be accepted"),
+        semver::Version::new(0, 2, 4)
+    );
 }
 
 #[test]

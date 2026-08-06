@@ -3,8 +3,9 @@
 Status: Active
 Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
-(g08.010–g08.015, complete), and the active machine-local dependency
-management suite (g08.018–g08.023).
+(g08.010–g08.015, complete), the machine-local dependency management suite
+(g08.018–g08.023), and bounded release-orchestration follow-through in
+`g08.024`.
 
 ## Purpose
 
@@ -54,6 +55,7 @@ This generation should help agents and maintainers answer questions like:
 - [`021-bun-local-dependency-linking.md`](./021-bun-local-dependency-linking.md)
 - [`022-dependency-link-doctor-and-hygiene.md`](./022-dependency-link-doctor-and-hygiene.md)
 - [`023-dependency-link-portfolio-proof-and-closeout.md`](./023-dependency-link-portfolio-proof-and-closeout.md)
+- [`024-initial-current-version-release-tag.md`](./024-initial-current-version-release-tag.md)
 
 ## Design Posture
 
@@ -113,9 +115,12 @@ This generation should help agents and maintainers answer questions like:
 - Dependency suite complete: `1064` published operator/agent guidance, kept
   command/JSON references current, passed full QA, and closed `g08.018`,
   `g08.023`, and strict lane `099`.
+- Initial-tag follow-through complete: `g08.024` added an explicit,
+  first-release-only path for tagging the version already declared by a new
+  repository without weakening normal monotonic release planning.
 - Visible milestones: `g08.020` Cargo mutation, `g08.021` Bun mutation,
   `g08.022` doctor/hygiene, and `g08.023` portfolio proof/closeout.
-- Planning checkpoint: after `g08.023`, select the next substantial g08 scope;
+- Planning checkpoint: after `g08.024`, select the next substantial g08 scope;
   completion of this suite does not imply generation rollover.
 
 ## Execution Rule

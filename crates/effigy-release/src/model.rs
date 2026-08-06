@@ -12,6 +12,7 @@ pub struct ReleaseConfig {
     pub version_source: ResolvedVersionSource,
     pub changelog_path: PathBuf,
     pub pre_1_0: bool,
+    pub initial_tag_current_version: bool,
     pub sync_files: Vec<ResolvedSyncFile>,
     pub gates: Vec<ResolvedGate>,
     pub tag_format: String,
