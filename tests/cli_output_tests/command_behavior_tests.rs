@@ -4583,9 +4583,12 @@ fn cli_release_prepare_plan_json_mode_includes_sync_file_mutation_when_configure
     assert!(mutations[2]["path"]
         .as_str()
         .is_some_and(|path| path.ends_with("/Cargo.lock")));
+    // `cargo update --workspace`, not `cargo generate-lockfile`: the latter
+    // re-resolves every dependency to newest-compatible, which is how signal's
+    // 0.1.0 prepare silently moved ~40 third-party crates.
     assert_eq!(
         mutations[2]["detail_lines"][0],
-        "sync command: cargo generate-lockfile --quiet"
+        "sync command: cargo update --workspace --quiet"
     );
     assert_eq!(
         mutations[2]["diff_preview"]
@@ -5252,7 +5255,10 @@ fn cli_release_execute_plan_json_mode_validates_prepared_git_state() {
     assert!(expected_files
         .iter()
         .any(|value| value.as_str() == Some("CHANGELOG.md")));
-    assert!(expected_files
+    // The prepared-state file must NOT be an expected working-tree change. The
+    // presence check runs through `git status`, which honours `.gitignore`, so
+    // requiring it made execute impossible in every repository that ignores it.
+    assert!(!expected_files
         .iter()
         .any(|value| value.as_str() == Some(".release-prepared.json")));
     let unexpected = parsed["result"]["working_tree"]["unexpected_files"]

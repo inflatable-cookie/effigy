@@ -143,26 +143,43 @@ pub(super) fn apply_bump(version: &semver::Version, bump: BumpKind) -> Option<se
     }
 }
 
-pub(super) fn build_sync_mutations(sync_files: &[ResolvedSyncFile]) -> Vec<FileMutationPlan> {
+pub(super) fn build_sync_mutations(
+    sync_files: &[ResolvedSyncFile],
+    workspace_version: &semver::Version,
+) -> Vec<FileMutationPlan> {
     sync_files
         .iter()
         .map(|sync| match sync.kind {
             SyncFileKind::CargoLock => FileMutationPlan {
                 path: sync.path.clone(),
                 kind: "sync-file",
-                summary: "sync Cargo.lock via `cargo generate-lockfile --quiet`".to_owned(),
+                summary: format!(
+                    "sync Cargo.lock to workspace version {workspace_version} via \
+                     `cargo update --workspace --quiet`"
+                ),
                 before_preview: if sync.path.exists() {
-                    "Cargo.lock exists and will be regenerated".to_owned()
+                    "Cargo.lock exists and its workspace member versions will be refreshed"
+                        .to_owned()
                 } else {
                     "Cargo.lock is missing and will be created".to_owned()
                 },
-                after_preview: "Cargo.lock synced via `cargo generate-lockfile --quiet`".to_owned(),
+                after_preview: format!(
+                    "Cargo.lock workspace members recorded at {workspace_version}"
+                ),
                 detail_lines: vec![
-                    "sync command: cargo generate-lockfile --quiet".to_owned(),
-                    "preview fidelity: lockfile contents are generated at apply time".to_owned(),
+                    "sync command: cargo update --workspace --quiet".to_owned(),
+                    "third-party dependencies are not re-resolved; only workspace member \
+                     versions move"
+                        .to_owned(),
+                    format!(
+                        "refuses to apply if any other line changes or any version other than \
+                         {workspace_version} appears"
+                    ),
                 ],
                 diff_preview: Vec::new(),
-                apply: FileMutationApply::SyncCargoLock,
+                apply: FileMutationApply::SyncCargoLock {
+                    workspace_version: workspace_version.to_string(),
+                },
             },
         })
         .collect()
@@ -205,6 +222,37 @@ pub fn snapshot_mutation_paths(
         snapshots.insert(mutation.path.clone(), current);
     }
     Ok(snapshots)
+}
+
+/// Put every mutated path back as [`snapshot_mutation_paths`] found it.
+///
+/// `release prepare` applies its mutations and *then* runs the gates. Without
+/// this, a failing gate left the version bump and changelog roll written to the
+/// working tree while reporting `Prepared: no` and `State file: not written` --
+/// a half-applied release the operator then had to spot and unpick by hand,
+/// with nothing in the output saying the tree had been touched.
+///
+/// A path the snapshot recorded as absent is removed rather than truncated, so
+/// a mutation that creates a file leaves no empty stub behind.
+///
+/// Best-effort by design: it returns the paths it could not restore instead of
+/// failing, because it runs on a path that is already reporting a failure and
+/// replacing that failure with this one would hide the original.
+pub fn restore_mutation_snapshots(snapshots: &BTreeMap<PathBuf, Option<Vec<u8>>>) -> Vec<PathBuf> {
+    let mut unrestored = Vec::new();
+    for (path, before) in snapshots {
+        let outcome = match before {
+            Some(bytes) => std::fs::write(path, bytes),
+            None => match std::fs::remove_file(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                other => other,
+            },
+        };
+        if outcome.is_err() {
+            unrestored.push(path.clone());
+        }
+    }
+    unrestored
 }
 
 pub fn collect_changed_mutation_paths(
@@ -254,7 +302,9 @@ pub fn apply_release_mutations(
                     ))
                 })?;
             }
-            FileMutationApply::SyncCargoLock => sync_cargo_lock(root, &mutation.path)?,
+            FileMutationApply::SyncCargoLock { workspace_version } => {
+                sync_cargo_lock(root, &mutation.path, workspace_version)?
+            }
         }
     }
     Ok(())
@@ -423,17 +473,37 @@ pub fn load_release_prepared_state(path: &Path) -> Result<ReleasePreparedState, 
     })
 }
 
+/// Files `release execute` requires to be present as working-tree changes.
+///
+/// The prepared-state file is deliberately NOT one of them. It used to be, and
+/// that made execute impossible in any repository that gitignores it: the
+/// presence check runs through `git status`, which honours `.gitignore`, so the
+/// file could never appear and the blocker was unconditional. Both signal and
+/// swallowtail gitignore it -- reasonably, since it is local state from a single
+/// prepare run and committing it would be wrong.
+///
+/// Execute has already read the file off disk by the time this runs, so `git
+/// status` was never the right oracle for whether it exists. It is tolerated
+/// rather than required: see [`is_release_state_file`], used to keep it out of
+/// the unexpected-changes list when a repository does track it.
 pub fn normalized_expected_files(
     state_file_name: &str,
     repo_root: &Path,
     files: &[PathBuf],
 ) -> Vec<String> {
-    let mut normalized = files
+    let _ = state_file_name;
+    files
         .iter()
         .map(|path| normalize_repo_relative_path(repo_root, path))
-        .collect::<BTreeSet<_>>();
-    normalized.insert(state_file_name.to_owned());
-    normalized.into_iter().collect()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Whether a working-tree path is the prepared-state file, which execute wrote
+/// itself and must not report as an unexpected change.
+pub fn is_release_state_file(path: &str, state_file_name: &str) -> bool {
+    path == state_file_name
 }
 
 pub fn normalized_repo_files(repo_root: &Path, files: &[PathBuf]) -> Vec<String> {
@@ -493,32 +563,154 @@ pub fn compare_release_state_fingerprints(
     drift
 }
 
-fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), ReleaseError> {
+/// Refresh the lockfile's record of the workspace members' own versions.
+///
+/// `cargo update --workspace`, NOT `cargo generate-lockfile`. The difference is
+/// the whole point. `generate-lockfile` rebuilds the lockfile from scratch and
+/// resolves every dependency to its newest compatible version: on signal's
+/// 0.1.0 prepare that silently moved ~40 third-party crates, including
+/// `syn 2 -> 3` and `rustix 0.38 -> 0.41`. Signal removed `sync-files` entirely
+/// rather than accept that, and then had to carry the lockfile in a separate
+/// hand-made commit -- because a tag whose manifest says one version and whose
+/// lockfile says another cannot be built with `--locked`, and every `--locked`
+/// gate refuses to run between the bump and the sync.
+///
+/// `cargo update --workspace` moves only the workspace members' own version
+/// numbers, which is exactly what a version bump requires and nothing more.
+///
+/// Verified rather than trusted. Every changed line must be a `version` line,
+/// and every added one must be `workspace_version` -- a third-party bump is
+/// also a version line, so the second check is what actually distinguishes
+/// them. If either fails the previous lockfile is restored and the mutation
+/// fails, so a surprising resolve cannot enter a release commit.
+fn sync_cargo_lock(
+    root: &Path,
+    lockfile: &Path,
+    workspace_version: &str,
+) -> Result<(), ReleaseError> {
+    let before = match std::fs::read_to_string(lockfile) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "failed to read {} before syncing: {error}",
+                lockfile.display()
+            )));
+        }
+    };
+
+    // Nothing to preserve when the lockfile does not exist yet, so a full
+    // resolve is the only option there and is not a regression.
+    let (args, label): (&[&str], &str) = if before.is_some() {
+        (
+            &["update", "--workspace", "--quiet"],
+            "cargo update --workspace --quiet",
+        )
+    } else {
+        (
+            &["generate-lockfile", "--quiet"],
+            "cargo generate-lockfile --quiet",
+        )
+    };
+
     let output = ProcessCommand::new("cargo")
-        .arg("generate-lockfile")
-        .arg("--quiet")
+        .args(args)
         .current_dir(root)
         .output()
         .map_err(|error| {
             ReleaseError::TaskInvocation(format!("failed to sync {}: {error}", lockfile.display()))
         })?;
-    if output.status.success() {
-        return Ok(());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("{label} exited unsuccessfully")
+        };
+        return Err(ReleaseError::TaskInvocation(format!(
+            "failed to sync {}: {detail}",
+            lockfile.display()
+        )));
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let detail = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        "cargo generate-lockfile --quiet exited unsuccessfully".to_owned()
+    let Some(before) = before else {
+        return Ok(());
     };
-    Err(ReleaseError::TaskInvocation(format!(
-        "failed to sync {}: {detail}",
-        lockfile.display()
-    )))
+    let after = std::fs::read_to_string(lockfile).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read {} after syncing: {error}",
+            lockfile.display()
+        ))
+    })?;
+    if let Some(reason) = unexpected_lockfile_change(&before, &after, workspace_version) {
+        // Put the lockfile back before failing: the caller's rollback covers
+        // planned mutations, and leaving a surprise resolve on disk would
+        // outlive this error.
+        std::fs::write(lockfile, &before).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to sync {}: {reason}; and the previous lockfile could not be restored: \
+                 {error}",
+                lockfile.display()
+            ))
+        })?;
+        return Err(ReleaseError::TaskInvocation(format!(
+            "refused to sync {}: {reason}",
+            lockfile.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Describe every change that is not a workspace version move, if any.
+///
+/// Reports all offenders rather than the first, because the first by sort order
+/// is usually a structural line like `[[package]]` while the informative one is
+/// the `name = ` beside it. A caller reading this needs to know which crate
+/// moved, not that the file has package headers.
+pub(crate) fn unexpected_lockfile_change(
+    before: &str,
+    after: &str,
+    workspace_version: &str,
+) -> Option<String> {
+    let expected_added = format!("version = \"{workspace_version}\"");
+
+    // A line-multiset comparison rather than a diff: order is irrelevant, and
+    // every line appearing on one side and not the other has to be accounted
+    // for. Blank lines carry no information and would otherwise dominate.
+    let mut deltas: BTreeMap<&str, isize> = BTreeMap::new();
+    for line in before.lines().filter(|line| !line.trim().is_empty()) {
+        *deltas.entry(line.trim()).or_default() += 1;
+    }
+    for line in after.lines().filter(|line| !line.trim().is_empty()) {
+        *deltas.entry(line.trim()).or_default() -= 1;
+    }
+
+    let mut reasons = Vec::new();
+    for (line, delta) in &deltas {
+        if *delta == 0 {
+            continue;
+        }
+        if !line.starts_with("version = \"") {
+            reasons.push(format!("`{line}` is not a version line"));
+        } else if *delta < 0 && *line != expected_added {
+            // Added lines (present in `after`, so a negative delta) must be the
+            // workspace version. Removed lines can be anything: they are the
+            // old workspace versions being replaced.
+            reasons.push(format!(
+                "`{line}` is not the workspace version {workspace_version}"
+            ));
+        }
+    }
+    if reasons.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "the sync changed more than the workspace version: {}",
+        reasons.join("; ")
+    ))
 }
 
 fn capture_release_prepared_source_fingerprints(

@@ -377,11 +377,24 @@ fn prompt_release_text_input(
         })?;
 
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).map_err(|error| {
+    let read = std::io::stdin().read_line(&mut input).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to read interactive release confirmation: {error}"
         ))
     })?;
+    // `read_line` returns `Ok(0)` at end of input, leaving `input` empty. The
+    // menus treat an empty response as unrecognised and re-prompt, so without
+    // this every review menu spins forever the moment stdin runs out -- which
+    // is what `effigy release resume` did in any script or non-interactive
+    // shell, with no `--yes` escape to reach for (it has none).
+    if read == 0 {
+        return Err(RunnerError::task_invocation(
+            "interactive release input ended before a choice was made; use `--plan` for a \
+             read-only summary, `--json` for the machine-readable form, or `--yes` on \
+             `release prepare`/`release execute` to apply without review"
+                .to_owned(),
+        ));
+    }
     Ok(input.trim().to_owned())
 }
 

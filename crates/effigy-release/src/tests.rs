@@ -1,11 +1,14 @@
+use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
     build_release_prepare_plan, compare_release_state_fingerprints, format_release_tag,
-    gate_blockers, git_create_tag, load_release_config, load_release_context,
-    load_release_prepared_state, normalized_expected_files, snapshot_mutation_paths, test_support,
+    gate_blockers, git_create_tag, is_release_state_file, load_release_config,
+    load_release_context, load_release_prepared_state, normalized_expected_files,
+    restore_mutation_snapshots, snapshot_mutation_paths, test_support,
     validate_planned_release_version, write_release_prepared_state, FileMutationApply,
     FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
     ReleasePreparedSourceFingerprints,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -317,8 +320,14 @@ fn prepared_state_round_trip_preserves_fingerprints() {
     );
 }
 
+/// The prepared-state file must NOT be required as a working-tree change.
+///
+/// It used to be, and the presence check runs through `git status`, which
+/// honours `.gitignore` -- so in any repository that gitignores the file (both
+/// signal and swallowtail do) execute reported it permanently missing and could
+/// never run at all.
 #[test]
-fn normalized_expected_files_adds_state_file_once() {
+fn normalized_expected_files_excludes_the_state_file() {
     let repo_root = PathBuf::from("/tmp/repo");
     let files = vec![
         repo_root.join("Cargo.toml"),
@@ -328,12 +337,81 @@ fn normalized_expected_files_adds_state_file_once() {
     let normalized = normalized_expected_files(".release-prepared.json", &repo_root, &files);
     assert_eq!(
         normalized,
-        vec![
-            ".release-prepared.json".to_owned(),
-            "CHANGELOG.md".to_owned(),
-            "Cargo.toml".to_owned(),
-        ]
+        vec!["CHANGELOG.md".to_owned(), "Cargo.toml".to_owned()]
     );
+    // Tolerated, not required: a repository that does track it must not have it
+    // counted as an unexpected change either.
+    assert!(is_release_state_file(
+        ".release-prepared.json",
+        ".release-prepared.json"
+    ));
+    assert!(!is_release_state_file(
+        "Cargo.toml",
+        ".release-prepared.json"
+    ));
+}
+
+/// A failed prepare must not leave the version bump on disk.
+#[test]
+fn restore_mutation_snapshots_puts_the_tree_back() {
+    let root = temp_repo("rollback");
+    let existing = root.join("Cargo.toml");
+    let created = root.join("CHANGELOG.md");
+    fs::write(&existing, "version = \"0.1.0\"\n").expect("seed");
+
+    let mut snapshots = BTreeMap::new();
+    snapshots.insert(existing.clone(), Some(b"version = \"0.1.0\"\n".to_vec()));
+    snapshots.insert(created.clone(), None);
+
+    // Simulate the mutations prepare would have applied before a gate failed.
+    fs::write(&existing, "version = \"0.2.0\"\n").expect("mutate");
+    fs::write(&created, "# Changelog\n").expect("create");
+
+    let unrestored = restore_mutation_snapshots(&snapshots);
+
+    assert!(unrestored.is_empty(), "nothing should fail to restore");
+    assert_eq!(
+        fs::read_to_string(&existing).expect("read"),
+        "version = \"0.1.0\"\n"
+    );
+    // Absent before, so removed rather than left as an empty stub.
+    assert!(!created.exists());
+}
+
+/// The lockfile sync must move workspace versions and nothing else.
+#[test]
+fn unexpected_lockfile_change_distinguishes_workspace_from_third_party() {
+    let before = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.0\"\n\n\
+                  [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n";
+
+    // The whole point of the sync: workspace members move to the bumped version.
+    let workspace_bump = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
+                          [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n";
+    assert_eq!(
+        unexpected_lockfile_change(before, workspace_bump, "0.1.1"),
+        None
+    );
+
+    // What `cargo generate-lockfile` used to do, and what must now be refused:
+    // a third-party crate moving. It is also a `version` line, which is why
+    // checking the added value rather than the line shape is what catches it.
+    let third_party = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
+                       [[package]]\nname = \"rayon\"\nversion = \"1.12.0\"\n";
+    let refused = unexpected_lockfile_change(before, third_party, "0.1.1")
+        .expect("a third-party bump must be refused");
+    assert!(refused.contains("1.12.0"), "{refused}");
+
+    // Anything structural -- a package appearing or disappearing -- is refused
+    // outright rather than inspected.
+    let added_package = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
+                         [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n\n\
+                         [[package]]\nname = \"surprise\"\nversion = \"0.1.1\"\n";
+    let refused = unexpected_lockfile_change(before, added_package, "0.1.1")
+        .expect("a new package must be refused");
+    assert!(refused.contains("surprise"), "{refused}");
+
+    // No change at all is fine.
+    assert_eq!(unexpected_lockfile_change(before, before, "0.1.0"), None);
 }
 
 #[test]

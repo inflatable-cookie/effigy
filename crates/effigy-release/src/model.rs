@@ -120,8 +120,16 @@ pub struct FileMutationPlan {
 
 #[derive(Debug, Clone)]
 pub enum FileMutationApply {
-    Write { after_contents: String },
-    SyncCargoLock,
+    Write {
+        after_contents: String,
+    },
+    /// Refresh the lockfile's record of the workspace members' own versions
+    /// after the version bump. `workspace_version` is the version the bump
+    /// wrote, and the sync refuses to produce a lockfile carrying anything else
+    /// (see `sync_cargo_lock`).
+    SyncCargoLock {
+        workspace_version: String,
+    },
 }
 
 #[derive(Debug, Clone)]

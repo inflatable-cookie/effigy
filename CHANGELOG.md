@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- `release.sync-files` now syncs `Cargo.lock` with `cargo update --workspace` instead of `cargo generate-lockfile`, and refuses to apply if anything other than the workspace members' own versions moved. `generate-lockfile` rebuilt the lockfile from scratch and resolved every dependency to newest-compatible — on signal's `0.1.0` prepare that silently moved ~40 third-party crates including `syn 2 -> 3`, which is why signal removed `sync-files` entirely and then had to carry the lockfile in a separate hand-made commit. A tag whose manifest and lockfile disagree cannot be built with `--locked`, and every `--locked` gate refuses to run between the bump and the sync, so this is what makes a Cargo release consistent by construction.
+
+### Fixed
+- `release execute` no longer requires the prepared-state file to appear as a working-tree change. The presence check runs through `git status`, which honours `.gitignore`, so any repository that gitignores `.release-prepared.json` — signal and swallowtail both do, correctly, since it is single-run local state — reported it permanently missing and could never execute at all. It is now tolerated whether tracked or ignored.
+- `release prepare` now rolls its mutations back when it reports `Prepared: no`. It applied the version bump and changelog roll before running the gates, so a failing gate left a half-applied release in the working tree with nothing in the output saying the tree had been touched. Paths that cannot be restored are reported as blockers rather than silently left.
+- `release resume`, `prepare` and `execute` no longer hang without a terminal. The review menus read from stdin, and `resume` has no `--yes` escape, so running it from a script or non-interactive shell blocked forever with no output. They now render the same read-only summary `--plan` produces.
+
 ## [0.9.0] - 2026-08-06
 
 ### Added

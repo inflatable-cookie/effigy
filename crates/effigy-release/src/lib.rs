@@ -21,9 +21,10 @@ use prepare_helpers::{
 };
 pub use prepare_helpers::{
     apply_release_mutations, collect_changed_mutation_paths, compare_release_state_fingerprints,
-    gate_blockers, gate_blockers_if_checked, load_release_prepared_state,
+    gate_blockers, gate_blockers_if_checked, is_release_state_file, load_release_prepared_state,
     normalized_expected_files, normalized_repo_files, render_prepared_changelog_contents,
-    snapshot_mutation_paths, suggested_bump, write_release_prepared_state,
+    restore_mutation_snapshots, snapshot_mutation_paths, suggested_bump,
+    write_release_prepared_state,
 };
 pub use verify_install::{
     normalize_verify_install_repo_url, resolve_verify_install_tag, run_release_verify_install,
@@ -126,6 +127,26 @@ pub struct ResolvedSyncFile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncFileKind {
     CargoLock,
+}
+
+/// Blockers describing a rollback that could not complete.
+///
+/// Empty on the normal path, which is the point: a failed prepare says nothing
+/// extra when it has successfully put the tree back, and says exactly which
+/// files it could not restore when it has not.
+fn rollback_blockers(unrestored: Vec<PathBuf>) -> Vec<String> {
+    if unrestored.is_empty() {
+        return Vec::new();
+    }
+    let mut paths = unrestored
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    vec![format!(
+        "prepared release changes could not be rolled back and remain in the working tree: {}",
+        paths.join(", ")
+    )]
 }
 
 pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
@@ -751,7 +772,10 @@ pub fn build_release_prepare_plan(
                 after_contents: changelog_after.clone(),
             },
         });
-        mutations.extend(build_sync_mutations(&context.config.sync_files));
+        mutations.extend(build_sync_mutations(
+            &context.config.sync_files,
+            &next_version,
+        ));
     }
 
     blockers.extend(gate_blockers_if_checked(check_gates, &gate_report.results));
@@ -937,8 +961,13 @@ pub fn collect_release_execute_plan(
                             .difference(&modified_set)
                             .cloned()
                             .collect::<Vec<_>>();
+                        // The prepared-state file is tolerated either way: a
+                        // repository that gitignores it never sees it here, and
+                        // one that tracks it must not have it counted against
+                        // the release. Execute wrote it itself.
                         unexpected_files = modified_set
                             .difference(&expected_set)
+                            .filter(|path| !is_release_state_file(path, state_file_name))
                             .cloned()
                             .collect::<Vec<_>>();
                         if !missing_expected_files.is_empty() {
@@ -1080,6 +1109,10 @@ where
     if let Err(error) = apply_release_mutations(&repo_root, &plan.mutations) {
         let files_modified = collect_changed_mutation_paths(&plan.mutations, &snapshots)
             .unwrap_or_else(|_| planned_files.clone());
+        // Roll back whatever landed before the failure: a partly-applied
+        // release is worse to inherit than none at all.
+        let mut blockers = vec![error.to_string()];
+        blockers.extend(rollback_blockers(restore_mutation_snapshots(&snapshots)));
         return Ok(ReleasePrepared {
             repo_root,
             previous_version: context.current_version,
@@ -1094,7 +1127,7 @@ where
             configured_gate_count: context.config.gates.len(),
             gate_results: Vec::new(),
             files_modified,
-            blockers: vec![error.to_string()],
+            blockers,
             prepared: false,
             state_file_written: false,
         });
@@ -1112,6 +1145,11 @@ where
     let files_modified =
         collect_changed_mutation_paths(&plan.mutations, &snapshots).unwrap_or(planned_files);
     if !gate_blockers.is_empty() {
+        // Same rollback as the apply-error path. The gates ran against the
+        // prepared files, so their verdict stands; what must not survive is the
+        // working-tree mutation behind a `Prepared: no` report.
+        let mut gate_blockers = gate_blockers;
+        gate_blockers.extend(rollback_blockers(restore_mutation_snapshots(&snapshots)));
         return Ok(ReleasePrepared {
             repo_root,
             previous_version: context.current_version,
