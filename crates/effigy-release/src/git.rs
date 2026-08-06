@@ -215,7 +215,7 @@ pub fn git_create_tag(repo_root: &Path, tag: &str) -> Result<(), ReleaseError> {
     let output = ProcessCommand::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["tag", tag])
+        .args(["tag", "--annotate", "--message", tag, "--", tag])
         .output()
         .map_err(|error| {
             ReleaseError::TaskInvocation(format!("failed to create release tag `{tag}`: {error}"))

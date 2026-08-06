@@ -100,8 +100,9 @@ Current built-in release commands:
 - `effigy release execute`
   - text-mode final review before commit, tag, and push
 - `effigy release execute --yes`
-  - create the release commit and tag, push to `origin`, and clean up the state
-  file only after a full success; stale state requires explicit `--allow-stale`
+  - create the release commit and annotated tag, push to `origin`, and clean up
+    the state file only after a full success; the annotation message exactly
+    equals the rendered tag; stale state requires explicit `--allow-stale`
 - `effigy release verify-install`
   - install the tagged binary from git into a temporary root and validate the
     installed command against a fixture repo
@@ -321,7 +322,8 @@ What each step is for:
 8. `execute --plan`
    - confirms the prepared state still matches the working tree
 9. `execute --yes`
-   - commits, tags, pushes, and removes prepared state on success
+   - commits, creates an annotated tag whose message equals the rendered tag,
+     pushes, and removes prepared state on success
 10. `verify-install`
    - validates the tagged install path after a release tag exists
 
@@ -381,6 +383,8 @@ Execute safety checks:
   are reported as source-drift blockers in `resume` and `execute --plan`
 - push failure leaves the prepared state file in place
 - retries do not re-create an already-created local tag
+- release tags are annotated Git objects; signing and configurable annotation
+  templates are not implied
 
 ## 8) Release Notes Baseline
 

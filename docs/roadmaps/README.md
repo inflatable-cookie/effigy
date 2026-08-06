@@ -83,12 +83,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g08.024`](./g08/024-initial-current-version-release-tag.md) follow-up lets
   an explicitly configured new repository tag its already-declared first
   version without weakening later monotonic releases.
+  [`g08.025`](./g08/025-annotated-release-tag-integrity.md) now repairs the
+  release tag object boundary exposed by a real Swallowtail candidate.
 
 ## Active Strict Lane
 
-None. Strict spec `099` and cards `1051` through `1064` are complete;
-[`g08.018`](./g08/018-local-dependency-management-suite.md) through
-[`g08.024`](./g08/024-initial-current-version-release-tag.md) are closed.
+None. Cards `1065` and `1066` completed
+[`g08.025`](./g08/025-annotated-release-tag-integrity.md).
 
 ## Research Program
 

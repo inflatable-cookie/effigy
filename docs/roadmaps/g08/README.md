@@ -5,7 +5,7 @@ Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
-`g08.024`.
+`g08.024` and `g08.025`.
 
 ## Purpose
 
@@ -56,6 +56,7 @@ This generation should help agents and maintainers answer questions like:
 - [`022-dependency-link-doctor-and-hygiene.md`](./022-dependency-link-doctor-and-hygiene.md)
 - [`023-dependency-link-portfolio-proof-and-closeout.md`](./023-dependency-link-portfolio-proof-and-closeout.md)
 - [`024-initial-current-version-release-tag.md`](./024-initial-current-version-release-tag.md)
+- [`025-annotated-release-tag-integrity.md`](./025-annotated-release-tag-integrity.md)
 
 ## Design Posture
 
@@ -118,15 +119,17 @@ This generation should help agents and maintainers answer questions like:
 - Initial-tag follow-through complete: `g08.024` added an explicit,
   first-release-only path for tagging the version already declared by a new
   repository without weakening normal monotonic release planning.
+- Annotated-tag integrity complete: `g08.025` makes the irreversible release path
+  preserve the approved Git tag object type and deterministic message.
 - Visible milestones: `g08.020` Cargo mutation, `g08.021` Bun mutation,
   `g08.022` doctor/hygiene, and `g08.023` portfolio proof/closeout.
-- Planning checkpoint: after `g08.024`, select the next substantial g08 scope;
-  completion of this suite does not imply generation rollover.
+- Planning checkpoint: select the next substantial g08 scope; completion of
+  `g08.025` does not imply generation rollover.
 
 ## Execution Rule
 
-The dependency suite completed under strict spec `099`. No dependency-link
-ready card remains.
+The dependency suite completed under strict spec `099`. Cards `1065` and
+`1066` completed the bounded release-tag integrity lane. No ready card remains.
 
 ## Batch Cards
 
@@ -166,6 +169,8 @@ ready card remains.
 - [`1062-prove-signal-links-across-flat-and-nested-consumers.md`](./batch-cards/1062-prove-signal-links-across-flat-and-nested-consumers.md)
 - [`1063-prove-bun-closure-drift-and-repair.md`](./batch-cards/1063-prove-bun-closure-drift-and-repair.md)
 - [`1064-publish-dependency-link-guidance-and-close-suite.md`](./batch-cards/1064-publish-dependency-link-guidance-and-close-suite.md)
+- [`1065-create-annotated-release-tags.md`](./batch-cards/1065-create-annotated-release-tags.md)
+- [`1066-prove-annotated-release-execution.md`](./batch-cards/1066-prove-annotated-release-execution.md)
 
 ## Current State
 
@@ -175,7 +180,7 @@ ready card remains.
 
 `g08.018` through `g08.023` are complete.
 
-Cards `1051` through `1064` are complete. No active ready card remains.
+Cards `1051` through `1066` are complete. No active ready card remains.
 
 ## Next Task
 

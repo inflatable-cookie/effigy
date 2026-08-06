@@ -5515,6 +5515,9 @@ fn cli_release_execute_yes_json_mode_commits_tags_pushes_and_cleans_state() {
     assert_eq!(parsed["result"]["pushed"], true);
     assert_eq!(parsed["result"]["state_file_removed"], true);
     assert_eq!(parsed["result"]["commit_message"], "release: v0.2.5");
+    let release_commit = parsed["result"]["commit_sha"]
+        .as_str()
+        .expect("release commit sha");
     assert!(!root.join(".release-prepared.json").exists());
 
     assert_eq!(
@@ -5524,6 +5527,25 @@ fn cli_release_execute_yes_json_mode_commits_tags_pushes_and_cleans_state() {
     assert_eq!(
         git_stdout(&root, &["tag", "--list", "release-0.2.5"]),
         "release-0.2.5"
+    );
+    assert_eq!(
+        git_stdout(&root, &["cat-file", "-t", "refs/tags/release-0.2.5"]),
+        "tag"
+    );
+    assert_eq!(
+        git_stdout(
+            &root,
+            &[
+                "for-each-ref",
+                "--format=%(contents)",
+                "refs/tags/release-0.2.5",
+            ],
+        ),
+        "release-0.2.5"
+    );
+    assert_eq!(
+        git_stdout(&root, &["rev-parse", "refs/tags/release-0.2.5^{}"]),
+        release_commit
     );
     assert!(git_stdout(&root, &["status", "--porcelain"]).is_empty());
 
@@ -5542,6 +5564,25 @@ fn cli_release_execute_yes_json_mode_commits_tags_pushes_and_cleans_state() {
             .expect("utf8 remote tags")
             .trim(),
         "release-0.2.5"
+    );
+    assert_eq!(
+        git_stdout(&remote, &["cat-file", "-t", "refs/tags/release-0.2.5"]),
+        "tag"
+    );
+    assert_eq!(
+        git_stdout(
+            &remote,
+            &[
+                "for-each-ref",
+                "--format=%(contents)",
+                "refs/tags/release-0.2.5",
+            ],
+        ),
+        "release-0.2.5"
+    );
+    assert_eq!(
+        git_stdout(&remote, &["rev-parse", "refs/tags/release-0.2.5^{}"]),
+        release_commit
     );
 }
 

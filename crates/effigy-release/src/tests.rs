@@ -1,7 +1,7 @@
 use super::{
     build_release_prepare_plan, compare_release_state_fingerprints, format_release_tag,
-    gate_blockers, load_release_config, load_release_context, load_release_prepared_state,
-    normalized_expected_files, snapshot_mutation_paths, test_support,
+    gate_blockers, git_create_tag, load_release_config, load_release_context,
+    load_release_prepared_state, normalized_expected_files, snapshot_mutation_paths, test_support,
     validate_planned_release_version, write_release_prepared_state, FileMutationApply,
     FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
     ReleasePreparedSourceFingerprints,
@@ -50,6 +50,76 @@ fn write_initial_release_repo(name: &str, opt_in: bool) -> PathBuf {
         .expect("git init");
     assert!(status.success());
     root
+}
+
+#[test]
+fn release_tag_is_annotated_with_the_rendered_tag_as_its_message() {
+    let root = temp_repo("annotated-tag");
+    fs::write(root.join("README.md"), "release fixture\n").expect("fixture");
+    for args in [
+        &["init", "--quiet"][..],
+        &["config", "user.name", "Effigy Test"][..],
+        &["config", "user.email", "effigy@example.invalid"][..],
+        &["add", "README.md"][..],
+        &["commit", "--quiet", "-m", "initial"][..],
+    ] {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .status()
+            .expect("git fixture command");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("head");
+    let head = String::from_utf8(head.stdout).expect("head utf8");
+
+    git_create_tag(&root, "v0.1.0").expect("annotated tag");
+
+    let object_type = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["cat-file", "-t", "refs/tags/v0.1.0"])
+        .output()
+        .expect("tag type");
+    assert_eq!(
+        String::from_utf8(object_type.stdout)
+            .expect("tag type utf8")
+            .trim(),
+        "tag"
+    );
+
+    let message = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["for-each-ref", "--format=%(contents)", "refs/tags/v0.1.0"])
+        .output()
+        .expect("tag message");
+    assert_eq!(
+        String::from_utf8(message.stdout)
+            .expect("tag message utf8")
+            .trim(),
+        "v0.1.0"
+    );
+
+    let peeled = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "refs/tags/v0.1.0^{}"])
+        .output()
+        .expect("peeled tag");
+    assert_eq!(
+        String::from_utf8(peeled.stdout)
+            .expect("peeled utf8")
+            .trim(),
+        head.trim()
+    );
 }
 
 #[test]

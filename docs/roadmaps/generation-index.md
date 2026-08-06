@@ -94,7 +94,7 @@ Updated: 2026-08-05
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is active. Milestones `g08.001` through `g08.023` are complete. No
+`g08` is active. Milestones `g08.001` through `g08.025` are complete. No
 milestone or strict lane is currently active.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
@@ -162,7 +162,7 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1064` and strict spec `099` are complete. No active ready
+Cards `1051` through `1066` and strict spec `099` are complete. No active ready
 card remains.
 
 ## Research Roadmaps
