@@ -1,16 +1,22 @@
 name: Release Binaries
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated release tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
   gates:
@@ -19,11 +25,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tag must be v-prefixed semver, got $RELEASE_TAG"
+            exit 1
+          fi
+          if [ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" != "tag" ]; then
+            echo "::error::release tag must be annotated: $RELEASE_TAG"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [ "$checked_out_commit" != "$tag_commit" ]; then
+            echo "::error::checkout $checked_out_commit does not match $RELEASE_TAG at $tag_commit"
+            exit 1
+          fi
+          expected_version="${RELEASE_TAG#v}"
+          manifest_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "effigy") | .version')"
+          if [ "$manifest_version" != "$expected_version" ]; then
+            echo "::error::$RELEASE_TAG expects version $expected_version, manifest declares $manifest_version"
+            exit 1
+          fi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -71,6 +104,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -117,6 +153,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       - name: Download all binaries
         uses: actions/download-artifact@v8
@@ -138,7 +177,7 @@ jobs:
       - name: Extract release notes from CHANGELOG.md
         id: notes
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           if ./target/release/effigy changelog extract CHANGELOG.md --version "$VERSION" > release-notes.md; then
             if [ ! -s release-notes.md ]; then
               echo "::warning::Extractor returned an empty release note body for $VERSION, falling back to generated notes"
@@ -157,7 +196,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
           chmod +x artifacts/effigy-*
           if [ "${{ steps.notes.outputs.fallback }}" = "true" ]; then
@@ -190,23 +229,25 @@ jobs:
       - name: Compute binary SHA256 hashes
         id: hashes
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
           BASE="https://github.com/inflatable-cookie/effigy/releases/download/${TAG}"
           ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-apple-darwin" | sha256sum | awk '{print $1}')"
           X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-apple-darwin" | sha256sum | awk '{print $1}')"
           LINUX_X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-unknown-linux-gnu" | sha256sum | awk '{print $1}')"
           LINUX_ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-unknown-linux-gnu" | sha256sum | awk '{print $1}')"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "arm_url=${BASE}/effigy-aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
-          echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
-          echo "x86_url=${BASE}/effigy-x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
-          echo "x86_sha=$X86_SHA" >> "$GITHUB_OUTPUT"
-          echo "linux_x86_url=${BASE}/effigy-x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
-          echo "linux_x86_sha=$LINUX_X86_SHA" >> "$GITHUB_OUTPUT"
-          echo "linux_arm_url=${BASE}/effigy-aarch64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
-          echo "linux_arm_sha=$LINUX_ARM_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "arm_url=${BASE}/effigy-aarch64-apple-darwin"
+            echo "arm_sha=$ARM_SHA"
+            echo "x86_url=${BASE}/effigy-x86_64-apple-darwin"
+            echo "x86_sha=$X86_SHA"
+            echo "linux_x86_url=${BASE}/effigy-x86_64-unknown-linux-gnu"
+            echo "linux_x86_sha=$LINUX_X86_SHA"
+            echo "linux_arm_url=${BASE}/effigy-aarch64-unknown-linux-gnu"
+            echo "linux_arm_sha=$LINUX_ARM_SHA"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
         uses: actions/checkout@v7

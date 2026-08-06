@@ -1,11 +1,10 @@
 name: JSON Contracts
 
+# Keep routine main pushes local; use this workflow for pull-request proof or
+# an explicit clean-clone contract check.
 on:
-  pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  pull_request:
 
 concurrency:
   group: json-contracts-${{ github.ref }}

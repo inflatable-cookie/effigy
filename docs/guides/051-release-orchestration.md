@@ -290,6 +290,16 @@ effigy release execute --yes
 effigy release verify-install --tag vX.Y.Z
 ```
 
+For Effigy's own binary publication, explicitly dispatch the immutable tag
+after execute succeeds and before install verification:
+
+```sh
+gh workflow run release-binaries.yml -f tag=vX.Y.Z
+```
+
+The workflow definition runs from `main`, but every release job checks out and
+validates the supplied annotated tag. Pushing a tag alone does not publish.
+
 For Effigy's own release prep, the useful pre-cut habit is:
 
 ```sh
@@ -326,7 +336,8 @@ What each step is for:
    - commits, creates an annotated tag whose message equals the rendered tag,
      pushes, and removes prepared state on success
 10. `verify-install`
-   - validates the tagged install path after a release tag exists
+   - validates the tagged install path after the manually dispatched release
+     workflow publishes its artifacts
 
 ## 6) Gate Configuration
 

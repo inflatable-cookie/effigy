@@ -1329,6 +1329,7 @@ mod tests {
 
     #[test]
     fn cargo_link_dry_run_text_and_json_share_the_exact_non_mutating_report() {
+        let _process_lock = crate::contract_test_support::lock_test();
         let (consumer, library) = cargo_link_fixture();
         let home = TempDir::new().unwrap();
         let args = |output_json| DepsArgs {
@@ -1368,6 +1369,7 @@ mod tests {
 
     #[test]
     fn cargo_unlink_dry_run_text_and_json_keep_the_exact_linked_state() {
+        let _process_lock = crate::contract_test_support::lock_test();
         let (consumer, library) = cargo_link_fixture();
         let home = TempDir::new().unwrap();
         let linked = run_deps_with_home(

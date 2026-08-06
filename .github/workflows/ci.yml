@@ -1,10 +1,10 @@
 name: CI
 
+# Ordinary pushes intentionally rely on local `effigy qa`. Hosted CI runs when
+# explicitly requested or when a pull request needs clean-clone evidence.
 on:
+  workflow_dispatch:
   pull_request:
-  push:
-    branches:
-      - main
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -1275,7 +1275,16 @@ pub fn validate_metadata_command(
             ("name: Release Binaries", "release workflow name"),
             ("Create GitHub Release", "GitHub Release job wiring"),
             ("Update Homebrew tap", "Homebrew automation job wiring"),
-            ("      - \"v*\"", "tag trigger wiring"),
+            ("  workflow_dispatch:", "manual release trigger wiring"),
+            ("      tag:", "release tag input wiring"),
+            (
+                "          ref: ${{ inputs.tag }}",
+                "immutable tag checkout wiring",
+            ),
+            (
+                "git cat-file -t \"refs/tags/$RELEASE_TAG\"",
+                "annotated tag validation",
+            ),
             (
                 "          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04",
                 "x86_64 Linux release baseline pinning",
@@ -1290,6 +1299,12 @@ pub fn validate_metadata_command(
                     "expected {description} in .github/workflows/release-binaries.yml"
                 ));
             }
+        }
+        if workflow.contains("\n  push:") {
+            errors.push(
+                "release workflow must be explicitly dispatched, not triggered by tag push"
+                    .to_owned(),
+            );
         }
         let linux_glibc_guards = [
             "./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35",

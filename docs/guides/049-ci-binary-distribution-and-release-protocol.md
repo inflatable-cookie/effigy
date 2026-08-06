@@ -32,9 +32,9 @@ detail.
 - Release posture: use exact versions in consumer CI instead of relying on this
   guide to imply a moving "current" number
 - Active workflows in `.github/workflows/`:
-  - `ci.yml` — PR and push validation (format, clippy, tests)
-  - `release-binaries.yml` — tag-triggered: gates → build → GitHub Release → Homebrew tap
-  - `json-contracts.yml` — JSON contract and docs link validation
+  - `ci.yml` — pull-request or on-demand validation (format, clippy, tests)
+  - `release-binaries.yml` — explicit annotated-tag dispatch: gates → build → GitHub Release → Homebrew tap
+  - `json-contracts.yml` — pull-request or on-demand JSON contract and docs link validation
 - Distribution channels:
   - **Homebrew** — `brew install inflatable-cookie/tap/effigy` (macOS, prebuilt binaries)
   - **GitHub Releases** — prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64)
@@ -87,14 +87,22 @@ Example: `effigy-x86_64-unknown-linux-gnu`, `effigy-aarch64-apple-darwin`
 
 ### 4a) Trigger
 
-The release pipeline activates on git tag push matching `v*`. No release may be
-triggered by branch push, manual workflow dispatch alone, or any automated
-process that skips the tag.
+The release pipeline is explicitly dispatched with an existing annotated tag:
+
+```sh
+gh workflow run release-binaries.yml -f tag=vX.Y.Z
+```
+
+The workflow checks out that tag, rejects lightweight or non-semver tags, and
+confirms the tagged manifest version before running gates or builds. Branch
+pushes and tag pushes do not publish automatically. This avoids spending CI
+minutes on ordinary pushes and lets an operator recover a dropped GitHub event
+without deleting or recreating an immutable release tag.
 
 ### 4b) Pipeline Stages
 
 ```
-tag push (v*)
+manual dispatch (existing annotated vX.Y.Z tag)
   │
   ├─ 1. Release gates (existing: format, test, QA, smoke)
   │
@@ -241,8 +249,10 @@ and resolve the failure before continuing.
    - Run `effigy release execute --plan` after prepare.
    - Use `effigy release execute` for text-mode final review.
    - Use `effigy release execute --yes` only for the irreversible step.
+   - Explicitly dispatch `release-binaries.yml` with the pushed tag and wait
+     for publication.
    - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` after
-     the tag exists.
+     the release artifacts exist.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`
@@ -291,11 +301,16 @@ and resolve the failure before continuing.
    - This commit must be on `main`.
 
 6. **Create and push the git tag.**
-   - `git tag vX.Y.Z`
-   - `git push origin main --tags`
-   - This triggers the CI release pipeline.
+   - Prefer `effigy release execute --yes`, which creates and pushes the
+     annotated tag after committing the prepared files.
+   - Pushing the tag does not automatically consume GitHub Actions minutes.
 
-7. **Verify the release pipeline.**
+7. **Dispatch the release pipeline.**
+   - `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
+   - The workflow must reject a missing, lightweight, mismatched, or
+     non-semver tag before build work starts.
+
+8. **Verify the release pipeline.**
    - Monitor CI to confirm the release workflow completes.
    - If CI fails, do not re-tag. Fix the issue, bump to the next `PATCH`, and
      start from step 1.
@@ -349,9 +364,9 @@ All release workflows are now active in `.github/workflows/`:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | PR, push to main | Format, clippy, tests |
-| `release-binaries.yml` | Tag push `v*` | Gates → build → release → Homebrew tap |
-| `json-contracts.yml` | PR, push to main, manual | JSON contract and docs link validation |
+| `ci.yml` | PR, manual | Format, clippy, tests |
+| `release-binaries.yml` | Manual with existing annotated tag | Gates → build → release → Homebrew tap |
+| `json-contracts.yml` | PR, manual | JSON contract and docs link validation |
 
 Workflow changes still require explicit human approval.
 

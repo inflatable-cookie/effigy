@@ -18,6 +18,34 @@ use super::support::{
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+fn release_workflow_fixture() -> &'static str {
+    r#"name: Release Binaries
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - run: git cat-file -t "refs/tags/$RELEASE_TAG"
+      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35
+  release:
+    name: Create GitHub Release
+  homebrew:
+    name: Update Homebrew tap
+"#
+}
+
 struct CliProcessTestGuard {
     _thread_guard: std::sync::MutexGuard<'static, ()>,
     lock_path: PathBuf,
@@ -3283,7 +3311,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     fs::write(root.join("docs/logs/README.md"), "# Logs\n").expect("write docs logs readme");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        release_workflow_fixture(),
     )
     .expect("write workflow");
 
@@ -3376,7 +3404,7 @@ run = "printf smoke-ok"
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        release_workflow_fixture(),
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
@@ -3415,7 +3443,7 @@ required-files = [".github/workflows/release-binaries.yml"]
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        release_workflow_fixture(),
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
@@ -5951,6 +5979,10 @@ fn cli_release_execute_interactive_text_mode_confirms_and_runs() {
         "got: {stdout}"
     );
     assert!(stdout.contains("Release Executed"), "got: {stdout}");
+    assert!(
+        stdout.contains("Start or confirm the configured release CI pipeline for the pushed tag."),
+        "got: {stdout}"
+    );
     assert!(!root.join(".release-prepared.json").exists());
     assert_eq!(
         git_stdout(&root, &["log", "-1", "--pretty=%s"]),

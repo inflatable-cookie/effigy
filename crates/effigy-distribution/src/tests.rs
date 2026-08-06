@@ -144,6 +144,43 @@ fn validate_metadata_accepts_release_check_binary_guard() {
 }
 
 #[test]
+fn validate_metadata_rejects_tag_push_only_release_workflow() {
+    let root = temp_repo("metadata-tag-push-release");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        r#"name: Release Binaries
+on:
+  push:
+    tags:
+      - "v*"
+jobs:
+  release:
+    name: Create GitHub Release
+  homebrew:
+    name: Update Homebrew tap
+"#,
+    )
+    .expect("write workflow");
+    fs::write(root.join("Cargo.toml"), cargo_fixture()).expect("write cargo");
+    write_required_docs(&root);
+
+    let error =
+        validate_metadata_command(&root, &default_distribution_policy(), Some("v0.7.1"), false)
+            .expect_err("tag-push-only workflow should fail");
+    assert!(
+        error.to_string().contains("manual release trigger wiring"),
+        "got: {error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("must be explicitly dispatched, not triggered by tag push"),
+        "got: {error}"
+    );
+}
+
+#[test]
 fn validate_metadata_accepts_distribution_check_glibc_floor_guard() {
     let root = temp_repo("metadata-distribution-glibc-floor");
     fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
@@ -272,11 +309,16 @@ fn workflow_fixture(glibc_guard: &str) -> String {
     format!(
         r#"name: Release Binaries
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
 jobs:
   build:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{{{ inputs.tag }}}}
+      - run: git cat-file -t "refs/tags/$RELEASE_TAG"
     strategy:
       matrix:
         include:

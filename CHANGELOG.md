@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- Effigy's CI and JSON-contract workflows now run for pull requests or explicit
+  manual dispatch instead of every push to `main`. Binary publication is also
+  explicitly dispatched with an existing annotated tag; the workflow validates
+  the tag, version, and checkout identity before building immutable tagged
+  source, so a dropped GitHub tag event can be recovered without re-tagging.
+
 ## [0.9.1] - 2026-08-06
 
 ### Changed

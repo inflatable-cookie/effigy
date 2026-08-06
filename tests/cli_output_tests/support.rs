@@ -160,17 +160,15 @@ pub(super) fn git_stdout(root: &Path, args: &[&str]) -> String {
 }
 
 pub(super) fn attach_bare_remote(root: &Path) -> PathBuf {
+    static NEXT_REMOTE_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("time")
         .as_nanos();
     let pid = std::process::id();
-    let remote = (0..1024)
-        .map(|attempt| {
-            std::env::temp_dir().join(format!("effigy-release-remote-{pid}-{ts}-{attempt}.git"))
-        })
-        .find(|candidate| !candidate.exists())
-        .expect("find unique bare remote path");
+    let id = NEXT_REMOTE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let remote = std::env::temp_dir().join(format!("effigy-release-remote-{pid}-{ts}-{id}.git"));
     let init = Command::new("git")
         .arg("init")
         .arg("--bare")

@@ -316,6 +316,7 @@ effigy release simulate         # Dry-run: what would happen?
 effigy release prepare --plan   # Preview file mutations
 effigy release prepare --yes    # Bump version, update changelog
 effigy release execute --yes    # Commit, tag, push
+gh workflow run release-binaries.yml -f tag=vX.Y.Z  # Publish explicitly
 ```
 
 No more hand-editing `package.json` and `CHANGELOG.md` and hoping you didn't miss a step.

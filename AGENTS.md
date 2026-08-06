@@ -66,6 +66,7 @@ Preferred release command path:
 - `effigy release prepare --yes --check-gates`
 - `effigy release execute --plan`
 - `effigy release execute --yes`
+- `gh workflow run release-binaries.yml -f tag=v0.__.__` (explicit human approval)
 - `effigy release verify-install --tag v0.__.__`
 - `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 

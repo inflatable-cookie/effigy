@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 use effigy_manifest::ManifestContainerConfig;
@@ -56,13 +55,6 @@ fn temp_repo(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(&root).expect("mkdir");
     root
-}
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
 }
 
 fn write_container_manifest(root: &std::path::Path, working_dir: &str) {
@@ -292,7 +284,7 @@ fn parse_compose_exec_args_defaults_to_tty_when_not_disabled() {
 
 #[test]
 fn resolve_host_program_uses_host_cli_resolver_for_bare_names() {
-    let _env_lock = env_lock();
+    let _env_lock = crate::contract_test_support::lock_test();
     let temp_dir = temp_repo("host-cli-resolver");
     let bin_dir = temp_dir.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
@@ -320,7 +312,7 @@ fn resolve_host_program_uses_host_cli_resolver_for_bare_names() {
 
 #[test]
 fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker() {
-    let _env_lock = env_lock();
+    let _env_lock = crate::contract_test_support::lock_test();
     let temp_dir = temp_repo("copy-runtime-backend");
     let bin_dir = temp_dir.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");

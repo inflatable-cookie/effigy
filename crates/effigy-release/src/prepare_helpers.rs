@@ -770,7 +770,7 @@ fn release_digest_hex(bytes: &[u8]) -> String {
 
 pub(super) fn build_post_release_instructions(tag: Option<&str>) -> Vec<String> {
     let mut instructions = vec![
-        "Confirm the release CI pipeline starts for the pushed branch and tag.".to_owned(),
+        "Start or confirm the configured release CI pipeline for the pushed tag.".to_owned(),
         "Monitor the published release artifacts before announcing availability.".to_owned(),
     ];
     if let Some(tag) = tag {

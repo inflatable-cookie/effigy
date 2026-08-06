@@ -31,7 +31,8 @@ Never run these unprompted:
 | Command | Side effect |
 |---------|-------------|
 | `effigy release prepare --yes` | Writes prepare artifacts |
-| `effigy release execute --yes` | Pushes tag, creates GitHub release |
+| `effigy release execute --yes` | Commits prepared files and pushes the annotated tag |
+| `gh workflow run release-binaries.yml -f tag=vX.Y.Z` | Starts binary publication for the immutable tag |
 | `effigy release verify-install --tag vX.Y.Z` | Network-side verification |
 
 ## Canonical sequence
@@ -44,8 +45,9 @@ When a human explicitly asks for a release:
 4. `effigy release prepare --yes --check-gates`
 5. `effigy release execute --plan`
 6. `effigy release execute --yes`
-7. `effigy release verify-install --tag vX.Y.Z`
-8. `effigy changelog extract CHANGELOG.md --version X.Y.Z`
+7. `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
+8. `effigy release verify-install --tag vX.Y.Z`
+9. `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
