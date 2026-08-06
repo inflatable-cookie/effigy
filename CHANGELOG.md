@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-06
+
 ### Changed
 - `release execute --allow-stale` is now documented and reported as an
   age-only acknowledgement. Branch, HEAD, or prepared-file source drift still
