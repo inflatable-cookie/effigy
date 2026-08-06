@@ -6,15 +6,8 @@ use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup,
 };
-use std::sync::{Mutex, OnceLock};
 
 fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-gateway-registration-home-{name}-{}",
         std::time::SystemTime::now()
@@ -23,19 +16,9 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
             .as_nanos()
     ));
     std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let home = crate::runner::gateway_command::set_test_gateway_home(&temp_home);
     let result = op();
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
+    drop(home);
     let _ = std::fs::remove_dir_all(&temp_home);
     result
 }

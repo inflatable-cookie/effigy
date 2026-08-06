@@ -35,6 +35,33 @@ pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER
 const GATEWAY_STARTUP_NOTICE: &str =
     "gateway is down; starting local DNS/proxy (may prompt for password)";
 
+#[cfg(test)]
+thread_local! {
+    static TEST_GATEWAY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(in crate::runner) struct TestGatewayHomeGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn set_test_gateway_home(path: &std::path::Path) -> TestGatewayHomeGuard {
+    let previous = TEST_GATEWAY_HOME.with(|home| home.replace(Some(path.to_path_buf())));
+    TestGatewayHomeGuard { previous }
+}
+
+#[cfg(test)]
+impl Drop for TestGatewayHomeGuard {
+    fn drop(&mut self) {
+        TEST_GATEWAY_HOME.with(|home| {
+            home.replace(self.previous.take());
+        });
+    }
+}
+
 pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         GatewaySubcommand::Up => run_gateway_up(args.output_json),
@@ -656,6 +683,10 @@ fn gateway_config() -> Result<GatewayConfig, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_dir() -> Result<PathBuf, RunnerError> {
+    #[cfg(test)]
+    if let Some(home) = TEST_GATEWAY_HOME.with(|home| home.borrow().clone()) {
+        return Ok(home.join(GATEWAY_DIR_NAME));
+    }
     let home = std::env::var_os("HOME").ok_or_else(|| {
         RunnerError::task_invocation("`HOME` is not set; cannot resolve gateway state directory")
     })?;

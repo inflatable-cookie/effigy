@@ -875,21 +875,14 @@ mod tests {
         copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
     }
 
-    struct HomeGuard(Option<std::ffi::OsString>);
-
-    impl HomeGuard {
-        fn set(path: &Path) -> Self {
-            let original = std::env::var_os("HOME");
-            std::env::set_var("HOME", path);
-            Self(original)
-        }
+    struct GatewayHomeGuard {
+        _guard: crate::runner::gateway_command::TestGatewayHomeGuard,
     }
 
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match self.0.take() {
-                Some(value) => std::env::set_var("HOME", value),
-                None => std::env::remove_var("HOME"),
+    impl GatewayHomeGuard {
+        fn set(path: &Path) -> Self {
+            Self {
+                _guard: crate::runner::gateway_command::set_test_gateway_home(path),
             }
         }
     }
@@ -1025,7 +1018,7 @@ primary_service = "app"
     fn run_container_data_dump_rejects_push_without_oci_destination() {
         let root = temp_repo("data-dump-push-local");
         let home = temp_repo("data-dump-push-local-home");
-        let _home = HomeGuard::set(&home);
+        let _home = GatewayHomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -1065,7 +1058,7 @@ database = "app"
         let root = temp_repo("data-dump-oci-planned");
         setup_workspace_app_path_bundle(&root);
         let home = temp_repo("data-dump-oci-planned-home");
-        let _home = HomeGuard::set(&home);
+        let _home = GatewayHomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -1126,7 +1119,7 @@ databases = ["app"]
         let root = temp_repo("data-dump-oci-pushed");
         setup_workspace_app_path_bundle(&root);
         let home = temp_repo("data-dump-oci-pushed-home");
-        let _home = HomeGuard::set(&home);
+        let _home = GatewayHomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
