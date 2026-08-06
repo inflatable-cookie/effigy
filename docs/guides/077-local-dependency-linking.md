@@ -79,7 +79,11 @@ effigy deps link cargo ../signal
 
 The config uses canonical absolute paths. One repo-root config therefore also
 covers nested workspaces without per-workspace relative paths. Effigy preserves
-unrelated config, comments, and hand-managed patches, and refuses collisions.
+unrelated config and comments. A compatible pre-Effigy patch is migrated into
+the managed block by `link`, or can be removed directly by `unlink`. Adoption
+requires the source table to contain only crates from the requested library and
+every path to resolve into that checkout; mixed or mismatched tables are
+refused.
 
 Cargo verification or a consumer build can rewrite affected `Cargo.lock`
 entries while the patch is active. That is expected local state, but it is a
@@ -181,7 +185,8 @@ Key states:
 | partial Bun closure | error | re-link when Effigy desired state exists |
 | duplicate Bun peer paths | error | remove local peer copy and hoist/dedupe |
 | library checkout missing | error | restore the checkout or unlink using the recorded path |
-| foreign Cargo patch or Bun registration | error | resolve ownership manually; Effigy will not overwrite it |
+| compatible pre-Effigy Cargo patch | migration | link to adopt it, or unlink to remove it directly |
+| mixed/mismatched Cargo patch or foreign Bun registration | error | resolve ownership manually; Effigy will not overwrite it |
 
 Status, doctor, and `--dry-run` never mutate manager state or lockfiles.
 
@@ -194,9 +199,13 @@ Status, doctor, and `--dry-run` never mutate manager state or lockfiles.
   asking Effigy to own a machine-local patch.
 - Dirty affected Cargo lock: finish or revert unrelated work explicitly, then
   retry. Effigy will not restore it through Git.
+- Mixed or mismatched Cargo patch: split unrelated crates into another source
+  table where possible, or resolve the conflicting path manually. Effigy claims
+  only a table that points exclusively into the requested library.
 - Conflicting Bun registration: inspect Bun's global link registration and
   resolve the foreign path; Effigy will not replace or claim it.
-- Already unlinked: unlink succeeds as a no-op and leaves foreign state alone.
+- Already unlinked: unlink succeeds as a no-op when neither desired state nor a
+  compatible legacy patch is present.
 
 ## Automation Contract
 

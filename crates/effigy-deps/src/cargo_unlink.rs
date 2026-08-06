@@ -6,12 +6,14 @@ use std::path::{Path, PathBuf};
 use crate::cargo_apply::{
     apply_exact_change, not_run_verification, rollback_physical_changes, validate_all_preconditions,
 };
+use crate::cargo_plan::{cargo_config_patches_library, plan_adopted_cargo_unlink, plan_cargo_link};
 use crate::{
-    inventory_cargo_consumer_roots, plan_cargo_unlink, CargoDependencyPlan,
-    CargoExpectedResolution, CargoLibraryInventory, CargoLinkRollback, CargoLockfileEvidence,
-    CargoLockfileState, CargoPackageInventory, CargoUnlinkOperationReport, CargoUnlinkOutcome,
-    DependencyVerification, DepsError, GitCargoPlanObserver, PlannedChange, ProcessRequest,
-    ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
+    inventory_cargo_consumer_roots, inventory_cargo_consumers, inventory_cargo_library,
+    plan_cargo_unlink, CargoDependencyPlan, CargoExpectedResolution, CargoLibraryInventory,
+    CargoLinkRollback, CargoLockfileEvidence, CargoLockfileState, CargoPackageInventory,
+    CargoUnlinkOperationReport, CargoUnlinkOutcome, DependencyVerification, DepsError,
+    GitCargoPlanObserver, PlannedChange, ProcessRequest, ReadOnlyProcess, RepoLinkStateStore,
+    VerificationEvidence, VerificationStatus,
 };
 
 pub fn execute_cargo_unlink(
@@ -21,7 +23,25 @@ pub fn execute_cargo_unlink(
     process: &impl ReadOnlyProcess,
 ) -> Result<CargoUnlinkOperationReport, DepsError> {
     let observer = GitCargoPlanObserver::new(process);
-    let plan = plan_cargo_unlink(repo_root, library_path, dry_run, &observer)?;
+    let mut plan = plan_cargo_unlink(&repo_root, &library_path, dry_run, &observer)?;
+    if plan.operation.changes.is_empty()
+        && cargo_config_patches_library(
+            &plan.operation.key.consumer_repo,
+            &plan.operation.key.library_path,
+        )?
+    {
+        let library = inventory_cargo_library(&plan.operation.key.library_path, process)?;
+        let workspaces =
+            inventory_cargo_consumers(&plan.operation.key.consumer_repo, &library, process)?;
+        let adoption = plan_cargo_link(
+            &plan.operation.key.consumer_repo,
+            &library,
+            &workspaces,
+            dry_run,
+            &observer,
+        )?;
+        plan = plan_adopted_cargo_unlink(adoption)?;
+    }
     apply_cargo_unlink_plan(plan, process)
 }
 
@@ -84,10 +104,10 @@ pub fn apply_cargo_unlink_plan(
         .iter()
         .cloned()
         .partition(|change| change.target == ledger_path);
-    if ledger_changes.len() != 1 {
+    if ledger_changes.len() > 1 {
         return Err(DepsError::invalid(
             &ledger_path,
-            "Cargo unlink plan must contain exactly one desired-state change",
+            "Cargo unlink plan contains duplicate desired-state changes",
         ));
     }
 
@@ -140,24 +160,22 @@ pub fn apply_cargo_unlink_plan(
         ));
     }
 
-    let ledger_change = ledger_changes
-        .into_iter()
-        .next()
-        .expect("checked ledger change");
-    if let Err(error) = apply_exact_change(&ledger_change) {
-        let rollback = rollback_physical_changes(&plan, &applied);
-        return Ok(report(
-            plan,
-            CargoUnlinkOutcome::ApplyFailed,
-            applied_paths(&applied),
-            Vec::new(),
-            verification,
-            after_locks,
-            rollback,
-            vec![error.to_string()],
-        ));
+    if let Some(ledger_change) = ledger_changes.into_iter().next() {
+        if let Err(error) = apply_exact_change(&ledger_change) {
+            let rollback = rollback_physical_changes(&plan, &applied);
+            return Ok(report(
+                plan,
+                CargoUnlinkOutcome::ApplyFailed,
+                applied_paths(&applied),
+                Vec::new(),
+                verification,
+                after_locks,
+                rollback,
+                vec![error.to_string()],
+            ));
+        }
+        applied.push(ledger_change);
     }
-    applied.push(ledger_change);
 
     let (removed_directories, cleanup_errors) = remove_owned_empty_directories(&plan);
     let outcome = if cleanup_errors.is_empty() {

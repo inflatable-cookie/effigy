@@ -216,6 +216,94 @@ fn real_nested_git_dependencies_share_the_repo_root_patch_and_verify_per_workspa
 }
 
 #[test]
+fn compatible_hand_managed_patch_is_adopted_without_dry_run_lock_churn() {
+    let library = create_library();
+    let library_root = fs::canonicalize(library.path()).unwrap();
+    let git_url = format!("file://{}", library_root.display());
+    let repo_temp = TempDir::new().unwrap();
+    let repo = fs::canonicalize(repo_temp.path()).unwrap();
+    prepare_consumer(&repo, std::slice::from_ref(&repo), &git_url);
+    write(&repo.join(".gitignore"), ".cargo/config.toml\n.effigy/\n");
+    run(&repo, "git", &["add", ".gitignore"]);
+    run(&repo, "git", &["commit", "-qm", "ignore local link state"]);
+
+    let manual_config = format!(
+        "# existing local Signal patch\n[net]\ngit-fetch-with-cli = true\n\n[patch.\"{git_url}\"]\neffigy-link-fixture-core = {{ path = \"{}\" }}\neffigy-link-fixture-protocol = {{ path = \"{}\" }}\n",
+        library_root.join("crates/core").display(),
+        library_root.join("crates/protocol").display()
+    );
+    write(&repo.join(".cargo/config.toml"), &manual_config);
+    let lock_before = fs::read(repo.join("Cargo.lock")).unwrap();
+
+    let unlink_dry_run =
+        execute_cargo_unlink(&repo, &library_root, true, &StdReadOnlyProcess).unwrap();
+    assert_eq!(unlink_dry_run.outcome, CargoUnlinkOutcome::DryRun);
+    assert!(unlink_dry_run
+        .plan
+        .operation
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("pre-Effigy Cargo patch")));
+    assert_eq!(
+        fs::read_to_string(repo.join(".cargo/config.toml")).unwrap(),
+        manual_config
+    );
+    assert_eq!(fs::read(repo.join("Cargo.lock")).unwrap(), lock_before);
+
+    let direct_unlink =
+        execute_cargo_unlink(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(
+        direct_unlink.outcome,
+        CargoUnlinkOutcome::Unlinked,
+        "{direct_unlink:#?}"
+    );
+    assert_eq!(
+        direct_unlink.verification.status,
+        VerificationStatus::Passed
+    );
+    assert!(!fs::read_to_string(repo.join(".cargo/config.toml"))
+        .unwrap()
+        .contains("[patch."));
+    assert_eq!(fs::read(repo.join("Cargo.lock")).unwrap(), lock_before);
+    write(&repo.join(".cargo/config.toml"), &manual_config);
+
+    let dry_run = execute_cargo_link(&repo, &library_root, true, &StdReadOnlyProcess).unwrap();
+
+    assert_eq!(dry_run.outcome, CargoLinkOutcome::DryRun);
+    assert!(dry_run
+        .plan
+        .operation
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("adopting 1 compatible hand-managed")));
+    assert_eq!(
+        fs::read_to_string(repo.join(".cargo/config.toml")).unwrap(),
+        manual_config
+    );
+    assert_eq!(fs::read(repo.join("Cargo.lock")).unwrap(), lock_before);
+    assert!(!RepoLinkStateStore::for_repo(&repo).path().exists());
+
+    let link = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(link.outcome, CargoLinkOutcome::Applied, "{link:#?}");
+    assert_eq!(link.verification.status, VerificationStatus::Passed);
+    let managed_config = fs::read_to_string(repo.join(".cargo/config.toml")).unwrap();
+    assert!(managed_config.contains("# existing local Signal patch"));
+    assert!(managed_config.contains("[net]"));
+    assert_eq!(managed_config.matches("# >>> effigy deps cargo").count(), 1);
+
+    let unlink = execute_cargo_unlink(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(unlink.outcome, CargoUnlinkOutcome::Unlinked, "{unlink:#?}");
+    assert_eq!(unlink.verification.status, VerificationStatus::Passed);
+    let unlinked_config = fs::read_to_string(repo.join(".cargo/config.toml")).unwrap();
+    assert!(unlinked_config.contains("# existing local Signal patch"));
+    assert!(unlinked_config.contains("[net]"));
+    assert!(!unlinked_config.contains("[patch."));
+    assert!(!unlinked_config.contains("effigy deps cargo"));
+    assert_eq!(fs::read(repo.join("Cargo.lock")).unwrap(), lock_before);
+    assert!(!RepoLinkStateStore::for_repo(&repo).path().exists());
+}
+
+#[test]
 fn unlink_preserves_foreign_cargo_state_and_another_active_library() {
     let first = create_library();
     let second = create_named_library("effigy-link-other-core", "effigy-link-other-protocol");

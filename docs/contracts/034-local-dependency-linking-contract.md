@@ -118,7 +118,10 @@ Unix.
 - Planning, dry-run, status, and doctor use locked Cargo metadata so observation
   cannot rewrite a lockfile. An unrelated workspace blocked only by stale
   locked resolution may be skipped when none of its local manifests declares a
-  target-library crate; a target-declaring workspace remains an error.
+  target-library crate. When a compatible repo-local patch itself makes locked
+  resolution stale, repeat the locked query outside the consumer config search
+  tree to observe the committed graph without applying that patch or rewriting
+  the lockfile.
 - Match library crates against resolved consumer packages and their exact
   declared git source URLs.
 - Patch every matching crate from the library present in the graph. Partial
@@ -130,9 +133,12 @@ Unix.
 - Write entries under `[patch."<exact-url>"]` inside clearly delimited
   Effigy-managed blocks.
 - Preserve unrelated tables, comments, and hand-managed entries.
+- `link` may adopt a pre-Effigy patch table only when every entry belongs to
+  the requested library and resolves to its canonical local crate path.
+  `unlink` may remove that same compatible legacy table directly when the
+  explicit library path proves the target. Both operations refuse mixed tables.
 - Refuse a `.cargo/config.toml` already tracked by git.
-- Refuse a same-source/same-crate collision with a hand-managed patch instead
-  of overwriting it.
+- Refuse mismatched same-source/same-crate patches instead of overwriting them.
 - Create the config when absent and ensure `.cargo/config.toml` is ignored by
   the repo; report any `.gitignore` change to the operator.
 - Remove an empty config file and empty `.cargo/` directory on unlink only when

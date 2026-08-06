@@ -129,6 +129,9 @@ fn inventory_cargo_consumer_manifests(
             {
                 continue;
             }
+            Err(error) if locked && lockfile_needs_update(&error) => {
+                run_metadata_without_repo_config(repo_root, &manifest, process)?
+            }
             Err(error) => return Err(error),
         };
         let root = canonical_or_original(&metadata.workspace_root);
@@ -188,6 +191,18 @@ fn inventory_cargo_consumer_manifests(
         );
     }
     Ok(workspaces.into_values().collect())
+}
+
+fn run_metadata_without_repo_config(
+    repo_root: &Path,
+    manifest: &Path,
+    process: &impl ReadOnlyProcess,
+) -> Result<Metadata, DepsError> {
+    let neutral_cwd = repo_root.ancestors().last().unwrap_or(repo_root);
+    if neutral_cwd == repo_root {
+        return run_metadata(repo_root, manifest, false, true, process);
+    }
+    run_metadata(neutral_cwd, manifest, false, true, process)
 }
 
 fn cargo_manifests(root: &Path) -> Result<Vec<PathBuf>, DepsError> {

@@ -119,13 +119,17 @@ The adapter:
 - treats explicit workspace roots as boundaries, skips archived reference
   trees and orphaned descendant manifests, and uses locked metadata for
   planning/status so observation cannot rewrite locks
+- observes committed resolution from outside the consumer config search tree
+  when a compatible legacy patch makes the normal locked query stale
 - matches library crates present in the consumer graph and groups them by exact
   declared git source URL
 - patches the full matching closure inside Effigy-managed marker blocks
+- adopts or directly removes a compatible pre-Effigy patch only when its table
+  contains no unrelated crates and every path matches the requested checkout
 - checks every exact planned before-state before the first write, then applies
   config and ignore files atomically
 - preserves unrelated and hand-managed Cargo config
-- refuses tracked config files and same-crate collisions
+- refuses tracked config files, mixed legacy tables, and mismatched collisions
 - refuses first-link mutation when an affected tracked `Cargo.lock` is dirty;
   later links allow only drift owned by already-active package closures
 - verifies every workspace/crate pair with Cargo metadata and tree evidence

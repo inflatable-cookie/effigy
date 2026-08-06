@@ -100,7 +100,13 @@ pub fn plan_cargo_link(
         ));
     }
     let config_without_own = remove_block(config_before.as_deref().unwrap_or(""), own_block);
-    refuse_patch_collisions(&config_without_own, &patch_groups, &config_path)?;
+    let (config_without_adopted, adopted_patch_tables) = adopt_compatible_patch_tables(
+        &repo_root,
+        &config_without_own,
+        &patch_groups,
+        &config_path,
+    )?;
+    refuse_patch_collisions(&config_without_adopted, &patch_groups, &config_path)?;
     let rendered_block = render_managed_block(&library_root, &patch_groups);
     let config_after = Some(match own_block {
         Some(block) => replace_block(
@@ -108,7 +114,7 @@ pub fn plan_cargo_link(
             block,
             &rendered_block,
         ),
-        None => append_block(config_before.as_deref().unwrap_or(""), &rendered_block),
+        None => append_block(&config_without_adopted, &rendered_block),
     });
 
     let cargo_ownership =
@@ -167,6 +173,16 @@ pub fn plan_cargo_link(
         ledger_after,
     );
 
+    let mut warnings = vec![
+        "Cargo verification or builds may rewrite affected Cargo.lock entries to local path sources; do not commit that linked lock state"
+            .to_owned(),
+    ];
+    if adopted_patch_tables > 0 {
+        warnings.push(format!(
+            "adopting {adopted_patch_tables} compatible hand-managed Cargo patch table(s) into Effigy-managed state"
+        ));
+    }
+
     Ok(CargoDependencyPlan {
         desired: Some(desired),
         operation: DependencyLinkPlan {
@@ -174,10 +190,7 @@ pub fn plan_cargo_link(
             dry_run,
             key,
             changes,
-            warnings: vec![
-                "Cargo verification or builds may rewrite affected Cargo.lock entries to local path sources; do not commit that linked lock state"
-                    .to_owned(),
-            ],
+            warnings,
         },
         expected_resolutions,
         affected_lockfiles,
@@ -317,6 +330,117 @@ pub fn plan_cargo_unlink(
         lockfile_guard_packages,
         remaining_linked_packages,
         remove_empty_directories,
+    })
+}
+
+pub(crate) fn cargo_config_patches_library(
+    repo_root: &Path,
+    library_root: &Path,
+) -> Result<bool, DepsError> {
+    let config_path = repo_root.join(".cargo/config.toml");
+    let Some(raw) = read_optional_string(&config_path)? else {
+        return Ok(false);
+    };
+    let config: toml::Value = toml::from_str(&raw).map_err(|error| {
+        DepsError::invalid(
+            &config_path,
+            format!("failed to parse existing Cargo config: {error}"),
+        )
+    })?;
+    let Some(patch) = config.get("patch").and_then(toml::Value::as_table) else {
+        return Ok(false);
+    };
+    for source in patch.values().filter_map(toml::Value::as_table) {
+        for entry in source.values().filter_map(toml::Value::as_table) {
+            let Some(path) = entry.get("path").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let candidate = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                repo_root.join(path)
+            };
+            if canonical_existing_path(candidate).is_ok_and(|path| path.starts_with(library_root)) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn plan_adopted_cargo_unlink(
+    link_plan: CargoDependencyPlan,
+) -> Result<CargoDependencyPlan, DepsError> {
+    let desired = link_plan.desired.as_ref().ok_or_else(|| {
+        DepsError::invalid(
+            &link_plan.operation.key.consumer_repo,
+            "manual Cargo patch adoption produced no desired link state",
+        )
+    })?;
+    let config_path = link_plan
+        .operation
+        .key
+        .consumer_repo
+        .join(".cargo/config.toml");
+    let config_change = link_plan
+        .operation
+        .changes
+        .iter()
+        .find(|change| change.target == config_path)
+        .ok_or_else(|| {
+            DepsError::invalid(
+                &config_path,
+                "manual Cargo patch adoption produced no config change",
+            )
+        })?;
+    let managed = config_change.after.as_deref().ok_or_else(|| {
+        DepsError::invalid(
+            &config_path,
+            "manual Cargo patch adoption did not produce managed config",
+        )
+    })?;
+    let blocks = parse_managed_blocks(managed, &config_path)?;
+    let block = select_owned_block(&blocks, &link_plan.operation.key.library_path, &config_path)?;
+    let block = block.ok_or_else(|| {
+        DepsError::invalid(
+            &config_path,
+            "manual Cargo patch adoption did not produce an owned block",
+        )
+    })?;
+    let config_after = remove_block(managed, Some(block));
+    let mut changes = Vec::new();
+    push_file_change(
+        &mut changes,
+        config_path,
+        "remove the compatible hand-managed Cargo patch",
+        config_change.before.clone(),
+        Some(config_after),
+    );
+    let lockfile_guard_packages = desired
+        .packages
+        .iter()
+        .map(|package| package.name.clone())
+        .collect();
+
+    Ok(CargoDependencyPlan {
+        desired: None,
+        operation: DependencyLinkPlan {
+            action: PlanAction::Unlink,
+            dry_run: link_plan.operation.dry_run,
+            key: link_plan.operation.key,
+            changes,
+            warnings: vec![
+                "removing a compatible pre-Effigy Cargo patch that resolves only to the requested local library"
+                    .to_owned(),
+                "unlink apply must re-resolve affected lockfiles from committed git sources without Git restore commands"
+                    .to_owned(),
+            ],
+        },
+        expected_resolutions: link_plan.expected_resolutions,
+        affected_lockfiles: link_plan.affected_lockfiles,
+        lockfile_guard_packages,
+        remaining_linked_packages: Vec::new(),
+        remove_empty_directories: Vec::new(),
     })
 }
 
@@ -741,6 +865,155 @@ fn refuse_patch_collisions(
         }
     }
     Ok(())
+}
+
+fn adopt_compatible_patch_tables(
+    repo_root: &Path,
+    raw: &str,
+    patch_groups: &PatchGroups,
+    config_path: &Path,
+) -> Result<(String, usize), DepsError> {
+    if raw.trim().is_empty() {
+        return Ok((raw.to_owned(), 0));
+    }
+    let config: toml::Value = toml::from_str(raw).map_err(|error| {
+        DepsError::invalid(
+            config_path,
+            format!("failed to parse existing Cargo config: {error}"),
+        )
+    })?;
+    let Some(patch) = config.get("patch") else {
+        return Ok((raw.to_owned(), 0));
+    };
+
+    let mut adopted_sources = BTreeSet::new();
+    for (source, packages) in patch_groups {
+        let Some(source_table) = patch.get(source).and_then(toml::Value::as_table) else {
+            continue;
+        };
+        let overlaps = source_table.keys().any(|name| packages.contains_key(name));
+        if !overlaps {
+            return Err(DepsError::invalid(
+                config_path,
+                format!(
+                    "hand-managed Cargo patch table already exists for exact source `{source}`; refusing an unsafe table merge"
+                ),
+            ));
+        }
+        for (name, value) in source_table {
+            let Some(expected_path) = packages.get(name) else {
+                return Err(DepsError::invalid(
+                    config_path,
+                    format!(
+                        "hand-managed Cargo patch table for exact source `{source}` also contains unrelated crate `{name}`; refusing to claim it"
+                    ),
+                ));
+            };
+            let Some(entry) = value.as_table() else {
+                return Err(incompatible_patch(config_path, source, name));
+            };
+            if entry.len() != 1 {
+                return Err(incompatible_patch(config_path, source, name));
+            }
+            let Some(path) = entry.get("path").and_then(toml::Value::as_str) else {
+                return Err(incompatible_patch(config_path, source, name));
+            };
+            let candidate = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                repo_root.join(path)
+            };
+            let candidate = canonical_existing_path(&candidate)
+                .map_err(|_| incompatible_patch(config_path, source, name))?;
+            if &candidate != expected_path {
+                return Err(incompatible_patch(config_path, source, name));
+            }
+        }
+        adopted_sources.insert(source.clone());
+    }
+
+    let mut spans = adopted_sources
+        .iter()
+        .map(|source| patch_table_span(raw, source, config_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    spans.sort_unstable();
+    let mut rendered = raw.to_owned();
+    for (start, end) in spans.into_iter().rev() {
+        rendered.replace_range(start..end, "");
+    }
+    Ok((rendered, adopted_sources.len()))
+}
+
+fn incompatible_patch(config_path: &Path, source: &str, name: &str) -> DepsError {
+    DepsError::invalid(
+        config_path,
+        format!(
+            "hand-managed Cargo patch collision for crate `{name}` under exact source `{source}` does not point only at the requested local crate"
+        ),
+    )
+}
+
+fn patch_table_span(
+    raw: &str,
+    source: &str,
+    config_path: &Path,
+) -> Result<(usize, usize), DepsError> {
+    let mut headers = Vec::new();
+    let mut offset = 0;
+    for line in raw.split_inclusive('\n') {
+        if is_table_header(line) {
+            headers.push((offset, patch_header_matches(line, source)));
+        }
+        offset += line.len();
+    }
+    let matches = headers
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, matches))| *matches)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(DepsError::invalid(
+            config_path,
+            format!(
+                "could not isolate the hand-managed Cargo patch table for exact source `{source}`"
+            ),
+        ));
+    }
+    let (index, (start, _)) = matches[0];
+    let table_limit = headers
+        .get(index + 1)
+        .map(|(offset, _)| *offset)
+        .unwrap_or(raw.len());
+    let mut end = *start;
+    let mut offset = *start;
+    for line in raw[*start..table_limit].split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            end = offset + line.len();
+        }
+        offset += line.len();
+    }
+    Ok((*start, end))
+}
+
+fn is_table_header(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with('[') && !trimmed.starts_with("[[")
+}
+
+fn patch_header_matches(line: &str, source: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(end) = trimmed.find(']') else {
+        return false;
+    };
+    let header = &trimmed[..=end];
+    let Ok(value) = toml::from_str::<toml::Value>(header) else {
+        return false;
+    };
+    value
+        .get("patch")
+        .and_then(|patch| patch.get(source))
+        .is_some()
 }
 
 fn plan_link_gitignore(repo_root: &Path) -> Result<(Option<String>, Option<String>), DepsError> {
