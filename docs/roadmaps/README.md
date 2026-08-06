@@ -85,11 +85,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   version without weakening later monotonic releases.
   [`g08.025`](./g08/025-annotated-release-tag-integrity.md) now repairs the
   release tag object boundary exposed by a real Swallowtail candidate.
+  The completed [`g08.026`](./g08/026-patch-release-lane-hardening.md) lane removes
+  a persistent loopback test-state leak, settles prepared-source drift policy,
+  and proves the `0.9.1` candidate.
 
 ## Active Strict Lane
 
-None. Cards `1065` and `1066` completed
-[`g08.025`](./g08/025-annotated-release-tag-integrity.md).
+None. Cards `1067` through `1069` completed
+[`g08.026`](./g08/026-patch-release-lane-hardening.md).
 
 ## Research Program
 
@@ -144,8 +147,8 @@ Before rollover:
 
 ## Next Task
 
-Select the next substantial g08 scope separately. No `g09` rollover at this
-time.
+Request explicit human authorization before release prepare. No `g09`
+rollover is implied.
 
 ## Historical language boundary
 

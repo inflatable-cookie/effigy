@@ -234,7 +234,7 @@ pub fn render_execute_stale_review_lines(plan: &ReleaseExecutePlan) -> Vec<Strin
         lines.push(format!("  Warning: {warning}"));
     }
     lines.push(
-        "  Action required: rerun `effigy release prepare` or acknowledge this stale state now."
+        "  Action required: rerun `effigy release prepare` or acknowledge this age-stale state now."
             .to_owned(),
     );
     lines
@@ -281,7 +281,7 @@ pub fn render_execute_state_review_lines(plan: &ReleaseExecutePlan) -> Vec<Strin
         if plan.stale { "yes" } else { "no" }
     ));
     lines.push(format!(
-        "  Stale override used: {}",
+        "  Age-stale override used: {}",
         if plan.stale_override_used {
             "yes"
         } else {
@@ -593,7 +593,7 @@ pub fn render_execute_final_review_lines(plan: &ReleaseExecutePlan) -> Vec<Strin
         lines.push(format!("  Tag to create: {tag}"));
     }
     lines.push(format!(
-        "  Stale override accepted: {}",
+        "  Age-stale override accepted: {}",
         if plan.stale_override_used {
             "yes"
         } else {

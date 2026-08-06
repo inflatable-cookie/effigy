@@ -3,6 +3,17 @@ use chrono::Utc;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::routes::{Route, RouteSource};
 
+#[test]
+fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
+    let path = gateway_dir().expect("gateway dir");
+    assert!(
+        path.to_string_lossy()
+            .contains("effigy-runner-test-gateway-home-"),
+        "unit-test gateway state must not use the real home: {}",
+        path.display()
+    );
+}
+
 fn tls_summary() -> GatewayTlsSummary {
     GatewayTlsSummary {
         https_addr: Some("127.0.0.1:443".parse().expect("https")),

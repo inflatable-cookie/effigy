@@ -43,12 +43,24 @@ fn resolve_publish_address(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static TEST_EFFIGY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
 }
+
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static DEFAULT_TEST_EFFIGY_HOME: PathBuf = std::env::temp_dir().join(format!(
+        "effigy-containers-test-home-{}-{}",
+        std::process::id(),
+        NEXT_TEST_HOME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ));
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static NEXT_TEST_HOME_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GeneratedComposeDocument {
@@ -883,7 +895,7 @@ fn user_global_catalog_dir() -> Option<PathBuf> {
 }
 
 pub(crate) fn effigy_home_dir() -> Option<PathBuf> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(path) = test_effigy_home_override() {
         return Some(path);
     }
@@ -920,9 +932,14 @@ pub(crate) fn with_test_effigy_home<T>(path: &Path, run: impl FnOnce() -> T) -> 
     run()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn test_effigy_home_override() -> Option<PathBuf> {
-    TEST_EFFIGY_HOME.with(|slot| slot.borrow().clone())
+    let explicit = TEST_EFFIGY_HOME.with(|slot| slot.borrow().clone());
+    if explicit.is_some() {
+        return explicit;
+    }
+
+    Some(DEFAULT_TEST_EFFIGY_HOME.with(Clone::clone))
 }
 
 fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
@@ -1235,6 +1252,16 @@ pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crate_tests_default_to_an_isolated_effigy_home() {
+        let actual = effigy_home_dir().expect("test Effigy home");
+        let real_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|path| path.join(".effigy"));
+
+        assert_ne!(Some(actual), real_home);
+    }
 
     #[test]
     fn typed_generated_compose_env_policy_converts_sequence_entries() {

@@ -49,7 +49,7 @@ pub fn remediation_hints_for_blockers(
         }
         if blocker.contains("prepared release source drift detected") {
             hints.insert(
-                "Review the reported branch, HEAD, and content drift, then regenerate `.release-prepared.json` with `effigy release prepare` before executing the release. In interactive `release resume` or `release execute`, use `reprepare` to regenerate state or `discard` to clear the old prepared state.".to_owned(),
+                "Prepared-source drift cannot be overridden with `--allow-stale`; review the reported branch, HEAD, and content drift, then regenerate `.release-prepared.json` with `effigy release prepare` before executing the release. In interactive `release resume` or `release execute`, use `reprepare` to regenerate state or `discard` to clear the old prepared state.".to_owned(),
             );
         }
         if blocker.contains("prepared release state reports failed or skipped gates") {
@@ -731,7 +731,7 @@ pub fn render_release_execute_plan_text(plan: &ReleaseExecutePlan) -> String {
         plan.stale_threshold_seconds
     ));
     lines.push(format!(
-        "  Stale override required: {}",
+        "  Age-stale override required: {}",
         if plan.stale_override_required {
             "yes"
         } else {
@@ -739,7 +739,7 @@ pub fn render_release_execute_plan_text(plan: &ReleaseExecutePlan) -> String {
         }
     ));
     lines.push(format!(
-        "  Stale override accepted: {}",
+        "  Age-stale override accepted: {}",
         if plan.stale_override_used {
             "yes"
         } else {
@@ -1020,7 +1020,7 @@ pub fn render_release_executed_text(result: &ReleaseExecuted) -> String {
         if result.stale { "yes" } else { "no" }
     ));
     lines.push(format!(
-        "  Stale override used: {}",
+        "  Age-stale override used: {}",
         if result.stale_override_used {
             "yes"
         } else {

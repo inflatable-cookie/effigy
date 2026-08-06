@@ -5674,7 +5674,7 @@ fn cli_release_execute_yes_json_mode_allows_stale_with_explicit_override() {
 }
 
 #[test]
-fn cli_release_execute_plan_json_mode_detects_head_and_content_drift_since_prepare() {
+fn cli_release_execute_plan_json_mode_requires_reprepare_for_source_drift() {
     let root = temp_workspace("cli-release-execute-plan-json-source-drift");
     fs::write(
         root.join("Cargo.toml"),
@@ -5714,7 +5714,7 @@ fn cli_release_execute_plan_json_mode_detects_head_and_content_drift_since_prepa
         "empty commit failed: {empty_commit:?}"
     );
 
-    let output = run_json_cli_command(&root, &["release", "execute", "--plan"]);
+    let output = run_json_cli_command(&root, &["release", "execute", "--plan", "--allow-stale"]);
     let parsed = parse_stdout_json(&output);
 
     assert!(!output.status.success());
@@ -5723,6 +5723,7 @@ fn cli_release_execute_plan_json_mode_detects_head_and_content_drift_since_prepa
         "effigy.release.execute.plan.v1"
     );
     assert_eq!(parsed["error"]["details"]["ready"], false);
+    assert_eq!(parsed["error"]["details"]["stale_override_used"], false);
     assert_eq!(
         parsed["error"]["details"]["source_fingerprints"]["available"],
         true
@@ -5742,6 +5743,12 @@ fn cli_release_execute_plan_json_mode_detects_head_and_content_drift_since_prepa
     assert!(blockers.iter().any(|value| value
         .as_str()
         .is_some_and(|line| line.contains("prepared release source drift detected"))));
+    let suggested_actions = parsed["error"]["details"]["suggested_actions"]
+        .as_array()
+        .expect("suggested actions");
+    assert!(suggested_actions.iter().any(|value| value
+        .as_str()
+        .is_some_and(|line| line.contains("cannot be overridden with `--allow-stale`"))));
 }
 
 #[test]

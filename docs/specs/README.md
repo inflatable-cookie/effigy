@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- none; cards `1067` through `1069` completed `g08.026`
 
 Queued strict lanes:
 
@@ -48,5 +48,5 @@ Other provisional spec:
 
 ## Next Task
 
-Select the next substantial g08 scope separately. Keep the unrelated `098`
-uninstall draft paused unless it is explicitly resumed.
+Request explicit human authorization before release prepare. Keep the
+unrelated `098` uninstall draft paused unless it is explicitly resumed.

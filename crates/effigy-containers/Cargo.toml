@@ -6,6 +6,9 @@ license.workspace = true
 publish = false
 description = "Container policy contracts for Effigy"
 
+[features]
+test-support = []
+
 [dependencies]
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-core = { path = "../effigy-core" }

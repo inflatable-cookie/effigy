@@ -301,8 +301,8 @@ mod tests {
     fn command_timeout_message_mentions_elapsed_seconds() {
         let error = run_command_capture_with_timeout(
             Path::new("."),
-            "sh",
-            &["-c", "sleep 2"],
+            "/bin/sh",
+            &["-c", "/bin/sleep 2"],
             "sleep test",
             Duration::from_millis(200),
         )
@@ -323,7 +323,7 @@ mod tests {
     fn streamed_command_failure_reports_streaming_footer() {
         let error = run_command_stream_with_timeout(
             Path::new("."),
-            "sh",
+            "/bin/sh",
             &[
                 "-c",
                 "echo streamed-output; echo streamed-error >&2; exit 7",
@@ -387,7 +387,7 @@ mod tests {
         fs::create_dir_all(&root).expect("mkdir");
         let pid_file = root.join("descendant.pid");
         let script = format!(
-            "sh -c 'echo $$ > \"{}\"; trap \"exit 0\" TERM; sleep 5' & wait",
+            "/bin/sh -c 'echo $$ > \"{}\"; trap \"exit 0\" TERM; /bin/sleep 5' & wait",
             pid_file.display()
         );
 

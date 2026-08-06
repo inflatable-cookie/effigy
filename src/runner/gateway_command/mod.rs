@@ -40,7 +40,16 @@ thread_local! {
     static TEST_GATEWAY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
+    static DEFAULT_TEST_GATEWAY_HOME: PathBuf = std::env::temp_dir().join(format!(
+        "effigy-runner-test-gateway-home-{}-{}",
+        std::process::id(),
+        NEXT_TEST_GATEWAY_HOME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ));
 }
+
+#[cfg(test)]
+static NEXT_TEST_GATEWAY_HOME_ID: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
 pub(in crate::runner) struct TestGatewayHomeGuard {
@@ -684,13 +693,22 @@ fn gateway_config() -> Result<GatewayConfig, RunnerError> {
 
 pub(in crate::runner) fn gateway_dir() -> Result<PathBuf, RunnerError> {
     #[cfg(test)]
-    if let Some(home) = TEST_GATEWAY_HOME.with(|home| home.borrow().clone()) {
-        return Ok(home.join(GATEWAY_DIR_NAME));
+    {
+        let home = TEST_GATEWAY_HOME
+            .with(|home| home.borrow().clone())
+            .unwrap_or_else(|| DEFAULT_TEST_GATEWAY_HOME.with(Clone::clone));
+        Ok(home.join(GATEWAY_DIR_NAME))
     }
-    let home = std::env::var_os("HOME").ok_or_else(|| {
-        RunnerError::task_invocation("`HOME` is not set; cannot resolve gateway state directory")
-    })?;
-    Ok(PathBuf::from(home).join(GATEWAY_DIR_NAME))
+
+    #[cfg(not(test))]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            RunnerError::task_invocation(
+                "`HOME` is not set; cannot resolve gateway state directory",
+            )
+        })?;
+        Ok(PathBuf::from(home).join(GATEWAY_DIR_NAME))
+    }
 }
 
 fn render_gateway_up_result(

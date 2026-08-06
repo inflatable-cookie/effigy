@@ -81,7 +81,7 @@ const RELEASE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
 
 const RELEASE_OPTIONS: &[(&str, &str)] = option_rows![
     "--version <SEMVER>" => "Override the changelog-derived selected version for `release simulate`, `release prepare --plan`, or `release prepare --yes`",
-    "--allow-stale" => "Acknowledge a stale `.release-prepared.json` state and allow `release execute` to continue",
+    "--allow-stale" => "Acknowledge age-based `.release-prepared.json` staleness; source drift still requires `release prepare`",
     "--tag <TAG>" => "Release tag used for install verification (falls back to `GITHUB_REF_NAME` when omitted)",
     "--repo-url <URL>" => "Git repository URL used for tag install verification",
     "--glibc-floor <VER>" => "Maximum allowed GLIBC version for Linux release binaries",

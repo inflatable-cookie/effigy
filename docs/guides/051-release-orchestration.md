@@ -102,7 +102,8 @@ Current built-in release commands:
 - `effigy release execute --yes`
   - create the release commit and annotated tag, push to `origin`, and clean up
     the state file only after a full success; the annotation message exactly
-    equals the rendered tag; stale state requires explicit `--allow-stale`
+    equals the rendered tag; age-based staleness requires explicit
+    `--allow-stale`
 - `effigy release verify-install`
   - install the tagged binary from git into a temporary root and validate the
     installed command against a fixture repo
@@ -377,10 +378,15 @@ Execute safety checks:
 
 - missing state file blocks execute
 - stale state emits a warning using the default one-hour threshold and requires
-  explicit acknowledgement or `--allow-stale` before execute can proceed
+  explicit acknowledgement or `--allow-stale` before execute can proceed;
+  this override covers age only
 - unexpected working-tree changes block execute
 - branch drift, HEAD movement, or changed prepared-file contents since prepare
-  are reported as source-drift blockers in `resume` and `execute --plan`
+  are reported as source-drift blockers in `resume` and `execute --plan`;
+  `--allow-stale` cannot override them because the recorded gates apply to the
+  prepared source identity, so regenerate state with `release prepare`
+- JSON `release execute --plan` includes `suggested_actions`; source drift
+  reports the same mandatory reprepare recovery used by `release resume`
 - push failure leaves the prepared state file in place
 - retries do not re-create an already-created local tag
 - release tags are annotated Git objects; signing and configurable annotation

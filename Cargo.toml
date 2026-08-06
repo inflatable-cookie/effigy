@@ -129,4 +129,5 @@ minijinja = "2"
 rpassword = "7"
 
 [dev-dependencies]
+effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
 tempfile = "3"

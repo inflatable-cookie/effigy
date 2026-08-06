@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::text::{remediation_hints_for_blockers, ReleaseBlockedStage};
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
@@ -573,6 +574,7 @@ struct ReleaseExecutePlanPayload {
     working_tree: WorkingTreePayload,
     warnings: Vec<String>,
     blockers: Vec<String>,
+    suggested_actions: Vec<String>,
 }
 
 impl From<&ReleaseExecutePlan> for ReleaseExecutePlanPayload {
@@ -618,6 +620,10 @@ impl From<&ReleaseExecutePlan> for ReleaseExecutePlanPayload {
             },
             warnings: plan.warnings.clone(),
             blockers: plan.blockers.clone(),
+            suggested_actions: remediation_hints_for_blockers(
+                &plan.blockers,
+                ReleaseBlockedStage::Execute,
+            ),
         }
     }
 }

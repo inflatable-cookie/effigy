@@ -5,7 +5,7 @@ Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
-`g08.024` and `g08.025`.
+`g08.024` through `g08.026`.
 
 ## Purpose
 
@@ -57,6 +57,7 @@ This generation should help agents and maintainers answer questions like:
 - [`023-dependency-link-portfolio-proof-and-closeout.md`](./023-dependency-link-portfolio-proof-and-closeout.md)
 - [`024-initial-current-version-release-tag.md`](./024-initial-current-version-release-tag.md)
 - [`025-annotated-release-tag-integrity.md`](./025-annotated-release-tag-integrity.md)
+- [`026-patch-release-lane-hardening.md`](./026-patch-release-lane-hardening.md)
 
 ## Design Posture
 
@@ -121,6 +122,9 @@ This generation should help agents and maintainers answer questions like:
   repository without weakening normal monotonic release planning.
 - Annotated-tag integrity complete: `g08.025` makes the irreversible release path
   preserve the approved Git tag object type and deterministic message.
+- Patch-release hardening complete: `g08.026` removes persistent loopback test
+  leakage, settles prepared-source drift policy, and proves the `0.9.1`
+  candidate without release mutation.
 - Visible milestones: `g08.020` Cargo mutation, `g08.021` Bun mutation,
   `g08.022` doctor/hygiene, and `g08.023` portfolio proof/closeout.
 - Planning checkpoint: select the next substantial g08 scope; completion of
@@ -129,7 +133,9 @@ This generation should help agents and maintainers answer questions like:
 ## Execution Rule
 
 The dependency suite completed under strict spec `099`. Cards `1065` and
-`1066` completed the bounded release-tag integrity lane. No ready card remains.
+`1066` completed the bounded release-tag integrity lane. Cards `1067` through
+`1069` completed the `g08.026` patch-release hardening lane. No ready card
+remains.
 
 ## Batch Cards
 
@@ -171,6 +177,9 @@ The dependency suite completed under strict spec `099`. Cards `1065` and
 - [`1064-publish-dependency-link-guidance-and-close-suite.md`](./batch-cards/1064-publish-dependency-link-guidance-and-close-suite.md)
 - [`1065-create-annotated-release-tags.md`](./batch-cards/1065-create-annotated-release-tags.md)
 - [`1066-prove-annotated-release-execution.md`](./batch-cards/1066-prove-annotated-release-execution.md)
+- [`1067-remove-loopback-test-state-leakage.md`](./batch-cards/1067-remove-loopback-test-state-leakage.md)
+- [`1068-settle-prepared-source-drift-policy.md`](./batch-cards/1068-settle-prepared-source-drift-policy.md)
+- [`1069-prove-patch-release-candidate.md`](./batch-cards/1069-prove-patch-release-candidate.md)
 
 ## Current State
 
@@ -180,9 +189,9 @@ The dependency suite completed under strict spec `099`. Cards `1065` and
 
 `g08.018` through `g08.023` are complete.
 
-Cards `1051` through `1066` are complete. No active ready card remains.
+Cards `1051` through `1069` are complete. No active ready card remains.
 
 ## Next Task
 
-Select the next substantial g08 scope separately. No release or generation
-rollover is implied.
+Request explicit human authorization before release prepare or any later
+release mutation.

@@ -78,6 +78,9 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/06-223813-patch-release-candidate-proof.md`](./2026-08/06-223813-patch-release-candidate-proof.md)
+- [`2026-08/06-223205-prepared-source-drift-policy.md`](./2026-08/06-223205-prepared-source-drift-policy.md)
+- [`2026-08/06-222825-loopback-test-state-isolation.md`](./2026-08/06-222825-loopback-test-state-isolation.md)
 - [`2026-08/06-120729-annotated-release-tag-integrity.md`](./2026-08/06-120729-annotated-release-tag-integrity.md)
 - [`2026-08/06-111534-initial-current-version-release-tag.md`](./2026-08/06-111534-initial-current-version-release-tag.md)
 - [`2026-08/05-231121-dependency-linking-suite-closeout.md`](./2026-08/05-231121-dependency-linking-suite-closeout.md)
@@ -149,5 +152,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Select the next substantial g08 scope separately. No release or generation
-rollover is implied.
+Request explicit human authorization before release prepare or any later
+release mutation.
