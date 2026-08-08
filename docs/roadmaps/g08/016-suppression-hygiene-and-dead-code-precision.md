@@ -86,6 +86,9 @@ and test symbols.
   (`run_manifest_task_builtin_scan_dead_code_refuses_stale_index`). With
   approval (granted 2026-06-10), removed the `-A` clippy flags from
   `.github/workflows/ci.yml` so CI relies on `[workspace.lints]`.
+  Later superseded: lazy on-query refresh (see the `[Unreleased]` changelog
+  entry) means the scan now rebuilds a stale index itself; the guard only
+  fires when the refresh cannot complete.
 
 ## Governing Contracts
 

@@ -16,8 +16,28 @@ fn parse_graph_status_accepts_repo_and_json_flags() {
     assert_eq!(
         command,
         Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Status,
+            subcommand: GraphSubcommand::Status { refresh: false },
             repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_graph_status_accepts_refresh_flag() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "status".to_owned(),
+        "--refresh".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        command,
+        Command::Graph(GraphArgs {
+            subcommand: GraphSubcommand::Status { refresh: true },
+            repo_override: None,
             output_json: true,
         })
     );

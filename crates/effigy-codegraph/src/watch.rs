@@ -220,6 +220,7 @@ fn flush_watch_batch(
     pending.dirty_notes.clear();
 
     let started = Instant::now();
+    let _refresh_lock = crate::refresh::RefreshLock::acquire_wait(repo_root, WATCH_LOCK_WAIT_MS)?;
     let report = run_index(repo_root)?;
     let changed_paths = merged_changed_paths(&observed_changed_paths, &report.changed_paths);
     Ok(GraphWatchEventPayload {
@@ -257,6 +258,10 @@ fn merged_changed_paths(observed_paths: &[String], indexed_paths: &[String]) -> 
 fn should_trigger_refresh(kind: &EventKind) -> bool {
     !matches!(kind, EventKind::Access(_))
 }
+
+/// How long a watch batch waits for an in-flight refresh before proceeding
+/// without the lock (batches are idempotent and SQLite serializes writers).
+const WATCH_LOCK_WAIT_MS: u64 = 10_000;
 
 fn describe_watch_error(error: &notify::Error) -> String {
     match &error.kind {

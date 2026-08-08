@@ -7,6 +7,7 @@ pub mod check_id {
     pub const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
     pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
+    pub const GRAPH_INDEX: &str = "graph.index";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
     pub const SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate-blocks";
     pub const SCAN_COMMENT_RATIO: &str = "scan.comment-ratio";
@@ -18,7 +19,7 @@ pub mod check_id {
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
 }
 
-pub const ALL_CHECK_IDS: [&str; 17] = [
+pub const ALL_CHECK_IDS: [&str; 18] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -27,6 +28,7 @@ pub const ALL_CHECK_IDS: [&str; 17] = [
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
     check_id::DEPENDENCY_LINK_HEALTH,
+    check_id::GRAPH_INDEX,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
     check_id::SCAN_COMMENT_RATIO,
@@ -81,6 +83,8 @@ pub mod remediation {
         "Align keys/types with `effigy config --schema` and retry.";
     pub const INSTALL_JS_PM_OR_CONFIGURE: &str =
         "Install one of bun/pnpm/npm or define `[package_manager].js` to match your toolchain.";
+    pub const GRAPH_INDEX_REFRESH: &str =
+        "Run `effigy graph status --refresh` to rebuild a stale or missing graph index on demand.";
 }
 
 pub fn install_tool(tool: &str) -> String {

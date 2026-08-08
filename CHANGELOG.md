@@ -7,6 +7,23 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Changed
+- Graph data queries (`search`, `node`, `callers`, `callees`, `impact`, `context`,
+  `explore`, `affected`, `files`) now refresh a stale or missing index on demand
+  instead of returning stale results. A cross-process lock
+  (`.effigy/graph/refresh.lock`) guarantees only one process re-indexes at a time;
+  concurrent queries wait a short budget and then report the true trust state.
+  `graph status` stays report-only, and `graph index` and `graph watch` share the
+  same lock so parallel refreshes never race. On git repos whose indexed HEAD
+  still matches with a clean working tree, freshness is verified via `git status`
+  without a full scan; non-git repos and any git failure fall back to the
+  scan-state walk. Correctness-gated scans (`dead-code`, `validation-gaps`,
+  `boundary-violations`) refresh through the same gate instead of refusing on a
+  stale or missing index, and only refuse when the refresh itself cannot
+  complete. `effigy graph status --refresh` provides the same on-demand
+  rebuild for the status surface, which stays report-only by default.
+  `effigy doctor` gains a `graph.index` check that flags a stale or degraded
+  index with the `graph status --refresh` remediation (a missing index is
+  self-healing, so it stays silent).
 - Effigy's CI and JSON-contract workflows now run for pull requests or explicit
   manual dispatch instead of every push to `main`. Binary publication is also
   explicitly dispatched with an existing annotated tag; the workflow validates

@@ -16,15 +16,17 @@
 //! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
 //!
 //! Recommended agent workflow:
-//! 1. run [`status`] and read `freshness.state` / `freshness.usable` on the JSON payload
-//! 2. refresh with [`run_index`] when state is `missing-index`, `refresh-recommended`,
-//!    or `degraded`, or when `usable` is false
+//! 1. query functions refresh a stale or missing index on demand, so graph
+//!    reads are current without a manual `graph index` step
+//! 2. run [`status`] to inspect freshness and counts; it stays report-only and
+//!    never mutates graph state
 //! 3. start task-shaped navigation with [`explore`]
 //! 4. use [`affected`] when the question is which tests or tasks to run after edits
 //! 5. fall back to [`context`] or exact-search tools for lower-level confirmation
 
 mod error;
 pub mod extractor;
+mod git;
 mod ids;
 pub mod index;
 pub mod json;
@@ -32,6 +34,7 @@ mod language;
 pub mod model;
 pub mod paths;
 pub mod query;
+pub mod refresh;
 mod registry;
 pub mod storage;
 mod support;
@@ -43,7 +46,7 @@ pub use error::CodeGraphError;
 /// Stable extractor identity for stored graph facts.
 pub use ids::{ExtractorId, GraphId};
 /// Build or refresh the local graph, then inspect freshness and counts.
-pub use index::{run_index, status, IndexReport};
+pub use index::{run_index, status, status_with_refresh, IndexReport};
 /// Render graph payloads into the public JSON contract.
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// Query helpers over the stored graph.
@@ -51,6 +54,8 @@ pub use query::{
     affected, callees, callers, context, explore, files as query_files, impact, node,
     search as query_search,
 };
+/// Lazy on-query graph refresh (rebuilds stale indexes on demand).
+pub use refresh::{ensure_fresh, RefreshOutcome};
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;
 /// Foreground graph watch surface and typed watch events.

@@ -6,6 +6,8 @@ mod catalog_checks;
 mod definitions;
 #[path = "checks/executor.rs"]
 mod executor;
+#[path = "checks/graph_checks.rs"]
+mod graph_checks;
 #[path = "checks/scan_checks.rs"]
 mod scan_checks;
 

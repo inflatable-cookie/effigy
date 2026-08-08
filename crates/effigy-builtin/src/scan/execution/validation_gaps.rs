@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_codegraph::json::{GraphAffectedFilePayload, GraphAffectedTaskPayload};
 use effigy_codegraph::model::{Confidence, FileIndexStatus};
-use effigy_codegraph::{affected, status, GraphId, GraphStore};
+use effigy_codegraph::{affected, GraphId};
 use effigy_scan::{
     ValidationGapConfidence, ValidationGapFinding, ValidationGapFindingKind,
     ValidationGapScanOptions, ValidationGapScanResult, ValidationGapSeverity,
@@ -13,8 +13,8 @@ use effigy_scan::{
 use crate::BuiltinError;
 
 use super::graph_helpers::{
-    classify_file_role, compile_globs, first_symbol_line, supported_language_map, FileRole,
-    FileRoleOptions,
+    classify_file_role, compile_globs, first_symbol_line, open_fresh_graph_store,
+    supported_language_map, FileRole, FileRoleOptions,
 };
 
 pub(super) fn run_validation_gap_scan(
@@ -27,17 +27,7 @@ pub(super) fn run_validation_gap_scan(
         .validate()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
 
-    let graph_status =
-        status(target_root).map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    if !graph_status.freshness.usable {
-        return Err(BuiltinError::task_invocation(format!(
-            "`scan validation-gaps` requires a usable graph index ({})",
-            graph_status.freshness.summary
-        )));
-    }
-
-    let store = GraphStore::open(target_root)
-        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    let store = open_fresh_graph_store(target_root, "validation-gaps")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;

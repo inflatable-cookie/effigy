@@ -42,6 +42,52 @@ fn run_doctor_reports_error_when_health_task_fails() {
 }
 
 #[test]
+fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
+    let root = temp_workspace("doctor-stale-graph-index");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"printf health-ok\"\n",
+    );
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn release_graph() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+    effigy_codegraph::run_index(&root).expect("graph index");
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn release_graph() { helper(); helper(); }\nfn helper() {}\n",
+    )
+    .expect("rewrite rust");
+
+    let out = run_doctor_task(root, &[]).expect("doctor run");
+    assert_output_contains_all(
+        &out,
+        &[
+            "graph.index",
+            "graph index is not current",
+            "effigy graph status --refresh",
+        ],
+    );
+}
+
+#[test]
+fn run_doctor_does_not_flag_missing_graph_index() {
+    let root = temp_workspace("doctor-no-graph-index");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"printf health-ok\"\n",
+    );
+    fs::write(root.join("src/lib.rs"), "pub fn release_graph() {}\n").expect("write rust");
+
+    let out = run_doctor_task(root, &[]).expect("doctor run");
+    assert_output_contains_all(&out, &["No findings."]);
+    assert_output_excludes_all(&out, &["graph.index", "graph status --refresh"]);
+}
+
+#[test]
 fn run_doctor_fix_scaffolds_health_task_when_missing() {
     let root = temp_workspace("doctor-fix-scaffold-health");
     write_manifest(

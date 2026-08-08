@@ -50,11 +50,12 @@ allow_paths = ["src/bin/**"]
 }
 
 #[test]
-fn run_manifest_task_builtin_scan_dead_code_refuses_stale_index() {
+fn run_manifest_task_builtin_scan_dead_code_auto_refreshes_stale_index() {
     // Regression for g08.016: a stale graph index reports drifted symbol
     // positions and missing edges, which surface as false-positive dead-code
-    // findings. The scan must refuse on a stale index and direct the operator
-    // to refresh, rather than presenting stale results as authoritative.
+    // findings. The scan used to refuse on a stale index; it now refreshes on
+    // demand (like graph queries) and only refuses when the refresh cannot
+    // complete.
     let root = setup_scan_workspace(
         "builtin-scan-dead-code-stale-index",
         Some("[scan.dead_code]\ndoctor = false\n"),
@@ -63,23 +64,24 @@ fn run_manifest_task_builtin_scan_dead_code_refuses_stale_index() {
     fs::write(root.join("src/lib.rs"), "pub mod live;\n").expect("write lib");
     fs::write(
         root.join("src/live/mod.rs"),
-        "pub fn lonely() -> usize { 1 }\n",
+        "pub fn lonely() -> usize { helper() }\nfn helper() -> usize { 1 }\n",
     )
     .expect("write live");
     seed_graph_index(&root);
 
-    // Mutate a source file after indexing so the graph index goes stale.
+    // Mutate a source file after indexing so the graph index goes stale and
+    // `helper` becomes unreferenced. Only a refreshed index reports it.
     fs::write(
         root.join("src/live/mod.rs"),
-        "pub fn lonely() -> usize { 1 }\npub fn added_after_index() -> usize { 2 }\n",
+        "pub fn lonely() -> usize { 1 }\nfn helper() -> usize { 1 }\n",
     )
     .expect("rewrite live");
 
-    let error = run_builtin_err(root, "scan", &["dead-code"]);
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("requires a fresh graph index"),
-        "stale index should be refused with remediation, got: {rendered}"
+    let out = run_builtin_ok(root, "scan", &["dead-code"]);
+    assert_output_excludes_all(&out, &["requires a fresh graph index"]);
+    assert_output_contains_all(
+        &out,
+        &["Dead Code", "unreferenced-symbol", "helper (function)"],
     );
 }
 

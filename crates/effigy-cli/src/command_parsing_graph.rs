@@ -48,9 +48,22 @@ fn parse_graph_status<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    let (repo_override, output_json) = parse_common_graph_flags(args)?;
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut refresh = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--refresh" => refresh = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
     Ok(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Status,
+        subcommand: GraphSubcommand::Status { refresh },
         repo_override,
         output_json,
     }))

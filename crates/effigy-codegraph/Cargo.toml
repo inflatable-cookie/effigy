@@ -9,6 +9,7 @@ description = "Native graph storage and JSON contracts for Effigy code intellige
 [dependencies]
 aho-corasick = "1"
 effigy-manifest = { path = "../effigy-manifest" }
+fs2 = "0.4"
 ignore = "0.4"
 notify = "8"
 pulldown-cmark = "0.13"

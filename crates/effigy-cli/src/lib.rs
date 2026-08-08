@@ -329,7 +329,9 @@ pub enum RhaiSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphSubcommand {
     Index,
-    Status,
+    Status {
+        refresh: bool,
+    },
     Watch {
         debounce_ms: u64,
     },

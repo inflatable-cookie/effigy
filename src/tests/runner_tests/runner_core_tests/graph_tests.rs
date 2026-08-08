@@ -81,7 +81,7 @@ fn graph_index_and_status_json_report_repo_state() {
     );
 
     let status = run_command(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Status,
+        subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root.clone()),
         output_json: true,
     }))
@@ -363,8 +363,8 @@ fn release_graph_smoke() {
 }
 
 #[test]
-fn graph_query_text_reports_stale_state() {
-    let root = setup_graph_fixture("graph-text-stale");
+fn graph_query_text_auto_refreshes_stale_index() {
+    let root = setup_graph_fixture("graph-text-auto-refresh");
     run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
@@ -377,6 +377,16 @@ fn graph_query_text_reports_stale_state() {
     )
     .expect("rewrite rust");
 
+    // Status still reports the stale index...
+    let status = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Status { refresh: false },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("graph status should succeed");
+    assert!(status.contains("trust: refresh-recommended"));
+
+    // ...while queries refresh on the fly instead of returning stale data.
     let search = run_command(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Search {
             query: "release".to_owned(),
@@ -386,10 +396,9 @@ fn graph_query_text_reports_stale_state() {
         output_json: false,
     }))
     .expect("graph search should succeed");
-    assert!(search.contains("graph trust: refresh-recommended"));
-    assert!(search
-        .contains("graph trust summary: graph index is stale; run `effigy graph index --json`"));
-    assert!(search.contains("graph stale: 1 paths require reindex"));
+    assert!(search.contains("graph trust: ready"));
+    assert!(search.contains("graph auto-refreshed"));
+    assert!(!search.contains("paths require reindex"));
 }
 
 #[test]
@@ -397,7 +406,7 @@ fn graph_status_json_reports_missing_index_trust_state() {
     let root = setup_graph_fixture("graph-status-missing-index");
 
     let status = run_command(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Status,
+        subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root),
         output_json: true,
     }))
@@ -411,5 +420,57 @@ fn graph_status_json_reports_missing_index_trust_state() {
     assert_eq!(
         status["payload"]["freshness"]["usable"].as_bool(),
         Some(false)
+    );
+}
+
+#[test]
+fn graph_status_refresh_flag_remediates_stale_index() {
+    let root = setup_graph_fixture("graph-status-refresh");
+    run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Index,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("graph index should succeed");
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn release_graph() { helper(); helper(); }\nfn helper() {}\n",
+    )
+    .expect("rewrite rust");
+
+    // Plain status reports the stale index.
+    let plain = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Status { refresh: false },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("graph status should succeed");
+    let plain = parse_json_output_with_schema_version(&plain, "effigy.graph.status.v1", 1);
+    assert_eq!(
+        plain["payload"]["freshness"]["state"].as_str(),
+        Some("refresh-recommended")
+    );
+
+    // `status --refresh` rebuilds on demand and reports the fresh state.
+    let refreshed = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Status { refresh: true },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("graph status --refresh should succeed");
+    let refreshed = parse_json_output_with_schema_version(&refreshed, "effigy.graph.status.v1", 1);
+    assert_eq!(
+        refreshed["payload"]["freshness"]["state"].as_str(),
+        Some("ready")
+    );
+    assert_eq!(
+        refreshed["payload"]["freshness"]["usable"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        refreshed["payload"]["freshness"]["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("graph auto-refreshed")),
+        "refresh note should surface in the summary"
     );
 }

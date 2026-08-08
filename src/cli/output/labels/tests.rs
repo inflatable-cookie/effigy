@@ -98,7 +98,7 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
     });
     let graph = Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Status,
+        subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: None,
         output_json: false,
     });

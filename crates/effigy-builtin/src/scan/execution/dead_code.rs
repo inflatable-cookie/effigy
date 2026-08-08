@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use effigy_codegraph::model::{
     Confidence, EdgeRecord, FileIndexStatus, FileRecord, ReferenceRecord, SymbolRecord,
 };
-use effigy_codegraph::{status, GraphId, GraphStore};
+use effigy_codegraph::GraphId;
 use effigy_scan::{
     DeadCodeConfidence, DeadCodeFinding, DeadCodeFindingKind, DeadCodeScanOptions,
     DeadCodeScanResult, DeadCodeSeverity,
@@ -14,8 +14,8 @@ use globset::GlobSet;
 use crate::BuiltinError;
 
 use super::graph_helpers::{
-    classify_file_role, compile_globs, first_symbol_line, supported_language_map, FileRole,
-    FileRoleOptions,
+    classify_file_role, compile_globs, first_symbol_line, open_fresh_graph_store,
+    supported_language_map, FileRole, FileRoleOptions,
 };
 
 pub(super) fn run_dead_code_scan(
@@ -26,22 +26,13 @@ pub(super) fn run_dead_code_scan(
         .validate()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
 
-    let graph_status =
-        status(target_root).map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
     // Dead-code findings are only trustworthy against a current index: a stale
     // index reports drifted symbol positions and missing edges, which surface as
-    // false positives (the exact failure g08.016 set out to fix). Refuse on a
-    // stale or unusable index and direct the operator to refresh, rather than
-    // presenting stale results as authoritative.
-    if !graph_status.freshness.usable || graph_status.freshness.stale {
-        return Err(BuiltinError::task_invocation(format!(
-            "`scan dead-code` requires a fresh graph index ({}); run `effigy graph index` first",
-            graph_status.freshness.summary
-        )));
-    }
-
-    let store = GraphStore::open(target_root)
-        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    // false positives (the exact failure g08.016 set out to fix). The store is
+    // opened through the lazy-refresh gate, so a stale or missing index is
+    // rebuilt on demand; the scan only refuses when the refresh could not
+    // complete.
+    let store = open_fresh_graph_store(target_root, "dead-code")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;

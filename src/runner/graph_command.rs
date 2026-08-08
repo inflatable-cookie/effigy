@@ -6,7 +6,7 @@ use effigy_codegraph::json::{
 };
 use effigy_codegraph::{
     affected, callees, callers, context, explore, impact, node, query_files, query_search,
-    render_json, run_index, status,
+    render_json, run_index, status, status_with_refresh,
 };
 
 use crate::runner::command_context::resolve_active_repo_root;
@@ -45,8 +45,12 @@ pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
                 Ok(render_index_text(&payload))
             }
         }
-        GraphSubcommand::Status => {
-            let payload = status(&repo_root).map_err(map_graph_error)?;
+        GraphSubcommand::Status { refresh } => {
+            let payload = if refresh {
+                status_with_refresh(&repo_root).map_err(map_graph_error)?
+            } else {
+                status(&repo_root).map_err(map_graph_error)?
+            };
             if args.output_json {
                 Ok(render_json(
                     &GraphCommandPayload::new(

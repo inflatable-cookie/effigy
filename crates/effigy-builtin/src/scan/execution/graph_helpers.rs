@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use effigy_codegraph::model::{ExtractorCapability, ExtractorRecord, SymbolRecord};
-use effigy_codegraph::GraphId;
+use effigy_codegraph::{ensure_fresh, GraphId, GraphStore};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::BuiltinError;
@@ -157,4 +158,29 @@ pub(super) fn first_symbol_line(
         .map(|symbol| symbol.span.start.line as usize)
         .min()
         .unwrap_or(1)
+}
+
+/// Open the graph store with a stale or missing index refreshed on demand.
+///
+/// Correctness-gated scans (dead-code, validation-gaps, boundary-violations)
+/// used to refuse on a stale or missing index and send the operator to
+/// `effigy graph index`. Lazy refresh fixes the common case: the index is
+/// rebuilt here, under the same cross-process lock queries use. The scan only
+/// refuses when the refresh itself could not complete — for example another
+/// process is mid-refresh and the wait budget expired.
+pub(super) fn open_fresh_graph_store(
+    target_root: &Path,
+    scan_label: &str,
+) -> Result<GraphStore, BuiltinError> {
+    let store = GraphStore::open(target_root)
+        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    let outcome = ensure_fresh(target_root, &store)
+        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    if !outcome.freshness.usable || outcome.freshness.stale {
+        return Err(BuiltinError::task_invocation(format!(
+            "`scan {scan_label}` requires a fresh graph index ({}); run `effigy graph index` if the automatic refresh did not complete",
+            outcome.freshness.summary
+        )));
+    }
+    Ok(store)
 }

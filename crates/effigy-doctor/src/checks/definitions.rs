@@ -4,6 +4,7 @@ use super::catalog_checks::{
     run_environment_tools_check, run_health_task_check, run_manifest_conflicts_check,
     run_task_references_check,
 };
+use super::graph_checks::run_graph_index_check;
 use super::scan_checks::{
     run_attention_markers_check, run_comment_ratio_check, run_duplicate_blocks_check,
     run_generated_assets_check, run_generated_in_src_check, run_god_files_check,
@@ -40,7 +41,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 11] = [
+const DOCTOR_CHECKS: [DoctorCheckDefinition; 12] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         progress_label: None,
@@ -55,6 +56,11 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 11] = [
         name: "task_references",
         progress_label: None,
         run: run_task_references_check,
+    },
+    DoctorCheckDefinition {
+        name: "graph_index",
+        progress_label: Some("Doctor check: graph index"),
+        run: run_graph_index_check,
     },
     DoctorCheckDefinition {
         name: "god_files",

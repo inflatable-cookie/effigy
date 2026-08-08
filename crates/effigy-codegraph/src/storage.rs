@@ -807,6 +807,30 @@ impl GraphStore {
         Ok(())
     }
 
+    pub(crate) fn metadata_value(&self, key: &str) -> Result<Option<String>, CodeGraphError> {
+        Ok(self
+            .connection
+            .query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
+    pub(crate) fn save_metadata(&self, key: &str, value: &str) -> Result<(), CodeGraphError> {
+        self.connection.execute(
+            "INSERT INTO metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_metadata(&self, key: &str) -> Result<(), CodeGraphError> {
+        self.connection
+            .execute("DELETE FROM metadata WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
     fn count_graph_search_records(&self, record_type: &str) -> Result<usize, CodeGraphError> {
         let count = self.connection.query_row(
             "SELECT COUNT(*) FROM graph_search WHERE record_type = ?1",

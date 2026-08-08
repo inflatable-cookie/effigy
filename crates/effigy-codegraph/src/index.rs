@@ -198,6 +198,7 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
     if graph_changed {
         store.refresh_search_index()?;
     }
+    crate::git::update_index_stamp(repo_root, &store)?;
 
     Ok(IndexReport {
         indexed_files: scan_entries.len(),
@@ -210,6 +211,24 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
         failed_paths: store.failed_diagnostic_paths()?,
         counts: store.counts()?,
     })
+}
+
+/// `status` with a lazy-refresh pass first: a stale or missing index is
+/// rebuilt on demand (the same gate queries use), and any refresh notes are
+/// appended to the reported freshness summary. Report-only by default;
+/// callers opt in.
+pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
+    let store = GraphStore::open(repo_root)?;
+    let outcome = crate::refresh::ensure_fresh(repo_root, &store)?;
+    let mut payload = status(repo_root)?;
+    if !outcome.notes.is_empty() {
+        payload.freshness.summary = format!(
+            "{} ({})",
+            payload.freshness.summary,
+            outcome.notes.join("; ")
+        );
+    }
+    Ok(payload)
 }
 
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
@@ -279,21 +298,7 @@ pub(crate) fn stale_paths_for_repo(
     .stale_paths)
 }
 
-pub(crate) fn freshness_payload(
-    repo_root: &Path,
-    store: &GraphStore,
-) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let stale_paths = stale_paths_for_repo(repo_root, store)?;
-    let counts = store.counts()?;
-    Ok(graph_freshness_payload(
-        counts.files > 0,
-        store.paths().db_path.is_file(),
-        &stale_paths,
-        store.failed_diagnostic_paths()?.len(),
-    ))
-}
-
-fn graph_freshness_payload(
+pub(crate) fn graph_freshness_payload(
     ready: bool,
     index_present: bool,
     stale_paths: &[String],

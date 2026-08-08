@@ -944,6 +944,7 @@ version = "0.9.1"
 dependencies = [
  "aho-corasick",
  "effigy-manifest",
+ "fs2",
  "hex",
  "ignore",
  "notify",
@@ -1064,6 +1065,7 @@ version = "0.9.1"
 dependencies = [
  "anstream",
  "effigy-cli",
+ "effigy-codegraph",
  "effigy-core",
  "effigy-deps",
  "effigy-manifest",

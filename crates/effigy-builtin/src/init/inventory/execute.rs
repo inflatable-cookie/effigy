@@ -189,7 +189,7 @@ fn command_for_job(id: &str, target_root: &Path) -> Option<Command> {
     let repo_override = Some(target_root.to_path_buf());
     match id {
         "graph_status.inspect" => Some(Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Status,
+            subcommand: GraphSubcommand::Status { refresh: false },
             repo_override,
             output_json: true,
         })),

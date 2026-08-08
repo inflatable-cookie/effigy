@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use effigy_codegraph::model::{Confidence, SymbolRecord};
-use effigy_codegraph::{status, GraphStore};
 use effigy_scan::{
     BoundaryViolationFinding, BoundaryViolationScanOptions, BoundaryViolationScanResult,
     BoundaryViolationSeverity,
@@ -10,6 +9,8 @@ use effigy_scan::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::BuiltinError;
+
+use super::graph_helpers::open_fresh_graph_store;
 
 pub(super) fn run_boundary_violation_scan(
     target_root: &Path,
@@ -28,17 +29,7 @@ pub(super) fn run_boundary_violation_scan(
         });
     }
 
-    let graph_status =
-        status(target_root).map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    if !graph_status.freshness.usable {
-        return Err(BuiltinError::task_invocation(format!(
-            "`scan boundary-violations` requires a usable graph index ({})",
-            graph_status.freshness.summary
-        )));
-    }
-
-    let store = GraphStore::open(target_root)
-        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    let store = open_fresh_graph_store(target_root, "boundary-violations")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;

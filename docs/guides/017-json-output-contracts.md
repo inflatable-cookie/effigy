@@ -229,10 +229,12 @@ Consume one JSON object per line. Current event kinds:
 
 ## Graph Workflow Notes
 
-- `graph status --json` is the freshness gate; read `payload.freshness.state`
-  and `payload.freshness.usable` before trusting queries. Reindex when state is
-  `missing-index`, `refresh-recommended`, or `degraded`, or when `usable` is
-  false. Path lists (`stale_paths`, `failed_paths`) are supporting detail.
+- Graph data queries refresh a stale or missing index before serving, so their
+  payloads are the post-refresh view. `graph status --json` is the honest
+  pre-refresh gate; when its `payload.freshness.state` is `missing-index`,
+  `refresh-recommended`, or `degraded`, reindex with
+  `graph status --refresh --json` (or let the next query refresh on demand).
+  Path lists (`stale_paths`, `failed_paths`) are supporting detail.
 - `graph affected --json` narrows validation scope but does not claim exhaustive
   test reachability.
 - `graph explore --json` and `graph context --json` are bounded packets; exact

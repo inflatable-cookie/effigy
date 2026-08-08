@@ -28,14 +28,12 @@ use traversal::{
 
 pub fn files(repo_root: &Path, limit: Option<usize>) -> Result<GraphFilesPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let mut files = store.list_files()?;
     if let Some(limit) = limit {
         files.truncate(limit);
     }
-    Ok(GraphFilesPayload {
-        freshness: freshness(repo_root, &store)?,
-        files,
-    })
+    Ok(GraphFilesPayload { freshness, files })
 }
 
 pub fn search(
@@ -44,6 +42,7 @@ pub fn search(
     limit: Option<usize>,
 ) -> Result<GraphSearchPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let limit = limit.unwrap_or(20);
     let matches = store
         .search(query, limit)?
@@ -54,7 +53,7 @@ pub fn search(
         .collect();
     Ok(GraphSearchPayload {
         query: query.to_owned(),
-        freshness: freshness(repo_root, &store)?,
+        freshness,
         matches,
     })
 }
@@ -116,6 +115,7 @@ fn search_match_payload(
 
 pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let file = store.find_file_by_id(id)?;
     let symbol = store.find_symbol_by_id(id)?;
     let edges = store
@@ -155,7 +155,7 @@ pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphErr
         })
         .collect();
     Ok(GraphNodePayload {
-        freshness: freshness(repo_root, &store)?,
+        freshness,
         file,
         symbol,
         edges,
@@ -186,6 +186,7 @@ pub fn impact(
     limit: Option<usize>,
 ) -> Result<GraphImpactPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let files = store.list_files()?;
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
@@ -213,7 +214,7 @@ pub fn impact(
             .collect::<Vec<_>>();
         return Ok(GraphImpactPayload {
             target: target.to_owned(),
-            freshness: freshness(repo_root, &store)?,
+            freshness,
             files: vec![file.clone()],
             symbols: file_symbols,
             edges: impact_edges,
@@ -228,7 +229,7 @@ pub fn impact(
     let Some(symbol) = symbol.cloned() else {
         return Ok(GraphImpactPayload {
             target: target.to_owned(),
-            freshness: freshness(repo_root, &store)?,
+            freshness,
             files: Vec::new(),
             symbols: Vec::new(),
             edges: Vec::new(),
@@ -254,7 +255,7 @@ pub fn impact(
         .collect();
     Ok(GraphImpactPayload {
         target: target.to_owned(),
-        freshness: freshness(repo_root, &store)?,
+        freshness,
         files: file,
         symbols: vec![symbol],
         edges,
@@ -268,12 +269,12 @@ pub fn affected(
     limit: Option<usize>,
 ) -> Result<GraphAffectedPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let files = store.list_files()?;
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
     let limit = limit.unwrap_or(100);
     let depth = depth.max(1);
-    let freshness = freshness(repo_root, &store)?;
     affected_from_graph(
         &files,
         &symbols,
@@ -532,10 +533,10 @@ pub fn context(
     paths: &[String],
 ) -> Result<GraphContextPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let files = store.list_files()?;
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
-    let freshness = freshness(repo_root, &store)?;
     context_from_graph(
         repo_root, &store, request, max_files, max_bytes, languages, paths, &files, &symbols,
         &edges, freshness,
@@ -952,10 +953,10 @@ pub fn explore(
     let max_files = max_files.unwrap_or(6);
     let max_bytes = max_bytes.unwrap_or(12_288);
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let files = store.list_files()?;
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
-    let freshness = freshness(repo_root, &store)?;
     let context_payload = context_from_graph(
         repo_root,
         &store,
@@ -1255,6 +1256,7 @@ fn related(
     inbound: bool,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
+    let freshness = ensure_freshness(repo_root, &store)?;
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
     let target_symbol = symbols
@@ -1294,16 +1296,21 @@ fn related(
         }
     }
     Ok(GraphRelatedNodesPayload {
-        freshness: freshness(repo_root, &store)?,
+        freshness,
         target_id: id.to_owned(),
         nodes: related_symbols,
         edges: related_edges,
     })
 }
 
-fn freshness(
+fn ensure_freshness(
     repo_root: &Path,
     store: &GraphStore,
 ) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    crate::index::freshness_payload(repo_root, store)
+    let outcome = crate::refresh::ensure_fresh(repo_root, store)?;
+    let mut payload = outcome.freshness;
+    if !outcome.notes.is_empty() {
+        payload.summary = format!("{} ({})", payload.summary, outcome.notes.join("; "));
+    }
+    Ok(payload)
 }
