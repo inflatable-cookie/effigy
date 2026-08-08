@@ -207,8 +207,22 @@ fn bounded_snippet(
     let mut snippet = slice.trim().to_owned();
     let truncated = snippet.len() > limit;
     if truncated {
-        snippet.truncate(limit.saturating_sub(3));
-        snippet.push_str("...");
+        // `String::truncate` panics unless the index is a char boundary, and
+        // `limit - 3` lands mid-codepoint whenever a snippet contains
+        // multi-byte text — an em-dash in a doc comment is enough. The slice
+        // bounds above are already walked back for this reason; this one was
+        // not, so a Unicode-bearing result aborted the whole query instead of
+        // returning an envelope.
+        // The ellipsis has to fit inside the limit too. `limit - 3` saturates
+        // to 0 for a limit under 4, which produced a three-byte "..." for a
+        // one-byte budget — a bound the function's own name promises to keep.
+        let ellipsis = if limit >= 4 { "..." } else { "" };
+        let mut cut = limit.saturating_sub(ellipsis.len());
+        while cut > 0 && !snippet.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        snippet.truncate(cut);
+        snippet.push_str(ellipsis);
     }
     if snippet.is_empty() {
         None
@@ -403,4 +417,48 @@ fn line_end_at_or_after(content: &str, index: usize) -> usize {
         .find('\n')
         .map(|position| end + position)
         .unwrap_or(content.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The panic this guards: `limit - 3` landing inside a multi-byte
+    /// character. An em-dash occupies three bytes, so a snippet containing one
+    /// aborts the query for any limit whose cut point falls inside it.
+    #[test]
+    fn bounded_snippet_truncates_on_a_character_boundary() {
+        let content = "focus ring — accent, and a long tail to force truncation";
+        for limit in 1..content.len() {
+            let Some((snippet, truncated)) = bounded_snippet(content, 0, content.len(), limit)
+            else {
+                continue;
+            };
+            assert!(
+                snippet.is_char_boundary(snippet.len()),
+                "limit {limit} produced a snippet split mid-character"
+            );
+            if truncated {
+                assert!(
+                    limit < 4 || snippet.ends_with("..."),
+                    "limit {limit} lost its ellipsis"
+                );
+                assert!(
+                    snippet.len() <= limit,
+                    "limit {limit} produced {} bytes",
+                    snippet.len()
+                );
+            }
+        }
+    }
+
+    /// Multi-byte content that is *not* truncated must survive untouched.
+    #[test]
+    fn bounded_snippet_leaves_short_unicode_alone() {
+        let content = "café —";
+        let (snippet, truncated) = bounded_snippet(content, 0, content.len(), 512)
+            .expect("short content still yields a snippet");
+        assert_eq!(snippet, content);
+        assert!(!truncated);
+    }
 }
