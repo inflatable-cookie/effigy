@@ -277,12 +277,12 @@ Companion references:
         "consumer_roots": [{ "canonical_path": "/workspace/app" }],
         "packages": [
           {
-            "name": "@poodle/core",
+            "name": "@inflatable-cookie/poodle-core",
             "local_path": "/workspace/poodle/packages/core",
             "committed_sources": [{ "kind": "registry", "identity": "1.2.3" }]
           },
           {
-            "name": "@poodle/protocol",
+            "name": "@inflatable-cookie/poodle-protocol",
             "local_path": "/workspace/poodle/packages/protocol",
             "committed_sources": [{ "kind": "registry", "identity": "1.2.3" }]
           }
@@ -303,7 +303,7 @@ Companion references:
       },
       "packages": [
         {
-          "name": "@poodle/core",
+          "name": "@inflatable-cookie/poodle-core",
           "local_path": "/workspace/poodle/packages/core",
           "depth": "direct",
           "committed_version": "1.2.3",
@@ -311,7 +311,7 @@ Companion references:
           "consumer_link": "registry"
         },
         {
-          "name": "@poodle/protocol",
+          "name": "@inflatable-cookie/poodle-protocol",
           "local_path": "/workspace/poodle/packages/protocol",
           "depth": "transitive",
           "committed_version": "1.2.3",
@@ -322,24 +322,24 @@ Companion references:
       "process_intents": [
         {
           "action": "register",
-          "packages": ["@poodle/core"],
+          "packages": ["@inflatable-cookie/poodle-core"],
           "cwd": "/workspace/poodle/packages/core",
           "program": "bun",
           "args": ["link", "--no-save"]
         },
         {
           "action": "register",
-          "packages": ["@poodle/protocol"],
+          "packages": ["@inflatable-cookie/poodle-protocol"],
           "cwd": "/workspace/poodle/packages/protocol",
           "program": "bun",
           "args": ["link", "--no-save"]
         },
         {
           "action": "link-consumer",
-          "packages": ["@poodle/core", "@poodle/protocol"],
+          "packages": ["@inflatable-cookie/poodle-core", "@inflatable-cookie/poodle-protocol"],
           "cwd": "/workspace/app",
           "program": "bun",
-          "args": ["link", "@poodle/core", "@poodle/protocol", "--no-save"]
+          "args": ["link", "@inflatable-cookie/poodle-core", "@inflatable-cookie/poodle-protocol", "--no-save"]
         }
       ],
       "symlink_intents": [],
@@ -466,20 +466,20 @@ Companion references:
   "report": {
     "outcome": "unlinked",
     "removed_consumer_links": [
-      "/workspace/app/node_modules/@poodle/core",
-      "/workspace/app/node_modules/@poodle/protocol"
+      "/workspace/app/node_modules/@inflatable-cookie/poodle-core",
+      "/workspace/app/node_modules/@inflatable-cookie/poodle-protocol"
     ],
     "applied_processes": [
       {
         "action": "unregister",
-        "packages": ["@poodle/core"],
+        "packages": ["@inflatable-cookie/poodle-core"],
         "cwd": "/workspace/poodle/packages/core",
         "program": "bun",
         "args": ["unlink", "--no-save"]
       },
       {
         "action": "unregister",
-        "packages": ["@poodle/protocol"],
+        "packages": ["@inflatable-cookie/poodle-protocol"],
         "cwd": "/workspace/poodle/packages/protocol",
         "program": "bun",
         "args": ["unlink", "--no-save"]
@@ -494,15 +494,15 @@ Companion references:
       "status": "passed",
       "evidence": [
         {
-          "package": "@poodle/core",
-          "consumer_root": "/workspace/app/node_modules/@poodle/core",
+          "package": "@inflatable-cookie/poodle-core",
+          "consumer_root": "/workspace/app/node_modules/@inflatable-cookie/poodle-core",
           "expected_source": "missing",
           "observed_source": "missing",
           "methods": ["bun-consumer-unlink"]
         },
         {
-          "package": "@poodle/protocol",
-          "consumer_root": "/workspace/app/node_modules/@poodle/protocol",
+          "package": "@inflatable-cookie/poodle-protocol",
+          "consumer_root": "/workspace/app/node_modules/@inflatable-cookie/poodle-protocol",
           "expected_source": "missing",
           "observed_source": "missing",
           "methods": ["bun-consumer-unlink"]
