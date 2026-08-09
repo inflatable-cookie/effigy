@@ -94,9 +94,9 @@ Updated: 2026-08-05
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is active. Milestones `g08.001` through `g08.025` are complete.
-`g08.026` completed patch-release hardening through card `1069`. No strict lane
-is currently active.
+`g08` is active. Milestones `g08.001` through `g08.026` are complete.
+`g08.027` completes papercut portfolio discovery and capture under strict spec
+`100`; cards `1070` and `1071` are complete.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
@@ -163,8 +163,7 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1069` and strict spec `099` are complete. No active ready
-card remains.
+Cards `1051` through `1071` and strict specs `099` and `100` are complete.
 
 ## Research Roadmaps
 
@@ -197,5 +196,5 @@ closeout there first.
 
 ## Next Task
 
-Request explicit human authorization before release prepare. No generation
+Select the next operator-approved scope. No release action or generation
 rollover is implied.

@@ -88,11 +88,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   The completed [`g08.026`](./g08/026-patch-release-lane-hardening.md) lane removes
   a persistent loopback test-state leak, settles prepared-source drift policy,
   and proves the `0.9.1` candidate.
+  The completed [`g08.027`](./g08/027-papercuts-discovery-and-capture.md) lane adds
+  rootless project/portfolio papercut discovery and safe single-project capture.
 
 ## Active Strict Lane
 
-None. Cards `1067` through `1069` completed
-[`g08.026`](./g08/026-patch-release-lane-hardening.md).
+No strict card is active. Cards `1070` and `1071` completed `g08.027` under
+strict spec `100`.
 
 ## Research Program
 
@@ -147,8 +149,8 @@ Before rollover:
 
 ## Next Task
 
-Request explicit human authorization before release prepare. No `g09`
-rollover is implied.
+Select the next operator-approved scope. No release action or `g09` rollover is
+implied.
 
 ## Historical language boundary
 

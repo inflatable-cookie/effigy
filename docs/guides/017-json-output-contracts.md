@@ -40,6 +40,7 @@ effigy --json doctor
 effigy --json test --plan
 effigy --json graph status
 effigy --json graph context "trace release orchestrator"
+effigy --json papercuts --scope ~/Dev/projects
 ```
 
 ## Top-Level Contract
@@ -106,6 +107,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
 - `effigy.deps.unlink.v1`
+- `effigy.papercuts.v1`
+- `effigy.papercuts.add.v1`
 
 Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-dependency-linking.md).
 - `effigy.doctor.v1`

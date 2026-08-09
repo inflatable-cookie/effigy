@@ -33,6 +33,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_deps,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Papercuts),
+        render: render_papercuts,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Secrets),
         render: render_secrets,
     },
@@ -176,6 +180,10 @@ fn render_general(
 
 fn render_bundle(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_bundle_help(renderer)
+}
+
+fn render_papercuts(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_papercuts_help(renderer)
 }
 
 fn render_catalog(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

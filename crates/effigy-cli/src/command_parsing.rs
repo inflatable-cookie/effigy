@@ -32,7 +32,8 @@ use crate::{
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs,
     DepsArgs, DepsManager, DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs,
     InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
-    InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
+    InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand,
+    TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -70,6 +71,7 @@ where
         "changelog" => parse_changelog_command(args),
         "deploy" => parse_deploy_command(args),
         "deps" => parse_deps_command(args),
+        "papercuts" => parse_papercuts_command(args),
         "secrets" => parse_secrets_command(args),
         "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),
@@ -98,6 +100,107 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_papercuts_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter().peekable();
+    if matches!(args.peek().map(String::as_str), Some("--help" | "-h")) {
+        return Ok(Command::Help(HelpTopic::Papercuts));
+    }
+
+    let is_add = args.peek().map(String::as_str) == Some("add");
+    let mut title = None;
+    if is_add {
+        args.next();
+        let value = args.next().ok_or_else(|| {
+            CliParseError::InvalidArguments("`effigy papercuts add` requires a title".to_owned())
+        })?;
+        if value.starts_with('-') || value.trim().is_empty() {
+            return Err(CliParseError::InvalidArguments(
+                "`effigy papercuts add` requires a title before flags".to_owned(),
+            ));
+        }
+        title = Some(value);
+    }
+
+    let mut scope = None;
+    let mut output_json = false;
+    let mut include_closed = false;
+    let mut friction = None;
+    let mut impact = None;
+    let mut possible_fix = None;
+    let mut surface = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--scope" => scope = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" if !is_add => include_closed = true,
+            "--friction" if is_add => {
+                friction = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--friction".to_owned(),
+                    },
+                )?)
+            }
+            "--impact" if is_add => {
+                impact = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--impact".to_owned(),
+                    },
+                )?)
+            }
+            "--fix" if is_add => {
+                possible_fix = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--fix".to_owned(),
+                    },
+                )?)
+            }
+            "--surface" if is_add => {
+                surface = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--surface".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Papercuts)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let subcommand = if let Some(title) = title {
+        PapercutsSubcommand::Add {
+            title,
+            friction: required_papercut_field(friction, "--friction")?,
+            impact: required_papercut_field(impact, "--impact")?,
+            possible_fix: required_papercut_field(possible_fix, "--fix")?,
+            surface: required_papercut_field(surface, "--surface")?,
+        }
+    } else {
+        PapercutsSubcommand::List { include_closed }
+    };
+    Ok(Command::Papercuts(PapercutsArgs {
+        subcommand,
+        scope,
+        output_json,
+    }))
+}
+
+fn required_papercut_field(value: Option<String>, flag: &str) -> Result<String, CliParseError> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            CliParseError::InvalidArguments(format!(
+                "`effigy papercuts add` requires {flag} <TEXT>"
+            ))
+        })
 }
 
 fn parse_deps_command<I>(args: I) -> Result<Command, CliParseError>

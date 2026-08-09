@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy papercuts` discovers conventional root `PAPERCUTS.md` queues from
+  one project or the immediate projects below a collection directory, with
+  open-only/default and `--all` human output plus agent-ready
+  `effigy.papercuts.v1` JSON. `effigy papercuts add` safely creates or updates
+  one project queue with required canonical fields, duplicate-title refusal,
+  locking, and atomic replacement.
+
 ### Changed
 - Graph data queries (`search`, `node`, `callers`, `callees`, `impact`, `context`,
   `explore`, `affected`, `files`) now refresh a stale or missing index on demand

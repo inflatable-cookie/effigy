@@ -26,6 +26,7 @@ pub enum Command {
     Changelog(ChangelogArgs),
     Deploy(DeployArgs),
     Deps(DepsArgs),
+    Papercuts(PapercutsArgs),
     Secrets(SecretsArgs),
     Defer(DeferArgs),
     Exec(ExecArgs),
@@ -109,6 +110,7 @@ pub enum HelpTopic {
     Changelog,
     Deploy,
     Deps,
+    Papercuts,
     Secrets,
     Defer,
     Exec,
@@ -191,6 +193,27 @@ pub enum DepsSubcommand {
         manager: DepsManager,
         library_path: PathBuf,
         dry_run: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PapercutsArgs {
+    pub subcommand: PapercutsSubcommand,
+    pub scope: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PapercutsSubcommand {
+    List {
+        include_closed: bool,
+    },
+    Add {
+        title: String,
+        friction: String,
+        impact: String,
+        possible_fix: String,
+        surface: String,
     },
 }
 

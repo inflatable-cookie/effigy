@@ -18,6 +18,8 @@ mod gateway_option_tests;
 mod graph_option_tests;
 #[path = "lib_tests_parse_tests/help_and_flag_tests.rs"]
 mod help_and_flag_tests;
+#[path = "lib_tests_parse_tests/papercuts_option_tests.rs"]
+mod papercuts_option_tests;
 #[path = "lib_tests_parse_tests/release_option_tests.rs"]
 mod release_option_tests;
 #[path = "lib_tests_parse_tests/rhai_option_tests.rs"]

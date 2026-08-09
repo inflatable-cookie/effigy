@@ -23,6 +23,7 @@ members = [
     "crates/effigy-containers",
     "crates/effigy-distribution",
     "crates/effigy-deps",
+    "crates/effigy-papercuts",
     "crates/effigy-release",
     "crates/effigy-rhai",
     "crates/effigy-routing",
@@ -85,6 +86,7 @@ effigy-core = { path = "crates/effigy-core" }
 effigy-data = { path = "crates/effigy-data" }
 effigy-demo = { path = "crates/effigy-demo" }
 effigy-deps = { path = "crates/effigy-deps" }
+effigy-papercuts = { path = "crates/effigy-papercuts" }
 effigy-doctor = { path = "crates/effigy-doctor" }
 effigy-docs-policy = { path = "crates/effigy-docs-policy" }
 effigy-distribution = { path = "crates/effigy-distribution" }

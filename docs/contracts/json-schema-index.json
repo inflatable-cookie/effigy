@@ -39,6 +39,20 @@
       "status": "active"
     },
     {
+      "schema": "effigy.papercuts.v1",
+      "schema_version": 1,
+      "command": "effigy --json papercuts --scope <fixture_task_success>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.papercuts.add.v1",
+      "schema_version": 1,
+      "command": "effigy --json papercuts add contract-cut --friction fixture --impact fixture --fix fixture --surface fixture --scope <fixture_task_success>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
       "schema": "effigy.command.v1",
       "schema_version": 1,
       "command": "effigy --json doctor --repo <fixture_task_success>",

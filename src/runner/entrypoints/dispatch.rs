@@ -23,6 +23,7 @@ use super::super::run_internal_gateway;
 use super::super::run_internal_host_process_stop;
 use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_script_run;
+use super::super::run_papercuts_with_cwd;
 use super::super::run_release;
 use super::super::run_rhai;
 use super::super::run_secrets;
@@ -62,6 +63,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Changelog(args) => run_changelog(args),
         Command::Deploy(args) => run_deploy(args),
         Command::Deps(args) => run_deps(args),
+        Command::Papercuts(args) => run_papercuts_with_cwd(args, cwd),
         Command::Secrets(args) => run_secrets(args),
         Command::Defer(args) => run_defer(args),
         Command::Exec(args) => run_exec(args),

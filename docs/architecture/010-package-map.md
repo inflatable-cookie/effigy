@@ -93,6 +93,7 @@ Current authority surfaces:
 | `effigy-env` | env-schema integration and env contract helpers |
 | `effigy-demo` | demo model and execution helpers |
 | `effigy-deps` | machine-local dependency-link identities, Cargo/Bun inventory, Cargo and Bun planning/application/verification, observed status, and atomic desired-state stores |
+| `effigy-papercuts` | project/collection papercut discovery, tolerant Markdown parsing, normalized reports, diagnostics, fingerprints, and safe queue insertion |
 | `effigy-scan` | repository scans used by doctor/policy surfaces |
 | `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers |
 

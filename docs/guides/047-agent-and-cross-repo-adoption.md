@@ -119,6 +119,12 @@ Default flow:
 8. Use `--repo <PATH>` only when intentionally operating on another repo
 9. Fall back to raw tool commands only when Effigy does not yet cover the path
 
+Portfolio maintenance:
+- use `effigy --json papercuts --scope <projects-dir>` to inventory root
+  papercut queues for periodic triage
+- treat entries as observations until the owning project's planning process
+  promotes them
+
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available
 - if `tasks.test` exists in `effigy.toml`, that explicit task is the source of truth

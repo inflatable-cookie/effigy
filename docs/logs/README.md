@@ -78,6 +78,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/09-164830-papercuts-discovery-and-capture.md`](./2026-08/09-164830-papercuts-discovery-and-capture.md)
 - [`2026-08/06-223813-patch-release-candidate-proof.md`](./2026-08/06-223813-patch-release-candidate-proof.md)
 - [`2026-08/06-223205-prepared-source-drift-policy.md`](./2026-08/06-223205-prepared-source-drift-policy.md)
 - [`2026-08/06-222825-loopback-test-state-isolation.md`](./2026-08/06-222825-loopback-test-state-isolation.md)

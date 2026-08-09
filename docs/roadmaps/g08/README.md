@@ -5,7 +5,7 @@ Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
-`g08.024` through `g08.026`.
+`g08.024` through `g08.026`, and papercut portfolio discovery in `g08.027`.
 
 ## Purpose
 
@@ -58,6 +58,7 @@ This generation should help agents and maintainers answer questions like:
 - [`024-initial-current-version-release-tag.md`](./024-initial-current-version-release-tag.md)
 - [`025-annotated-release-tag-integrity.md`](./025-annotated-release-tag-integrity.md)
 - [`026-patch-release-lane-hardening.md`](./026-patch-release-lane-hardening.md)
+- [`027-papercuts-discovery-and-capture.md`](./027-papercuts-discovery-and-capture.md)
 
 ## Design Posture
 
@@ -134,8 +135,8 @@ This generation should help agents and maintainers answer questions like:
 
 The dependency suite completed under strict spec `099`. Cards `1065` and
 `1066` completed the bounded release-tag integrity lane. Cards `1067` through
-`1069` completed the `g08.026` patch-release hardening lane. No ready card
-remains.
+`1069` completed the `g08.026` patch-release hardening lane. Strict spec `100`
+completed `g08.027` through cards `1070` and `1071`.
 
 ## Batch Cards
 
@@ -180,6 +181,8 @@ remains.
 - [`1067-remove-loopback-test-state-leakage.md`](./batch-cards/1067-remove-loopback-test-state-leakage.md)
 - [`1068-settle-prepared-source-drift-policy.md`](./batch-cards/1068-settle-prepared-source-drift-policy.md)
 - [`1069-prove-patch-release-candidate.md`](./batch-cards/1069-prove-patch-release-candidate.md)
+- [`1070-add-papercuts-discovery-foundation.md`](./batch-cards/1070-add-papercuts-discovery-foundation.md)
+- [`1071-add-papercuts-capture-and-closeout.md`](./batch-cards/1071-add-papercuts-capture-and-closeout.md)
 
 ## Current State
 
@@ -189,9 +192,8 @@ remains.
 
 `g08.018` through `g08.023` are complete.
 
-Cards `1051` through `1069` are complete. No active ready card remains.
+Cards `1051` through `1071` and strict spec `100` are complete.
 
 ## Next Task
 
-Request explicit human authorization before release prepare or any later
-release mutation.
+Select the next operator-approved scope without release mutation.

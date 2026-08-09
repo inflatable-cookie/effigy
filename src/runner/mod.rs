@@ -34,6 +34,7 @@ mod interactive_session;
 mod locking;
 mod managed_shell;
 mod manifest;
+mod papercuts_command;
 mod release_command;
 mod render;
 mod rhai_command;
@@ -74,6 +75,7 @@ pub(in crate::runner) use host_container_lease::run_internal_container_lease_rea
 pub(in crate::runner) use host_process::{
     run_internal_host_process_stop, run_internal_host_process_supervise,
 };
+pub(in crate::runner) use papercuts_command::run_papercuts_with_cwd;
 pub(in crate::runner) use release_command::run_release;
 pub(in crate::runner) use rhai_command::run_rhai;
 pub(in crate::runner) use script_command::run_internal_script_run;

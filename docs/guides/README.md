@@ -65,6 +65,7 @@ Use `071` only when you are changing the shipped catalog itself.
 
 Read:
 - [`077-local-dependency-linking.md`](./077-local-dependency-linking.md)
+- [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md)
 
 Use when:
 - a consumer is pinned to a Cargo Git tag or published Bun package
@@ -128,6 +129,7 @@ Use when:
 - you need stable JSON
 - you want the graph as the code-understanding lane inside a wider agent flow
 - you are adopting Effigy across multiple repos
+- you want a periodic agent to inventory project papercut queues
 
 ### Release and distribute Effigy-managed software
 

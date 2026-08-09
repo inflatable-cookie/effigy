@@ -15,7 +15,7 @@ This folder contains both:
 
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
-`030`, `031`, `032`, `033`, `034`, and `035`.
+`030`, `031`, `032`, `033`, `034`, `035`, and `036`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -142,6 +142,9 @@ new reusable-core work.
 - [`035-release-tag-identity-contract.md`](./035-release-tag-identity-contract.md):
   release tag object, deterministic annotation-message, push-order, and
   no-retag evidence contract.
+- [`036-papercuts-discovery-contract.md`](./036-papercuts-discovery-contract.md):
+  rootless project/collection queue discovery, tolerant Markdown parsing,
+  agent-ready JSON, and safe single-project capture contract.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -178,6 +181,7 @@ new reusable-core work.
 | `033-gateway-route-table-trust-contract.md` | Platform maintainers | Gateway route-table trust boundary, read-path integrity mechanism (ownership/permission + managed marker), fail-closed failure mode, and operator visibility in gateway status/doctor | Planning review against `g08.014` plus focused trust-verification fixtures (well-formed, tampered, wrong-permission, foreign-marked) once implementation starts |
 | `034-local-dependency-linking-contract.md` | Platform maintainers | `effigy deps` grammar, Cargo/Bun mechanism behavior, closure rules, desired-state schema/location, manifest/lock invariants, doctor severity, and JSON payload shape | Planning review against `g08.018` through `g08.023`; focused manager, state, doctor, and portfolio proofs once implementation starts |
 | `035-release-tag-identity-contract.md` | Platform maintainers | Release tag object type, annotation-message derivation, signing posture, tag push ordering, or no-retag evidence | Focused `effigy-release` tests plus execute-success local and bare-remote tag-object proof |
+| `036-papercuts-discovery-contract.md` | Platform maintainers | Papercut Markdown convention, scope rules, parser diagnostics, command grammar, JSON payload, or capture safety | `cargo test -p effigy-papercuts` plus focused CLI and command-output tests |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 

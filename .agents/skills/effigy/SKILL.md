@@ -104,6 +104,7 @@ for generic repo orientation.
 | Full local QA | `effigy qa` or `effigy qa:ci:local` |
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
+| Inventory project papercuts | `effigy --json papercuts` or `effigy --json papercuts --scope <PROJECTS_DIR>` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
@@ -188,6 +189,7 @@ Sequence: `references/release-protocol.md`.
 | Quick start | `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
 | Local dependency linking | `docs/guides/077-local-dependency-linking.md` |
+| Papercuts discovery | `docs/guides/078-papercuts-discovery-and-capture.md` |
 | Distribution evidence | `docs/guides/062-distribution-system-guide.md` |
 | Containers / dev | `docs/guides/063-container-system-guide.md` |
 | Release | `docs/guides/051-release-orchestration.md` |
