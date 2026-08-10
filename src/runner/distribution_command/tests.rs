@@ -58,18 +58,17 @@ fn write_summary_defaults_crate_version_from_tag() {
             .as_nanos()
     ));
     fs::create_dir_all(&root).expect("mkdir");
-    run_write_summary(
-        std::path::Path::new("."),
-        &default_distribution_policy(),
-        "v0.2.5",
-        &root,
-        None,
-        "https://github.com/inflatable-cookie/effigy.git",
-        "inflatable-cookie/effigy/effigy",
-        true,
-        &["01-tag-install-validation.log".to_owned()],
-        false,
-    )
+    run_write_summary(effigy_distribution::DistributionSummaryRequest {
+        distribution_policy: &default_distribution_policy(),
+        tag: "v0.2.5",
+        artifacts_dir: &root,
+        crate_version: None,
+        repo_url: "https://github.com/inflatable-cookie/effigy.git",
+        brew_formula: "inflatable-cookie/effigy/effigy",
+        homebrew_executed: true,
+        log_files: &["01-tag-install-validation.log".to_owned()],
+        output_json: false,
+    })
     .expect("write summary");
     let rendered = fs::read_to_string(root.join("distribution-summary.env")).expect("read summary");
     assert!(rendered.contains("CRATE_VERSION=0.2.5"));

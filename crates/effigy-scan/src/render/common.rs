@@ -1,11 +1,15 @@
+pub(super) struct SeverityLevels<S> {
+    pub(super) warning: S,
+    pub(super) high: S,
+    pub(super) critical: S,
+}
+
 pub(super) fn render_text_report<T, S, FSeverity, FLine>(
     spec: TextReportSpec,
     findings: &[T],
     render_options: crate::model::TextRenderOptions,
     severity_of: FSeverity,
-    warning: S,
-    high: S,
-    critical: S,
+    levels: SeverityLevels<S>,
     line_for: FLine,
 ) -> String
 where
@@ -13,6 +17,11 @@ where
     FSeverity: Fn(&T) -> S,
     FLine: Fn(&T) -> String,
 {
+    let SeverityLevels {
+        warning,
+        high,
+        critical,
+    } = levels;
     let counts = severity_counts(findings, &severity_of, warning, high, critical);
     let visible_findings = visible_findings(
         findings,

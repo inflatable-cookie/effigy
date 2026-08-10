@@ -24,13 +24,18 @@ pub(in crate::scan::execution) use overrides::{
 };
 use response::{
     build_scan_payload, fail_on_findings_error, render_scan_output, render_scan_response,
+    ScanResponse,
 };
 
+pub(super) struct ScanExecution<'a> {
+    pub(super) request: ScanRequest,
+    pub(super) target_root: &'a Path,
+    pub(super) scan_roots: &'a [PathBuf],
+    pub(super) mode: ScanModeConfig,
+}
+
 pub(super) fn run_scan_mode<TOptions, TResult, FLoad, FPrepare, FRun, FText, FMarkdown>(
-    request: ScanRequest,
-    target_root: &Path,
-    scan_roots: &[PathBuf],
-    mode: ScanModeConfig,
+    execution: ScanExecution<'_>,
     load_options: FLoad,
     prepare_options: FPrepare,
     run_scan: FRun,
@@ -46,6 +51,12 @@ where
     FText: FnOnce(&TResult, TextRenderOptions) -> String,
     FMarkdown: FnOnce(&TResult) -> String,
 {
+    let ScanExecution {
+        request,
+        target_root,
+        scan_roots,
+        mode,
+    } = execution;
     let graph_context = load_graph_context(target_root, &request, mode.label);
     let mut options = load_options(target_root)?;
     prepare_options(&mut options, &request)?;
@@ -73,16 +84,16 @@ where
             &rendered_output.text,
         ),
     );
-    let rendered = render_scan_response(
-        request.output_json,
-        rendered_output.display_output_path.as_ref(),
+    let rendered = render_scan_response(ScanResponse {
+        output_json: request.output_json,
+        output_path: rendered_output.display_output_path.as_ref(),
         mode,
-        options.format(),
+        format: options.format(),
         finding_count,
-        graph_context.as_ref(),
-        &payload,
-        &rendered_output.text,
-    )?;
+        graph_context: graph_context.as_ref(),
+        payload: &payload,
+        rendered_text: &rendered_output.text,
+    })?;
     fail_on_findings_error(options.fail_on_findings(), finding_count, &rendered)?;
     Ok(Some(rendered))
 }

@@ -14,7 +14,7 @@ use crate::policy::project::{
 };
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
-use crate::workspace::materialize_runtime_workspace_mount_rewrite;
+use crate::workspace::{materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite};
 use crate::{
     resolve_catalog_network_contract, DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE,
     DEFAULT_HEALTH_TIMEOUT_SECS,
@@ -124,17 +124,17 @@ pub fn load_container_policy_with_workspace(
         ))
     })?;
     let library_mounts = resolve_library_mounts(&loaded.manifest, loaded.bundle_root.as_deref())?;
-    build_effective_policy(
+    build_effective_policy(PolicyBuildContext {
         repo_root,
-        loaded.bundle_root.as_deref(),
+        bundle_root: loaded.bundle_root.as_deref(),
         containers,
-        &default_project_name_base,
-        &name,
+        default_project_name_base: &default_project_name_base,
+        name: &name,
         config,
-        &loaded.effective_manifest,
-        inferred_workspace.as_ref(),
-        &library_mounts,
-    )
+        effective_manifest: &loaded.effective_manifest,
+        workspace: inferred_workspace.as_ref(),
+        library_mounts: &library_mounts,
+    })
 }
 
 pub fn load_all_container_policies(
@@ -156,17 +156,17 @@ pub fn load_all_container_policies(
         .iter()
         .map(|(name, config)| {
             let workspace = resolve_container_workspace(&loaded.manifest, Some(name), None)?;
-            build_effective_policy(
+            build_effective_policy(PolicyBuildContext {
                 repo_root,
-                loaded.bundle_root.as_deref(),
+                bundle_root: loaded.bundle_root.as_deref(),
                 containers,
-                &default_project_name_base,
+                default_project_name_base: &default_project_name_base,
                 name,
                 config,
-                &loaded.effective_manifest,
-                workspace.as_ref(),
-                &library_mounts,
-            )
+                effective_manifest: &loaded.effective_manifest,
+                workspace: workspace.as_ref(),
+                library_mounts: &library_mounts,
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     policies.sort_by(|left, right| left.name.cmp(&right.name));
@@ -245,17 +245,32 @@ pub fn effective_attach_mode(
     }
 }
 
+struct PolicyBuildContext<'a> {
+    repo_root: &'a Path,
+    bundle_root: Option<&'a Path>,
+    containers: &'a ManifestContainersConfig,
+    default_project_name_base: &'a str,
+    name: &'a str,
+    config: &'a ManifestContainerConfig,
+    effective_manifest: &'a str,
+    workspace: Option<&'a ManifestWorkspaceConfig>,
+    library_mounts: &'a [effigy_manifest::LibraryMount],
+}
+
 fn build_effective_policy(
-    repo_root: &Path,
-    bundle_root: Option<&Path>,
-    containers: &ManifestContainersConfig,
-    default_project_name_base: &str,
-    name: &str,
-    config: &ManifestContainerConfig,
-    effective_manifest: &str,
-    workspace: Option<&ManifestWorkspaceConfig>,
-    library_mounts: &[effigy_manifest::LibraryMount],
+    context: PolicyBuildContext<'_>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    let PolicyBuildContext {
+        repo_root,
+        bundle_root,
+        containers,
+        default_project_name_base,
+        name,
+        config,
+        effective_manifest,
+        workspace,
+        library_mounts,
+    } = context;
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
     let profile = config
         .profile
@@ -292,14 +307,16 @@ fn build_effective_policy(
             let working_dir =
                 resolve_container_exec_working_dir(repo_root, name, config, Some(workspace))?;
             materialize_runtime_workspace_mount_rewrite(
-                repo_root,
-                name,
-                config,
-                workspace,
-                &working_dir,
-                &primary_service,
+                WorkspaceComposeRewrite {
+                    repo_root,
+                    container_name: name,
+                    config,
+                    workspace,
+                    working_dir: &working_dir,
+                    primary_service: &primary_service,
+                    library_mounts,
+                },
                 &mut compose_files,
-                library_mounts,
             )?;
         }
     }

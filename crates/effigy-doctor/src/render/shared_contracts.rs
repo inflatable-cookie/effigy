@@ -18,18 +18,32 @@ pub(crate) fn root_resolution_payload(
     }
 }
 
-pub(crate) fn explain_summary_rows(
-    request_task: &str,
-    request_args: &[String],
-    resolved_root: &str,
-    selection_status: &str,
-    selected_catalog: Option<&str>,
-    selected_mode: Option<&str>,
-    selection_reasoning: &str,
-    deferral_considered: bool,
-    deferral_selected: bool,
-    deferral_reasoning: &str,
-) -> Vec<(String, String)> {
+pub(crate) struct ExplainSummary<'a> {
+    pub(crate) request_task: &'a str,
+    pub(crate) request_args: &'a [String],
+    pub(crate) resolved_root: &'a str,
+    pub(crate) selection_status: &'a str,
+    pub(crate) selected_catalog: Option<&'a str>,
+    pub(crate) selected_mode: Option<&'a str>,
+    pub(crate) selection_reasoning: &'a str,
+    pub(crate) deferral_considered: bool,
+    pub(crate) deferral_selected: bool,
+    pub(crate) deferral_reasoning: &'a str,
+}
+
+pub(crate) fn explain_summary_rows(summary: ExplainSummary<'_>) -> Vec<(String, String)> {
+    let ExplainSummary {
+        request_task,
+        request_args,
+        resolved_root,
+        selection_status,
+        selected_catalog,
+        selected_mode,
+        selection_reasoning,
+        deferral_considered,
+        deferral_selected,
+        deferral_reasoning,
+    } = summary;
     vec![
         ("request".to_owned(), request_task.to_owned()),
         ("args".to_owned(), request_args.join(" ")),

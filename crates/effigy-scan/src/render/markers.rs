@@ -1,6 +1,6 @@
 use super::common::{
     render_markdown_report, render_text_report, style_snippet_line, MarkdownReportSpec,
-    TextReportSpec,
+    SeverityLevels, TextReportSpec,
 };
 use crate::model::{
     AttentionMarkerScanResult, AttentionMarkerSeverity, ScanGraphFileContext,
@@ -35,9 +35,11 @@ pub fn render_attention_marker_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        AttentionMarkerSeverity::Warning,
-        AttentionMarkerSeverity::High,
-        AttentionMarkerSeverity::Critical,
+        SeverityLevels {
+            warning: AttentionMarkerSeverity::Warning,
+            high: AttentionMarkerSeverity::High,
+            critical: AttentionMarkerSeverity::Critical,
+        },
         |finding| {
             let base = format!(
                 "{}  {}:{}  {}  [{}]  {}",
@@ -141,9 +143,11 @@ pub fn render_stale_suppression_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        StaleSuppressionSeverity::Warning,
-        StaleSuppressionSeverity::High,
-        StaleSuppressionSeverity::Critical,
+        SeverityLevels {
+            warning: StaleSuppressionSeverity::Warning,
+            high: StaleSuppressionSeverity::High,
+            critical: StaleSuppressionSeverity::Critical,
+        },
         |finding| {
             let header = format!(
                 "{}  {}:{}  {}  [{}]",

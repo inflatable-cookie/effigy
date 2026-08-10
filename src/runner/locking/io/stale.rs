@@ -81,7 +81,7 @@ pub(super) fn lock_conflict(
         })
         .unwrap_or((None, None, None, None, None));
 
-    RunnerError::TaskLockConflict {
+    RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
         scope: scope_label.clone(),
         lock_path,
         holder_pid,
@@ -94,7 +94,7 @@ pub(super) fn lock_conflict(
             scope_label,
             workspace_root.display()
         ),
-    }
+    }))
 }
 
 pub(super) fn lock_heartbeat_epoch_ms(record: &super::LockRecord) -> u128 {

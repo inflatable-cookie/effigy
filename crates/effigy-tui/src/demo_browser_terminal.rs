@@ -61,6 +61,20 @@ struct TerminalStreamSource {
     terminal_rows: Option<u16>,
 }
 
+#[derive(Clone, Copy)]
+struct TerminalGeometry {
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+#[derive(Clone, Copy)]
+struct TerminalViewport {
+    width: usize,
+    height: usize,
+    scroll_offset: usize,
+    geometry: TerminalGeometry,
+}
+
 pub fn build_terminal_view(
     repo_root: &Path,
     detail: &DemoDetail,
@@ -80,8 +94,10 @@ pub fn build_terminal_view(
             session.recent_output.stdout_lines.clone(),
             session.recent_output.stderr_lines.clone(),
             TerminalViewSource::ActiveLogs,
-            session.terminal_size.cols,
-            session.terminal_size.rows,
+            TerminalGeometry {
+                cols: session.terminal_size.cols,
+                rows: session.terminal_size.rows,
+            },
         );
         return render_terminal_view_from_source(source, width, height, scroll_offset);
     }
@@ -94,8 +110,10 @@ pub fn build_terminal_view(
             Vec::new(),
             Vec::new(),
             TerminalViewSource::LatestAttemptLogs,
-            None,
-            None,
+            TerminalGeometry {
+                cols: None,
+                rows: None,
+            },
         );
         return render_terminal_view_from_source(source, width, height, scroll_offset);
     }
@@ -152,9 +170,12 @@ fn terminal_stream_source(
     fallback_stdout_lines: Vec<String>,
     fallback_stderr_lines: Vec<String>,
     source: TerminalViewSource,
-    terminal_cols: Option<u16>,
-    terminal_rows: Option<u16>,
+    geometry: TerminalGeometry,
 ) -> TerminalStreamSource {
+    let TerminalGeometry {
+        cols: terminal_cols,
+        rows: terminal_rows,
+    } = geometry;
     let stdout_bytes = stdout_log_path
         .map(|path| resolve_repo_relative_path(repo_root, path))
         .and_then(|path| fs::read(path).ok())
@@ -198,11 +219,15 @@ fn render_terminal_view_from_source(
     render_terminal_view_from_bytes(
         &source.stdout_bytes,
         source.source,
-        width,
-        height,
-        scroll_offset,
-        source.terminal_cols,
-        source.terminal_rows,
+        TerminalViewport {
+            width,
+            height,
+            scroll_offset,
+            geometry: TerminalGeometry {
+                cols: source.terminal_cols,
+                rows: source.terminal_rows,
+            },
+        },
         source.stderr_lines,
     )
 }
@@ -210,13 +235,19 @@ fn render_terminal_view_from_source(
 fn render_terminal_view_from_bytes(
     stdout_bytes: &[u8],
     source: TerminalViewSource,
-    width: usize,
-    height: usize,
-    scroll_offset: usize,
-    terminal_cols: Option<u16>,
-    terminal_rows: Option<u16>,
+    viewport: TerminalViewport,
     stderr_lines: Vec<String>,
 ) -> TerminalView {
+    let TerminalViewport {
+        width,
+        height,
+        scroll_offset,
+        geometry:
+            TerminalGeometry {
+                cols: terminal_cols,
+                rows: terminal_rows,
+            },
+    } = viewport;
     let parser_rows = terminal_rows.unwrap_or(height as u16).max(1);
     let parser_cols = terminal_cols.unwrap_or(width as u16).max(1);
     let mut parser = vt100::Parser::new(

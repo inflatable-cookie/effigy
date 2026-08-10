@@ -428,7 +428,8 @@ fn render_host_log_message(message: &str, color_enabled: bool) -> String {
 }
 
 fn render_host_log_line(line: &str, color_enabled: bool) -> String {
-    const STATUS_PREFIXES: [(&str, fn(&Theme) -> Style); 10] = [
+    type StatusPrefix = (&'static str, fn(&Theme) -> Style);
+    const STATUS_PREFIXES: [StatusPrefix; 10] = [
         ("[ok]", |theme| theme.success),
         ("[check]", |theme| theme.warning),
         ("[error]", |theme| theme.error),

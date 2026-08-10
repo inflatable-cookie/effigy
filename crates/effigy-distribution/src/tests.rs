@@ -2,13 +2,13 @@ use super::{
     base_artifact_patterns, build_first_publish_plan, effective_brew_formula,
     effective_closeout_owner, effective_repo_url, load_distribution_policy, schema_v1_payload,
     validate_artifacts_command, validate_metadata_command, EffectiveDistributionPolicy,
-    DEFAULT_BINARY_NAME, DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER,
-    DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL,
-    DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
+    FirstPublishRequest, DEFAULT_BINARY_NAME, DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP,
+    DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL,
+    DEFAULT_REPO_URL, DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
 };
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn temp_repo(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -208,15 +208,19 @@ fn first_publish_plan_skips_homebrew_when_disabled() {
     let effigy_bin = PathBuf::from("/tmp/bin/effigy");
 
     let plan = build_first_publish_plan(
-        &repo_root,
-        &default_distribution_policy(),
-        "v0.7.1",
-        "0.7.1",
-        "https://example.test/repo.git",
-        "acme/effigy/effigy",
-        true,
-        &work_dir,
-        &effigy_bin,
+        &FirstPublishRequest {
+            repo_root: &repo_root,
+            distribution_policy: &default_distribution_policy(),
+            tag: "v0.7.1",
+            crate_version: "0.7.1",
+            repo_url: "https://example.test/repo.git",
+            brew_formula: "acme/effigy/effigy",
+            skip_homebrew: true,
+            artifacts_dir: Path::new("/tmp/artifacts"),
+            work_dir: &work_dir,
+            effigy_bin: &effigy_bin,
+            output_json: false,
+        },
         true,
     );
 
@@ -240,15 +244,19 @@ fn first_publish_plan_includes_homebrew_steps_when_available() {
     policy.binary_name = "effigy-custom".to_owned();
 
     let plan = build_first_publish_plan(
-        &PathBuf::from("/tmp/repo"),
-        &policy,
-        "v0.7.1",
-        "0.7.1",
-        "https://example.test/repo.git",
-        "acme/effigy/effigy",
-        false,
-        &PathBuf::from("/tmp/work"),
-        &PathBuf::from("/tmp/bin/effigy"),
+        &FirstPublishRequest {
+            repo_root: Path::new("/tmp/repo"),
+            distribution_policy: &policy,
+            tag: "v0.7.1",
+            crate_version: "0.7.1",
+            repo_url: "https://example.test/repo.git",
+            brew_formula: "acme/effigy/effigy",
+            skip_homebrew: false,
+            artifacts_dir: Path::new("/tmp/artifacts"),
+            work_dir: Path::new("/tmp/work"),
+            effigy_bin: Path::new("/tmp/bin/effigy"),
+            output_json: false,
+        },
         true,
     );
 

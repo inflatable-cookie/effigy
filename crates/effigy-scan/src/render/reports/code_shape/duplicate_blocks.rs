@@ -1,5 +1,5 @@
 use super::super::super::common::{
-    render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
+    render_markdown_report, render_text_report, MarkdownReportSpec, SeverityLevels, TextReportSpec,
 };
 use crate::model::{DuplicateBlockScanResult, DuplicateBlockSeverity, TextRenderOptions};
 
@@ -32,9 +32,11 @@ pub fn render_duplicate_block_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        DuplicateBlockSeverity::Warning,
-        DuplicateBlockSeverity::High,
-        DuplicateBlockSeverity::Critical,
+        SeverityLevels {
+            warning: DuplicateBlockSeverity::Warning,
+            high: DuplicateBlockSeverity::High,
+            critical: DuplicateBlockSeverity::Critical,
+        },
         |finding| {
             let locations = finding
                 .locations

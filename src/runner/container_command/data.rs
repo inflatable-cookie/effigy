@@ -348,16 +348,16 @@ pub(super) fn run_container_data_dump(
             run_container_exec_capture(repo_root, container_name, service, argv)
         },
         |source, destination, repo_root, push| {
-            capture_artifact_report(
+            capture_artifact_report(crate::runner::artifact_command::ArtifactCaptureRequest {
                 source,
                 destination,
-                Some("sql-dump"),
-                None,
+                kind: Some("sql-dump"),
+                environment_label: None,
                 repo_root,
-                repo_root,
-                false,
+                invocation_cwd: repo_root,
+                farmyard_handoff: false,
                 push,
-            )
+            })
         },
     )
 }

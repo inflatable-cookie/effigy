@@ -30,6 +30,10 @@ During v0.x, MINOR bumps may include breaking changes.
   locking, and atomic replacement.
 
 ### Changed
+- Removed the repo-wide Clippy allowances for large error variants, excessive
+  argument lists, and complex types. The affected APIs now use focused error,
+  request, and context types, and the workspace passes Clippy with warnings
+  denied.
 - Graph data queries (`search`, `node`, `callers`, `callees`, `impact`, `context`,
   `explore`, `affected`, `files`) now refresh a stale or missing index on demand
   instead of returning stale results. A cross-process lock

@@ -2,7 +2,7 @@ use super::execute::{
     execute_demo_attempt, load_active_attempt, request_demo_termination,
     write_latest_attempt_receipt,
 };
-use super::query::{build_demo_record, demo_history_request, demo_list_request};
+use super::query::{build_demo_record, demo_list_request};
 use super::*;
 
 #[path = "render/attempts.rs"]

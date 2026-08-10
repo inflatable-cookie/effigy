@@ -11,6 +11,10 @@ use crate::model::{
 use crate::support::{id_fragment, provenance_for_file, span_from_bytes};
 use crate::{ExtractorId, GraphId};
 
+pub(super) type SourceContext<'a> = (&'a SourceFile, &'a FileRecord, &'a ExtractorId, &'a str);
+pub(super) type ProvenanceContext<'a> = (&'a SourceFile, &'a ExtractorId, &'a str);
+pub(super) type SymbolDescriptor<'a> = (&'a str, &'a str, &'a str, &'a str);
+
 macro_rules! walk_scoped_owned_symbol {
     (
         $language_prefix:expr,
@@ -29,17 +33,11 @@ macro_rules! walk_scoped_owned_symbol {
         |$symbol_id:ident| $walk:block
     ) => {{
         let $symbol_id = $crate::language::emit::declare_owned_symbol(
-            $language_prefix,
-            $canonical,
-            $kind,
-            $display_name,
+            ($language_prefix, $canonical, $kind, $display_name),
             $owner_id,
             $node,
-            $file,
-            $file_record,
+            ($file, $file_record, $extractor_id, $extractor_version),
             $sink,
-            $extractor_id,
-            $extractor_version,
         )?;
         $scope.push($scope_name);
         let walk = || $walk;
@@ -53,14 +51,12 @@ pub(super) use walk_scoped_owned_symbol;
 
 pub(super) fn push_parse_diagnostic(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     diagnostic_id: String,
     message: String,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     sink.push_diagnostic(DiagnosticRecord {
         id: GraphId::new(diagnostic_id)?,
         severity: DiagnosticSeverity::Warning,
@@ -88,22 +84,17 @@ pub(super) fn push_parse_diagnostic_once(
     message_prefix: &str,
     snippet: String,
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
 ) -> Result<(), CodeGraphError> {
+    let (file, _, _, _) = source;
     if !diagnostics.insert(node.start_byte()) {
         return Ok(());
     }
     push_parse_diagnostic(
         node,
-        file,
-        file_record,
+        source,
         sink,
-        extractor_id,
-        extractor_version,
         format!(
             "diag:{language_prefix}-parse:{}:{}",
             file.relative_path,
@@ -114,16 +105,12 @@ pub(super) fn push_parse_diagnostic_once(
 }
 
 pub(super) fn symbol_record(
-    language_prefix: &str,
-    canonical: &str,
-    kind: &str,
-    display_name: &str,
+    descriptor: SymbolDescriptor<'_>,
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    source: SourceContext<'_>,
 ) -> Result<SymbolRecord, CodeGraphError> {
+    let (language_prefix, canonical, kind, display_name) = descriptor;
+    let (file, file_record, extractor_id, extractor_version) = source;
     Ok(SymbolRecord {
         id: GraphId::new(format!(
             "symbol:{language_prefix}:{}",
@@ -145,29 +132,14 @@ pub(super) fn symbol_record(
 }
 
 pub(super) fn declare_owned_symbol(
-    language_prefix: &str,
-    canonical: &str,
-    kind: &str,
-    display_name: &str,
+    descriptor: SymbolDescriptor<'_>,
     owner_id: &GraphId,
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
 ) -> Result<GraphId, CodeGraphError> {
-    let symbol = symbol_record(
-        language_prefix,
-        canonical,
-        kind,
-        display_name,
-        node,
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
-    )?;
+    let (file, _, extractor_id, extractor_version) = source;
+    let symbol = symbol_record(descriptor, node, source)?;
     let symbol_id = symbol.id.clone();
     push_contains_edge(
         owner_id,
@@ -218,13 +190,11 @@ pub(super) fn push_reference_record(
     kind: &str,
     target: &str,
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     sink.push_reference(ReferenceRecord {
         id: GraphId::new(reference_id)?,
         file_id: file_record.id.clone(),
@@ -248,12 +218,11 @@ pub(super) fn push_unresolved_edge(
     owner_id: &GraphId,
     kind: &str,
     target: impl Into<String>,
-    file: &SourceFile,
+    provenance: ProvenanceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
+    let (file, extractor_id, extractor_version) = provenance;
     sink.push_edge(EdgeRecord {
         id: GraphId::new(edge_id)?,
         kind: kind.to_owned(),

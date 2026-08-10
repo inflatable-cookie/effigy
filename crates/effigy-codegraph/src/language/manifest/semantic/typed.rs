@@ -11,7 +11,8 @@ use crate::{ExtractorId, GraphId};
 
 use super::support::{
     index_run_binding, manifest_named_symbol_id, manifest_nested_symbol_id, manifest_section_id,
-    push_contains_edge, push_resolved_edge, push_symbol, push_unresolved_edge,
+    push_contains_edge, push_resolved_edge, push_symbol, push_unresolved_edge, SemanticOrigin,
+    SemanticSource,
 };
 use super::ManifestTasks;
 
@@ -33,10 +34,7 @@ pub(super) fn index_tasks(
             "task",
             task_name,
             &format!("task::{task_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "task",
         );
         push_contains_edge(
@@ -44,18 +42,14 @@ pub(super) fn index_tasks(
             &tasks_section_id,
             &task_id,
             &format!("task:{task_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         push_contains_edge(
             sink,
             file_symbol_id,
             &task_id,
             &format!("task-root:{task_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         if let Some(system) = task.system.as_deref() {
             push_unresolved_edge(
@@ -64,9 +58,7 @@ pub(super) fn index_tasks(
                 "task-system",
                 system,
                 &format!("task-system:{task_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -77,9 +69,7 @@ pub(super) fn index_tasks(
                 "task-workspace",
                 workspace,
                 &format!("task-workspace:{task_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -89,9 +79,7 @@ pub(super) fn index_tasks(
             "task-run-in",
             task.run_in().as_str(),
             &format!("task-run-in:{task_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
         if let Some(run) = task.run.as_ref() {
@@ -130,10 +118,7 @@ pub(super) fn index_systems(
             "system",
             system_name,
             &format!("system::{system_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "system",
         );
         push_contains_edge(
@@ -141,18 +126,14 @@ pub(super) fn index_systems(
             &section_id,
             &system_id,
             &format!("system:{system_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         push_contains_edge(
             sink,
             file_symbol_id,
             &system_id,
             &format!("system-root:{system_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         if let Some(default_workspace) = system.default_workspace.as_deref() {
             push_unresolved_edge(
@@ -161,9 +142,7 @@ pub(super) fn index_systems(
                 "system-default-workspace",
                 default_workspace,
                 &format!("system-default-workspace:{system_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -189,10 +168,7 @@ pub(super) fn index_systems(
                 "workspace",
                 workspace_name,
                 &format!("system::{system_name}::workspace::{workspace_name}"),
-                file,
-                file_record,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 "workspace",
             );
             push_contains_edge(
@@ -200,9 +176,7 @@ pub(super) fn index_systems(
                 &system_id,
                 &workspace_id,
                 &format!("workspace:{system_name}:{workspace_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
             )?;
             if let Some(container) = workspace.container.as_ref() {
                 index_workspace_container_ref(
@@ -241,10 +215,7 @@ pub(super) fn index_containers(
             "container",
             container_name,
             &format!("container::{container_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "container",
         );
         push_contains_edge(
@@ -252,18 +223,14 @@ pub(super) fn index_containers(
             &section_id,
             &container_id,
             &format!("container:{container_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         push_contains_edge(
             sink,
             file_symbol_id,
             &container_id,
             &format!("container-root:{container_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         if let Some(primary_service) = container.primary_service.as_deref() {
             push_unresolved_edge(
@@ -272,20 +239,15 @@ pub(super) fn index_containers(
                 "container-primary-service",
                 primary_service,
                 &format!("container-primary-service:{container_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
         for (service_name, service) in &container.services {
             index_container_service(
-                file,
-                file_record,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 &container_id,
                 sink,
-                extractor_id,
-                extractor_version,
                 container_name,
                 service_name,
                 service,
@@ -296,16 +258,19 @@ pub(super) fn index_containers(
 }
 
 fn index_container_service(
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SemanticSource<'_>,
     container_id: &GraphId,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     container_name: &str,
     service_name: &str,
     service: &ManifestContainerServiceConfig,
 ) -> Result<(), CodeGraphError> {
+    let SemanticSource {
+        file,
+        file_record,
+        extractor_id,
+        extractor_version,
+    } = source;
     let service_id = manifest_nested_symbol_id(
         file,
         &["container", container_name, "service", service_name],
@@ -316,10 +281,7 @@ fn index_container_service(
         "container-service",
         service_name,
         &format!("container::{container_name}::service::{service_name}"),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "service",
     );
     push_contains_edge(
@@ -327,9 +289,7 @@ fn index_container_service(
         container_id,
         &service_id,
         &format!("service:{container_name}:{service_name}"),
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     push_unresolved_edge(
         sink,
@@ -337,9 +297,7 @@ fn index_container_service(
         "service-catalog",
         &service.catalog,
         &format!("service-catalog:{container_name}:{service_name}"),
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         Confidence::Exact,
     )?;
     if let Some(variant) = service.variant.as_deref() {
@@ -349,9 +307,7 @@ fn index_container_service(
             "service-variant",
             variant,
             &format!("service-variant:{container_name}:{service_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
     }
@@ -362,9 +318,7 @@ fn index_container_service(
             "service-config",
             config,
             &format!("service-config:{container_name}:{service_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             Confidence::Syntactic,
         )?;
     }
@@ -390,10 +344,7 @@ pub(super) fn index_bundle(
         "bundle",
         "bundle",
         &format!("{}::bundle", file.relative_path),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "bundle",
     );
     push_contains_edge(
@@ -401,9 +352,7 @@ pub(super) fn index_bundle(
         file_symbol_id,
         &bundle_id,
         "bundle-root",
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     if let Some(base) = bundle.base.as_ref() {
         match base {
@@ -413,9 +362,7 @@ pub(super) fn index_bundle(
                 "bundle-base-path",
                 dir,
                 "bundle-base-path",
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?,
             ManifestBundleBase::Git { url, r#ref } => {
@@ -425,9 +372,7 @@ pub(super) fn index_bundle(
                     "bundle-base-git",
                     url,
                     "bundle-base-git",
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
                 if let Some(reference) = r#ref.as_deref() {
@@ -437,9 +382,7 @@ pub(super) fn index_bundle(
                         "bundle-base-ref",
                         reference,
                         "bundle-base-ref",
-                        file,
-                        extractor_id,
-                        extractor_version,
+                        SemanticSource::new(file, file_record, extractor_id, extractor_version),
                         Confidence::Exact,
                     )?;
                 }
@@ -450,9 +393,7 @@ pub(super) fn index_bundle(
                 "bundle-base-oci",
                 url,
                 "bundle-base-oci",
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?,
         }
@@ -465,10 +406,7 @@ pub(super) fn index_bundle(
             "bundle-input",
             input_name,
             &format!("bundle::input::{input_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "bundle-input",
         );
         push_contains_edge(
@@ -476,9 +414,7 @@ pub(super) fn index_bundle(
             &bundle_id,
             &input_id,
             &format!("bundle-input:{input_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
     }
     Ok(())
@@ -503,10 +439,7 @@ pub(super) fn index_release(
         "release",
         "release",
         &format!("{}::release", file.relative_path),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "release",
     );
     push_contains_edge(
@@ -514,9 +447,7 @@ pub(super) fn index_release(
         file_symbol_id,
         &release_id,
         "release-root",
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     for (field, value) in [
         ("version-file", release.version_file.as_deref()),
@@ -531,9 +462,7 @@ pub(super) fn index_release(
                 field,
                 value,
                 &format!("release-{field}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -546,10 +475,7 @@ pub(super) fn index_release(
             "release-gate",
             gate_name,
             &format!("release::gate::{gate_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "release-gate",
         );
         push_contains_edge(
@@ -557,9 +483,7 @@ pub(super) fn index_release(
             &release_id,
             &gate_id,
             &format!("release-gate:{gate_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         let command = match gate {
             ManifestReleaseGateConfig::Command(command) => command.as_str(),
@@ -571,9 +495,7 @@ pub(super) fn index_release(
             "release-gate-command",
             command,
             &format!("release-gate-command:{gate_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
     }
@@ -599,10 +521,7 @@ pub(super) fn index_distribution(
         "distribution",
         "distribution",
         &format!("{}::distribution", file.relative_path),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "distribution",
     );
     push_contains_edge(
@@ -610,9 +529,7 @@ pub(super) fn index_distribution(
         file_symbol_id,
         &distribution_id,
         "distribution-root",
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     if let Some(preflight) = distribution.preflight.as_ref() {
         if let Some(task) = preflight.docs_task.as_deref() {
@@ -622,9 +539,7 @@ pub(super) fn index_distribution(
                 "distribution-docs-task",
                 task,
                 "distribution-docs-task",
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -635,9 +550,7 @@ pub(super) fn index_distribution(
                 "distribution-smoke-task",
                 task,
                 "distribution-smoke-task",
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -653,9 +566,7 @@ pub(super) fn index_distribution(
                     "distribution-required-doc:{}",
                     crate::support::id_fragment(path)
                 ),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -669,9 +580,7 @@ pub(super) fn index_distribution(
                     "distribution-required-file:{}",
                     crate::support::id_fragment(path)
                 ),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -680,15 +589,18 @@ pub(super) fn index_distribution(
 }
 
 pub(super) fn index_bootstrap(
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: SemanticSource<'_>,
     file_symbol_id: &GraphId,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     tasks: &ManifestTasks,
     bootstrap: Option<&effigy_manifest::ManifestBootstrapConfig>,
 ) -> Result<(), CodeGraphError> {
+    let SemanticSource {
+        file,
+        file_record,
+        extractor_id,
+        extractor_version,
+    } = source;
     let Some(bootstrap) = bootstrap else {
         return Ok(());
     };
@@ -699,10 +611,7 @@ pub(super) fn index_bootstrap(
         "bootstrap",
         "bootstrap",
         &format!("{}::bootstrap", file.relative_path),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "bootstrap",
     );
     push_contains_edge(
@@ -710,9 +619,7 @@ pub(super) fn index_bootstrap(
         file_symbol_id,
         &bootstrap_id,
         "bootstrap-root",
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     if let Some(run) = bootstrap.run.as_ref() {
         index_bootstrap_run(
@@ -734,10 +641,7 @@ pub(super) fn index_bootstrap(
                 "task-selector",
                 selector,
                 &format!("selector::{selector}"),
-                file,
-                file_record,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 "task-selector",
             );
             push_contains_edge(
@@ -745,9 +649,7 @@ pub(super) fn index_bootstrap(
                 &bootstrap_id,
                 &selector_id,
                 &format!("bootstrap-start-selector:{index}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
             )?;
             if tasks.contains_key(selector) {
                 let task_id = manifest_named_symbol_id(file, "task", selector)?;
@@ -757,9 +659,7 @@ pub(super) fn index_bootstrap(
                     "entrypoint-task",
                     &task_id,
                     &format!("bootstrap-start:{index}"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             } else {
@@ -769,9 +669,7 @@ pub(super) fn index_bootstrap(
                     "entrypoint-task",
                     selector,
                     &format!("bootstrap-start:{index}"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticSource::new(file, file_record, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }
@@ -786,10 +684,7 @@ pub(super) fn index_bootstrap(
             "bootstrap-child",
             &child.path,
             &format!("bootstrap::child::{}", child.path),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "bootstrap-child",
         );
         push_contains_edge(
@@ -797,9 +692,7 @@ pub(super) fn index_bootstrap(
             &bootstrap_id,
             &child_id,
             &format!("bootstrap-child:{index}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         push_unresolved_edge(
             sink,
@@ -807,9 +700,7 @@ pub(super) fn index_bootstrap(
             "bootstrap-child-repo",
             &child.repo,
             &format!("bootstrap-child-repo:{index}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
         if let Some(run) = child.run.as_ref() {
@@ -870,10 +761,7 @@ pub(super) fn index_demos(
         "demos",
         "demos",
         &format!("{}::demos", file.relative_path),
-        file,
-        file_record,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         "demos",
     );
     push_contains_edge(
@@ -881,9 +769,7 @@ pub(super) fn index_demos(
         file_symbol_id,
         &demos_section_id,
         "demos-root",
-        file,
-        extractor_id,
-        extractor_version,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
     for (demo_id_name, demo) in demos {
         let demo_id = manifest_named_symbol_id(file, "demo", demo_id_name)?;
@@ -893,10 +779,7 @@ pub(super) fn index_demos(
             "demo",
             demo_id_name,
             &format!("demo::{demo_id_name}"),
-            file,
-            file_record,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             "demo",
         );
         push_contains_edge(
@@ -904,9 +787,7 @@ pub(super) fn index_demos(
             &demos_section_id,
             &demo_id,
             &format!("demo:{demo_id_name}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
         )?;
         if let Some(task) = demo.task.as_deref() {
             push_unresolved_edge(
@@ -915,9 +796,7 @@ pub(super) fn index_demos(
                 "demo-task",
                 task,
                 &format!("demo-task:{demo_id_name}"),
-                file,
-                extractor_id,
-                extractor_version,
+                SemanticSource::new(file, file_record, extractor_id, extractor_version),
                 Confidence::Exact,
             )?;
         }
@@ -952,9 +831,7 @@ fn index_workspace_container_ref(
             "workspace-container-ref",
             name,
             label,
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         ),
         ManifestWorkspaceContainerRef::Inline(inline) => {
@@ -965,9 +842,7 @@ fn index_workspace_container_ref(
                     "workspace-inline-image",
                     image,
                     &format!("{label}:image"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }
@@ -978,9 +853,7 @@ fn index_workspace_container_ref(
                     "workspace-inline-mount",
                     mount,
                     &format!("{label}:mount"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }

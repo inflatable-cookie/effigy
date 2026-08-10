@@ -104,21 +104,33 @@ impl std::fmt::Display for StateIoError {
 
 impl std::error::Error for StateIoError {}
 
+pub struct StateCaptureContextRequest {
+    pub key: String,
+    pub capture_role: String,
+    pub capture_mode: StateCaptureMode,
+    pub source_environment: String,
+    pub source: Option<String>,
+    pub destination_ref: Option<String>,
+}
+
 pub fn build_state_capture_task_context(
     lineage: &StateStackLineageReport,
     stack_name: &str,
-    key: &str,
-    capture_role: String,
-    capture_mode: StateCaptureMode,
-    source_environment: String,
-    source: Option<String>,
-    destination_ref: Option<String>,
+    request: StateCaptureContextRequest,
 ) -> StateContextFile<StateCaptureTaskContext> {
+    let StateCaptureContextRequest {
+        key,
+        capture_role,
+        capture_mode,
+        source_environment,
+        source,
+        destination_ref,
+    } = request;
     let relative_path = PathBuf::from(".effigy")
         .join("state")
         .join("capture-context")
         .join(safe_path_component(stack_name))
-        .join(format!("{}.json", safe_path_component(key)));
+        .join(format!("{}.json", safe_path_component(&key)));
     StateContextFile {
         relative_path,
         context: StateCaptureTaskContext {
@@ -129,7 +141,7 @@ pub fn build_state_capture_task_context(
             capture_role,
             capture_mode: capture_mode.to_string(),
             source_environment,
-            key: key.to_owned(),
+            key,
             source,
             destination_ref,
         },

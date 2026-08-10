@@ -134,25 +134,7 @@ fn runner_to_builtin(error: RunnerError) -> BuiltinError {
         RunnerError::TaskInvocation(message) => BuiltinError::TaskInvocation(message),
         RunnerError::Ui(message) => BuiltinError::Ui(message),
         RunnerError::TaskLockIo { path, error } => BuiltinError::TaskLockIo { path, error },
-        RunnerError::TaskLockConflict {
-            scope,
-            lock_path,
-            holder_pid,
-            holder_started_at_epoch_ms,
-            holder_heartbeat_at_epoch_ms,
-            holder_hostname,
-            holder_workspace_root,
-            remediation,
-        } => BuiltinError::TaskLockConflict {
-            scope,
-            lock_path,
-            holder_pid,
-            holder_started_at_epoch_ms,
-            holder_heartbeat_at_epoch_ms,
-            holder_hostname,
-            holder_workspace_root,
-            remediation,
-        },
+        RunnerError::TaskLockConflict(details) => BuiltinError::TaskLockConflict(details),
         RunnerError::TaskCommandLaunch { command, error } => {
             BuiltinError::TaskCommandLaunch { command, error }
         }

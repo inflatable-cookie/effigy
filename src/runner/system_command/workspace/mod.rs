@@ -199,11 +199,13 @@ pub(super) fn finish_workspace_handoff_after_activation(
     routes_were_ready_before_handoff: bool,
 ) -> Result<bool, RunnerError> {
     prepare_workspace_handoff_using(
-        repo_root,
-        policy,
-        container_name,
-        repo_override,
-        initial_command,
+        WorkspaceHandoffRequest {
+            repo_root,
+            policy,
+            container_name,
+            repo_override,
+            initial_command,
+        },
         |_repo_root, _policy| Ok(routes_were_ready_before_handoff),
         |_policy| Ok(()),
         |_repo_root, _policy| Ok(()),
@@ -212,12 +214,16 @@ pub(super) fn finish_workspace_handoff_after_activation(
     )
 }
 
-fn prepare_workspace_handoff_using(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    container_name: Option<&str>,
+struct WorkspaceHandoffRequest<'a> {
+    repo_root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    container_name: Option<&'a str>,
     repo_override: Option<PathBuf>,
-    initial_command: Option<&str>,
+    initial_command: Option<&'a str>,
+}
+
+fn prepare_workspace_handoff_using(
+    request: WorkspaceHandoffRequest<'_>,
     gateway_ready_before_handoff: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
@@ -232,6 +238,13 @@ fn prepare_workspace_handoff_using(
     ) -> Result<(), RunnerError>,
     render_transition: impl FnOnce(&EffectiveContainerPolicy, Option<&str>) -> Result<(), RunnerError>,
 ) -> Result<bool, RunnerError> {
+    let WorkspaceHandoffRequest {
+        repo_root,
+        policy,
+        container_name,
+        repo_override,
+        initial_command,
+    } = request;
     let routes_were_ready_before_handoff = gateway_ready_before_handoff(repo_root, policy)?;
     start_gateway(policy)?;
     if container_policy_uses_gateway_surface(policy) {

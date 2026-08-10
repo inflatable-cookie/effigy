@@ -94,26 +94,10 @@ impl LanguageIndexer for JavaScriptIndexer {
         });
 
         let mut state = JsWalkState::default();
-        walk_js(
-            tree.root_node(),
-            file,
-            file_record,
-            sink,
-            &self.extractor_id,
-            &self.version,
-            &mut state,
-            file_symbol_id,
-        )?;
+        let source = (file, file_record, &self.extractor_id, self.version.as_str());
+        walk_js(tree.root_node(), source, sink, &mut state, file_symbol_id)?;
         if tree.root_node().has_error() && state.diagnostics.is_empty() {
-            push_parse_diagnostic(
-                tree.root_node(),
-                file,
-                file_record,
-                sink,
-                &self.extractor_id,
-                &self.version,
-                &mut state,
-            )?;
+            push_parse_diagnostic(tree.root_node(), source, sink, &mut state)?;
         }
         Ok(())
     }
@@ -130,24 +114,14 @@ struct JsWalkState {
 
 fn walk_js(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     if node.is_error() {
-        push_parse_diagnostic(
-            node,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-        )?;
+        push_parse_diagnostic(node, source, sink, state)?;
     }
 
     match node.kind() {
@@ -191,18 +165,7 @@ fn walk_js(
                     extractor_version,
                     &mut state.scope,
                     name,
-                    |symbol_id| {
-                        walk_children(
-                            node,
-                            file,
-                            file_record,
-                            sink,
-                            extractor_id,
-                            extractor_version,
-                            state,
-                            symbol_id,
-                        )
-                    }
+                    |symbol_id| { walk_children(node, source, sink, state, symbol_id,) }
                 )?;
                 return Ok(());
             }
@@ -211,28 +174,13 @@ fn walk_js(
             if let Some(name) = field_text(node, "name", &file.content) {
                 let canonical = scoped_name(&state.scope, &name);
                 let symbol_id = emit::declare_owned_symbol(
-                    "js",
-                    &canonical,
-                    "method",
-                    &name,
+                    ("js", &canonical, "method", &name),
                     &owner_id,
                     node,
-                    file,
-                    file_record,
+                    (file, file_record, extractor_id, extractor_version),
                     sink,
-                    extractor_id,
-                    extractor_version,
                 )?;
-                walk_children(
-                    node,
-                    file,
-                    file_record,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                    state,
-                    symbol_id,
-                )?;
+                walk_children(node, source, sink, state, symbol_id)?;
                 return Ok(());
             }
         }
@@ -248,77 +196,29 @@ fn walk_js(
             )?;
         }
         "export_statement" => {
-            index_export_statement(
-                node,
-                file,
-                file_record,
-                sink,
-                extractor_id,
-                extractor_version,
-                state,
-                &owner_id,
-            )?;
+            index_export_statement(node, source, sink, state, &owner_id)?;
         }
         "lexical_declaration" | "variable_declaration" => {
-            index_variable_declaration(
-                node,
-                file,
-                file_record,
-                sink,
-                extractor_id,
-                extractor_version,
-                state,
-                &owner_id,
-            )?;
+            index_variable_declaration(node, source, sink, state, &owner_id)?;
         }
         "call_expression" => {
-            index_call_reference(
-                node,
-                file,
-                file_record,
-                sink,
-                extractor_id,
-                extractor_version,
-                state,
-                &owner_id,
-            )?;
+            index_call_reference(node, source, sink, state, &owner_id)?;
         }
         _ => {}
     }
-    walk_children(
-        node,
-        file,
-        file_record,
-        sink,
-        extractor_id,
-        extractor_version,
-        state,
-        owner_id,
-    )
+    walk_children(node, source, sink, state, owner_id)
 }
 
 fn walk_children(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk_js(
-            child,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-            owner_id.clone(),
-        )?;
+        walk_js(child, source, sink, state, owner_id.clone())?;
     }
     Ok(())
 }
@@ -367,10 +267,8 @@ fn index_import_statement(
             "import",
             specifier,
             source_node,
-            file,
+            (file, extractor_id, extractor_version),
             sink,
-            extractor_id,
-            extractor_version,
             Confidence::Syntactic,
         )?;
     }
@@ -379,14 +277,12 @@ fn index_import_statement(
 
 fn index_export_statement(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
     owner_id: &GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, _, extractor_id, extractor_version) = source;
     if text(node, &file.content).starts_with("export default") {
         let key = format!("{owner_id}:default");
         if state.export_edges.insert(key) {
@@ -395,10 +291,8 @@ fn index_export_statement(
                 "export-default",
                 "default",
                 node,
-                file,
+                (file, extractor_id, extractor_version),
                 sink,
-                extractor_id,
-                extractor_version,
                 Confidence::Syntactic,
             )?;
         }
@@ -414,16 +308,7 @@ fn index_export_statement(
             | "type_alias_declaration"
             | "lexical_declaration"
             | "variable_declaration" => {
-                walk_js(
-                    child,
-                    file,
-                    file_record,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                    state,
-                    owner_id.clone(),
-                )?;
+                walk_js(child, source, sink, state, owner_id.clone())?;
                 if let Some(name) = export_name(child, &file.content) {
                     let canonical = scoped_name(&state.scope, &name);
                     let key = format!("{owner_id}:{canonical}");
@@ -433,10 +318,8 @@ fn index_export_statement(
                             "export",
                             canonical,
                             child,
-                            file,
+                            (file, extractor_id, extractor_version),
                             sink,
-                            extractor_id,
-                            extractor_version,
                             Confidence::Exact,
                         )?;
                     }
@@ -454,10 +337,8 @@ fn index_export_statement(
                             "export",
                             name,
                             specifier,
-                            file,
+                            (file, extractor_id, extractor_version),
                             sink,
-                            extractor_id,
-                            extractor_version,
                             Confidence::Syntactic,
                         )?;
                     }
@@ -472,14 +353,12 @@ fn index_export_statement(
 
 fn index_variable_declaration(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
     owner_id: &GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if child.kind() != "variable_declarator" {
@@ -491,17 +370,11 @@ fn index_variable_declaration(
         let kind = variable_symbol_kind(child, &name);
         let canonical = scoped_name(&state.scope, &name);
         emit::declare_owned_symbol(
-            "js",
-            &canonical,
-            kind,
-            &name,
+            ("js", &canonical, kind, &name),
             owner_id,
             child,
-            file,
-            file_record,
+            (file, file_record, extractor_id, extractor_version),
             sink,
-            extractor_id,
-            extractor_version,
         )?;
     }
     Ok(())
@@ -509,14 +382,12 @@ fn index_variable_declaration(
 
 fn index_call_reference(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
     owner_id: &GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     let Some(function) = node.child_by_field_name("function") else {
         return Ok(());
     };
@@ -530,11 +401,8 @@ fn index_call_reference(
         "call-site",
         &target,
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
         Confidence::Heuristic,
     )?;
     unresolved_edge(
@@ -542,34 +410,27 @@ fn index_call_reference(
         "call",
         target,
         function,
-        file,
+        (file, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
         Confidence::Heuristic,
     )
 }
 
 fn push_parse_diagnostic(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut JsWalkState,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     emit::push_parse_diagnostic_once(
         &mut state.diagnostics,
         "js",
         "js/ts",
         text(node, &file.content),
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
     )
 }
 
@@ -578,10 +439,8 @@ fn unresolved_edge(
     kind: &str,
     target: impl Into<String>,
     node: Node<'_>,
-    file: &SourceFile,
+    provenance: emit::ProvenanceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
     emit::push_unresolved_edge(
@@ -589,10 +448,8 @@ fn unresolved_edge(
         owner_id,
         kind,
         target,
-        file,
+        provenance,
         sink,
-        extractor_id,
-        extractor_version,
         confidence,
     )
 }

@@ -1,3 +1,4 @@
+use super::super::WorkspaceScan;
 use super::*;
 
 pub fn run_generated_asset_scan_workspace(
@@ -6,9 +7,11 @@ pub fn run_generated_asset_scan_workspace(
     options: &GeneratedAssetScanOptions,
 ) -> Result<GeneratedAssetScanResult, ScanError> {
     run_workspace_scan(
-        target_root,
-        scan_roots,
-        ScanWorkspaceCounts::default(),
+        WorkspaceScan {
+            target_root,
+            scan_roots,
+            stats: ScanWorkspaceCounts::default(),
+        },
         |root, skipped_roots| run_generated_asset_scan_single(root, skipped_roots, options),
         |counts, result| {
             counts.scanned_files += result.scanned_files;
@@ -35,9 +38,11 @@ pub fn run_generated_in_src_scan_workspace(
     options: &GeneratedInSrcScanOptions,
 ) -> Result<GeneratedInSrcScanResult, ScanError> {
     run_workspace_scan(
-        target_root,
-        scan_roots,
-        ScanWorkspaceCounts::default(),
+        WorkspaceScan {
+            target_root,
+            scan_roots,
+            stats: ScanWorkspaceCounts::default(),
+        },
         |root, skipped_roots| run_generated_in_src_scan_single(root, skipped_roots, options),
         |counts, result| {
             counts.scanned_files += result.scanned_files;

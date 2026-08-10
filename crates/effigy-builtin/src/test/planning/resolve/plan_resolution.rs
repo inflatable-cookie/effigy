@@ -12,18 +12,17 @@ use super::target_config::{
     resolve_target_test_config, BuiltinConfiguredSuite, BuiltinTestTargetConfig,
 };
 
+type ResolvedTargetTestPlans = (
+    Vec<BuiltinResolvedPlan>,
+    String,
+    BTreeMap<String, String>,
+    ManifestCargoEnvMatchMode,
+);
+
 pub(super) fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
-) -> Result<
-    (
-        Vec<BuiltinResolvedPlan>,
-        String,
-        BTreeMap<String, String>,
-        ManifestCargoEnvMatchMode,
-    ),
-    BuiltinError,
-> {
+) -> Result<ResolvedTargetTestPlans, BuiltinError> {
     let BuiltinTestTargetConfig {
         configured_suites,
         package_manager,

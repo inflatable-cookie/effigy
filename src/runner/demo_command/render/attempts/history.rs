@@ -4,10 +4,7 @@ pub(in crate::runner::demo_command) fn render_demo_history(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
     demo_id: &str,
-    limit: Option<usize>,
-    outcome: Option<DemoHistoryOutcome>,
-    selected_attempt_id: Option<&str>,
-    selected_attempt_ordinal: Option<usize>,
+    request: &effigy_demo::DemoHistoryRequest,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let Some(demo) = loaded.manifest.demos.get(demo_id) else {
@@ -20,16 +17,5 @@ pub(in crate::runner::demo_command) fn render_demo_history(
     };
 
     let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
-    effigy_demo::render_demo_history(
-        repo_root,
-        &record,
-        &demo_history_request(
-            limit,
-            outcome,
-            selected_attempt_id,
-            selected_attempt_ordinal,
-        ),
-        output_json,
-    )
-    .map_err(Into::into)
+    effigy_demo::render_demo_history(repo_root, &record, request, output_json).map_err(Into::into)
 }

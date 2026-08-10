@@ -6,6 +6,7 @@ use effigy_manifest::{
 };
 
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
+use super::ReferenceResolution;
 use crate::profiles::has_concurrent_schema;
 use crate::run_spec::{render_builtin_reference_invocation, render_task_run_spec, RunSpecContext};
 use crate::{resolve_catalog_env_schema_with_ancestors, ManagedError};
@@ -20,19 +21,21 @@ pub struct ResolvedReferenceRun {
     pub cwd: PathBuf,
 }
 
-pub fn resolve_reference_run<'a, F>(
+pub fn resolve_reference_run<'request, 'a, F>(
     parsed: &ParsedTaskRef,
-    args_rendered: &str,
-    catalogs: &'a [LoadedCatalog],
-    task_scope_cwd: &Path,
-    runtime_env_schema_override: Option<&Path>,
-    depth: usize,
+    resolution: ReferenceResolution<'request, 'a>,
     missing_run_error: F,
-    resolver: TaskResolverFn<'_>,
 ) -> Result<ResolvedReferenceRun, ManagedError>
 where
     F: Fn(&TaskSelection<'a>) -> ManagedError,
 {
+    let ReferenceResolution {
+        args_rendered,
+        catalogs,
+        task_scope_cwd,
+        resolver,
+        ..
+    } = resolution;
     match resolve_reference_target(parsed, catalogs, task_scope_cwd, resolver) {
         Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
             command: render_builtin_reference_invocation(
@@ -47,12 +50,8 @@ where
                 &selection,
                 &parsed.selector_rendered,
                 &parsed.selector.task_name,
-                args_rendered,
-                catalogs,
-                runtime_env_schema_override,
-                depth,
+                resolution,
                 || missing_run_error(&selection),
-                resolver,
             )?,
             cwd: selection.catalog.catalog_root.clone(),
         }),
@@ -77,27 +76,14 @@ fn render_selected_task_invocation<F>(
     selection: &TaskSelection<'_>,
     selector_rendered: &str,
     task_name: &str,
-    args_rendered: &str,
-    catalogs: &[LoadedCatalog],
-    runtime_env_schema_override: Option<&Path>,
-    depth: usize,
+    resolution: ReferenceResolution<'_, '_>,
     missing_run_error: F,
-    resolver: TaskResolverFn<'_>,
 ) -> Result<String, ManagedError>
 where
     F: FnOnce() -> ManagedError,
 {
     if let Some(run_spec) = selection.task.run.as_ref() {
-        return render_selected_task_run(
-            selection,
-            run_spec,
-            task_name,
-            args_rendered,
-            catalogs,
-            runtime_env_schema_override,
-            depth,
-            resolver,
-        );
+        return render_selected_task_run(selection, run_spec, task_name, resolution);
     }
 
     let execution_binding =
@@ -110,7 +96,7 @@ where
     {
         return render_builtin_reference_invocation(
             selector_rendered,
-            args_rendered,
+            resolution.args_rendered,
             &selection.catalog.catalog_root,
         );
     }
@@ -118,16 +104,20 @@ where
     Err(missing_run_error())
 }
 
-fn render_selected_task_run<'a>(
+fn render_selected_task_run<'request, 'a>(
     selection: &TaskSelection<'a>,
     run_spec: &ManifestManagedRun,
     task_name: &str,
-    args_rendered: &str,
-    catalogs: &'a [LoadedCatalog],
-    runtime_env_schema_override: Option<&Path>,
-    depth: usize,
-    resolver: TaskResolverFn<'a>,
+    resolution: ReferenceResolution<'request, 'a>,
 ) -> Result<String, ManagedError> {
+    let ReferenceResolution {
+        args_rendered,
+        catalogs,
+        runtime_env_schema_override,
+        depth,
+        resolver,
+        ..
+    } = resolution;
     let env_schema_resolved = resolve_catalog_env_schema_with_ancestors(
         catalogs,
         &selection.catalog.catalog_root,

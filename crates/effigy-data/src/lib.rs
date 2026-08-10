@@ -916,4 +916,5 @@ pub fn is_oci_artifact_ref_path(path: &std::path::Path) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+#[path = "tests.rs"]
+mod unit;

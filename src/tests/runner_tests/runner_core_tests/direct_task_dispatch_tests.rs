@@ -133,7 +133,7 @@ fn direct_task_dispatch_writes_blocked_task_status_record_for_lock_conflict() {
     )
     .expect_err("task should block");
     match error {
-        RunnerError::TaskLockConflict { .. } => {}
+        RunnerError::TaskLockConflict(_) => {}
         other => panic!("unexpected error: {other}"),
     }
 

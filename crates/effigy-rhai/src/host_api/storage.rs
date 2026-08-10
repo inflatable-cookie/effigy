@@ -229,16 +229,16 @@ fn storage_get(
         .bytes()
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
 
-    let mut map = head_output_map(
-        config.provider.as_str(),
-        &bucket,
-        &key,
-        etag.as_deref(),
-        content_type.as_deref(),
+    let mut map = head_output_map(HeadObjectOutput {
+        provider: config.provider.as_str(),
+        bucket: &bucket,
+        key: &key,
+        e_tag: etag.as_deref(),
+        content_type: content_type.as_deref(),
         content_length,
-        None,
-        &HashMap::new(),
-    );
+        version_id: None,
+        metadata: &HashMap::new(),
+    });
     map.insert(
         "size".into(),
         i64::try_from(bytes.len())
@@ -505,28 +505,40 @@ fn raw_head_object_map(
 
     let headers = response.headers();
     let metadata = metadata_from_headers(headers);
-    Ok(head_output_map(
-        config.provider.as_str(),
+    Ok(head_output_map(HeadObjectOutput {
+        provider: config.provider.as_str(),
         bucket,
         key,
-        header_string(headers, "etag").as_deref(),
-        header_string(headers, "content-type").as_deref(),
-        header_u64(headers, "content-length"),
-        header_string(headers, "x-amz-version-id").as_deref(),
-        &metadata,
-    ))
+        e_tag: header_string(headers, "etag").as_deref(),
+        content_type: header_string(headers, "content-type").as_deref(),
+        content_length: header_u64(headers, "content-length"),
+        version_id: header_string(headers, "x-amz-version-id").as_deref(),
+        metadata: &metadata,
+    }))
 }
 
-fn head_output_map(
-    provider: &str,
-    bucket: &str,
-    key: &str,
-    e_tag: Option<&str>,
-    content_type: Option<&str>,
+struct HeadObjectOutput<'a> {
+    provider: &'a str,
+    bucket: &'a str,
+    key: &'a str,
+    e_tag: Option<&'a str>,
+    content_type: Option<&'a str>,
     content_length: Option<u64>,
-    version_id: Option<&str>,
-    metadata: &HashMap<String, String>,
-) -> Map {
+    version_id: Option<&'a str>,
+    metadata: &'a HashMap<String, String>,
+}
+
+fn head_output_map(output: HeadObjectOutput<'_>) -> Map {
+    let HeadObjectOutput {
+        provider,
+        bucket,
+        key,
+        e_tag,
+        content_type,
+        content_length,
+        version_id,
+        metadata,
+    } = output;
     let mut map = Map::new();
     map.insert("provider".into(), provider.into());
     map.insert("bucket".into(), bucket.into());

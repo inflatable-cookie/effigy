@@ -28,7 +28,7 @@ use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
     container_exec_command, managed_gateway_command, managed_lifecycle_command,
     managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix,
+    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
 };
 use effigy_containers::{
     load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
@@ -140,15 +140,17 @@ pub(in crate::runner) fn run_managed_task(
     };
     if execution_mode != ManagedExecutionMode::RenderPlan {
         run_managed_setup_steps(
-            preflight,
-            selection,
             &mut plan,
-            &env_schema_resolved,
-            &binding_resolution,
-            container_binding,
-            container_handoff,
-            container_repo_root.as_deref(),
-            &managed_task_secret_pairs,
+            ManagedSetupContext {
+                preflight,
+                selection,
+                env_schema_resolved: &env_schema_resolved,
+                binding_resolution: &binding_resolution,
+                container_binding,
+                container_handoff,
+                container_repo_root: container_repo_root.as_deref(),
+                managed_task_secret_pairs: &managed_task_secret_pairs,
+            },
         )?;
     }
     if !container_handoff
@@ -254,17 +256,31 @@ pub(in crate::runner) fn run_managed_task(
     )
 }
 
-fn run_managed_setup_steps(
-    preflight: &ExecutionPreflight,
-    selection: &TaskSelection<'_>,
-    plan: &mut effigy_managed::ManagedTaskPlan,
-    env_schema_resolved: &Option<effigy_env::resolver::ResolvedEnv>,
-    binding_resolution: &super::super::api::ExecutionBindingResolution,
-    container_binding: &ContainerExecutionBinding,
+struct ManagedSetupContext<'a, 'catalog> {
+    preflight: &'a ExecutionPreflight,
+    selection: &'a TaskSelection<'catalog>,
+    env_schema_resolved: &'a Option<effigy_env::resolver::ResolvedEnv>,
+    binding_resolution: &'a super::super::api::ExecutionBindingResolution,
+    container_binding: &'a ContainerExecutionBinding,
     container_handoff: bool,
-    container_repo_root: Option<&std::path::Path>,
-    managed_task_secret_pairs: &[(String, SecretString)],
+    container_repo_root: Option<&'a std::path::Path>,
+    managed_task_secret_pairs: &'a [(String, SecretString)],
+}
+
+fn run_managed_setup_steps(
+    plan: &mut effigy_managed::ManagedTaskPlan,
+    context: ManagedSetupContext<'_, '_>,
 ) -> Result<(), RunnerError> {
+    let ManagedSetupContext {
+        preflight,
+        selection,
+        env_schema_resolved,
+        binding_resolution,
+        container_binding,
+        container_handoff,
+        container_repo_root,
+        managed_task_secret_pairs,
+    } = context;
     let plan_has_lifecycle = plan
         .processes
         .iter()
@@ -320,17 +336,19 @@ fn run_named_container_managed_setup_steps(
 ) -> Result<(), RunnerError> {
     let resolver: effigy_manifest::TaskResolverFn<'_> = &effigy_routing::resolve_task_selection;
     let rendered = render_run_step_sequence(
-        &process.name,
         &process.setup_steps,
-        &selection.task.env,
-        selection.task.env_file.as_ref(),
-        &selection.catalog.manifest.env,
-        &selection.catalog.catalog_root,
-        selection.catalog.bundle_root.as_deref(),
-        &preflight.catalogs,
-        &process.cwd,
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-        resolver,
+        effigy_managed::run_spec::RunStepSequenceContext {
+            owner_label: &process.name,
+            task_env: &selection.task.env,
+            task_env_file: selection.task.env_file.as_ref(),
+            env_profiles: &selection.catalog.manifest.env,
+            repo_root: &selection.catalog.catalog_root,
+            bundle_root: selection.catalog.bundle_root.as_deref(),
+            catalogs: &preflight.catalogs,
+            task_scope_cwd: &process.cwd,
+            runtime_env_schema_override: preflight.runtime_args_raw.env_schema_override.as_deref(),
+            resolver,
+        },
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let rendered =
@@ -660,29 +678,31 @@ fn materialize_special_managed_processes(
                     render_inline_managed_lifecycle_command(
                         repo_root,
                         policy,
-                        &preflight.selector.task_name,
-                        selection.task.health_wait.unwrap_or(false),
-                        ready_message.as_deref(),
-                        &dns_route_lines,
-                        &readiness_probe_urls,
-                        &[],
+                        crate::runner::managed_shell::InlineManagedLifecycle {
+                            owner_task: &preflight.selector.task_name,
+                            health_wait: selection.task.health_wait.unwrap_or(false),
+                            ready_message: ready_message.as_deref(),
+                            dns_route_lines: &dns_route_lines,
+                            readiness_probe_urls: &readiness_probe_urls,
+                            setup_commands: &[],
+                        },
                     )
                 } else {
-                    managed_lifecycle_command(
+                    managed_lifecycle_command(ManagedLifecycleRequest {
                         repo_root,
-                        container_binding.container_name(),
-                        &preflight.selector.task_name,
-                        selection.task.health_wait.unwrap_or(false),
-                        ready_message.as_deref(),
-                        &dns_route_lines,
-                        &readiness_probe_urls,
-                        &[],
-                        &executable,
-                        matches!(
+                        container_name: container_binding.container_name(),
+                        owner_task: &preflight.selector.task_name,
+                        health_wait: selection.task.health_wait.unwrap_or(false),
+                        ready_message: ready_message.as_deref(),
+                        dns_route_lines: &dns_route_lines,
+                        readiness_probe_urls: &readiness_probe_urls,
+                        setup_commands: &[],
+                        executable: &executable,
+                        secrets_required: matches!(
                             selection.task.secrets,
                             Some(ManifestTaskSecretsMode::Required)
                         ),
-                    )
+                    })
                 };
             }
             ManagedProcessRole::Shell => {
@@ -757,16 +777,16 @@ fn materialize_special_managed_processes(
                         &wrapped_run,
                     );
                 } else if container_binding.container_name().is_some() {
-                    process.run = managed_standard_exec_command(
+                    process.run = managed_standard_exec_command(ManagedStandardExecRequest {
                         repo_root,
-                        container_binding.container_name(),
-                        &preflight.selector.task_name,
-                        &process.cwd,
-                        container_repo_root.as_deref(),
-                        wrapped_setup.as_deref(),
-                        &executable,
-                        &wrapped_run,
-                    );
+                        container_name: container_binding.container_name(),
+                        owner_task: &preflight.selector.task_name,
+                        process_cwd: &process.cwd,
+                        container_repo_root: container_repo_root.as_deref(),
+                        setup_command: wrapped_setup.as_deref(),
+                        executable: &executable,
+                        command: &wrapped_run,
+                    });
                 }
             }
         }

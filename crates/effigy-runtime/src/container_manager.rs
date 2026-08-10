@@ -110,11 +110,13 @@ pub fn runtime_invocation_plan(
         .runtime_invocation_plan(
             &request,
             &backend_detection_for_policy(repo_root, policy),
-            policy.profile.as_str(),
-            docker_program,
-            docker_args,
-            action,
-            label,
+            effigy_containers::RuntimeInvocation {
+                profile: policy.profile.as_str(),
+                docker_program: docker_program.into(),
+                docker_args,
+                action,
+                label: label.to_owned(),
+            },
         )
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
 }

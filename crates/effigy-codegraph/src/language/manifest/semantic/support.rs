@@ -7,16 +7,64 @@ use crate::model::{Confidence, EdgeRecord, FileRecord, SymbolRecord};
 use crate::support::{full_span, id_fragment, provenance_for_file};
 use crate::{ExtractorId, GraphId};
 
+#[derive(Clone, Copy)]
+pub(super) struct SemanticSource<'a> {
+    pub file: &'a SourceFile,
+    pub file_record: &'a FileRecord,
+    pub extractor_id: &'a ExtractorId,
+    pub extractor_version: &'a str,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SemanticOrigin<'a> {
+    pub file: &'a SourceFile,
+    pub extractor_id: &'a ExtractorId,
+    pub extractor_version: &'a str,
+}
+
+impl<'a> SemanticOrigin<'a> {
+    pub(super) fn new(
+        file: &'a SourceFile,
+        extractor_id: &'a ExtractorId,
+        extractor_version: &'a str,
+    ) -> Self {
+        Self {
+            file,
+            extractor_id,
+            extractor_version,
+        }
+    }
+}
+
+impl<'a> From<SemanticSource<'a>> for SemanticOrigin<'a> {
+    fn from(source: SemanticSource<'a>) -> Self {
+        Self::new(source.file, source.extractor_id, source.extractor_version)
+    }
+}
+
+impl<'a> SemanticSource<'a> {
+    pub(super) fn new(
+        file: &'a SourceFile,
+        file_record: &'a FileRecord,
+        extractor_id: &'a ExtractorId,
+        extractor_version: &'a str,
+    ) -> Self {
+        Self {
+            file,
+            file_record,
+            extractor_id,
+            extractor_version,
+        }
+    }
+}
+
 pub(super) fn push_symbol(
     sink: &mut GraphSink,
     id: GraphId,
     kind: &str,
     display_name: &str,
     canonical_name: &str,
-    file: &SourceFile,
-    file_record: &FileRecord,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    source: SemanticSource<'_>,
     detail: &str,
 ) {
     sink.push_symbol(SymbolRecord {
@@ -24,26 +72,24 @@ pub(super) fn push_symbol(
         kind: kind.to_owned(),
         display_name: display_name.to_owned(),
         canonical_name: canonical_name.to_owned(),
-        file_id: file_record.id.clone(),
-        span: full_span(&file.content),
+        file_id: source.file_record.id.clone(),
+        span: full_span(&source.file.content),
         provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
+            source.extractor_id,
+            source.extractor_version,
+            source.file,
             Confidence::Exact,
             Some(detail),
         ),
     });
 }
 
-pub(super) fn push_contains_edge(
+pub(super) fn push_contains_edge<'a>(
     sink: &mut GraphSink,
     from_id: &GraphId,
     to_id: &GraphId,
     label: &str,
-    file: &SourceFile,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    source: impl Into<SemanticOrigin<'a>>,
 ) -> Result<(), CodeGraphError> {
     push_resolved_edge(
         sink,
@@ -51,24 +97,21 @@ pub(super) fn push_contains_edge(
         "contains",
         to_id,
         label,
-        file,
-        extractor_id,
-        extractor_version,
+        source,
         Confidence::Exact,
     )
 }
 
-pub(super) fn push_resolved_edge(
+pub(super) fn push_resolved_edge<'a>(
     sink: &mut GraphSink,
     from_id: &GraphId,
     kind: &str,
     to_id: &GraphId,
     label: &str,
-    file: &SourceFile,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    source: impl Into<SemanticOrigin<'a>>,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
+    let source = source.into();
     sink.push_edge(EdgeRecord {
         id: GraphId::new(format!("edge:{kind}:{}:{}", from_id, id_fragment(label)))?,
         kind: kind.to_owned(),
@@ -76,9 +119,9 @@ pub(super) fn push_resolved_edge(
         to_id: Some(to_id.clone()),
         unresolved_target: None,
         provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
+            source.extractor_id,
+            source.extractor_version,
+            source.file,
             confidence,
             Some(kind),
         ),
@@ -86,17 +129,16 @@ pub(super) fn push_resolved_edge(
     Ok(())
 }
 
-pub(super) fn push_unresolved_edge(
+pub(super) fn push_unresolved_edge<'a>(
     sink: &mut GraphSink,
     from_id: &GraphId,
     kind: &str,
     unresolved_target: &str,
     label: &str,
-    file: &SourceFile,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    source: impl Into<SemanticOrigin<'a>>,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
+    let source = source.into();
     if unresolved_target.trim().is_empty() {
         return Ok(());
     }
@@ -107,9 +149,9 @@ pub(super) fn push_unresolved_edge(
         to_id: None,
         unresolved_target: Some(unresolved_target.to_owned()),
         provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
+            source.extractor_id,
+            source.extractor_version,
+            source.file,
             confidence,
             Some(kind),
         ),
@@ -164,9 +206,7 @@ pub(super) fn index_run_binding(
             "task-command",
             command,
             &format!("{label}:command"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         ),
         ManifestManagedRun::Sequence(steps) => {
@@ -202,9 +242,7 @@ fn index_run_step(
             "task-command",
             command,
             label,
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         ),
         ManifestManagedRunStep::Step(step) => index_step_table(
@@ -235,9 +273,7 @@ fn index_step_table(
             "task-command",
             command,
             &format!("{label}:run"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
     }
@@ -248,9 +284,7 @@ fn index_step_table(
             "task-step-task",
             task,
             &format!("{label}:task"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
     }
@@ -261,9 +295,7 @@ fn index_step_table(
             "task-step-rhai",
             rhai,
             &format!("{label}:rhai"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         )?;
     }
@@ -286,9 +318,7 @@ pub(super) fn index_run_like_raw(
             "task-command",
             command,
             label,
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         ),
         Value::Array(steps) => {
@@ -334,9 +364,7 @@ pub(super) fn index_run_step_raw(
             "task-command",
             command,
             label,
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticOrigin::new(file, extractor_id, extractor_version),
             Confidence::Exact,
         ),
         Value::Table(table) => {
@@ -347,9 +375,7 @@ pub(super) fn index_run_step_raw(
                     "task-command",
                     command,
                     &format!("{label}:run"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }
@@ -360,9 +386,7 @@ pub(super) fn index_run_step_raw(
                     "task-step-task",
                     task,
                     &format!("{label}:task"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }
@@ -373,9 +397,7 @@ pub(super) fn index_run_step_raw(
                     "task-step-rhai",
                     rhai,
                     &format!("{label}:rhai"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }
@@ -386,9 +408,7 @@ pub(super) fn index_run_step_raw(
                     "task-run-in",
                     run_in,
                     &format!("{label}:run-in"),
-                    file,
-                    extractor_id,
-                    extractor_version,
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;
             }

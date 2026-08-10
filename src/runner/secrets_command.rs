@@ -325,15 +325,17 @@ fn run_secrets_import(
         return render_import_result(
             repo_root,
             secrets,
-            &vault_path,
-            &import_path,
-            format,
-            imported,
-            skipped_undeclared,
-            false,
-            false,
-            output_json,
-            "no declared secrets matched; vault not created",
+            SecretsImportResult {
+                vault_path: &vault_path,
+                input_path: &import_path,
+                format,
+                imported,
+                skipped_undeclared,
+                changed: false,
+                created_vault: false,
+                output_json,
+                summary: "no declared secrets matched; vault not created",
+            },
         );
     }
 
@@ -369,15 +371,17 @@ fn run_secrets_import(
     render_import_result(
         repo_root,
         secrets,
-        &vault_path,
-        &import_path,
-        format,
-        imported,
-        skipped_undeclared,
-        changed,
-        !vault_exists,
-        output_json,
-        summary,
+        SecretsImportResult {
+            vault_path: &vault_path,
+            input_path: &import_path,
+            format,
+            imported,
+            skipped_undeclared,
+            changed,
+            created_vault: !vault_exists,
+            output_json,
+            summary,
+        },
     )
 }
 
@@ -747,19 +751,34 @@ fn render_export_result(
     render_command_result(output_json, true, payload, text)
 }
 
-fn render_import_result(
-    repo_root: &Path,
-    secrets: &ManifestSecretsConfig,
-    vault_path: &Path,
-    input_path: &Path,
+struct SecretsImportResult<'a> {
+    vault_path: &'a Path,
+    input_path: &'a Path,
     format: SecretsImportFormat,
     imported: Vec<String>,
     skipped_undeclared: Vec<String>,
     changed: bool,
     created_vault: bool,
     output_json: bool,
-    summary: &str,
+    summary: &'a str,
+}
+
+fn render_import_result(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+    result: SecretsImportResult<'_>,
 ) -> Result<String, RunnerError> {
+    let SecretsImportResult {
+        vault_path,
+        input_path,
+        format,
+        imported,
+        skipped_undeclared,
+        changed,
+        created_vault,
+        output_json,
+        summary,
+    } = result;
     let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
     if let Some(object) = payload.as_object_mut() {
         object.insert("action".to_owned(), json!("import"));

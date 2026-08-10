@@ -278,21 +278,21 @@ fn prepared_state_round_trip_preserves_fingerprints() {
     fs::write(&version_file, "0.3.0\n").expect("version");
     let state_path = root.join(".release-prepared.json");
 
-    write_release_prepared_state(
-        &state_path,
-        &root,
-        &semver::Version::parse("0.2.9").expect("previous"),
-        Some(&semver::Version::parse("0.3.0").expect("suggested")),
-        Some(&semver::Version::parse("0.3.0").expect("prepared")),
-        Some("v0.3.0"),
-        Some("v0.3.0"),
-        false,
-        "2026-04-16",
-        true,
-        std::slice::from_ref(&version_file),
-        Some("main"),
-        Some("deadbeef"),
-    )
+    write_release_prepared_state(crate::prepare_helpers::ReleasePreparedStateWrite {
+        path: &state_path,
+        repo_root: &root,
+        previous_version: &semver::Version::parse("0.2.9").expect("previous"),
+        suggested_version: Some(&semver::Version::parse("0.3.0").expect("suggested")),
+        prepared_version: Some(&semver::Version::parse("0.3.0").expect("prepared")),
+        suggested_tag: Some("v0.3.0"),
+        tag: Some("v0.3.0"),
+        version_override_used: false,
+        release_date: "2026-04-16",
+        gates_checked: true,
+        files_modified: std::slice::from_ref(&version_file),
+        prepared_branch: Some("main"),
+        prepared_head: Some("deadbeef"),
+    })
     .expect("write state");
 
     let state = load_release_prepared_state(&state_path).expect("load state");

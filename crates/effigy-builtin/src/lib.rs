@@ -87,13 +87,13 @@ pub fn try_run_builtin_task(
         return Ok(None);
     };
 
-    entry.run(
+    entry.run(registry::BuiltinRunContext {
         ports,
         selector,
         task,
         runtime_args,
-        &target_root,
+        target_root: &target_root,
         catalogs,
         invocation_cwd,
-    )
+    })
 }

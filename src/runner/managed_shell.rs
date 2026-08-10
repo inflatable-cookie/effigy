@@ -54,16 +54,28 @@ pub(crate) fn render_inline_compose_command(
     )
 }
 
+pub(crate) struct InlineManagedLifecycle<'a> {
+    pub(crate) owner_task: &'a str,
+    pub(crate) health_wait: bool,
+    pub(crate) ready_message: Option<&'a str>,
+    pub(crate) dns_route_lines: &'a [String],
+    pub(crate) readiness_probe_urls: &'a [String],
+    pub(crate) setup_commands: &'a [String],
+}
+
 pub(crate) fn render_inline_managed_lifecycle_command(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    owner_task: &str,
-    health_wait: bool,
-    ready_message: Option<&str>,
-    dns_route_lines: &[String],
-    readiness_probe_urls: &[String],
-    setup_commands: &[String],
+    lifecycle: InlineManagedLifecycle<'_>,
 ) -> String {
+    let InlineManagedLifecycle {
+        owner_task,
+        health_wait,
+        ready_message,
+        dns_route_lines,
+        readiness_probe_urls,
+        setup_commands,
+    } = lifecycle;
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let up = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["up", "-d"]));

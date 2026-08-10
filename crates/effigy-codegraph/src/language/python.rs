@@ -84,26 +84,10 @@ impl LanguageIndexer for PythonIndexer {
         });
 
         let mut state = PythonWalkState::default();
-        walk_python(
-            tree.root_node(),
-            file,
-            file_record,
-            sink,
-            &self.extractor_id,
-            &self.version,
-            &mut state,
-            file_symbol_id,
-        )?;
+        let source = (file, file_record, &self.extractor_id, self.version.as_str());
+        walk_python(tree.root_node(), source, sink, &mut state, file_symbol_id)?;
         if tree.root_node().has_error() && state.diagnostics.is_empty() {
-            push_parse_diagnostic(
-                tree.root_node(),
-                file,
-                file_record,
-                sink,
-                &self.extractor_id,
-                &self.version,
-                &mut state,
-            )?;
+            push_parse_diagnostic(tree.root_node(), source, sink, &mut state)?;
         }
         Ok(())
     }
@@ -119,24 +103,14 @@ struct PythonWalkState {
 
 fn walk_python(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PythonWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     if node.is_error() {
-        push_parse_diagnostic(
-            node,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-        )?;
+        push_parse_diagnostic(node, source, sink, state)?;
     }
 
     match node.kind() {
@@ -206,16 +180,7 @@ fn walk_python(
                         }
                     }
                 }
-                walk_python(
-                    definition,
-                    file,
-                    file_record,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                    state,
-                    owner_id,
-                )?;
+                walk_python(definition, source, sink, state, owner_id)?;
                 return Ok(());
             }
         }
@@ -236,18 +201,7 @@ fn walk_python(
                     extractor_version,
                     &mut state.scope,
                     name,
-                    |symbol_id| {
-                        walk_children(
-                            node,
-                            file,
-                            file_record,
-                            sink,
-                            extractor_id,
-                            extractor_version,
-                            state,
-                            symbol_id,
-                        )
-                    }
+                    |symbol_id| { walk_children(node, source, sink, state, symbol_id,) }
                 )?;
                 return Ok(());
             }
@@ -269,18 +223,7 @@ fn walk_python(
                     extractor_version,
                     &mut state.scope,
                     name,
-                    |symbol_id| {
-                        walk_children(
-                            node,
-                            file,
-                            file_record,
-                            sink,
-                            extractor_id,
-                            extractor_version,
-                            state,
-                            symbol_id,
-                        )
-                    }
+                    |symbol_id| { walk_children(node, source, sink, state, symbol_id,) }
                 )?;
                 return Ok(());
             }
@@ -291,10 +234,8 @@ fn walk_python(
                     &owner_id,
                     &specifier,
                     node,
-                    file,
+                    (file, extractor_id, extractor_version),
                     sink,
-                    extractor_id,
-                    extractor_version,
                     state,
                 )?;
             }
@@ -305,10 +246,8 @@ fn walk_python(
                     &owner_id,
                     &specifier,
                     node,
-                    file,
+                    (file, extractor_id, extractor_version),
                     sink,
-                    extractor_id,
-                    extractor_version,
                     state,
                 )?;
             }
@@ -318,26 +257,14 @@ fn walk_python(
                 let target = text(function, &file.content);
                 let key = format!("{owner_id}:{target}");
                 if state.call_edges.insert(key) {
-                    reference_record(
-                        &owner_id,
-                        "call-site",
-                        &target,
-                        function,
-                        file,
-                        file_record,
-                        sink,
-                        extractor_id,
-                        extractor_version,
-                    )?;
+                    reference_record(&owner_id, "call-site", &target, function, source, sink)?;
                     unresolved_edge(
                         &owner_id,
                         "call",
                         target,
                         function,
-                        file,
+                        (file, extractor_id, extractor_version),
                         sink,
-                        extractor_id,
-                        extractor_version,
                         Confidence::Heuristic,
                     )?;
                 }
@@ -346,40 +273,19 @@ fn walk_python(
         _ => {}
     }
 
-    walk_children(
-        node,
-        file,
-        file_record,
-        sink,
-        extractor_id,
-        extractor_version,
-        state,
-        owner_id,
-    )
+    walk_children(node, source, sink, state, owner_id)
 }
 
 fn walk_children(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PythonWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk_python(
-            child,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-            owner_id.clone(),
-        )?;
+        walk_python(child, source, sink, state, owner_id.clone())?;
     }
     Ok(())
 }
@@ -388,12 +294,11 @@ fn push_import_edge(
     owner_id: &GraphId,
     specifier: &str,
     node: Node<'_>,
-    file: &SourceFile,
+    provenance: emit::ProvenanceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PythonWalkState,
 ) -> Result<(), CodeGraphError> {
+    let (file, extractor_id, extractor_version) = provenance;
     let key = format!("{owner_id}:{specifier}");
     if !state.import_edges.insert(key) {
         return Ok(());
@@ -422,10 +327,8 @@ fn push_import_edge(
             "import",
             specifier,
             node,
-            file,
+            (file, extractor_id, extractor_version),
             sink,
-            extractor_id,
-            extractor_version,
             Confidence::Syntactic,
         )?;
     }
@@ -641,24 +544,19 @@ fn text(node: Node<'_>, source: &str) -> String {
 
 fn push_parse_diagnostic(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PythonWalkState,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     emit::push_parse_diagnostic_once(
         &mut state.diagnostics,
         "py",
         "python",
         text(node, &file.content),
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
     )
 }
 
@@ -667,22 +565,17 @@ fn reference_record(
     kind: &str,
     target: &str,
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     emit::push_reference_record(
         format!("ref:py:{kind}:{owner_id}:{}", node.start_byte()),
         kind,
         target,
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
         Confidence::Heuristic,
     )
 }
@@ -692,10 +585,8 @@ fn unresolved_edge(
     kind: &str,
     target: impl Into<String>,
     node: Node<'_>,
-    file: &SourceFile,
+    provenance: emit::ProvenanceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
     emit::push_unresolved_edge(
@@ -703,10 +594,8 @@ fn unresolved_edge(
         owner_id,
         kind,
         target,
-        file,
+        provenance,
         sink,
-        extractor_id,
-        extractor_version,
         confidence,
     )
 }

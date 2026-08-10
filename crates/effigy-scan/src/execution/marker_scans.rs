@@ -1,3 +1,4 @@
+use super::WorkspaceScan;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -19,9 +20,11 @@ pub fn run_attention_marker_scan_workspace(
     options: &AttentionMarkerScanOptions,
 ) -> Result<AttentionMarkerScanResult, ScanError> {
     run_workspace_scan(
-        target_root,
-        scan_roots,
-        ScanWorkspaceCounts::default(),
+        WorkspaceScan {
+            target_root,
+            scan_roots,
+            stats: ScanWorkspaceCounts::default(),
+        },
         |root, skipped_roots| run_attention_marker_scan_single(root, skipped_roots, options),
         |counts, result| {
             counts.scanned_files += result.scanned_files;
@@ -48,9 +51,11 @@ pub fn run_stale_suppression_scan_workspace(
     options: &StaleSuppressionScanOptions,
 ) -> Result<StaleSuppressionScanResult, ScanError> {
     run_workspace_scan(
-        target_root,
-        scan_roots,
-        ScanWorkspaceCounts::default(),
+        WorkspaceScan {
+            target_root,
+            scan_roots,
+            stats: ScanWorkspaceCounts::default(),
+        },
         |root, skipped_roots| run_stale_suppression_scan_single(root, skipped_roots, options),
         |counts, result| {
             counts.scanned_files += result.scanned_files;

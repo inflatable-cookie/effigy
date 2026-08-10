@@ -81,11 +81,13 @@ impl LanguageIndexer for ManifestIndexer {
                     key,
                     value,
                     &file_symbol_id,
-                    file,
-                    file_record,
-                    sink,
-                    &self.extractor_id,
-                    &self.version,
+                    ManifestEntryContext {
+                        file,
+                        file_record,
+                        sink,
+                        extractor_id: &self.extractor_id,
+                        extractor_version: &self.version,
+                    },
                 )?;
             }
         }
@@ -120,16 +122,27 @@ impl LanguageIndexer for ManifestIndexer {
     }
 }
 
+struct ManifestEntryContext<'a> {
+    file: &'a SourceFile,
+    file_record: &'a FileRecord,
+    sink: &'a mut GraphSink,
+    extractor_id: &'a ExtractorId,
+    extractor_version: &'a str,
+}
+
 fn top_level_entry(
     key: &str,
     value: &Value,
     owner_id: &GraphId,
-    file: &SourceFile,
-    file_record: &FileRecord,
-    sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
+    context: ManifestEntryContext<'_>,
 ) -> Result<(), CodeGraphError> {
+    let ManifestEntryContext {
+        file,
+        file_record,
+        sink,
+        extractor_id,
+        extractor_version,
+    } = context;
     let entry_id = GraphId::new(format!("symbol:manifest:{}:{key}", file.relative_path))?;
     sink.push_symbol(SymbolRecord {
         id: entry_id.clone(),

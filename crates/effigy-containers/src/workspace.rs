@@ -32,29 +32,24 @@ pub(crate) use host_integration::{
 use isolation::build_isolation_mounts;
 use library_mounts::build_library_mounts;
 
+pub(crate) struct WorkspaceComposeRewrite<'a> {
+    pub(crate) repo_root: &'a Path,
+    pub(crate) container_name: &'a str,
+    pub(crate) config: &'a ManifestContainerConfig,
+    pub(crate) workspace: &'a ManifestWorkspaceConfig,
+    pub(crate) working_dir: &'a Path,
+    pub(crate) primary_service: &'a str,
+    pub(crate) library_mounts: &'a [LibraryMount],
+}
+
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
-    repo_root: &Path,
-    container_name: &str,
-    config: &ManifestContainerConfig,
-    workspace: &ManifestWorkspaceConfig,
-    working_dir: &Path,
-    primary_service: &str,
+    request: WorkspaceComposeRewrite<'_>,
     compose_files: &mut [PathBuf],
-    library_mounts: &[LibraryMount],
 ) -> Result<(), ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(());
     };
-    let rewritten = rewrite_workspace_mounts_for_direct_compose(
-        repo_root,
-        container_name,
-        config,
-        workspace,
-        primary_service,
-        &source_compose,
-        working_dir,
-        library_mounts,
-    )?;
+    let rewritten = rewrite_workspace_mounts_for_direct_compose(request, &source_compose)?;
     compose_files[0] = rewritten;
     Ok(())
 }

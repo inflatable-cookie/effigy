@@ -1061,7 +1061,10 @@ fn parse_published_host_port_range(raw: &str) -> Result<(u16, u16), RunnerError>
     parse_runtime_port_binding_range(raw).map(|(host, _container)| host)
 }
 
-fn parse_runtime_port_binding_range(raw: &str) -> Result<((u16, u16), (u16, u16)), RunnerError> {
+type PortRange = (u16, u16);
+type RuntimePortBindingRange = (PortRange, PortRange);
+
+fn parse_runtime_port_binding_range(raw: &str) -> Result<RuntimePortBindingRange, RunnerError> {
     let Some((published, container)) = raw.split_once("->") else {
         return Err(gateway_route_shape_error(format!(
             "runtime port mapping `{raw}` is missing a published-port segment"

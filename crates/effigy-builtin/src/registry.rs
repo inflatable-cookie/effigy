@@ -13,6 +13,16 @@ pub(super) struct BuiltinRegistryEntry {
     dispatch: BuiltinDispatch,
 }
 
+pub(super) struct BuiltinRunContext<'a> {
+    pub(super) ports: &'a dyn BuiltinRuntimePorts,
+    pub(super) selector: &'a TaskSelector,
+    pub(super) task: &'a TaskInvocation,
+    pub(super) runtime_args: &'a TaskRuntimeArgs,
+    pub(super) target_root: &'a Path,
+    pub(super) catalogs: &'a [LoadedCatalog],
+    pub(super) invocation_cwd: &'a Path,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BuiltinDispatch {
     Doctor,
@@ -69,15 +79,15 @@ pub(super) fn builtin_registry_entry(task_name: &str) -> Option<&'static Builtin
 impl BuiltinRegistryEntry {
     pub(super) fn run(
         &self,
-        ports: &dyn BuiltinRuntimePorts,
-        selector: &TaskSelector,
-        task: &TaskInvocation,
-        runtime_args: &TaskRuntimeArgs,
-        target_root: &Path,
-        catalogs: &[LoadedCatalog],
-        invocation_cwd: &Path,
+        context: BuiltinRunContext<'_>,
     ) -> Result<Option<String>, BuiltinError> {
-        self.dispatch.run(
+        self.dispatch.run(context)
+    }
+}
+
+impl BuiltinDispatch {
+    fn run(self, context: BuiltinRunContext<'_>) -> Result<Option<String>, BuiltinError> {
+        let BuiltinRunContext {
             ports,
             selector,
             task,
@@ -85,21 +95,7 @@ impl BuiltinRegistryEntry {
             target_root,
             catalogs,
             invocation_cwd,
-        )
-    }
-}
-
-impl BuiltinDispatch {
-    fn run(
-        self,
-        ports: &dyn BuiltinRuntimePorts,
-        selector: &TaskSelector,
-        task: &TaskInvocation,
-        runtime_args: &TaskRuntimeArgs,
-        target_root: &Path,
-        catalogs: &[LoadedCatalog],
-        invocation_cwd: &Path,
-    ) -> Result<Option<String>, BuiltinError> {
+        } = context;
         match self {
             Self::Doctor => doctor::run_builtin_doctor(ports, task, runtime_args, target_root),
             Self::Tasks => tasks::run_builtin_tasks(

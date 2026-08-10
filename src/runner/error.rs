@@ -4,6 +4,7 @@ use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
 use effigy_core::resolver::ResolveError;
+use effigy_core::task_lock::TaskLockConflict;
 use effigy_env::error::EnvSchemaError;
 use effigy_managed::ManagedError;
 use effigy_manifest::ManifestError;
@@ -126,16 +127,7 @@ pub enum RunnerError {
         stdout: String,
         stderr: String,
     },
-    TaskLockConflict {
-        scope: String,
-        lock_path: PathBuf,
-        holder_pid: Option<u32>,
-        holder_started_at_epoch_ms: Option<u128>,
-        holder_heartbeat_at_epoch_ms: Option<u128>,
-        holder_hostname: Option<String>,
-        holder_workspace_root: Option<String>,
-        remediation: String,
-    },
+    TaskLockConflict(Box<TaskLockConflict>),
     TaskLockIo {
         path: PathBuf,
         error: std::io::Error,
@@ -613,25 +605,7 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
             B::Ui(message) => Self::Ui(message),
             B::TaskManifestCompose { path, detail } => Self::TaskManifestCompose { path, detail },
             B::TaskCommandLaunch { command, error } => Self::TaskCommandLaunch { command, error },
-            B::TaskLockConflict {
-                scope,
-                lock_path,
-                holder_pid,
-                holder_started_at_epoch_ms,
-                holder_heartbeat_at_epoch_ms,
-                holder_hostname,
-                holder_workspace_root,
-                remediation,
-            } => Self::TaskLockConflict {
-                scope,
-                lock_path,
-                holder_pid,
-                holder_started_at_epoch_ms,
-                holder_heartbeat_at_epoch_ms,
-                holder_hostname,
-                holder_workspace_root,
-                remediation,
-            },
+            B::TaskLockConflict(details) => Self::TaskLockConflict(details),
             B::TaskLockIo { path, error } => Self::TaskLockIo { path, error },
             B::BuiltinTestNonZero { failures, rendered } => {
                 Self::BuiltinTestNonZero { failures, rendered }

@@ -37,28 +37,34 @@ pub(super) fn execute_concurrent_runner_backed_demo(
         Some((DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS))
     };
     let active_record = PersistedDemoActiveAttempt::new_concurrent_runner_backed(
-        build_attempt_id(demo_id),
-        demo_id,
-        task_name,
-        format!("<managed:{task_name} profile:{}>", plan.profile),
-        browser_live_attach_supported,
-        concurrent_runner_projection_shape(managed_process_names.len())
+        effigy_demo::ConcurrentRunnerActiveAttempt {
+            attempt_id: build_attempt_id(demo_id),
+            demo_id,
+            task_name,
+            managed_command: format!("<managed:{task_name} profile:{}>", plan.profile),
+            browser_live_attach_supported,
+            projection_shape_kind: concurrent_runner_projection_shape(managed_process_names.len())
+                .kind
+                .clone(),
+            managed_process_count: plan.processes.len(),
+            managed_process_names: managed_process_names.clone(),
+            projected_output_provenance_kind: concurrent_runner_projected_output_provenance(
+                managed_process_names.len(),
+            )
             .kind
             .clone(),
-        plan.processes.len(),
-        managed_process_names.clone(),
-        concurrent_runner_projected_output_provenance(managed_process_names.len())
-            .kind
-            .clone(),
-        input_handoff_path
-            .as_ref()
-            .map(|path| display_repo_path(path, repo_root)),
-        resize_handoff_path
-            .as_ref()
-            .map(|path| display_repo_path(path, repo_root)),
-        log_paths.stdout.clone(),
-        log_paths.stderr.clone(),
-        initial_terminal_size,
+            terminal: effigy_demo::ActiveAttemptTerminal {
+                input_handoff_rendered: input_handoff_path
+                    .as_ref()
+                    .map(|path| display_repo_path(path, repo_root)),
+                resize_handoff_rendered: resize_handoff_path
+                    .as_ref()
+                    .map(|path| display_repo_path(path, repo_root)),
+                stdout_log_rendered: log_paths.stdout.clone(),
+                stderr_log_rendered: log_paths.stderr.clone(),
+                terminal_size: initial_terminal_size,
+            },
+        },
     );
     let _active_guard = register_active_attempt(repo_root, demo_id, &active_record)?;
 
@@ -66,26 +72,40 @@ pub(super) fn execute_concurrent_runner_backed_demo(
         repo_root,
         demo_id,
         task_name,
-        plan,
-        log_paths,
-        input_target_process,
-        input_handoff_path,
-        resize_handoff_path,
-        output_json,
+        ConcurrentDemoRuntime {
+            plan,
+            log_paths,
+            input_target_process,
+            input_handoff_path,
+            resize_handoff_path,
+            output_json,
+        },
     )
 }
 
-fn run_concurrent_runner_demo_runtime(
-    repo_root: &Path,
-    demo_id: &str,
-    task_name: &str,
+struct ConcurrentDemoRuntime {
     plan: effigy_managed::ManagedTaskPlan,
     log_paths: DemoLogPaths,
     input_target_process: Option<String>,
     input_handoff_path: Option<PathBuf>,
     resize_handoff_path: Option<PathBuf>,
     output_json: bool,
+}
+
+fn run_concurrent_runner_demo_runtime(
+    repo_root: &Path,
+    demo_id: &str,
+    task_name: &str,
+    runtime: ConcurrentDemoRuntime,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
+    let ConcurrentDemoRuntime {
+        plan,
+        log_paths,
+        input_target_process,
+        input_handoff_path,
+        resize_handoff_path,
+        output_json,
+    } = runtime;
     let shutdown_on_exit_processes = plan
         .processes
         .iter()
@@ -181,36 +201,42 @@ fn run_concurrent_runner_demo_runtime(
 
     if state.stop_requested {
         Ok(terminated_demo_attempt(
-            "task",
-            task_name,
-            &command,
-            None,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: &command,
+                exit_code: None,
+                stdout: state.stdout,
+                stderr: state.stderr,
+                log_paths,
+            },
             summary,
-            state.stdout,
-            state.stderr,
-            log_paths,
         ))
     } else if plan.fail_on_non_zero && !state.non_zero_exits.is_empty() {
         Ok(failed_demo_attempt(
-            "task",
-            task_name,
-            &command,
-            None,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: &command,
+                exit_code: None,
+                stdout: state.stdout,
+                stderr: state.stderr,
+                log_paths,
+            },
             summary,
-            state.stdout,
-            state.stderr,
-            log_paths,
         ))
     } else {
         Ok(successful_demo_attempt(
-            "task",
-            task_name,
-            &command,
-            None,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: &command,
+                exit_code: None,
+                stdout: state.stdout,
+                stderr: state.stderr,
+                log_paths,
+            },
             Some(summary),
-            state.stdout,
-            state.stderr,
-            log_paths,
         ))
     }
 }

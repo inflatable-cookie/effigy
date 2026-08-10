@@ -49,14 +49,16 @@ pub(super) fn run_artifact(args: ArtifactArgs) -> Result<String, RunnerError> {
             farmyard_handoff,
             push,
         } => run_artifact_capture(
-            &source,
-            &destination,
-            kind.as_deref(),
-            environment_label.as_deref(),
-            &repo_root,
-            &invocation_cwd,
-            farmyard_handoff,
-            push,
+            ArtifactCaptureRequest {
+                source: &source,
+                destination: &destination,
+                kind: kind.as_deref(),
+                environment_label: environment_label.as_deref(),
+                repo_root: &repo_root,
+                invocation_cwd: &invocation_cwd,
+                farmyard_handoff,
+                push,
+            },
             args.output_json,
         ),
     }
@@ -109,27 +111,22 @@ fn run_artifact_stage(
     )
 }
 
+pub(in crate::runner) struct ArtifactCaptureRequest<'a> {
+    pub(in crate::runner) source: &'a str,
+    pub(in crate::runner) destination: &'a str,
+    pub(in crate::runner) kind: Option<&'a str>,
+    pub(in crate::runner) environment_label: Option<&'a str>,
+    pub(in crate::runner) repo_root: &'a Path,
+    pub(in crate::runner) invocation_cwd: &'a Path,
+    pub(in crate::runner) farmyard_handoff: bool,
+    pub(in crate::runner) push: bool,
+}
+
 fn run_artifact_capture(
-    source: &str,
-    destination: &str,
-    kind: Option<&str>,
-    environment_label: Option<&str>,
-    repo_root: &Path,
-    invocation_cwd: &Path,
-    farmyard_handoff: bool,
-    push: bool,
+    request: ArtifactCaptureRequest<'_>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let report = capture_artifact_report(
-        source,
-        destination,
-        kind,
-        environment_label,
-        repo_root,
-        invocation_cwd,
-        farmyard_handoff,
-        push,
-    )?;
+    let report = capture_artifact_report(request)?;
     render_command_result(
         output_json,
         true,
@@ -139,16 +136,16 @@ fn run_artifact_capture(
 }
 
 pub(in crate::runner) fn capture_artifact_report(
-    source: &str,
-    destination: &str,
-    kind: Option<&str>,
-    environment_label: Option<&str>,
-    repo_root: &Path,
-    invocation_cwd: &Path,
-    farmyard_handoff: bool,
-    push: bool,
+    request: ArtifactCaptureRequest<'_>,
 ) -> Result<Value, RunnerError> {
-    capture_artifact_report_with_adapter(
+    capture_artifact_report_with_adapter(request, &OrasCliArtifactAdapter::default())
+}
+
+pub(in crate::runner) fn capture_artifact_report_with_adapter(
+    request: ArtifactCaptureRequest<'_>,
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<Value, RunnerError> {
+    let ArtifactCaptureRequest {
         source,
         destination,
         kind,
@@ -157,21 +154,7 @@ pub(in crate::runner) fn capture_artifact_report(
         invocation_cwd,
         farmyard_handoff,
         push,
-        &OrasCliArtifactAdapter::default(),
-    )
-}
-
-pub(in crate::runner) fn capture_artifact_report_with_adapter(
-    source: &str,
-    destination: &str,
-    kind: Option<&str>,
-    environment_label: Option<&str>,
-    repo_root: &Path,
-    invocation_cwd: &Path,
-    farmyard_handoff: bool,
-    push: bool,
-    adapter: &dyn OciArtifactAdapter,
-) -> Result<Value, RunnerError> {
+    } = request;
     let source_ref = parse_artifact_source(source)?;
     let ArtifactSourceRef::Local(local) = source_ref else {
         return Err(RunnerError::task_invocation(
@@ -662,16 +645,16 @@ mod tests {
         let cwd = temp_dir("cwd-capture");
         fs::write(cwd.join("uat.sql.gz"), "select 1;").expect("write source");
 
-        let report = capture_artifact_report(
-            "uat.sql.gz",
-            "oci://ghcr.io/acme/uat-content:2026-05-06",
-            Some("uat-content-snapshot"),
-            Some("uat"),
-            &repo,
-            &cwd,
-            true,
-            false,
-        )
+        let report = capture_artifact_report(ArtifactCaptureRequest {
+            source: "uat.sql.gz",
+            destination: "oci://ghcr.io/acme/uat-content:2026-05-06",
+            kind: Some("uat-content-snapshot"),
+            environment_label: Some("uat"),
+            repo_root: &repo,
+            invocation_cwd: &cwd,
+            farmyard_handoff: true,
+            push: false,
+        })
         .expect("capture");
 
         assert_eq!(report["schema"], "effigy.artifact.capture.v1");
@@ -697,16 +680,16 @@ mod tests {
         fs::write(cwd.join("media/root.txt"), "root").expect("write root");
         fs::write(cwd.join("media/nested/file.txt"), "nested").expect("write nested");
 
-        let report = capture_artifact_report(
-            "media",
-            "oci://ghcr.io/acme/media:2026-05-13",
-            Some("object-store"),
-            Some("uat"),
-            &repo,
-            &cwd,
-            true,
-            false,
-        )
+        let report = capture_artifact_report(ArtifactCaptureRequest {
+            source: "media",
+            destination: "oci://ghcr.io/acme/media:2026-05-13",
+            kind: Some("object-store"),
+            environment_label: Some("uat"),
+            repo_root: &repo,
+            invocation_cwd: &cwd,
+            farmyard_handoff: true,
+            push: false,
+        })
         .expect("capture");
 
         assert_eq!(report["schema"], "effigy.artifact.capture.v1");
@@ -738,16 +721,16 @@ mod tests {
         let cwd = temp_dir("cwd-capture-digest");
         fs::write(cwd.join("uat.sql.gz"), "select 1;").expect("write source");
 
-        let error = capture_artifact_report(
-            "uat.sql.gz",
-            "oci://ghcr.io/acme/uat-content@sha256:abc123",
-            None,
-            None,
-            &repo,
-            &cwd,
-            false,
-            false,
-        )
+        let error = capture_artifact_report(ArtifactCaptureRequest {
+            source: "uat.sql.gz",
+            destination: "oci://ghcr.io/acme/uat-content@sha256:abc123",
+            kind: None,
+            environment_label: None,
+            repo_root: &repo,
+            invocation_cwd: &cwd,
+            farmyard_handoff: false,
+            push: false,
+        })
         .expect_err("reject digest destination");
 
         assert!(error.to_string().contains("destination must be a tag ref"));
@@ -761,14 +744,16 @@ mod tests {
         let adapter = FakeOciArtifactAdapter;
 
         let report = capture_artifact_report_with_adapter(
-            "uat.sql.gz",
-            "oci://ghcr.io/acme/uat-content:2026-05-06",
-            None,
-            None,
-            &repo,
-            &cwd,
-            false,
-            true,
+            ArtifactCaptureRequest {
+                source: "uat.sql.gz",
+                destination: "oci://ghcr.io/acme/uat-content:2026-05-06",
+                kind: None,
+                environment_label: None,
+                repo_root: &repo,
+                invocation_cwd: &cwd,
+                farmyard_handoff: false,
+                push: true,
+            },
             &adapter,
         )
         .expect("push");
@@ -789,14 +774,16 @@ mod tests {
         fs::write(cwd.join("uat.sql.gz"), "select 1;").expect("write source");
 
         let error = capture_artifact_report_with_adapter(
-            "uat.sql.gz",
-            "oci://ghcr.io/acme/uat-content:2026-05-06",
-            None,
-            None,
-            &repo,
-            &cwd,
-            false,
-            true,
+            ArtifactCaptureRequest {
+                source: "uat.sql.gz",
+                destination: "oci://ghcr.io/acme/uat-content:2026-05-06",
+                kind: None,
+                environment_label: None,
+                repo_root: &repo,
+                invocation_cwd: &cwd,
+                farmyard_handoff: false,
+                push: true,
+            },
             &FailingPushOciArtifactAdapter,
         )
         .expect_err("push should fail");

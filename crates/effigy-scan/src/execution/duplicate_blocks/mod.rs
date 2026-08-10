@@ -1,3 +1,4 @@
+use super::WorkspaceScan;
 use std::path::{Path, PathBuf};
 
 use super::super::model::{
@@ -20,9 +21,11 @@ pub fn run_duplicate_block_scan_workspace(
     options: &DuplicateBlockScanOptions,
 ) -> Result<DuplicateBlockScanResult, ScanError> {
     run_workspace_scan(
-        target_root,
-        scan_roots,
-        ScanWorkspaceCounts::default(),
+        WorkspaceScan {
+            target_root,
+            scan_roots,
+            stats: ScanWorkspaceCounts::default(),
+        },
         |root, skipped_roots| run_duplicate_block_scan_single(root, skipped_roots, options),
         |counts, result| {
             counts.scanned_files += result.scanned_files;

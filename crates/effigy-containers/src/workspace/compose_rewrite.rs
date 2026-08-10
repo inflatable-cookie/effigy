@@ -1,25 +1,27 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
-use effigy_manifest::{LibraryMount, ManifestContainerConfig, ManifestWorkspaceConfig};
-
 use crate::ContainerPolicyError;
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, RenderedWorkspaceMount,
+    WorkspaceComposeRewrite,
 };
 
 pub(super) fn rewrite_workspace_mounts_for_direct_compose(
-    repo_root: &Path,
-    container_name: &str,
-    config: &ManifestContainerConfig,
-    workspace: &ManifestWorkspaceConfig,
-    primary_service: &str,
+    request: WorkspaceComposeRewrite<'_>,
     source_compose: &Path,
-    working_dir: &Path,
-    library_mounts: &[LibraryMount],
 ) -> Result<PathBuf, ContainerPolicyError> {
+    let WorkspaceComposeRewrite {
+        repo_root,
+        container_name,
+        config,
+        workspace,
+        working_dir,
+        primary_service,
+        library_mounts,
+    } = request;
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace exec working dir `{}` must have a parent directory",

@@ -1,5 +1,5 @@
 use super::super::super::common::{
-    render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
+    render_markdown_report, render_text_report, MarkdownReportSpec, SeverityLevels, TextReportSpec,
 };
 use crate::model::{format_ratio, CommentRatioScanResult, CommentRatioSeverity, TextRenderOptions};
 
@@ -32,9 +32,11 @@ pub fn render_comment_ratio_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        CommentRatioSeverity::Warning,
-        CommentRatioSeverity::High,
-        CommentRatioSeverity::Critical,
+        SeverityLevels {
+            warning: CommentRatioSeverity::Warning,
+            high: CommentRatioSeverity::High,
+            critical: CommentRatioSeverity::Critical,
+        },
         |finding| {
             format!(
                 "{}  ratio={}  {} comment / {} code  {}",

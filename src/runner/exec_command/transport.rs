@@ -123,10 +123,13 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
             capture,
             &plan.label,
             stdin_file,
-            &parse_compose_exec_args,
-            &run_command_capture_allow_failure,
-            &run_command_capture_allow_failure_with_stdin,
-            &format_args,
+            colima::ColimaExecAdapters {
+                parse_compose_exec_args: &parse_compose_exec_args,
+                run_command_capture_allow_failure: &run_command_capture_allow_failure,
+                run_command_capture_allow_failure_with_stdin:
+                    &run_command_capture_allow_failure_with_stdin,
+                format_args: &format_args,
+            },
         );
     }
 

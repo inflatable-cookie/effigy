@@ -5,7 +5,8 @@ use super::boundaries::run_boundary_violation_scan;
 use super::core::{
     apply_comment_ratio_request_overrides, apply_common_request_overrides,
     apply_generated_in_src_request_overrides, apply_stale_suppression_request_overrides,
-    apply_threshold_request_overrides, reject_threshold_overrides, run_scan_mode, ScanModeConfig,
+    apply_threshold_request_overrides, reject_threshold_overrides, run_scan_mode, ScanExecution,
+    ScanModeConfig,
 };
 use super::dead_code::run_dead_code_scan;
 use super::validation_gaps::run_validation_gap_scan;
@@ -38,10 +39,12 @@ pub(super) fn run_god_files(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("god-files", "effigy.scan.god-files.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("god-files", "effigy.scan.god-files.v1"),
+        },
         |root| load_root_god_file_options(root).map_err(Into::into),
         |options, request| {
             apply_threshold_request_overrides(options, request);
@@ -62,10 +65,12 @@ pub(super) fn run_boundary_violations(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("boundary-violations", "effigy.scan.boundary-violations.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("boundary-violations", "effigy.scan.boundary-violations.v1"),
+        },
         |root| load_root_boundary_violation_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("boundary-violations", request)?;
@@ -85,10 +90,12 @@ pub(super) fn run_dead_code(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("dead-code", "effigy.scan.dead-code.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("dead-code", "effigy.scan.dead-code.v1"),
+        },
         |root| load_root_dead_code_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("dead-code", request)?;
@@ -110,10 +117,12 @@ pub(super) fn run_validation_gaps(
     let changed_paths = request.changed_paths.clone();
     let read_stdin = request.read_stdin;
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("validation-gaps", "effigy.scan.validation-gaps.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("validation-gaps", "effigy.scan.validation-gaps.v1"),
+        },
         |root| load_root_validation_gap_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("validation-gaps", request)?;
@@ -135,10 +144,12 @@ pub(super) fn run_duplicate_blocks(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("duplicate-blocks", "effigy.scan.duplicate-blocks.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("duplicate-blocks", "effigy.scan.duplicate-blocks.v1"),
+        },
         |root| load_root_duplicate_block_options(root).map_err(Into::into),
         |options, request| {
             apply_threshold_request_overrides(options, request);
@@ -159,10 +170,12 @@ pub(super) fn run_comment_ratio(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("comment-ratio", "effigy.scan.comment-ratio.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("comment-ratio", "effigy.scan.comment-ratio.v1"),
+        },
         |root| load_root_comment_ratio_options(root).map_err(Into::into),
         |options, request| {
             apply_comment_ratio_request_overrides(options, request);
@@ -183,10 +196,12 @@ pub(super) fn run_generated_assets(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("generated-assets", "effigy.scan.generated-assets.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("generated-assets", "effigy.scan.generated-assets.v1"),
+        },
         |root| load_root_generated_asset_options(root).map_err(Into::into),
         |options, request| {
             apply_threshold_request_overrides(options, request);
@@ -207,10 +222,12 @@ pub(super) fn run_generated_in_src(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("generated-in-src", "effigy.scan.generated-in-src.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("generated-in-src", "effigy.scan.generated-in-src.v1"),
+        },
         |root| load_root_generated_in_src_options(root).map_err(Into::into),
         |options, request| {
             apply_generated_in_src_request_overrides(options, request);
@@ -231,10 +248,12 @@ pub(super) fn run_attention_markers(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("attention-markers", "effigy.scan.attention-markers.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("attention-markers", "effigy.scan.attention-markers.v1"),
+        },
         |root| load_root_attention_marker_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("attention-markers", request)?;
@@ -256,10 +275,12 @@ pub(super) fn run_stale_suppressions(
 ) -> Result<Option<String>, BuiltinError> {
     let scan_roots = catalog_scan_roots(target_root, catalogs);
     run_scan_mode(
-        request,
-        target_root,
-        &scan_roots,
-        ScanModeConfig::new("stale-suppressions", "effigy.scan.stale-suppressions.v1"),
+        ScanExecution {
+            request,
+            target_root,
+            scan_roots: &scan_roots,
+            mode: ScanModeConfig::new("stale-suppressions", "effigy.scan.stale-suppressions.v1"),
+        },
         |root| load_root_stale_suppression_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("stale-suppressions", request)?;

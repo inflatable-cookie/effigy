@@ -99,14 +99,16 @@ pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
             yes,
             push,
         } => run_state_capture_set(
-            &stack,
-            &profiles,
-            key,
+            StateCaptureSetRequest {
+                stack: &stack,
+                profiles: &profiles,
+                key,
+                yes,
+                push,
+                output_json: args.output_json,
+            },
             &context.invocation_cwd,
             &context.resolved.resolved_root,
-            yes,
-            push,
-            args.output_json,
         ),
         StateSubcommand::History {
             stack,
@@ -443,16 +445,28 @@ fn run_state_capture_report(
     Ok(report)
 }
 
-fn run_state_capture_set(
-    stack: &str,
-    profiles: &[String],
+struct StateCaptureSetRequest<'a> {
+    stack: &'a str,
+    profiles: &'a [String],
     key: Option<String>,
-    invocation_cwd: &Path,
-    repo_root: &Path,
     yes: bool,
     push: bool,
     output_json: bool,
+}
+
+fn run_state_capture_set(
+    request: StateCaptureSetRequest<'_>,
+    invocation_cwd: &Path,
+    repo_root: &Path,
 ) -> Result<String, RunnerError> {
+    let StateCaptureSetRequest {
+        stack,
+        profiles,
+        key,
+        yes,
+        push,
+        output_json,
+    } = request;
     let key = key.unwrap_or_else(default_capture_set_key);
     let mut captures = Vec::new();
     let mut ok = true;
@@ -862,14 +876,16 @@ fn build_state_stack_capture_report(
     ) {
         (true, Some(source), Some(destination)) => Some(
             crate::runner::artifact_command::capture_artifact_report_with_adapter(
-                source,
-                destination,
-                Some("app-specific"),
-                Some(&source_env),
-                repo_root,
-                repo_root,
-                false,
-                request.push,
+                crate::runner::artifact_command::ArtifactCaptureRequest {
+                    source,
+                    destination,
+                    kind: Some("app-specific"),
+                    environment_label: Some(&source_env),
+                    repo_root,
+                    invocation_cwd: repo_root,
+                    farmyard_handoff: false,
+                    push: request.push,
+                },
                 adapter,
             )?,
         ),
@@ -925,13 +941,15 @@ fn state_capture_task_env(
     state_capture_task_environment(
         repo_root,
         lineage,
-        request.source_env.as_deref().unwrap_or_default(),
-        request.key.as_deref().unwrap_or_default(),
-        request.source.as_deref(),
-        request.destination_ref.as_deref(),
-        capture_role,
-        capture_mode,
-        context_path,
+        effigy_state::StateCaptureTaskEnvironment {
+            source_environment: request.source_env.as_deref().unwrap_or_default(),
+            key: request.key.as_deref().unwrap_or_default(),
+            source: request.source.as_deref(),
+            destination_ref: request.destination_ref.as_deref(),
+            capture_role,
+            capture_mode,
+            context_path,
+        },
     )
 }
 
@@ -945,12 +963,14 @@ fn write_state_capture_task_context(
     let built = build_state_capture_task_context(
         lineage,
         &lineage.stack_name,
-        request.key.as_deref().unwrap_or("capture"),
-        plain_state_layer_role(capture_role),
-        capture_mode,
-        request.source_env.clone().unwrap_or_default(),
-        request.source.clone(),
-        request.destination_ref.clone(),
+        effigy_state::StateCaptureContextRequest {
+            key: request.key.clone().unwrap_or_else(|| "capture".to_owned()),
+            capture_role: plain_state_layer_role(capture_role),
+            capture_mode,
+            source_environment: request.source_env.clone().unwrap_or_default(),
+            source: request.source.clone(),
+            destination_ref: request.destination_ref.clone(),
+        },
     );
     write_state_context_file(
         repo_root,

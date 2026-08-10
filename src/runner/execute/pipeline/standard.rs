@@ -5,6 +5,7 @@ use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
     capture_routed_task_container_exec, capture_routed_task_container_exec_with_policy,
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
+    RoutedTaskExecRequest,
 };
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::system_command::is_primary_service_running;
@@ -273,15 +274,17 @@ fn run_standard_task_inner(
         )?;
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
-                scope_root,
-                &preflight.invocation_cwd,
-                &preflight.selector,
-                &preflight.runtime_args_exec.passthrough,
+                RoutedTaskExecRequest {
+                    repo_root: scope_root,
+                    invocation_cwd: &preflight.invocation_cwd,
+                    selector: &preflight.selector,
+                    task_args: &preflight.runtime_args_exec.passthrough,
+                    service,
+                    command: context.command(),
+                    task_env: Some(&context.selection.task.env),
+                    secret_env: secret_ref,
+                },
                 container,
-                service,
-                context.command(),
-                Some(&context.selection.task.env),
-                secret_ref,
             )?;
             let stdout =
                 redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
@@ -308,15 +311,17 @@ fn run_standard_task_inner(
         }
 
         run_routed_task_container_exec(
-            scope_root,
-            &preflight.invocation_cwd,
-            &preflight.selector,
-            &preflight.runtime_args_exec.passthrough,
+            RoutedTaskExecRequest {
+                repo_root: scope_root,
+                invocation_cwd: &preflight.invocation_cwd,
+                selector: &preflight.selector,
+                task_args: &preflight.runtime_args_exec.passthrough,
+                service,
+                command: context.command(),
+                task_env: Some(&context.selection.task.env),
+                secret_env: secret_ref,
+            },
             container,
-            service,
-            context.command(),
-            Some(&context.selection.task.env),
-            secret_ref,
         )?;
         if task_activation.is_some_and(|activation| activation.refreshed_host_container_lease) {
             emit_host_container_lease_notice(container);
@@ -772,16 +777,18 @@ fn run_inline_workspace_standard_task(
 
     let exec_result = if preflight.output_json {
         let output = capture_routed_task_container_exec_with_policy(
-            repo_root,
-            &preflight.invocation_cwd,
-            &preflight.selector,
-            &preflight.runtime_args_exec.passthrough,
+            RoutedTaskExecRequest {
+                repo_root,
+                invocation_cwd: &preflight.invocation_cwd,
+                selector: &preflight.selector,
+                task_args: &preflight.runtime_args_exec.passthrough,
+                service: policy.primary_service.as_str(),
+                command: context.command(),
+                task_env: Some(&context.selection.task.env),
+                secret_env: secret_ref,
+            },
             &policy,
             &working_dir,
-            policy.primary_service.as_str(),
-            context.command(),
-            Some(&context.selection.task.env),
-            secret_ref,
         );
         let _ = run_compose_capture(
             repo_root,
@@ -810,16 +817,18 @@ fn run_inline_workspace_standard_task(
         }
     } else {
         let result = run_routed_task_container_exec_with_policy(
-            repo_root,
-            &preflight.invocation_cwd,
-            &preflight.selector,
-            &preflight.runtime_args_exec.passthrough,
+            RoutedTaskExecRequest {
+                repo_root,
+                invocation_cwd: &preflight.invocation_cwd,
+                selector: &preflight.selector,
+                task_args: &preflight.runtime_args_exec.passthrough,
+                service: policy.primary_service.as_str(),
+                command: context.command(),
+                task_env: Some(&context.selection.task.env),
+                secret_env: secret_ref,
+            },
             &policy,
             &working_dir,
-            policy.primary_service.as_str(),
-            context.command(),
-            Some(&context.selection.task.env),
-            secret_ref,
         );
         let _ = run_compose_capture(
             repo_root,

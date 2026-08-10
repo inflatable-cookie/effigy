@@ -538,24 +538,57 @@ pub fn context(
     let symbols = store.list_symbols()?;
     let edges = store.list_edges()?;
     context_from_graph(
-        repo_root, &store, request, max_files, max_bytes, languages, paths, &files, &symbols,
-        &edges, freshness,
+        repo_root,
+        &store,
+        ContextOptions {
+            request,
+            max_files,
+            max_bytes,
+            languages,
+            paths,
+        },
+        GraphData {
+            files: &files,
+            symbols: &symbols,
+            edges: &edges,
+        },
+        freshness,
     )
+}
+
+struct ContextOptions<'a> {
+    request: &'a str,
+    max_files: Option<usize>,
+    max_bytes: Option<usize>,
+    languages: &'a [String],
+    paths: &'a [String],
+}
+
+struct GraphData<'a> {
+    files: &'a [FileRecord],
+    symbols: &'a [SymbolRecord],
+    edges: &'a [EdgeRecord],
 }
 
 fn context_from_graph(
     repo_root: &Path,
     store: &GraphStore,
-    request: &str,
-    max_files: Option<usize>,
-    max_bytes: Option<usize>,
-    languages: &[String],
-    paths: &[String],
-    files: &[FileRecord],
-    symbols: &[SymbolRecord],
-    edges: &[EdgeRecord],
+    options: ContextOptions<'_>,
+    graph: GraphData<'_>,
     freshness: GraphFreshnessPayload,
 ) -> Result<GraphContextPayload, CodeGraphError> {
+    let ContextOptions {
+        request,
+        max_files,
+        max_bytes,
+        languages,
+        paths,
+    } = options;
+    let GraphData {
+        files,
+        symbols,
+        edges,
+    } = graph;
     let max_files = max_files.unwrap_or(8);
     let max_bytes = max_bytes.unwrap_or(4096);
     let request_profile = RequestProfile::new(request, repo_root);
@@ -960,14 +993,18 @@ pub fn explore(
     let context_payload = context_from_graph(
         repo_root,
         &store,
-        request,
-        Some(max_files),
-        Some(max_bytes),
-        languages,
-        paths,
-        &files,
-        &symbols,
-        &edges,
+        ContextOptions {
+            request,
+            max_files: Some(max_files),
+            max_bytes: Some(max_bytes),
+            languages,
+            paths,
+        },
+        GraphData {
+            files: &files,
+            symbols: &symbols,
+            edges: &edges,
+        },
         freshness.clone(),
     )?;
     let counts = store.counts()?;

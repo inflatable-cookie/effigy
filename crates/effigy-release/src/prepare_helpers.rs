@@ -310,21 +310,40 @@ pub fn apply_release_mutations(
     Ok(())
 }
 
+pub struct ReleasePreparedStateWrite<'a> {
+    pub path: &'a Path,
+    pub repo_root: &'a Path,
+    pub previous_version: &'a semver::Version,
+    pub suggested_version: Option<&'a semver::Version>,
+    pub prepared_version: Option<&'a semver::Version>,
+    pub suggested_tag: Option<&'a str>,
+    pub tag: Option<&'a str>,
+    pub version_override_used: bool,
+    pub release_date: &'a str,
+    pub gates_checked: bool,
+    pub files_modified: &'a [PathBuf],
+    pub prepared_branch: Option<&'a str>,
+    pub prepared_head: Option<&'a str>,
+}
+
 pub fn write_release_prepared_state(
-    path: &Path,
-    repo_root: &Path,
-    previous_version: &semver::Version,
-    suggested_version: Option<&semver::Version>,
-    prepared_version: Option<&semver::Version>,
-    suggested_tag: Option<&str>,
-    tag: Option<&str>,
-    version_override_used: bool,
-    release_date: &str,
-    gates_checked: bool,
-    files_modified: &[PathBuf],
-    prepared_branch: Option<&str>,
-    prepared_head: Option<&str>,
+    state: ReleasePreparedStateWrite<'_>,
 ) -> Result<(), ReleaseError> {
+    let ReleasePreparedStateWrite {
+        path,
+        repo_root,
+        previous_version,
+        suggested_version,
+        prepared_version,
+        suggested_tag,
+        tag,
+        version_override_used,
+        release_date,
+        gates_checked,
+        files_modified,
+        prepared_branch,
+        prepared_head,
+    } = state;
     let source_fingerprints = capture_release_prepared_source_fingerprints(
         repo_root,
         files_modified,

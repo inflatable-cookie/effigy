@@ -84,6 +84,37 @@ impl PersistedDemoActivePhase {
     }
 }
 
+pub struct ActiveAttemptTerminal {
+    pub input_handoff_rendered: Option<String>,
+    pub resize_handoff_rendered: Option<String>,
+    pub stdout_log_rendered: Option<String>,
+    pub stderr_log_rendered: Option<String>,
+    pub terminal_size: Option<(u16, u16)>,
+}
+
+pub struct ConcurrentRunnerActiveAttempt<'a> {
+    pub attempt_id: String,
+    pub demo_id: &'a str,
+    pub task_name: &'a str,
+    pub managed_command: String,
+    pub browser_live_attach_supported: bool,
+    pub projection_shape_kind: String,
+    pub managed_process_count: usize,
+    pub managed_process_names: Vec<String>,
+    pub projected_output_provenance_kind: String,
+    pub terminal: ActiveAttemptTerminal,
+}
+
+pub struct RunBackedActiveAttempt<'a> {
+    pub attempt_id: String,
+    pub demo_id: &'a str,
+    pub entrypoint_value: String,
+    pub run_command: String,
+    pub target_pid: u32,
+    pub terminal_transport: PersistedDemoTerminalTransport,
+    pub terminal: ActiveAttemptTerminal,
+}
+
 impl PersistedDemoActiveAttempt {
     /// Build a task-backed active attempt record (non-managed tasks).
     ///
@@ -131,22 +162,26 @@ impl PersistedDemoActiveAttempt {
     /// rendered paths, and initial terminal size — all derived from the
     /// runner's task plan. This keeps runtime-shape classification in
     /// `effigy-demo` while the runner produces the plan-level inputs.
-    pub fn new_concurrent_runner_backed(
-        attempt_id: String,
-        demo_id: &str,
-        task_name: &str,
-        managed_command: String,
-        browser_live_attach_supported: bool,
-        projection_shape_kind: String,
-        managed_process_count: usize,
-        managed_process_names: Vec<String>,
-        projected_output_provenance_kind: String,
-        input_handoff_rendered: Option<String>,
-        resize_handoff_rendered: Option<String>,
-        stdout_log_rendered: Option<String>,
-        stderr_log_rendered: Option<String>,
-        terminal_size: Option<(u16, u16)>,
-    ) -> Self {
+    pub fn new_concurrent_runner_backed(request: ConcurrentRunnerActiveAttempt) -> Self {
+        let ConcurrentRunnerActiveAttempt {
+            attempt_id,
+            demo_id,
+            task_name,
+            managed_command,
+            browser_live_attach_supported,
+            projection_shape_kind,
+            managed_process_count,
+            managed_process_names,
+            projected_output_provenance_kind,
+            terminal,
+        } = request;
+        let ActiveAttemptTerminal {
+            input_handoff_rendered,
+            resize_handoff_rendered,
+            stdout_log_rendered,
+            stderr_log_rendered,
+            terminal_size,
+        } = terminal;
         let supports_input_forwarding = input_handoff_rendered.is_some();
         let supports_resize = resize_handoff_rendered.is_some();
         Self {
@@ -187,19 +222,23 @@ impl PersistedDemoActiveAttempt {
     /// Shapes the persistence payload for a demo whose entrypoint is a
     /// shell run command, with a known target pid, terminal transport, and
     /// optional input/resize handoff paths.
-    pub fn new_run_backed(
-        attempt_id: String,
-        demo_id: &str,
-        entrypoint_value: String,
-        run_command: String,
-        target_pid: u32,
-        terminal_transport: PersistedDemoTerminalTransport,
-        input_handoff_rendered: Option<String>,
-        resize_handoff_rendered: Option<String>,
-        stdout_log_rendered: Option<String>,
-        stderr_log_rendered: Option<String>,
-        terminal_size: Option<(u16, u16)>,
-    ) -> Self {
+    pub fn new_run_backed(request: RunBackedActiveAttempt) -> Self {
+        let RunBackedActiveAttempt {
+            attempt_id,
+            demo_id,
+            entrypoint_value,
+            run_command,
+            target_pid,
+            terminal_transport,
+            terminal,
+        } = request;
+        let ActiveAttemptTerminal {
+            input_handoff_rendered,
+            resize_handoff_rendered,
+            stdout_log_rendered,
+            stderr_log_rendered,
+            terminal_size,
+        } = terminal;
         let supports_input_forwarding = input_handoff_rendered.is_some();
         let supports_resize = resize_handoff_rendered.is_some();
         Self {

@@ -973,11 +973,13 @@ fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() 
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
     let routes_were_ready_before_handoff = prepare_workspace_handoff_using(
-        repo_root,
-        &policy,
-        Some("web"),
-        Some(PathBuf::from("/tmp/demo-repo")),
-        Some("effigy dev"),
+        WorkspaceHandoffRequest {
+            repo_root,
+            policy: &policy,
+            container_name: Some("web"),
+            repo_override: Some(PathBuf::from("/tmp/demo-repo")),
+            initial_command: Some("effigy dev"),
+        },
         {
             let events = std::sync::Arc::clone(&events);
             move |repo_root, policy| {
@@ -1055,11 +1057,13 @@ fn workspace_handoff_preparation_preserves_explicit_repo_override() {
     let captured_clone = std::sync::Arc::clone(&captured);
 
     prepare_workspace_handoff_using(
-        repo_root,
-        &policy,
-        Some("web"),
-        Some(std::path::PathBuf::from("/tmp/cloned-target")),
-        Some("effigy dev"),
+        WorkspaceHandoffRequest {
+            repo_root,
+            policy: &policy,
+            container_name: Some("web"),
+            repo_override: Some(std::path::PathBuf::from("/tmp/cloned-target")),
+            initial_command: Some("effigy dev"),
+        },
         |_repo_root, _policy| Ok(true),
         |_policy| Ok(()),
         |_repo_root, _policy| Ok(()),
@@ -1101,11 +1105,13 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
 
     prepare_workspace_handoff_using(
-        repo_root,
-        &policy,
-        Some("web"),
-        Some(PathBuf::from("/tmp/demo-repo")),
-        None,
+        WorkspaceHandoffRequest {
+            repo_root,
+            policy: &policy,
+            container_name: Some("web"),
+            repo_override: Some(PathBuf::from("/tmp/demo-repo")),
+            initial_command: None,
+        },
         {
             let events = std::sync::Arc::clone(&events);
             move |_, _| {

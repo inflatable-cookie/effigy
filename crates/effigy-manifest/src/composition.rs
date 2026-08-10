@@ -232,17 +232,16 @@ fn load_composed_value(
             override_paths: include.override_paths.clone(),
             extend_paths: child.extend_paths.clone(),
         });
-        merge_values(
-            "",
-            &mut composed.value,
-            &child.value,
-            &child.source_map,
-            &include,
-            &child.extend_paths,
-            &mut session.overridden_paths,
-            &mut composed.source_map,
-            manifest_path,
-        )?;
+        merge_values(MergeRequest {
+            current: &mut composed.value,
+            incoming: &child.value,
+            incoming_sources: &child.source_map,
+            include: &include,
+            extend_paths: &child.extend_paths,
+            overridden_paths: &mut session.overridden_paths,
+            current_sources: &mut composed.source_map,
+            root_manifest_path: manifest_path,
+        })?;
         for path in child.extend_paths {
             if !composed.extend_paths.contains(&path) {
                 composed.extend_paths.push(path);
@@ -340,43 +339,62 @@ fn take_include_specs(
     Ok((specs, config.extend))
 }
 
-fn merge_values(
-    path: &str,
-    current: &mut Value,
-    incoming: &Value,
-    incoming_sources: &BTreeMap<String, PathBuf>,
-    include: &ManifestIncludeSpec,
-    extend_paths: &[String],
-    overridden_paths: &mut Vec<ManifestCompositionOverride>,
-    current_sources: &mut BTreeMap<String, PathBuf>,
-    root_manifest_path: &Path,
-) -> Result<(), ManifestError> {
+struct MergeRequest<'a> {
+    current: &'a mut Value,
+    incoming: &'a Value,
+    incoming_sources: &'a BTreeMap<String, PathBuf>,
+    include: &'a ManifestIncludeSpec,
+    extend_paths: &'a [String],
+    overridden_paths: &'a mut Vec<ManifestCompositionOverride>,
+    current_sources: &'a mut BTreeMap<String, PathBuf>,
+    root_manifest_path: &'a Path,
+}
+
+struct MergeContext<'a> {
+    incoming_sources: &'a BTreeMap<String, PathBuf>,
+    override_set: BTreeSet<String>,
+    extend_set: BTreeSet<String>,
+    used_overrides: BTreeSet<String>,
+    used_extends: BTreeSet<String>,
+    overridden_paths: &'a mut Vec<ManifestCompositionOverride>,
+    current_sources: &'a mut BTreeMap<String, PathBuf>,
+    incoming_fragment: &'a Path,
+    root_manifest_path: &'a Path,
+}
+
+fn merge_values(request: MergeRequest<'_>) -> Result<(), ManifestError> {
+    let MergeRequest {
+        current,
+        incoming,
+        incoming_sources,
+        include,
+        extend_paths,
+        overridden_paths,
+        current_sources,
+        root_manifest_path,
+    } = request;
     let override_set = include
         .override_paths
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
     let extend_set = extend_paths.iter().cloned().collect::<BTreeSet<_>>();
-    let mut used_overrides = BTreeSet::new();
-    let mut used_extends = BTreeSet::new();
-    merge_value_inner(
-        path,
-        current,
-        incoming,
+    let mut context = MergeContext {
         incoming_sources,
-        &override_set,
-        &extend_set,
-        &mut used_overrides,
-        &mut used_extends,
+        override_set,
+        extend_set,
+        used_overrides: BTreeSet::new(),
+        used_extends: BTreeSet::new(),
         overridden_paths,
         current_sources,
-        &include.resolved_path,
+        incoming_fragment: &include.resolved_path,
         root_manifest_path,
-    )?;
+    };
+    merge_value_inner("", current, incoming, &mut context)?;
     let unused_overrides = include
         .override_paths
         .iter()
-        .filter(|path| !used_overrides.contains((*path).as_str()))
+        .filter(|path| !context.used_overrides.contains((*path).as_str()))
         .cloned()
         .collect::<Vec<_>>();
     if !unused_overrides.is_empty() {
@@ -394,7 +412,7 @@ fn merge_values(
     // is the happy outcome, not an error. Override is strict because a
     // replacement that replaced nothing is almost always a typo;
     // extend doesn't carry the same risk.
-    let _ = used_extends;
+    let _ = context.used_extends;
     Ok(())
 }
 
@@ -402,24 +420,17 @@ fn merge_value_inner(
     path: &str,
     current: &mut Value,
     incoming: &Value,
-    incoming_sources: &BTreeMap<String, PathBuf>,
-    override_set: &BTreeSet<String>,
-    extend_set: &BTreeSet<String>,
-    used_overrides: &mut BTreeSet<String>,
-    used_extends: &mut BTreeSet<String>,
-    overridden_paths: &mut Vec<ManifestCompositionOverride>,
-    current_sources: &mut BTreeMap<String, PathBuf>,
-    incoming_fragment: &Path,
-    root_manifest_path: &Path,
+    context: &mut MergeContext<'_>,
 ) -> Result<(), ManifestError> {
-    if !path.is_empty() && extend_set.contains(path) {
+    if !path.is_empty() && context.extend_set.contains(path) {
         let existing_source =
-            current_value_source(path, current_sources, root_manifest_path).to_path_buf();
+            current_value_source(path, context.current_sources, context.root_manifest_path)
+                .to_path_buf();
         if let (Some(current_array), Some(incoming_array)) =
             (current.as_array_mut(), incoming.as_array())
         {
             current_array.extend(incoming_array.iter().cloned());
-            used_extends.insert(path.to_owned());
+            context.used_extends.insert(path.to_owned());
             return Ok(());
         }
         if current.is_table() && incoming.is_table() {
@@ -427,55 +438,56 @@ fn merge_value_inner(
                 path,
                 current,
                 incoming,
-                incoming_sources,
-                current_sources,
-                incoming_fragment,
+                context.incoming_sources,
+                context.current_sources,
+                context.incoming_fragment,
             );
-            used_extends.insert(path.to_owned());
+            context.used_extends.insert(path.to_owned());
             return Ok(());
         }
         return Err(ManifestError::Compose {
-            path: root_manifest_path.to_path_buf(),
+            path: context.root_manifest_path.to_path_buf(),
             detail: format!(
                 "extend path `{path}` requires arrays or tables on both sides; got {} from {} and {} from {}",
                 value_kind(current),
                 existing_source.display(),
                 value_kind(incoming),
-                incoming_fragment.display()
+                context.incoming_fragment.display()
             ),
         });
     }
 
-    if !path.is_empty() && override_set.contains(path) {
+    if !path.is_empty() && context.override_set.contains(path) {
         let existing_source =
-            current_value_source(path, current_sources, root_manifest_path).to_path_buf();
+            current_value_source(path, context.current_sources, context.root_manifest_path)
+                .to_path_buf();
         if value_kind(current) != value_kind(incoming) {
             return Err(ManifestError::Compose {
-                path: root_manifest_path.to_path_buf(),
+                path: context.root_manifest_path.to_path_buf(),
                 detail: format!(
                     "override path `{path}` cannot replace {} from {} with {} from {}",
                     value_kind(current),
                     existing_source.display(),
                     value_kind(incoming),
-                    incoming_fragment.display()
+                    context.incoming_fragment.display()
                 ),
             });
         }
         *current = incoming.clone();
-        remove_source_entries(path, current_sources);
+        remove_source_entries(path, context.current_sources);
         copy_source_entries(
             path,
-            incoming_sources,
-            current_sources,
-            incoming_fragment,
+            context.incoming_sources,
+            context.current_sources,
+            context.incoming_fragment,
             incoming,
         );
-        overridden_paths.push(ManifestCompositionOverride {
+        context.overridden_paths.push(ManifestCompositionOverride {
             path: path.to_owned(),
             replaced_source: existing_source,
-            by_fragment: incoming_fragment.to_path_buf(),
+            by_fragment: context.incoming_fragment.to_path_buf(),
         });
-        used_overrides.insert(path.to_owned());
+        context.used_overrides.insert(path.to_owned());
         return Ok(());
     }
 
@@ -484,27 +496,16 @@ fn merge_value_inner(
             for (key, incoming_value) in incoming_table {
                 let child_path = join_path(path, key);
                 match current_table.get_mut(key) {
-                    Some(current_value) => merge_value_inner(
-                        &child_path,
-                        current_value,
-                        incoming_value,
-                        incoming_sources,
-                        override_set,
-                        extend_set,
-                        used_overrides,
-                        used_extends,
-                        overridden_paths,
-                        current_sources,
-                        incoming_fragment,
-                        root_manifest_path,
-                    )?,
+                    Some(current_value) => {
+                        merge_value_inner(&child_path, current_value, incoming_value, context)?
+                    }
                     None => {
                         current_table.insert(key.clone(), incoming_value.clone());
                         copy_source_entries(
                             &child_path,
-                            incoming_sources,
-                            current_sources,
-                            incoming_fragment,
+                            context.incoming_sources,
+                            context.current_sources,
+                            context.incoming_fragment,
                             incoming_value,
                         );
                     }
@@ -514,16 +515,17 @@ fn merge_value_inner(
         }
         (Some(_), None) | (None, Some(_)) => {
             let existing_source =
-                current_value_source(path, current_sources, root_manifest_path).to_path_buf();
+                current_value_source(path, context.current_sources, context.root_manifest_path)
+                    .to_path_buf();
             return Err(ManifestError::Compose {
-                path: root_manifest_path.to_path_buf(),
+                path: context.root_manifest_path.to_path_buf(),
                 detail: format!(
                     "manifest conflict at `{}` between {} from {} and {} from {}",
                     display_path(path),
                     value_kind(current),
                     existing_source.display(),
                     value_kind(incoming),
-                    incoming_fragment.display()
+                    context.incoming_fragment.display()
                 ),
             });
         }
@@ -535,16 +537,17 @@ fn merge_value_inner(
     }
 
     let existing_source =
-        current_value_source(path, current_sources, root_manifest_path).to_path_buf();
+        current_value_source(path, context.current_sources, context.root_manifest_path)
+            .to_path_buf();
     Err(ManifestError::Compose {
-        path: root_manifest_path.to_path_buf(),
+        path: context.root_manifest_path.to_path_buf(),
         detail: format!(
             "manifest conflict at `{}` between {} and {}; add override = [\"{}\"] to the include entry for {}",
             display_path(path),
             existing_source.display(),
-            incoming_fragment.display(),
+            context.incoming_fragment.display(),
             path,
-            incoming_fragment.display(),
+            context.incoming_fragment.display(),
         ),
     })
 }

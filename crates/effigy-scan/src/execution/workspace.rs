@@ -15,9 +15,7 @@ pub fn run_workspace_scan<
     FSort,
     FBuild,
 >(
-    target_root: &Path,
-    scan_roots: &[PathBuf],
-    mut stats: TStats,
+    request: WorkspaceScan<'_, TStats>,
     run_single: FSingle,
     mut merge_stats: FMerge,
     extract_findings: FExtract,
@@ -33,6 +31,11 @@ where
     FSort: FnOnce(&mut [TFinding]),
     FBuild: FnOnce(String, TStats, Vec<TFinding>) -> TResult,
 {
+    let WorkspaceScan {
+        target_root,
+        scan_roots,
+        mut stats,
+    } = request;
     let mut findings = Vec::new();
     for (root, skipped_roots) in workspace_scan_roots(target_root, scan_roots) {
         let result = run_single(&root, &skipped_roots)?;
@@ -50,6 +53,12 @@ where
         stats,
         findings,
     ))
+}
+
+pub struct WorkspaceScan<'a, TStats> {
+    pub target_root: &'a Path,
+    pub scan_roots: &'a [PathBuf],
+    pub stats: TStats,
 }
 
 pub fn walk_text_scan_files<ShouldSkip, Visit>(

@@ -201,6 +201,14 @@ impl GeneratedComposeService {
     }
 }
 
+type ResolvedComposeSource = (
+    Vec<PathBuf>,
+    String,
+    Vec<ManagedVolume>,
+    Vec<String>,
+    Vec<SharedServiceBinding>,
+);
+
 pub(crate) fn resolve_compose_source(
     repo_root: &Path,
     bundle_root: Option<&Path>,
@@ -208,16 +216,7 @@ pub(crate) fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
-) -> Result<
-    (
-        Vec<PathBuf>,
-        String,
-        Vec<ManagedVolume>,
-        Vec<String>,
-        Vec<SharedServiceBinding>,
-    ),
-    ContainerPolicyError,
-> {
+) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"

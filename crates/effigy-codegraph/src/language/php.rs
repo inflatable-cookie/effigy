@@ -81,16 +81,8 @@ impl LanguageIndexer for PhpIndexer {
         });
 
         let mut state = PhpWalkState::default();
-        walk_php(
-            tree.root_node(),
-            file,
-            file_record,
-            sink,
-            &self.extractor_id,
-            &self.version,
-            &mut state,
-            file_symbol_id,
-        )
+        let source = (file, file_record, &self.extractor_id, self.version.as_str());
+        walk_php(tree.root_node(), source, sink, &mut state, file_symbol_id)
     }
 }
 
@@ -107,24 +99,14 @@ struct PhpWalkState {
 
 fn walk_php(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PhpWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     if node.is_error() {
-        push_parse_diagnostic(
-            node,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-        )?;
+        push_parse_diagnostic(node, source, sink, state)?;
     }
 
     match node.kind() {
@@ -160,16 +142,7 @@ fn walk_php(
                     state.namespace_owner_id.replace(namespace_id.clone());
                 state.scope.push(name);
                 if let Some(body) = node.child_by_field_name("body") {
-                    walk_children(
-                        body,
-                        file,
-                        file_record,
-                        sink,
-                        extractor_id,
-                        extractor_version,
-                        state,
-                        namespace_id,
-                    )?;
+                    walk_children(body, source, sink, state, namespace_id)?;
                     state.scope.pop();
                     state.namespace = previous_namespace;
                     state.namespace_owner_id = previous_namespace_owner;
@@ -191,29 +164,14 @@ fn walk_php(
                 };
                 let canonical = scoped_name(state.namespace.as_deref(), &name);
                 let symbol_id = emit::declare_owned_symbol(
-                    "php",
-                    &canonical,
-                    kind,
-                    &name,
+                    ("php", &canonical, kind, &name),
                     &effective_owner_id(state, &owner_id),
                     node,
-                    file,
-                    file_record,
+                    (file, file_record, extractor_id, extractor_version),
                     sink,
-                    extractor_id,
-                    extractor_version,
                 )?;
                 state.scope.push(name);
-                walk_children(
-                    node,
-                    file,
-                    file_record,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                    state,
-                    symbol_id,
-                )?;
+                walk_children(node, source, sink, state, symbol_id)?;
                 state.scope.pop();
                 return Ok(());
             }
@@ -231,52 +189,25 @@ fn walk_php(
                     scoped_name(state.namespace.as_deref(), &name)
                 };
                 let symbol_id = emit::declare_owned_symbol(
-                    "php",
-                    &canonical,
-                    kind,
-                    &name,
+                    ("php", &canonical, kind, &name),
                     &effective_owner_id(state, &owner_id),
                     node,
-                    file,
-                    file_record,
+                    (file, file_record, extractor_id, extractor_version),
                     sink,
-                    extractor_id,
-                    extractor_version,
                 )?;
-                walk_children(
-                    node,
-                    file,
-                    file_record,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                    state,
-                    symbol_id,
-                )?;
+                walk_children(node, source, sink, state, symbol_id)?;
                 return Ok(());
             }
         }
         "const_declaration" | "class_const_declaration" => {
             index_constants(
                 node,
-                file,
-                file_record,
+                source,
                 sink,
-                extractor_id,
-                extractor_version,
                 state,
                 &effective_owner_id(state, &owner_id),
             )?;
-            return walk_children(
-                node,
-                file,
-                file_record,
-                sink,
-                extractor_id,
-                extractor_version,
-                state,
-                owner_id,
-            );
+            return walk_children(node, source, sink, state, owner_id);
         }
         "namespace_use_declaration" => {
             index_imports(
@@ -306,11 +237,8 @@ fn walk_php(
         "function_call_expression" | "member_call_expression" | "scoped_call_expression" => {
             index_call_reference(
                 node,
-                file,
-                file_record,
+                source,
                 sink,
-                extractor_id,
-                extractor_version,
                 state,
                 &effective_owner_id(state, &owner_id),
             )?;
@@ -318,54 +246,31 @@ fn walk_php(
         _ => {}
     }
 
-    walk_children(
-        node,
-        file,
-        file_record,
-        sink,
-        extractor_id,
-        extractor_version,
-        state,
-        owner_id,
-    )
+    walk_children(node, source, sink, state, owner_id)
 }
 
 fn walk_children(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PhpWalkState,
     owner_id: GraphId,
 ) -> Result<(), CodeGraphError> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk_php(
-            child,
-            file,
-            file_record,
-            sink,
-            extractor_id,
-            extractor_version,
-            state,
-            owner_id.clone(),
-        )?;
+        walk_php(child, source, sink, state, owner_id.clone())?;
     }
     Ok(())
 }
 
 fn index_constants(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &PhpWalkState,
     owner_id: &GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if child.kind() != "const_element" {
@@ -378,17 +283,11 @@ fn index_constants(
         };
         let canonical = scoped_member_name(state.namespace.as_deref(), &state.scope, &name);
         emit::declare_owned_symbol(
-            "php",
-            &canonical,
-            "constant",
-            &name,
+            ("php", &canonical, "constant", &name),
             owner_id,
             child,
-            file,
-            file_record,
+            (file, file_record, extractor_id, extractor_version),
             sink,
-            extractor_id,
-            extractor_version,
         )?;
     }
     Ok(())
@@ -417,10 +316,8 @@ fn index_imports(
                             "import",
                             name,
                             child,
-                            file,
+                            (file, extractor_id, extractor_version),
                             sink,
-                            extractor_id,
-                            extractor_version,
                             Confidence::Exact,
                         )?;
                     }
@@ -471,10 +368,8 @@ fn index_include(
                 "include",
                 target,
                 node,
-                file,
+                (file, extractor_id, extractor_version),
                 sink,
-                extractor_id,
-                extractor_version,
                 Confidence::Heuristic,
             )?;
         }
@@ -484,10 +379,8 @@ fn index_include(
             "include",
             text(node, &file.content),
             node,
-            file,
+            (file, extractor_id, extractor_version),
             sink,
-            extractor_id,
-            extractor_version,
             Confidence::Heuristic,
         )?;
     }
@@ -496,14 +389,12 @@ fn index_include(
 
 fn index_call_reference(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PhpWalkState,
     owner_id: &GraphId,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     let Some(target) = call_target(node, &file.content) else {
         return Ok(());
     };
@@ -516,11 +407,8 @@ fn index_call_reference(
         "call-site",
         &target,
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
         Confidence::Heuristic,
     )?;
     unresolved_edge(
@@ -528,34 +416,27 @@ fn index_call_reference(
         "call",
         target,
         node,
-        file,
+        (file, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
         Confidence::Heuristic,
     )
 }
 
 fn push_parse_diagnostic(
     node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
+    source: emit::SourceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     state: &mut PhpWalkState,
 ) -> Result<(), CodeGraphError> {
+    let (file, file_record, extractor_id, extractor_version) = source;
     emit::push_parse_diagnostic_once(
         &mut state.diagnostics,
         "php",
         "php",
         text(node, &file.content),
         node,
-        file,
-        file_record,
+        (file, file_record, extractor_id, extractor_version),
         sink,
-        extractor_id,
-        extractor_version,
     )
 }
 
@@ -564,10 +445,8 @@ fn unresolved_edge(
     kind: &str,
     target: impl Into<String>,
     node: Node<'_>,
-    file: &SourceFile,
+    provenance: emit::ProvenanceContext<'_>,
     sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
     emit::push_unresolved_edge(
@@ -575,10 +454,8 @@ fn unresolved_edge(
         owner_id,
         kind,
         target,
-        file,
+        provenance,
         sink,
-        extractor_id,
-        extractor_version,
         confidence,
     )
 }

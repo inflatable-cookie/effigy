@@ -1172,21 +1172,21 @@ where
 
     let prepared_branch = git_current_branch(&repo_root).ok();
     let prepared_head = git_head_sha(&repo_root).ok();
-    write_release_prepared_state(
-        &state_file,
-        &repo_root,
-        &context.current_version,
-        plan.suggested_version.as_ref(),
-        prepared_version.as_ref(),
-        plan.suggested_tag.as_deref(),
-        plan.tag.as_deref(),
-        plan.version_override_used,
-        &plan.release_date,
-        check_gates,
-        &files_modified,
-        prepared_branch.as_deref(),
-        prepared_head.as_deref(),
-    )?;
+    write_release_prepared_state(prepare_helpers::ReleasePreparedStateWrite {
+        path: &state_file,
+        repo_root: &repo_root,
+        previous_version: &context.current_version,
+        suggested_version: plan.suggested_version.as_ref(),
+        prepared_version: prepared_version.as_ref(),
+        suggested_tag: plan.suggested_tag.as_deref(),
+        tag: plan.tag.as_deref(),
+        version_override_used: plan.version_override_used,
+        release_date: &plan.release_date,
+        gates_checked: check_gates,
+        files_modified: &files_modified,
+        prepared_branch: prepared_branch.as_deref(),
+        prepared_head: prepared_head.as_deref(),
+    })?;
 
     Ok(ReleasePrepared {
         repo_root,

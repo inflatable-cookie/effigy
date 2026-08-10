@@ -165,20 +165,22 @@ fn render_suite_lifecycle_sequence(
     }
 
     render_run_step_sequence(
-        owner_label,
         steps,
-        task_env,
-        task_env_file,
-        env_profiles,
-        target_root,
-        catalogs
-            .iter()
-            .find(|catalog| catalog.catalog_root == target_root)
-            .and_then(|catalog| catalog.bundle_root.as_deref()),
-        catalogs,
-        target_root,
-        None,
-        &effigy_routing::resolve_task_selection,
+        effigy_managed::run_spec::RunStepSequenceContext {
+            owner_label,
+            task_env,
+            task_env_file,
+            env_profiles,
+            repo_root: target_root,
+            bundle_root: catalogs
+                .iter()
+                .find(|catalog| catalog.catalog_root == target_root)
+                .and_then(|catalog| catalog.bundle_root.as_deref()),
+            catalogs,
+            task_scope_cwd: target_root,
+            runtime_env_schema_override: None,
+            resolver: &effigy_routing::resolve_task_selection,
+        },
     )
     .map(Some)
     .map_err(Into::into)

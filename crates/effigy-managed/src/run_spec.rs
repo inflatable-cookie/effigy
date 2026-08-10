@@ -115,19 +115,35 @@ pub fn resolve_run_step_env(
     )
 }
 
+pub struct RunStepSequenceContext<'a> {
+    pub owner_label: &'a str,
+    pub task_env: &'a BTreeMap<String, String>,
+    pub task_env_file: Option<&'a ManifestEnvFileDirective>,
+    pub env_profiles: &'a BTreeMap<String, ManifestEnvEntry>,
+    pub repo_root: &'a Path,
+    pub bundle_root: Option<&'a Path>,
+    pub catalogs: &'a [LoadedCatalog],
+    pub task_scope_cwd: &'a Path,
+    pub runtime_env_schema_override: Option<&'a Path>,
+    pub resolver: TaskResolverFn<'a>,
+}
+
 pub fn render_run_step_sequence<'a>(
-    owner_label: &'a str,
     steps: &[ManifestManagedRunStep],
-    task_env: &'a BTreeMap<String, String>,
-    task_env_file: Option<&'a ManifestEnvFileDirective>,
-    env_profiles: &'a BTreeMap<String, ManifestEnvEntry>,
-    repo_root: &'a Path,
-    bundle_root: Option<&'a Path>,
-    catalogs: &'a [LoadedCatalog],
-    task_scope_cwd: &'a Path,
-    runtime_env_schema_override: Option<&'a Path>,
-    resolver: TaskResolverFn<'a>,
+    context: RunStepSequenceContext<'a>,
 ) -> Result<String, ManagedError> {
+    let RunStepSequenceContext {
+        owner_label,
+        task_env,
+        task_env_file,
+        env_profiles,
+        repo_root,
+        bundle_root,
+        catalogs,
+        task_scope_cwd,
+        runtime_env_schema_override,
+        resolver,
+    } = context;
     sequence::render_run_sequence(
         steps,
         RunSpecContext {

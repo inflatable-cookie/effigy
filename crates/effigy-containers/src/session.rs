@@ -149,18 +149,32 @@ pub fn attached_session_process_plans(
     plans
 }
 
-pub fn managed_lifecycle_command(
-    repo_root: &Path,
-    container_name: Option<&str>,
-    owner_task: &str,
-    health_wait: bool,
-    ready_message: Option<&str>,
-    dns_route_lines: &[String],
-    readiness_probe_urls: &[String],
-    setup_commands: &[String],
-    executable: &str,
-    secrets_required: bool,
-) -> String {
+pub struct ManagedLifecycleRequest<'a> {
+    pub repo_root: &'a Path,
+    pub container_name: Option<&'a str>,
+    pub owner_task: &'a str,
+    pub health_wait: bool,
+    pub ready_message: Option<&'a str>,
+    pub dns_route_lines: &'a [String],
+    pub readiness_probe_urls: &'a [String],
+    pub setup_commands: &'a [String],
+    pub executable: &'a str,
+    pub secrets_required: bool,
+}
+
+pub fn managed_lifecycle_command(request: ManagedLifecycleRequest<'_>) -> String {
+    let ManagedLifecycleRequest {
+        repo_root,
+        container_name,
+        owner_task,
+        health_wait,
+        ready_message,
+        dns_route_lines,
+        readiness_probe_urls,
+        setup_commands,
+        executable,
+        secrets_required,
+    } = request;
     let repo = shell_quote(&repo_root.display().to_string());
     let lifecycle_owner_task = owner_task;
     let owner_task = shell_quote(owner_task);
@@ -306,16 +320,28 @@ pub fn managed_lifecycle_idle_wait_command() -> &'static str {
     "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
 }
 
-pub fn managed_standard_exec_command(
-    repo_root: &Path,
-    container_name: Option<&str>,
-    owner_task: &str,
-    process_cwd: &Path,
-    container_repo_root: Option<&Path>,
-    setup_command: Option<&str>,
-    executable: &str,
-    command: &str,
-) -> String {
+pub struct ManagedStandardExecRequest<'a> {
+    pub repo_root: &'a Path,
+    pub container_name: Option<&'a str>,
+    pub owner_task: &'a str,
+    pub process_cwd: &'a Path,
+    pub container_repo_root: Option<&'a Path>,
+    pub setup_command: Option<&'a str>,
+    pub executable: &'a str,
+    pub command: &'a str,
+}
+
+pub fn managed_standard_exec_command(request: ManagedStandardExecRequest<'_>) -> String {
+    let ManagedStandardExecRequest {
+        repo_root,
+        container_name,
+        owner_task,
+        process_cwd,
+        container_repo_root,
+        setup_command,
+        executable,
+        command,
+    } = request;
     let repo = shell_quote(&repo_root.display().to_string());
     let cwd = shell_quote(&process_cwd.display().to_string());
     let routed_command =
@@ -564,24 +590,24 @@ fn yes_no(value: bool) -> &'static str {
 mod tests {
     use super::{
         managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
-        resolve_effigy_invocation_prefix,
+        resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
     };
     use std::path::Path;
 
     #[test]
     fn managed_lifecycle_command_renders_one_shot_snapshot_without_screen_clear_loop() {
-        let rendered = managed_lifecycle_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            true,
-            Some("http://project.test"),
-            &[],
-            &[],
-            &[],
-            "effigy",
-            false,
-        );
+        let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            health_wait: true,
+            ready_message: Some("http://project.test"),
+            dns_route_lines: &[],
+            readiness_probe_urls: &[],
+            setup_commands: &[],
+            executable: "effigy",
+            secrets_required: false,
+        });
 
         assert!(!rendered.contains("\\033[2J\\033[H"), "got: {rendered}");
         assert!(!rendered.contains("sleep 0.2"), "got: {rendered}");
@@ -612,20 +638,20 @@ mod tests {
 
     #[test]
     fn managed_lifecycle_command_runs_setup_before_ready_projection() {
-        let rendered = managed_lifecycle_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            true,
-            Some("http://project.test"),
-            &[],
-            &[],
-            &[String::from(
+        let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            health_wait: true,
+            ready_message: Some("http://project.test"),
+            dns_route_lines: &[],
+            readiness_probe_urls: &[],
+            setup_commands: &[String::from(
                 "effigy exec --repo /tmp/repo -- sh -lc 'cd /workspace/app && bun install'",
             )],
-            "effigy",
-            false,
-        );
+            executable: "effigy",
+            secrets_required: false,
+        });
 
         assert!(
             rendered.contains("managed lifecycle failed during container setup"),
@@ -642,18 +668,18 @@ mod tests {
 
     #[test]
     fn managed_lifecycle_command_waits_for_probe_urls_before_ready() {
-        let rendered = managed_lifecycle_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            true,
-            Some("routes: http://project.test"),
-            &["http://project.test -> app".to_owned()],
-            &["http://project.test".to_owned()],
-            &[],
-            "effigy",
-            false,
-        );
+        let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            health_wait: true,
+            ready_message: Some("routes: http://project.test"),
+            dns_route_lines: &["http://project.test -> app".to_owned()],
+            readiness_probe_urls: &["http://project.test".to_owned()],
+            setup_commands: &[],
+            executable: "effigy",
+            secrets_required: false,
+        });
 
         assert!(
             rendered.contains("curl -k -s -o /dev/null"),
@@ -667,18 +693,18 @@ mod tests {
 
     #[test]
     fn managed_lifecycle_command_can_require_container_secret_injection() {
-        let rendered = managed_lifecycle_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            false,
-            None,
-            &[],
-            &[],
-            &[],
-            "effigy",
-            true,
-        );
+        let rendered = managed_lifecycle_command(ManagedLifecycleRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            health_wait: false,
+            ready_message: None,
+            dns_route_lines: &[],
+            readiness_probe_urls: &[],
+            setup_commands: &[],
+            executable: "effigy",
+            secrets_required: true,
+        });
 
         assert!(
             rendered.contains("env EFFIGY_SECRETS_REQUIRED=1 env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web up --detach --repo /tmp/repo"),
@@ -688,16 +714,16 @@ mod tests {
 
     #[test]
     fn managed_standard_exec_command_waits_for_exec_surface_before_launch() {
-        let rendered = managed_standard_exec_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            Path::new("/tmp/repo/acme-api"),
-            Some(Path::new("/workspace-root/repo")),
-            None,
-            "effigy",
-            "printf api-ok",
-        );
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/tmp/repo/acme-api"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: None,
+            executable: "effigy",
+            command: "printf api-ok",
+        });
 
         assert!(
             rendered.contains("cd /tmp/repo/acme-api && state_path=/tmp/repo/.effigy/runtime/managed-lifecycle/dev-web.state; deadline=$(( $(date +%s) + 30 )); while true; do if env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command true --repo /tmp/repo >/dev/null 2>&1; then exec env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command"),
@@ -718,16 +744,16 @@ mod tests {
 
     #[test]
     fn managed_standard_exec_command_rewrites_host_repo_paths_for_container_commands() {
-        let rendered = managed_standard_exec_command(
-            Path::new("/Users/tom/repo"),
-            Some("web"),
-            "dev",
-            Path::new("/Users/tom/repo/acme-admin"),
-            Some(Path::new("/workspace-root/repo")),
-            None,
-            "effigy",
-            "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
-        );
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/Users/tom/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/Users/tom/repo/acme-admin"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: None,
+            executable: "effigy",
+            command: "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
+        });
 
         assert!(
             rendered.contains("/workspace-root/repo/acme-admin"),
@@ -745,20 +771,20 @@ mod tests {
     fn managed_standard_exec_command_rewrites_host_effigy_invocation_for_container_commands() {
         let host_effigy =
             resolve_effigy_invocation_prefix().expect("resolve host effigy invocation");
-        let rendered = managed_standard_exec_command(
-            Path::new("/Users/tom/repo"),
-            Some("web"),
-            "dev",
-            Path::new("/Users/tom/repo/acme-admin"),
-            Some(Path::new("/workspace-root/repo")),
-            Some(
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/Users/tom/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/Users/tom/repo/acme-admin"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: Some(
                 &format!(
                     "env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' {host_effigy} script run --file '/Users/tom/repo/.effigy/cache/setup.rhai'"
                 ),
             ),
-            "effigy",
-            "bun run dev",
-        );
+            executable: "effigy",
+            command: "bun run dev",
+        });
 
         assert!(
             rendered.contains("/usr/local/bin/effigy script run --file")
@@ -771,16 +797,16 @@ mod tests {
 
     #[test]
     fn managed_standard_exec_command_runs_process_setup_before_attach() {
-        let rendered = managed_standard_exec_command(
-            Path::new("/tmp/repo"),
-            Some("web"),
-            "dev",
-            Path::new("/tmp/repo/acme-front"),
-            Some(Path::new("/workspace-root/repo")),
-            Some("printf setup-ok; "),
-            "effigy",
-            "bun run dev",
-        );
+        let rendered = managed_standard_exec_command(ManagedStandardExecRequest {
+            repo_root: Path::new("/tmp/repo"),
+            container_name: Some("web"),
+            owner_task: "dev",
+            process_cwd: Path::new("/tmp/repo/acme-front"),
+            container_repo_root: Some(Path::new("/workspace-root/repo")),
+            setup_command: Some("printf setup-ok; "),
+            executable: "effigy",
+            command: "bun run dev",
+        });
 
         let setup_index = rendered.find("printf setup-ok").expect("setup command");
         let attach_index = rendered

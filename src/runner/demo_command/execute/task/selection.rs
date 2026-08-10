@@ -10,7 +10,7 @@ use crate::runner::managed_shell::{
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
     managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix,
+    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
 };
 use effigy_core::shell::shell_quote;
 use effigy_managed::ManagedProcessRole;
@@ -179,29 +179,33 @@ fn materialize_demo_special_managed_processes(
                     render_inline_managed_lifecycle_command(
                         repo_root,
                         policy,
-                        task_name,
-                        task.health_wait.unwrap_or(false),
-                        task.ready_message.as_deref(),
-                        &[],
-                        &managed_readiness_probe_urls(inline_policy.as_ref()),
-                        &lifecycle_setup_commands,
+                        crate::runner::managed_shell::InlineManagedLifecycle {
+                            owner_task: task_name,
+                            health_wait: task.health_wait.unwrap_or(false),
+                            ready_message: task.ready_message.as_deref(),
+                            dns_route_lines: &[],
+                            readiness_probe_urls: &managed_readiness_probe_urls(
+                                inline_policy.as_ref(),
+                            ),
+                            setup_commands: &lifecycle_setup_commands,
+                        },
                     )
                 } else {
-                    managed_lifecycle_command(
+                    managed_lifecycle_command(ManagedLifecycleRequest {
                         repo_root,
-                        container_binding.container_name(),
-                        task_name,
-                        task.health_wait.unwrap_or(false),
-                        task.ready_message.as_deref(),
-                        &[],
-                        &[],
-                        &lifecycle_setup_commands,
-                        &executable,
-                        matches!(
+                        container_name: container_binding.container_name(),
+                        owner_task: task_name,
+                        health_wait: task.health_wait.unwrap_or(false),
+                        ready_message: task.ready_message.as_deref(),
+                        dns_route_lines: &[],
+                        readiness_probe_urls: &[],
+                        setup_commands: &lifecycle_setup_commands,
+                        executable: &executable,
+                        secrets_required: matches!(
                             task.secrets,
                             Some(effigy_manifest::ManifestTaskSecretsMode::Required)
                         ),
-                    )
+                    })
                 };
             }
             ManagedProcessRole::Shell => {
@@ -243,16 +247,16 @@ fn materialize_demo_special_managed_processes(
                     container_binding,
                     ContainerExecutionBinding::Container { .. }
                 ) {
-                    process.run = managed_standard_exec_command(
+                    process.run = managed_standard_exec_command(ManagedStandardExecRequest {
                         repo_root,
-                        container_binding.container_name(),
-                        task_name,
-                        &process.cwd,
-                        container_repo_root.as_deref(),
-                        process.setup.as_deref(),
-                        &executable,
-                        &process.run,
-                    );
+                        container_name: container_binding.container_name(),
+                        owner_task: task_name,
+                        process_cwd: &process.cwd,
+                        container_repo_root: container_repo_root.as_deref(),
+                        setup_command: process.setup.as_deref(),
+                        executable: &executable,
+                        command: &process.run,
+                    });
                 }
             }
         }

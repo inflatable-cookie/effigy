@@ -53,24 +53,28 @@ pub fn apply_cargo_unlink_plan(
         return Ok(report(
             plan,
             CargoUnlinkOutcome::DryRun,
-            Vec::new(),
-            Vec::new(),
-            not_run_verification(),
-            Vec::new(),
-            CargoLinkRollback::not_required(),
-            Vec::new(),
+            CargoUnlinkReportDetails {
+                applied_files: Vec::new(),
+                removed_directories: Vec::new(),
+                verification: not_run_verification(),
+                lockfiles: Vec::new(),
+                rollback: CargoLinkRollback::not_required(),
+                errors: Vec::new(),
+            },
         ));
     }
     if plan.operation.changes.is_empty() {
         return Ok(report(
             plan,
             CargoUnlinkOutcome::NoOp,
-            Vec::new(),
-            Vec::new(),
-            not_run_verification(),
-            Vec::new(),
-            CargoLinkRollback::not_required(),
-            Vec::new(),
+            CargoUnlinkReportDetails {
+                applied_files: Vec::new(),
+                removed_directories: Vec::new(),
+                verification: not_run_verification(),
+                lockfiles: Vec::new(),
+                rollback: CargoLinkRollback::not_required(),
+                errors: Vec::new(),
+            },
         ));
     }
 
@@ -86,12 +90,14 @@ pub fn apply_cargo_unlink_plan(
         return Ok(report(
             plan,
             CargoUnlinkOutcome::VerificationFailed,
-            Vec::new(),
-            Vec::new(),
-            not_run_verification(),
-            before_locks,
-            CargoLinkRollback::not_required(),
-            unexpected_before,
+            CargoUnlinkReportDetails {
+                applied_files: Vec::new(),
+                removed_directories: Vec::new(),
+                verification: not_run_verification(),
+                lockfiles: before_locks,
+                rollback: CargoLinkRollback::not_required(),
+                errors: unexpected_before,
+            },
         ));
     }
 
@@ -118,12 +124,14 @@ pub fn apply_cargo_unlink_plan(
             return Ok(report(
                 plan,
                 CargoUnlinkOutcome::ApplyFailed,
-                applied_paths(&applied),
-                Vec::new(),
-                not_run_verification(),
-                before_locks,
-                rollback,
-                vec![error.to_string()],
+                CargoUnlinkReportDetails {
+                    applied_files: applied_paths(&applied),
+                    removed_directories: Vec::new(),
+                    verification: not_run_verification(),
+                    lockfiles: before_locks,
+                    rollback,
+                    errors: vec![error.to_string()],
+                },
             ));
         }
         applied.push(change.clone());
@@ -151,12 +159,14 @@ pub fn apply_cargo_unlink_plan(
         return Ok(report(
             plan,
             CargoUnlinkOutcome::VerificationFailed,
-            applied_paths(&applied),
-            Vec::new(),
-            verification,
-            after_locks,
-            CargoLinkRollback::not_required(),
-            errors,
+            CargoUnlinkReportDetails {
+                applied_files: applied_paths(&applied),
+                removed_directories: Vec::new(),
+                verification,
+                lockfiles: after_locks,
+                rollback: CargoLinkRollback::not_required(),
+                errors,
+            },
         ));
     }
 
@@ -166,12 +176,14 @@ pub fn apply_cargo_unlink_plan(
             return Ok(report(
                 plan,
                 CargoUnlinkOutcome::ApplyFailed,
-                applied_paths(&applied),
-                Vec::new(),
-                verification,
-                after_locks,
-                rollback,
-                vec![error.to_string()],
+                CargoUnlinkReportDetails {
+                    applied_files: applied_paths(&applied),
+                    removed_directories: Vec::new(),
+                    verification,
+                    lockfiles: after_locks,
+                    rollback,
+                    errors: vec![error.to_string()],
+                },
             ));
         }
         applied.push(ledger_change);
@@ -186,26 +198,39 @@ pub fn apply_cargo_unlink_plan(
     Ok(report(
         plan,
         outcome,
-        applied_paths(&applied),
-        removed_directories,
-        verification,
-        after_locks,
-        CargoLinkRollback::not_required(),
-        cleanup_errors,
+        CargoUnlinkReportDetails {
+            applied_files: applied_paths(&applied),
+            removed_directories,
+            verification,
+            lockfiles: after_locks,
+            rollback: CargoLinkRollback::not_required(),
+            errors: cleanup_errors,
+        },
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn report(
-    plan: CargoDependencyPlan,
-    outcome: CargoUnlinkOutcome,
+struct CargoUnlinkReportDetails {
     applied_files: Vec<PathBuf>,
     removed_directories: Vec<PathBuf>,
     verification: DependencyVerification,
     lockfiles: Vec<CargoLockfileEvidence>,
     rollback: CargoLinkRollback,
     errors: Vec<String>,
+}
+
+fn report(
+    plan: CargoDependencyPlan,
+    outcome: CargoUnlinkOutcome,
+    details: CargoUnlinkReportDetails,
 ) -> CargoUnlinkOperationReport {
+    let CargoUnlinkReportDetails {
+        applied_files,
+        removed_directories,
+        verification,
+        lockfiles,
+        rollback,
+        errors,
+    } = details;
     CargoUnlinkOperationReport {
         plan,
         outcome,

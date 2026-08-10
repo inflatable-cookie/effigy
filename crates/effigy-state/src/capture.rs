@@ -261,17 +261,30 @@ impl fmt::Display for StateCapturePlanningError {
 
 impl std::error::Error for StateCapturePlanningError {}
 
+pub struct StateCaptureTaskEnvironment<'a> {
+    pub source_environment: &'a str,
+    pub key: &'a str,
+    pub source: Option<&'a str>,
+    pub destination_ref: Option<&'a str>,
+    pub capture_role: StateLayerRole,
+    pub capture_mode: StateCaptureMode,
+    pub context_path: Option<&'a str>,
+}
+
 pub fn state_capture_task_environment(
     repo_root: &Path,
     lineage: &StateStackLineageReport,
-    source_environment: &str,
-    key: &str,
-    source: Option<&str>,
-    destination_ref: Option<&str>,
-    capture_role: StateLayerRole,
-    capture_mode: StateCaptureMode,
-    context_path: Option<&str>,
+    task: StateCaptureTaskEnvironment<'_>,
 ) -> BTreeMap<String, String> {
+    let StateCaptureTaskEnvironment {
+        source_environment,
+        key,
+        source,
+        destination_ref,
+        capture_role,
+        capture_mode,
+        context_path,
+    } = task;
     let mut env = BTreeMap::new();
     env.insert(
         "EFFIGY_STATE_CAPTURE_SCHEMA".to_owned(),

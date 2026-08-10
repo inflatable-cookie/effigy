@@ -35,10 +35,12 @@ pub(in crate::runner) fn run_demo(args: DemoArgs) -> Result<String, RunnerError>
             &repo_root,
             &loaded,
             &demo_id,
-            limit,
-            outcome,
-            attempt_id.as_deref(),
-            attempt_ordinal,
+            &super::query::demo_history_request(
+                limit,
+                outcome,
+                attempt_id.as_deref(),
+                attempt_ordinal,
+            ),
             args.output_json,
         ),
         DemoSubcommand::Run { demo_id } => render_demo_execute(

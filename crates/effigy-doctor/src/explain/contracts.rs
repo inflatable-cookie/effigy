@@ -95,15 +95,17 @@ pub(super) fn explain_json_payload(contract: &ExplainRenderContract) -> serde_js
 
 pub(super) fn explain_text_summary_rows(contract: &ExplainRenderContract) -> Vec<(String, String)> {
     super::super::render::shared_contracts::explain_summary_rows(
-        &contract.request_task,
-        &contract.request_args,
-        &contract.resolved_root,
-        &contract.selection.status,
-        contract.selection.catalog.as_deref(),
-        contract.selection.mode.as_deref(),
-        &contract.selection.reasoning,
-        contract.deferral.considered,
-        contract.deferral.selected,
-        &contract.deferral.reasoning,
+        super::super::render::shared_contracts::ExplainSummary {
+            request_task: &contract.request_task,
+            request_args: &contract.request_args,
+            resolved_root: &contract.resolved_root,
+            selection_status: &contract.selection.status,
+            selected_catalog: contract.selection.catalog.as_deref(),
+            selected_mode: contract.selection.mode.as_deref(),
+            selection_reasoning: &contract.selection.reasoning,
+            deferral_considered: contract.deferral.considered,
+            deferral_selected: contract.deferral.selected,
+            deferral_reasoning: &contract.deferral.reasoning,
+        },
     )
 }

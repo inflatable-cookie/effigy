@@ -21,5 +21,6 @@ pub mod repo_markers;
 pub mod resolver;
 pub mod runtime_dir;
 pub mod shell;
+pub mod task_lock;
 pub mod task_selection;
 pub mod widgets;

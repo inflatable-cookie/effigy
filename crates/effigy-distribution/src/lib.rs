@@ -438,17 +438,32 @@ pub fn generate_closeout_command(
     Ok(format!("[ok] wrote log: {}", output_path.display()))
 }
 
+pub struct DistributionSummaryRequest<'a> {
+    pub distribution_policy: &'a EffectiveDistributionPolicy,
+    pub tag: &'a str,
+    pub artifacts_dir: &'a Path,
+    pub crate_version: Option<&'a str>,
+    pub repo_url: &'a str,
+    pub brew_formula: &'a str,
+    pub homebrew_executed: bool,
+    pub log_files: &'a [String],
+    pub output_json: bool,
+}
+
 pub fn write_summary_command(
-    distribution_policy: &EffectiveDistributionPolicy,
-    tag: &str,
-    artifacts_dir: &Path,
-    crate_version: Option<&str>,
-    repo_url: &str,
-    brew_formula: &str,
-    homebrew_executed: bool,
-    log_files: &[String],
-    output_json: bool,
+    request: DistributionSummaryRequest<'_>,
 ) -> Result<String, DistributionExecutionError> {
+    let DistributionSummaryRequest {
+        distribution_policy,
+        tag,
+        artifacts_dir,
+        crate_version,
+        repo_url,
+        brew_formula,
+        homebrew_executed,
+        log_files,
+        output_json,
+    } = request;
     let tag_re = Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("tag regex");
     if !tag_re.is_match(tag) {
         return Err(DistributionExecutionError::Message(format!(
@@ -498,32 +513,39 @@ pub fn write_summary_command(
     Ok(format!("[ok] wrote summary: {}", summary_path.display()))
 }
 
+#[derive(Clone, Copy)]
+pub struct FirstPublishRequest<'a> {
+    pub repo_root: &'a Path,
+    pub distribution_policy: &'a EffectiveDistributionPolicy,
+    pub tag: &'a str,
+    pub crate_version: &'a str,
+    pub repo_url: &'a str,
+    pub brew_formula: &'a str,
+    pub skip_homebrew: bool,
+    pub artifacts_dir: &'a Path,
+    pub work_dir: &'a Path,
+    pub effigy_bin: &'a Path,
+    pub output_json: bool,
+}
+
 pub fn first_publish_command(
-    repo_root: &Path,
-    distribution_policy: &EffectiveDistributionPolicy,
-    tag: &str,
-    crate_version: &str,
-    repo_url: &str,
-    brew_formula: &str,
-    skip_homebrew: bool,
-    artifacts_dir: &Path,
-    work_dir: &Path,
-    effigy_bin: &Path,
-    output_json: bool,
+    request: FirstPublishRequest<'_>,
 ) -> Result<String, DistributionExecutionError> {
     let brew_available = command_exists("brew");
-    let plan = build_first_publish_plan(
-        repo_root,
+    let plan = build_first_publish_plan(&request, brew_available);
+    let FirstPublishRequest {
+        repo_root: _,
         distribution_policy,
         tag,
         crate_version,
         repo_url,
         brew_formula,
-        skip_homebrew,
-        work_dir,
-        effigy_bin,
-        brew_available,
-    );
+        skip_homebrew: _,
+        artifacts_dir,
+        work_dir: _,
+        effigy_bin: _,
+        output_json,
+    } = request;
 
     let mut step_index = 0usize;
     let mut log_files = Vec::new();
@@ -577,17 +599,17 @@ pub fn first_publish_command(
         )?;
     }
 
-    let _ = write_summary_command(
+    let _ = write_summary_command(DistributionSummaryRequest {
         distribution_policy,
         tag,
         artifacts_dir,
-        Some(crate_version),
+        crate_version: Some(crate_version),
         repo_url,
         brew_formula,
-        plan.homebrew_executed,
-        &log_files,
-        false,
-    )?;
+        homebrew_executed: plan.homebrew_executed,
+        log_files: &log_files,
+        output_json: false,
+    })?;
     let _ = validate_artifacts_command(
         distribution_policy,
         artifacts_dir,
@@ -658,17 +680,21 @@ struct FirstPublishPlan {
 }
 
 fn build_first_publish_plan(
-    repo_root: &Path,
-    distribution_policy: &EffectiveDistributionPolicy,
-    tag: &str,
-    crate_version: &str,
-    repo_url: &str,
-    brew_formula: &str,
-    skip_homebrew: bool,
-    work_dir: &Path,
-    effigy_bin: &Path,
+    request: &FirstPublishRequest<'_>,
     brew_available: bool,
 ) -> FirstPublishPlan {
+    let FirstPublishRequest {
+        repo_root,
+        distribution_policy,
+        tag,
+        crate_version,
+        repo_url,
+        brew_formula,
+        skip_homebrew,
+        work_dir,
+        effigy_bin,
+        ..
+    } = *request;
     let mut pre_install_steps = Vec::new();
     if distribution_policy.verify_tag_install {
         pre_install_steps.push(PlannedCommand::new(
@@ -1358,16 +1384,30 @@ pub fn validate_metadata_command(
 /// calls [`validate_metadata_command`] for the metadata slice. Optionally
 /// writes a key=value status file to `output_path` summarising each slice.
 /// Returns the shaped preflight payload (json or text).
+pub struct DistributionPreflightRequest<'a> {
+    pub repo_root: &'a Path,
+    pub distribution_policy: &'a EffectiveDistributionPolicy,
+    pub tag: Option<&'a str>,
+    pub skip_docs: bool,
+    pub skip_smoke: bool,
+    pub output_path: Option<&'a Path>,
+    pub effigy_bin: &'a Path,
+    pub output_json: bool,
+}
+
 pub fn preflight_command(
-    repo_root: &Path,
-    distribution_policy: &EffectiveDistributionPolicy,
-    tag: Option<&str>,
-    skip_docs: bool,
-    skip_smoke: bool,
-    output_path: Option<&Path>,
-    effigy_bin: &Path,
-    output_json: bool,
+    request: DistributionPreflightRequest<'_>,
 ) -> Result<String, DistributionExecutionError> {
+    let DistributionPreflightRequest {
+        repo_root,
+        distribution_policy,
+        tag,
+        skip_docs,
+        skip_smoke,
+        output_path,
+        effigy_bin,
+        output_json,
+    } = request;
     let mut docs_status = "skipped";
     let mut smoke_status = "skipped";
 

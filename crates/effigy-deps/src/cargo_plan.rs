@@ -483,20 +483,18 @@ fn desired_cargo_resolutions(desired: &DesiredDependencyLink) -> Vec<CargoExpect
 }
 
 type PatchGroups = BTreeMap<String, BTreeMap<String, PathBuf>>;
+type CargoClosure = (
+    Vec<ConsumerRoot>,
+    Vec<DependencyPackage>,
+    PatchGroups,
+    Vec<CargoExpectedResolution>,
+);
 
 fn cargo_closure(
     repo_root: &Path,
     library: &CargoLibraryInventory,
     workspaces: &[CargoWorkspaceInventory],
-) -> Result<
-    (
-        Vec<ConsumerRoot>,
-        Vec<DependencyPackage>,
-        PatchGroups,
-        Vec<CargoExpectedResolution>,
-    ),
-    DepsError,
-> {
+) -> Result<CargoClosure, DepsError> {
     let mut local_packages = BTreeMap::<String, PathBuf>::new();
     for package in &library.packages {
         let package_path = package.manifest_path.parent().ok_or_else(|| {

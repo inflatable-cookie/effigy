@@ -16,15 +16,17 @@ pub use active::{
     classify_demo_stop, clear_active_attempt_state, clear_resize_handoff, load_active_attempt,
     prepare_demo_input_handoff, prepare_demo_resize_handoff, read_active_attempt_record,
     read_recent_output_lines, register_active_attempt, resolve_repo_relative_path,
-    update_active_terminal_resize, write_active_attempt_record, DemoActiveAttemptGuard,
-    DemoStopDecision, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
-    PersistedDemoTerminalTransport,
+    update_active_terminal_resize, write_active_attempt_record, ActiveAttemptTerminal,
+    ConcurrentRunnerActiveAttempt, DemoActiveAttemptGuard, DemoStopDecision,
+    PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoTerminalTransport,
+    RunBackedActiveAttempt,
 };
 pub use build::build_demo_record;
 pub use execution::{
     failed_demo_attempt, parse_task_backed_attempt_json, persist_demo_attempt_logs,
     run_attempt_from_output, successful_demo_attempt, terminated_demo_attempt,
-    write_latest_attempt_receipt, DemoExecutionAttempt, DemoInvocationKind, DemoLogPaths,
+    write_latest_attempt_receipt, DemoAttemptOutput, DemoExecutionAttempt, DemoInvocationKind,
+    DemoLogPaths,
 };
 pub use process::{
     browser_terminal_size_override, current_terminal_size, demo_mode_prefers_attached_terminal,

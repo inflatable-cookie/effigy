@@ -18,6 +18,20 @@ use super::{resolve_host_program, ParsedComposeExec};
 static SERVICE_CONTAINER_NAME_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
     OnceLock::new();
 
+pub(super) type ParseComposeExec = dyn Fn(&[OsString]) -> Result<ParsedComposeExec, RunnerError>;
+pub(super) type CaptureCommand =
+    dyn Fn(&Path, &std::ffi::OsStr, &[OsString]) -> Result<Output, RunnerError>;
+pub(super) type CaptureCommandWithStdin =
+    dyn Fn(&Path, &std::ffi::OsStr, &[OsString], Option<&Path>) -> Result<Output, RunnerError>;
+pub(super) type FormatArgs = dyn Fn(&[OsString]) -> String;
+
+pub(super) struct ColimaExecAdapters<'a> {
+    pub(super) parse_compose_exec_args: &'a ParseComposeExec,
+    pub(super) run_command_capture_allow_failure: &'a CaptureCommand,
+    pub(super) run_command_capture_allow_failure_with_stdin: &'a CaptureCommandWithStdin,
+    pub(super) format_args: &'a FormatArgs,
+}
+
 pub(super) fn run_colima_direct_exec(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -25,20 +39,14 @@ pub(super) fn run_colima_direct_exec(
     capture: bool,
     label: &str,
     stdin_file: Option<&Path>,
-    parse_compose_exec_args: &dyn Fn(&[OsString]) -> Result<ParsedComposeExec, RunnerError>,
-    run_command_capture_allow_failure: &dyn Fn(
-        &Path,
-        &std::ffi::OsStr,
-        &[OsString],
-    ) -> Result<Output, RunnerError>,
-    run_command_capture_allow_failure_with_stdin: &dyn Fn(
-        &Path,
-        &std::ffi::OsStr,
-        &[OsString],
-        Option<&Path>,
-    ) -> Result<Output, RunnerError>,
-    format_args: &dyn Fn(&[OsString]) -> String,
+    adapters: ColimaExecAdapters<'_>,
 ) -> Result<Output, RunnerError> {
+    let ColimaExecAdapters {
+        parse_compose_exec_args,
+        run_command_capture_allow_failure,
+        run_command_capture_allow_failure_with_stdin,
+        format_args,
+    } = adapters;
     let parsed = parse_compose_exec_args(compose_exec_args)?;
     let resolved = resolve_colima_direct_exec_invocation(
         repo_root,
@@ -105,12 +113,8 @@ fn resolve_colima_direct_exec_invocation(
     policy: &EffectiveContainerPolicy,
     parsed: &ParsedComposeExec,
     has_stdin_file: bool,
-    run_command_capture_allow_failure: &dyn Fn(
-        &Path,
-        &std::ffi::OsStr,
-        &[OsString],
-    ) -> Result<Output, RunnerError>,
-    format_args: &dyn Fn(&[OsString]) -> String,
+    run_command_capture_allow_failure: &CaptureCommand,
+    format_args: &FormatArgs,
 ) -> Result<Vec<OsString>, RunnerError> {
     let container_id = resolve_compose_service_container_id(
         repo_root,
@@ -154,12 +158,8 @@ pub(super) fn resolve_compose_service_container_id(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
-    run_command_capture_allow_failure: &dyn Fn(
-        &Path,
-        &std::ffi::OsStr,
-        &[OsString],
-    ) -> Result<Output, RunnerError>,
-    format_args: &dyn Fn(&[OsString]) -> String,
+    run_command_capture_allow_failure: &CaptureCommand,
+    format_args: &FormatArgs,
 ) -> Result<OsString, RunnerError> {
     if let Some(container_name) =
         resolve_cached_running_service_container_name(repo_root, policy, service)?
@@ -180,12 +180,8 @@ fn resolve_compose_service_container_id_via_ps(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
-    run_command_capture_allow_failure: &dyn Fn(
-        &Path,
-        &std::ffi::OsStr,
-        &[OsString],
-    ) -> Result<Output, RunnerError>,
-    format_args: &dyn Fn(&[OsString]) -> String,
+    run_command_capture_allow_failure: &CaptureCommand,
+    format_args: &FormatArgs,
 ) -> Result<OsString, RunnerError> {
     let mut args = compose_args(policy, ["ps", "-q"]);
     args.push(OsString::from(service));

@@ -25,15 +25,18 @@ pub(super) fn write_task_command_failure(
 
 pub(super) fn write_lock_conflict(
     f: &mut std::fmt::Formatter<'_>,
-    scope: &str,
-    lock_path: &std::path::Path,
-    holder_pid: &Option<u32>,
-    holder_started_at_epoch_ms: &Option<u128>,
-    holder_heartbeat_at_epoch_ms: &Option<u128>,
-    holder_hostname: &Option<String>,
-    holder_workspace_root: &Option<String>,
-    remediation: &str,
+    details: &effigy_core::task_lock::TaskLockConflict,
 ) -> std::fmt::Result {
+    let effigy_core::task_lock::TaskLockConflict {
+        scope,
+        lock_path,
+        holder_pid,
+        holder_started_at_epoch_ms,
+        holder_heartbeat_at_epoch_ms,
+        holder_hostname,
+        holder_workspace_root,
+        remediation,
+    } = details;
     write!(
         f,
         "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, lock={}); {remediation}",

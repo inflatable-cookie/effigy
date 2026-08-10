@@ -83,12 +83,16 @@ fn reject_conflicting_release_stage_flags(
     Ok(())
 }
 
-fn run_release_stage<PlanFn, YesFn, InteractiveFn>(
-    command_name: &str,
+struct ReleaseStageRequest<'a> {
+    command_name: &'a str,
     plan: bool,
     yes: bool,
     output_json: bool,
-    interactive_json_error: &str,
+    interactive_json_error: &'a str,
+}
+
+fn run_release_stage<PlanFn, YesFn, InteractiveFn>(
+    request: ReleaseStageRequest<'_>,
     render_plan: PlanFn,
     render_yes: YesFn,
     interactive: InteractiveFn,
@@ -98,6 +102,13 @@ where
     YesFn: FnOnce() -> Result<ReleaseStageRendered, RunnerError>,
     InteractiveFn: FnOnce() -> Result<String, RunnerError>,
 {
+    let ReleaseStageRequest {
+        command_name,
+        plan,
+        yes,
+        output_json,
+        interactive_json_error,
+    } = request;
     reject_conflicting_release_stage_flags(command_name, plan, yes)?;
     if plan {
         return render_plan()
@@ -238,19 +249,19 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             artifacts_dir,
         } => {
             let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
-            distribution_ops::run_first_publish(
-                &resolved.resolved_root,
-                &distribution_policy,
-                &tag,
-                crate_version.as_deref(),
-                &repo_url,
-                &brew_formula,
+            distribution_ops::run_first_publish(distribution_ops::RunFirstPublishRequest {
+                repo_root: &resolved.resolved_root,
+                distribution_policy: &distribution_policy,
+                tag: &tag,
+                crate_version: crate_version.as_deref(),
+                repo_url: &repo_url,
+                brew_formula: &brew_formula,
                 skip_homebrew,
-                artifacts_dir
+                artifacts_dir: artifacts_dir
                     .as_ref()
                     .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
-                args.output_json,
-            )
+                output_json: args.output_json,
+            })
         }
         ReleaseSubcommand::Evidence { subcommand } => {
             let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
@@ -272,17 +283,18 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                     owner,
                     expect_homebrew,
                 } => distribution_ops::run_generate_closeout(
-                    &resolved.resolved_root,
-                    &distribution_policy,
-                    &tag,
-                    &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
-                    output_path
+                    distribution_ops::GenerateCloseoutRequest {
+                    repo_root: &resolved.resolved_root,
+                    distribution_policy: &distribution_policy,
+                    tag: &tag,
+                    artifacts_dir: &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
+                    output_path: output_path
                         .as_ref()
                         .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
-                    &owner,
+                    owner: &owner,
                     expect_homebrew,
-                    args.output_json,
-                ),
+                    output_json: args.output_json,
+                }),
                 ReleaseEvidenceSubcommand::Summary {
                     tag,
                     artifacts_dir,
@@ -292,16 +304,23 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                     homebrew_executed,
                     log_files,
                 } => distribution_ops::run_write_summary(
-                    &resolved.resolved_root,
-                    &distribution_policy,
-                    &tag,
-                    &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
-                    crate_version.as_deref(),
-                    &effective_repo_url(&distribution_policy, &repo_url),
-                    &effective_brew_formula(&distribution_policy, &brew_formula),
-                    homebrew_executed,
-                    &log_files,
-                    args.output_json,
+                    effigy_distribution::DistributionSummaryRequest {
+                        distribution_policy: &distribution_policy,
+                        tag: &tag,
+                        artifacts_dir: &resolve_repo_input(
+                            &resolved.resolved_root,
+                            artifacts_dir,
+                        ),
+                        crate_version: crate_version.as_deref(),
+                        repo_url: &effective_repo_url(&distribution_policy, &repo_url),
+                        brew_formula: &effective_brew_formula(
+                            &distribution_policy,
+                            &brew_formula,
+                        ),
+                        homebrew_executed,
+                        log_files: &log_files,
+                        output_json: args.output_json,
+                    },
                 ),
             }
         }
@@ -341,11 +360,13 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             let requested_version_override_for_plan = requested_version_override.clone();
             let requested_version_override_for_yes = requested_version_override.clone();
             run_release_stage(
-                "prepare",
-                plan,
-                yes,
-                args.output_json,
-                "interactive release preparation is only available in text mode; use `effigy release prepare --plan` or `effigy release prepare --yes` when `--json` is enabled",
+                ReleaseStageRequest {
+                    command_name: "prepare",
+                    plan,
+                    yes,
+                    output_json: args.output_json,
+                    interactive_json_error: "interactive release preparation is only available in text mode; use `effigy release prepare --plan` or `effigy release prepare --yes` when `--json` is enabled",
+                },
                 || {
                     let prepare_plan = collect_release_prepare_plan(
                         &resolved,
@@ -385,11 +406,13 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             yes,
             allow_stale,
         } => run_release_stage(
-            "execute",
-            plan,
-            yes,
-            args.output_json,
-            "interactive release execution is only available in text mode; use `effigy release execute --plan` or `effigy release execute --yes` when `--json` is enabled",
+            ReleaseStageRequest {
+                command_name: "execute",
+                plan,
+                yes,
+                output_json: args.output_json,
+                interactive_json_error: "interactive release execution is only available in text mode; use `effigy release execute --plan` or `effigy release execute --yes` when `--json` is enabled",
+            },
             || {
                 let execute_plan = collect_release_execute_plan(&resolved, allow_stale)?;
                 Ok(ReleaseStageRendered {

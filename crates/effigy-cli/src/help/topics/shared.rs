@@ -118,45 +118,30 @@ pub(super) fn render_standard_topic_help_spec<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     spec: &StandardTopicHelpSpec,
 ) -> HelpResult<()> {
-    render_standard_topic_help_with_common_options(
+    let mut rows: Vec<(&str, &str)> = Vec::with_capacity(
+        spec.leading_common_options.len() + spec.options.len() + spec.trailing_common_options.len(),
+    );
+    rows.extend(
+        spec.leading_common_options
+            .iter()
+            .copied()
+            .map(CommonOption::row),
+    );
+    rows.extend(spec.options.iter().copied());
+    rows.extend(
+        spec.trailing_common_options
+            .iter()
+            .copied()
+            .map(CommonOption::row),
+    );
+    render_standard_topic_help(
         renderer,
         spec.topic,
         spec.notices,
         spec.usage,
-        spec.leading_common_options,
-        spec.options,
-        spec.trailing_common_options,
+        &rows,
         spec.examples,
     )
-}
-
-pub(super) fn render_standard_topic_help_with_common_options<R: HelpRenderer + ?Sized>(
-    renderer: &mut R,
-    topic: &str,
-    notices: &[&str],
-    usage: &[&str],
-    leading_common_options: &[CommonOption],
-    options: &[(&str, &str)],
-    trailing_common_options: &[CommonOption],
-    examples: &[&str],
-) -> HelpResult<()> {
-    let mut rows: Vec<(&str, &str)> = Vec::with_capacity(
-        leading_common_options.len() + options.len() + trailing_common_options.len(),
-    );
-    rows.extend(
-        leading_common_options
-            .iter()
-            .copied()
-            .map(CommonOption::row),
-    );
-    rows.extend(options.iter().copied());
-    rows.extend(
-        trailing_common_options
-            .iter()
-            .copied()
-            .map(CommonOption::row),
-    );
-    render_standard_topic_help(renderer, topic, notices, usage, &rows, examples)
 }
 
 pub(super) fn render_standard_topic_help<R: HelpRenderer + ?Sized>(

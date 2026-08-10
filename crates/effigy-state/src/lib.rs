@@ -18,8 +18,9 @@ pub use capture::{
     capture_produced_layer, parse_capture_role, state_capture_task_environment,
     StateCaptureArtifactOperation, StateCaptureMode, StateCapturePlanRequest,
     StateCapturePlanningError, StateCaptureSetEntry, StateCaptureSetReport,
-    StateCaptureTaskContext, StateStackCaptureArtifact, StateStackCaptureProducedLayer,
-    StateStackCaptureReport, StateStackCaptureTask, StateStackCaptureTaskStatus,
+    StateCaptureTaskContext, StateCaptureTaskEnvironment, StateStackCaptureArtifact,
+    StateStackCaptureProducedLayer, StateStackCaptureReport, StateStackCaptureTask,
+    StateStackCaptureTaskStatus,
 };
 pub use config::{
     capture_profile_from_state_value, load_state_stack_manifest_file,
@@ -48,7 +49,7 @@ pub use model::{
 pub use paths::{
     build_state_apply_hook_context, build_state_capture_task_context, path_display,
     resolve_repo_relative_path, safe_path_component, state_capture_set_report_write_paths,
-    state_report_write_paths, write_state_context_file, write_state_report, StateContextFile,
-    StateIoError, StateReportWritePaths,
+    state_report_write_paths, write_state_context_file, write_state_report,
+    StateCaptureContextRequest, StateContextFile, StateIoError, StateReportWritePaths,
 };
 pub use validation::{validate_state_stack, StateStackParseError, StateStackValidationError};

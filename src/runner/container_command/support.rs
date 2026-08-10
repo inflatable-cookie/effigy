@@ -551,11 +551,13 @@ pub(super) fn run_runtime_volume_capture(
         .runtime_invocation_plan(
             &request,
             &detection,
-            profile,
-            command.program.as_str(),
-            &docker_args,
-            ContainerAction::Shutdown,
-            command.description.as_str(),
+            effigy_containers::RuntimeInvocation {
+                profile,
+                docker_program: command.program.as_str().into(),
+                docker_args: &docker_args,
+                action: ContainerAction::Shutdown,
+                label: command.description.clone(),
+            },
         )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     std::process::Command::new(&plan.program)

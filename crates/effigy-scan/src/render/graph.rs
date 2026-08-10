@@ -1,5 +1,5 @@
 use super::common::{
-    render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
+    render_markdown_report, render_text_report, MarkdownReportSpec, SeverityLevels, TextReportSpec,
 };
 use crate::model::{
     BoundaryViolationScanResult, BoundaryViolationSeverity, DeadCodeConfidence, DeadCodeFinding,
@@ -34,9 +34,11 @@ pub fn render_boundary_violation_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        BoundaryViolationSeverity::Warning,
-        BoundaryViolationSeverity::High,
-        BoundaryViolationSeverity::Critical,
+        SeverityLevels {
+            warning: BoundaryViolationSeverity::Warning,
+            high: BoundaryViolationSeverity::High,
+            critical: BoundaryViolationSeverity::Critical,
+        },
         |finding| {
             format!(
                 "{}  {} -> {}  {}  {}:{} -> {}:{}  {} -> {}  [{}]",

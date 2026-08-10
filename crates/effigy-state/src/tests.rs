@@ -185,13 +185,15 @@ fn capture_and_apply_env_helpers_expose_expected_keys() {
     let capture_env = state_capture_task_environment(
         &repo,
         &lineage,
-        "uat",
-        "uat-content",
-        Some("captures/content.dump"),
-        Some("oci://example.test/acowtancy:uat"),
-        StateLayerRole::UatCapture,
-        StateCaptureMode::UatOverlay,
-        Some(".effigy/state/capture-context/acowtancy-uat/uat-content.json"),
+        StateCaptureTaskEnvironment {
+            source_environment: "uat",
+            key: "uat-content",
+            source: Some("captures/content.dump"),
+            destination_ref: Some("oci://example.test/acowtancy:uat"),
+            capture_role: StateLayerRole::UatCapture,
+            capture_mode: StateCaptureMode::UatOverlay,
+            context_path: Some(".effigy/state/capture-context/acowtancy-uat/uat-content.json"),
+        },
     );
     assert_eq!(
         capture_env

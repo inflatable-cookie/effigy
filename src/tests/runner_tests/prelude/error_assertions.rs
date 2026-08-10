@@ -30,11 +30,9 @@ pub(in crate::runner::tests) fn assert_task_lock_conflict(
     expected_remediation: &str,
 ) {
     match err {
-        RunnerError::TaskLockConflict {
-            scope, remediation, ..
-        } => {
-            assert_eq!(scope, expected_scope);
-            assert!(remediation.contains(expected_remediation));
+        RunnerError::TaskLockConflict(details) => {
+            assert_eq!(details.scope, expected_scope);
+            assert!(details.remediation.contains(expected_remediation));
         }
         other => panic!("unexpected error: {other}"),
     }

@@ -1,5 +1,5 @@
 use super::super::common::{
-    render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
+    render_markdown_report, render_text_report, MarkdownReportSpec, SeverityLevels, TextReportSpec,
 };
 use crate::model::{
     format_bytes, GeneratedAssetScanResult, GeneratedAssetSeverity, GeneratedInSrcScanResult,
@@ -32,9 +32,11 @@ pub fn render_generated_asset_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        GeneratedAssetSeverity::Warning,
-        GeneratedAssetSeverity::High,
-        GeneratedAssetSeverity::Critical,
+        SeverityLevels {
+            warning: GeneratedAssetSeverity::Warning,
+            high: GeneratedAssetSeverity::High,
+            critical: GeneratedAssetSeverity::Critical,
+        },
         |finding| {
             format!(
                 "{}  {}  {}  [{}]",
@@ -105,9 +107,11 @@ pub fn render_generated_in_src_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        GeneratedInSrcSeverity::Warning,
-        GeneratedInSrcSeverity::High,
-        GeneratedInSrcSeverity::Critical,
+        SeverityLevels {
+            warning: GeneratedInSrcSeverity::Warning,
+            high: GeneratedInSrcSeverity::High,
+            critical: GeneratedInSrcSeverity::Critical,
+        },
         |finding| {
             format!(
                 "{}  {}  {}  [{}] [{}]",

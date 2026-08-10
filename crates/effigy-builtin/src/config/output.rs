@@ -235,16 +235,16 @@ fn render_inspect_payload(
 
     render_config_payload(
         request.output_json,
-        ConfigPayload::inspect(
+        ConfigPayload::inspect(ConfigInspect {
             text,
-            display_path(&loaded.manifest_path, target_root),
+            manifest_path: display_path(&loaded.manifest_path, target_root),
             evaluation_order,
             include_graph,
             overridden_paths,
             value_sources,
-            loaded.effective_manifest,
+            effective_manifest: loaded.effective_manifest,
             selected_path,
-            selected.map(|entry| {
+            selected_value: selected.map(|entry| {
                 json!({
                     "path": entry.path,
                     "source": display_path(&entry.source, target_root),
@@ -264,7 +264,7 @@ fn render_inspect_payload(
                         .collect::<Vec<_>>(),
                 })
             }),
-        ),
+        }),
     )
 }
 
@@ -341,6 +341,18 @@ struct ConfigPayload {
     text: String,
 }
 
+struct ConfigInspect {
+    text: String,
+    manifest_path: String,
+    evaluation_order: Vec<String>,
+    include_graph: Vec<serde_json::Value>,
+    overridden_paths: Vec<serde_json::Value>,
+    value_sources: Vec<serde_json::Value>,
+    effective_manifest: String,
+    selected_path: Option<String>,
+    selected_value: Option<serde_json::Value>,
+}
+
 impl ConfigPayload {
     fn reference(text: String) -> Self {
         Self {
@@ -396,17 +408,18 @@ impl ConfigPayload {
         }
     }
 
-    fn inspect(
-        text: String,
-        manifest_path: String,
-        evaluation_order: Vec<String>,
-        include_graph: Vec<serde_json::Value>,
-        overridden_paths: Vec<serde_json::Value>,
-        value_sources: Vec<serde_json::Value>,
-        effective_manifest: String,
-        selected_path: Option<String>,
-        selected_value: Option<serde_json::Value>,
-    ) -> Self {
+    fn inspect(inspect: ConfigInspect) -> Self {
+        let ConfigInspect {
+            text,
+            manifest_path,
+            evaluation_order,
+            include_graph,
+            overridden_paths,
+            value_sources,
+            effective_manifest,
+            selected_path,
+            selected_value,
+        } = inspect;
         Self {
             mode: "inspect",
             minimal: false,

@@ -12,6 +12,16 @@ use crate::references;
 use crate::run_spec::{render_run_step_sequence, wrap_reference_command_in_cwd};
 use crate::{ManagedProcessRole, ManagedProcessSpec, DEFAULT_MANAGED_SHELL_RUN};
 
+#[derive(Clone, Copy)]
+struct EntryResolutionContext<'a> {
+    selector: &'a TaskSelector,
+    task: &'a ManifestTask,
+    catalog: &'a LoadedCatalog,
+    catalogs: &'a [LoadedCatalog],
+    task_scope_cwd: &'a Path,
+    resolver: TaskResolverFn<'a>,
+}
+
 pub fn resolve_concurrent_process_entries<'a>(
     selector: &TaskSelector,
     task: &ManifestTask,
@@ -21,6 +31,14 @@ pub fn resolve_concurrent_process_entries<'a>(
     task_scope_cwd: &Path,
     resolver: TaskResolverFn<'a>,
 ) -> Result<Vec<super::ConcurrentResolvedProcess>, crate::ManagedError> {
+    let context = EntryResolutionContext {
+        selector,
+        task,
+        catalog,
+        catalogs,
+        task_scope_cwd,
+        resolver,
+    };
     let mut used_names = HashSet::<String>::new();
     let mut resolved = Vec::<super::ConcurrentResolvedProcess>::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
@@ -34,26 +52,8 @@ pub fn resolve_concurrent_process_entries<'a>(
             ));
         }
 
-        let (run, cwd) = resolve_process_run_and_cwd(
-            selector,
-            task,
-            &process_name,
-            entry,
-            catalog,
-            catalogs,
-            task_scope_cwd,
-            resolver,
-        )?;
-        let setup = resolve_process_setup(
-            selector,
-            task,
-            &process_name,
-            entry,
-            catalog,
-            catalogs,
-            &cwd,
-            resolver,
-        )?;
+        let (run, cwd) = resolve_process_run_and_cwd(context, &process_name, entry)?;
+        let setup = resolve_process_setup(context, &process_name, entry, &cwd)?;
         resolved.push(super::ConcurrentResolvedProcess {
             spec: ManagedProcessSpec {
                 name: process_name,
@@ -76,15 +76,19 @@ pub fn resolve_concurrent_process_entries<'a>(
 }
 
 fn resolve_process_setup<'a>(
-    selector: &TaskSelector,
-    task: &ManifestTask,
+    context: EntryResolutionContext<'a>,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
-    catalog: &LoadedCatalog,
-    catalogs: &'a [LoadedCatalog],
     process_cwd: &Path,
-    resolver: TaskResolverFn<'a>,
 ) -> Result<Option<String>, crate::ManagedError> {
+    let EntryResolutionContext {
+        selector,
+        task,
+        catalog,
+        catalogs,
+        resolver,
+        ..
+    } = context;
     if entry.setup.is_empty() {
         return Ok(None);
     }
@@ -96,17 +100,19 @@ fn resolve_process_setup<'a>(
         ));
     }
     let rendered = render_run_step_sequence(
-        process_name,
         &entry.setup,
-        &task.env,
-        task.env_file.as_ref(),
-        &catalog.manifest.env,
-        &catalog.catalog_root,
-        catalog.bundle_root.as_deref(),
-        catalogs,
-        process_cwd,
-        None,
-        resolver,
+        crate::run_spec::RunStepSequenceContext {
+            owner_label: process_name,
+            task_env: &task.env,
+            task_env_file: task.env_file.as_ref(),
+            env_profiles: &catalog.manifest.env,
+            repo_root: &catalog.catalog_root,
+            bundle_root: catalog.bundle_root.as_deref(),
+            catalogs,
+            task_scope_cwd: process_cwd,
+            runtime_env_schema_override: None,
+            resolver,
+        },
     )?;
     Ok(Some(wrap_reference_command_in_cwd(process_cwd, &rendered)))
 }
@@ -180,15 +186,15 @@ fn normalize_entry(
 }
 
 fn resolve_process_run_and_cwd<'a>(
-    selector: &TaskSelector,
-    task: &ManifestTask,
+    context: EntryResolutionContext<'a>,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
-    catalog: &LoadedCatalog,
-    catalogs: &'a [LoadedCatalog],
-    task_scope_cwd: &Path,
-    resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), crate::ManagedError> {
+    let EntryResolutionContext {
+        selector,
+        task_scope_cwd,
+        ..
+    } = context;
     if matches!(entry.role.as_deref(), Some("lifecycle") | Some("shell")) {
         return Ok((String::new(), task_scope_cwd.to_path_buf()));
     }
@@ -210,30 +216,26 @@ fn resolve_process_run_and_cwd<'a>(
             )
         },
     )? {
-        super::RunOrTaskRef::Task(task_ref) => resolve_task_process_run_and_cwd(
-            selector,
-            task,
-            process_name,
-            task_ref,
-            catalog,
-            catalogs,
-            task_scope_cwd,
-            resolver,
-        ),
+        super::RunOrTaskRef::Task(task_ref) => {
+            resolve_task_process_run_and_cwd(context, process_name, task_ref)
+        }
         super::RunOrTaskRef::Run(run) => Ok((run.to_owned(), task_scope_cwd.to_path_buf())),
     }
 }
 
 fn resolve_task_process_run_and_cwd<'a>(
-    selector: &TaskSelector,
-    _task: &ManifestTask,
+    context: EntryResolutionContext<'a>,
     process_name: &str,
     task_ref: &str,
-    catalog: &LoadedCatalog,
-    catalogs: &'a [LoadedCatalog],
-    task_scope_cwd: &Path,
-    resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), crate::ManagedError> {
+    let EntryResolutionContext {
+        selector,
+        catalog,
+        catalogs,
+        task_scope_cwd,
+        resolver,
+        ..
+    } = context;
     if task_ref.trim() == "shell" {
         return resolve_shell_process_run(selector, process_name, catalog, task_scope_cwd);
     }

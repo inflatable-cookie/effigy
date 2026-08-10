@@ -1,5 +1,5 @@
 use super::super::super::common::{
-    render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
+    render_markdown_report, render_text_report, MarkdownReportSpec, SeverityLevels, TextReportSpec,
 };
 use crate::model::{GodFileScanResult, GodFileSeverity, ScanGraphFileContext, TextRenderOptions};
 
@@ -29,9 +29,11 @@ pub fn render_god_file_text(
         &result.findings,
         render_options,
         |finding| finding.severity,
-        GodFileSeverity::Warning,
-        GodFileSeverity::High,
-        GodFileSeverity::Critical,
+        SeverityLevels {
+            warning: GodFileSeverity::Warning,
+            high: GodFileSeverity::High,
+            critical: GodFileSeverity::Critical,
+        },
         |finding| {
             let base = format!(
                 "{}  {} code lines ({} total)  {}",

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
+use effigy_core::task_lock::TaskLockConflict;
 use effigy_managed::ManagedError;
 use effigy_manifest::ManifestError;
 use effigy_routing::RoutingError;
@@ -34,16 +35,7 @@ pub enum BuiltinError {
         command: String,
         error: std::io::Error,
     },
-    TaskLockConflict {
-        scope: String,
-        lock_path: PathBuf,
-        holder_pid: Option<u32>,
-        holder_started_at_epoch_ms: Option<u128>,
-        holder_heartbeat_at_epoch_ms: Option<u128>,
-        holder_hostname: Option<String>,
-        holder_workspace_root: Option<String>,
-        remediation: String,
-    },
+    TaskLockConflict(Box<TaskLockConflict>),
     TaskLockIo {
         path: PathBuf,
         error: std::io::Error,
@@ -99,8 +91,8 @@ impl std::fmt::Display for BuiltinError {
             BuiltinError::TaskCommandLaunch { command, error } => {
                 write!(f, "failed to launch command `{command}`: {error}")
             }
-            BuiltinError::TaskLockConflict { scope, .. } => {
-                write!(f, "lock conflict on scope `{scope}`")
+            BuiltinError::TaskLockConflict(details) => {
+                write!(f, "lock conflict on scope `{}`", details.scope)
             }
             BuiltinError::TaskLockIo { path, error } => {
                 write!(f, "lock io at {}: {error}", path.display())

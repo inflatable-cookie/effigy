@@ -158,26 +158,7 @@ pub(super) fn fmt_runner_error(
             stdout,
             stderr,
         } => write_task_command_failure(f, command, code, stdout, stderr),
-        RunnerError::TaskLockConflict {
-            scope,
-            lock_path,
-            holder_pid,
-            holder_started_at_epoch_ms,
-            holder_heartbeat_at_epoch_ms,
-            holder_hostname,
-            holder_workspace_root,
-            remediation,
-        } => write_lock_conflict(
-            f,
-            scope,
-            lock_path,
-            holder_pid,
-            holder_started_at_epoch_ms,
-            holder_heartbeat_at_epoch_ms,
-            holder_hostname,
-            holder_workspace_root,
-            remediation,
-        ),
+        RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
         RunnerError::TaskLockIo { path, error } => write_task_lock_io(f, path, error),
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")

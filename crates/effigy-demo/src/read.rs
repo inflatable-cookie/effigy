@@ -689,16 +689,7 @@ fn query_is_empty(query: &DemoListRequest) -> bool {
 }
 
 fn demo_matches_query(record: &DemoRecord, query: &DemoListRequest) -> bool {
-    record.matches_filters(
-        query.search.as_deref(),
-        query.owner.as_deref(),
-        query.tag.as_deref(),
-        query.mode.as_deref(),
-        query.cover.as_deref(),
-        query.status.as_deref(),
-        query.gap.as_deref(),
-        query.stale_only,
-    )
+    record.matches_filters(query)
 }
 
 fn demo_list_query_to_json(query: &DemoListRequest) -> serde_json::Value {

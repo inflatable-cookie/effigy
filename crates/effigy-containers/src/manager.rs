@@ -545,19 +545,22 @@ impl ContainerManager {
         &self,
         request: &ContainerManagerRequest,
         detection: &ContainerBackendDetection,
-        profile: &str,
-        docker_program: impl Into<OsString>,
-        docker_args: &[OsString],
-        action: ContainerAction,
-        label: impl Into<String>,
+        invocation: RuntimeInvocation<'_>,
     ) -> Result<ContainerRuntimeInvocationPlan, ContainerManagerError> {
+        let RuntimeInvocation {
+            profile,
+            docker_program,
+            docker_args,
+            action,
+            label,
+        } = invocation;
         let mut detection = detection.clone();
         if let Some(backend_override) = request.backend_override.as_ref() {
             detection.backend_override = Some(backend_override.clone());
         }
         let backend_id = self.registry.detect_backend(&detection)?;
         let (program, args) = if backend_id == BackendId::docker_compose() {
-            (docker_program.into(), docker_args.to_vec())
+            (docker_program, docker_args.to_vec())
         } else {
             let mut resolved = vec![
                 OsString::from("nerdctl"),
@@ -575,7 +578,7 @@ impl ContainerManager {
             action,
             program,
             args,
-            label: label.into(),
+            label,
         })
     }
 
@@ -590,6 +593,14 @@ impl ContainerManager {
             Ok("containerd")
         }
     }
+}
+
+pub struct RuntimeInvocation<'a> {
+    pub profile: &'a str,
+    pub docker_program: OsString,
+    pub docker_args: &'a [OsString],
+    pub action: ContainerAction,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -694,7 +705,7 @@ mod tests {
         backend_override_from_env_value, BackendId, ColimaNerdctlBackend, ContainerAction,
         ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry,
         ContainerInterruptPolicy, ContainerManager, ContainerManagerError, ContainerManagerRequest,
-        ContainerRuntimeState, DockerComposeBackend,
+        ContainerRuntimeState, DockerComposeBackend, RuntimeInvocation,
     };
 
     #[test]
@@ -972,11 +983,13 @@ mod tests {
             .runtime_invocation_plan(
                 &request,
                 &ContainerBackendDetection::new(true),
-                "effigy",
-                "docker",
-                &args,
-                ContainerAction::Shutdown,
-                "remove generated image",
+                RuntimeInvocation {
+                    profile: "effigy",
+                    docker_program: OsString::from("docker"),
+                    docker_args: &args,
+                    action: ContainerAction::Shutdown,
+                    label: "remove generated image".to_owned(),
+                },
             )
             .expect("runtime plan");
 
@@ -1005,11 +1018,13 @@ mod tests {
             .runtime_invocation_plan(
                 &request,
                 &ContainerBackendDetection::new(false),
-                "effigy",
-                "docker",
-                &args,
-                ContainerAction::Shutdown,
-                "remove generated image",
+                RuntimeInvocation {
+                    profile: "effigy",
+                    docker_program: OsString::from("docker"),
+                    docker_args: &args,
+                    action: ContainerAction::Shutdown,
+                    label: "remove generated image".to_owned(),
+                },
             )
             .expect("runtime plan");
 

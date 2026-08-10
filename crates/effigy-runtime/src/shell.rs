@@ -229,11 +229,13 @@ where
     let first_output = execute_command_mode_shell(
         repo_root,
         policy,
-        service,
-        working_dir,
-        command,
-        shell,
-        optimistic_identity.as_ref(),
+        CommandModeShell {
+            service,
+            working_dir,
+            command,
+            shell,
+            workspace_identity: optimistic_identity.as_ref(),
+        },
         run_exec,
     )?;
     let output = if first_output.status.success() {
@@ -252,11 +254,13 @@ where
         execute_command_mode_shell(
             repo_root,
             policy,
-            service,
-            working_dir,
-            command,
-            shell,
-            None,
+            CommandModeShell {
+                service,
+                working_dir,
+                command,
+                shell,
+                workspace_identity: None,
+            },
             run_exec,
         )?
     } else {
@@ -280,14 +284,18 @@ where
     ))
 }
 
+struct CommandModeShell<'a> {
+    service: &'a str,
+    working_dir: Option<&'a Path>,
+    command: &'a str,
+    shell: &'a str,
+    workspace_identity: Option<&'a ResolvedWorkspaceExecIdentity>,
+}
+
 fn execute_command_mode_shell<FRunExec>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    service: &str,
-    working_dir: Option<&Path>,
-    command: &str,
-    shell: &str,
-    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
+    request: CommandModeShell<'_>,
     run_exec: &FRunExec,
 ) -> Result<Output, EffigyRuntimeError>
 where
@@ -297,6 +305,13 @@ where
         bool,
     ) -> Result<Output, EffigyRuntimeError>,
 {
+    let CommandModeShell {
+        service,
+        working_dir,
+        command,
+        shell,
+        workspace_identity,
+    } = request;
     let args = build_container_shell_args(
         service,
         Some(command),

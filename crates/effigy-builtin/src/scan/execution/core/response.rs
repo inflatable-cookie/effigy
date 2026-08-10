@@ -99,16 +99,28 @@ where
     })
 }
 
-pub(super) fn render_scan_response(
-    output_json: bool,
-    output_path: Option<&PathBuf>,
-    mode: ScanModeConfig,
-    format: ScanRenderFormat,
-    finding_count: usize,
-    graph_context: Option<&ScanGraphContext>,
-    payload: &serde_json::Value,
-    rendered_text: &str,
-) -> Result<String, BuiltinError> {
+pub(super) struct ScanResponse<'a> {
+    pub(super) output_json: bool,
+    pub(super) output_path: Option<&'a PathBuf>,
+    pub(super) mode: ScanModeConfig,
+    pub(super) format: ScanRenderFormat,
+    pub(super) finding_count: usize,
+    pub(super) graph_context: Option<&'a ScanGraphContext>,
+    pub(super) payload: &'a serde_json::Value,
+    pub(super) rendered_text: &'a str,
+}
+
+pub(super) fn render_scan_response(response: ScanResponse<'_>) -> Result<String, BuiltinError> {
+    let ScanResponse {
+        output_json,
+        output_path,
+        mode,
+        format,
+        finding_count,
+        graph_context,
+        payload,
+        rendered_text,
+    } = response;
     if output_json {
         return encode_scan_json(payload);
     }

@@ -139,11 +139,13 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
     render_footer(
         frame,
         chunks[3],
-        input_mode,
-        active_is_shell,
-        shell_capture_mode,
-        show_help,
-        show_options,
-        footer_message,
+        footer::FooterState {
+            input_mode,
+            active_is_shell,
+            shell_capture_mode,
+            show_help,
+            show_options,
+            message: footer_message,
+        },
     );
 }

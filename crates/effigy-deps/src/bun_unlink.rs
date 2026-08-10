@@ -41,24 +41,28 @@ pub fn apply_bun_unlink_plan(
         return Ok(report(
             plan,
             BunUnlinkOutcome::DryRun,
-            Vec::new(),
-            Vec::new(),
-            immutable_files,
-            not_run_verification(),
-            BunUnlinkRollback::not_required(),
-            Vec::new(),
+            BunUnlinkReportDetails {
+                removed_consumer_links: Vec::new(),
+                applied_processes: Vec::new(),
+                immutable_files,
+                verification: not_run_verification(),
+                rollback: BunUnlinkRollback::not_required(),
+                errors: Vec::new(),
+            },
         ));
     }
     if plan.packages.is_empty() && plan.operation.changes.is_empty() {
         return Ok(report(
             plan,
             BunUnlinkOutcome::NoOp,
-            Vec::new(),
-            Vec::new(),
-            immutable_files,
-            not_run_verification(),
-            BunUnlinkRollback::not_required(),
-            Vec::new(),
+            BunUnlinkReportDetails {
+                removed_consumer_links: Vec::new(),
+                applied_processes: Vec::new(),
+                immutable_files,
+                verification: not_run_verification(),
+                rollback: BunUnlinkRollback::not_required(),
+                errors: Vec::new(),
+            },
         ));
     }
 
@@ -187,12 +191,14 @@ pub fn apply_bun_unlink_plan(
         return Ok(report(
             plan,
             outcome,
-            removed_links,
-            applied_processes,
-            evidence,
-            verification,
-            rollback,
-            errors,
+            BunUnlinkReportDetails {
+                removed_consumer_links: removed_links,
+                applied_processes,
+                immutable_files: evidence,
+                verification,
+                rollback,
+                errors,
+            },
         ));
     }
 
@@ -222,12 +228,14 @@ pub fn apply_bun_unlink_plan(
     Ok(report(
         plan,
         outcome,
-        removed_links,
-        applied_processes,
-        evidence,
-        verification,
-        rollback,
-        errors,
+        BunUnlinkReportDetails {
+            removed_consumer_links: removed_links,
+            applied_processes,
+            immutable_files: evidence,
+            verification,
+            rollback,
+            errors,
+        },
     ))
 }
 
@@ -650,16 +658,28 @@ fn canonical_or_original(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn report(
-    plan: BunDependencyPlan,
-    outcome: BunUnlinkOutcome,
+struct BunUnlinkReportDetails {
     removed_consumer_links: Vec<PathBuf>,
     applied_processes: Vec<BunProcessIntent>,
     immutable_files: Vec<BunImmutableFileEvidence>,
     verification: DependencyVerification,
     rollback: BunUnlinkRollback,
     errors: Vec<String>,
+}
+
+fn report(
+    plan: BunDependencyPlan,
+    outcome: BunUnlinkOutcome,
+    details: BunUnlinkReportDetails,
 ) -> BunUnlinkOperationReport {
+    let BunUnlinkReportDetails {
+        removed_consumer_links,
+        applied_processes,
+        immutable_files,
+        verification,
+        rollback,
+        errors,
+    } = details;
     BunUnlinkOperationReport {
         plan,
         outcome,

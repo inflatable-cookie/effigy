@@ -104,16 +104,29 @@ impl DemoExecutionAttempt {
     }
 }
 
+pub struct DemoAttemptOutput<'a> {
+    pub entrypoint_kind: &'a str,
+    pub entrypoint_value: &'a str,
+    pub command: &'a str,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub log_paths: DemoLogPaths,
+}
+
 pub fn successful_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
+    output: DemoAttemptOutput<'_>,
     summary: Option<String>,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
+    let DemoAttemptOutput {
+        entrypoint_kind,
+        entrypoint_value,
+        command,
+        exit_code,
+        stdout,
+        stderr,
+        log_paths,
+    } = output;
     DemoExecutionAttempt {
         ok: true,
         outcome: "passed".to_owned(),
@@ -130,16 +143,16 @@ pub fn successful_demo_attempt(
     }
 }
 
-pub fn failed_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
-    summary: String,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
-) -> DemoExecutionAttempt {
+pub fn failed_demo_attempt(output: DemoAttemptOutput<'_>, summary: String) -> DemoExecutionAttempt {
+    let DemoAttemptOutput {
+        entrypoint_kind,
+        entrypoint_value,
+        command,
+        exit_code,
+        stdout,
+        stderr,
+        log_paths,
+    } = output;
     DemoExecutionAttempt {
         ok: false,
         outcome: "failed".to_owned(),
@@ -157,15 +170,18 @@ pub fn failed_demo_attempt(
 }
 
 pub fn terminated_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
+    output: DemoAttemptOutput<'_>,
     summary: String,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
+    let DemoAttemptOutput {
+        entrypoint_kind,
+        entrypoint_value,
+        command,
+        exit_code,
+        stdout,
+        stderr,
+        log_paths,
+    } = output;
     DemoExecutionAttempt {
         ok: false,
         outcome: "terminated".to_owned(),
@@ -283,48 +299,25 @@ impl DemoInvocationKind {
 /// whether stop was requested and whether the run exited successfully.
 pub fn run_attempt_from_output(
     demo_id: &str,
-    entrypoint_value: &str,
-    run_command: &str,
-    exit_code: Option<i32>,
+    output: DemoAttemptOutput<'_>,
     success: bool,
     stop_requested: bool,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
     if stop_requested {
         return terminated_demo_attempt(
-            "run",
-            entrypoint_value,
-            run_command,
-            exit_code,
+            output,
             format!("Demo `{demo_id}` was terminated after stop was requested."),
-            stdout,
-            stderr,
-            log_paths,
         );
     }
     if success {
         return successful_demo_attempt(
-            "run",
-            entrypoint_value,
-            run_command,
-            exit_code,
+            output,
             Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
-            stdout,
-            stderr,
-            log_paths,
         );
     }
     failed_demo_attempt(
-        "run",
-        entrypoint_value,
-        run_command,
-        exit_code,
+        output,
         format!("Demo `{demo_id}` failed via run entrypoint."),
-        stdout,
-        stderr,
-        log_paths,
     )
 }
 

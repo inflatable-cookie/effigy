@@ -610,30 +610,6 @@ fn inject_internal_skill_metadata(contents: &str) -> String {
     next
 }
 
-#[cfg(test)]
-#[allow(clippy::items_after_test_module)]
-mod tests {
-    use super::inject_internal_skill_metadata;
-
-    #[test]
-    fn inject_internal_skill_metadata_adds_internal_flag_inside_frontmatter() {
-        let input = "---\nname: effigy\ndescription: demo\n---\n\n# Skill\n";
-        let output = inject_internal_skill_metadata(input);
-        assert!(output.starts_with("---\nname: effigy\ndescription: demo\n"));
-        assert!(output.contains("\nmetadata:\n  internal: true\n"));
-        assert!(output.contains("\n---\n\n# Skill\n"));
-        assert!(output.ends_with("\n# Skill\n"));
-    }
-
-    #[test]
-    fn inject_internal_skill_metadata_is_idempotent() {
-        let input =
-            "---\nname: effigy\ndescription: demo\nmetadata:\n  internal: true\n---\n\n# Skill\n";
-        let output = inject_internal_skill_metadata(input);
-        assert_eq!(output, input);
-    }
-}
-
 fn check(
     job: AgentInitJob,
     relative_path: &str,
@@ -744,5 +720,28 @@ fn mode_name(mode: AgentInitMode) -> &'static str {
         AgentInitMode::Check => "check",
         AgentInitMode::Apply => "apply",
         AgentInitMode::Repair => "repair",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inject_internal_skill_metadata;
+
+    #[test]
+    fn inject_internal_skill_metadata_adds_internal_flag_inside_frontmatter() {
+        let input = "---\nname: effigy\ndescription: demo\n---\n\n# Skill\n";
+        let output = inject_internal_skill_metadata(input);
+        assert!(output.starts_with("---\nname: effigy\ndescription: demo\n"));
+        assert!(output.contains("\nmetadata:\n  internal: true\n"));
+        assert!(output.contains("\n---\n\n# Skill\n"));
+        assert!(output.ends_with("\n# Skill\n"));
+    }
+
+    #[test]
+    fn inject_internal_skill_metadata_is_idempotent() {
+        let input =
+            "---\nname: effigy\ndescription: demo\nmetadata:\n  internal: true\n---\n\n# Skill\n";
+        let output = inject_internal_skill_metadata(input);
+        assert_eq!(output, input);
     }
 }

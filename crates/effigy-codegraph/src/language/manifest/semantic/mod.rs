@@ -7,6 +7,8 @@ use crate::extractor::{GraphSink, SourceFile};
 use crate::model::FileRecord;
 use crate::{ExtractorId, GraphId};
 
+use support::SemanticSource;
+
 mod raw;
 mod support;
 mod typed;
@@ -37,9 +39,7 @@ pub(super) fn extract_effigy_manifest_relations(
             "includes-manifest",
             &crate::extractor::file_graph_id(&child_path)?,
             &format!("include:{child_path}"),
-            file,
-            extractor_id,
-            extractor_version,
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
             crate::model::Confidence::Exact,
         )?;
     }
@@ -99,12 +99,9 @@ pub(super) fn extract_effigy_manifest_relations(
         loaded.manifest.distribution.as_ref(),
     )?;
     typed::index_bootstrap(
-        file,
-        file_record,
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
         file_symbol_id,
         sink,
-        extractor_id,
-        extractor_version,
         &loaded.manifest.tasks,
         loaded.manifest.bootstrap.as_ref(),
     )?;

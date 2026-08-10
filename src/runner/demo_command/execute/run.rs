@@ -34,23 +34,26 @@ pub(in crate::runner::demo_command) fn execute_run_backed_demo(
             ))
         })?;
 
-    let active_record = PersistedDemoActiveAttempt::new_run_backed(
-        build_attempt_id(demo_id),
-        demo_id,
-        entrypoint_value.to_owned(),
-        run_command.to_owned(),
-        child.id(),
-        launch_mode.transport(),
-        input_handoff_path
-            .as_ref()
-            .map(|path| display_repo_path(path, repo_root)),
-        resize_handoff_path
-            .as_ref()
-            .map(|path| display_repo_path(path, repo_root)),
-        log_paths.stdout.clone(),
-        log_paths.stderr.clone(),
-        initial_terminal_size,
-    );
+    let active_record =
+        PersistedDemoActiveAttempt::new_run_backed(effigy_demo::RunBackedActiveAttempt {
+            attempt_id: build_attempt_id(demo_id),
+            demo_id,
+            entrypoint_value: entrypoint_value.to_owned(),
+            run_command: run_command.to_owned(),
+            target_pid: child.id(),
+            terminal_transport: launch_mode.transport(),
+            terminal: effigy_demo::ActiveAttemptTerminal {
+                input_handoff_rendered: input_handoff_path
+                    .as_ref()
+                    .map(|path| display_repo_path(path, repo_root)),
+                resize_handoff_rendered: resize_handoff_path
+                    .as_ref()
+                    .map(|path| display_repo_path(path, repo_root)),
+                stdout_log_rendered: log_paths.stdout.clone(),
+                stderr_log_rendered: log_paths.stderr.clone(),
+                terminal_size: initial_terminal_size,
+            },
+        });
     let _active_guard = register_active_attempt(repo_root, demo_id, &active_record)?;
 
     if output_json || attached_terminal {
@@ -111,14 +114,17 @@ pub(in crate::runner::demo_command) fn execute_run_backed_demo(
         let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
         return Ok(demo_run_attempt_from_output(
             demo_id,
-            entrypoint_value,
-            run_command,
-            status.code(),
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "run",
+                entrypoint_value,
+                command: run_command,
+                exit_code: status.code(),
+                stdout,
+                stderr,
+                log_paths,
+            },
             status.success(),
             stop_requested,
-            stdout,
-            stderr,
-            log_paths,
         ));
     }
 
@@ -131,14 +137,17 @@ pub(in crate::runner::demo_command) fn execute_run_backed_demo(
     let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
     Ok(demo_run_attempt_from_output(
         demo_id,
-        entrypoint_value,
-        run_command,
-        status.code(),
+        effigy_demo::DemoAttemptOutput {
+            entrypoint_kind: "run",
+            entrypoint_value,
+            command: run_command,
+            exit_code: status.code(),
+            stdout: String::new(),
+            stderr: String::new(),
+            log_paths: DemoLogPaths::none(),
+        },
         status.success(),
         stop_requested,
-        String::new(),
-        String::new(),
-        DemoLogPaths::none(),
     ))
 }
 

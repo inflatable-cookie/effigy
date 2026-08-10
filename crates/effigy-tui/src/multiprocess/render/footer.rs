@@ -5,16 +5,28 @@ use ratatui::Frame;
 
 use crate::core::InputMode;
 
+pub(super) struct FooterState<'a> {
+    pub(super) input_mode: InputMode,
+    pub(super) active_is_shell: bool,
+    pub(super) shell_capture_mode: bool,
+    pub(super) show_help: bool,
+    pub(super) show_options: bool,
+    pub(super) message: Option<&'a str>,
+}
+
 pub(super) fn render_footer(
     frame: &mut Frame<'_>,
     area: ratatui::layout::Rect,
-    input_mode: InputMode,
-    active_is_shell: bool,
-    shell_capture_mode: bool,
-    show_help: bool,
-    show_options: bool,
-    footer_message: Option<&str>,
+    state: FooterState<'_>,
 ) {
+    let FooterState {
+        input_mode,
+        active_is_shell,
+        shell_capture_mode,
+        show_help,
+        show_options,
+        message: footer_message,
+    } = state;
     let mode_label = if input_mode == InputMode::Insert {
         "insert"
     } else {

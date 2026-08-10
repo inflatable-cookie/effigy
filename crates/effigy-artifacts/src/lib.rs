@@ -30,7 +30,7 @@ mod tests {
         OciArtifactDescriptor, OciArtifactStagingRequest, ARTIFACT_METADATA_SCHEMA,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn temp_dir() -> PathBuf {
@@ -234,11 +234,11 @@ mod tests {
         assert!(report.metadata.primary_files.iter().any(|path| path
             .strip_prefix(&report.metadata.staged_root)
             .expect("staged relative")
-            == PathBuf::from("nested/file.txt")));
+            == Path::new("nested/file.txt")));
         assert!(report.metadata.primary_files.iter().any(|path| path
             .strip_prefix(&report.metadata.staged_root)
             .expect("staged relative")
-            == PathBuf::from("root.txt")));
+            == Path::new("root.txt")));
         assert_eq!(
             fs::read(report.metadata.staged_root.join("nested/file.txt"))
                 .expect("read staged nested"),

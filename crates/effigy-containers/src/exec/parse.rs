@@ -85,16 +85,16 @@ pub(super) fn parse_running_compose_containers(
     Ok(rows)
 }
 
-fn parse_running_compose_container_row(
-    line: &str,
-) -> Option<(
+type RunningComposeContainerRow = (
     String,
     String,
     Vec<String>,
     Option<String>,
     Option<String>,
     Option<String>,
-)> {
+);
+
+fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeContainerRow> {
     let trimmed = line.trim();
     if trimmed.eq_ignore_ascii_case("name status") {
         return None;

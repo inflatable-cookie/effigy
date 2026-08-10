@@ -51,14 +51,16 @@ pub(in crate::runner::demo_command) fn execute_task_backed_demo(
                 parse_task_backed_attempt_json(repo_root, demo_id, task_name, &rendered)
             }
             Err(error) => Ok(failed_demo_attempt(
-                "task",
-                task_name,
-                task_name,
-                None,
+                effigy_demo::DemoAttemptOutput {
+                    entrypoint_kind: "task",
+                    entrypoint_value: task_name,
+                    command: task_name,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    log_paths: DemoLogPaths::none(),
+                },
                 format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
-                String::new(),
-                String::new(),
-                DemoLogPaths::none(),
             )),
         };
     }
@@ -73,36 +75,42 @@ pub(in crate::runner::demo_command) fn execute_task_backed_demo(
         ExecutionSurface::Demo,
     ) {
         Ok(_) => Ok(successful_demo_attempt(
-            "task",
-            task_name,
-            task_name,
-            None,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: task_name,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                log_paths: DemoLogPaths::none(),
+            },
             Some(format!(
                 "Demo `{demo_id}` completed via task `{task_name}`."
             )),
-            String::new(),
-            String::new(),
-            DemoLogPaths::none(),
         )),
         Err(RunnerError::TaskCommandFailure { code, .. }) => Ok(failed_demo_attempt(
-            "task",
-            task_name,
-            task_name,
-            code,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: task_name,
+                exit_code: code,
+                stdout: String::new(),
+                stderr: String::new(),
+                log_paths: DemoLogPaths::none(),
+            },
             format!("Demo `{demo_id}` failed via task `{task_name}`."),
-            String::new(),
-            String::new(),
-            DemoLogPaths::none(),
         )),
         Err(error) => Ok(failed_demo_attempt(
-            "task",
-            task_name,
-            task_name,
-            None,
+            effigy_demo::DemoAttemptOutput {
+                entrypoint_kind: "task",
+                entrypoint_value: task_name,
+                command: task_name,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                log_paths: DemoLogPaths::none(),
+            },
             format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
-            String::new(),
-            String::new(),
-            DemoLogPaths::none(),
         )),
     }
 }

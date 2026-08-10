@@ -202,7 +202,7 @@ fn classify_error(
                 error_code: None,
             },
         ),
-        RunnerError::TaskLockConflict { .. } => (
+        RunnerError::TaskLockConflict(_) => (
             TaskStatusState::Blocked,
             TaskStatusOutcome {
                 summary: "task blocked by active lock".to_owned(),
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn lock_conflict_classifies_as_blocked() {
         let (state, outcome) = classify_error(
-            &RunnerError::TaskLockConflict {
+            &RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
                 scope: "task:build".to_owned(),
                 lock_path: "/tmp/repo/.effigy/locks/task-build.lock".into(),
                 holder_pid: Some(42),
@@ -329,7 +329,7 @@ mod tests {
                 holder_hostname: None,
                 holder_workspace_root: None,
                 remediation: "unlock".to_owned(),
-            },
+            })),
             TaskStatusStage::WaitingForLock,
         );
         assert_eq!(state, TaskStatusState::Blocked);

@@ -72,13 +72,15 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
             )?;
             let result = execute_bootstrap_request(
                 &request,
-                &cwd,
-                args.output_json,
-                *no_prompt,
-                *reuse_path,
-                *fresh,
-                &mut selected_backend,
-                &mut backend_guard,
+                BootstrapExecutionContext {
+                    invocation_cwd: &cwd,
+                    output_json: args.output_json,
+                    no_prompt: *no_prompt,
+                    reuse_path: *reuse_path,
+                    fresh: *fresh,
+                    selected_backend: &mut selected_backend,
+                    backend_guard: &mut backend_guard,
+                },
             )?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
@@ -414,16 +416,29 @@ pub(super) fn prompt_bootstrap_backend_choice_from_io<R: BufRead, W: Write>(
     }
 }
 
-fn execute_bootstrap_request(
-    request: &BootstrapResolution,
-    invocation_cwd: &Path,
+struct BootstrapExecutionContext<'a> {
+    invocation_cwd: &'a Path,
     output_json: bool,
     no_prompt: bool,
     reuse_path: bool,
     fresh: bool,
-    selected_backend: &mut Option<BootstrapBackendOverride>,
-    backend_guard: &mut Option<ScopedBootstrapBackendOverride>,
+    selected_backend: &'a mut Option<BootstrapBackendOverride>,
+    backend_guard: &'a mut Option<ScopedBootstrapBackendOverride>,
+}
+
+fn execute_bootstrap_request(
+    request: &BootstrapResolution,
+    context: BootstrapExecutionContext<'_>,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
+    let BootstrapExecutionContext {
+        invocation_cwd,
+        output_json,
+        no_prompt,
+        reuse_path,
+        fresh,
+        selected_backend,
+        backend_guard,
+    } = context;
     let progress = RefCell::new(BootstrapProgressReporter::new(output_json));
     let mut fresh_session = fresh.then(|| {
         session::BootstrapFreshSessionTracker::new(session::generate_bootstrap_fresh_session_id())
@@ -868,7 +883,8 @@ fn render_bootstrap_progress_message(message: &str, color_enabled: bool) -> Stri
 }
 
 fn render_bootstrap_progress_line(line: &str, color_enabled: bool) -> String {
-    const STATUS_PREFIXES: [(&str, fn(&Theme) -> anstyle::Style); 6] = [
+    type StatusPrefix = (&'static str, fn(&Theme) -> anstyle::Style);
+    const STATUS_PREFIXES: [StatusPrefix; 6] = [
         ("[ok]", |theme| theme.success),
         ("[warn]", |theme| theme.warning),
         ("[info]", |theme| theme.label),

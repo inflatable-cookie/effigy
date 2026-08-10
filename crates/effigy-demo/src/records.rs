@@ -117,17 +117,25 @@ impl DemoRecord {
         })
     }
 
-    pub fn matches_filters(
-        &self,
-        search: Option<&str>,
-        owner: Option<&str>,
-        tag: Option<&str>,
-        mode: Option<&str>,
-        cover: Option<&str>,
-        status: Option<&str>,
-        gap: Option<&str>,
-        stale_only: bool,
-    ) -> bool {
+    pub fn matches_filters(&self, query: &crate::DemoListRequest) -> bool {
+        let crate::DemoListRequest {
+            search,
+            owner,
+            tag,
+            mode,
+            cover,
+            status,
+            gap,
+            stale_only,
+            ..
+        } = query;
+        let search = search.as_deref();
+        let owner = owner.as_deref();
+        let tag = tag.as_deref();
+        let mode = mode.as_deref();
+        let cover = cover.as_deref();
+        let status = status.as_deref();
+        let gap = gap.as_deref();
         if let Some(search) = search {
             let needle = search.to_ascii_lowercase();
             let haystacks = [&self.id, &self.title, &self.summary];
@@ -168,7 +176,7 @@ impl DemoRecord {
                 return false;
             }
         }
-        if stale_only && !self.latest_attempt.stale {
+        if *stale_only && !self.latest_attempt.stale {
             return false;
         }
         true

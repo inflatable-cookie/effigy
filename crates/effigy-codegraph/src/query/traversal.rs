@@ -120,17 +120,15 @@ pub(super) fn explore_traversal_neighbors(
                         }
                     }
                 } else if let Some(unresolved_target) = &edge.unresolved_target {
-                    push_unresolved_neighbors(
-                        &mut neighbors,
-                        &mut seen,
-                        unresolved_target,
-                        &primary_paths,
-                        &edge.kind,
-                        true,
-                        &unresolved_indexes,
-                        &mut unresolved_cache,
-                        4,
-                    );
+                    let mut collection = UnresolvedNeighborCollection {
+                        neighbors: &mut neighbors,
+                        seen: &mut seen,
+                        primary_paths: &primary_paths,
+                        indexes: &unresolved_indexes,
+                        cache: &mut unresolved_cache,
+                        limit: 4,
+                    };
+                    push_unresolved_neighbors(&mut collection, unresolved_target, &edge.kind, true);
                 } else if edge.kind == "doc-path-ref" || edge.kind == "doc-link-file" {
                     push_doc_neighbor(
                         &mut neighbors,
@@ -278,24 +276,31 @@ pub(super) fn explore_summary(
     )
 }
 
+struct UnresolvedNeighborCollection<'a> {
+    neighbors: &'a mut Vec<ExploreTraversalNeighbor>,
+    seen: &'a mut BTreeSet<String>,
+    primary_paths: &'a BTreeSet<String>,
+    indexes: &'a UnresolvedNeighborIndexes<'a>,
+    cache: &'a mut BTreeMap<String, Vec<ExploreTraversalNeighbor>>,
+    limit: usize,
+}
+
 fn push_unresolved_neighbors(
-    neighbors: &mut Vec<ExploreTraversalNeighbor>,
-    seen: &mut BTreeSet<String>,
+    collection: &mut UnresolvedNeighborCollection<'_>,
     unresolved_target: &str,
-    primary_paths: &BTreeSet<String>,
     edge_kind: &str,
     outgoing: bool,
-    indexes: &UnresolvedNeighborIndexes<'_>,
-    unresolved_cache: &mut BTreeMap<String, Vec<ExploreTraversalNeighbor>>,
-    limit: usize,
 ) {
-    let cached = unresolved_cache
+    let cached = collection
+        .cache
         .entry(unresolved_target.to_owned())
-        .or_insert_with(|| unresolved_neighbor_candidates(unresolved_target, indexes, limit));
-    for candidate in cached.iter().take(limit) {
+        .or_insert_with(|| {
+            unresolved_neighbor_candidates(unresolved_target, collection.indexes, collection.limit)
+        });
+    for candidate in cached.iter().take(collection.limit) {
         match candidate.kind.as_str() {
             "symbol" => {
-                if primary_paths.contains(candidate.path.as_str()) {
+                if collection.primary_paths.contains(candidate.path.as_str()) {
                     continue;
                 }
                 let key = format!(
@@ -303,16 +308,16 @@ fn push_unresolved_neighbors(
                     candidate.path,
                     candidate.name.as_deref().unwrap_or_default()
                 );
-                if !seen.insert(key) {
+                if !collection.seen.insert(key) {
                     continue;
                 }
             }
             "file" => {
-                if primary_paths.contains(candidate.path.as_str()) {
+                if collection.primary_paths.contains(candidate.path.as_str()) {
                     continue;
                 }
                 let key = format!("file:{}", candidate.path);
-                if !seen.insert(key) {
+                if !collection.seen.insert(key) {
                     continue;
                 }
             }
@@ -321,7 +326,7 @@ fn push_unresolved_neighbors(
         let mut projected = candidate.clone();
         projected.reason = traversal_reason(edge_kind, outgoing, projected.kind.as_str());
         projected.score = traversal_score(edge_kind, outgoing, projected.kind == "symbol");
-        neighbors.push(projected);
+        collection.neighbors.push(projected);
     }
 }
 

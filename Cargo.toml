@@ -43,13 +43,7 @@ version = "0.9.1"
 edition = "2021"
 license = "MIT"
 
-# Single source of truth for the repo-wide clippy allows. Every package opts in
-# via `[lints] workspace = true`, so `cargo clippy` with no extra flags matches
-# CI. See docs/roadmaps/g08/016-suppression-hygiene-and-dead-code-precision.md.
-[workspace.lints.clippy]
-result_large_err = "allow"
-too_many_arguments = "allow"
-type_complexity = "allow"
+[workspace.lints]
 
 [patch.crates-io]
 # Temporary security patch for RUSTSEC-2026-0194 and RUSTSEC-2026-0195.

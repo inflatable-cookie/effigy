@@ -265,14 +265,16 @@ fn render_demo_execute_treats_terminated_attempt_as_non_error_text_result() {
         },
     };
     let attempt = terminated_demo_attempt(
-        "run",
-        "printf demo",
-        "printf demo",
-        None,
+        effigy_demo::DemoAttemptOutput {
+            entrypoint_kind: "run",
+            entrypoint_value: "printf demo",
+            command: "printf demo",
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            log_paths: DemoLogPaths::none(),
+        },
         "Demo `demo` was terminated after stop was requested.".to_owned(),
-        String::new(),
-        String::new(),
-        DemoLogPaths::none(),
     );
 
     let rendered = render_demo_execute(
