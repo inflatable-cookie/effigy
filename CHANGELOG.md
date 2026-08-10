@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-10
+
 ### Breaking
 - Catalog membership is now explicit. The root catalog is always included;
   child and sibling catalogs must be declared through `[catalog.members]`, a
