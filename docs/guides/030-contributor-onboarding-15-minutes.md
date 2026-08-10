@@ -68,7 +68,7 @@ cargo run --bin effigy -- tasks
 ```
 
 Expected outcome:
-- discovered catalogs/tasks are listed
+- effective catalogs/tasks are listed
 - self-hosted contributor tasks (`qa`, `qa:docs`, `bootstrap:local`, etc.) are visible
 
 ## Minute 5-8: Health + Explain

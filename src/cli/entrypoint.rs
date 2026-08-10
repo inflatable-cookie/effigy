@@ -130,7 +130,6 @@ pub fn run_cli(raw_args: Vec<String>) {
             },
         ) => run_graph_watch_command(&context, args),
         command @ (Command::Bundle(_)
-        | Command::Catalog(_)
         | Command::Changelog(_)
         | Command::Deploy(_)
         | Command::Deps(_)

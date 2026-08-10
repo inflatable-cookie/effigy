@@ -48,8 +48,8 @@ pub use config_sections::{
     ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend,
     ManifestSecretsConfig, ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy,
     ManifestSecretsVaultConfig, ManifestSecretsVaultIdentity, ManifestShellConfig,
-    ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -178,16 +178,7 @@ pub struct TaskManifest {
 pub struct ManifestCatalog {
     pub alias: Option<String>,
     #[serde(default)]
-    pub discovery: Option<ManifestCatalogDiscoveryConfig>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestCatalogDiscoveryConfig {
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    #[serde(default)]
-    pub ignore: Vec<String>,
+    pub members: BTreeMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -214,6 +205,17 @@ impl TaskManifest {
     }
 
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
+        if let Some(catalog) = self.catalog.as_ref() {
+            for (member, directory) in &catalog.members {
+                if member.trim().is_empty() || directory.trim().is_empty() {
+                    return Err(ManifestError::Compose {
+                        path: manifest_path.to_path_buf(),
+                        detail: "catalog member handles and directories must be non-empty strings"
+                            .to_owned(),
+                    });
+                }
+            }
+        }
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;
         }

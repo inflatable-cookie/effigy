@@ -5,6 +5,9 @@ minimum_effigy_version = "0.7.0"
 #
 # Shape: single-repo. Adjust task contents, add release config, and
 # extend `qa:northstar` with repo-specific checks as the project grows.
+# If it becomes a multi-project repo, declare each nested catalog explicitly:
+# [catalog.members]
+# docs = "packages/docs"
 
 [tasks]
 ping = "printf ok"

@@ -3,7 +3,7 @@ use std::path::Path;
 use effigy_core::data_loading::{parse_toml, read_utf8};
 use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::{load_task_manifest_with_inspection, LoadedCatalog, LoadedTaskManifest};
-use effigy_routing::{default_alias, discover_manifest_paths};
+use effigy_routing::{default_alias, effective_manifest_paths, RoutingError};
 use toml::Value;
 
 use super::super::finding_templates::ManifestParseFinding;
@@ -15,7 +15,13 @@ pub(super) fn collect_manifest_findings(
     resolved_root: &Path,
     state: &mut DoctorState,
 ) -> Result<ManifestScanResult, DoctorError> {
-    let manifest_paths = discover_manifest_paths(resolved_root)?;
+    let manifest_paths = match effective_manifest_paths(resolved_root) {
+        Ok(paths) => paths,
+        Err(RoutingError::Manifest(_)) => {
+            vec![resolved_root.join(effigy_manifest::TASK_MANIFEST_FILE)]
+        }
+        Err(error) => return Err(error.into()),
+    };
     let mut context = ScanContext::new(resolved_root, state);
     for manifest_path in &manifest_paths {
         context.process_manifest_path(manifest_path);

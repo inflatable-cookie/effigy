@@ -15,7 +15,7 @@ This folder contains both:
 
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
-`030`, `031`, `032`, `033`, `034`, `035`, and `036`.
+`030`, `031`, `032`, `033`, `034`, `035`, `036`, and `037`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -145,6 +145,9 @@ new reusable-core work.
 - [`036-papercuts-discovery-contract.md`](./036-papercuts-discovery-contract.md):
   rootless project/collection queue discovery, tolerant Markdown parsing,
   agent-ready JSON, and safe single-project capture contract.
+- [`037-explicit-catalog-membership-contract.md`](./037-explicit-catalog-membership-contract.md):
+  root-owned catalog membership, named and inline mounted members, shared
+  normalization, routing stability, and ambient-discovery removal contract.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -182,6 +185,7 @@ new reusable-core work.
 | `034-local-dependency-linking-contract.md` | Platform maintainers | `effigy deps` grammar, Cargo/Bun mechanism behavior, closure rules, desired-state schema/location, manifest/lock invariants, doctor severity, and JSON payload shape | Planning review against `g08.018` through `g08.023`; focused manager, state, doctor, and portfolio proofs once implementation starts |
 | `035-release-tag-identity-contract.md` | Platform maintainers | Release tag object type, annotation-message derivation, signing posture, tag push ordering, or no-retag evidence | Focused `effigy-release` tests plus execute-success local and bare-remote tag-object proof |
 | `036-papercuts-discovery-contract.md` | Platform maintainers | Papercut Markdown convention, scope rules, parser diagnostics, command grammar, JSON payload, or capture safety | `cargo test -p effigy-papercuts` plus focused CLI and command-output tests |
+| `037-explicit-catalog-membership-contract.md` | Platform maintainers | Catalog member grammar, structured system mounts, normalization, routing membership, discovery removal, or membership diagnostics/JSON evidence | Focused manifest, routing, container, doctor, CLI, test-plan, JSON, and consumer-shape proofs |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -235,9 +239,10 @@ as the `g04.037` deploy domain boundary contract, and
 deduplication contract, `031-artifact-and-crate-boundary-contract.md` as the
 `g04.039` artifact and crate-boundary contract, and
 `032-secret-and-local-config-management-contract.md` as the active `g05.001`
-secret and local configuration contract.
+secret and local configuration contract, and
+`037-explicit-catalog-membership-contract.md` as the active explicit catalog
+membership and ambient-discovery removal boundary.
 
 ## Next Task
 
-Keep contract `034` aligned with active strict spec `099`. Execute batch card
-`1055` for the first verified dependency-link mutation.
+No contract-backed card is ready. Await the next operator-approved scope.

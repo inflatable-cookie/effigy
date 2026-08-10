@@ -28,12 +28,12 @@ mod secrets;
 mod state;
 
 use crate::{
-    BundleArgs, BundleSubcommand, CatalogArgs, CatalogCacheSubcommand, CatalogSubcommand, Command,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs,
-    DepsArgs, DepsManager, DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs,
-    InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
-    InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand,
-    TaskInvocation, TasksArgs, UninstallArgs,
+    BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
+    DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
+    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs,
+    PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, TaskInvocation, TasksArgs,
+    UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -67,7 +67,9 @@ where
         "--version" | "version" => parse_version_command(args),
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "bundle" => parse_bundle_command(args),
-        "catalog" => parse_catalog_command(args),
+        "catalog" => Err(CliParseError::InvalidArguments(
+            "`effigy catalog` was removed with ambient catalog discovery; declare members in root `effigy.toml` and use `effigy tasks` to inspect effective membership".to_owned(),
+        )),
         "changelog" => parse_changelog_command(args),
         "deploy" => parse_deploy_command(args),
         "deps" => parse_deps_command(args),
@@ -312,55 +314,6 @@ fn parse_deps_manager(value: &str) -> Result<DepsManager, CliParseError> {
             "invalid dependency package manager `{other}` (expected `cargo` or `bun`)"
         ))),
     }
-}
-
-fn parse_catalog_command<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let Some(subcommand) = args.next() else {
-        return Ok(Command::Help(HelpTopic::Catalog));
-    };
-
-    match subcommand.as_str() {
-        "--help" | "-h" => Ok(Command::Help(HelpTopic::Catalog)),
-        "cache" => parse_catalog_cache_command(args),
-        other => Err(unknown_argument(other)),
-    }
-}
-
-fn parse_catalog_cache_command<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let Some(subcommand) = args.next() else {
-        return Ok(Command::Help(HelpTopic::Catalog));
-    };
-
-    let subcommand = match subcommand.as_str() {
-        "--help" | "-h" => return Ok(Command::Help(HelpTopic::Catalog)),
-        "clear" => CatalogCacheSubcommand::Clear,
-        other => return Err(unknown_argument(other)),
-    };
-    let mut repo_override = None;
-    let mut output_json = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Catalog)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Catalog(CatalogArgs {
-        subcommand: CatalogSubcommand::Cache { subcommand },
-        repo_override,
-        output_json,
-    }))
 }
 
 fn parse_uninstall_command<I>(args: I) -> Result<Command, CliParseError>

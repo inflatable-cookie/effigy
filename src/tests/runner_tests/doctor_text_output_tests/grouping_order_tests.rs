@@ -66,7 +66,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
 
     write_root_manifest(
         &root,
-        "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
+        "[catalog.members]\nbroken = \"broken\"\n\n[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
     );
     fs::write(broken.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");
 

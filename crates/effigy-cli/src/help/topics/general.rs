@@ -43,7 +43,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
                 "Run built-in repository scanners such as `god-files` and `attention-markers`",
                 None,
             ),
-            ("effigy <task>", "Resolve task across discovered catalogs", None),
+            ("effigy <task>", "Resolve task across effective catalogs", None),
             (
                 "effigy <catalog>/<task>",
                 "Run task from explicit catalog alias",

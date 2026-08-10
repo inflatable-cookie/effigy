@@ -15,9 +15,10 @@ the active `docs/specs/` tree.
 
 ## Current Archive State
 
-All completed or paused `g01` through `g04` strict-lane specs have been moved
-here before opening the `g05` roadmap generation. The active `docs/specs/`
-tree should remain empty until the first `g05` strict lane opens.
+Completed or paused strict-lane specs `076` through `096` are archived here.
+Spec `101` is also archived after the explicit catalog membership closeout.
+The active tree retains a small number of completed specs awaiting the next
+planning sweep plus provisional spec `098`.
 
 ## Next Task
 

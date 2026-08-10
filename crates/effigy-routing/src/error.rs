@@ -4,7 +4,7 @@ use effigy_manifest::ManifestError;
 
 /// Narrow error boundary for the task-routing surface.
 ///
-/// Produced by catalog discovery and selection. Lifts to `RunnerError`
+/// Produced by catalog membership loading and selection. Lifts to `RunnerError`
 /// at the runner edge via `From<RoutingError> for RunnerError` in
 /// `src/runner/error.rs`. Matches the Job-8 pattern used by
 /// `effigy-process`, `effigy-ui`, `effigy-managed`, and `effigy-env`.
@@ -25,14 +25,17 @@ pub enum RoutingError {
     TaskCatalogsMissing {
         root: PathBuf,
     },
-    TaskCatalogReadDir {
-        path: PathBuf,
-        error: std::io::Error,
-    },
     TaskCatalogAliasConflict {
         alias: String,
         first_path: PathBuf,
         second_path: PathBuf,
+    },
+    TaskCatalogMemberInvalid {
+        origin: String,
+        handle: Option<String>,
+        source: String,
+        resolved_path: Option<PathBuf>,
+        detail: String,
     },
     TaskCatalogPrefixNotFound {
         prefix: String,
@@ -58,12 +61,9 @@ impl std::fmt::Display for RoutingError {
         match self {
             RoutingError::TaskCatalogsMissing { root } => write!(
                 f,
-                "no task catalogs found under {} (expected one or more effigy.toml files)",
-                root.display()
+                "no root catalog manifest found at {}",
+                root.join("effigy.toml").display()
             ),
-            RoutingError::TaskCatalogReadDir { path, error } => {
-                write!(f, "failed to read directory {}: {error}", path.display())
-            }
             RoutingError::TaskCatalogAliasConflict {
                 alias,
                 first_path,
@@ -74,6 +74,23 @@ impl std::fmt::Display for RoutingError {
                 first_path.display(),
                 second_path.display()
             ),
+            RoutingError::TaskCatalogMemberInvalid {
+                origin,
+                handle,
+                source,
+                resolved_path,
+                detail,
+            } => {
+                write!(f, "invalid catalog member declared at `{origin}`")?;
+                if let Some(handle) = handle {
+                    write!(f, " (handle `{handle}`)")?;
+                }
+                write!(f, ": source `{source}`")?;
+                if let Some(path) = resolved_path {
+                    write!(f, " resolved to `{}`", path.display())?;
+                }
+                write!(f, ": {detail}")
+            }
             RoutingError::TaskCatalogPrefixNotFound { prefix, available } => write!(
                 f,
                 "task catalog prefix `{prefix}` not found (available: {})",
@@ -84,7 +101,7 @@ impl std::fmt::Display for RoutingError {
             }
             RoutingError::TaskNotFoundAny { name, catalogs } => write!(
                 f,
-                "task `{name}` is not defined in discovered catalogs: {}",
+                "task `{name}` is not defined in effective catalogs: {}",
                 catalogs.join(", ")
             ),
             RoutingError::TaskAmbiguous { name, candidates } => write!(

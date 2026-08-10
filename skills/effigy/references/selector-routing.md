@@ -21,12 +21,20 @@ Repo layout:
 
 ```
 .
-├── effigy.toml
+├── effigy.toml                    # declares api = "api", web = "web"
 ├── config/tasks.toml            # defines `test`, `qa:ci:fast`
 ├── api/
 │   └── effigy.toml               # defines `test`
 └── web/
     └── effigy.toml               # defines `test`
+```
+
+The root declaration is explicit:
+
+```toml
+[catalog.members]
+api = "api"
+web = "web"
 ```
 
 | User runs (CWD) | Resolves to |
@@ -56,7 +64,7 @@ Common ambiguity causes:
 
 - Two workspaces define the same task name with no path prefix.
 - A workspace was added recently and its `effigy.toml` isn't yet in the
-  catalog cache (run `effigy doctor` to refresh).
+  effective catalog membership (run `effigy doctor` for shared evidence).
 - A task is defined as both an alias and a workspace task.
 
 ## Full spec

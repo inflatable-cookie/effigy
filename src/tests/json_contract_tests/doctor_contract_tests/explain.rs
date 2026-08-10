@@ -7,7 +7,7 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
@@ -48,7 +48,7 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
@@ -168,7 +168,7 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),

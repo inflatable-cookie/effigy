@@ -22,7 +22,6 @@ pub use global_json::GlobalCliOptions;
 pub enum Command {
     Version,
     Bundle(BundleArgs),
-    Catalog(CatalogArgs),
     Changelog(ChangelogArgs),
     Deploy(DeployArgs),
     Deps(DepsArgs),
@@ -106,7 +105,6 @@ pub struct InternalHostProcessStopArgs {
 pub enum HelpTopic {
     General,
     Bundle,
-    Catalog,
     Changelog,
     Deploy,
     Deps,
@@ -135,23 +133,6 @@ pub enum HelpTopic {
     Init,
     Migrate,
     Uninstall,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogArgs {
-    pub subcommand: CatalogSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CatalogSubcommand {
-    Cache { subcommand: CatalogCacheSubcommand },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CatalogCacheSubcommand {
-    Clear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

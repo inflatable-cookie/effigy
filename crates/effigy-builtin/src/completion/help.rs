@@ -27,7 +27,7 @@ pub(super) fn render_completion_help() -> String {
                 heading: "Notes",
                 items: &[
                     "completion command list is sourced from Effigy built-in command index",
-                    "candidate suggestions include built-ins and discovered task selectors",
+                    "candidate suggestions include built-ins and effective task selectors",
                     "candidate lookups use short TTL memoization with manifest mtime invalidation",
                     "export prints the raw script to stdout; install writes the shell-specific file and wires startup when needed",
                     "interactive prompts only appear on a real TTY when shell or action is omitted",

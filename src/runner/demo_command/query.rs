@@ -63,7 +63,7 @@ pub(super) fn render_demo_run_command(
     demo_id: &str,
     run: &ManifestManagedRun,
 ) -> Result<String, RunnerError> {
-    let catalogs = effigy_routing::discover_catalogs_allow_missing(repo_root)?;
+    let catalogs = effigy_routing::load_effective_catalogs_allow_missing(repo_root)?;
     let task_env = BTreeMap::new();
     render_task_run_spec(
         run,

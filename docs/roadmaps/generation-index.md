@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-08-05
+Updated: 2026-08-10
 
 ## Generation history
 
@@ -98,6 +98,10 @@ Updated: 2026-08-05
 `g08.027` completes papercut portfolio discovery and capture under strict spec
 `100`; cards `1070` and `1071` are complete.
 
+`g08.028` is complete under strict spec `101`. It replaces ambient descendant
+catalog discovery with explicit root-owned membership; cards `1072` through
+`1075` are complete.
+
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
   scan/graph readiness, additive enrichment for existing scans, graph-native
@@ -163,7 +167,8 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1071` and strict specs `099` and `100` are complete.
+Cards `1051` through `1075` and strict specs `099` through `101` are complete.
+No strict-lane card is currently ready.
 
 ## Research Roadmaps
 
@@ -196,5 +201,5 @@ closeout there first.
 
 ## Next Task
 
-Select the next operator-approved scope. No release action or generation
+Await the next operator-approved g08 scope. No release action or generation
 rollover is implied.

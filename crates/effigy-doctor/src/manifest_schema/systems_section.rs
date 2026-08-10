@@ -2,7 +2,7 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys};
-use super::values::validate_optional_non_empty_string_field;
+use super::values::{validate_optional_boolean_field, validate_optional_non_empty_string_field};
 
 pub(super) fn validate_systems_section(context: &mut SchemaContext<'_, '_>, systems: &Value) {
     let Some(table) = require_table(context, "systems", systems, "expected table") else {
@@ -84,15 +84,91 @@ fn validate_workspace_fields(
     validate_optional_non_empty_string_field(context, table.get("user"), &format!("{path}.user"));
     validate_optional_non_empty_string_field(context, table.get("home"), &format!("{path}.home"));
     if let Some(mounts) = table.get("mounts") {
-        super::values::validate_string_array(
-            context,
-            &format!("{path}.mounts"),
-            mounts,
-            "expected array of strings",
-        );
+        validate_system_mounts(context, &format!("{path}.mounts"), mounts);
     }
     if let Some(container) = table.get("container") {
         validate_workspace_container(context, &format!("{path}.container"), container);
+    }
+}
+
+fn validate_system_mounts(context: &mut SchemaContext<'_, '_>, path: &str, mounts: &Value) {
+    let Some(entries) = mounts.as_array() else {
+        context.unsupported_value(path, SchemaContext::value_type(mounts), "expected array");
+        return;
+    };
+    for (index, mount) in entries.iter().enumerate() {
+        let mount_path = format!("{path}[{index}]");
+        if mount.is_str() {
+            validate_optional_non_empty_string_field(context, Some(mount), &mount_path);
+            continue;
+        }
+        let Some(table) = require_table(
+            context,
+            &mount_path,
+            mount,
+            "expected string or structured mount table",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &mount_path,
+            table,
+            &["member", "source", "target", "options", "catalog"],
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            table.get("member"),
+            &format!("{mount_path}.member"),
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            table.get("source"),
+            &format!("{mount_path}.source"),
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            table.get("target"),
+            &format!("{mount_path}.target"),
+        );
+        validate_optional_boolean_field(
+            context,
+            table.get("catalog"),
+            &format!("{mount_path}.catalog"),
+        );
+        let has_member = table.contains_key("member");
+        let has_source = table.contains_key("source");
+        if has_member == has_source {
+            context.unsupported_value(
+                &mount_path,
+                "invalid source declaration",
+                "exactly one of `member` or `source`",
+            );
+        }
+        if has_member && table.contains_key("catalog") {
+            context.unsupported_value(
+                &format!("{mount_path}.catalog"),
+                "catalog flag on member mount",
+                "omit `catalog`; member mounts imply catalog membership",
+            );
+        }
+        if let Some(options) = table.get("options") {
+            let Some(options) = options.as_array() else {
+                context.unsupported_value(
+                    &format!("{mount_path}.options"),
+                    SchemaContext::value_type(options),
+                    "expected array of non-empty strings",
+                );
+                continue;
+            };
+            for (option_index, option) in options.iter().enumerate() {
+                validate_optional_non_empty_string_field(
+                    context,
+                    Some(option),
+                    &format!("{mount_path}.options[{option_index}]"),
+                );
+            }
+        }
     }
 }
 

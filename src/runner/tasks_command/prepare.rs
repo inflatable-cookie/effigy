@@ -13,7 +13,7 @@ use super::super::deferred_builtins_from_catalogs;
 use super::status::{run_task_status, run_task_status_all};
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
-use effigy_routing::discover_catalogs_allow_missing;
+use effigy_routing::load_effective_catalogs_allow_missing;
 
 pub(super) struct PreparedTasksCommand {
     resolved_root: PathBuf,
@@ -61,7 +61,7 @@ pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCom
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let cwd = context.invocation_cwd;
     let resolved = context.resolved;
-    let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
+    let catalogs = load_effective_catalogs_allow_missing(&resolved.resolved_root)?;
     let deferred_builtins = deferred_builtins_from_catalogs(&catalogs, &resolved.resolved_root);
     let resolve_probe = probe_task_resolution(
         ProbeTaskResolutionRequest {

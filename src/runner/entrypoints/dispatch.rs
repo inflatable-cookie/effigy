@@ -6,7 +6,6 @@ use std::path::Path;
 use super::super::doctor_ports::RunnerDoctorPorts;
 use super::super::run_artifact;
 use super::super::run_bundle;
-use super::super::run_catalog;
 use super::super::run_changelog;
 use super::super::run_container;
 use super::super::run_contracts;
@@ -57,7 +56,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     match cmd {
         Command::Version => Ok(String::new()),
         Command::Bundle(args) => run_bundle(args),
-        Command::Catalog(args) => run_catalog(args),
         Command::Artifact(args) => run_artifact(args),
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),

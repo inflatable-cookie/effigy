@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 
 use super::super::super::scripts::command_names;
 use crate::BuiltinError;
-use effigy_routing::{discover_catalogs, RoutingError};
+use effigy_routing::{load_effective_catalogs, RoutingError};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ManifestStamp {
@@ -20,7 +20,7 @@ pub(super) fn discover_completion_candidates(
 ) -> Result<(Vec<String>, Vec<ManifestStamp>), BuiltinError> {
     let mut candidates: BTreeSet<String> = command_names().into_iter().map(str::to_owned).collect();
     let mut manifest_stamps: Vec<ManifestStamp> = Vec::new();
-    match discover_catalogs(repo_root) {
+    match load_effective_catalogs(repo_root) {
         Ok(catalogs) => {
             for catalog in catalogs {
                 manifest_stamps.push(read_manifest_stamp(&catalog.manifest_path));

@@ -32,7 +32,7 @@ impl HealthFinding {
             Self::DiscoveryMissing => {
                 state.add_check_fixable_warning(
                     check_id::HEALTH_TASK_DISCOVERY,
-                    "no `health` task found in discovered catalogs",
+                    "no `health` task found in effective catalogs",
                     remediation::DEFINE_HEALTH_TASK,
                 );
             }

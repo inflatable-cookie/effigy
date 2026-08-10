@@ -821,6 +821,39 @@ alias = "acowtancy"
     }
 
     #[test]
+    fn catalog_members_compose_across_included_fragments() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["catalog.toml"]
+
+[catalog.members]
+app = "apps/app"
+"#,
+        );
+        write_manifest(
+            dir,
+            "catalog.toml",
+            r#"
+[catalog.members]
+underlay = "packages/underlay"
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let members = &loaded.manifest.catalog.as_ref().expect("catalog").members;
+        assert_eq!(members.get("app").map(String::as_str), Some("apps/app"));
+        assert_eq!(
+            members.get("underlay").map(String::as_str),
+            Some("packages/underlay")
+        );
+    }
+
+    #[test]
     fn extend_appends_array_entries() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();

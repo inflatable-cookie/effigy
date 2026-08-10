@@ -44,7 +44,7 @@ pub(in crate::runner::demo_command) fn demo_task_selection(
     repo_root: &Path,
     task_name: &str,
 ) -> Result<Option<DemoTaskSelectionResolved>, RunnerError> {
-    let catalogs = effigy_routing::discover_catalogs_allow_missing(repo_root)?;
+    let catalogs = effigy_routing::load_effective_catalogs_allow_missing(repo_root)?;
     if catalogs.is_empty() {
         return Ok(None);
     }

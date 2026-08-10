@@ -1,4 +1,105 @@
 #[cfg(test)]
+mod structured_mount_tests {
+    use super::super::*;
+    use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
+    use std::fs;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-structured-mount-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("mkdir");
+        path
+    }
+
+    #[test]
+    fn structured_mount_matches_legacy_rendering() {
+        let repo_root = temp_dir("render");
+        let source = repo_root.join("shared");
+        fs::create_dir_all(&source).expect("mkdir source");
+        let workspace_root = Path::new("/workspace-root");
+        let legacy =
+            ManifestSystemMount::Spec("shared:/workspace-root/shared:ro,cached".to_owned());
+        let structured = ManifestSystemMount::Table(ManifestSystemMountTable {
+            member: None,
+            source: Some("shared".to_owned()),
+            target: Some("/workspace-root/shared".to_owned()),
+            options: vec!["ro".to_owned(), "cached".to_owned()],
+            catalog: false,
+        });
+
+        let legacy = parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &legacy)
+            .expect("legacy mount");
+        let structured =
+            parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &structured)
+                .expect("structured mount");
+
+        assert_eq!(structured.rendered, legacy.rendered);
+        assert_eq!(structured.source, legacy.source);
+        assert_eq!(structured.target, legacy.target);
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn structured_mount_defaults_target_from_source_basename() {
+        let repo_root = temp_dir("target");
+        fs::create_dir_all(repo_root.join("shared-tools")).expect("mkdir source");
+        let mount = ManifestSystemMount::Table(ManifestSystemMountTable {
+            member: None,
+            source: Some("shared-tools".to_owned()),
+            target: None,
+            options: vec![],
+            catalog: false,
+        });
+
+        let rendered =
+            parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
+                .expect("structured mount");
+
+        assert_eq!(rendered.target, "/workspace-root/shared-tools");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn structured_catalog_mount_preserves_isolation_auto_adoption() {
+        let repo_root = temp_dir("isolation");
+        let producer = repo_root.join("producer");
+        fs::create_dir_all(&producer).expect("mkdir producer");
+        fs::write(
+            producer.join(effigy_manifest::TASK_MANIFEST_FILE),
+            "[isolation]\npaths = [\"vendor\"]\n",
+        )
+        .expect("producer manifest");
+        let mount = ManifestSystemMount::Table(ManifestSystemMountTable {
+            member: None,
+            source: Some("producer".to_owned()),
+            target: Some("/workspace-root/producer".to_owned()),
+            options: vec![],
+            catalog: true,
+        });
+        let rendered =
+            parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
+                .expect("structured mount");
+
+        let isolation = build_isolation_mounts(
+            &repo_root,
+            "dev",
+            &ManifestWorkspaceConfig::default(),
+            &[rendered],
+        )
+        .expect("isolation mounts");
+
+        assert_eq!(isolation.len(), 1);
+        assert_eq!(isolation[0].target, "/workspace-root/producer/vendor");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+}
+
+#[cfg(test)]
 mod library_mount_tests {
     use super::super::*;
     use std::fs;

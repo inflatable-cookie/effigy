@@ -256,10 +256,10 @@ fn parse_service_help_alias_is_scoped() {
 }
 
 #[test]
-fn parse_catalog_help_is_scoped() {
-    let catalog = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(catalog, Command::Help(HelpTopic::Catalog));
+fn parse_catalog_help_reports_removed_command() {
+    let error = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
+        .expect_err("removed catalog command should fail");
+    assert!(error.to_string().contains("`effigy catalog` was removed"));
 }
 
 #[test]

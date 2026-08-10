@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
 use effigy_core::resolver::resolve_target_root;
-use effigy_routing::{discover_catalogs, select_catalog_and_task};
+use effigy_routing::{load_effective_catalogs, select_catalog_and_task};
 use effigy_tasks::{parse_task_selector, CatalogSelectionMode};
 
 #[path = "explain/analysis.rs"]
@@ -38,7 +38,7 @@ pub(crate) fn run_doctor_explain(
 
     let cwd = current_working_dir()?;
     let resolved = resolve_target_root(cwd.clone(), repo_override)?;
-    let catalogs = discover_catalogs(&resolved.resolved_root)?;
+    let catalogs = load_effective_catalogs(&resolved.resolved_root)?;
     let selector = parse_task_selector(&request.name)
         .map_err(|e| DoctorError::task_invocation(e.to_string()))?;
 

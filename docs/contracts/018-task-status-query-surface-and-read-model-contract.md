@@ -157,7 +157,7 @@ Single-selector payload must include at least:
 `--all` payload must include at least:
 
 - scope root
-- discovered catalog scopes
+- effective catalog scopes
 - rows
 - counts by state
 - warnings/evidence

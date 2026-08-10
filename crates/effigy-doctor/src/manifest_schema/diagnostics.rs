@@ -29,6 +29,11 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
     }
 
     pub(super) fn unsupported_key(&mut self, key_path: &str) {
+        let remediation = if key_path == "catalog.discovery" {
+            remediation::DECLARE_CATALOG_MEMBERS
+        } else {
+            remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS
+        };
         self.sink.add_check_error(
             check_id::MANIFEST_SCHEMA_UNSUPPORTED_KEY,
             format!(
@@ -36,7 +41,7 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
                 self.manifest_path.display(),
                 key_path
             ),
-            remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS.to_owned(),
+            remediation.to_owned(),
         );
     }
 

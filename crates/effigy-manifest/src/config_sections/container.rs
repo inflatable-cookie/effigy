@@ -30,7 +30,7 @@ pub struct ManifestSystemConfig {
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
-    pub mounts: Vec<String>,
+    pub mounts: Vec<ManifestSystemMount>,
     #[serde(default)]
     pub user: Option<String>,
     #[serde(default)]
@@ -47,13 +47,234 @@ pub struct ManifestWorkspaceConfig {
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
-    pub mounts: Vec<String>,
+    pub mounts: Vec<ManifestSystemMount>,
     #[serde(default)]
     pub user: Option<String>,
     #[serde(default)]
     pub home: Option<String>,
     #[serde(skip)]
     pub isolation: Vec<ManifestIsolationAdoption>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ManifestSystemMount {
+    Spec(String),
+    Table(ManifestSystemMountTable),
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestSystemMount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MountVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for MountVisitor {
+            type Value = ManifestSystemMount;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a legacy mount string or structured mount table")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(ManifestSystemMount::Spec(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(ManifestSystemMount::Spec(value))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                <ManifestSystemMountTable as serde::Deserialize>::deserialize(
+                    serde::de::value::MapAccessDeserializer::new(map),
+                )
+                .map(ManifestSystemMount::Table)
+            }
+        }
+
+        deserializer.deserialize_any(MountVisitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManifestSystemMountTable {
+    pub member: Option<String>,
+    pub source: Option<String>,
+    pub target: Option<String>,
+    pub options: Vec<String>,
+    pub catalog: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawManifestSystemMountTable {
+    #[serde(default)]
+    member: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    options: Vec<String>,
+    #[serde(default)]
+    catalog: Option<bool>,
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestSystemMountTable {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawManifestSystemMountTable::deserialize(deserializer)?;
+        let member = validate_mount_string::<D::Error>(raw.member, "member")?;
+        let source = validate_mount_string::<D::Error>(raw.source, "source")?;
+        let target = validate_mount_string::<D::Error>(raw.target, "target")?;
+        if member.is_some() == source.is_some() {
+            return Err(serde::de::Error::custom(
+                "structured mount must declare exactly one of `member` or `source`",
+            ));
+        }
+        if member.is_some() && raw.catalog.is_some() {
+            return Err(serde::de::Error::custom(
+                "structured member mount cannot declare `catalog`; member mounts imply catalog membership",
+            ));
+        }
+        if raw.options.iter().any(|option| option.trim().is_empty()) {
+            return Err(serde::de::Error::custom(
+                "structured mount `options` entries must be non-empty strings",
+            ));
+        }
+        Ok(Self {
+            member,
+            source,
+            target,
+            options: raw.options,
+            catalog: raw.catalog.unwrap_or(false),
+        })
+    }
+}
+
+fn validate_mount_string<E: serde::de::Error>(
+    value: Option<String>,
+    field: &str,
+) -> Result<Option<String>, E> {
+    if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+        return Err(E::custom(format!(
+            "structured mount `{field}` must be a non-empty string"
+        )));
+    }
+    Ok(value)
+}
+
+impl ManifestSystemMount {
+    pub fn member(&self) -> Option<&str> {
+        match self {
+            Self::Spec(_) => None,
+            Self::Table(table) => table.member.as_deref(),
+        }
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Spec(spec) => legacy_mount_parts(spec).0,
+            Self::Table(table) => table.source.as_deref(),
+        }
+    }
+
+    pub fn target(&self) -> Option<&str> {
+        match self {
+            Self::Spec(spec) => legacy_mount_parts(spec).1,
+            Self::Table(table) => table.target.as_deref(),
+        }
+    }
+
+    pub fn options(&self) -> Vec<&str> {
+        match self {
+            Self::Spec(spec) => legacy_mount_parts(spec)
+                .2
+                .map(|options| options.split(',').collect())
+                .unwrap_or_default(),
+            Self::Table(table) => table.options.iter().map(String::as_str).collect(),
+        }
+    }
+
+    pub fn is_catalog(&self) -> bool {
+        match self {
+            Self::Spec(_) => true,
+            Self::Table(table) => table.member.is_some() || table.catalog,
+        }
+    }
+
+    pub fn resolved(&self, members: &BTreeMap<String, String>) -> Result<Self, String> {
+        let Self::Table(table) = self else {
+            return Ok(self.clone());
+        };
+        let Some(member) = table.member.as_deref() else {
+            return Ok(self.clone());
+        };
+        let source = members
+            .get(member)
+            .ok_or_else(|| format!("system mount references unknown catalog member `{member}`"))?;
+        Ok(Self::Table(ManifestSystemMountTable {
+            member: None,
+            source: Some(source.clone()),
+            target: table.target.clone(),
+            options: table.options.clone(),
+            catalog: true,
+        }))
+    }
+}
+
+fn legacy_mount_parts(spec: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let mut parts = spec.splitn(3, ':');
+    let source = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let target = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let options = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    (source, target, options)
+}
+
+impl PartialEq<String> for ManifestSystemMount {
+    fn eq(&self, other: &String) -> bool {
+        matches!(self, Self::Spec(spec) if spec == other)
+    }
+}
+
+impl PartialEq<&str> for ManifestSystemMount {
+    fn eq(&self, other: &&str) -> bool {
+        matches!(self, Self::Spec(spec) if spec == other)
+    }
+}
+
+impl ManifestWorkspaceConfig {
+    pub fn resolve_member_mounts(
+        &mut self,
+        members: &BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        self.mounts = self
+            .mounts
+            .iter()
+            .map(|mount| mount.resolved(members))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]

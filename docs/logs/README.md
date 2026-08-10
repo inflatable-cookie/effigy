@@ -78,6 +78,10 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/10-105636-explicit-catalog-membership-closeout.md`](./2026-08/10-105636-explicit-catalog-membership-closeout.md)
+- [`2026-08/10-104558-delete-discovery-and-align-diagnostics.md`](./2026-08/10-104558-delete-discovery-and-align-diagnostics.md)
+- [`2026-08/10-101827-explicit-catalog-routing-cutover.md`](./2026-08/10-101827-explicit-catalog-routing-cutover.md)
+- [`2026-08/10-095639-explicit-catalog-schema-foundation.md`](./2026-08/10-095639-explicit-catalog-schema-foundation.md)
 - [`2026-08/09-164830-papercuts-discovery-and-capture.md`](./2026-08/09-164830-papercuts-discovery-and-capture.md)
 - [`2026-08/06-223813-patch-release-candidate-proof.md`](./2026-08/06-223813-patch-release-candidate-proof.md)
 - [`2026-08/06-223205-prepared-source-drift-policy.md`](./2026-08/06-223205-prepared-source-drift-policy.md)
@@ -153,5 +157,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Request explicit human authorization before release prepare or any later
-release mutation.
+Execute ready card
+[`1073`](../roadmaps/g08/batch-cards/1073-cut-routing-over-to-explicit-membership.md).
+Release mutation remains outside the active lane.

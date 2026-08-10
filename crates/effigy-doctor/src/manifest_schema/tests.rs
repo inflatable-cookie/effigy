@@ -177,7 +177,7 @@ initial-tag-current-version = "yes"
 }
 
 #[test]
-fn validate_manifest_schema_accepts_catalog_discovery_config() {
+fn validate_manifest_schema_rejects_removed_ambient_catalog_config() {
     let manifest: Value = toml::from_str(
         r###"
 [catalog]
@@ -194,34 +194,17 @@ ignore = ["tests", "fixtures"]
     validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
 
     assert!(
-        sink.findings.is_empty(),
-        "expected catalog.discovery config to validate cleanly, got: {:?}",
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("catalog.discovery")),
+        "expected removed catalog.discovery table to be flagged, got: {:?}",
         sink.findings
     );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_catalog_discovery_key() {
-    let manifest: Value = toml::from_str(
-        r###"
-[catalog]
-alias = "app"
-
-[catalog.discovery]
-ignore = ["tests"]
-unknown = true
-"###,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
     assert!(
         sink.findings
             .iter()
-            .any(|finding| finding.evidence.contains("catalog.discovery.unknown")),
-        "expected unknown catalog.discovery key to be flagged, got: {:?}",
+            .any(|finding| finding.remediation.contains("[catalog.members]")),
+        "expected explicit membership remediation, got: {:?}",
         sink.findings
     );
 }
@@ -437,6 +420,51 @@ mounts = [
     assert!(
         sink.findings.is_empty(),
         "structured external mount should be accepted; findings: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_catalog_members_and_structured_system_mounts() {
+    let manifest: Value = toml::from_str(
+        r#"
+[catalog.members]
+underlay = "packages/underlay"
+
+[systems.dev]
+mounts = [
+  { member = "underlay", target = "/workspace/underlay" },
+  { source = "../shared", catalog = true, options = ["ro"] },
+  "../legacy:/workspace/legacy",
+]
+"#,
+    )
+    .expect("parse manifest");
+    let mut sink = TestSink::default();
+
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(sink.findings.is_empty(), "findings: {:?}", sink.findings);
+}
+
+#[test]
+fn validate_manifest_schema_rejects_ambiguous_structured_system_mount() {
+    let manifest: Value = toml::from_str(
+        r#"
+[systems.dev]
+mounts = [{ member = "underlay", source = "../underlay", catalog = true }]
+"#,
+    )
+    .expect("parse manifest");
+    let mut sink = TestSink::default();
+
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("systems.dev.mounts[0]")),
+        "expected structured mount finding: {:?}",
         sink.findings
     );
 }

@@ -84,7 +84,7 @@ For narrative workflow guidance instead of lookup, start with:
 | --- | --- | --- | --- | --- |
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
-| `effigy tasks` | List discovered catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
+| `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
 | `effigy deps` | Inspect machine-local Cargo and Bun links; apply and remove verified full closures | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1` | [`077-local-dependency-linking.md`](./077-local-dependency-linking.md) |
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
@@ -430,7 +430,7 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   participate in task execution; use the env guide for the full fallback and
   indirection rules
 - config completion candidates are cached and include both built-ins and
-  discovered task selectors
+  effective task selectors
 - `init` never replaces an existing **root** `README.md` unless `--force`; other
   declared paths still fail fast when present without `--force`
 - `state plan` is plan-only: it validates the manifest, reports ordered lineage,

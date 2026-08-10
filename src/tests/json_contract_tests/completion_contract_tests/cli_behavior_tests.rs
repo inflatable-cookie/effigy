@@ -12,7 +12,7 @@ fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf root\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.build]\nrun = \"printf root\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),

@@ -7,7 +7,7 @@ pub(crate) fn render_tasks_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
 
 const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "tasks",
-    notices: &["List discovered task catalogs and task commands, or inspect status for one resolved task; use routing probes only when debugging selector resolution."],
+    notices: &["List effective task catalogs and task commands, or inspect status for one resolved task; use routing probes only when debugging selector resolution."],
     usage: &[
         "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
         "effigy tasks status <SELECTOR> [--repo <PATH>] [--json]",

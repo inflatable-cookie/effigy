@@ -105,7 +105,14 @@ Run `effigy validate`. It runs lint first, then unit tests and contract tests in
 
 ### Nested Catalogs (Monorepo-Native)
 
-Drop an `effigy.toml` in any subdirectory. Effigy discovers it automatically and treats it as a named catalog:
+Give each subproject its own `effigy.toml`, then declare the intended members
+in the root manifest:
+
+```toml
+[catalog.members]
+api = "api"
+web = "web"
+```
 
 ```
 repo/
@@ -148,7 +155,10 @@ run = [
 ]
 ```
 
-Effigy handles routing, working-directory context, and result aggregation. No turbo.json, no pnpm workspaces, no `cd` dance. Just tasks, discovered and callable by name.
+Effigy handles routing, working-directory context, and result aggregation. A
+nested manifest that is not declared stays outside the parent task surface.
+No turbo.json, no pnpm workspaces, no `cd` dance. Just explicit catalogs and
+callable tasks.
 
 ### Built-In Repo Scans
 
@@ -181,7 +191,7 @@ effigy test vitest          # Run only the vitest suite
 effigy test --verbose-results
 ```
 
-Effigy detects `vitest`, `cargo nextest`, and `cargo test` per catalog root. From a workspace root it fans out across all discovered catalogs and aggregates results, running up to 3 in parallel by default.
+Effigy detects `vitest`, `cargo nextest`, and `cargo test` per catalog root. From a workspace root it fans out across all explicitly declared catalogs and aggregates results, running up to 3 in parallel by default.
 
 For suites that need setup and teardown, declare them in the manifest:
 

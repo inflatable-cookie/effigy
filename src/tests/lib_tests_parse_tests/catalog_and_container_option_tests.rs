@@ -4,9 +4,9 @@ use crate::tests::prelude::{
     UninstallArgs, WorkspaceArgs,
 };
 use effigy_cli::{
-    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, CatalogArgs, CatalogCacheSubcommand,
-    CatalogSubcommand, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
-    ContainerProfileSubcommand, ContainerVolumeSubcommand,
+    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
+    ContainerDataSubcommand, ContainerDbDumpInput, ContainerProfileSubcommand,
+    ContainerVolumeSubcommand,
 };
 
 #[test]
@@ -24,8 +24,8 @@ fn parse_bundle_help_is_scoped() {
 }
 
 #[test]
-fn parse_catalog_cache_clear_is_supported() {
-    let cmd = parse_command(vec![
+fn parse_catalog_cache_clear_reports_explicit_membership_migration() {
+    let error = parse_command(vec![
         "catalog".to_owned(),
         "cache".to_owned(),
         "clear".to_owned(),
@@ -33,18 +33,13 @@ fn parse_catalog_cache_clear_is_supported() {
         "/tmp/demo".to_owned(),
         "--json".to_owned(),
     ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Catalog(CatalogArgs {
-            subcommand: CatalogSubcommand::Cache {
-                subcommand: CatalogCacheSubcommand::Clear,
-            },
-            repo_override: Some(PathBuf::from("/tmp/demo")),
-            output_json: true,
-        })
+    .expect_err("removed catalog command should fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("`effigy catalog` was removed"),
+        "{rendered}"
     );
+    assert!(rendered.contains("declare members"), "{rendered}");
 }
 
 #[test]
@@ -219,13 +214,15 @@ fn parse_service_extract_supports_dir_override() {
 }
 
 #[test]
-fn parse_catalog_rejects_unknown_subcommand_and_catalogue_falls_back_to_task_routing() {
+fn parse_removed_catalog_command_and_catalogue_task_fallback_are_distinct() {
     let catalog_error = parse_command(vec!["catalog".to_owned(), "list".to_owned()])
-        .expect_err("catalog is a scoped built-in command");
+        .expect_err("catalog is a removed built-in command");
     let catalogue = parse_command(vec!["catalogue".to_owned(), "list".to_owned()])
         .expect("catalogue token should route as a task selector");
 
-    assert!(catalog_error.to_string().contains("unknown argument: list"));
+    assert!(catalog_error
+        .to_string()
+        .contains("`effigy catalog` was removed"));
     assert_eq!(
         catalogue,
         Command::Task(crate::tests::prelude::TaskInvocation {

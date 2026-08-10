@@ -49,7 +49,7 @@ Fix:
 - use a real catalog alias from `effigy tasks`, or
 - update `[catalog].alias` in the target `effigy.toml`, then retry.
 
-### Symptom: `task <...> is not defined in discovered catalogs`
+### Symptom: `task <...> is not defined in effective catalogs`
 
 Diagnosis:
 
@@ -60,6 +60,8 @@ effigy tasks --resolve <task-name>
 
 Fix:
 - add the missing task under `[tasks]` in the right catalog, or
+- declare that catalog under root `[catalog.members]` or a typed catalog mount,
+  or
 - call an existing prefixed task (`<catalog>/<task>`).
 
 ### Symptom: `task <...> is ambiguous; matched multiple catalogs`

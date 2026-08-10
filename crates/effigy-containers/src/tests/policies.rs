@@ -112,6 +112,47 @@ run_in = "host"
 }
 
 #[test]
+fn load_container_policy_resolves_named_member_mounts() {
+    let root = temp_repo("named-member-mount");
+    setup_workspace_app_path_bundle(&root);
+    fs::create_dir_all(root.join("underlay")).expect("member dir");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/workspace-app" }
+host = "acme.test"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
+databases = ["acme"]
+
+[catalog.members]
+underlay = "underlay"
+
+[systems.dev]
+mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir(root.join(".git")).expect("git dir");
+
+    let policy = load_container_policy(&root, Some("stack")).expect("policy");
+
+    let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("rewritten compose");
+    assert!(
+        rewritten.contains(
+            &root
+                .join("underlay")
+                .canonicalize()
+                .unwrap()
+                .display()
+                .to_string()
+        ),
+        "named member source should be rendered into compose: {rewritten}"
+    );
+}
+
+#[test]
 fn load_container_policy_accepts_named_container_without_default() {
     let root = temp_repo("sole-non-dev-container");
     fs::write(

@@ -12,7 +12,7 @@ assessment finding 1.
 
 Today, default catalog discovery skips only
 `.git .effigy external node_modules vendor target .next`
-([discovery.rs:217](../../../crates/effigy-routing/src/discovery.rs)). It has no
+([membership.rs](../../../crates/effigy-routing/src/membership.rs)). It has no
 concept of a fixture/test manifest, so this repo's own
 `tests/fixtures/graph-agent-benchmark/*/effigy.toml` are discovered as real
 catalogs, miss-errors list them, and `doctor` exits non-zero on a clean tree

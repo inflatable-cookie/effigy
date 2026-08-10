@@ -32,8 +32,9 @@ pub use container::{
     ManifestContainerOnTaskExit, ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
-    ManifestInlineWorkspaceContainerConfig, ManifestSystemConfig, ManifestSystemsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestInlineWorkspaceContainerConfig, ManifestSystemConfig, ManifestSystemMount,
+    ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
+    ManifestWorkspaceContainerRef,
 };
 pub use demo::{
     ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig,
@@ -453,6 +454,90 @@ mounts = ["../platform", "../poodle:/workspace-root/poodle"]
                 "../poodle:/workspace-root/poodle".to_owned()
             ]
         );
+    }
+
+    #[test]
+    fn systems_config_accepts_member_and_source_mount_tables() {
+        let parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems.dev]
+mounts = [
+  { member = "underlay", target = "/workspace/underlay", options = ["ro", "cached"] },
+  { source = "../shared", catalog = true },
+]
+"#,
+        )
+        .expect("parse structured mounts");
+
+        let mounts = &parsed.systems.systems["dev"].mounts;
+        assert_eq!(mounts[0].member(), Some("underlay"));
+        assert_eq!(mounts[0].source(), None);
+        assert!(mounts[0].is_catalog());
+        assert_eq!(mounts[1].source(), Some("../shared"));
+        assert!(mounts[1].is_catalog());
+    }
+
+    #[test]
+    fn systems_config_rejects_ambiguous_and_invalid_mount_tables() {
+        for invalid in [
+            r#"mounts = [{ member = "underlay", source = "../underlay" }]"#,
+            r#"mounts = [{ target = "/workspace/shared" }]"#,
+            r#"mounts = [{ member = "underlay", catalog = false }]"#,
+            r#"mounts = [{ source = " " }]"#,
+            r#"mounts = [{ source = "../shared", options = [""] }]"#,
+        ] {
+            let manifest = format!("[systems.dev]\n{invalid}\n");
+            assert!(
+                toml::from_str::<SystemWrapper>(&manifest).is_err(),
+                "invalid mount unexpectedly parsed: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn structured_mount_validation_preserves_precise_error_detail() {
+        let error = toml::from_str::<SystemWrapper>(
+            r#"
+[systems.dev]
+mounts = [{ member = "underlay", source = "../underlay" }]
+"#,
+        )
+        .expect_err("ambiguous mount must fail")
+        .to_string();
+
+        assert!(
+            error.contains("exactly one of `member` or `source`"),
+            "unexpected parse error: {error}"
+        );
+    }
+
+    #[test]
+    fn member_mount_resolution_uses_catalog_member_map() {
+        let mut parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems.dev.workspaces.app]
+mounts = [{ member = "underlay", target = "/workspace/underlay" }]
+"#,
+        )
+        .expect("parse member mount");
+        let workspace = parsed
+            .systems
+            .systems
+            .get_mut("dev")
+            .expect("system")
+            .workspaces
+            .get_mut("app")
+            .expect("workspace");
+        workspace
+            .resolve_member_mounts(&std::collections::BTreeMap::from([(
+                "underlay".to_owned(),
+                "../underlay".to_owned(),
+            )]))
+            .expect("resolve member");
+
+        assert_eq!(workspace.mounts[0].member(), None);
+        assert_eq!(workspace.mounts[0].source(), Some("../underlay"));
+        assert!(workspace.mounts[0].is_catalog());
     }
 
     #[test]

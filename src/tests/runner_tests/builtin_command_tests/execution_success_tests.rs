@@ -2,7 +2,7 @@ use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
     assert_path_missing, fs, install_local_vitest_marker, lock_test, run_builtin_ok,
     setup_fanout_catalog_repo, temp_workspace, write_multi_suite_cargo_manifest,
-    write_package_json_with_test_script,
+    write_package_json_with_test_script, write_root_manifest,
 };
 
 #[test]
@@ -56,6 +56,52 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     assert_output_excludes_all(&out, &["runner:vitest", "command:"]);
     assert_path_exists(&catalog_a_marker, "catalog_a vitest marker");
     assert_path_exists(&catalog_b_marker, "catalog_b vitest marker");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_uses_only_explicit_member_forms() {
+    let root = temp_workspace("builtin-test-explicit-member-forms");
+    let named = root.join("named");
+    let inline = root.join("inline");
+    let ordinary = root.join("ordinary");
+    let undeclared = root.join("undeclared");
+    for catalog in [&named, &inline, &ordinary, &undeclared] {
+        fs::create_dir_all(catalog).expect("mkdir catalog");
+        write_package_json_with_test_script(catalog);
+    }
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+named = "named"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+mounts = [{ member = "named" }, { source = "ordinary" }]
+
+[systems.prod]
+mounts = [{ source = "inline", catalog = true }]
+"#,
+    );
+    fs::write(named.join("effigy.toml"), "[catalog]\nalias = \"named\"\n")
+        .expect("write named catalog");
+    fs::write(
+        inline.join("effigy.toml"),
+        "[catalog]\nalias = \"inline\"\n",
+    )
+    .expect("write inline catalog");
+    fs::write(
+        ordinary.join("effigy.toml"),
+        "[catalog]\nalias = \"ordinary\"\n",
+    )
+    .expect("write ordinary mount catalog");
+    fs::write(undeclared.join("effigy.toml"), "[catalog\ninvalid = true\n")
+        .expect("write invalid undeclared sentinel");
+
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_output_contains_all(&out, &["named", "inline"]);
+    assert_output_excludes_all(&out, &["ordinary", "undeclared"]);
 }
 
 #[test]

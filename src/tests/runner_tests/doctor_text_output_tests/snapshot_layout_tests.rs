@@ -70,6 +70,7 @@ alias = "catalog_a"
 run = { task = "missing/task" }
 "#,
     );
+    write_root_manifest(&root, "[catalog.members]\ncatalog_a = \"catalog_a\"\n");
 
     let err = run_doctor_err_from_cwd(&root, true);
 

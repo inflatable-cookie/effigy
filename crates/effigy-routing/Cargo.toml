@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Task catalog discovery and selection routing for Effigy"
+description = "Explicit task catalog membership and selection routing for Effigy"
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }

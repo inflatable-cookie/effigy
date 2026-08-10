@@ -6,8 +6,8 @@ mod builtin_contract;
 mod builtin_help;
 #[path = "prelude/case_tables/mod.rs"]
 mod case_tables;
-#[path = "prelude/catalog_discovery.rs"]
-mod catalog_discovery;
+#[path = "prelude/catalog_routing.rs"]
+mod catalog_routing;
 #[path = "prelude/deferral.rs"]
 mod deferral;
 #[path = "prelude/error_assertions.rs"]
@@ -55,7 +55,7 @@ pub(in crate::runner::tests) use builtin_contracts::*;
 pub(in crate::runner::tests) use builtin_help::*;
 pub(in crate::runner::tests) use case_tables::*;
 pub(in crate::runner::tests) use catalog::*;
-pub(in crate::runner::tests) use catalog_discovery::*;
+pub(in crate::runner::tests) use catalog_routing::*;
 pub(in crate::runner::tests) use deferral::*;
 pub(in crate::runner::tests) use error_assertions::*;
 pub(in crate::runner::tests) use fixtures::*;

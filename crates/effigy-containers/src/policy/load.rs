@@ -102,9 +102,8 @@ pub fn load_container_policy_with_workspace(
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let inferred_workspace = workspace_override
-        .cloned()
-        .or_else(|| infer_default_workspace_for_container(&loaded.manifest, requested_name));
+    let inferred_workspace =
+        resolve_container_workspace(&loaded.manifest, requested_name, workspace_override)?;
     let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
@@ -156,6 +155,7 @@ pub fn load_all_container_policies(
         .environments
         .iter()
         .map(|(name, config)| {
+            let workspace = resolve_container_workspace(&loaded.manifest, Some(name), None)?;
             build_effective_policy(
                 repo_root,
                 loaded.bundle_root.as_deref(),
@@ -164,13 +164,39 @@ pub fn load_all_container_policies(
                 name,
                 config,
                 &loaded.effective_manifest,
-                infer_default_workspace_for_container(&loaded.manifest, Some(name)).as_ref(),
+                workspace.as_ref(),
                 &library_mounts,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
     policies.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(policies)
+}
+
+fn resolve_container_workspace(
+    manifest: &effigy_manifest::TaskManifest,
+    requested_container_name: Option<&str>,
+    workspace_override: Option<&ManifestWorkspaceConfig>,
+) -> Result<Option<ManifestWorkspaceConfig>, ContainerPolicyError> {
+    let mut workspace = workspace_override
+        .cloned()
+        .or_else(|| infer_default_workspace_for_container(manifest, requested_container_name));
+    if let Some(workspace) = workspace.as_mut() {
+        if let Some(catalog) = manifest.catalog.as_ref() {
+            workspace
+                .resolve_member_mounts(&catalog.members)
+                .map_err(ContainerPolicyError::TaskInvocation)?;
+        } else if workspace
+            .mounts
+            .iter()
+            .any(|mount| mount.member().is_some())
+        {
+            workspace
+                .resolve_member_mounts(&Default::default())
+                .map_err(ContainerPolicyError::TaskInvocation)?;
+        }
+    }
+    Ok(workspace)
 }
 
 pub fn load_container_exec_working_dir(

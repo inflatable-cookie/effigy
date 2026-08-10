@@ -112,9 +112,6 @@ pub(super) fn fmt_runner_error(
             working_dir.display(),
         ),
         RunnerError::TaskCatalogsMissing { root } => write_catalogs_missing(f, root),
-        RunnerError::TaskCatalogReadDir { path, error } => {
-            write!(f, "failed to read directory {}: {error}", path.display())
-        }
         RunnerError::TaskManifestRead { path, error } => {
             write!(f, "{}", failed_to_read_path(path, error))
         }
@@ -144,7 +141,7 @@ pub(super) fn fmt_runner_error(
         }
         RunnerError::TaskNotFoundAny { name, catalogs } => write!(
             f,
-            "task `{name}` is not defined in discovered catalogs: {}",
+            "task `{name}` is not defined in effective catalogs: {}",
             catalogs.join(", ")
         ),
         RunnerError::TaskAmbiguous { name, candidates } => write!(
@@ -246,8 +243,7 @@ fn write_catalogs_missing(
 ) -> std::fmt::Result {
     write!(
         f,
-        "no task catalogs found under {} (expected one or more {} files)",
-        root.display(),
-        TASK_MANIFEST_FILE
+        "no root catalog manifest found at {}",
+        root.join(TASK_MANIFEST_FILE).display()
     )
 }

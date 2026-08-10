@@ -39,7 +39,7 @@ extend the graph-aware scan work; it closes the assessment.
 1. **Discovery fixture leak** — default catalog discovery has no `tests`/fixture
    exclusion, so `tests/fixtures/**/effigy.toml` surface as live catalogs and
    `effigy doctor` reports a hard error on a clean tree.
-   ([discovery.rs:217](../../../crates/effigy-routing/src/discovery.rs))
+   ([membership.rs](../../../crates/effigy-routing/src/membership.rs))
 2. **Gateway route-table trust** — `routes.json` is a plain user-writable file
    consumed by an elevated daemon that proxies to whatever target each route
    names; no provenance or integrity model.

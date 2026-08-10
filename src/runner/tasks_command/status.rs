@@ -23,7 +23,7 @@ use serde_json::json;
 pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let catalogs =
-        effigy_routing::discover_catalogs_allow_missing(&context.resolved.resolved_root)?;
+        effigy_routing::load_effective_catalogs_allow_missing(&context.resolved.resolved_root)?;
     let selector = parse_task_selector(raw_selector)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let selection = select_catalog_and_task(&selector, &catalogs, &context.invocation_cwd)
@@ -79,7 +79,7 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
 pub(super) fn run_task_status_all(args: &TasksArgs) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let repo_root = context.resolved.resolved_root;
-    let catalogs = effigy_routing::discover_catalogs_allow_missing(&repo_root)?;
+    let catalogs = effigy_routing::load_effective_catalogs_allow_missing(&repo_root)?;
     let rows = build_status_inventory_rows(&repo_root, &catalogs)?;
 
     if args.output_json {

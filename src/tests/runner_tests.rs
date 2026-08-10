@@ -1,5 +1,5 @@
-#[path = "runner_tests/catalog_discovery_tests/mod.rs"]
-mod catalog_discovery_tests;
+#[path = "runner_tests/catalog_membership_tests/mod.rs"]
+mod catalog_membership_tests;
 
 #[path = "runner_tests/runner_core_tests/mod.rs"]
 mod runner_core_tests;

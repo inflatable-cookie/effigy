@@ -1,7 +1,7 @@
 # Package Map
 
 Status: active
-Updated: 2026-05-12
+Updated: 2026-08-10
 
 ## Purpose
 
@@ -40,6 +40,8 @@ Current authority surfaces:
   staging, seed, and dump handoff ownership
 - `docs/contracts/015-runtime-operation-pipeline-contract.md` for the `g04`
   request/plan/report/adapter pipeline boundaries
+- `docs/contracts/037-explicit-catalog-membership-contract.md` for root-owned
+  catalog membership, typed system mounts, and routing normalization
 
 ## Workspace Crates
 
@@ -56,8 +58,8 @@ Current authority surfaces:
 
 | Crate | Responsibility |
 | --- | --- |
-| `effigy-manifest` | manifest model, bundles, local-bundle parsing, deploy-model derivation inputs |
-| `effigy-routing` | catalog discovery, selector routing, task lookup order |
+| `effigy-manifest` | manifest model, composition, explicit catalog-member schema, typed system/workspace mounts, bundles, and deploy-model derivation inputs |
+| `effigy-routing` | explicit catalog membership normalization, canonical member identity, catalog loading, selector routing, and task lookup order |
 | `effigy-tasks` | shared task model and task-shape helpers |
 | `effigy-builtin` | builtin task inventory and builtin-facing task helpers |
 | `effigy-exec` | execution-binding model and routing helpers shared below the runner |
@@ -70,7 +72,7 @@ Current authority surfaces:
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, host facts, and container handoff capture |
-| `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
+| `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
@@ -235,7 +237,7 @@ Current retained small-crate rationale:
 | `effigy-catalog` | Keep. Owns service-catalog fragment/schema/template assembly without pulling in runner, manifest, or CLI policy. |
 | `effigy-changelog` | Keep. Owns changelog AST, parse, format, validate, and extract logic behind one reusable seam. |
 | `effigy-exec` | Keep. Owns pure container-exec routing, cwd mapping, and alias logic without runtime side effects. |
-| `effigy-routing` | Keep. Selector routing and catalog lookup order stay independent from CLI and runner orchestration. |
+| `effigy-routing` | Keep. Explicit catalog membership, selector routing, and catalog lookup order stay independent from CLI and runner orchestration. |
 | `effigy-runtime-plan` | Keep. Pure activation request/plan/report model; small by design because side effects stay in runtime adapters. |
 | `effigy-deps` | Keep. Shared dependency-link state and report owner consumed by command and doctor surfaces without importing either shell. |
 | `effigy-process` | Keep. Host process primitives are reused across runner surfaces without importing container/runtime crates. |

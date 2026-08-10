@@ -112,7 +112,7 @@ Notes:
 
 ## Workspace Fanout
 
-When built-in `test` is used from a workspace root, Effigy fans out across discovered catalog roots and aggregates results.
+When built-in `test` is used from a workspace root, Effigy fans out across explicitly declared catalog roots and aggregates results.
 
 Concurrency is configured in root `effigy.toml`:
 

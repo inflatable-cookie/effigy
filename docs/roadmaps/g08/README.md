@@ -5,7 +5,8 @@ Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
-`g08.024` through `g08.026`, and papercut portfolio discovery in `g08.027`.
+`g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`, and
+explicit catalog membership in `g08.028`.
 
 ## Purpose
 
@@ -18,9 +19,10 @@ The goal is not to replace deterministic filesystem scans. The goal is to add
 relation-aware findings where graph data is the missing signal, and to enrich
 current scan output when a ready index already exists.
 
-The active tranche adds a package-manager-aware `effigy deps` domain for
-reversible machine-local Cargo and Bun links while committed dependency
-manifests remain authoritative.
+The completed dependency tranche added a package-manager-aware `effigy deps`
+domain for reversible machine-local Cargo and Bun links while committed
+dependency manifests remain authoritative. The active tranche replaces
+ambient catalog discovery with explicit root-owned membership.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -59,6 +61,7 @@ This generation should help agents and maintainers answer questions like:
 - [`025-annotated-release-tag-integrity.md`](./025-annotated-release-tag-integrity.md)
 - [`026-patch-release-lane-hardening.md`](./026-patch-release-lane-hardening.md)
 - [`027-papercuts-discovery-and-capture.md`](./027-papercuts-discovery-and-capture.md)
+- [`028-explicit-catalog-membership.md`](./028-explicit-catalog-membership.md)
 
 ## Design Posture
 
@@ -87,11 +90,13 @@ This generation should help agents and maintainers answer questions like:
 - no broad code deletion from advisory scan findings
 - no dependency manifest edits or Bun `--save` behavior from local linking
 - no package managers beyond Cargo and Bun in the first dependency tranche
+- no ambient catalog fallback, recursive member expansion, or migration scan
+  in the explicit-membership tranche
 
 ## Generation Runway
 
-- Runway goal: make local dependency switching a deterministic Effigy-owned
-  operator workflow without weakening committed source identity.
+- Runway goal: make catalog membership deterministic root-owned configuration
+  without weakening cwd-aware routing or mounted-repo workflows.
 - Foundation complete: `g08.019` established shared inventory, desired state,
   status, and JSON foundations through cards `1051` to `1053`.
 - Cargo planning complete: `1054` established the pure full-closure and safety
@@ -126,10 +131,12 @@ This generation should help agents and maintainers answer questions like:
 - Patch-release hardening complete: `g08.026` removes persistent loopback test
   leakage, settles prepared-source drift policy, and proves the `0.9.1`
   candidate without release mutation.
-- Visible milestones: `g08.020` Cargo mutation, `g08.021` Bun mutation,
-  `g08.022` doctor/hygiene, and `g08.023` portfolio proof/closeout.
-- Planning checkpoint: select the next substantial g08 scope; completion of
-  `g08.025` does not imply generation rollover.
+- Explicit membership complete: `g08.028` delivered under contract `037` and
+  strict spec `101`; cards `1072` through `1075` are complete.
+- Visible cards: `1072` typed schema, `1073` routing cutover, `1074` deletion
+  and diagnostics, `1075` migration proof and closeout.
+- Deletion checkpoint: no undeclared consumer, ambient walker, or cache surface
+  remains. No generation rollover is implied.
 
 ## Execution Rule
 
@@ -137,6 +144,7 @@ The dependency suite completed under strict spec `099`. Cards `1065` and
 `1066` completed the bounded release-tag integrity lane. Cards `1067` through
 `1069` completed the `g08.026` patch-release hardening lane. Strict spec `100`
 completed `g08.027` through cards `1070` and `1071`.
+Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 
 ## Batch Cards
 
@@ -183,6 +191,10 @@ completed `g08.027` through cards `1070` and `1071`.
 - [`1069-prove-patch-release-candidate.md`](./batch-cards/1069-prove-patch-release-candidate.md)
 - [`1070-add-papercuts-discovery-foundation.md`](./batch-cards/1070-add-papercuts-discovery-foundation.md)
 - [`1071-add-papercuts-capture-and-closeout.md`](./batch-cards/1071-add-papercuts-capture-and-closeout.md)
+- [`1072-add-explicit-member-and-typed-mount-schema.md`](./batch-cards/1072-add-explicit-member-and-typed-mount-schema.md)
+- [`1073-cut-routing-over-to-explicit-membership.md`](./batch-cards/1073-cut-routing-over-to-explicit-membership.md)
+- [`1074-delete-discovery-and-align-diagnostics.md`](./batch-cards/1074-delete-discovery-and-align-diagnostics.md)
+- [`1075-prove-migration-and-close-explicit-membership-lane.md`](./batch-cards/1075-prove-migration-and-close-explicit-membership-lane.md)
 
 ## Current State
 
@@ -192,8 +204,11 @@ completed `g08.027` through cards `1070` and `1071`.
 
 `g08.018` through `g08.023` are complete.
 
-Cards `1051` through `1071` and strict spec `100` are complete.
+Cards `1051` through `1075` and strict specs `100` and `101` are complete.
+
+`g08.028` is complete under contract `037`; no ready card remains.
 
 ## Next Task
 
-Select the next operator-approved scope without release mutation.
+Await the next operator-approved g08 scope. Do not infer release work or a
+generation rollover.

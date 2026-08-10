@@ -14,7 +14,7 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.dev]\nrun = \"printf root\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
@@ -141,7 +141,10 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     let root = temp_workspace("tasks-json-contract-resolve");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n",
+    );
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
@@ -175,7 +178,10 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     let root = temp_workspace("tasks-filtered-json-contract-resolve");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n",
+    );
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
@@ -271,7 +277,7 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.test]\nrun = \"printf test\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.test]\nrun = \"printf test\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),

@@ -1,10 +1,10 @@
 use crate::runner::tests::prelude::{
     assert_builtin_ok_empty, assert_catalog_alias_conflict, create_workspace_dir,
-    discover_catalogs, symlink, temp_workspace, write_catalog_tasks, write_manifest,
+    load_effective_catalogs, symlink, temp_workspace, write_catalog_tasks, write_manifest,
 };
 
 #[test]
-fn discover_catalogs_includes_symlinked_catalog_directories() {
+fn effective_catalogs_include_symlinked_member_directories() {
     let root = temp_workspace("catalog-symlink-discovery");
     let external = create_workspace_dir(&root, "external");
     let platform_src = create_workspace_dir(&external, "platform");
@@ -12,6 +12,9 @@ fn discover_catalogs_includes_symlinked_catalog_directories() {
         &root.join("effigy.toml"),
         r#"[catalog]
 alias = "acowtancy"
+
+[catalog.members]
+platform = "platform"
 "#,
     );
     write_catalog_tasks(
@@ -21,7 +24,7 @@ alias = "acowtancy"
     );
     symlink(&platform_src, root.join("platform")).expect("symlink platform");
 
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert!(
         catalogs.iter().any(|catalog| catalog.alias == "platform"),
         "symlinked platform catalog should be discovered"
@@ -32,13 +35,19 @@ alias = "acowtancy"
 
 #[cfg(unix)]
 #[test]
-fn discover_catalogs_reports_alias_conflict_for_symlinked_catalog() {
+fn effective_catalogs_report_alias_conflict_for_symlinked_catalog() {
     let root = temp_workspace("catalog-symlink-alias-conflict");
     let catalog_b = create_workspace_dir(&root, "catalog_b");
     let external = create_workspace_dir(&root, "external");
     let platform_src = create_workspace_dir(&external, "platform");
 
-    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog.members]
+catalog_b = "catalog_b"
+platform = "platform"
+"#,
+    );
 
     write_manifest(
         &catalog_b.join("effigy.toml"),
@@ -54,12 +63,12 @@ alias = "catalog_b"
     );
     symlink(&platform_src, root.join("platform")).expect("symlink platform");
 
-    let err = discover_catalogs(&root).expect_err("expected alias conflict");
+    let err = load_effective_catalogs(&root).expect_err("expected alias conflict");
     assert_catalog_alias_conflict(err.into(), "catalog_b");
 }
 
 #[test]
-fn discover_catalogs_requires_root_manifest_anchor_before_scanning_children() {
+fn effective_catalogs_require_root_manifest_anchor() {
     let root = temp_workspace("catalog-discovery-root-anchor");
     let catalog_a = create_workspace_dir(&root, "catalog_a");
 
@@ -70,7 +79,7 @@ alias = "catalog_a"
 "#,
     );
 
-    let err = discover_catalogs(&root).expect_err("expected missing root manifest");
+    let err = load_effective_catalogs(&root).expect_err("expected missing root manifest");
     match err {
         effigy_routing::RoutingError::TaskCatalogsMissing { root: missing_root } => {
             assert_eq!(missing_root, root);
@@ -80,7 +89,7 @@ alias = "catalog_a"
 }
 
 #[test]
-fn discover_catalogs_includes_system_mount_catalog_directories() {
+fn effective_catalogs_include_named_member_mount_directories() {
     let root = temp_workspace("catalog-system-mount-discovery");
     let external = create_workspace_dir(&root, "external");
     let platform_src = create_workspace_dir(&external, "platform");
@@ -90,8 +99,11 @@ fn discover_catalogs_includes_system_mount_catalog_directories() {
         r#"[catalog]
 alias = "acowtancy"
 
+[catalog.members]
+platform = "external/platform"
+
 [systems.dev]
-mounts = ["./external/platform"]
+mounts = [{ member = "platform" }]
 "#,
     );
     write_manifest(
@@ -104,7 +116,7 @@ run = "printf platform-checks"
 "#,
     );
 
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert!(
         catalogs.iter().any(|catalog| catalog.alias == "platform"),
         "mounted platform catalog should be discovered"
@@ -114,7 +126,7 @@ run = "printf platform-checks"
 }
 
 #[test]
-fn discover_catalogs_includes_workspace_mount_catalog_directories() {
+fn effective_catalogs_include_inline_workspace_mount_directories() {
     let root = temp_workspace("catalog-workspace-mount-discovery");
     let external = create_workspace_dir(&root, "external");
     let platform_src = create_workspace_dir(&external, "platform");
@@ -125,7 +137,7 @@ fn discover_catalogs_includes_workspace_mount_catalog_directories() {
 alias = "acowtancy"
 
 [systems.dev.workspaces.app]
-mounts = ["./external/platform:/workspace-root/platform"]
+mounts = [{ source = "external/platform", target = "/workspace-root/platform", catalog = true }]
 "#,
     );
     write_catalog_tasks(
@@ -134,7 +146,7 @@ mounts = ["./external/platform:/workspace-root/platform"]
         &[("validate", "printf platform-validate")],
     );
 
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert!(
         catalogs.iter().any(|catalog| catalog.alias == "platform"),
         "workspace-mounted platform catalog should be discovered"
@@ -144,7 +156,7 @@ mounts = ["./external/platform:/workspace-root/platform"]
 }
 
 #[test]
-fn discover_catalogs_skips_runtime_artifact_directories() {
+fn effective_catalogs_ignore_undeclared_runtime_artifact_directories() {
     let root = temp_workspace("catalog-discovery-skips-runtime-artifacts");
     let runtime_catalog = create_workspace_dir(&root, ".effigy/runtime/fake-catalog");
 
@@ -156,7 +168,7 @@ alias = "fake-runtime"
 "#,
     );
 
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert!(
         catalogs
             .iter()
@@ -166,7 +178,7 @@ alias = "fake-runtime"
 }
 
 #[test]
-fn discover_catalogs_skips_dependency_and_build_directories() {
+fn effective_catalogs_ignore_undeclared_dependency_and_build_directories() {
     let root = temp_workspace("catalog-discovery-skips-dependency-build-dirs");
     let node_catalog = create_workspace_dir(&root, "node_modules/fake-package");
     let vendor_catalog = create_workspace_dir(&root, "vendor/fake-package");
@@ -192,7 +204,7 @@ alias = "fake-target"
 "#,
     );
 
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert!(
         catalogs.iter().all(|catalog| {
             !matches!(

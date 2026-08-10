@@ -1,7 +1,7 @@
 //! Task catalog routing for Effigy.
 //!
 //! Extracted from `src/runner/catalog/**` under card `246`. Owns the
-//! catalog discovery walk, prefix/cwd/depth selection strategies, and
+//! explicit catalog membership, prefix/cwd/depth selection strategies, and
 //! the narrow `RoutingError` boundary that lifts to `RunnerError` at
 //! the runner's edge via `impl From<RoutingError> for RunnerError` in
 //! `src/runner/error.rs`.
@@ -9,9 +9,9 @@
 //! Callers import from `effigy_routing::` directly — there is no
 //! transitional shim in `src/lib.rs` (242 / second-sweep lesson).
 
-mod discovery;
 mod error;
 mod manifest_load;
+mod membership;
 mod selection;
 
 use std::path::Path;
@@ -19,12 +19,12 @@ use std::path::Path;
 use effigy_core::task_selection::TaskSelector;
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 
-pub use discovery::{
-    catalog_discovery_cache_file, clear_catalog_discovery_cache, default_alias, discover_catalogs,
-    discover_catalogs_allow_missing, discover_manifest_paths,
-};
 pub use error::RoutingError;
 pub use manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};
+pub use membership::{
+    default_alias, effective_manifest_paths, load_effective_catalogs,
+    load_effective_catalogs_allow_missing,
+};
 pub use selection::{resolve_catalog_by_prefix, select_catalog_and_task};
 
 /// String-error adapter for `select_catalog_and_task`, shaped to fit

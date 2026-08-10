@@ -22,7 +22,7 @@ effigy tasks --json --resolve test
 effigy tasks --json --pretty false --resolve catalog-a/api
 ```
 
-The `tasks` output shows discovered catalogs plus routing precedence and resolution evidence.
+The `tasks` output shows effective catalogs plus routing precedence and resolution evidence.
 
 ## Discovery Scope
 

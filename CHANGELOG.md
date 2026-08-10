@@ -6,7 +6,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- Catalog membership is now explicit. The root catalog is always included;
+  child and sibling catalogs must be declared through `[catalog.members]`, a
+  structured `member` mount, or a structured `source` mount with
+  `catalog = true`. Recursive filesystem discovery, automatic membership from
+  legacy/ordinary mounts, `[catalog.discovery]`, discovery caches, and
+  `effigy catalog cache clear` have been removed. To migrate, remove
+  `[catalog.discovery]` and cache-clear calls, then list every intended child
+  or sibling directory under the root `[catalog.members]`; use typed catalog
+  mounts only when the same declaration also owns runtime mounting.
+
 ### Added
+- Catalog manifests can declare explicit handle-to-directory membership through
+  `[catalog.members]`. System and workspace mounts now accept structured
+  `member` or `source` forms with typed targets, options, and source-only
+  catalog membership while preserving legacy mount strings.
 - `effigy papercuts` discovers conventional root `PAPERCUTS.md` queues from
   one project or the immediate projects below a collection directory, with
   open-only/default and `--all` human output plus agent-ready

@@ -10,7 +10,10 @@ pub(in crate::runner::tests) fn setup_fanout_catalog_repo(root: &Path) -> (PathB
     let catalog_b = root.join("catalog_b");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     fs::create_dir_all(&catalog_b).expect("mkdir catalog_b");
-    write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
+    write_root_manifest(
+        root,
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\ncatalog_b = \"catalog_b\"\n\n[tasks.dev]\nrun = \"printf root\"\n",
+    );
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.ping]\nrun = \"printf ok\"\n",

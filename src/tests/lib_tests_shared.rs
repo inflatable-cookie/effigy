@@ -3,16 +3,15 @@ pub(super) use effigy_cli::help::ui::render_help;
 pub(super) use effigy_cli::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
     strip_global_json_flags, ArtifactArgs, ArtifactSubcommand, BootstrapArgs,
-    BootstrapBackendOverride, BootstrapDepsSyncMode, BootstrapSubcommand, CatalogArgs,
-    CatalogCacheSubcommand, CatalogSubcommand, Command, ContainerArgs, ContainerSubcommand,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs,
-    DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
-    DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs, DepsManager, DepsSubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand,
-    GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseEvidenceSubcommand,
-    ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs, ServiceSubcommand, StateArgs,
-    StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
-    WorkspaceArgs,
+    BootstrapBackendOverride, BootstrapDepsSyncMode, BootstrapSubcommand, Command, ContainerArgs,
+    ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
+    ContractsSubcommand, DeferArgs, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode,
+    DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs,
+    DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
+    ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs,
+    ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
+    ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
+    TasksArgs, UninstallArgs, WorkspaceArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

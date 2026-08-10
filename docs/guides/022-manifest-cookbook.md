@@ -1127,23 +1127,19 @@ See [`074-deployment-guide.md`](./074-deployment-guide.md).
 
 ## Notes
 
-- Discovery scans for `effigy.toml` recursively.
-- Root manifests can trim ambient catalog discovery with `[catalog.discovery]`:
+- Catalog membership is declared by the root manifest. Nested `effigy.toml`
+  files do not join the parent task surface automatically:
 
 ```toml
-[catalog.discovery]
-ignore = ["tests"]
+[catalog.members]
+web = "apps/web"
+api = "services/api"
 ```
 
-  Use this for repo-local trees that should never become ambient task catalogs:
-  generated/snapshot directories, and `tests`/fixture trees that ship partial or
-  intentionally malformed `effigy.toml` manifests as test inputs. Without it,
-  fixture manifests are discovered as live catalogs and can make `effigy doctor`
-  report a schema error on an otherwise clean tree. `ignore` matches directory
-  names at any depth. An alternative for a self-contained nested project is
-  `[manifest] root = true` in that subtree's manifest, which prunes it and its
-  children from the parent's ambient discovery.
-- Catalog aliases must be unique across discovered manifests.
+  System mounts may reference a named member with `{ member = "web" }`, or
+  declare an inline member with `{ source = "../tooling", catalog = true }`.
+  Ordinary and legacy string mounts never imply membership.
+- Catalog aliases must be unique across effective membership.
 - Useful interpolation tokens in run commands:
   - `{project}` catalog root path (shell-quoted alias of `{repo}`)
   - `{repo}` catalog root path (shell-quoted)

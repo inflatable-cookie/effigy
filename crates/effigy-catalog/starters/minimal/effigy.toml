@@ -3,6 +3,11 @@ minimum_effigy_version = "0.7.0"
 
 # Baseline effigy.toml scaffold (phase 1)
 
+# Nested project manifests join this catalog only when declared here:
+# [catalog.members]
+# web = "apps/web"
+# api = "services/api"
+
 [tasks]
 ping = "printf ok"
 

@@ -26,7 +26,9 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-Active strict lane: none
+Active strict lane:
+
+- none
 
 Queued strict lanes:
 
@@ -37,6 +39,8 @@ Archived strict lanes:
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
 - `076` through `096` are archived
+- [`101`](./archive/101-explicit-catalog-membership-strict-lane.md) is archived
+  after completing explicit catalog membership
 - `097`, `099`, and `100` are complete and awaiting archive on the next
   planning sweep
 
@@ -47,5 +51,5 @@ Other provisional spec:
 
 ## Next Task
 
-Select the next operator-approved scope. Keep release work and the unrelated
+Await the next operator-approved scope. Keep release work and the unrelated
 `098` uninstall draft paused unless explicitly resumed.

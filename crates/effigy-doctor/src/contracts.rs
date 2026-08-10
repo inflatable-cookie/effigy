@@ -74,6 +74,8 @@ pub mod remediation {
         "Remove stale suppressions, narrow broad disables, or disable doctor integration intentionally.";
     pub const SCHEMA_REMOVE_UNSUPPORTED_KEYS: &str =
         "Remove/rename unsupported keys to match `effigy config --schema`.";
+    pub const DECLARE_CATALOG_MEMBERS: &str =
+        "Remove `[catalog.discovery]`; declare intended catalogs under root `[catalog.members]` or typed catalog mounts.";
     pub const SCHEMA_TABLE_ROOT_REQUIRED: &str =
         "Use table-based TOML with sections like `[tasks]`.";
     pub const MANIFEST_READ_FAILURE: &str =

@@ -83,10 +83,6 @@ pub enum RunnerError {
     TaskCatalogsMissing {
         root: PathBuf,
     },
-    TaskCatalogReadDir {
-        path: PathBuf,
-        error: std::io::Error,
-    },
     TaskManifestRead {
         path: PathBuf,
         error: std::io::Error,
@@ -548,9 +544,6 @@ impl From<RoutingError> for RunnerError {
     fn from(value: RoutingError) -> Self {
         match value {
             RoutingError::TaskCatalogsMissing { root } => Self::TaskCatalogsMissing { root },
-            RoutingError::TaskCatalogReadDir { path, error } => {
-                Self::TaskCatalogReadDir { path, error }
-            }
             RoutingError::TaskCatalogAliasConflict {
                 alias,
                 first_path,
@@ -560,6 +553,9 @@ impl From<RoutingError> for RunnerError {
                 first_path,
                 second_path,
             },
+            RoutingError::TaskCatalogMemberInvalid { .. } => {
+                Self::TaskInvocation(value.to_string())
+            }
             RoutingError::TaskCatalogPrefixNotFound { prefix, available } => {
                 Self::TaskCatalogPrefixNotFound { prefix, available }
             }

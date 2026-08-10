@@ -22,7 +22,7 @@ pub(in crate::runner::tests) mod runtime {
 
 pub(in crate::runner::tests) mod catalog {
     pub(in crate::runner::tests) use effigy_builtin::test_support::builtin_test_max_parallel;
-    pub(in crate::runner::tests) use effigy_routing::discover_catalogs;
+    pub(in crate::runner::tests) use effigy_routing::load_effective_catalogs;
 }
 
 pub(in crate::runner::tests) mod parsing {

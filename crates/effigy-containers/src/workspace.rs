@@ -1,7 +1,10 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::{LibraryMount, ManifestContainerConfig, ManifestWorkspaceConfig};
+use effigy_manifest::{
+    LibraryMount, ManifestContainerConfig, ManifestSystemMount, ManifestSystemMountTable,
+    ManifestWorkspaceConfig,
+};
 
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
@@ -146,12 +149,12 @@ fn build_workspace_runtime_mounts(
     }];
     let catalog_capabilities =
         load_workspace_catalog_capabilities(repo_root, config, primary_service)?;
-    for raw in &workspace.mounts {
+    for mount in &workspace.mounts {
         mounts.push(parse_workspace_extra_mount(
             repo_root,
             container_name,
             workspace_root,
-            raw,
+            mount,
         )?);
     }
     mounts.extend(build_library_mounts(container_name, library_mounts)?);
@@ -203,6 +206,22 @@ fn parse_workspace_extra_mount(
     repo_root: &Path,
     container_name: &str,
     workspace_root: &Path,
+    mount: &ManifestSystemMount,
+) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+    match mount {
+        ManifestSystemMount::Spec(raw) => {
+            parse_legacy_workspace_extra_mount(repo_root, container_name, workspace_root, raw)
+        }
+        ManifestSystemMount::Table(table) => {
+            parse_structured_workspace_extra_mount(repo_root, container_name, workspace_root, table)
+        }
+    }
+}
+
+fn parse_legacy_workspace_extra_mount(
+    repo_root: &Path,
+    container_name: &str,
+    workspace_root: &Path,
     raw: &str,
 ) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
     let mut parts = raw.splitn(3, ':');
@@ -249,6 +268,56 @@ fn parse_workspace_extra_mount(
     if let Some(options) = options {
         rendered.push(':');
         rendered.push_str(options);
+    }
+    Ok(RenderedWorkspaceMount {
+        target,
+        rendered,
+        source: Some(canonical_source),
+        named_volume: None,
+    })
+}
+
+fn parse_structured_workspace_extra_mount(
+    repo_root: &Path,
+    container_name: &str,
+    workspace_root: &Path,
+    mount: &ManifestSystemMountTable,
+) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+    let source_raw = mount.source.as_deref().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace mount member was not resolved"
+        ))
+    })?;
+    let source_path = Path::new(source_raw);
+    let resolved_source = if source_path.is_absolute() {
+        source_path.to_path_buf()
+    } else {
+        repo_root.join(source_path)
+    };
+    let canonical_source = resolved_source.canonicalize().map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
+        ))
+    })?;
+    let target = match mount.target.as_deref() {
+        Some(target) => target.to_owned(),
+        None => {
+            let basename = canonical_source
+                .file_name()
+                .and_then(OsStr::to_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ContainerPolicyError::TaskInvocation(format!(
+                        "container `{container_name}` workspace extra mount source `{source_raw}` must declare an explicit target because the source has no basename"
+                    ))
+                })?;
+            workspace_root.join(basename).display().to_string()
+        }
+    };
+    let mut rendered = format!("{}:{target}", canonical_source.display());
+    if !mount.options.is_empty() {
+        rendered.push(':');
+        rendered.push_str(&mount.options.join(","));
     }
     Ok(RenderedWorkspaceMount {
         target,

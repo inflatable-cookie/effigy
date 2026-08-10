@@ -1,5 +1,5 @@
 use crate::runner::tests::prelude::{
-    builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, temp_workspace,
+    builtin_test_max_parallel, load_effective_catalogs, parse_task_runtime_args, temp_workspace,
     write_root_manifest, PathBuf, RunnerError, TaskRuntimeArgs,
 };
 
@@ -46,7 +46,7 @@ fn builtin_test_max_parallel_reads_root_manifest_config() {
 max_parallel = 1
 "#,
     );
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert_eq!(builtin_test_max_parallel(&catalogs, &root), 1);
 }
 
@@ -59,6 +59,6 @@ fn builtin_test_max_parallel_falls_back_when_invalid_or_missing() {
 max_parallel = 0
 "#,
     );
-    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    let catalogs = load_effective_catalogs(&root).expect("load catalogs");
     assert_eq!(builtin_test_max_parallel(&catalogs, &root), 3);
 }

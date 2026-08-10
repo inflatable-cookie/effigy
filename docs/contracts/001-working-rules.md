@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-04-09
+Updated: 2026-08-10
 
 This contract defines how Effigy executes active roadmap work under the strict
 Northstar posture.
@@ -96,5 +96,5 @@ one vague “polish” lane.
 
 ## Next Task
 
-Use these rules to execute the active `g02.001` strict lane from explicit specs
-and ready cards rather than from roadmap summaries alone.
+No strict card is ready. Await the next operator-approved scope; do not infer
+release work or generation rollover.
