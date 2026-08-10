@@ -1,8 +1,13 @@
 [catalog]
 alias = "render-provider-smoke"
 
+[catalog.members]
+admin = "acme-admin"
+api = "acme-api"
+front = "acme-front"
+
 [manifest]
-minimum_effigy_version = "0.7.0"
+minimum_effigy_version = "0.10.0"
 root = true
 
 [bundle]
