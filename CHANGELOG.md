@@ -6,6 +6,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- Manually dispatched binary release runs now include the selected version tag
+  in their GitHub Actions title.
+
 ## [0.10.0] - 2026-08-10
 
 ### Breaking

@@ -1,4 +1,5 @@
 name: Release Binaries
+run-name: "release: ${{ inputs.tag }}"
 
 on:
   workflow_dispatch:
