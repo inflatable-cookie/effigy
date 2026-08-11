@@ -1,2 +1,2 @@
-[tasks.test]
-run = "cargo test"
+[test.suites]
+rust-test = "cargo test"

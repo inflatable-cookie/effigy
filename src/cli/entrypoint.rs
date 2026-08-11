@@ -380,7 +380,7 @@ mod tests {
         fs::create_dir_all(&target).expect("mkdir target");
         fs::write(
             target.join("effigy.toml"),
-            "[tasks.test]\nrun = \"printf ok\"\n",
+            "[test.suites]\nunit = \"printf ok\"\n",
         )
         .expect("write manifest");
 

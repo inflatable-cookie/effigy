@@ -93,11 +93,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   The completed [`g08.028`](./g08/028-explicit-catalog-membership.md) lane replaces
   ambient descendant discovery with root-owned catalog membership under
   contract `037`.
+  Completed [`g08.029`](./g08/029-unified-test-orchestration-v011.md) makes
+  `[test]` the sole v0.11 test authority under contract `038`.
 
 ## Active Strict Lane
 
-None. Strict spec `101`, roadmap `g08.028`, and cards `1072` through `1075`
-are complete.
+No strict lane or ready card is active. Spec `102`, roadmap `g08.029`, and card
+`1076` are complete.
 
 ## Research Program
 
@@ -152,8 +154,7 @@ Before rollover:
 
 ## Next Task
 
-Await the next operator-approved g08 scope. No release action or `g09`
-rollover is implied.
+Await operator-approved scope. No release action or `g09` rollover is implied.
 
 ## Historical language boundary
 

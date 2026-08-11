@@ -59,9 +59,9 @@ Use this when you need runnable selectors, QA entrypoints, or task inventory.
 Show the resolved test plan **without running it**. Tells you which test
 runners will fire, in what order, with what selectors.
 
-Expected output is a plan tree. If the repo has `tasks.test` it overrides
-the built-in plan; otherwise built-in test detection runs (cargo-nextest with
-fallback to cargo test, vitest, etc.).
+Expected output is a plan tree. It never executes tests. The plan combines
+named `[test.suites]` when configured, or built-in detection otherwise
+(Vitest plus cargo-nextest with a cargo-test fallback, for example).
 
 For machine parsing: `effigy test --plan --json`.
 

@@ -2,18 +2,21 @@ use crate::runner::tests::prelude::harness::*;
 use crate::runner::tests::prelude::output::*;
 
 #[test]
-fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
-    let root = temp_workspace("builtin-test-explicit-override");
+fn run_manifest_task_rejects_test_override_without_executing_plan() {
+    let root = temp_workspace("builtin-test-removed-override");
     write_root_manifest(
         &root,
         "[tasks.test]\nrun = \"printf explicit > explicit-test.log\"\n",
     );
     write_package_json_with_test_script(&root);
 
-    assert_builtin_ok_empty(root.to_path_buf(), "test", &[]);
-    assert_path_exists(
+    let error = run_builtin_err(root.to_path_buf(), "test", &["--plan"]);
+    let rendered = error.to_string();
+    assert!(rendered.contains("`tasks.test` was removed in v0.11"));
+    assert!(rendered.contains("`[test.suites]`"));
+    assert_path_missing(
         &root.join("explicit-test.log"),
-        "explicit test task output marker",
+        "removed test override marker",
     );
 }
 

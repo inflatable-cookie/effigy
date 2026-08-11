@@ -22,8 +22,10 @@ pub(super) fn build_migrate_plan(
 
     let selected = io::select_scripts(io::load_package_scripts(&package)?, &request.script_filter);
     let manifest_path = target_root.join(TASK_MANIFEST_FILE);
-    let (mut manifest_doc, existing_tasks) = io::load_manifest_and_existing_tasks(&manifest_path)?;
-    let (added, conflicts) = io::partition_scripts(selected, &existing_tasks);
+    let (mut manifest_doc, existing_tasks, existing_test_suites) =
+        io::load_manifest_and_existing_destinations(&manifest_path)?;
+    let (added, conflicts) =
+        io::partition_scripts(selected, &existing_tasks, &existing_test_suites);
     let written =
         io::apply_migration_if_requested(request.apply, &added, &mut manifest_doc, &manifest_path)?;
 

@@ -5,8 +5,9 @@ Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
-`g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`, and
-explicit catalog membership in `g08.028`.
+`g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`,
+explicit catalog membership in `g08.028`, and unified v0.11 test
+orchestration in `g08.029`.
 
 ## Purpose
 
@@ -21,8 +22,9 @@ current scan output when a ready index already exists.
 
 The completed dependency tranche added a package-manager-aware `effigy deps`
 domain for reversible machine-local Cargo and Bun links while committed
-dependency manifests remain authoritative. The active tranche replaces
-ambient catalog discovery with explicit root-owned membership.
+dependency manifests remain authoritative. Later completed tranches replaced
+ambient catalog discovery with explicit root-owned membership and unified the
+v0.11 test authority under `[test]`.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -62,6 +64,7 @@ This generation should help agents and maintainers answer questions like:
 - [`026-patch-release-lane-hardening.md`](./026-patch-release-lane-hardening.md)
 - [`027-papercuts-discovery-and-capture.md`](./027-papercuts-discovery-and-capture.md)
 - [`028-explicit-catalog-membership.md`](./028-explicit-catalog-membership.md)
+- [`029-unified-test-orchestration-v011.md`](./029-unified-test-orchestration-v011.md)
 
 ## Design Posture
 
@@ -145,6 +148,7 @@ The dependency suite completed under strict spec `099`. Cards `1065` and
 `1069` completed the `g08.026` patch-release hardening lane. Strict spec `100`
 completed `g08.027` through cards `1070` and `1071`.
 Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
+Strict spec `102` and `g08.029` are complete through card `1076`.
 
 ## Batch Cards
 
@@ -195,6 +199,7 @@ Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 - [`1073-cut-routing-over-to-explicit-membership.md`](./batch-cards/1073-cut-routing-over-to-explicit-membership.md)
 - [`1074-delete-discovery-and-align-diagnostics.md`](./batch-cards/1074-delete-discovery-and-align-diagnostics.md)
 - [`1075-prove-migration-and-close-explicit-membership-lane.md`](./batch-cards/1075-prove-migration-and-close-explicit-membership-lane.md)
+- [`1076-unify-test-orchestration-for-v011.md`](./batch-cards/1076-unify-test-orchestration-for-v011.md)
 
 ## Current State
 
@@ -206,9 +211,10 @@ Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 
 Cards `1051` through `1075` and strict specs `100` and `101` are complete.
 
-`g08.028` is complete under contract `037`; no ready card remains.
+`g08.029` is complete under contract `038`; card `1076` and strict spec `102`
+are complete.
 
 ## Next Task
 
-Await the next operator-approved g08 scope. Do not infer release work or a
-generation rollover.
+Await operator-approved scope. Do not infer release work or a generation
+rollover.

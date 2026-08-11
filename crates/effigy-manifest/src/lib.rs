@@ -69,7 +69,9 @@ pub use task_runtime::{
     ManifestTaskRunIn, ManifestTaskSecretsMode,
 };
 use test_config::ManifestTestConfig;
-pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};
+pub use test_config::{
+    ManifestCargoEnvMatchMode, ManifestTestSuite, ManifestTestSuiteTeardownPolicy,
+};
 pub use user_config::{
     load_user_config, load_user_config_from, save_user_config, save_user_config_to,
     user_config_path, with_test_user_config_home, LibraryMount, UserBundleConfig, UserConfig,
@@ -205,6 +207,13 @@ impl TaskManifest {
     }
 
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
+        if self.tasks.contains_key("test") {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: "`tasks.test` was removed in v0.11 because `effigy test` is always the built-in orchestrator; move the command to a named `[test.suites]` entry"
+                    .to_owned(),
+            });
+        }
         if let Some(catalog) = self.catalog.as_ref() {
             for (member, directory) in &catalog.members {
                 if member.trim().is_empty() || directory.trim().is_empty() {

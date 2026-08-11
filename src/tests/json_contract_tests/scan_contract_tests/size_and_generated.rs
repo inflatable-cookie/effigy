@@ -57,7 +57,7 @@ fn builtin_scan_god_files_json_contract_top_level_keys_are_stable() {
 }
 
 #[test]
-fn builtin_scan_god_files_graph_context_json_contract_is_additive() {
+fn builtin_scan_god_files_graph_context_refreshes_a_missing_index() {
     let root = temp_workspace("scan-json-contract-graph-context");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(&root.join("effigy.toml"), "");
@@ -82,12 +82,13 @@ fn builtin_scan_god_files_graph_context_json_contract_is_additive() {
     );
     assert!(parsed["graph"].is_object());
     assert_eq!(parsed["graph"]["requested"], true);
-    assert_eq!(parsed["graph"]["applied"], false);
-    assert_eq!(parsed["graph"]["state"], "missing-index");
-    assert_eq!(parsed["graph"]["usable"], false);
+    assert_eq!(parsed["graph"]["applied"], true);
+    assert_eq!(parsed["graph"]["state"], "ready");
+    assert_eq!(parsed["graph"]["usable"], true);
     assert!(parsed["graph"]["reason"]
         .as_str()
-        .is_some_and(|value| value.contains("not implemented for `god-files` yet")));
+        .is_some_and(|value| value.contains("applied graph file context")));
+    assert_eq!(parsed["findings"][0]["graph"]["language_id"], "typescript");
 }
 
 #[test]

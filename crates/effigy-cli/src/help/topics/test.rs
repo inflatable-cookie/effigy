@@ -8,8 +8,8 @@ pub(crate) fn render_test_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
     render_info_notices(
         renderer,
         &[
-            "Run built-in test runner detection by default (including <catalog>/test fallback).",
-            "If `tasks.test` is defined, it takes precedence over built-in detection.",
+            "`effigy test` is always the built-in orchestrator, including `<catalog>/test` targeting.",
+            "Configure explicit suites under `[test.suites]`; `tasks.test` was removed in v0.11.",
         ],
     )?;
     render_usage_section(
@@ -33,7 +33,7 @@ pub(crate) fn render_test_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Configured suites can declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`; use plan mode to inspect lifecycle metadata before running them.",
+        "Configured suites can use managed run steps and declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`; use plan mode to inspect the resolved chain before running it.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -84,7 +84,7 @@ pub(crate) fn render_test_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
     renderer.text("unit = \"bun x vitest run\"")?;
     renderer.text("integration = \"cargo nextest run\"")?;
     renderer.text("[test.suites.managed]")?;
-    renderer.text("run = \"cargo nextest run --workspace\"")?;
+    renderer.text("run = [{ task = \"db:test:prepare\" }, \"cargo nextest run --workspace\"]")?;
     renderer.text("env = \"managed-test\"")?;
     renderer.text("env_file = [\".env\", \".env.test\"]")?;
     renderer.text("setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]")?;

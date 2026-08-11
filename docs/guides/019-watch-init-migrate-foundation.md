@@ -105,11 +105,11 @@ effigy init northstar --force
 ## `effigy tasks migrate`
 
 Use `migrate` when a repo already has useful `package.json` scripts and the
-next step is to move them into `[tasks]` without doing the whole rewrite by
-hand.
+next step is to move them into Effigy without doing the whole rewrite by hand.
 
-`migrate` imports `package.json` scripts into `[tasks]` with preview-first
-behavior.
+`migrate` imports ordinary scripts into `[tasks]`. The package `test` script
+becomes `[test.suites].js`, preserving `effigy test` as the single test
+orchestrator. Migration stays preview-first.
 
 ### Usage
 
@@ -125,8 +125,8 @@ effigy tasks migrate --from ./frontend/package.json --apply --json
 - Source is `package.json` by default (`--from` overrides).
 - Preview mode does not write files.
 - `--apply` writes only ready imports.
-- Existing task-name conflicts are skipped and reported with manual remediation
-  guidance.
+- Existing destination conflicts are skipped and reported with manual
+  remediation guidance.
 - `package.json` is never modified by migration.
 
 ## JSON Schemas

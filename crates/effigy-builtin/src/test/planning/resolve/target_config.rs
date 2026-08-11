@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::BuiltinError;
-use effigy_managed::run_spec::{render_run_step_sequence, resolve_run_step_env};
+use effigy_managed::run_spec::{
+    render_run_step_sequence, render_task_run_spec, resolve_run_step_env, RunSpecContext,
+};
 use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::task_runtime::ManifestRunStepEnv;
 use effigy_manifest::LoadedCatalog;
@@ -103,52 +105,96 @@ fn resolve_configured_suites(
 
     test.suites
         .iter()
-        .filter_map(|(raw_suite, suite)| {
-            suite.run().map(|command| {
-                let suite_name = normalize_suite_key(raw_suite);
-                let suite_ref = format!("test.suites.{suite_name}");
-                let resolved_env = resolve_run_step_env(
-                    &suite_ref,
-                    suite.env(),
-                    suite.env_file(),
-                    &catalog.manifest.env,
-                    target_root,
-                    catalogs,
-                    None,
-                )?;
-                let setup_command = render_suite_lifecycle_sequence(
-                    &format!("{suite_ref}.setup"),
-                    suite.setup(),
-                    &resolved_env,
-                    suite.env_file(),
-                    &catalog.manifest.env,
-                    target_root,
-                    catalogs,
-                )?;
-                let teardown_command = render_suite_lifecycle_sequence(
-                    &format!("{suite_ref}.teardown"),
-                    suite.teardown(),
-                    &resolved_env,
-                    suite.env_file(),
-                    &catalog.manifest.env,
-                    target_root,
-                    catalogs,
-                )?;
-                Ok(BuiltinConfiguredSuite {
-                    suite: suite_name,
-                    command: command.to_owned(),
-                    env: resolved_env,
-                    suite_env: render_suite_env_descriptor(suite.env()),
-                    suite_env_files: render_suite_env_files(suite.env_file()),
-                    setup_command,
-                    setup_steps: suite.setup().len(),
-                    teardown_command,
-                    teardown_steps: suite.teardown().len(),
-                    teardown_policy: suite.teardown_policy(),
-                })
+        .map(|(raw_suite, suite)| {
+            let suite_name = normalize_suite_key(raw_suite);
+            let suite_ref = format!("test.suites.{suite_name}");
+            let resolved_env = resolve_run_step_env(
+                &suite_ref,
+                suite.env(),
+                suite.env_file(),
+                &catalog.manifest.env,
+                target_root,
+                catalogs,
+                None,
+            )?;
+            let command = render_suite_run(
+                &suite_ref,
+                suite,
+                &catalog.manifest.env,
+                target_root,
+                catalogs,
+            )?;
+            let setup_command = render_suite_lifecycle_sequence(
+                &format!("{suite_ref}.setup"),
+                suite.setup(),
+                &resolved_env,
+                suite.env_file(),
+                &catalog.manifest.env,
+                target_root,
+                catalogs,
+            )?;
+            let teardown_command = render_suite_lifecycle_sequence(
+                &format!("{suite_ref}.teardown"),
+                suite.teardown(),
+                &resolved_env,
+                suite.env_file(),
+                &catalog.manifest.env,
+                target_root,
+                catalogs,
+            )?;
+            Ok(BuiltinConfiguredSuite {
+                suite: suite_name,
+                command,
+                env: resolved_env,
+                suite_env: render_suite_env_descriptor(suite.env()),
+                suite_env_files: render_suite_env_files(suite.env_file()),
+                setup_command,
+                setup_steps: suite.setup().len(),
+                teardown_command,
+                teardown_steps: suite.teardown().len(),
+                teardown_policy: suite.teardown_policy(),
             })
         })
         .collect::<Result<Vec<BuiltinConfiguredSuite>, BuiltinError>>()
+}
+
+fn render_suite_run(
+    suite_ref: &str,
+    suite: &effigy_manifest::ManifestTestSuite,
+    env_profiles: &BTreeMap<String, effigy_manifest::ManifestEnvEntry>,
+    target_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<String, BuiltinError> {
+    if let Some(command) = suite.command() {
+        return Ok(command.to_owned());
+    }
+    let run = suite
+        .managed_run()
+        .expect("configured suite has a managed run");
+    let empty_env = BTreeMap::new();
+    render_task_run_spec(
+        run,
+        RunSpecContext {
+            task_name: suite_ref,
+            task_env: &empty_env,
+            task_env_file: None,
+            env_profiles,
+            args_rendered: "",
+            args_raw: &[],
+            repo_root: target_root,
+            bundle_root: catalogs
+                .iter()
+                .find(|catalog| catalog.catalog_root == target_root)
+                .and_then(|catalog| catalog.bundle_root.as_deref()),
+            catalogs,
+            task_scope_cwd: target_root,
+            invocation_cwd: target_root,
+            runtime_env_schema_override: None,
+            depth: 0,
+            resolver: &effigy_routing::resolve_task_selection,
+        },
+    )
+    .map_err(Into::into)
 }
 
 fn render_suite_lifecycle_sequence(

@@ -824,6 +824,24 @@ alias = "acowtancy"
     }
 
     #[test]
+    fn composed_manifest_rejects_removed_test_task_override() {
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            r#"
+[tasks]
+test = "printf should-not-run"
+"#,
+        );
+
+        let error = load_task_manifest_with_inspection(&root).expect_err("reject tasks.test");
+        let message = error.to_string();
+        assert!(message.contains("`tasks.test` was removed in v0.11"));
+        assert!(message.contains("named `[test.suites]` entry"));
+    }
+
+    #[test]
     fn catalog_members_compose_across_included_fragments() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();

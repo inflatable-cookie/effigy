@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- `effigy test` is now always the built-in test orchestrator. Legacy
+  `[tasks.test]` manifests are rejected with migration guidance; custom and
+  polyglot test commands belong under named `[test.suites]` entries. Package
+  migration writes package test scripts there. Configured suites now accept
+  managed run-step sequences, including task references, and `test --plan`
+  resolves those sequences without executing setup, suite, or teardown work.
+
 ### Changed
 - Manually dispatched binary release runs now include the selected version tag
   in their GitHub Actions title.

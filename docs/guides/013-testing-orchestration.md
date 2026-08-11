@@ -1,6 +1,8 @@
 # 013 - Testing Orchestration
 
-Effigy supports built-in test runner detection when a project does not define an explicit `tasks.test` command.
+`effigy test` is Effigy's single test entrypoint. It runs named
+`[test.suites]` when configured, or detects applicable runners when they are
+not. In polyglot roots, detection can schedule both JavaScript and Rust suites.
 
 ## Commands
 
@@ -17,11 +19,16 @@ Per target root:
 2. `cargo nextest run` when `Cargo.toml` exists and `cargo-nextest` is available.
 3. `cargo test` when `Cargo.toml` exists and `cargo-nextest` is unavailable.
 
-`effigy test --plan` prints selected runner, command, evidence, fallback chain, and per-target `cargo-env-match` mode.
+`effigy test --plan` prints selected runner, command, evidence, fallback chain,
+and per-target `cargo-env-match` mode. Planning never runs setup, suite, or
+teardown commands.
 
-## Explicit Override
+## Configuration Authority
 
-If `tasks.test` exists in the selected catalog, that explicit task always wins.
+`[test]`, `[test.suites]`, and `[test.runners]` are the only test configuration
+surfaces. `tasks.test` was removed in v0.11 because it made `--plan` ambiguous
+and could turn inspection into execution. Move custom test commands into named
+suite entries.
 
 ## Lifecycle-Aware Configured Suites
 
@@ -29,7 +36,10 @@ Builtin `test` can also use configured suite tables instead of plain command str
 
 ```toml
 [test.suites.integration]
-run = "cargo nextest run --workspace"
+run = [
+  { task = "db:test:prepare" },
+  "cargo nextest run --workspace"
+]
 env = "TEST_DATABASE_URL"
 env_file = ".env"
 setup = [{ run = "cargo run -p app-db --bin migrate_test_db" }]
@@ -37,7 +47,9 @@ teardown = [{ run = "cargo run -p app-db --bin reset_test_db" }]
 teardown_policy = "always"
 ```
 
-Use this when a suite needs declarative setup/teardown around `nextest`, `cargo test`, or another builtin runner command without falling back to a wrapper task.
+Use this when a suite needs reusable task references, declarative
+setup/teardown, or a custom runner command without creating a competing test
+task.
 
 Operational notes:
 - suite `env` / `env_file` resolve before setup, run, and teardown

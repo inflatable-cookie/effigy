@@ -1,8 +1,9 @@
 # Selector Routing
 
-A **selector** is the string the user types after `effigy` to identify a
-task: `test`, `api/test`, `qa:ci:fast`, `web/build`. Effigy resolves it to
-exactly one task in exactly one catalog.
+A **selector** is the string the user types after `effigy` to identify a task
+or built-in target: `test`, `api/test`, `qa:ci:fast`, `web/build`. Effigy
+resolves tasks to one catalog. Built-ins such as `test` use the same catalog
+prefixes without becoming manifest tasks.
 
 Routing precedence, top to bottom (first match wins):
 
@@ -22,11 +23,11 @@ Repo layout:
 ```
 .
 ├── effigy.toml                    # declares api = "api", web = "web"
-├── config/tasks.toml            # defines `test`, `qa:ci:fast`
+├── config/tasks.toml            # defines `check`, `qa:ci:fast`
 ├── api/
-│   └── effigy.toml               # defines `test`
+│   └── effigy.toml               # configures `[test.suites]`
 └── web/
-    └── effigy.toml               # defines `test`
+    └── effigy.toml               # configures `[test.suites]`
 ```
 
 The root declaration is explicit:
@@ -39,9 +40,9 @@ web = "web"
 
 | User runs (CWD) | Resolves to |
 |-----------------|-------------|
-| `effigy test` (in repo root) | root `test` (shallowest) |
-| `effigy test` (in `api/`) | `api/` `test` (CWD-nearest) |
-| `effigy api/test` (anywhere) | `api/` `test` (path prefix) |
+| `effigy test` (in repo root) | root built-in test plan |
+| `effigy test` (in `api/`) | `api/` built-in test plan |
+| `effigy api/test` (anywhere) | `api/` built-in test plan |
 | `effigy qa:ci:fast` (anywhere) | root `qa:ci:fast` (alias prefix) |
 
 ## Disambiguation

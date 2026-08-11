@@ -25,15 +25,9 @@ Effigy is **manifest-driven** (`effigy.toml`, often split across includes): most
 
 ## Default test policy
 
-Pick one and make it explicit:
-
-- Built-in `effigy test` is the default test entrypoint (leave
-  `[tasks].test` unset)
-- Explicit `[tasks].test` is the repo-owned source of truth
-
-Document the choice below once made:
-
-> **Current policy:** _(fill in)_
+`effigy test` is always the built-in orchestration entrypoint. Use automatic
+Rust/Vitest detection for simple repos or declare named `[test.suites]` for
+explicit polyglot and lifecycle-aware routing. Never define `tasks.test`.
 
 ## Docs authority
 

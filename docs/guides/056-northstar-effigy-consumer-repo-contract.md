@@ -144,12 +144,10 @@ Use these pages for the practical detail instead of re-explaining them here:
 
 ### Default test policy
 
-Pick one of these and document it explicitly:
-
-- built-in `effigy test` is the default test entrypoint
-- explicit `tasks.test` is the repo-owned source of truth
-
-Do not leave this ambiguous in multi-runner repos.
+Built-in `effigy test` is the only test entrypoint. Document each custom or
+language-specific route as a named `[test.suites]` entry. Never define
+`tasks.test`. In multi-runner repos, use suite names that expose the language
+or scope clearly.
 
 ## 3) Minimum AGENTS Contract
 
@@ -169,7 +167,7 @@ Minimum semantics:
 
 Minimum policy notes:
 
-- state whether built-in `effigy test` or explicit `tasks.test` is the default
+- state that built-in `effigy test` is the default and name configured suites
 - identify the docs authority location
 - identify any allowed fallback boundaries such as release wrappers or local
   bootstrap helpers

@@ -19,7 +19,7 @@ fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing(
             "Migrate Preview",
             "candidate scripts: 2",
             "+ tasks.build = \"npm run compile\"",
-            "+ tasks.test = \"vitest run\"",
+            "+ test.suites.js = \"vitest run\"",
             "No files were modified.",
         ],
     );
@@ -41,7 +41,8 @@ fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
         &[
             "[tasks]",
             "build = \"npm run compile\"",
-            "test = \"vitest run\"",
+            "[test.suites]",
+            "js = \"vitest run\"",
         ],
     );
 }
@@ -68,7 +69,7 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
         &out,
         &[
             "Manual Remediation",
-            "skip `build` (already defined in `[tasks]`)",
+            "skip `tasks.build` (destination already defined)",
             "+ tasks.lint = \"eslint .\"",
         ],
     );
@@ -94,6 +95,7 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
             "\"schema\": \"effigy.migrate.v1\"",
             "\"apply\": false",
             "\"name\": \"test\"",
+            "\"target\": \"test.suites.js\"",
             "\"name\": \"build\"",
         ],
     );

@@ -93,8 +93,8 @@ Baseline mental model:
 - define tasks in `effigy.toml`
 - let Effigy discover nearby catalogs
 - run tasks by intent instead of by directory or package manager
-- leave `test` to the built-in runner unless you intentionally want explicit
-  `tasks.test` behavior
+- keep `test` on the built-in orchestrator and configure custom routes as
+  named `[test.suites]` entries
 
 For fuller patterns such as multi-process dev stacks, systems, workspaces,
 containers, demos, and manifest composition, continue to:

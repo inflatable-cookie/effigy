@@ -17,13 +17,13 @@ use crate::runner::tests::prelude::{
 #[test]
 fn run_tasks_status_json_prefers_live_active_record() {
     let root = temp_workspace("tasks-status-json-active");
-    write_root_manifest(&root, "[tasks.test]\nrun = \"printf test\"\n");
-    seed_active_task_status(&root, "test");
+    write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");
+    seed_active_task_status(&root, "check");
 
-    let out = run_task_status_from_repo(&root, "test", true);
+    let out = run_task_status_from_repo(&root, "check", true);
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status.v1", 1);
-    assert_eq!(parsed["resolved_selector"], "test");
+    assert_eq!(parsed["resolved_selector"], "check");
     assert_eq!(parsed["state"], "running");
     assert_eq!(parsed["currently_declared"], true);
     assert_eq!(parsed["active"]["stage"], "executing");
@@ -34,23 +34,29 @@ fn run_tasks_status_json_prefers_live_active_record() {
 #[test]
 fn run_tasks_status_text_reports_last_known_completed_outcome() {
     let root = temp_workspace("tasks-status-text-latest");
-    write_root_manifest(&root, "[tasks.test]\nrun = \"printf test\"\n");
-    seed_latest_task_status(&root, "test");
+    write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");
+    seed_latest_task_status(&root, "check");
 
-    let out = run_task_status_from_repo(&root, "test", false);
+    let out = run_task_status_from_repo(&root, "check", false);
 
     assert_output_contains_all(
         &out,
-        &["Task Status", "test", "succeeded", "task completed", "host"],
+        &[
+            "Task Status",
+            "check",
+            "succeeded",
+            "task completed",
+            "host",
+        ],
     );
 }
 
 #[test]
 fn run_tasks_status_text_reports_unknown_when_declared_task_has_no_records() {
     let root = temp_workspace("tasks-status-text-unknown");
-    write_root_manifest(&root, "[tasks.test]\nrun = \"printf test\"\n");
+    write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");
 
-    let out = run_task_status_from_repo(&root, "test", false);
+    let out = run_task_status_from_repo(&root, "check", false);
 
     assert_output_contains_all(&out, &["unknown", "No recorded task status yet."]);
 }
@@ -62,13 +68,13 @@ fn run_tasks_status_all_json_reports_declared_and_stale_rows() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_root_manifest(
         &root,
-        "[tasks.test]\nrun = \"printf test\"\n[tasks.idle]\nrun = \"printf idle\"\n",
+        "[tasks.check]\nrun = \"printf check\"\n[tasks.idle]\nrun = \"printf idle\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
     );
-    seed_active_task_status(&root, "test");
+    seed_active_task_status(&root, "check");
     seed_latest_task_status(&root, "catalog_a/build");
     seed_undeclared_latest_task_status(&root, "old-task");
 
@@ -82,7 +88,7 @@ fn run_tasks_status_all_json_reports_declared_and_stale_rows() {
     assert_eq!(parsed["counts_by_state"]["unknown"], 1);
     assert_eq!(parsed["counts_by_state"]["failed"], 1);
     assert!(rows.iter().any(|row| {
-        row["selector"] == "test" && row["state"] == "running" && row["currently_declared"] == true
+        row["selector"] == "check" && row["state"] == "running" && row["currently_declared"] == true
     }));
     assert!(rows.iter().any(|row| {
         row["selector"] == "idle" && row["state"] == "unknown" && row["currently_declared"] == true
@@ -105,7 +111,7 @@ fn run_tasks_status_all_text_groups_rows_by_catalog_scope() {
     let root = temp_workspace("tasks-status-all-text");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_root_manifest(&root, "[tasks.test]\nrun = \"printf test\"\n");
+    write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
@@ -120,7 +126,7 @@ fn run_tasks_status_all_text_groups_rows_by_catalog_scope() {
             "Task Status",
             "Catalog: root",
             "Catalog: catalog_a",
-            "- test [unknown]",
+            "- check [unknown]",
             "- catalog_a/build [succeeded] host",
         ],
     );

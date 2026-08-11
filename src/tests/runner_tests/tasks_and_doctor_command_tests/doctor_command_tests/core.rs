@@ -154,6 +154,25 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
 }
 
 #[test]
+fn run_doctor_reports_tasks_test_migration_remediation() {
+    let root = temp_workspace("doctor-rejects-tasks-test");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.test]\nrun = \"cargo test\"\n",
+    )
+    .expect("write legacy manifest");
+
+    let err = run_doctor_err_from_cwd(&root, false);
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "`tasks.test` was removed in v0.11",
+            "move the command to a named `[test.suites]` entry",
+        ],
+    );
+}
+
+#[test]
 fn run_doctor_removes_stale_scan_detail_report_when_scan_findings_clear() {
     let root = temp_workspace("doctor-removes-stale-scan-detail-report");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

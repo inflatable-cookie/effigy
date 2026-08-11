@@ -24,6 +24,39 @@ unit = "sh -lc 'printf configured > \"{}\"'"
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plans_and_runs_managed_suite_steps() {
+    let root = temp_workspace("builtin-test-managed-suite-steps");
+    let prepare_marker = root.join("prepare.log");
+    let suite_marker = root.join("suite.log");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"[tasks.prepare]
+run = "printf prepared > {}"
+
+[test.suites.composed]
+run = [
+  {{ task = "prepare" }},
+  {{ run = "printf suite > {}" }},
+]
+"#,
+            prepare_marker.display(),
+            suite_marker.display()
+        ),
+    );
+
+    let plan = run_builtin_ok(root.to_path_buf(), "test", &["--plan", "composed"]);
+    assert_output_contains_all(&plan, &["Test Plan", "composed", "printf prepared"]);
+    assert_path_missing(&prepare_marker, "planned prepare marker");
+    assert_path_missing(&suite_marker, "planned suite marker");
+
+    let out = run_builtin_ok(root, "test", &["composed"]);
+    assert_output_contains_all(&out, &["Test Results", "root: ok"]);
+    assert_path_exists(&prepare_marker, "executed prepare marker");
+    assert_path_exists(&suite_marker, "executed suite marker");
+}
+
+#[test]
 fn run_manifest_task_builtin_test_with_configured_multi_suite_requires_explicit_suite() {
     let root = temp_workspace("builtin-test-configured-multi-suite-ambiguous");
     write_test_suites_manifest(&root, &[("unit", "true"), ("integration", "true")]);

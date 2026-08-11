@@ -528,8 +528,8 @@ fn graph_affected_returns_likely_test_files_and_tasks_for_changed_source() {
     fs::write(
         temp.path().join("effigy.toml"),
         r#"
-[tasks.test]
-run = "cargo test"
+[test.suites]
+rust-test = "cargo test"
 "#,
     )
     .expect("write manifest");
@@ -586,8 +586,8 @@ fn helper_works() {
         payload
             .likely_test_tasks
             .iter()
-            .any(|item| item.name == "test"),
-        "manifest test task should be surfaced as a candidate: {:?}",
+            .any(|item| item.name == "rust-test"),
+        "manifest test suite should be surfaced as a candidate: {:?}",
         payload
             .likely_test_tasks
             .iter()

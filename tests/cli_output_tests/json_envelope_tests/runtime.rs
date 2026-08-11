@@ -178,7 +178,7 @@ fn cli_json_mode_watch_once_suppresses_target_stdout_for_machine_readable_output
     let root = temp_workspace("cli-json-watch-once-clean-envelope");
     fs::write(
         root.join("effigy.toml"),
-        "[tasks.test]\nrun = \"printf noisy-watch-output\"\n",
+        "[tasks.check]\nrun = \"printf noisy-watch-output\"\n",
     )
     .expect("write manifest");
 
@@ -188,7 +188,7 @@ fn cli_json_mode_watch_once_suppresses_target_stdout_for_machine_readable_output
         .arg("--owner")
         .arg("effigy")
         .arg("--once")
-        .arg("test")
+        .arg("check")
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")

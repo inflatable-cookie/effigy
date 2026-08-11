@@ -49,8 +49,8 @@ fn run_manifest_task_builtin_scan_validation_gaps_surfaces_likely_tests_for_chan
 doctor = false
 hotspot_threshold = 1
 
-[tasks.test]
-run = "cargo test"
+[test.suites]
+rust-test = "cargo test"
 "#,
         ),
         &["src", "tests"],

@@ -195,7 +195,7 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         topic: HelpTopic::Test,
         command_name: Some("test"),
         general_help_command: Some("effigy test"),
-        general_help_description: Some("Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback"),
+        general_help_description: Some("Run built-in auto-detected or `[test.suites]` tests; supports <catalog>/test targeting"),
         deferred_builtin: Some("test"),
     },
     CommandDescriptor {

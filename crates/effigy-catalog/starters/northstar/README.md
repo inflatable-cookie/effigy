@@ -10,9 +10,9 @@ This repo uses the Northstar + Effigy consumer contract:
 - Effigy owns the executable validation and operator surface
 
 **Selectors:** names like **`qa`** or **`validate`** are **tasks** (or task
-chains) defined in **`effigy.toml`** for this repo. **`effigy test`** is usually
-the **built-in** test orchestration unless you set **`[tasks].test`** to override
-it. See Effigy’s quick start:
+chains) defined in **`effigy.toml`** for this repo. **`effigy test`** is always
+the built-in test orchestrator; configure deterministic repo-owned suites under
+**`[test.suites]`**. See Effigy’s quick start:
 [`021-quick-start-and-command-cookbook.md`](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/021-quick-start-and-command-cookbook.md).
 
 Start here:

@@ -38,8 +38,8 @@ effigy app/db:reset
 ```
 
 Names like **`dev`** and **`app/db:reset`** come from **`effigy.toml`** (or a
-nested catalog). **`test`** is usually the **built-in** test orchestration unless
-the repo defines **`tasks.test`** to override it.
+nested catalog). **`test`** is always the **built-in** test orchestrator. Named
+**`[test.suites]`** entries configure what it runs.
 
 The shift is simple:
 

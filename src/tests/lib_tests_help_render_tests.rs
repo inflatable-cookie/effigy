@@ -29,7 +29,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy tasks migrate"));
     assert!(rendered.contains("effigy tasks cache"));
     assert!(rendered.contains("effigy config completion"));
-    assert!(rendered.contains("<catalog>/test fallback"));
+    assert!(rendered.contains("supports <catalog>/test targeting"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(rendered.contains("--env-schema <PATH>"));
@@ -397,9 +397,9 @@ fn render_container_help_shows_pull_production_surface() {
 fn render_test_help_shows_detection_and_config() {
     let rendered = render_help_text(HelpTopic::Test);
     assert!(rendered.contains("test Help"));
-    assert!(rendered.contains("built-in test runner detection by default"));
-    assert!(rendered.contains("`tasks.test` is defined, it takes precedence"));
-    assert!(rendered.contains("<catalog>/test fallback"));
+    assert!(rendered.contains("always the built-in orchestrator"));
+    assert!(rendered.contains("`tasks.test` was removed in v0.11"));
+    assert!(rendered.contains("including `<catalog>/test` targeting"));
     assert!(rendered.contains("Detection Order"));
     assert!(rendered.contains("--verbose-results"));
     assert!(rendered.contains("--tui"));
@@ -413,7 +413,7 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("prefix the suite explicitly"));
     assert!(rendered.contains("check `available-suites` per target"));
     assert!(rendered.contains(
-        "Configured suites can declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`"
+        "Configured suites can use managed run steps and declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`"
     ));
     assert!(rendered.contains("suggests nearest suite names"));
     assert!(rendered.contains("source of truth and auto-detection is skipped"));
@@ -433,6 +433,8 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("[test.suites]"));
     assert!(rendered.contains("unit = \"bun x vitest run\""));
     assert!(rendered.contains("[test.suites.managed]"));
+    assert!(rendered
+        .contains("run = [{ task = \"db:test:prepare\" }, \"cargo nextest run --workspace\"]"));
     assert!(rendered.contains("env = \"managed-test\""));
     assert!(rendered.contains("env_file = [\".env\", \".env.test\"]"));
     assert!(rendered.contains("setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]"));

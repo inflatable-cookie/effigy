@@ -43,7 +43,8 @@ Agents should assume:
   the current working tree
 - built-in `test` prefers `cargo-nextest` when available and falls back to
   `cargo test` only when `cargo-nextest` is unavailable
-- explicit `tasks.test` in `effigy.toml` overrides built-in test auto-detection
+- `[test.suites]` is the explicit authority for custom and polyglot test routes
+- `effigy test --plan` is inspection only and never executes suite steps
 - shell wrappers and direct scripts are compatibility or external-contract
   surfaces unless the repo explicitly documents otherwise
 - a vendored `.agents/skills/effigy` copy is repo-authoritative when present,
@@ -128,8 +129,8 @@ Portfolio maintenance:
 
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available
-- if `tasks.test` exists in `effigy.toml`, that explicit task is the source of truth
-- for Rust repos without explicit `tasks.test`, Effigy prefers `cargo-nextest` when available
+- configure custom routes as named `[test.suites]`; never define `tasks.test`
+- for Rust repos without configured suites, Effigy prefers `cargo-nextest` when available
 
 Repo maintenance policy:
 - keep main contributor loops represented in `effigy.toml`
@@ -209,9 +210,8 @@ these are true:
 1. There is a discoverable root `effigy.toml`.
 2. `effigy tasks` shows the primary contributor tasks or catalog entrypoints.
 3. `effigy doctor` provides actionable health/routing output.
-4. The repo has one supported default test path:
-   - built-in `effigy test`, or
-   - explicit `tasks.test` in `effigy.toml`.
+4. The repo uses built-in `effigy test`, with custom routes represented as
+   named `[test.suites]` entries.
 5. The main contributor loop is represented in tasks, for example:
    - `dev`
    - `test`
@@ -253,7 +253,7 @@ that the skill/template layer cannot cover the gap cleanly.
 ### Wave 2 - Testing and Health
 
 - make `effigy test --plan` reliable and documented
-- decide whether built-in `test` or explicit `tasks.test` is the source of truth
+- move custom commands into named `[test.suites]` entries
 - ensure `doctor` surfaces common routing/config failures clearly
 
 ### Wave 3 - Agent Instructions

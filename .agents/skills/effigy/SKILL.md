@@ -21,8 +21,8 @@ repo's task surface. **Selectors** (`dev`, `api/test`, `qa:ci:fast`) route to
 manifest tasks or **built-ins** (`test`, `doctor`, `scan`, `graph`, …).
 
 **`dev`** is almost always a **repo task name**, not a built-in verb.
-**`test`** is usually the built-in test orchestrator unless `tasks.test`
-overrides it. Prefer `effigy <selector>` over raw `cargo` / `npm` /
+**`test`** is always the built-in test orchestrator. Repos configure explicit
+test routes under `[test.suites]`. Prefer `effigy <selector>` over raw `cargo` / `npm` /
 `docker compose` when Effigy covers the path.
 
 ## Footguns (read first)
@@ -36,6 +36,8 @@ overrides it. Prefer `effigy <selector>` over raw `cargo` / `npm` /
   target repo.
 - **Never map `health` to `qa`.** Keep `health` seconds-scale, `validate`
   mid-cost, and `qa` the full board.
+- **Never define `tasks.test`.** It was removed in v0.11. Use named
+  `[test.suites]` entries for Rust, TypeScript, and other repo test routes.
 
 Full rationale: `references/footguns.md`.
 

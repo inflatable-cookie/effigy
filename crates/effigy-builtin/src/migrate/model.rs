@@ -7,6 +7,16 @@ pub(super) struct MigrateScript {
     pub(super) command: String,
 }
 
+impl MigrateScript {
+    pub(super) fn target(&self) -> String {
+        if self.name == "test" {
+            "test.suites.js".to_owned()
+        } else {
+            format!("tasks.{}", self.name)
+        }
+    }
+}
+
 pub(super) struct MigrateRequest {
     pub(super) output_json: bool,
     pub(super) apply: bool,

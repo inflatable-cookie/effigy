@@ -120,17 +120,17 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
 }
 
 #[test]
-fn run_tasks_json_prefixed_test_filter_skips_builtin_fallback_note() {
+fn run_tasks_json_prefixed_filter_skips_builtin_test_note() {
     let root = setup_root_with_catalog_tasks(
         "tasks-json-prefixed-test-filter",
-        &[("catalog_a", &[("test", "printf catalog_a-test")])],
+        &[("catalog_a", &[("check", "printf catalog_a-check")])],
         false,
     );
 
-    let out = run_tasks_from_repo(&root, Some("catalog_a/test"), None, true);
+    let out = run_tasks_from_repo(&root, Some("catalog_a/check"), None, true);
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.filtered.v1", 1);
-    assert_json_string_field_eq(&parsed, "filter", "catalog_a/test");
+    assert_json_string_field_eq(&parsed, "filter", "catalog_a/check");
     assert_json_array_field(&parsed, "builtin_matches");
     assert_eq!(
         parsed["builtin_matches"]
@@ -142,11 +142,11 @@ fn run_tasks_json_prefixed_test_filter_skips_builtin_fallback_note() {
     assert_eq!(
         parsed["notes"].as_array().expect("notes array").len(),
         0,
-        "prefixed selectors should not report built-in fallback notes"
+        "prefixed selectors should not report built-in test notes"
     );
     assert_string_items_contains_all(
         &json_task_column(&parsed, "matches"),
-        &["catalog_a/test".to_owned()],
+        &["catalog_a/check".to_owned()],
     );
 }
 

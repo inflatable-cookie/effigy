@@ -13,8 +13,8 @@ When to use:
 
 Decision path:
 1. Create baseline manifest.
-2. Add minimal tasks (`dev`, `lint`, `build`, `validate`) and keep `test` on
-   the built-in runner unless you need an explicit override.
+2. Add minimal tasks (`dev`, `lint`, `build`, `validate`). Keep `test` on the
+   built-in orchestrator; add named `[test.suites]` for custom routes.
 3. Verify routing and health.
 4. Add CI JSON checks only after local task flow is stable.
 

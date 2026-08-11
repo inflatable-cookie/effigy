@@ -16,7 +16,7 @@ fn run_tasks_with_task_filter_reports_only_matches() {
 }
 
 #[test]
-fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
+fn run_tasks_with_test_filter_shows_builtin_configuration_note() {
     let root = temp_workspace("task-filter-test-note");
 
     let out = run_tasks_from_repo(&root, Some("test"), None, false);
@@ -25,7 +25,7 @@ fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
         &[
             "Task Matches: test",
             "Built-in Task Matches",
-            "built-in fallback supports `<catalog>/test`",
+            "`test` is always built-in; configure explicit suites under `[test.suites]`",
         ],
     );
 }
@@ -51,7 +51,7 @@ fn run_tasks_with_builtin_only_filter_renders_builtin_matches_without_fallback_n
     assert_output_excludes_all(
         &out,
         &[
-            "built-in fallback supports `<catalog>/test`",
+            "`test` is always built-in; configure explicit suites under `[test.suites]`",
             "Resolution:",
             "no matches",
         ],

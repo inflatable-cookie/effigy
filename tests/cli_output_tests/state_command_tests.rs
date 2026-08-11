@@ -109,7 +109,7 @@ fn cli_state_plan_uses_requested_manifest_stack() {
 #[test]
 fn cli_state_plan_reports_missing_manifest_state_config() {
     let root = temp_workspace("state-plan-manifest-missing-state");
-    fs::write(root.join("effigy.toml"), "[tasks.test]\nrun = \"true\"\n")
+    fs::write(root.join("effigy.toml"), "[tasks.check]\nrun = \"true\"\n")
         .expect("write effigy manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))

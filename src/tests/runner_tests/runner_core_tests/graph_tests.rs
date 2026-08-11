@@ -18,8 +18,8 @@ fn setup_graph_fixture(name: &str) -> std::path::PathBuf {
 [tasks.release]
 run = "cargo test"
 
-[tasks.test]
-run = "cargo test"
+[test.suites]
+rust-test = "cargo test"
 "#,
     );
     fs::write(
@@ -228,7 +228,7 @@ fn graph_search_and_context_json_return_ranked_results() {
         .as_array()
         .expect("likely test tasks")
         .iter()
-        .any(|item| item["name"].as_str() == Some("test")));
+        .any(|item| item["name"].as_str() == Some("rust-test")));
     assert!(explore["payload"]["guidance"]
         .as_array()
         .expect("guidance")

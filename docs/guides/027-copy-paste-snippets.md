@@ -244,7 +244,7 @@ If `env = "<NAME>"` is not found in `[env]` or the process environment, Effigy f
 By default it reads `.env`; override per-task or mid-chain with `env_file`:
 
 ```toml
-[tasks.test]
+[test.suites.integration]
 env_file = ".env.test"
 run = [{ env = "DATABASE_URL" }, { run = "cargo test --workspace" }]
 

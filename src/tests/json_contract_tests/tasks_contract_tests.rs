@@ -243,16 +243,16 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
     let root = temp_workspace("tasks-status-json-contract");
     write_manifest(
         &root.join("effigy.toml"),
-        "[tasks.test]\nrun = \"printf test\"\n",
+        "[tasks.check]\nrun = \"printf check\"\n",
     );
-    seed_latest_task_status(&root, "test");
+    seed_latest_task_status(&root, "check");
 
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
             resolve_selector: None,
-            status_selector: Some("test".to_owned()),
+            status_selector: Some("check".to_owned()),
             status_all: false,
             output_json: true,
             pretty_json: true,
@@ -262,7 +262,7 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
 
     let parsed = parse_json(&out);
     assert_schema_v1(&parsed, "effigy.tasks-status.v1");
-    assert_eq!(parsed["resolved_selector"], "test");
+    assert_eq!(parsed["resolved_selector"], "check");
     assert_eq!(parsed["state"], "succeeded");
     assert!(parsed["active"].is_null());
     assert!(parsed["latest"].is_object());
@@ -277,7 +277,7 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.test]\nrun = \"printf test\"\n",
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.check]\nrun = \"printf check\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),

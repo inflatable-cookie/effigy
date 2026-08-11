@@ -3,7 +3,7 @@ use serde_json::json;
 use super::super::response::render_optional_text_with_schema_text_fields_lazy;
 use super::super::text_doc::TextDoc;
 use super::model::{MigratePlan, MigrateScript};
-use super::{BUILTIN_MIGRATE_NAME, CONFLICT_REASON_TASK_EXISTS};
+use super::{BUILTIN_MIGRATE_NAME, CONFLICT_REASON_DESTINATION_EXISTS};
 use crate::BuiltinError;
 
 pub(super) fn render_migrate_output(
@@ -32,7 +32,7 @@ fn render_migrate_json_payload(plan: &MigratePlan) -> serde_json::Value {
         "conflicts": plan
             .conflicts
             .iter()
-            .map(|script| script_entry_json(script, Some(CONFLICT_REASON_TASK_EXISTS)))
+            .map(|script| script_entry_json(script, Some(CONFLICT_REASON_DESTINATION_EXISTS)))
             .collect::<Vec<_>>(),
     })
 }
@@ -41,11 +41,13 @@ fn script_entry_json(script: &MigrateScript, reason: Option<&str>) -> serde_json
     match reason {
         Some(reason) => json!({
             "name": script.name,
+            "target": script.target(),
             "run": script.command,
             "reason": reason,
         }),
         None => json!({
             "name": script.name,
+            "target": script.target(),
             "run": script.command,
         }),
     }
@@ -76,9 +78,9 @@ fn push_added_section(doc: &mut TextDoc, added: &[MigrateScript]) {
     if added.is_empty() {
         return;
     }
-    doc.line("Planned Task Imports");
+    doc.line("Planned Imports");
     for script in added {
-        doc.line(format!("+ tasks.{} = {:?}", script.name, script.command));
+        doc.line(format!("+ {} = {:?}", script.target(), script.command));
     }
     doc.blank();
 }
@@ -90,8 +92,9 @@ fn push_conflicts_section(doc: &mut TextDoc, conflicts: &[MigrateScript]) {
     doc.line("Manual Remediation");
     for script in conflicts {
         doc.line(format!(
-            "- skip `{}` (already defined in `[tasks]`): {}",
-            script.name, script.command
+            "- skip `{}` (destination already defined): {}",
+            script.target(),
+            script.command
         ));
     }
     doc.blank();

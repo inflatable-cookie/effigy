@@ -31,11 +31,17 @@ pub(super) fn select_scripts(
 pub(super) fn partition_scripts(
     selected: Vec<MigrateScript>,
     existing_tasks: &BTreeSet<String>,
+    existing_test_suites: &BTreeSet<String>,
 ) -> (Vec<MigrateScript>, Vec<MigrateScript>) {
     let mut added = Vec::<MigrateScript>::new();
     let mut conflicts = Vec::<MigrateScript>::new();
     for script in selected {
-        if existing_tasks.contains(&script.name) {
+        let conflicts_with_existing = if script.name == "test" {
+            existing_test_suites.contains("js")
+        } else {
+            existing_tasks.contains(&script.name)
+        };
+        if conflicts_with_existing {
             conflicts.push(script);
         } else {
             added.push(script);
@@ -53,9 +59,12 @@ pub(super) fn apply_migration_if_requested(
     if !apply || added.is_empty() {
         return Ok(false);
     }
-    {
-        let tasks = ensure_tasks_table(manifest_doc, manifest_path)?;
-        for script in added {
+    for script in added {
+        if script.name == "test" {
+            let suites = ensure_test_suites_table(manifest_doc, manifest_path)?;
+            suites.insert("js".to_owned(), Value::String(script.command.clone()));
+        } else {
+            let tasks = ensure_tasks_table(manifest_doc, manifest_path)?;
             tasks.insert(script.name.clone(), Value::String(script.command.clone()));
         }
     }
@@ -90,13 +99,18 @@ pub(super) fn load_package_scripts(path: &Path) -> Result<Vec<MigrateScript>, Bu
     Ok(entries)
 }
 
-pub(super) fn load_manifest_and_existing_tasks(
+pub(super) fn load_manifest_and_existing_destinations(
     manifest_path: &Path,
-) -> Result<(Value, BTreeSet<String>), BuiltinError> {
-    let mut existing = BTreeSet::<String>::new();
+) -> Result<(Value, BTreeSet<String>, BTreeSet<String>), BuiltinError> {
+    let mut existing_tasks = BTreeSet::<String>::new();
+    let mut existing_test_suites = BTreeSet::<String>::new();
     let mut probe = PathPresenceCache::new();
     if !probe.exists(manifest_path) {
-        return Ok((Value::Table(Default::default()), existing));
+        return Ok((
+            Value::Table(Default::default()),
+            existing_tasks,
+            existing_test_suites,
+        ));
     }
 
     let parsed = read_toml_path(manifest_path)?;
@@ -108,10 +122,19 @@ pub(super) fn load_manifest_and_existing_tasks(
             )));
         };
         for name in task_table.keys() {
-            existing.insert(name.clone());
+            existing_tasks.insert(name.clone());
         }
     }
-    Ok((parsed, existing))
+    if let Some(suites) = parsed.get("test").and_then(|test| test.get("suites")) {
+        let Some(suite_table) = suites.as_table() else {
+            return Err(BuiltinError::task_invocation(format!(
+                "`test.suites` in {} must be a table",
+                manifest_path.display()
+            )));
+        };
+        existing_test_suites.extend(suite_table.keys().cloned());
+    }
+    Ok((parsed, existing_tasks, existing_test_suites))
 }
 
 fn ensure_tasks_table<'a>(
@@ -139,6 +162,41 @@ fn ensure_tasks_table<'a>(
             manifest_path.display()
         ))
     })
+}
+
+fn ensure_test_suites_table<'a>(
+    manifest: &'a mut Value,
+    manifest_path: &Path,
+) -> Result<&'a mut toml::map::Map<String, Value>, BuiltinError> {
+    let Some(root) = manifest.as_table_mut() else {
+        return Err(BuiltinError::task_invocation(format!(
+            "manifest root in {} must be a table",
+            manifest_path.display()
+        )));
+    };
+    if !root.contains_key("test") {
+        root.insert("test".to_owned(), Value::Table(Default::default()));
+    }
+    let test = root
+        .get_mut("test")
+        .and_then(Value::as_table_mut)
+        .ok_or_else(|| {
+            BuiltinError::task_invocation(format!(
+                "`test` in {} must be a table",
+                manifest_path.display()
+            ))
+        })?;
+    if !test.contains_key("suites") {
+        test.insert("suites".to_owned(), Value::Table(Default::default()));
+    }
+    test.get_mut("suites")
+        .and_then(Value::as_table_mut)
+        .ok_or_else(|| {
+            BuiltinError::task_invocation(format!(
+                "`test.suites` in {} must be a table",
+                manifest_path.display()
+            ))
+        })
 }
 
 fn read_path(path: &Path) -> Result<String, BuiltinError> {

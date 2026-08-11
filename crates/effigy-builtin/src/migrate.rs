@@ -17,7 +17,7 @@ use super::help_text::{render_titled_help, HelpSection};
 use super::render_builtin_help_text;
 use crate::BuiltinError;
 
-const CONFLICT_REASON_TASK_EXISTS: &str = "task already exists";
+const CONFLICT_REASON_DESTINATION_EXISTS: &str = "destination already exists";
 const BUILTIN_MIGRATE_NAME: &str = "migrate";
 
 pub(super) fn run_builtin_migrate(
@@ -47,8 +47,8 @@ fn render_migrate_help() -> String {
             HelpSection::Bulleted {
                 heading: "Notes",
                 items: &[
-                    "import `package.json` scripts into `[tasks]` with preview-first, explicit apply flow",
-                    "phase-1 scope only: package.json scripts, non-destructive source preservation, manual remediation hints for task-name conflicts",
+                    "import `package.json` scripts with preview-first, explicit apply flow; `test` maps to `[test.suites].js` and other scripts map to `[tasks]`",
+                    "package.json remains unchanged; existing destination conflicts require manual remediation",
                 ],
             },
             HelpSection::Bulleted {

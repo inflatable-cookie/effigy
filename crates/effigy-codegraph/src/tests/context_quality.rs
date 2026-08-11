@@ -382,8 +382,8 @@ fn graph_explore_packet_surfaces_edit_targets_and_likely_tests_for_split_ownersh
     fs::write(
         temp.path().join("effigy.toml"),
         r#"
-[tasks.test]
-run = "cargo test"
+[test.suites]
+rust-test = "cargo test"
 "#,
     )
     .expect("write manifest");
@@ -471,7 +471,7 @@ fn closeout_prompt_runs() {
         payload
             .likely_test_tasks
             .iter()
-            .any(|item| item.name == "test"),
+            .any(|item| item.name == "rust-test"),
         "split-ownership packet should surface likely test tasks: {:?}",
         payload
             .likely_test_tasks
@@ -829,7 +829,7 @@ fn graph_index_skips_empty_markdown_headings_without_diagnostics() {
     .expect("write markdown");
     fs::write(
         temp.path().join("effigy.toml"),
-        "[tasks.test]\nrun = \"cargo test\"\n",
+        "[test.suites]\nrust-test = \"cargo test\"\n",
     )
     .expect("write manifest");
 

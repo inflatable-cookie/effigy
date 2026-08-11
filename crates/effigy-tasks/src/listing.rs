@@ -18,7 +18,7 @@ use crate::view::{
 use crate::{EffigyTasksError, TaskSelector};
 
 const BUILTIN_TEST_FALLBACK_NOTE: &str =
-    "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined";
+    "`test` is always built-in; configure explicit suites under `[test.suites]`";
 const TASKS_SCHEMA: &str = "effigy.tasks.v1";
 const FILTERED_TASKS_SCHEMA: &str = "effigy.tasks.filtered.v1";
 const SCHEMA_VERSION: u64 = 1;

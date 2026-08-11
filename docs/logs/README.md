@@ -78,6 +78,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/11-144402-unified-test-orchestration-v011-closeout.md`](./2026-08/11-144402-unified-test-orchestration-v011-closeout.md)
 - [`2026-08/10-105636-explicit-catalog-membership-closeout.md`](./2026-08/10-105636-explicit-catalog-membership-closeout.md)
 - [`2026-08/10-104558-delete-discovery-and-align-diagnostics.md`](./2026-08/10-104558-delete-discovery-and-align-diagnostics.md)
 - [`2026-08/10-101827-explicit-catalog-routing-cutover.md`](./2026-08/10-101827-explicit-catalog-routing-cutover.md)

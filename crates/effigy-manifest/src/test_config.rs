@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use super::task_runtime::{ManifestEnvFileDirective, ManifestManagedRunStep, ManifestRunStepEnv};
+use super::task_runtime::{
+    ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv,
+};
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,10 +67,10 @@ pub enum ManifestTestSuite {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestTestSuiteTable {
-    pub run: String,
+    pub run: ManifestManagedRun,
     #[serde(default)]
     pub env: Option<ManifestRunStepEnv>,
     #[serde(default)]
@@ -91,10 +93,17 @@ pub enum ManifestTestSuiteTeardownPolicy {
 
 #[allow(dead_code)]
 impl ManifestTestSuite {
-    pub fn run(&self) -> Option<&str> {
+    pub fn command(&self) -> Option<&str> {
         match self {
             ManifestTestSuite::Command(command) => Some(command.as_str()),
-            ManifestTestSuite::Config(table) => Some(table.run.as_str()),
+            ManifestTestSuite::Config(_) => None,
+        }
+    }
+
+    pub fn managed_run(&self) -> Option<&ManifestManagedRun> {
+        match self {
+            ManifestTestSuite::Command(_) => None,
+            ManifestTestSuite::Config(table) => Some(&table.run),
         }
     }
 

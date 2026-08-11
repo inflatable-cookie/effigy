@@ -14,7 +14,7 @@ const SECTION_TEST_CORE: &[&str] = &[
     "",
     "[test.suites.managed]",
     "# Optional lifecycle-aware suite example for managed test environments.",
-    "run = \"cargo nextest run --workspace\"",
+    "run = [{ task = \"db:test:prepare\" }, \"cargo nextest run --workspace\"]",
     "env = \"managed-test\"",
     "env_file = [\".env\", \".env.test\"]",
     "setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]",

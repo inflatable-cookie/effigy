@@ -19,14 +19,15 @@ See `graph-assist.md`.
 ## Run tests
 
 ```bash
-effigy test                  # built-in test detection or tasks.test override
+effigy test                  # run the built-in test orchestrator
 effigy test --plan           # show plan without running
 effigy test --json           # JSON envelope
 effigy test <selector>       # run tests in a specific workspace
 ```
 
-The built-in `test` prefers `cargo-nextest` when available, falling back to
-`cargo test`. If the repo defines `tasks.test`, that overrides.
+The built-in `test` runs every configured `[test.suites]` entry. Without
+configured suites it detects polyglot runners, preferring `cargo-nextest` over
+`cargo test` for Rust. `effigy test --plan` never executes a suite.
 
 ## Bring local dev up
 
