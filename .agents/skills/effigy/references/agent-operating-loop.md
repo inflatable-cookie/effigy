@@ -38,10 +38,12 @@ Do this when you need to find owners, trace behavior, or orient in an
 unfamiliar tree — **before** spraying `rg` or opening many files.
 
 ```bash
-effigy graph status --json
-effigy graph index --json          # when freshness.state is not ready or usable is false
 effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 ```
+
+Graph queries build or refresh the index on demand. Use `graph status` only
+when you need the report-only pre-refresh state, and explicit `graph index`
+only to pre-warm a large repo or recover a broken cache.
 
 Details: `graph-assist.md`.
 

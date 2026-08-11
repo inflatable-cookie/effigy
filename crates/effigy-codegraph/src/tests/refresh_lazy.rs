@@ -2,7 +2,7 @@ use super::*;
 
 use std::time::Duration;
 
-use crate::refresh::{ensure_fresh_with_wait, RefreshLock};
+use crate::refresh::{ensure_fresh_with_wait, run_index_exclusive_with_wait, RefreshLock};
 
 #[test]
 fn query_refreshes_stale_index_on_demand() {
@@ -82,6 +82,25 @@ fn refresh_lock_is_exclusive() {
 }
 
 #[test]
+fn explicit_index_refuses_to_run_without_the_refresh_lock() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
+
+    let _held = RefreshLock::try_acquire(temp.path())
+        .expect("hold refresh lock")
+        .expect("lock must be free");
+    let error = run_index_exclusive_with_wait(temp.path(), 0)
+        .expect_err("explicit index must not bypass a held refresh lock");
+
+    assert!(error
+        .to_string()
+        .contains("graph refresh lock remained busy"));
+    let store = GraphStore::open(temp.path()).expect("open store");
+    assert_eq!(store.counts().expect("counts").files, 0);
+}
+
+#[test]
 fn query_serves_stale_when_refresh_lock_is_held() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
@@ -133,7 +152,7 @@ fn query_detects_refresh_completed_by_concurrent_process() {
             .expect("acquire")
             .expect("lock must be free");
         std::thread::sleep(Duration::from_millis(150));
-        run_index(&lock_root).expect("concurrent refresh");
+        crate::index::run_index_unlocked(&lock_root).expect("concurrent refresh");
         drop(lock);
     });
 

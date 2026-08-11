@@ -27,14 +27,12 @@ implementation, or changed-file impact.
 ## Standard sequence
 
 ```bash
-effigy graph status --json
-# when freshness.state is missing-index, refresh-recommended, or degraded,
-# or freshness.usable is false:
-effigy graph index --json
-
 effigy graph explore "<task-shaped question>" \
   --max-files 6 --max-bytes 12288 --json
 ```
+
+The query builds or refreshes a stale index before reading it. Use
+`graph status --json` only when you need the report-only pre-refresh state.
 
 Good query shapes:
 
@@ -62,10 +60,12 @@ git diff --name-only | effigy scan validation-gaps --stdin --json
   first-pass orientation; open files only when the excerpt is insufficient.
 - **Ask implementation questions, not token questions.** Prefer
   `where is X handled` over raw identifiers when you want owners and tests.
-- **`graph index` is explicit.** Queries do not rebuild the index for you.
-- **Trust state matters.** If status reports `missing-index`,
-  `refresh-recommended`, or `degraded`, rebuild before using graph output as
-  navigation proof.
+- **Queries refresh before reading.** `search`, `node`, `callers`, `callees`,
+  `impact`, `context`, `explore`, `affected`, and `files` build or refresh the
+  index on demand.
+- **Trust state still matters.** Gate on the freshness returned by the query.
+  A query may still report `refresh-recommended` when another refresh outlives
+  its bounded wait; retry after that refresh completes.
 - **`graph affected` narrows validation** — it does not prove exhaustive test
   reachability.
 - **Graph-aware scans are review aids.** They do not prove semantic dead code,

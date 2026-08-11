@@ -21,13 +21,16 @@ use std::time::{Duration, Instant};
 use fs2::FileExt;
 
 use crate::error::CodeGraphError;
-use crate::index::{graph_freshness_payload, run_index, stale_paths_for_repo};
+use crate::index::{
+    graph_freshness_payload, run_index_unlocked, stale_paths_for_repo, IndexReport,
+};
 use crate::json::GraphFreshnessPayload;
 use crate::storage::GraphStore;
 
 /// How long a query waits for an in-flight refresh before serving current
 /// data that is still marked stale.
 const IN_FLIGHT_WAIT_MS: u64 = 2_500;
+const EXPLICIT_REFRESH_WAIT_MS: u64 = 10_000;
 const LOCK_POLL_MS: u64 = 100;
 
 /// Cross-process exclusive lock guarding graph re-indexing.
@@ -94,6 +97,22 @@ pub struct RefreshOutcome {
     pub freshness: GraphFreshnessPayload,
     /// Human-readable notes describing what the pass did (empty when fresh).
     pub notes: Vec<String>,
+}
+
+pub(crate) fn run_index_exclusive(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
+    run_index_exclusive_with_wait(repo_root, EXPLICIT_REFRESH_WAIT_MS)
+}
+
+pub(crate) fn run_index_exclusive_with_wait(
+    repo_root: &Path,
+    wait_ms: u64,
+) -> Result<IndexReport, CodeGraphError> {
+    let Some(_lock) = RefreshLock::acquire_wait(repo_root, wait_ms)? else {
+        return Err(CodeGraphError::validation(format!(
+            "graph refresh lock remained busy for {wait_ms}ms"
+        )));
+    };
+    run_index_unlocked(repo_root)
 }
 
 /// Ensure the graph is current for a query, rebuilding it on demand.
@@ -193,7 +212,7 @@ pub(crate) fn ensure_fresh_with_wait(
     }
 
     let started = Instant::now();
-    let report = run_index(repo_root)?;
+    let report = run_index_unlocked(repo_root)?;
     let duration_ms = started.elapsed().as_millis();
     let refreshed_files =
         report.new_paths.len() + report.changed_paths.len() + report.deleted_paths.len();
@@ -225,7 +244,7 @@ fn build_missing_index(
         });
     };
     let started = Instant::now();
-    let report = run_index(repo_root)?;
+    let report = run_index_unlocked(repo_root)?;
     let duration_ms = started.elapsed().as_millis();
     drop(lock);
 

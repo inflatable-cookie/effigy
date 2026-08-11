@@ -52,9 +52,10 @@ Pick the first Effigy command that matches the job.
 | Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
 
-If `graph status --json` reports `refresh-recommended`, `degraded`, or
-`missing-index`, run `effigy graph index --json` before trusting
-explore/affected. Use `rg` for exact tokens and final pre-edit proof.
+Graph data queries refresh stale or missing indexes on demand, so start with
+`explore` or `affected` directly. Use `graph status` only when you need the
+report-only pre-refresh state; use explicit `graph index` for pre-warming or
+cache recovery. Use `rg` for exact tokens and final pre-edit proof.
 
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 

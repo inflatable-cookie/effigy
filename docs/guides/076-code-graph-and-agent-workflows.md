@@ -129,7 +129,8 @@ correctness-gated scans (`scan dead-code`, `scan validation-gaps`,
 `scan boundary-violations`) refresh through the same gate before running, so a
 stale or missing index no longer blocks them — they only refuse when the
 refresh itself cannot complete. `graph status` and `--graph-context` reporting
-stay report-only; gate on `freshness.state` there before proceeding.
+use different postures: status stays report-only unless passed `--refresh`,
+while graph-context scan enrichment refreshes before reading graph facts.
 
 If the graph DB is corrupt or you hit an unsupported future storage schema,
 rebuild it locally:
@@ -192,6 +193,7 @@ rebuild the same graph.
 | --- | --- |
 | `graph search/node/callers/callees/impact/context/explore/affected/files` | refresh a stale or missing index before serving |
 | `scan dead-code`, `scan validation-gaps`, `scan boundary-violations` | refresh through the same gate; refuse only if the refresh cannot complete |
+| `scan ... --graph-context` | refresh before enriching supported scan findings; report refreshed readiness for unsupported families |
 | `graph status` | report-only by default; `--refresh` opts into the gate |
 | `graph index`, `graph watch` | explicit rebuild paths; share the lock |
 | `effigy doctor` (`graph.index` check) | warns on a stale or degraded index with the `graph status --refresh` remediation |

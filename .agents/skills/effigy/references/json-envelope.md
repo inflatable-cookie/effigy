@@ -83,11 +83,14 @@ effigy --json release status --check-gates \
   | jq -r '.result.payload.gates[] | "\(.name): \(.status)"'
 ```
 
-**Check graph freshness before explore:**
+**Inspect report-only graph freshness:**
 
 ```bash
 effigy --json graph status | jq '.result.payload.stale_paths'
 ```
+
+Graph queries refresh before reading, so this is a diagnostic view rather than
+a required preflight.
 
 **Detect error envelope:**
 

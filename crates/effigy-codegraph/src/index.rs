@@ -39,6 +39,10 @@ struct ScanDelta {
 }
 
 pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
+    crate::refresh::run_index_exclusive(repo_root)
+}
+
+pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
     let registry = ExtractorRegistry::builtins();
     let store = GraphStore::open(repo_root)?;
     let existing_states = store.file_scan_state_map()?;

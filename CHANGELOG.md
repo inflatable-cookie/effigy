@@ -10,6 +10,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - Manually dispatched binary release runs now include the selected version tag
   in their GitHub Actions title.
 
+### Fixed
+- Graph-context scan enrichment now refreshes a stale or missing index before
+  reading it. Explicit indexing and watch refreshes also honor the same
+  cross-process lock as lazy graph queries instead of allowing unlocked writers.
+- The bundled Effigy agent skill now starts code-understanding work with the
+  self-refreshing graph query instead of requiring a status and manual reindex
+  preflight.
+
 ## [0.10.0] - 2026-08-10
 
 ### Breaking

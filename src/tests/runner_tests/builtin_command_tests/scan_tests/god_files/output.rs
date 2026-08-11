@@ -88,7 +88,7 @@ fn run_manifest_task_builtin_scan_god_files_json_emits_machine_payload() {
 }
 
 #[test]
-fn run_manifest_task_builtin_scan_god_files_graph_context_text_reports_readiness() {
+fn run_manifest_task_builtin_scan_god_files_graph_context_builds_missing_index() {
     let root = temp_workspace("builtin-scan-god-files-graph-context");
     write_root_manifest(&root, "");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -112,19 +112,21 @@ fn run_manifest_task_builtin_scan_god_files_graph_context_text_reports_readiness
             "God Files",
             "src/app.ts",
             "warning  12 code lines",
-            "Graph context: requested, not applied",
-            "state: missing-index",
+            "graph: typescript",
+            "Graph context: applied",
+            "graph index built on demand",
         ],
     );
 }
 
 #[test]
-fn run_manifest_task_builtin_scan_god_files_graph_context_enriches_findings() {
+fn run_manifest_task_builtin_scan_god_files_graph_context_refreshes_stale_index() {
     let root = temp_workspace("builtin-scan-god-files-graph-context-enrich");
     write_root_manifest(&root, "");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_large_code_file(&root.join("src/app.ts"), 12);
     seed_graph_index(&root);
+    write_large_code_file(&root.join("src/app.ts"), 13);
 
     let out = run_builtin_ok(
         root,
@@ -147,6 +149,7 @@ fn run_manifest_task_builtin_scan_god_files_graph_context_enriches_findings() {
             "symbols=",
             "refs=",
             "Graph context: applied",
+            "graph auto-refreshed",
         ],
     );
 }

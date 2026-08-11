@@ -415,8 +415,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   [`050-env-schema-integration.md`](./050-env-schema-integration.md))
 - all scan commands accept either `--json` or `--markdown`, not both
 - `scan validation-gaps` accepts changed paths as args or via `--stdin`
-- `scan --graph-context` reports graph readiness even when a scan family does
-  not enrich findings yet
+- `scan --graph-context` refreshes the index before enriching supported scan
+  findings and reports refreshed readiness when a scan family does not enrich
+  findings yet
 - scan `--out <PATH>` values resolve relative to the scanned repo root
 - `config --minimal` requires `--schema`
 - `config --inspect` cannot be combined with `--schema`
@@ -469,10 +470,11 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
-- `graph index` is explicit; queries do not rebuild the graph for you
+- graph data queries build or refresh the index on demand; use explicit
+  `graph index` to pre-warm a large repo or recover a broken cache
 - `graph status --json` exposes `freshness.state` (`ready`, `refresh-recommended`,
-  `degraded`, `missing-index`) and `freshness.usable`; agents should gate on
-  those fields before trusting explore/affected output
+  `degraded`, `missing-index`) and `freshness.usable`; it is the report-only
+  pre-refresh view unless passed `--refresh`
 - `graph explore` is the preferred one-call agent navigation packet for
   code-understanding work; use `graph context` when you want the lower-level
   ranked item list instead

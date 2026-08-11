@@ -8,11 +8,11 @@ code-understanding questions, but not for every Effigy interaction.
 ## Map code before scanning
 
 ```bash
-effigy graph status --json
-effigy graph index --json                    # when stale_paths is non-empty
 effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
 ```
+
+Both queries refresh a stale or missing index before reading it.
 
 See `graph-assist.md`.
 
