@@ -192,6 +192,136 @@ fn initial_tag_current_version_selects_current_and_omits_version_mutation() {
 }
 
 #[test]
+fn prepare_plan_coordinates_workspace_path_dependency_versions() {
+    let root = temp_repo("coordinated-workspace-versions");
+    let external = temp_repo("external-workspace-dependency");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"Cargo.toml\"\nversion-path = \
+         \"workspace.package.version\"\nchangelog = \"CHANGELOG.md\"\nsync-files = \
+         [\"Cargo.lock\"]\n",
+    )
+    .expect("manifest");
+    let cargo_before = format!(
+        r#"[workspace]
+members = ["crates/*"]
+exclude = ["crates/excluded"]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.1"
+edition = "2021"
+
+[workspace.dependencies]
+fixture-core = {{ path = "crates/core", version = "0.3.1" }}
+fixture-renamed = {{ package = "fixture-alias", path = "crates/alias", version = "0.3.1" }}
+fixture-independent = {{ path = "crates/independent", version = "0.3.1" }}
+fixture-excluded = {{ path = "crates/excluded", version = "0.3.1" }}
+fixture-external = {{ path = "{}", version = "0.3.1" }}
+fixture-git = {{ git = "https://example.invalid/fixture.git", version = "0.3.1" }}
+serde = "1"
+"#,
+        external.display()
+    );
+    fs::write(root.join("Cargo.toml"), &cargo_before).expect("cargo manifest");
+    for (path, name, inherited) in [
+        ("crates/core", "fixture-core", true),
+        ("crates/alias", "fixture-alias", true),
+        ("crates/independent", "fixture-independent", false),
+        ("crates/excluded", "fixture-excluded", true),
+    ] {
+        fs::create_dir_all(root.join(path)).expect("member dir");
+        let version = if inherited {
+            "version.workspace = true"
+        } else {
+            "version = \"0.3.1\""
+        };
+        fs::write(
+            root.join(path).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\n{version}\nedition = \"2021\"\n"),
+        )
+        .expect("member manifest");
+    }
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Coordinate workspace versions\n",
+    )
+    .expect("changelog");
+    fs::write(
+        root.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n",
+    )
+    .expect("lockfile");
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status()
+        .expect("git init");
+    assert!(status.success());
+
+    let context = load_release_context(&root).expect("release context");
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    assert!(plan.ready, "{:?}", plan.blockers);
+    assert_eq!(plan.planned_version, Some(semver::Version::new(0, 3, 2)));
+
+    let version_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.kind == "version-file")
+        .expect("version mutation");
+    let FileMutationApply::Write { after_contents } = &version_mutation.apply else {
+        panic!("version mutation must write Cargo.toml")
+    };
+    assert!(after_contents.contains("version = \"0.3.2\"\n"));
+    assert!(
+        after_contents.contains("fixture-core = { path = \"crates/core\", version = \"0.3.2\" }")
+    );
+    assert!(after_contents.contains(
+        "fixture-renamed = { package = \"fixture-alias\", path = \"crates/alias\", version = \
+         \"0.3.2\" }"
+    ));
+    assert!(after_contents
+        .contains("fixture-independent = { path = \"crates/independent\", version = \"0.3.1\" }"));
+    assert!(after_contents
+        .contains("fixture-excluded = { path = \"crates/excluded\", version = \"0.3.1\" }"));
+    assert!(after_contents.contains("fixture-external"));
+    assert!(after_contents.contains("version = \"0.3.1\" }\nfixture-git"));
+    assert!(after_contents.contains(
+        "fixture-git = { git = \"https://example.invalid/fixture.git\", version = \"0.3.1\" }"
+    ));
+    assert!(version_mutation
+        .diff_preview
+        .iter()
+        .any(|line| line.contains("fixture-core") && line.contains("0.3.2")));
+    assert!(version_mutation
+        .detail_lines
+        .contains(&"coordinated workspace dependency: fixture-core -> 0.3.2".to_owned()));
+    assert!(version_mutation
+        .detail_lines
+        .contains(&"coordinated workspace dependency: fixture-renamed -> 0.3.2".to_owned()));
+    let plan_text = super::render_release_prepare_plan_text(&plan);
+    let plan_json = super::render_release_prepare_plan_json(&plan);
+    for dependency in ["fixture-core", "fixture-renamed"] {
+        assert!(plan_text.contains(dependency));
+        assert!(plan_json.contains(dependency));
+    }
+    assert!(plan.mutations.iter().any(|mutation| matches!(
+        mutation.apply,
+        FileMutationApply::SyncCargoLock { ref workspace_version }
+            if workspace_version == "0.3.2"
+    )));
+
+    let snapshots = snapshot_mutation_paths(&plan.mutations).expect("mutation snapshots");
+    fs::write(root.join("Cargo.toml"), after_contents).expect("apply version mutation");
+    assert!(restore_mutation_snapshots(&snapshots).is_empty());
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.toml")).expect("restored manifest"),
+        cargo_before
+    );
+}
+
+#[test]
 fn current_version_release_requires_the_first_tag_opt_in() {
     let root = write_initial_release_repo("initial-disabled", false);
     let context = load_release_context(&root).expect("release context");

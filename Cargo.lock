@@ -1184,6 +1184,7 @@ dependencies = [
  "chrono",
  "effigy-changelog",
  "effigy-manifest",
+ "globset",
  "semver",
  "serde",
  "serde_json",

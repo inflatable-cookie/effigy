@@ -739,6 +739,8 @@ pub fn build_release_prepare_plan(
                 detail_lines: build_version_mutation_detail_lines(
                     &context.config.version_source,
                     &next_version,
+                    &version_before,
+                    &version_after,
                 ),
                 diff_preview: build_diff_preview(&version_before, &version_after),
                 apply: FileMutationApply::Write {

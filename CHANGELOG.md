@@ -24,6 +24,11 @@ During v0.x, MINOR bumps may include breaking changes.
   in their GitHub Actions title.
 
 ### Fixed
+- Cargo workspace release preparation now bumps version requirements on
+  coordinated `[workspace.dependencies]` path entries alongside
+  `workspace.package.version`. Plans preview the edits, failed preparation
+  restores them with the version manifest, and registry, Git, external,
+  excluded, or independently versioned packages remain untouched.
 - `effigy deps link bun` now treats same-version peer installs across consumer
   and library trees (including Bun `.bun` copies) as shared instead of
   duplicate. Only mismatched peer versions fail verification, status, and

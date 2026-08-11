@@ -1,4 +1,5 @@
 use crate::{ReleaseError, ResolvedVersionSource, VersionFileKind};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -115,6 +116,8 @@ pub fn render_changelog_preview_line(
 pub fn build_version_mutation_detail_lines(
     source: &ResolvedVersionSource,
     selected_version: &semver::Version,
+    before: &str,
+    after: &str,
 ) -> Vec<String> {
     let mut details = vec![format!("format: {}", source.kind.format_label())];
     if let Some(field_path) = &source.field_path {
@@ -123,7 +126,42 @@ pub fn build_version_mutation_detail_lines(
         details.push("field path: direct file contents".to_owned());
     }
     details.push(format!("selected version: {selected_version}"));
+    for dependency in coordinated_workspace_dependency_changes(before, after) {
+        details.push(format!(
+            "coordinated workspace dependency: {dependency} -> {selected_version}"
+        ));
+    }
     details
+}
+
+fn coordinated_workspace_dependency_changes(before: &str, after: &str) -> Vec<String> {
+    let versions = |raw: &str| {
+        toml::from_str::<toml::Value>(raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("workspace")?
+                    .get("dependencies")?
+                    .as_table()
+                    .map(|dependencies| {
+                        dependencies
+                            .iter()
+                            .filter_map(|(name, dependency)| {
+                                dependency
+                                    .get("version")
+                                    .and_then(toml::Value::as_str)
+                                    .map(|version| (name.clone(), version.to_owned()))
+                            })
+                            .collect::<BTreeMap<_, _>>()
+                    })
+            })
+            .unwrap_or_default()
+    };
+    let before = versions(before);
+    versions(after)
+        .into_iter()
+        .filter_map(|(name, version)| (before.get(&name) != Some(&version)).then_some(name))
+        .collect()
 }
 
 pub fn build_changelog_mutation_detail_lines(
@@ -382,8 +420,154 @@ fn render_updated_toml_contents(
                 source.path.display()
             ))
         })?;
+    let current_version = resolve_toml_version_text(source, &parsed)?;
     set_toml_document_string_at_path(&mut document, &path, &new_version.to_string())?;
+    if source.kind == VersionFileKind::CargoToml && path == "workspace.package.version" {
+        update_coordinated_workspace_dependency_versions(
+            source,
+            &parsed,
+            &mut document,
+            &current_version,
+            &new_version.to_string(),
+        )?;
+    }
     Ok(document.to_string())
+}
+
+fn update_coordinated_workspace_dependency_versions(
+    source: &ResolvedVersionSource,
+    parsed: &toml::Value,
+    document: &mut toml_edit::DocumentMut,
+    current_version: &str,
+    new_version: &str,
+) -> Result<(), ReleaseError> {
+    let Some(workspace) = parsed.get("workspace") else {
+        return Ok(());
+    };
+    let Some(dependencies) = workspace
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+    else {
+        return Ok(());
+    };
+    let excluded = workspace_path_matcher(workspace, "exclude", &source.path)?;
+    let workspace_root = std::fs::canonicalize(
+        source.path.parent().unwrap_or_else(|| Path::new(".")),
+    )
+    .map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to resolve Cargo workspace root for {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let mut coordinated = Vec::new();
+
+    for (dependency_name, dependency) in dependencies {
+        let Some(dependency) = dependency.as_table() else {
+            continue;
+        };
+        if dependency.get("git").is_some()
+            || dependency.get("version").and_then(toml::Value::as_str) != Some(current_version)
+        {
+            continue;
+        }
+        let Some(relative_path) = dependency.get("path").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let normalized_path = relative_path.trim_start_matches("./").replace('\\', "/");
+        if excluded.is_match(&normalized_path) {
+            continue;
+        }
+        let member_root =
+            std::fs::canonicalize(workspace_root.join(relative_path)).map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to resolve coordinated workspace dependency `{dependency_name}` at \
+                     `{relative_path}` in {}: {error}",
+                    source.path.display()
+                ))
+            })?;
+        if !member_root.starts_with(&workspace_root) {
+            continue;
+        }
+        let member_manifest = member_root.join("Cargo.toml");
+        let member_raw = std::fs::read_to_string(&member_manifest).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to inspect workspace member {} for coordinated release: {error}",
+                member_manifest.display()
+            ))
+        })?;
+        let member: toml::Value = toml::from_str(&member_raw).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to parse workspace member {} for coordinated release: {error}",
+                member_manifest.display()
+            ))
+        })?;
+        let Some(package) = member.get("package").and_then(toml::Value::as_table) else {
+            continue;
+        };
+        let expected_name = dependency
+            .get("package")
+            .and_then(toml::Value::as_str)
+            .unwrap_or(dependency_name);
+        if package.get("name").and_then(toml::Value::as_str) != Some(expected_name)
+            || package
+                .get("version")
+                .and_then(toml::Value::as_table)
+                .and_then(|version| version.get("workspace"))
+                .and_then(toml::Value::as_bool)
+                != Some(true)
+        {
+            continue;
+        }
+        coordinated.push(dependency_name.clone());
+    }
+
+    let Some(dependencies) = document
+        .get_mut("workspace")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .and_then(|workspace| workspace.get_mut("dependencies"))
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
+        return Ok(());
+    };
+    for dependency_name in coordinated {
+        let Some(version) = dependencies
+            .get_mut(&dependency_name)
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .and_then(|dependency| dependency.get_mut("version"))
+            .and_then(toml_edit::Item::as_value_mut)
+        else {
+            continue;
+        };
+        let decor = version.decor().clone();
+        *version = toml_edit::Value::from(new_version.to_owned());
+        *version.decor_mut() = decor;
+    }
+    Ok(())
+}
+
+fn workspace_path_matcher(
+    workspace: &toml::Value,
+    field: &str,
+    source_path: &Path,
+) -> Result<GlobSet, ReleaseError> {
+    let mut builder = GlobSetBuilder::new();
+    if let Some(patterns) = workspace.get(field).and_then(toml::Value::as_array) {
+        for pattern in patterns.iter().filter_map(toml::Value::as_str) {
+            builder.add(Glob::new(pattern).map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "invalid Cargo workspace {field} pattern `{pattern}` in {}: {error}",
+                    source_path.display()
+                ))
+            })?);
+        }
+    }
+    builder.build().map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to compile Cargo workspace {field} patterns in {}: {error}",
+            source_path.display()
+        ))
+    })
 }
 
 fn render_updated_json_contents(
