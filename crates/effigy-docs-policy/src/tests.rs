@@ -189,6 +189,20 @@ fn collect_index_markdown_links_can_scope_to_section() {
 }
 
 #[test]
+fn collect_index_markdown_links_accepts_plain_relative_targets() {
+    let fixture = DocsFixture::new("index-plain-relative");
+    fixture.write(
+        "README.md",
+        "# Root\n\n- [One](one.md)\n- [Nested](dir/two.md)\n- `three.md` is not a link\n",
+    );
+
+    let links = collect_index_markdown_links(&fixture.root().join("README.md"), None).expect("links");
+    assert!(links.contains("one.md"));
+    assert!(links.contains("dir/two.md"));
+    assert!(!links.contains("three.md"));
+}
+
+#[test]
 fn check_headings_reports_missing_heading() {
     let fixture = DocsFixture::new("headings");
     fixture.write("README.md", "# Root\n");

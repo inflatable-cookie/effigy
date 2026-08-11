@@ -272,6 +272,9 @@ pub fn index_check_report(
         for entry in missing {
             failure_text.push_str(&format!("  - {entry}\n"));
         }
+        failure_text.push_str(
+            "hint: index recognition needs a markdown link — `[label](./path.md)` or `[label](path.md)`; backtick-only mentions do not count\n",
+        );
     }
     if !extra.is_empty() {
         if !failure_text.is_empty() {

@@ -630,7 +630,9 @@ pub fn collect_index_markdown_links(
     } else {
         content
     };
-    let link_re = Regex::new(r"\((\./[^)]+\.md)\)").expect("index link regex");
+    // Accept `(./x.md)` and plain `(x.md)`. Requiring `./` made visibly linked
+    // entries look "missing" with no hint about the required form.
+    let link_re = Regex::new(r"\(((?:\./)?[^()\s]+\.md)\)").expect("index link regex");
     let mut links = BTreeSet::new();
     for capture in link_re.captures_iter(&content) {
         let relative = capture[1].trim_start_matches("./");
