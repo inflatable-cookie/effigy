@@ -11,6 +11,10 @@ During v0.x, MINOR bumps may include breaking changes.
   in their GitHub Actions title.
 
 ### Fixed
+- `effigy doctor` now warns and skips project health delegation when
+  `tasks.health` reaches `qa`, built-in `test`, or a recognizable full-suite
+  command. Agent guidance and the Northstar starter now enforce the intended
+  cheap `health` → mid-cost `validate` → full `qa` ladder.
 - Graph-context scan enrichment now refreshes a stale or missing index before
   reading it. Explicit indexing and watch refreshes also honor the same
   cross-process lock as lazy graph queries instead of allowing unlocked writers.

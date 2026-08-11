@@ -569,6 +569,9 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
         &[
             "[docs_policy.indexes.vision]",
             "[docs_policy.next_actions.vision]",
+            "health = [",
+            "{ task = \"ping\" }",
+            "validate = [",
             "qa:northstar",
         ],
     );

@@ -49,6 +49,9 @@ Agents should assume:
 - a vendored `.agents/skills/effigy` copy is repo-authoritative when present,
   and may be marked internal so generic `npx skills` repo scans do not treat it
   as the public install source
+- task cost follows one explicit ladder: `health` is cheap orientation,
+  `validate` is the mid gate, and `qa` is the full board; never map `health`
+  directly or transitively to `qa` because doctor delegates to `tasks.health`
 
 Agents should not assume:
 
@@ -66,8 +69,6 @@ When the job is code understanding before editing or review, prefer the local
 graph over spraying `rg` across the whole repo:
 
 ```sh
-effigy graph status --json
-effigy graph index --json
 effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
 git diff --name-only | effigy graph affected --stdin --json
 ```
@@ -92,8 +93,8 @@ Rules:
   - `effigy scan dead-code --json`
   - `git diff --name-only | effigy scan validation-gaps --stdin --json`
 - use `rg` for exact token verification and final checks before editing
-- if `graph status --json` reports `missing-index`, `refresh-recommended`, or
-  `degraded`, refresh with `graph index` before trusting query output
+- graph queries refresh stale or missing indexes before reading; use
+  `graph status` only for the report-only pre-refresh view
 
 Full workflow and limits:
 [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)

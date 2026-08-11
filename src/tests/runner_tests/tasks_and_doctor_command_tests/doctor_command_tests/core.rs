@@ -42,6 +42,40 @@ fn run_doctor_reports_error_when_health_task_fails() {
 }
 
 #[test]
+fn run_doctor_warns_and_skips_health_task_that_reaches_qa() {
+    let root = temp_workspace("doctor-heavy-health-task");
+    let marker = root.join("heavy-health-ran");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks]
+health = [{{ task = "baseline" }}]
+baseline = [{{ task = "validate" }}]
+validate = [{{ task = "qa" }}]
+qa = "printf ran > {}"
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_doctor_task(root, &[]).expect("doctor warning should not fail");
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "health.task.posture",
+            "/health -> baseline -> validate -> qa",
+            "Map `health` to a cheap baseline",
+            "keep full validation on `effigy qa`",
+        ],
+    );
+    assert!(
+        !marker.exists(),
+        "doctor must not execute the heavy health task"
+    );
+}
+
+#[test]
 fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
     let root = temp_workspace("doctor-stale-graph-index");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

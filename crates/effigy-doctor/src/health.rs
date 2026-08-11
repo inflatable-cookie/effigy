@@ -9,6 +9,8 @@ use crate::{DoctorError, DoctorRuntimePorts, DoctorState};
 mod invocation;
 #[path = "health/json_output.rs"]
 mod json_output;
+#[path = "health/posture.rs"]
+mod posture;
 #[path = "health/summarize.rs"]
 mod summarize;
 
@@ -26,6 +28,11 @@ pub(crate) fn check_health_task(
     }
 
     add_discovery_found_finding(&health_catalogs, state);
+    let heavy_paths = posture::heavy_health_paths(catalogs);
+    if !heavy_paths.is_empty() {
+        HealthFinding::heavy_aggregate(heavy_paths.join("; ")).emit(state);
+        return;
+    }
 
     match invocation::run_health_task_json(resolved_root, ports) {
         Ok(output) => {

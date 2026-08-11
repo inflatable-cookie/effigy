@@ -16,10 +16,11 @@ pub mod check_id {
     pub const SCAN_ATTENTION_MARKERS: &str = "scan.attention-markers";
     pub const SCAN_STALE_SUPPRESSIONS: &str = "scan.stale-suppressions";
     pub const HEALTH_TASK_DISCOVERY: &str = "health.task.discovery";
+    pub const HEALTH_TASK_POSTURE: &str = "health.task.posture";
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
 }
 
-pub const ALL_CHECK_IDS: [&str; 18] = [
+pub const ALL_CHECK_IDS: [&str; 19] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -37,6 +38,7 @@ pub const ALL_CHECK_IDS: [&str; 18] = [
     check_id::SCAN_ATTENTION_MARKERS,
     check_id::SCAN_STALE_SUPPRESSIONS,
     check_id::HEALTH_TASK_DISCOVERY,
+    check_id::HEALTH_TASK_POSTURE,
     check_id::HEALTH_TASK_EXECUTE,
 ];
 
@@ -51,6 +53,8 @@ pub mod remediation {
         "Define `tasks.health` in a root or relevant catalog manifest for project-owned checks.";
     pub const FIX_HEALTH_TASK_FAILURES: &str =
         "Fix `tasks.health` command failures and re-run `effigy doctor`.";
+    pub const KEEP_HEALTH_CHEAP: &str =
+        "Map `health` to a cheap baseline; keep full validation on `effigy qa`.";
     pub const UNIQUE_CATALOG_ALIASES: &str = "Set unique `[catalog].alias` values per manifest.";
     pub const FIX_TASK_REFERENCE_SYNTAX: &str =
         "Fix task reference syntax (`<task>` or `<catalog>/<task>`).";

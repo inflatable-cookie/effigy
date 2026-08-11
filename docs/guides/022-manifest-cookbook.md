@@ -69,6 +69,19 @@ check = [{ task = "fmt" }, { task = "lint" }]
 Use when you want one local catalog with explicit command ownership while
 leaving `effigy test` available as the built-in test entrypoint.
 
+### Health, Validate, and QA Cost Ladder
+
+```toml
+[tasks]
+health = [{ run = "cargo fmt --all -- --check" }]
+validate = [{ task = "health" }, { run = "cargo check --workspace" }]
+qa = [{ task = "validate" }, { task = "test" }, { task = "qa:docs" }]
+```
+
+Keep `health` to seconds-scale orientation checks because `effigy doctor`
+delegates to it. `validate` is the mid gate; `qa` is the full board. Never map
+`health` directly or transitively to `qa`.
+
 ### Compact Tasks and Task Chains
 
 ```toml

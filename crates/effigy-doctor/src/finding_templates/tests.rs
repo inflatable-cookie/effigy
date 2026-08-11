@@ -101,12 +101,13 @@ fn health_templates_preserve_message_contract() {
     let mut state = DoctorState::new();
     HealthFinding::discovery_missing().emit(&mut state);
     HealthFinding::discovery_found(&["root".to_owned(), "api".to_owned()]).emit(&mut state);
+    HealthFinding::heavy_aggregate("root/health -> validate -> qa".to_owned()).emit(&mut state);
     HealthFinding::execution_success("health task executed successfully".to_owned())
         .emit(&mut state);
     HealthFinding::execution_failure("health task execution failed: exit=1".to_owned())
         .emit(&mut state);
 
-    assert_eq!(state.findings.len(), 4);
+    assert_eq!(state.findings.len(), 5);
     assert_eq!(state.findings[0].check_id, check_id::HEALTH_TASK_DISCOVERY);
     assert_eq!(state.findings[0].severity, DoctorSeverity::Warning);
     assert!(state.findings[0].fixable);
@@ -119,14 +120,20 @@ fn health_templates_preserve_message_contract() {
         "discovered `health` task in: root, api"
     );
     assert_eq!(state.findings[1].severity, DoctorSeverity::Info);
+    assert_eq!(state.findings[2].check_id, check_id::HEALTH_TASK_POSTURE);
+    assert_eq!(state.findings[2].severity, DoctorSeverity::Warning);
     assert_eq!(
-        state.findings[2].evidence,
-        "health task executed successfully"
+        state.findings[2].remediation,
+        remediation::KEEP_HEALTH_CHEAP
     );
-    assert_eq!(state.findings[2].check_id, check_id::HEALTH_TASK_EXECUTE);
     assert_eq!(
         state.findings[3].evidence,
+        "health task executed successfully"
+    );
+    assert_eq!(state.findings[3].check_id, check_id::HEALTH_TASK_EXECUTE);
+    assert_eq!(
+        state.findings[4].evidence,
         "health task execution failed: exit=1"
     );
-    assert_eq!(state.findings[3].severity, DoctorSeverity::Error);
+    assert_eq!(state.findings[4].severity, DoctorSeverity::Error);
 }

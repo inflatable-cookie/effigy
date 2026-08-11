@@ -32,6 +32,8 @@ overrides it. Prefer `effigy <selector>` over raw `cargo` / `npm` /
 - **Don't add `package.json` scripts** that re-export Effigy tasks.
 - **Don't add a current-directory repo override** when already inside the
   target repo.
+- **Never map `health` to `qa`.** Keep `health` seconds-scale, `validate`
+  mid-cost, and `qa` the full board.
 
 Full rationale: `references/footguns.md`.
 

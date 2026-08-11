@@ -46,10 +46,18 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
 
+# Cost ladder: cheap orientation -> focused gate -> full board
+health = [{ task = "fmt:check" }]
+validate = [{ task = "fmt:check" }, { run = "cargo check --workspace" }]
+qa = [{ task = "validate" }, { task = "test" }, { task = "qa:docs" }]
+
 # Task with explicit run block (for richer config)
 [tasks."smoke:release"]
 run = { rhai = "scripts/check-release-smoke.rhai" }
 ```
+
+Keep `health` seconds-scale because `effigy doctor` delegates to it. Never
+point `health` at `qa`, directly or through another task.
 
 Typical Rhai wrappers for typed deploy / distribution helpers:
 

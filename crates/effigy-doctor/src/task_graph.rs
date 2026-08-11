@@ -21,7 +21,7 @@ where
     }
 }
 
-fn for_each_task_command<F>(task: &ManifestTask, visit: &mut F)
+pub(super) fn for_each_task_command<F>(task: &ManifestTask, visit: &mut F)
 where
     F: FnMut(&str),
 {
@@ -50,7 +50,7 @@ where
     }
 }
 
-fn for_each_task_reference<F>(task: &ManifestTask, mut visit: F)
+pub(super) fn for_each_task_reference<F>(task: &ManifestTask, mut visit: F)
 where
     F: FnMut(&str),
 {

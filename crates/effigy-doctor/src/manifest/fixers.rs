@@ -9,6 +9,7 @@ use crate::{DoctorFixAction, DoctorFixStatus};
 use effigy_manifest::{LoadedCatalog, TASK_MANIFEST_FILE};
 
 const HEALTH_FIX_ID: &str = "manifest.health_task_scaffold";
+// Doctor-owned scaffolding must stay seconds-scale; never point this at `qa`.
 const HEALTH_SCAFFOLD_COMMAND: &str = "printf health-check-placeholder";
 
 pub(super) fn apply_fixers(

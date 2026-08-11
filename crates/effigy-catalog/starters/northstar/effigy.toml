@@ -17,12 +17,14 @@ ping = "printf ok"
 # not leave this ambiguous in multi-runner repos.
 # test = "<your test command>"
 
-# Per-repo health surface. `effigy doctor` still works without this;
-# declare `health` when the repo has project-specific readiness checks.
-# health = "<your health command>"
+# Cheap orientation only: seconds-scale fmt/toolchain/docs-forbidden/check
+# probes. Keep broader validation on `validate` and the full board on `qa`.
+health = [
+  { task = "ping" },
+]
 
-# Generic validation aggregator. Keep this as the `qa` spine and
-# compose it from `validate` + docs-contract checks.
+# Mid-cost validation gate. Add focused lint/check/test work here without
+# collapsing the full `qa` board into `health`.
 validate = [
   { task = "ping" },
 ]
