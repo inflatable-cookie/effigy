@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Docs index exclusions now apply to links collected from the index as well as
+  files discovered under its directory. Linked child indexes in excluded
+  subtrees are no longer misreported as nonexistent or subjected to the parent
+  next-action policy.
+
 ### Changed
 - Effigy's release protocol now requires a successful manually dispatched
   `ci.yml` run for the exact candidate source commit before release prepare or

@@ -641,6 +641,22 @@ pub fn collect_index_markdown_links(
     Ok(links)
 }
 
+/// Collect markdown links from an index after applying its configured excludes.
+pub fn collect_included_index_markdown_links(
+    index: &Path,
+    section: Option<&str>,
+    exclude: &[String],
+) -> Result<BTreeSet<String>, DocsPolicyError> {
+    Ok(collect_index_markdown_links(index, section)?
+        .into_iter()
+        .filter(|relative| {
+            !exclude
+                .iter()
+                .any(|pattern| path_matches_exclude(relative, pattern))
+        })
+        .collect())
+}
+
 pub fn path_matches_exclude(relative: &str, pattern: &str) -> bool {
     let normalized = pattern.trim_start_matches("./").replace('\\', "/");
     if let Some(prefix) = normalized.strip_suffix("/**") {

@@ -2642,10 +2642,12 @@ fn cli_docs_check_index_json_uses_named_policy_index() {
     .expect("write manifest");
     fs::write(
         root.join("docs/vision/README.md"),
-        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n2. [History](history/README.md)\n",
     )
     .expect("write index");
     fs::write(root.join("docs/vision/blueprint.md"), "# Blueprint\n").expect("write blueprint");
+    fs::write(root.join("docs/vision/history/README.md"), "# History\n")
+        .expect("write history index");
     fs::write(root.join("docs/vision/history/old.md"), "# Old\n").expect("write history");
 
     let output = run_json_cli_command(
@@ -2667,13 +2669,13 @@ fn cli_docs_check_next_action_json_uses_named_policy() {
     fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
     fs::write(
         root.join("effigy.toml"),
-        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"fixtures/verbs.txt\"\n",
+        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\nexclude = [\"history/**\"]\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"fixtures/verbs.txt\"\n",
     )
     .expect("write manifest");
     fs::write(root.join("fixtures/verbs.txt"), "ship\nreview\nexecute\n").expect("write verbs");
     fs::write(
         root.join("docs/vision/README.md"),
-        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n2. [History](history/README.md)\n",
     )
     .expect("write index");
     fs::write(
@@ -2681,6 +2683,9 @@ fn cli_docs_check_next_action_json_uses_named_policy() {
         "# Blueprint\n\n## Next Task\n\n- Execute the follow-up batch.\n",
     )
     .expect("write artifact");
+    fs::create_dir_all(root.join("docs/vision/history")).expect("mkdir history");
+    fs::write(root.join("docs/vision/history/README.md"), "# History\n")
+        .expect("write history index");
 
     let output = run_json_cli_command(
         &root,

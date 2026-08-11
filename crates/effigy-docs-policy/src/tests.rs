@@ -1,8 +1,8 @@
 use super::{
     check_contains, check_headings, check_paths, check_workflow_paths,
-    collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
-    collect_workflow_check_files, extract_fenced_json_blocks, extract_h2_section,
-    extract_lead_verb, first_non_empty_section_line, insert_log_index_entry,
+    collect_included_index_markdown_links, collect_index_markdown_links, collect_link_check_files,
+    collect_markdown_children, collect_workflow_check_files, extract_fenced_json_blocks,
+    extract_h2_section, extract_lead_verb, first_non_empty_section_line, insert_log_index_entry,
     normalize_log_index_relative_path, path_matches_exclude, resolve_docs_index_spec,
     resolve_docs_next_action_spec, scan_markdown_links,
 };
@@ -201,6 +201,24 @@ fn collect_index_markdown_links_accepts_plain_relative_targets() {
     assert!(links.contains("one.md"));
     assert!(links.contains("dir/two.md"));
     assert!(!links.contains("three.md"));
+}
+
+#[test]
+fn collect_included_index_markdown_links_respects_excludes() {
+    let fixture = DocsFixture::new("index-excludes");
+    fixture.write(
+        "README.md",
+        "# Root\n\n- [One](one.md)\n- [Archive](archive/README.md)\n",
+    );
+
+    let links = collect_included_index_markdown_links(
+        &fixture.root().join("README.md"),
+        None,
+        &[String::from("archive/**")],
+    )
+    .expect("links");
+    assert!(links.contains("one.md"));
+    assert!(!links.contains("archive/README.md"));
 }
 
 #[test]

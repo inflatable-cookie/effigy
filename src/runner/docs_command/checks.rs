@@ -8,7 +8,7 @@ use effigy_docs_policy::{
         check_next_action, default_json_example_block_requirements,
         default_json_example_requirements, validate_json_examples,
     },
-    collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
+    collect_included_index_markdown_links, collect_link_check_files, collect_markdown_children,
     contains_check_report, forbidden_check_report, heading_check_report, index_check_report,
     insert_log_index_entry, json_examples_check_report, link_check_report,
     next_action_check_report, normalize_log_index_relative_path, path_check_report,
@@ -218,8 +218,9 @@ pub(super) fn run_check_index(
     }
 
     let all_docs = collect_markdown_children(&spec.dir, &spec.exclude);
-    let indexed = collect_index_markdown_links(&spec.index, spec.section.as_deref())
-        .map_err(map_docs_policy_error)?;
+    let indexed =
+        collect_included_index_markdown_links(&spec.index, spec.section.as_deref(), &spec.exclude)
+            .map_err(map_docs_policy_error)?;
     let missing = all_docs.difference(&indexed).cloned().collect::<Vec<_>>();
     let extra = indexed.difference(&all_docs).cloned().collect::<Vec<_>>();
 

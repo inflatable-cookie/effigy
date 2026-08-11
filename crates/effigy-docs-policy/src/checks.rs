@@ -6,7 +6,7 @@
 use serde_json::json;
 
 use crate::{
-    collect_index_markdown_links, extract_h2_section, extract_lead_verb,
+    collect_included_index_markdown_links, extract_h2_section, extract_lead_verb,
     first_non_empty_section_line, load_next_action_allowlist, DocsNextActionSpec, DocsPolicyError,
 };
 
@@ -154,15 +154,18 @@ pub fn validate_json_examples(
     }
 }
 
-/// Run the next-action check across all indexed files.
+/// Run the next-action check across all included indexed files.
 ///
-/// Walks each file referenced in the index, checks for the required
+/// Walks each non-excluded file referenced in the index, checks for the required
 /// heading, validates the lead verb against the allowlist.
 pub fn check_next_action(
     spec: &DocsNextActionSpec,
 ) -> Result<Vec<NextActionFinding>, DocsPolicyError> {
-    let referenced =
-        collect_index_markdown_links(&spec.index.index, spec.index.section.as_deref())?;
+    let referenced = collect_included_index_markdown_links(
+        &spec.index.index,
+        spec.index.section.as_deref(),
+        &spec.index.exclude,
+    )?;
     let allowlist = load_next_action_allowlist(&spec.allowlist_file)?;
     let mut findings = Vec::new();
 
