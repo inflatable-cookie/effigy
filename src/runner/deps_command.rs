@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
 use effigy_deps::{
     execute_bun_link, execute_bun_unlink, execute_cargo_link, execute_cargo_unlink,
-    inspect_dependency_status, BunLinkOperationReport, BunRegistrationIndexStore,
+    inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome, BunRegistrationIndexStore,
     BunUnlinkOperationReport, CargoLinkOperationReport, CargoUnlinkOperationReport,
     CommittedSource, DependencyHealthSeverity, DependencyLinkReport, DependencyStatusReport,
     ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore, StdReadOnlyProcess,
@@ -97,7 +97,21 @@ fn run_bun_link(
     let repo_root = resolved.resolved_root;
     let report = execute_bun_link(&repo_root, library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
-    Ok(render_bun_link(&repo_root, &report, output_json))
+    let rendered = render_bun_link(&repo_root, &report, output_json);
+    if !report.errors.is_empty()
+        || !matches!(
+            report.outcome,
+            BunLinkOutcome::DryRun | BunLinkOutcome::Applied
+        )
+    {
+        return Err(RunnerError::DepsOperationNonZero {
+            command: "deps link bun",
+            outcome: report.outcome.as_str(),
+            error_count: report.errors.len(),
+            rendered,
+        });
+    }
+    Ok(rendered)
 }
 
 fn render_bun_link(repo_root: &Path, report: &BunLinkOperationReport, output_json: bool) -> String {
@@ -1259,6 +1273,73 @@ mod tests {
                 stderr: String::new(),
             })
         }
+    }
+
+    struct FailingBunLinkProcess;
+
+    impl ReadOnlyProcess for FailingBunLinkProcess {
+        fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
+            if request.args == ["pm", "ls", "--all"] {
+                return Ok(ProcessOutput {
+                    status: Some(0),
+                    stdout: "consumer node_modules (1)\n└── @acme/core@1.2.3\n".to_owned(),
+                    stderr: String::new(),
+                });
+            }
+            Err(DepsError::ProcessFailed {
+                program: request.program.clone(),
+                cwd: request.cwd.clone(),
+                status: Some(23),
+                stderr: "fixture link failed".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn bun_link_reported_errors_are_non_zero_with_human_and_json_details() {
+        let consumer = repo();
+        write(
+            &consumer.path().join("package.json"),
+            "{\"name\":\"consumer\",\"dependencies\":{\"@acme/core\":\"1.2.3\"}}\n",
+        );
+        let library = TempDir::new().unwrap();
+        write(
+            &library.path().join("package.json"),
+            "{\"name\":\"@acme/core\",\"version\":\"0.1.0\"}\n",
+        );
+        let home = TempDir::new().unwrap();
+        let args = |output_json| DepsArgs {
+            subcommand: DepsSubcommand::Link {
+                manager: DepsManager::Bun,
+                library_path: library.path().to_path_buf(),
+                dry_run: false,
+            },
+            repo_override: Some(consumer.path().to_path_buf()),
+            output_json,
+        };
+
+        let text_error =
+            run_deps_with_home_and_process(args(false), home.path(), &FailingBunLinkProcess)
+                .unwrap_err();
+        assert!(text_error
+            .to_string()
+            .contains("failed (outcome: apply-failed; 1 reported error)"));
+        let text = text_error.rendered_output().unwrap();
+        assert!(text.contains("outcome: apply-failed"));
+        assert!(text.contains("Errors (1)"));
+        assert!(text.contains("fixture link failed"));
+
+        let json_error =
+            run_deps_with_home_and_process(args(true), home.path(), &FailingBunLinkProcess)
+                .unwrap_err();
+        let json: serde_json::Value =
+            serde_json::from_str(json_error.rendered_output().unwrap()).unwrap();
+        assert_eq!(json["report"]["outcome"], "apply-failed");
+        assert_eq!(json["report"]["errors"].as_array().unwrap().len(), 1);
+        assert!(json["report"]["errors"][0]
+            .as_str()
+            .unwrap()
+            .contains("fixture link failed"));
     }
 
     #[test]

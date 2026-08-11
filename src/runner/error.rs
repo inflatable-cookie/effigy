@@ -135,6 +135,12 @@ pub enum RunnerError {
     CommandJsonFailure {
         rendered: String,
     },
+    DepsOperationNonZero {
+        command: &'static str,
+        outcome: &'static str,
+        error_count: usize,
+        rendered: String,
+    },
     ManagedProcess(ProcessManagerError),
     TaskManagedUnsupportedMode {
         task: String,

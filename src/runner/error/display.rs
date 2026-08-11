@@ -163,6 +163,16 @@ pub(super) fn fmt_runner_error(
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")
         }
+        RunnerError::DepsOperationNonZero {
+            command,
+            outcome,
+            error_count,
+            ..
+        } => write!(
+            f,
+            "{command} failed (outcome: {outcome}; {error_count} reported error{})",
+            if *error_count == 1 { "" } else { "s" }
+        ),
         RunnerError::ManagedProcess(error) => write!(f, "{error}"),
         RunnerError::TaskManagedUnsupportedMode { task, mode } => {
             write_task_managed_unsupported_mode(f, task, mode)
