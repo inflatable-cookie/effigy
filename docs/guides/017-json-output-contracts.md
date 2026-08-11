@@ -107,6 +107,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
 - `effigy.deps.unlink.v1`
+- `effigy.deps.pin.v1`
 - `effigy.papercuts.v1`
 - `effigy.papercuts.add.v1`
 

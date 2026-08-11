@@ -221,7 +221,7 @@ where
             };
             DepsSubcommand::Status { manager }
         }
-        Some("link" | "unlink") => {
+        Some("link" | "unlink" | "pin" | "unpin") => {
             let action = args.next().unwrap();
             let manager = args.next().ok_or_else(|| {
                 CliParseError::InvalidArguments(format!(
@@ -241,18 +241,28 @@ where
                     manager.as_str()
                 )));
             }
-            if action == "link" {
-                DepsSubcommand::Link {
+            match action.as_str() {
+                "link" => DepsSubcommand::Link {
                     manager,
                     library_path: PathBuf::from(library_path),
                     dry_run: false,
-                }
-            } else {
-                DepsSubcommand::Unlink {
+                },
+                "unlink" => DepsSubcommand::Unlink {
                     manager,
                     library_path: PathBuf::from(library_path),
                     dry_run: false,
-                }
+                },
+                "pin" => DepsSubcommand::Pin {
+                    manager,
+                    library_path: PathBuf::from(library_path),
+                    dry_run: false,
+                },
+                "unpin" => DepsSubcommand::Unpin {
+                    manager,
+                    library_path: PathBuf::from(library_path),
+                    dry_run: false,
+                },
+                _ => unreachable!("action was matched above"),
             }
         }
         Some(other) => return Err(unknown_argument(other)),
@@ -274,7 +284,7 @@ where
     let subcommand = match subcommand {
         DepsSubcommand::Status { manager: _ } if dry_run => {
             return Err(CliParseError::InvalidArguments(
-                "`--dry-run` is accepted only by `effigy deps link` and `effigy deps unlink`"
+                "`--dry-run` is accepted only by dependency mutation commands (`link`, `unlink`, `pin`, and `unpin`)"
                     .to_owned(),
             ));
         }
@@ -293,6 +303,24 @@ where
             library_path,
             ..
         } => DepsSubcommand::Unlink {
+            manager,
+            library_path,
+            dry_run,
+        },
+        DepsSubcommand::Pin {
+            manager,
+            library_path,
+            ..
+        } => DepsSubcommand::Pin {
+            manager,
+            library_path,
+            dry_run,
+        },
+        DepsSubcommand::Unpin {
+            manager,
+            library_path,
+            ..
+        } => DepsSubcommand::Unpin {
             manager,
             library_path,
             dry_run,

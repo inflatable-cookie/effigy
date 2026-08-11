@@ -7,7 +7,8 @@ extended with the 2026-06-10 security and posture hardening tranche
 (g08.018–g08.023), and bounded release-orchestration follow-through in
 `g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`,
 explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
-`g08.029`, and exact-candidate pre-release CI proof in `g08.030`.
+`g08.029`, exact-candidate pre-release CI proof in `g08.030`, and committed Bun
+dependency pinning in `g08.031`.
 
 ## Purpose
 
@@ -25,6 +26,10 @@ domain for reversible machine-local Cargo and Bun links while committed
 dependency manifests remain authoritative. Later completed tranches replaced
 ambient catalog discovery with explicit root-owned membership and unified the
 v0.11 test authority under `[test]`.
+
+The completed dependency follow-up adds an explicit committed Bun override
+mode for cross-repository graphs. It remains separate from machine-local links
+and never mutates intermediate repositories.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -66,6 +71,7 @@ This generation should help agents and maintainers answer questions like:
 - [`028-explicit-catalog-membership.md`](./028-explicit-catalog-membership.md)
 - [`029-unified-test-orchestration-v011.md`](./029-unified-test-orchestration-v011.md)
 - [`030-pre-release-ci-proof.md`](./030-pre-release-ci-proof.md)
+- [`031-bun-committed-dependency-pinning.md`](./031-bun-committed-dependency-pinning.md)
 
 ## Design Posture
 
@@ -78,6 +84,8 @@ This generation should help agents and maintainers answer questions like:
 - keep exact-token proof and final code inspection outside graph claims
 - keep committed dependency manifests authoritative while local links remain
   machine-local, inspectable, and reversible
+- keep committed Bun pins explicit, root-consumer-owned, and separate from
+  machine-local link ownership
 - select local-link mechanisms by package manager, not source language
 
 ## Non-Goals
@@ -99,8 +107,14 @@ This generation should help agents and maintainers answer questions like:
 
 ## Generation Runway
 
-- Runway goal: make catalog membership deterministic root-owned configuration
-  without weakening cwd-aware routing or mounted-repo workflows.
+- Runway goal: make cross-repository Bun local development actionable without
+  hidden mutation or mixed local/registry package identity.
+- Completed pin foundation: card `1078` owns full-closure planning and the safe
+  root-manifest transaction under contract `040`.
+- Completed command surface: card `1079` owns CLI, JSON, and link/pin
+  interlocks.
+- Completed proof and closeout: card `1080` owns disposable Soundcheck/Poodle
+  proof, public guidance, full validation, and lane archival.
 - Foundation complete: `g08.019` established shared inventory, desired state,
   status, and JSON foundations through cards `1051` to `1053`.
 - Cargo planning complete: `1054` established the pure full-closure and safety
@@ -151,6 +165,7 @@ completed `g08.027` through cards `1070` and `1071`.
 Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 Strict spec `102` and `g08.029` are complete through card `1076`.
 Strict spec `103` and `g08.030` are complete through card `1077`.
+Strict spec `104` and `g08.031` are complete through card `1080`.
 
 ## Batch Cards
 
@@ -203,6 +218,9 @@ Strict spec `103` and `g08.030` are complete through card `1077`.
 - [`1075-prove-migration-and-close-explicit-membership-lane.md`](./batch-cards/1075-prove-migration-and-close-explicit-membership-lane.md)
 - [`1076-unify-test-orchestration-for-v011.md`](./batch-cards/1076-unify-test-orchestration-for-v011.md)
 - [`1077-enforce-pre-release-ci-proof.md`](./batch-cards/1077-enforce-pre-release-ci-proof.md)
+- [`1078-build-bun-pin-planner-and-manifest-transaction.md`](./batch-cards/1078-build-bun-pin-planner-and-manifest-transaction.md)
+- [`1079-wire-bun-pin-cli-json-and-link-interlocks.md`](./batch-cards/1079-wire-bun-pin-cli-json-and-link-interlocks.md)
+- [`1080-prove-bun-pin-consumer-workflow-and-closeout.md`](./batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md)
 
 ## Current State
 
@@ -220,7 +238,10 @@ are complete.
 `g08.030` is complete under contract `039`; card `1077` and strict spec `103`
 make hosted CI evidence for the exact candidate SHA release-blocking.
 
+`g08.031` is complete under contract `040`; strict spec `104` is archived and
+cards `1078` through `1080` are complete.
+
 ## Next Task
 
-Await operator-approved scope. Do not infer release work or a generation
-rollover.
+No ready strict card remains. Await operator intent before compiling another
+lane. Do not infer release work or a generation rollover.

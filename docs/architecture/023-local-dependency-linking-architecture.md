@@ -1,18 +1,23 @@
 # Local Dependency Linking Architecture
 
 Status: active
-Updated: 2026-08-05
-Roadmaps: `g08.018` through `g08.023`
-Contract: [`034`](../contracts/034-local-dependency-linking-contract.md)
+Updated: 2026-08-11
+Roadmaps: `g08.018` through `g08.023`, `g08.031`
+Contracts: [`034`](../contracts/034-local-dependency-linking-contract.md),
+[`040`](../contracts/040-bun-committed-dependency-pinning-contract.md)
 
 ## Purpose
 
-Effigy needs one package-manager-aware surface for temporarily resolving a
-consumer's dependencies from local library checkouts. The committed dependency
-source remains authoritative; local edit-in-place development is an explicit,
-machine-local overlay.
+Effigy needs one package-manager-aware dependency domain with two explicit
+local-checkout modes:
 
-The first surface is:
+- temporary links are machine-local overlays and never edit committed
+  dependency manifests
+- committed Bun pins author consumer overrides inherited by CI and teammates
+
+The modes share package inventory but not mutation semantics or desired state.
+
+The shipped link surface is:
 
 ```text
 effigy deps
@@ -24,6 +29,16 @@ effigy deps unlink <cargo|bun> <LIBRARY_PATH> [--dry-run]
 `deps` is the domain. `link` and `unlink` describe the common state transition.
 `cargo` and `bun` select the package manager and therefore the physical
 mechanism.
+
+The accepted committed-pin surface is:
+
+```text
+effigy deps pin bun <LIBRARY_PATH> [--dry-run]
+effigy deps unpin bun <LIBRARY_PATH> [--dry-run]
+```
+
+Contract `040` and roadmap `g08.031` govern this surface. The command and JSON
+contracts are implemented; disposable consumer proof remains in card `1080`.
 
 ## Vision Alignment
 
@@ -38,7 +53,7 @@ mechanism.
 
 | Surface | Authority |
 | --- | --- |
-| Consumer manifests | Committed dependency intent: Cargo git/tag sources and Bun package versions |
+| Consumer manifests | Committed dependency intent: Cargo git/tag sources, Bun package versions, and explicit Bun pin overrides |
 | Consumer lockfiles | Committed resolved baseline; never the desired-state store for local links |
 | Library manifests | Package/crate names, workspace membership, package roots, and peer declarations |
 | `.effigy/local/dependency-links.json` | Repo-local desired link state, ignored by git |
@@ -46,7 +61,8 @@ mechanism.
 | `.cargo/config.toml` | Cargo's repo-local physical patch mechanism, ignored by git |
 | Bun global link registry | Bun's machine-global package registration mechanism |
 | Consumer `node_modules` symlinks | Bun's ephemeral physical link mechanism |
-| `effigy deps` | Inventory, planning, mutation, verification, status, and JSON reporting |
+| Consumer root `package.json` `overrides` | Committed Bun pin desired state |
+| `effigy deps` | Shared inventory plus mode-specific planning, mutation, verification, status, and JSON reporting |
 | `effigy doctor` | Independent hygiene and drift observer |
 
 ## Authority Map
@@ -56,12 +72,14 @@ mechanism.
 - Cargo owns dependency resolution through config-level `[patch]` tables.
 - Bun owns package registration and save-less consumer symlinks.
 - Library repositories own their crate/package inventories.
-- Consumer repositories own committed manifests and lockfiles.
+- Consumer repositories own committed manifests and lockfiles. Effigy may edit
+  only the root consumer `package.json` through explicit pin/unpin commands.
 - Portfolio strategy documents provide adoption rationale and proof targets;
   Effigy's contract owns the shipped command behavior.
 
-Effigy must not treat a local link as a manifest migration. Migration from path
-dependencies to tagged or published dependencies is separate future work.
+Effigy must not treat a local link as a manifest migration or implicit pin.
+Migration from path dependencies to tagged or published dependencies remains
+separate future work.
 
 ## Shared Operation Pipeline
 
@@ -173,14 +191,44 @@ Bun symlinks are ephemeral. Re-running the same link operation repairs drift.
 Complete loss of the desired symlink closure is repairable drift; a mixed
 local/registry closure is a correctness error.
 
+## Committed Bun Pin Adapter
+
+Committed pins use only the root consumer `package.json` `overrides` object.
+They do not use the local-link ledger, Bun registration index, global registry,
+or consumer symlink mutation.
+
+The adapter:
+
+- reuses library inventory and read-only consumer graph inspection
+- selects the full direct-and-transitive library package closure by name
+- writes relative `file:` values from the consumer manifest to canonical local
+  package roots; absolute paths are forbidden
+- warns when the relative path escapes the consumer because other machines
+  need the same checkout topology
+- preserves unrelated overrides, manifest ordering, indentation, and newline
+  posture
+- refuses the complete operation on one conflicting override, invalid manifest
+  shape, concurrent manifest change, or active overlapping Effigy link
+- applies one atomic manifest replacement and proves Bun lockfiles unchanged
+- removes only exact package/path matches during explicit unpin
+- leaves install and lockfile review to the operator
+
+Pin state is deliberately visible to Git. It needs no hidden ownership ledger:
+pin never overwrites a conflict, and unpin removes only values that canonically
+resolve to the named library package roots.
+
+Link planning must recognize an overlapping committed pin and decline link
+mutation. Pin planning must recognize overlapping Effigy-managed links and
+require unlink first. Neither mode silently converts into the other.
+
 ## Ownership Boundary
 
 The target implementation should use a focused dependency domain owner shared
 by the command and doctor surfaces. CLI parsing/help stays in `effigy-cli`;
 command dispatch and rendering stay in the normal built-in/runner shell;
-dependency inventory, plans, state, and manager verification stay below that
-shell. `effigy-doctor` consumes read-only inspection rather than duplicating
-manager parsing.
+dependency inventory, plans, state, manifest authoring, and manager verification
+stay below that shell. `effigy-doctor` consumes read-only inspection rather
+than duplicating manager parsing.
 
 Dependency-direction review selected a focused `effigy-deps` crate. It remains
 below CLI, doctor, and runner shells so both command and health surfaces can
@@ -188,12 +236,14 @@ consume one model without circular ownership.
 
 ## Expansion Boundary
 
-The `deps` namespace deliberately leaves room for later dependency inspection,
-health, and migration commands. The first tranche implements only status,
-link, and unlink. It must not add passthrough wrappers for arbitrary Cargo or
+The `deps` namespace leaves room for dependency inspection, health, and
+explicit mutation commands. Shipped status/link/unlink behavior stays governed
+by contract `034`; accepted Bun pin/unpin behavior stays governed by contract
+`040`. Neither contract permits passthrough wrappers for arbitrary Cargo or
 Bun commands.
 
 ## Next Task
 
-Use [`guide 077`](../guides/077-local-dependency-linking.md) for operation.
-Future dependency scope requires a new explicit roadmap; none is inferred.
+Use [`guide 077`](../guides/077-local-dependency-linking.md) for shipped link
+and committed-pin operation. Contract `040` and completed roadmap `g08.031`
+record the pin boundary and consumer proof.

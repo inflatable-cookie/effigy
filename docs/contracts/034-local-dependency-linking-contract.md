@@ -205,6 +205,12 @@ Unix.
 
 - Bun links are ephemeral across installs. Missing or redirected consumer
   symlinks are drift.
+- Status inspects `file:` dependencies declared by the consumer root and its
+  selected workspaces. When the target repository's visible `node_modules`
+  resolution exposes a package symlink whose target is outside that
+  repository, report the dependency name, package name, link path, and target.
+  Ignore Bun store links and workspace links that stay inside the target
+  repository.
 - Re-link repairs missing symlinks idempotently.
 - Verify each linked package resolves to the expected canonical library path.
 - Detect duplicate framework peer resolution for symlinked raw-source packages,
@@ -239,6 +245,8 @@ Doctor behavior:
 - Cargo lockfile carrying active path-link resolution: error with
   do-not-commit remediation
 - complete Bun link loss after install: warning with re-link remediation
+- external package link exposed through a cross-repository Bun `file:`
+  dependency: warning with unlink-or-override remediation
 - mixed local/registry Bun closure or registration-index conflict: error
 - Bun manifest/lock mutation or duplicate incompatible peer resolution: error
 
@@ -271,6 +279,21 @@ Actionable errors include:
 Errors name the manager, consumer root, library path, affected packages, and
 next action where known.
 
+## Related Committed Surface
+
+Contract [`040`](./040-bun-committed-dependency-pinning-contract.md) defines an
+accepted, separate Bun pin/unpin surface for committed consumer overrides. It
+does not weaken this contract:
+
+- link and unlink remain save-less and manifest-immutable
+- link never creates, changes, or removes an override
+- pin state never enters the local-link ledger or Bun registration index
+- overlapping committed and machine-local state must be reported and refused,
+  not silently converted
+
+Pin/unpin remains unavailable until its own roadmap batch is implemented and
+validated.
+
 ## Out of Scope
 
 - Editing dependency manifests.
@@ -298,4 +321,5 @@ the same change.
 ## Next Task
 
 Use [`guide 077`](../guides/077-local-dependency-linking.md) for operation.
-Future dependency scope requires a new explicit roadmap; none is inferred.
+Committed pinning proceeds separately under roadmap `g08.031` and contract
+`040`. Do not fold that work into link semantics.

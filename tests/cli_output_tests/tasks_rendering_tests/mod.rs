@@ -18,7 +18,7 @@ Built-in Tasks
 - defer : Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing
 - demo : Inspect and control configured demos
 - deploy : Inspect, plan, apply, and export deployment flows
-- deps : Inspect and manage machine-local dependency links
+- deps : Inspect dependency state, manage machine-local links, and author committed Bun pins
 - papercuts : Discover project papercut queues for humans and agents
 - help : Show general help (same as --help)
 - doctor : Built-in remedial health checks for environment, manifests, and task references

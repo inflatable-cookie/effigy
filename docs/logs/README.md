@@ -78,6 +78,9 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md`](./2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
+- [`2026-08/11-232228-bun-pin-cli-json-and-interlocks.md`](./2026-08/11-232228-bun-pin-cli-json-and-interlocks.md)
+- [`2026-08/11-224711-bun-pin-domain-foundation.md`](./2026-08/11-224711-bun-pin-domain-foundation.md)
 - [`2026-08/11-182709-pre-release-ci-proof-closeout.md`](./2026-08/11-182709-pre-release-ci-proof-closeout.md)
 - [`2026-08/11-173550-v011-pre-release-hardening-sweep.md`](./2026-08/11-173550-v011-pre-release-hardening-sweep.md)
 - [`2026-08/11-144402-unified-test-orchestration-v011-closeout.md`](./2026-08/11-144402-unified-test-orchestration-v011-closeout.md)

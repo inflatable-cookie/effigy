@@ -1,7 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::bun::inventory_bun_file_dependencies;
 use crate::cargo_unlink::{classify_lockfile, git_head_file};
 use crate::{
     inspect_bun_peer_resolutions, inventory_cargo_consumer_roots, BunPeerDiagnostic,
@@ -53,6 +54,7 @@ pub fn inspect_dependency_status(
     }
     append_orphan_cargo_blocks(repo_root, &state, &mut links)?;
     append_orphan_bun_registrations(repo_root, &state, &bun_index, &mut links);
+    append_bun_file_dependency_exposures(repo_root, &mut links)?;
     links.sort_by(|left, right| {
         left.desired
             .as_ref()
@@ -728,6 +730,126 @@ fn append_orphan_bun_registrations(
     }
 }
 
+fn append_bun_file_dependency_exposures(
+    repo_root: &Path,
+    reports: &mut Vec<DependencyLinkReport>,
+) -> Result<(), crate::DepsError> {
+    let consumer_repo = canonical_or_original(repo_root);
+    for dependency in inventory_bun_file_dependencies(repo_root)? {
+        let dependency_repo = containing_repo_root(&dependency.target_path);
+        if dependency_repo == consumer_repo {
+            continue;
+        }
+        let mut visible_packages = BTreeMap::new();
+        for node_modules in dependency_node_modules_paths(&dependency.target_path, &dependency_repo)
+        {
+            for (package, link_path, external_target) in
+                node_module_entries(&node_modules, &dependency_repo)?
+            {
+                visible_packages
+                    .entry(package)
+                    .or_insert((link_path, external_target));
+            }
+        }
+        for (package, (link_path, external_target)) in visible_packages {
+            if let Some(target_path) = external_target {
+                reports.push(unowned_warning_report(
+                    "bun-file-dependency-exposes-link",
+                    format!(
+                        "file dependency `{}` ({}) exposes linked package `{package}` from `{}`",
+                        dependency.name,
+                        dependency.specifier,
+                        target_path.display()
+                    ),
+                    Some(package.clone()),
+                    vec![
+                        dependency.manifest_path.display().to_string(),
+                        dependency.target_path.display().to_string(),
+                        format!("{} -> {}", link_path.display(), target_path.display()),
+                    ],
+                    format!(
+                        "unlink `{package}` in `{}` or add a consumer-level Bun override for it, then run `bun install`",
+                        dependency_repo.display()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn containing_repo_root(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(canonical_or_original)
+        .unwrap_or_else(|| canonical_or_original(path))
+}
+
+fn dependency_node_modules_paths(package_path: &Path, repo_root: &Path) -> Vec<PathBuf> {
+    package_path
+        .ancestors()
+        .take_while(|ancestor| ancestor.starts_with(repo_root))
+        .map(|ancestor| ancestor.join("node_modules"))
+        .collect()
+}
+
+fn node_module_entries(
+    node_modules: &Path,
+    repo_root: &Path,
+) -> Result<Vec<(String, PathBuf, Option<PathBuf>)>, crate::DepsError> {
+    let Some(entries) = read_optional_directory(node_modules)? else {
+        return Ok(Vec::new());
+    };
+    let mut links = Vec::new();
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        if name.starts_with('@') {
+            let Some(packages) = read_optional_directory(&entry.path())? else {
+                continue;
+            };
+            for package in packages {
+                let package_name = format!("{name}/{}", package.file_name().to_string_lossy());
+                append_node_module_entry(&mut links, package_name, package.path(), repo_root);
+            }
+        } else {
+            append_node_module_entry(&mut links, name, entry.path(), repo_root);
+        }
+    }
+    links.sort();
+    links.dedup();
+    Ok(links)
+}
+
+fn read_optional_directory(path: &Path) -> Result<Option<Vec<fs::DirEntry>>, crate::DepsError> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(crate::DepsError::io("read node_modules", path, error)),
+    };
+    let mut collected = Vec::new();
+    for entry in entries {
+        collected.push(
+            entry.map_err(|error| crate::DepsError::io("read node_modules entry", path, error))?,
+        );
+    }
+    collected.sort_by_key(fs::DirEntry::file_name);
+    Ok(Some(collected))
+}
+
+fn append_node_module_entry(
+    links: &mut Vec<(String, PathBuf, Option<PathBuf>)>,
+    package: String,
+    link_path: PathBuf,
+    repo_root: &Path,
+) {
+    let external_target =
+        symlink_target(&link_path).filter(|target| !target.starts_with(repo_root));
+    links.push((package, link_path, external_target));
+}
+
 fn report(
     desired: DesiredDependencyLink,
     state: ObservedState,
@@ -792,6 +914,37 @@ fn problem_report(
                 evidence,
                 status_remediation(code),
             )],
+        },
+        plan: None,
+        verification: DependencyVerification {
+            status: VerificationStatus::Failed,
+            evidence: Vec::new(),
+        },
+        peer_diagnostics: Vec::new(),
+    }
+}
+
+fn unowned_warning_report(
+    code: &str,
+    message: impl Into<String>,
+    package: Option<String>,
+    evidence: Vec<String>,
+    remediation: impl Into<String>,
+) -> DependencyLinkReport {
+    DependencyLinkReport {
+        manager: PackageManager::Bun,
+        desired: None,
+        observed: ObservedDependencyLink {
+            state: ObservedState::Drifted,
+            packages: Vec::new(),
+            drift: vec![DriftReason {
+                code: code.to_owned(),
+                severity: DependencyHealthSeverity::Warning,
+                message: message.into(),
+                evidence,
+                remediation: Some(remediation.into()),
+                package,
+            }],
         },
         plan: None,
         verification: DependencyVerification {
@@ -1377,6 +1530,56 @@ mod tests {
                 .drift
                 .iter()
                 .any(|reason| reason.code == "bun-link-partial-closure"));
+        }
+
+        #[test]
+        fn bun_status_warns_when_file_dependency_exposes_external_package_links() {
+            let temp = TempDir::new().unwrap();
+            let consumer = temp.path().join("consumer");
+            let hub = temp.path().join("hub");
+            let hub_package = hub.join("packages/hub");
+            let local_package = temp.path().join("poodle/packages/core");
+            fs::create_dir_all(consumer.join(".git")).unwrap();
+            fs::create_dir_all(hub.join(".git")).unwrap();
+            fs::create_dir_all(&hub_package).unwrap();
+            fs::create_dir_all(&local_package).unwrap();
+            write(
+                &consumer.join("package.json"),
+                "{\"dependencies\":{\"@acme/hub\":\"file:../hub/packages/hub\"}}\n",
+            );
+            let linked_package = hub.join("node_modules/@acme/poodle");
+            fs::create_dir_all(linked_package.parent().unwrap()).unwrap();
+            symlink(&local_package, &linked_package).unwrap();
+            let bun_store_package = hub.join("node_modules/.bun/svelte/node_modules/svelte");
+            fs::create_dir_all(&bun_store_package).unwrap();
+            symlink(&bun_store_package, hub.join("node_modules/svelte")).unwrap();
+            let manifest_before = fs::read(consumer.join("package.json")).unwrap();
+
+            let report = inspect_dependency_status(
+                &consumer,
+                temp.path(),
+                &RepoLinkState::empty(),
+                &BunRegistrationIndex::empty(),
+                &NoProcess,
+            )
+            .unwrap();
+
+            assert_eq!(report.links.len(), 1);
+            let finding = &report.links[0].observed.drift[0];
+            assert_eq!(finding.code, "bun-file-dependency-exposes-link");
+            assert_eq!(finding.severity, DependencyHealthSeverity::Warning);
+            assert_eq!(finding.package.as_deref(), Some("@acme/poodle"));
+            assert!(finding.message.contains("file dependency `@acme/hub`"));
+            assert!(finding.message.contains(local_package.to_str().unwrap()));
+            assert!(finding
+                .remediation
+                .as_deref()
+                .unwrap()
+                .contains("consumer-level Bun override"));
+            assert_eq!(
+                fs::read(consumer.join("package.json")).unwrap(),
+                manifest_before
+            );
         }
 
         #[test]

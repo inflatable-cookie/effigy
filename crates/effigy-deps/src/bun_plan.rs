@@ -80,6 +80,48 @@ pub fn plan_bun_link(
         library_path: library_root.clone(),
     };
     let closure = bun_closure(&repo_root, library_packages, consumer)?;
+    let committed_pin_packages = crate::bun_pin::matching_committed_overrides(
+        &repo_root,
+        closure
+            .iter()
+            .map(|package| (package.name.as_str(), package.local_path.as_path())),
+    )?;
+    if !committed_pin_packages.is_empty() {
+        return Ok(BunDependencyPlan {
+            desired: None,
+            operation: DependencyLinkPlan {
+                action: PlanAction::Link,
+                dry_run,
+                key,
+                changes: Vec::new(),
+                warnings: vec![format!(
+                    "committed Bun override already selects local package(s) {}; use the pin plus `bun install`, or run `effigy deps unpin bun {}` before linking",
+                    committed_pin_packages.join(", "),
+                    library_root.display()
+                )],
+            },
+            packages: closure
+                .iter()
+                .map(|package| BunPackagePlan {
+                    name: package.name.clone(),
+                    local_path: package.local_path.clone(),
+                    depth: Some(package.depth),
+                    committed_version: package.committed_version.clone(),
+                    registration: BunRegistrationDisposition::Conflict,
+                    consumer_link: BunConsumerLinkDisposition::Conflict,
+                    reference_release: None,
+                })
+                .collect(),
+            process_intents: Vec::new(),
+            symlink_intents: Vec::new(),
+            physical_preconditions: Vec::new(),
+            state_preconditions: Vec::new(),
+            immutable_files: immutable_bun_files(
+                &repo_root,
+                closure.iter().map(|package| package.local_path.as_path()),
+            )?,
+        });
+    }
     let reference = BunConsumerReference {
         consumer_repo: repo_root.clone(),
         library_path: library_root.clone(),
@@ -481,11 +523,18 @@ fn bun_closure(
         }
     }
     if !duplicate_names.is_empty() {
+        let guidance = bun_override_guidance(
+            repo_root,
+            matches
+                .values()
+                .map(|package| (package.name.as_str(), package.local_path.as_path())),
+        );
         return Err(DepsError::invalid(
             repo_root,
             format!(
-                "Bun dependency closure contains multiple resolved copies of {}; mixed local/registry linking is unsafe and no plan was produced",
-                duplicate_names.into_iter().collect::<Vec<_>>().join(", ")
+                "Bun dependency closure contains multiple resolved copies of {}; mixed local/registry linking is unsafe and no plan was produced\n\n{}",
+                duplicate_names.into_iter().collect::<Vec<_>>().join(", "),
+                guidance,
             ),
         ));
     }
@@ -496,6 +545,57 @@ fn bun_closure(
         ));
     }
     Ok(matches.into_values().collect())
+}
+
+fn bun_override_guidance<'a>(
+    consumer_root: &Path,
+    packages: impl Iterator<Item = (&'a str, &'a Path)>,
+) -> String {
+    let entries = packages
+        .map(|(name, local_path)| {
+            format!(
+                "  {}: {}",
+                serde_json::to_string(name).expect("package name is JSON-serializable"),
+                serde_json::to_string(&bun_file_spec(consumer_root, local_path))
+                    .expect("package path is JSON-serializable")
+            )
+        })
+        .collect::<Vec<_>>();
+    let override_block = format!("\"overrides\": {{\n{}\n}}", entries.join(",\n"));
+    format!(
+        "A consumer-level Bun override is the transitive mechanism for dependency graphs that cross `file:` or repository boundaries. Add or merge this block in `{}`, then run `bun install`:\n\n{}\n\n`deps link bun` remains save-less and did not modify the manifest",
+        consumer_root.join("package.json").display(),
+        override_block,
+    )
+}
+
+fn bun_file_spec(consumer_root: &Path, package_path: &Path) -> String {
+    let consumer_components = consumer_root.components().collect::<Vec<_>>();
+    let package_components = package_path.components().collect::<Vec<_>>();
+    let common = consumer_components
+        .iter()
+        .zip(&package_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+
+    if common == 0 {
+        return format!("file:{}", package_path.to_string_lossy().replace('\\', "/"));
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common..consumer_components.len() {
+        relative.push("..");
+    }
+    for component in &package_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    let relative = if relative.starts_with("../") || relative == ".." {
+        relative
+    } else {
+        format!("./{relative}")
+    };
+    format!("file:{relative}")
 }
 
 fn classify_registration(
@@ -581,11 +681,18 @@ fn refuse_unmanaged_partial_consumer_closure(
     if linked == 0 || linked == packages.len() || managed_relink {
         return Ok(());
     }
+    let guidance = bun_override_guidance(
+        repo_root,
+        packages
+            .iter()
+            .map(|package| (package.name.as_str(), package.local_path.as_path())),
+    );
     Err(DepsError::invalid(
         repo_root,
         format!(
-            "Bun consumer has a partial local closure ({linked} of {} packages linked); repair or remove the mixed state before planning",
-            packages.len()
+            "Bun consumer has a partial local closure ({linked} of {} packages linked); repair or remove the mixed state before planning\n\n{}",
+            packages.len(),
+            guidance,
         ),
     ))
 }
@@ -1091,13 +1198,16 @@ mod tests {
         .is_err());
         assert!(!RepoLinkStateStore::for_repo(&no_match.repo).path().exists());
 
-        let mut duplicate = fixture(&[("@signal/core", DependencyDepth::Direct)]);
+        let mut duplicate = fixture(&[
+            ("@signal/core", DependencyDepth::Direct),
+            ("@signal/protocol", DependencyDepth::Transitive),
+        ]);
         duplicate
             .consumer
             .library_matches
             .push(duplicate.consumer.library_matches[0].clone());
-        duplicate.consumer.library_matches[1].0.version = Some("2.0.0".to_owned());
-        assert!(plan_bun_link(
+        duplicate.consumer.library_matches[2].0.version = Some("2.0.0".to_owned());
+        let error = plan_bun_link(
             &duplicate.repo,
             &duplicate.library,
             &duplicate.packages,
@@ -1106,7 +1216,19 @@ mod tests {
             true,
             &FixtureObserver::default(),
         )
-        .is_err());
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("A consumer-level Bun override is the transitive mechanism"));
+        for package in &duplicate.packages {
+            assert!(error.contains(&format!(
+                "{}: {}",
+                serde_json::to_string(&package.name).unwrap(),
+                serde_json::to_string(&bun_file_spec(&duplicate.repo, &package.package_path))
+                    .unwrap()
+            )));
+        }
+        assert!(error.contains("then run `bun install`"));
+        assert!(error.contains("remains save-less and did not modify the manifest"));
 
         let partial = fixture(&[
             ("@signal/core", DependencyDepth::Direct),
@@ -1121,7 +1243,7 @@ mod tests {
             )]),
             ..FixtureObserver::default()
         };
-        assert!(plan_bun_link(
+        let error = plan_bun_link(
             &partial.repo,
             &partial.library,
             &partial.packages,
@@ -1130,7 +1252,36 @@ mod tests {
             true,
             &observer,
         )
-        .is_err());
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("partial local closure (1 of 2 packages linked)"));
+        assert!(error.contains("A consumer-level Bun override is the transitive mechanism"));
+        for package in &partial.packages {
+            assert!(error.contains(&format!(
+                "{}: {}",
+                serde_json::to_string(&package.name).unwrap(),
+                serde_json::to_string(&bun_file_spec(&partial.repo, &package.package_path))
+                    .unwrap()
+            )));
+        }
+    }
+
+    #[test]
+    fn bun_file_spec_is_relative_to_the_consumer_manifest() {
+        assert_eq!(
+            bun_file_spec(
+                Path::new("/projects/soundcheck"),
+                Path::new("/projects/poodle/packages/core")
+            ),
+            "file:../poodle/packages/core"
+        );
+        assert_eq!(
+            bun_file_spec(
+                Path::new("/projects/soundcheck"),
+                Path::new("/projects/soundcheck/packages/local")
+            ),
+            "file:./packages/local"
+        );
     }
 
     #[test]

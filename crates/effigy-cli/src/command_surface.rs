@@ -38,7 +38,7 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("deps"),
         general_help_command: Some("effigy deps"),
         general_help_description: Some(
-            "Inspect and manage machine-local Cargo and Bun dependency links",
+            "Inspect dependency state, manage machine-local links, and author committed Bun pins",
         ),
         deferred_builtin: Some("deps"),
     },

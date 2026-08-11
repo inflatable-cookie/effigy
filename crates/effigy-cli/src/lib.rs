@@ -175,6 +175,16 @@ pub enum DepsSubcommand {
         library_path: PathBuf,
         dry_run: bool,
     },
+    Pin {
+        manager: DepsManager,
+        library_path: PathBuf,
+        dry_run: bool,
+    },
+    Unpin {
+        manager: DepsManager,
+        library_path: PathBuf,
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

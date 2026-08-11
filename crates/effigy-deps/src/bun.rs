@@ -28,6 +28,14 @@ struct PackageManifest {
     optional_dependencies: BTreeMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct BunFileDependency {
+    pub manifest_path: PathBuf,
+    pub name: String,
+    pub specifier: String,
+    pub target_path: PathBuf,
+}
+
 pub fn inventory_bun_library(
     root: impl AsRef<Path>,
 ) -> Result<Vec<BunPackageInventory>, DepsError> {
@@ -80,6 +88,47 @@ pub fn inventory_bun_consumer(
         direct_dependencies: direct_dependencies.into_iter().collect(),
         library_matches,
     })
+}
+
+pub(crate) fn inventory_bun_file_dependencies(
+    root: &Path,
+) -> Result<Vec<BunFileDependency>, DepsError> {
+    if !root.join("package.json").is_file() {
+        return Ok(Vec::new());
+    }
+    let mut dependencies = BTreeSet::new();
+    for (manifest_path, manifest) in selected_bun_manifests(root)? {
+        let manifest_root = manifest_path.parent().unwrap_or(root);
+        for (name, value) in manifest
+            .dependencies
+            .iter()
+            .chain(&manifest.dev_dependencies)
+            .chain(&manifest.peer_dependencies)
+            .chain(&manifest.optional_dependencies)
+        {
+            let Some(specifier) = value.as_str().filter(|value| value.starts_with("file:")) else {
+                continue;
+            };
+            let path = Path::new(specifier.trim_start_matches("file:"));
+            let candidate = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                manifest_root.join(path)
+            };
+            let Ok(target_path) = fs::canonicalize(candidate) else {
+                continue;
+            };
+            if target_path.is_dir() {
+                dependencies.insert(BunFileDependency {
+                    manifest_path: manifest_path.clone(),
+                    name: name.clone(),
+                    specifier: specifier.to_owned(),
+                    target_path,
+                });
+            }
+        }
+    }
+    Ok(dependencies.into_iter().collect())
 }
 
 pub fn inspect_bun_peer_resolutions(
@@ -431,6 +480,43 @@ mod tests {
         assert_eq!(
             inventory[0].package_path,
             fs::canonicalize(temp.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn inventories_file_dependencies_from_root_and_workspace_manifests() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        let root_library = temp.path().join("root-library");
+        let workspace_library = temp.path().join("workspace-library");
+        fs::create_dir_all(&root_library).unwrap();
+        fs::create_dir_all(&workspace_library).unwrap();
+        write(
+            &consumer.join("package.json"),
+            r#"{"workspaces":["packages/*"],"dependencies":{"@acme/root":"file:../root-library","registry":"^1"}}"#,
+        );
+        write(
+            &consumer.join("packages/app/package.json"),
+            r#"{"devDependencies":{"@acme/workspace":"file:../../../workspace-library"}}"#,
+        );
+        write(
+            &consumer.join("examples/ignored/package.json"),
+            r#"{"dependencies":{"ignored":"file:../../root-library"}}"#,
+        );
+
+        let dependencies = inventory_bun_file_dependencies(&consumer).unwrap();
+
+        assert_eq!(dependencies.len(), 2);
+        assert_eq!(dependencies[0].name, "@acme/root");
+        assert_eq!(dependencies[0].specifier, "file:../root-library");
+        assert_eq!(
+            dependencies[0].target_path,
+            fs::canonicalize(root_library).unwrap()
+        );
+        assert_eq!(dependencies[1].name, "@acme/workspace");
+        assert_eq!(
+            dependencies[1].target_path,
+            fs::canonicalize(workspace_library).unwrap()
         );
     }
 

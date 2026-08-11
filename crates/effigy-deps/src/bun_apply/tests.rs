@@ -234,6 +234,39 @@ fn dry_run_executes_no_mutating_process_or_state_write() {
 }
 
 #[test]
+fn matching_committed_override_refuses_link_without_local_state_or_processes() {
+    let fixture = fixture(&[("@acme/core", DependencyDepth::Direct)]);
+    let package = &fixture.packages[0];
+    let relative = format!(
+        "../{}/{}",
+        fixture.library.file_name().unwrap().to_string_lossy(),
+        package.package_path.file_name().unwrap().to_string_lossy()
+    );
+    write(
+        &fixture.repo.join("package.json"),
+        &format!(
+            "{{\"name\":\"consumer\",\"overrides\":{{\"@acme/core\":\"file:{relative}\"}}}}\n"
+        ),
+    );
+    let process = FixtureProcess::new(&fixture.home);
+
+    let report = apply_bun_link_plan(
+        plan(&fixture, false),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::CommittedPinActive);
+    assert!(report.plan.operation.changes.is_empty());
+    assert!(report.applied_processes.is_empty());
+    assert!(report.errors[0].contains("effigy deps unpin bun"));
+    assert!(process.requests.borrow().is_empty());
+    assert!(!RepoLinkStateStore::for_repo(&fixture.repo).path().exists());
+}
+
+#[test]
 fn applies_and_verifies_every_direct_and_transitive_package() {
     let fixture = fixture(&[
         ("@signal/core", DependencyDepth::Direct),

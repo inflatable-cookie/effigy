@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
 use effigy_deps::{
     execute_bun_link, execute_bun_unlink, execute_cargo_link, execute_cargo_unlink,
-    inspect_dependency_status, BunLinkOperationReport, BunRegistrationIndexStore,
+    inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome, BunRegistrationIndexStore,
     BunUnlinkOperationReport, CargoLinkOperationReport, CargoUnlinkOperationReport,
     CommittedSource, DependencyHealthSeverity, DependencyLinkReport, DependencyStatusReport,
     ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore, StdReadOnlyProcess,
@@ -12,6 +12,8 @@ use serde_json::json;
 
 use super::command_context::resolve_active_repo_root;
 use super::RunnerError;
+
+mod pin;
 
 pub(in crate::runner) fn run_deps(args: DepsArgs) -> Result<String, RunnerError> {
     let needs_home = matches!(
@@ -82,6 +84,37 @@ fn run_deps_with_home_and_process(
                 process,
             ),
         },
+        DepsSubcommand::Pin {
+            manager,
+            library_path,
+            dry_run,
+        } => match manager {
+            DepsManager::Cargo => Err(RunnerError::task_invocation(
+                "`effigy deps pin cargo` is unsupported; committed pinning is available only for Bun overrides",
+            )),
+            DepsManager::Bun => pin::run_bun_pin(
+                args.repo_override,
+                &library_path,
+                dry_run,
+                args.output_json,
+                process,
+            ),
+        },
+        DepsSubcommand::Unpin {
+            manager,
+            library_path,
+            dry_run,
+        } => match manager {
+            DepsManager::Cargo => Err(RunnerError::task_invocation(
+                "`effigy deps unpin cargo` is unsupported; committed pinning is available only for Bun overrides",
+            )),
+            DepsManager::Bun => pin::run_bun_unpin(
+                args.repo_override,
+                &library_path,
+                dry_run,
+                args.output_json,
+            ),
+        },
     }
 }
 
@@ -136,7 +169,11 @@ fn render_bun_link(repo_root: &Path, report: &BunLinkOperationReport, output_jso
         format!("Process intents ({})", report.plan.process_intents.len()),
     ];
     if report.plan.process_intents.is_empty() {
-        lines.push("- none; Bun links already match".to_owned());
+        lines.push(if report.outcome == BunLinkOutcome::CommittedPinActive {
+            "- none; a committed override blocks ephemeral linking".to_owned()
+        } else {
+            "- none; Bun links already match".to_owned()
+        });
     }
     for intent in &report.plan.process_intents {
         lines.push(format!(
@@ -1044,6 +1081,37 @@ mod tests {
     }
 
     #[test]
+    fn cargo_pin_and_unpin_fail_as_explicitly_unsupported() {
+        let repo = repo();
+        let home = TempDir::new().unwrap();
+        for subcommand in [
+            DepsSubcommand::Pin {
+                manager: DepsManager::Cargo,
+                library_path: PathBuf::from("../library"),
+                dry_run: true,
+            },
+            DepsSubcommand::Unpin {
+                manager: DepsManager::Cargo,
+                library_path: PathBuf::from("../library"),
+                dry_run: false,
+            },
+        ] {
+            let error = run_deps_with_home(
+                DepsArgs {
+                    subcommand,
+                    repo_override: Some(repo.path().to_path_buf()),
+                    output_json: false,
+                },
+                home.path(),
+            )
+            .unwrap_err();
+
+            assert!(error.to_string().contains("unsupported"));
+            assert!(error.to_string().contains("only for Bun overrides"));
+        }
+    }
+
+    #[test]
     fn bare_status_renders_empty_text_and_json_from_the_same_report() {
         let repo = repo();
         let home = TempDir::new().unwrap();
@@ -1364,6 +1432,66 @@ mod tests {
     }
 
     #[test]
+    fn bun_link_reports_matching_committed_override_without_mutation() {
+        let consumer = repo();
+        let library = TempDir::new().unwrap();
+        write(
+            &library.path().join("package.json"),
+            "{\"name\":\"@acme/core\",\"version\":\"0.1.0\"}\n",
+        );
+        let relative = format!(
+            "../{}",
+            library.path().file_name().unwrap().to_string_lossy()
+        );
+        let manifest = format!(
+            "{{\"name\":\"consumer\",\"dependencies\":{{\"@acme/core\":\"1.2.3\"}},\"overrides\":{{\"@acme/core\":\"file:{relative}\"}}}}\n"
+        );
+        write(&consumer.path().join("package.json"), &manifest);
+        let home = TempDir::new().unwrap();
+        let process = BunInventoryProcess {
+            requests: RefCell::new(Vec::new()),
+        };
+        let args = |output_json| DepsArgs {
+            subcommand: DepsSubcommand::Link {
+                manager: DepsManager::Bun,
+                library_path: library.path().to_path_buf(),
+                dry_run: false,
+            },
+            repo_override: Some(consumer.path().to_path_buf()),
+            output_json,
+        };
+
+        let text_error =
+            run_deps_with_home_and_process(args(false), home.path(), &process).unwrap_err();
+        let text = text_error.rendered_output().unwrap();
+        assert!(text.contains("outcome: committed-pin-active"));
+        assert!(text.contains("effigy deps unpin bun"));
+
+        let json_error =
+            run_deps_with_home_and_process(args(true), home.path(), &process).unwrap_err();
+        let json: serde_json::Value =
+            serde_json::from_str(json_error.rendered_output().unwrap()).unwrap();
+        assert_eq!(json["schema"], "effigy.deps.link.v1");
+        assert_eq!(json["report"]["outcome"], "committed-pin-active");
+        assert!(json["report"]["plan"]["operation"]["changes"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            fs::read_to_string(consumer.path().join("package.json")).unwrap(),
+            manifest
+        );
+        assert!(!RepoLinkStateStore::for_repo(consumer.path())
+            .path()
+            .exists());
+        assert!(process
+            .requests
+            .borrow()
+            .iter()
+            .all(|request| request.args == ["pm", "ls", "--all"]));
+    }
+
+    #[test]
     fn bun_link_reported_errors_are_non_zero_with_human_and_json_details() {
         let consumer = repo();
         write(
@@ -1414,6 +1542,7 @@ mod tests {
     fn dependency_mutation_outcomes_have_explicit_shell_success_contracts() {
         assert!(BunLinkOutcome::DryRun.is_success());
         assert!(BunLinkOutcome::Applied.is_success());
+        assert!(!BunLinkOutcome::CommittedPinActive.is_success());
         assert!(!BunLinkOutcome::ApplyFailed.is_success());
         assert!(!BunLinkOutcome::InvariantFailed.is_success());
         assert!(!BunLinkOutcome::VerificationFailed.is_success());

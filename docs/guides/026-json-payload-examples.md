@@ -370,6 +370,51 @@ Companion references:
 }
 ```
 
+### Bun Committed Dependency Pin (`effigy.deps.pin.v1`)
+
+```json
+{
+  "schema": "effigy.deps.pin.v1",
+  "schema_version": 1,
+  "command": "deps pin bun",
+  "operation": "pin",
+  "manager": "bun",
+  "repo_root": "/workspace/app",
+  "manifest_path": "/workspace/app/package.json",
+  "library_path": "/workspace/poodle",
+  "dry_run": true,
+  "outcome": "dry-run",
+  "packages": [
+    {
+      "name": "@inflatable-cookie/poodle-core",
+      "local_path": "/workspace/poodle/packages/core",
+      "depth": "transitive",
+      "before": null,
+      "after": "file:../poodle/packages/core",
+      "action": "add"
+    }
+  ],
+  "writes": [],
+  "warnings": [
+    {
+      "code": "checkout-topology-portability",
+      "message": "pin for `@inflatable-cookie/poodle-core` escapes the consumer repository; CI and teammates need the same relative checkout topology",
+      "package": "@inflatable-cookie/poodle-core"
+    }
+  ],
+  "verification": {
+    "status": "not-run",
+    "install_pending": false,
+    "immutable_files": []
+  },
+  "errors": [],
+  "next_actions": [
+    "re-run `effigy deps pin bun /workspace/poodle` without `--dry-run`",
+    "then run `bun install` and review the resulting lockfile separately"
+  ]
+}
+```
+
 ### Cargo Dependency Unlink (`effigy.deps.unlink.v1`)
 
 ```json

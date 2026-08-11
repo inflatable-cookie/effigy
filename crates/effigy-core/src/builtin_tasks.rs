@@ -23,7 +23,10 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ),
     ("demo", "Inspect and control configured demos"),
     ("deploy", "Inspect, plan, apply, and export deployment flows"),
-    ("deps", "Inspect and manage machine-local dependency links"),
+    (
+        "deps",
+        "Inspect dependency state, manage machine-local links, and author committed Bun pins",
+    ),
     (
         "papercuts",
         "Discover project papercut queues for humans and agents",

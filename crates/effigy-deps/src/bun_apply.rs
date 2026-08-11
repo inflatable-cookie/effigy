@@ -42,6 +42,19 @@ pub fn apply_bun_link_plan(
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
 ) -> Result<BunLinkOperationReport, DepsError> {
+    if plan.desired.is_none() {
+        let errors = plan.operation.warnings.clone();
+        return Ok(BunLinkOperationReport {
+            immutable_files: immutable_evidence(&plan),
+            plan,
+            outcome: BunLinkOutcome::CommittedPinActive,
+            applied_processes: Vec::new(),
+            verification: not_run_verification(),
+            peer_diagnostics: Vec::new(),
+            rollback: BunLinkRollback::not_required(),
+            errors,
+        });
+    }
     if plan.operation.dry_run {
         let peer_diagnostics = peer_diagnostics(&plan)?;
         return Ok(BunLinkOperationReport {
@@ -54,12 +67,6 @@ pub fn apply_bun_link_plan(
             rollback: BunLinkRollback::not_required(),
             errors: Vec::new(),
         });
-    }
-    if plan.desired.is_none() {
-        return Err(DepsError::invalid(
-            &plan.operation.key.consumer_repo,
-            "Bun link apply requires desired link state",
-        ));
     }
     validate_state_preconditions(&plan)?;
     validate_immutable_preconditions(&plan)?;

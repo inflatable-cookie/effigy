@@ -85,6 +85,48 @@ fn deps_link_and_unlink_capture_manager_path_and_dry_run() {
 }
 
 #[test]
+fn deps_pin_and_unpin_capture_manager_path_and_dry_run() {
+    let pin = parse_command([
+        "deps".to_owned(),
+        "pin".to_owned(),
+        "bun".to_owned(),
+        "../poodle".to_owned(),
+        "--dry-run".to_owned(),
+    ])
+    .unwrap();
+    let unpin = parse_command([
+        "deps".to_owned(),
+        "unpin".to_owned(),
+        "cargo".to_owned(),
+        "../poodle".to_owned(),
+    ])
+    .unwrap();
+
+    assert!(matches!(
+        pin,
+        Command::Deps(DepsArgs {
+            subcommand: DepsSubcommand::Pin {
+                manager: DepsManager::Bun,
+                library_path,
+                dry_run: true,
+            },
+            ..
+        }) if library_path == Path::new("../poodle")
+    ));
+    assert!(matches!(
+        unpin,
+        Command::Deps(DepsArgs {
+            subcommand: DepsSubcommand::Unpin {
+                manager: DepsManager::Cargo,
+                library_path,
+                dry_run: false,
+            },
+            ..
+        }) if library_path == Path::new("../poodle")
+    ));
+}
+
+#[test]
 fn deps_rejects_unknown_manager_and_status_dry_run() {
     let manager_error = parse_command([
         "deps".to_owned(),
@@ -105,7 +147,7 @@ fn deps_rejects_unknown_manager_and_status_dry_run() {
     .unwrap_err();
     assert!(dry_run_error
         .to_string()
-        .contains("accepted only by `effigy deps link`"));
+        .contains("accepted only by dependency mutation commands"));
 }
 
 #[test]

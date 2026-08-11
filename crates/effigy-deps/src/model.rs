@@ -303,6 +303,7 @@ pub struct BunStateFileSnapshot {
 pub enum BunLinkOutcome {
     DryRun,
     Applied,
+    CommittedPinActive,
     ApplyFailed,
     InvariantFailed,
     VerificationFailed,
@@ -313,6 +314,7 @@ impl BunLinkOutcome {
         match self {
             Self::DryRun => "dry-run",
             Self::Applied => "applied",
+            Self::CommittedPinActive => "committed-pin-active",
             Self::ApplyFailed => "apply-failed",
             Self::InvariantFailed => "invariant-failed",
             Self::VerificationFailed => "verification-failed",

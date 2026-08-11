@@ -8,14 +8,16 @@ pub(crate) fn render_deps_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
 const DEPS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "deps",
     notices: &[
-        "Inspect machine-local Cargo and Bun dependency links without changing committed manifests.",
-        "Status is read-only. Cargo and Bun link/unlink operations are available with exact dry-run plans.",
+        "Inspect machine-local Cargo and Bun links, or author committed Bun overrides explicitly.",
+        "Link state is machine-local and save-less. Bun pin state is committed and requires a separate bun install.",
     ],
     usage: &[
         "effigy deps [--repo <PATH>] [--json]",
         "effigy deps status [cargo|bun] [--repo <PATH>] [--json]",
         "effigy deps link <cargo|bun> <LIBRARY_PATH> [--dry-run] [--repo <PATH>] [--json]",
         "effigy deps unlink <cargo|bun> <LIBRARY_PATH> [--dry-run] [--repo <PATH>] [--json]",
+        "effigy deps pin bun <LIBRARY_PATH> [--dry-run] [--repo <PATH>] [--json]",
+        "effigy deps unpin bun <LIBRARY_PATH> [--dry-run] [--repo <PATH>] [--json]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
@@ -24,7 +26,9 @@ const DEPS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ("unlink cargo <PATH>", "Remove a local Cargo patch and verify committed-source recovery"),
         ("link bun <PATH>", "Apply or preview one verified save-less Bun package closure"),
         ("unlink bun <PATH>", "Remove exact Bun links and release safe registrations"),
-        ("--dry-run", "Preview link/unlink without mutation"),
+        ("pin bun <PATH>", "Add one committed full-closure Bun override plan"),
+        ("unpin bun <PATH>", "Remove only exact committed Bun override matches"),
+        ("--dry-run", "Preview dependency mutation without writing"),
     ],
     trailing_common_options: &[
         CommonOption::Json("Render the versioned dependency status or operation payload"),
@@ -38,5 +42,7 @@ const DEPS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy deps unlink cargo ../signal",
         "effigy deps link bun ../poodle --dry-run",
         "effigy deps unlink bun ../poodle",
+        "effigy deps pin bun ../poodle --dry-run",
+        "effigy deps unpin bun ../poodle",
     ],
 };

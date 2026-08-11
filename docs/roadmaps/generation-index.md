@@ -94,7 +94,7 @@ Updated: 2026-08-11
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is active. Milestones `g08.001` through `g08.026` are complete.
+`g08` is active. Milestones `g08.001` through `g08.031` are complete.
 `g08.027` completes papercut portfolio discovery and capture under strict spec
 `100`; cards `1070` and `1071` are complete.
 
@@ -109,6 +109,10 @@ no-execution boundary.
 `g08.030` is complete under strict spec `103` and contract `039`. Card `1077`
 requires a successful manually dispatched hosted CI run for the exact
 candidate source commit before release preparation or execution.
+
+`g08.031` is complete under archived strict spec `104` and contract `040`.
+Cards `1078` through `1080` delivered the Bun pin planner, command surface,
+interlocks, disposable consumer proof, and public guidance.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
@@ -175,7 +179,8 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1077` and strict specs `099` through `103` are complete.
+Cards `1051` through `1080` and strict specs `099` through `104` are complete.
+No ready strict card remains.
 
 ## Research Roadmaps
 
@@ -208,5 +213,5 @@ closeout there first.
 
 ## Next Task
 
-Await operator-approved scope. No release action or generation rollover is
-implied.
+No ready strict card remains. Await operator intent before compiling another
+lane. No release action or generation rollover is implied.

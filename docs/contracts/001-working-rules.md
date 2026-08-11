@@ -96,5 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-No strict card is ready. Await the next operator-approved scope; do not infer
-release work or generation rollover.
+No ready strict card remains after roadmap `g08.031`. Await operator intent
+before compiling another lane; do not infer release work or generation
+rollover.

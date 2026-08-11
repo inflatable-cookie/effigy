@@ -175,9 +175,11 @@ Guide: `docs/guides/073-state-stack-guide.md`.
 **Deployment** — `effigy deploy plan`, `apply`, `status` (human-gated apply).
 Guide: `docs/guides/074-deployment-guide.md`.
 
-**Local dependencies** — `effigy deps link <cargo|bun> <PATH> --dry-run`,
-`link`, `status`, then `unlink`. Status and doctor are read-only; never edit
-committed manifests or restore linked locks through Git.
+**Local dependencies** — use `effigy deps link <cargo|bun> <PATH>` for
+ephemeral machine-local state. Use `effigy deps pin bun <PATH>` for a committed
+root-consumer override, then run `bun install` separately; reverse it with
+`unpin` plus another operator-run install. Status and doctor are read-only;
+never restore linked locks through Git.
 Guide: `docs/guides/077-local-dependency-linking.md`.
 
 **Release** — never mutate without explicit human instruction.

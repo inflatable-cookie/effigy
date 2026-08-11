@@ -6,6 +6,7 @@
 
 mod bun;
 mod bun_apply;
+mod bun_pin;
 mod bun_plan;
 mod bun_unlink;
 mod cargo;
@@ -23,6 +24,12 @@ pub use bun::{
     parse_bun_dependency_tree,
 };
 pub use bun_apply::{apply_bun_link_plan, execute_bun_link};
+pub use bun_pin::{
+    apply_bun_pin_plan, plan_bun_pin, plan_bun_unpin, BunPinImmutableFileEvidence, BunPinOperation,
+    BunPinOperationReport, BunPinOutcome, BunPinPackageAction, BunPinPackagePlan, BunPinPlan,
+    BunPinPlanDisposition, BunPinVerification, BunPinVerificationStatus, BunPinWarning,
+    BunPinWrite, BunPinWriteAction,
+};
 pub use bun_plan::{
     bun_registration_path, plan_bun_link, plan_bun_unlink, BunPlanObserver, FsBunPlanObserver,
 };

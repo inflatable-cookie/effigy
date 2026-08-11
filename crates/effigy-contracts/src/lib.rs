@@ -827,6 +827,11 @@ fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
         "[package]\nname='effigy-contract-link-fixture'\nversion='0.1.0'\nedition='2021'\n",
     )
     .map_err(|error| error.to_string())?;
+    std::fs::write(
+        library.join("package.json"),
+        "{\"name\":\"@effigy/contract-link-fixture\",\"version\":\"0.1.0\"}\n",
+    )
+    .map_err(|error| error.to_string())?;
     std::fs::write(library.join("src/lib.rs"), "pub fn value() {}\n")
         .map_err(|error| error.to_string())?;
     run_fixture_command(&library, "git", &["init", "-q"])?;
@@ -840,7 +845,11 @@ fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
     run_fixture_command(&library, "git", &["commit", "-qm", "fixture"])?;
 
     std::fs::create_dir_all(consumer.join("src")).map_err(|error| error.to_string())?;
-    std::fs::write(consumer.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        consumer.join("package.json"),
+        "{\"dependencies\":{\"@effigy/contract-link-fixture\":\"file:../library\"}}\n",
+    )
+    .map_err(|error| error.to_string())?;
     std::fs::write(
         consumer.join("Cargo.toml"),
         format!(
@@ -852,6 +861,7 @@ fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
     std::fs::write(consumer.join("src/lib.rs"), "pub fn consumer() {}\n")
         .map_err(|error| error.to_string())?;
     run_fixture_command(&consumer, "cargo", &["generate-lockfile"])?;
+    run_fixture_command(&consumer, "bun", &["install", "--ignore-scripts"])?;
     run_fixture_command(&consumer, "git", &["init", "-q"])?;
     Ok((consumer, library))
 }

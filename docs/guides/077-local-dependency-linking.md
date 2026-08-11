@@ -3,6 +3,12 @@
 Use `effigy deps` when a consumer is pinned to a Git tag or published package
 but you need it to resolve from a local library checkout while editing.
 
+Choose the state contract first:
+
+- `deps link` is ephemeral, machine-local, and invisible to Git.
+- `deps pin bun` writes committed consumer `overrides` inherited by CI and
+  teammates.
+
 The committed manifest stays authoritative. Effigy creates machine-local
 Cargo patches or save-less Bun symlinks, records the desired state, verifies
 the complete matching closure, and removes only state it owns.
@@ -40,6 +46,25 @@ effigy deps unlink bun ../poodle
 bun install
 ```
 
+When the Bun graph crosses repository or `file:` boundaries, use a committed
+pin instead:
+
+```sh
+effigy deps pin bun ../poodle --dry-run
+effigy deps pin bun ../poodle
+bun install
+
+# edit ../poodle and build or type-check the consumer
+
+effigy deps unpin bun ../poodle --dry-run
+effigy deps unpin bun ../poodle
+bun install
+```
+
+Pin and unpin edit only the root consumer `package.json`. Effigy reports
+resolution as pending and leaves both installs and lockfile review to the
+operator.
+
 Bare `effigy deps` reports both managers. Add top-level JSON mode when another
 tool or agent will consume the result:
 
@@ -49,7 +74,7 @@ effigy --json deps status cargo
 effigy --json deps link bun ../poodle --dry-run
 ```
 
-## What Stays Committed
+## What Stays Committed During Links
 
 `Cargo.toml`, `package.json`, and their pinned dependency declarations remain
 unchanged. Effigy never turns a local link into a manifest migration.
@@ -69,6 +94,42 @@ ignored. It refuses a tracked Cargo config rather than hiding committed state.
 Multiple libraries can be linked at once. Every operation is keyed by package
 manager, consumer repo, and canonical library path, so unlink removes only the
 selected link.
+
+## Bun Committed Pin Workflow
+
+`deps pin bun` inventories every named package in the local library and selects
+the complete package-name closure already present in the consumer's Bun tree.
+It then adds one relative `file:` override per match at the consumer root:
+
+```json
+{
+  "overrides": {
+    "@inflatable-cookie/poodle-core": "file:../poodle/packages/core",
+    "@inflatable-cookie/poodle-svelte": "file:../poodle/packages/svelte/components"
+  }
+}
+```
+
+The operation is atomic. An existing conflicting override, an overlapping
+Effigy-managed link, a concurrent manifest edit, or a partial closure refuses
+the whole write. Unrelated overrides, field order, indentation, final-newline
+posture, and both Bun lockfile forms are preserved.
+
+The checkout may sit outside the consumer repository, but the relative path is
+only portable when teammates and CI reproduce that sibling layout. Pin emits a
+warning for that case. It never writes an absolute path.
+
+`deps unpin bun` removes only package/path pairs that exactly match the named
+checkout. It does not restore hidden state or create a machine-local link.
+After either manifest change, run `bun install` yourself and review the
+lockfile separately.
+
+The Soundcheck/Poodle acceptance proof covered a consumer with `file:` edges
+through Soundcheck Library and Longhorn. One root pin redirected both Poodle
+packages to one canonical checkout without touching either intermediate
+repository. Physical linked-package contamination in Longhorn remained visible
+through `deps status bun`; an override changes resolver policy, not the
+underlying filesystem warning.
 
 ## Cargo Workflow
 
@@ -144,6 +205,14 @@ error because duplicate shared types can result. Managed re-link restores
 either shape idempotently. An unmanaged partial closure is rejected because
 Effigy has no desired-state ownership proof.
 
+When the duplicate closure crosses `file:` dependencies or repository
+boundaries, consumer-side Bun links cannot redirect every transitive copy.
+Effigy refuses the link and prints a paste-ready `overrides` block covering
+every matched package from the local library. Merge that block into the
+consumer `package.json`, then run `bun install`. Overrides are committed
+resolver policy inherited by CI and teammates; `deps link bun` remains
+machine-local, save-less, and never writes them.
+
 Raw-source links can resolve a framework peer from two physical trees (consumer
 hoist vs library `node_modules` / `.bun`). Same peer version is treated as
 shared and does not fail the link. Mismatched peer versions are duplicate
@@ -174,6 +243,12 @@ effigy deps status cargo
 effigy deps status bun
 ```
 
+Bun status also inspects cross-repository `file:` dependencies. If the target
+repository exposes a package symlink from its own `node_modules` into another
+checkout, status names the `file:` dependency, linked package, symlink, and
+resolved target. Bun's internal store links and links that stay inside the
+target repository are ignored. The check is read-only.
+
 Use doctor when dependency health belongs in the repo-wide health report:
 
 ```sh
@@ -189,6 +264,7 @@ Key states:
 | Cargo lock contains linked path resolution | error | do not commit; unlink before handoff |
 | complete Bun symlink loss | warning | re-run the same Bun link command |
 | partial Bun closure | error | re-link when Effigy desired state exists |
+| `file:` dependency exposes an external package link | warning | unlink it in the target repo or add a consumer override, then install |
 | same-version Bun peer paths across repos | healthy/info | no action |
 | mismatched Bun peer versions | error | align or remove the local peer copy |
 | library checkout missing | error | restore the checkout or unlink using the recorded path |
@@ -211,6 +287,10 @@ Status, doctor, and `--dry-run` never mutate manager state or lockfiles.
   only a table that points exclusively into the requested library.
 - Conflicting Bun registration: inspect Bun's global link registration and
   resolve the foreign path; Effigy will not replace or claim it.
+- Mixed Bun closure across `file:` or repository boundaries: merge the
+  reported `overrides` block into the consumer manifest and run `bun install`.
+  Effigy reports the committed mechanism but does not apply it through
+  machine-local `deps link`.
 - Already unlinked: unlink succeeds as a no-op when neither desired state nor a
   compatible legacy patch is present.
 
@@ -222,6 +302,7 @@ All operations use the standard `effigy.command.v1` envelope under global
 - status: `effigy.deps.status.v1`
 - link: `effigy.deps.link.v1`
 - unlink: `effigy.deps.unlink.v1`
+- pin and unpin: `effigy.deps.pin.v1`
 
 Read `result` on success. Doctor failures carry the same dependency findings
 under `error.details`. See
@@ -230,9 +311,9 @@ examples and
 [`034-local-dependency-linking-contract.md`](../contracts/034-local-dependency-linking-contract.md)
 for normative behavior.
 
-## Current Limit
+## Proof State
 
 Cargo behavior is proven against real flat and nested portfolio consumers.
-Bun behavior is proven with real Bun commands and registry-shaped fixtures;
-the first published portfolio TypeScript library remains the real-package
-acceptance target.
+Bun link behavior is proven with real Bun commands and registry-shaped
+fixtures. Bun committed pinning is also proven in disposable clones of the
+Soundcheck, Soundcheck Library, Longhorn, and Poodle repositories.

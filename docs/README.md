@@ -53,7 +53,7 @@ installing them directly on your machine.
 
 ### I want to test a consumer against local library edits
 
-- [`guides/077-local-dependency-linking.md`](./guides/077-local-dependency-linking.md) — Cargo patches and save-less Bun links without committed manifest churn
+- [`guides/077-local-dependency-linking.md`](./guides/077-local-dependency-linking.md) — choose machine-local Cargo/Bun links or committed root-consumer Bun pins
 
 ### I want to automate, integrate, or go deeper
 

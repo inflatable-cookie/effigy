@@ -45,15 +45,17 @@ Archived strict lanes:
   completing v0.11 unified test orchestration
 - [`103`](./archive/103-pre-release-ci-proof.md) is archived after making
   exact-candidate hosted CI proof release-blocking
+- [`104`](./archive/104-bun-committed-dependency-pinning.md) is archived after
+  completing committed Bun pinning and disposable consumer proof
 - `097`, `099`, and `100` are complete and awaiting archive on the next
   planning sweep
 
-Other provisional spec:
+Other planning specs:
 
 - [`098-effigy-uninstall-command.md`](./098-effigy-uninstall-command.md) -
   draft top-level uninstall command scope and safety rules
 
 ## Next Task
 
-Await operator-approved scope. Use contract `039` for the next release; keep
-the unrelated `098` uninstall draft paused.
+No ready strict card remains. Keep the unrelated `098` uninstall draft paused
+until the operator selects the next planning direction.

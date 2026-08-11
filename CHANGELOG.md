@@ -6,7 +6,24 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `deps pin bun <LIBRARY_PATH>` and `deps unpin bun <LIBRARY_PATH>` now author
+  an explicit committed root-consumer override closure without running install
+  or changing Bun lockfiles. Text and `effigy.deps.pin.v1` JSON reports expose
+  conflicts, writes, verification, portability warnings, and next actions.
+  Disposable Soundcheck/Poodle proof covers cross-repository `file:` edges,
+  one canonical local package identity, exact unpin recovery, and untouched
+  intermediate repositories.
+- `deps status bun` and doctor now warn when a cross-repository `file:`
+  dependency exposes a package symlink from its own `node_modules` into a
+  third checkout. Findings name the dependency, package, symlink, target, and
+  unlink-or-override remediation.
+
 ### Fixed
+- `deps link bun` mixed-closure refusals now explain that consumer-level Bun
+  overrides are the transitive cross-repository mechanism and print a
+  paste-ready block covering every matched local-library package. The command
+  remains save-less and does not edit `package.json`.
 - Docs index exclusions now apply to links collected from the index as well as
   files discovered under its directory. Linked child indexes in excluded
   subtrees are no longer misreported as nonexistent or subjected to the parent

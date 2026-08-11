@@ -39,13 +39,15 @@ fn render_help_writes_structured_sections() {
 }
 
 #[test]
-fn render_deps_help_shows_available_cargo_and_bun_link_operations() {
+fn render_deps_help_shows_link_and_committed_bun_pin_operations() {
     let rendered = render_help_text(HelpTopic::Deps);
     assert!(rendered.contains("deps Help"));
     assert!(rendered.contains("effigy deps status [cargo|bun]"));
     assert!(rendered.contains("effigy deps link <cargo|bun> <LIBRARY_PATH>"));
     assert!(rendered.contains("effigy deps unlink <cargo|bun> <LIBRARY_PATH>"));
-    assert!(rendered.contains("Cargo and Bun link/unlink operations are available"));
+    assert!(rendered.contains("effigy deps pin bun <LIBRARY_PATH>"));
+    assert!(rendered.contains("effigy deps unpin bun <LIBRARY_PATH>"));
+    assert!(rendered.contains("Bun pin state is committed"));
     assert!(rendered.contains("Apply or preview a verified local Cargo patch closure"));
     assert!(rendered.contains("Remove a local Cargo patch and verify committed-source recovery"));
     assert!(rendered.contains("Apply or preview one verified save-less Bun package closure"));

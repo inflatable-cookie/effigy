@@ -98,11 +98,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.030`](./g08/030-pre-release-ci-proof.md) requires a green
   hosted CI run for the exact candidate source SHA before release work under
   contract `039`.
+  Completed [`g08.031`](./g08/031-bun-committed-dependency-pinning.md) adds the
+  separate committed Bun override workflow under contract `040`; cards `1078`
+  through `1080` are complete.
 
 ## Active Strict Lane
 
-No strict lane or ready card is active. Spec `103`, roadmap `g08.030`, and card
-`1077` are complete.
+None. Strict spec
+[`104`](../specs/archive/104-bun-committed-dependency-pinning.md) and roadmap
+[`g08.031`](./g08/031-bun-committed-dependency-pinning.md) are complete.
 
 ## Research Program
 
@@ -157,7 +161,8 @@ Before rollover:
 
 ## Next Task
 
-Await operator-approved scope. No release action or `g09` rollover is implied.
+No ready strict card remains. Await operator intent before compiling another
+lane. No release action or `g09` rollover is implied.
 
 ## Historical language boundary
 
