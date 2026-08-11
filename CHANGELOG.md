@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-11
+
 ### Breaking
 - `effigy test` is now always the built-in test orchestrator. Legacy
   `[tasks.test]` manifests are rejected with migration guidance; custom and
