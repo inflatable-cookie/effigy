@@ -309,7 +309,9 @@ Deep dive:
 ## 9) Use Native Release And Distribution Surfaces
 
 When release or packaging work still depends on wrapper-script memory, the
-default path should be native:
+default path should be native. Before these commands, prove the clean pushed
+candidate SHA with the repository's full hosted CI board; for Effigy, manually
+dispatch `ci.yml` and watch the exact-SHA run to success.
 
 ```sh
 effigy release status --check-gates

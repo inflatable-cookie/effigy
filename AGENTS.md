@@ -55,10 +55,14 @@ Full protocol: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`
 
 Key rules:
 - Never modify `.github/workflows/` without explicit human approval
+- Never prepare or execute a release until `ci.yml` is green for the exact
+  candidate source commit
 - Never bypass release gates — fix the underlying issue instead
 - Never re-tag a failed release — fix goes into the next PATCH
 
 Preferred release command path:
+- push the clean candidate commit to `main`
+- `gh workflow run ci.yml --ref main`, then watch that exact-SHA run to success
 - `effigy release simulate`
 - `effigy release status --check-gates`
 - `effigy release prepare --plan`

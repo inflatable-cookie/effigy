@@ -216,6 +216,10 @@ other Rust code without shelling out to the CLI.
 
 When preparing a release:
 
+First prove the clean pushed candidate SHA with the repository's full hosted
+CI board. For Effigy, dispatch `ci.yml` manually and watch the matching run to
+success. Then continue:
+
 ```bash
 effigy changelog validate CHANGELOG.md
 effigy changelog analyze CHANGELOG.md

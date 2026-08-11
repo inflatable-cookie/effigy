@@ -31,10 +31,12 @@ If you are deciding where to start:
 
 For Effigy's own repo, the normal sequence is:
 
-1. `effigy release gates`
-2. `effigy release prepare --plan`
-3. `effigy release preflight --tag vX.Y.Z`
-4. the remaining distribution evidence commands after the release mutation path
+1. push the clean candidate commit to `main`
+2. dispatch `ci.yml` and watch the exact candidate SHA to success
+3. `effigy release gates`
+4. `effigy release prepare --plan`
+5. `effigy release preflight --tag vX.Y.Z`
+6. the remaining distribution evidence commands after the release mutation path
    is ready
 
 ## Start With The Right Level

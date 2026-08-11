@@ -118,6 +118,10 @@ effigy secrets import infra/local.env --json
 
 ## Release inspection (read-only)
 
+First prove the clean, pushed candidate commit through a manually dispatched
+`ci.yml` run. Release inspection checks that exact-SHA proof; it does not
+accept a green run from another commit.
+
 ```bash
 effigy release simulate                # dry-run the release flow
 effigy release status --check-gates    # show gate states

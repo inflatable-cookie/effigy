@@ -43,6 +43,8 @@ Archived strict lanes:
   after completing explicit catalog membership
 - [`102`](./archive/102-unified-test-orchestration-v011.md) is archived after
   completing v0.11 unified test orchestration
+- [`103`](./archive/103-pre-release-ci-proof.md) is archived after making
+  exact-candidate hosted CI proof release-blocking
 - `097`, `099`, and `100` are complete and awaiting archive on the next
   planning sweep
 
@@ -53,5 +55,5 @@ Other provisional spec:
 
 ## Next Task
 
-Await operator-approved scope. Keep release work and the unrelated `098`
-uninstall draft paused.
+Await operator-approved scope. Use contract `039` for the next release; keep
+the unrelated `098` uninstall draft paused.

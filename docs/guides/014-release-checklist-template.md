@@ -20,6 +20,10 @@ Owner: `name/team`
 
 ## 2) Quality Gates
 
+- [ ] Clean candidate commit is pushed to `main`; exact SHA recorded.
+- [ ] Manually dispatched `ci.yml` run for that exact SHA completes green:
+  - [ ] `gh workflow run ci.yml --ref main`
+  - [ ] matching run watched with `gh run watch <RUN_ID> --exit-status`
 - [ ] Distribution preflight passes:
   - [ ] `effigy release preflight --tag v0.__.__`
 - [ ] Safe release simulation passes:
@@ -34,7 +38,7 @@ Owner: `name/team`
   - [ ] `effigy qa`
 - [ ] Docs link integrity check passes:
   - [ ] `effigy qa:docs`
-- [ ] CI gate is green before merge/tag:
+- [ ] JSON contract checks are green before tag:
   - [ ] `json-contracts / Validate docs links`
   - [ ] `json-contracts / Validate JSON contracts`
 - [ ] Focused smoke checks pass in active workspace(s):

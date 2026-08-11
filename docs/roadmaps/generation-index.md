@@ -106,6 +106,10 @@ catalog discovery with explicit root-owned membership; cards `1072` through
 makes `[test]` the sole v0.11 test authority and hardens `--plan` as a
 no-execution boundary.
 
+`g08.030` is complete under strict spec `103` and contract `039`. Card `1077`
+requires a successful manually dispatched hosted CI run for the exact
+candidate source commit before release preparation or execution.
+
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
   scan/graph readiness, additive enrichment for existing scans, graph-native
@@ -171,7 +175,7 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1076` and strict specs `099` through `102` are complete.
+Cards `1051` through `1077` and strict specs `099` through `103` are complete.
 
 ## Research Roadmaps
 

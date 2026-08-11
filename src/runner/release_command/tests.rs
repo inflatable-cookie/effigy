@@ -521,6 +521,7 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
         gate_pairs,
         vec![
             ("build", "cargo build --release --bin effigy"),
+            ("ci", "sh scripts/check-release-ci.sh"),
             ("format", "cargo fmt --all -- --check"),
             (
                 "metadata",
@@ -545,10 +546,71 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
     let release_manifest =
         std::fs::read_to_string(root.join("config/release.toml")).expect("read release manifest");
     assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
+    assert!(release_manifest.contains("ci = \"sh scripts/check-release-ci.sh\""));
     assert!(!root.join("scripts/check-release-gates.sh").exists());
     assert!(!root
         .join("scripts/check-release-install-from-tag.sh")
         .exists());
     assert!(!root.join("scripts/check-release-smoke.sh").exists());
     assert!(!root.join("scripts/prepare-release.sh").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let candidate_sha = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("read candidate SHA");
+    assert!(candidate_sha.status.success());
+    let candidate_sha = String::from_utf8(candidate_sha.stdout)
+        .expect("UTF-8 SHA")
+        .trim()
+        .to_owned();
+
+    let fake_bin =
+        std::env::temp_dir().join(format!("effigy-release-ci-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    std::fs::write(
+        &fake_gh,
+        "#!/bin/sh\nprintf '%s\\n' \"$EFFIGY_TEST_CI_SHA\"\n",
+    )
+    .expect("write fake gh");
+    let mut permissions = std::fs::metadata(&fake_gh)
+        .expect("fake gh metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_gh, permissions).expect("make fake gh executable");
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |reported_sha: &str| {
+        std::process::Command::new("sh")
+            .arg("scripts/check-release-ci.sh")
+            .current_dir(root)
+            .env("PATH", &path)
+            .env("EFFIGY_TEST_CI_SHA", reported_sha)
+            .output()
+            .expect("run CI gate")
+    };
+
+    let success = run(&candidate_sha);
+    assert!(success.status.success());
+    assert!(String::from_utf8_lossy(&success.stdout).contains(&candidate_sha));
+
+    let failure = run("different-commit");
+    assert!(!failure.status.success());
+    let stderr = String::from_utf8_lossy(&failure.stderr);
+    assert!(stderr.contains("CI is not green for candidate commit"));
+    assert!(stderr.contains("dispatch ci.yml on main for this exact commit"));
+
+    std::fs::remove_dir_all(fake_bin).expect("remove fake bin");
 }

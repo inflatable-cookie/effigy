@@ -95,11 +95,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   contract `037`.
   Completed [`g08.029`](./g08/029-unified-test-orchestration-v011.md) makes
   `[test]` the sole v0.11 test authority under contract `038`.
+  Completed [`g08.030`](./g08/030-pre-release-ci-proof.md) requires a green
+  hosted CI run for the exact candidate source SHA before release work under
+  contract `039`.
 
 ## Active Strict Lane
 
-No strict lane or ready card is active. Spec `102`, roadmap `g08.029`, and card
-`1076` are complete.
+No strict lane or ready card is active. Spec `103`, roadmap `g08.030`, and card
+`1077` are complete.
 
 ## Research Program
 

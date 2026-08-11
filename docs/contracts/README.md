@@ -151,6 +151,9 @@ new reusable-core work.
 - [`038-unified-test-orchestration-contract.md`](./038-unified-test-orchestration-contract.md):
   v0.11 single-authority test configuration, polyglot suite selection,
   non-executing planning, and `tasks.test` removal contract.
+- [`039-pre-release-ci-proof-contract.md`](./039-pre-release-ci-proof-contract.md):
+  exact-candidate hosted CI evidence required before release preparation and
+  execution.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -245,9 +248,12 @@ deduplication contract, `031-artifact-and-crate-boundary-contract.md` as the
 `032-secret-and-local-config-management-contract.md` as the active `g05.001`
 secret and local configuration contract, and
 `037-explicit-catalog-membership-contract.md` as the explicit catalog
-membership boundary, and `038-unified-test-orchestration-contract.md` as the
-active v0.11 test authority and plan-safety boundary.
+membership boundary, `038-unified-test-orchestration-contract.md` as the
+active v0.11 test authority and plan-safety boundary, and
+`039-pre-release-ci-proof-contract.md` as the exact-candidate hosted CI
+release boundary.
 
 ## Next Task
 
-Execute contract-backed ready card `1076`.
+Await operator-approved scope. Contract `039` governs the next release's CI
+proof; no release action is implied.

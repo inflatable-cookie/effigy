@@ -275,6 +275,10 @@ by one language manifest.
 Recommended operator flow:
 
 ```sh
+candidate_sha="$(git rev-parse HEAD)"
+gh workflow run ci.yml --ref main
+# Select the workflow_dispatch run whose headSha equals $candidate_sha.
+gh run watch <RUN_ID> --exit-status
 effigy release simulate
 effigy release simulate --version 0.2.8
 effigy release status --check-gates
@@ -289,6 +293,22 @@ effigy release execute --plan
 effigy release execute --yes
 effigy release verify-install --tag vX.Y.Z
 ```
+
+The candidate must be a clean commit already pushed to `main`. Select its CI
+run with:
+
+```sh
+gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
+  --event workflow_dispatch --limit 1 \
+  --json databaseId,headSha,status,conclusion,url
+```
+
+Do not accept the latest green run unless its `headSha` is the candidate SHA.
+Effigy's self-hosted `ci` release gate checks the same invariant. Missing,
+pending, red, cancelled, or different-commit evidence blocks release gates,
+simulation, and gate-checked prepare. The other local gates validate the
+deterministic version, changelog, and lockfile mutations after hosted CI has
+proved the source commit.
 
 For Effigy's own binary publication, explicitly dispatch the immutable tag
 after execute succeeds and before install verification:
@@ -360,6 +380,11 @@ Gate behavior:
 - stops on first failure
 - surfaces captured output for failed gates
 - can be invoked directly with `effigy release gates`
+
+Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. This
+is a repository policy gate, not a provider assumption in the generic release
+engine. GitHub-hosted consumers can adopt the same exact-SHA pattern; other
+providers should supply an equivalent gate for their CI system.
 
 Important prepare rule:
 

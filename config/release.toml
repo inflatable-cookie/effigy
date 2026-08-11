@@ -5,6 +5,7 @@ sync-files = ["Cargo.lock"]
 tag-format = "v{version}"
 
 [release.gates]
+ci = "sh scripts/check-release-ci.sh"
 format = "cargo fmt --all -- --check"
 test = "cargo test --workspace"
 qa = "cargo build --bin effigy && ./target/debug/effigy qa:ci"

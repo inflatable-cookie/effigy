@@ -6,8 +6,8 @@ extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
 (g08.018–g08.023), and bounded release-orchestration follow-through in
 `g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`,
-explicit catalog membership in `g08.028`, and unified v0.11 test
-orchestration in `g08.029`.
+explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
+`g08.029`, and exact-candidate pre-release CI proof in `g08.030`.
 
 ## Purpose
 
@@ -65,6 +65,7 @@ This generation should help agents and maintainers answer questions like:
 - [`027-papercuts-discovery-and-capture.md`](./027-papercuts-discovery-and-capture.md)
 - [`028-explicit-catalog-membership.md`](./028-explicit-catalog-membership.md)
 - [`029-unified-test-orchestration-v011.md`](./029-unified-test-orchestration-v011.md)
+- [`030-pre-release-ci-proof.md`](./030-pre-release-ci-proof.md)
 
 ## Design Posture
 
@@ -149,6 +150,7 @@ The dependency suite completed under strict spec `099`. Cards `1065` and
 completed `g08.027` through cards `1070` and `1071`.
 Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 Strict spec `102` and `g08.029` are complete through card `1076`.
+Strict spec `103` and `g08.030` are complete through card `1077`.
 
 ## Batch Cards
 
@@ -200,6 +202,7 @@ Strict spec `102` and `g08.029` are complete through card `1076`.
 - [`1074-delete-discovery-and-align-diagnostics.md`](./batch-cards/1074-delete-discovery-and-align-diagnostics.md)
 - [`1075-prove-migration-and-close-explicit-membership-lane.md`](./batch-cards/1075-prove-migration-and-close-explicit-membership-lane.md)
 - [`1076-unify-test-orchestration-for-v011.md`](./batch-cards/1076-unify-test-orchestration-for-v011.md)
+- [`1077-enforce-pre-release-ci-proof.md`](./batch-cards/1077-enforce-pre-release-ci-proof.md)
 
 ## Current State
 
@@ -213,6 +216,9 @@ Cards `1051` through `1075` and strict specs `100` and `101` are complete.
 
 `g08.029` is complete under contract `038`; card `1076` and strict spec `102`
 are complete.
+
+`g08.030` is complete under contract `039`; card `1077` and strict spec `103`
+make hosted CI evidence for the exact candidate SHA release-blocking.
 
 ## Next Task
 

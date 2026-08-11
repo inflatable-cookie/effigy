@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- Effigy's release protocol now requires a successful manually dispatched
+  `ci.yml` run for the exact candidate source commit before release prepare or
+  execute. The self-hosted release configuration enforces the
+  proof and rejects missing, red, pending, or different-commit CI runs.
+
 ## [0.11.0] - 2026-08-11
 
 ### Breaking

@@ -240,7 +240,18 @@ When a human asks an agent to create a release, the agent must follow these
 steps in order. No step may be skipped. If any step fails, the agent must stop
 and resolve the failure before continuing.
 
-1. **Determine the release version.**
+1. **Prove the candidate commit in hosted CI.**
+   - Start from a clean `main` checkout whose `HEAD` is already pushed.
+   - Record `candidate_sha=$(git rev-parse HEAD)`.
+   - Dispatch `gh workflow run ci.yml --ref main`.
+   - Select the `workflow_dispatch` run for the exact commit:
+     `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion,url`.
+   - Verify `headSha` equals `$candidate_sha`, then run
+     `gh run watch <RUN_ID> --exit-status`.
+   - Stop on a missing, pending, red, cancelled, or different-commit run.
+     A recent green run for another SHA is not release evidence.
+
+2. **Determine the release version.**
    - Run `effigy release status --check-gates` first.
    - Run `effigy release simulate` for the full safe preview.
    - Run `effigy release prepare --plan` for the exact file mutation preview.
@@ -264,7 +275,7 @@ and resolve the failure before continuing.
      release commands.
    - Confirm the target version with the human before proceeding.
 
-2. **Prepare the version bump and changelog.**
+3. **Prepare the version bump and changelog.**
    - Prefer the built-in prepare flow:
      - interactive operator path: `effigy release prepare`
      - non-interactive apply path:
@@ -280,7 +291,7 @@ and resolve the failure before continuing.
      built-in suggestion, use the built-in custom-version path instead:
      `effigy release prepare --yes --check-gates --version X.Y.Z`
 
-3. **Draft release notes.**
+4. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
    - Place in `docs/logs/YYYY-MM/` with the standard naming convention.
    - Use `effigy changelog extract CHANGELOG.md --version X.Y.Z` to extract the
@@ -289,28 +300,31 @@ and resolve the failure before continuing.
      validation, rollback notes, and compatibility context for human review.
    - Present the draft to the human for review before continuing.
 
-4. **Run release gates.**
+5. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
    - Otherwise execute `effigy release gates`.
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
+   - Effigy's `ci` gate rechecks that the successful manual `ci.yml` run
+     belongs to the exact candidate source SHA. Hosted CI proves the source;
+     the remaining local gates prove deterministic release-file mutations.
 
-5. **Commit the version bump and release notes.**
+6. **Commit the version bump and release notes.**
    - Single commit with message: `release: vX.Y.Z`
    - This commit must be on `main`.
 
-6. **Create and push the git tag.**
+7. **Create and push the git tag.**
    - Prefer `effigy release execute --yes`, which creates and pushes the
      annotated tag after committing the prepared files.
    - Pushing the tag does not automatically consume GitHub Actions minutes.
 
-7. **Dispatch the release pipeline.**
+8. **Dispatch the release pipeline.**
    - `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
    - The workflow must reject a missing, lightweight, mismatched, or
      non-semver tag before build work starts.
 
-8. **Verify the release pipeline.**
+9. **Verify the release pipeline.**
    - Monitor CI to confirm the release workflow completes.
    - If CI fails, do not re-tag. Fix the issue, bump to the next `PATCH`, and
      start from step 1.
@@ -321,6 +335,8 @@ and resolve the failure before continuing.
 
 - Treat the release gate pipeline as the single source of truth for publish
   readiness
+- Require successful `workflow_dispatch` CI evidence for the exact clean,
+  pushed candidate SHA before any release preview, prepare, or execute step
 - Use `effigy release gates` to validate before
   any release action
 - Reference exact version numbers, never floating references
