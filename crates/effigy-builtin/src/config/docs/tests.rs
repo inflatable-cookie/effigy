@@ -45,8 +45,10 @@ fn default_test_sections_reference_and_schema_contract_is_stable() {
 
     assert!(reference.contains(&"[test]"));
     assert!(reference.contains(&"cargo_env_match = \"prefix-aware\""));
+    assert!(reference.contains(&"exclude_catalogs = [\"legacy\"]"));
     assert!(reference.contains(&"[test.suites.managed]"));
     assert!(reference.contains(&"teardown_policy = \"always\""));
+    assert!(reference.contains(&"default = false"));
     assert!(reference.contains(&"[test.runners.vitest]"));
     assert!(schema.contains(&"[test]"));
     assert!(schema.contains(&"cargo_env_match = \"prefix-aware\""));

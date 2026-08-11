@@ -25,6 +25,11 @@ pub(super) fn select_builtin_test_suite(
         .iter()
         .map(|plan| plan.runner.clone())
         .collect::<BTreeSet<String>>();
+    let default_runners = runnable
+        .iter()
+        .filter(|plan| plan.is_default)
+        .map(|plan| plan.runner.clone())
+        .collect::<BTreeSet<String>>();
     let requested_suite_raw = passthrough.first().cloned();
     let requested_suite = passthrough.first().and_then(|candidate| {
         normalize_builtin_test_suite(candidate)
@@ -62,7 +67,7 @@ pub(super) fn select_builtin_test_suite(
                 available_runners,
             });
         }
-    } else if !passthrough.is_empty() && available_runners.len() > 1 {
+    } else if !passthrough.is_empty() && default_runners.len() > 1 {
         let first = requested_suite_raw.unwrap_or_else(|| passthrough[0].clone());
         if let Some(suggested_suite) = suggest_suite_name(&first, &available_runners) {
             let remainder = passthrough.iter().skip(1).cloned().collect::<Vec<String>>();
@@ -79,7 +84,7 @@ pub(super) fn select_builtin_test_suite(
                 available_runners,
             });
         }
-        let available = render_available_suites(&available_runners);
+        let available = render_available_suites(&default_runners);
         let user_args = passthrough.join(" ");
         let suggested = available_runners
             .iter()
@@ -90,8 +95,18 @@ pub(super) fn select_builtin_test_suite(
             message: format!(
                 "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
             ),
-            available_runners,
+            available_runners: default_runners,
         });
+    }
+
+    if requested_suite.is_none() {
+        runnable.retain(|entry| entry.is_default);
+        if runnable.is_empty() {
+            return Err(BuiltinSuiteSelectionError {
+                message: "built-in `test` has no default suites; select an on-demand suite explicitly or mark one suite as default".to_owned(),
+                available_runners,
+            });
+        }
     }
 
     Ok(BuiltinSuiteSelection {

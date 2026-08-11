@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::test::planning::BuiltinTestTarget;
+use crate::test::planning::BuiltinTestTargetSet;
 use crate::BuiltinError;
 use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::LoadedCatalog;
@@ -16,7 +16,7 @@ pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Result<Vec<BuiltinTestTarget>, BuiltinError> {
+) -> Result<BuiltinTestTargetSet, BuiltinError> {
     targets::resolve_builtin_test_targets(prefix, resolved_root, catalogs)
 }
 

@@ -17,6 +17,7 @@ mod runnable;
 
 pub(super) use model::{
     BuiltinResolvedPlan, BuiltinTestCliFlags, BuiltinTestRunnable, BuiltinTestTarget,
+    BuiltinTestTargetSet,
 };
 
 pub(super) fn extract_builtin_test_flags(
@@ -42,7 +43,7 @@ pub(super) fn resolve_builtin_test_targets(
     selector: &TaskSelector,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Result<Vec<BuiltinTestTarget>, BuiltinError> {
+) -> Result<BuiltinTestTargetSet, BuiltinError> {
     resolve::resolve_builtin_test_targets(selector.prefix.as_deref(), resolved_root, catalogs)
 }
 

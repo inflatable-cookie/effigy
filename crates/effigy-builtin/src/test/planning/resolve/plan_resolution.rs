@@ -47,6 +47,7 @@ pub(super) fn resolve_target_test_plans(
                          teardown_command,
                          teardown_steps,
                          teardown_policy,
+                         is_default,
                      }| BuiltinResolvedPlan {
                         suite: suite.clone(),
                         command,
@@ -58,6 +59,7 @@ pub(super) fn resolve_target_test_plans(
                         teardown_command,
                         teardown_steps,
                         teardown_policy,
+                        is_default,
                         evidence: vec![format!("test.suites.{suite}")],
                     },
                 )
@@ -83,6 +85,7 @@ pub(super) fn resolve_target_test_plans(
                 teardown_command: None,
                 teardown_steps: 0,
                 teardown_policy: effigy_manifest::ManifestTestSuiteTeardownPolicy::OnSuccess,
+                is_default: true,
                 evidence: plan.evidence,
             })
             .collect::<Vec<BuiltinResolvedPlan>>(),

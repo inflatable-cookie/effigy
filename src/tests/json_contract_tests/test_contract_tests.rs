@@ -25,6 +25,8 @@ fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields()
     let parsed = parse_json(&out);
     assert_schema_v1(&parsed, "effigy.test.plan.v1");
     assert!(parsed["targets"].is_array());
+    assert!(parsed["excluded_targets"].is_array());
+    assert!(parsed["warnings"].is_array());
     let first = parsed["targets"]
         .as_array()
         .and_then(|targets| targets.first())
@@ -32,6 +34,7 @@ fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields()
     assert!(first["cargo_env_match"].is_string());
     assert!(first["suite_source"].is_string());
     assert!(first["available_suites"].is_array());
+    assert!(first["default_suites"].is_array());
     assert!(first["fallback_chain"].is_array());
 }
 

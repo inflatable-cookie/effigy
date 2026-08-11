@@ -20,8 +20,9 @@ pub(super) fn try_run_builtin_test(
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, BuiltinError> {
     let (flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
-    let targets = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs)?;
-    let runnable = planning::collect_builtin_test_runnable_targets(&targets);
+    let target_set = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs)?;
+    let targets = &target_set.targets;
+    let runnable = planning::collect_builtin_test_runnable_targets(targets);
     if runnable.is_empty() {
         return Ok(None);
     }
@@ -41,7 +42,7 @@ pub(super) fn try_run_builtin_test(
         return render::render_builtin_test_plan(
             task,
             resolved_root,
-            &targets,
+            &target_set,
             suite_selection.requested_suite.as_deref(),
             &suite_selection.passthrough,
             suite_selection.runnable.len(),
@@ -63,7 +64,7 @@ pub(super) fn try_run_builtin_test(
     };
     render::finalize_builtin_test_outcome(
         &results,
-        &targets,
+        targets,
         suite_selection.requested_suite.as_deref(),
         &suite_selection.passthrough,
         flags.verbose_results,

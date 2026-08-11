@@ -23,6 +23,10 @@ manifest tasks or **built-ins** (`test`, `doctor`, `scan`, `graph`, …).
 test routes under `[test.suites]`. Prefer `effigy <selector>` over raw `cargo` / `npm` /
 `docker compose` when Effigy covers the path.
 
+Use `test.suites.<name>.default = false` for focused suites that should run only
+when named. Use root `test.exclude_catalogs` when a parent workspace already
+owns a child catalog's tests; direct `catalog/test` selection still works.
+
 ## Footguns (read first)
 
 - **Never modify `.github/workflows/`** without explicit human approval.

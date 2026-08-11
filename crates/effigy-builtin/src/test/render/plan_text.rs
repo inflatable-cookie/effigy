@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::test::planning::BuiltinTestTarget;
+use crate::test::planning::BuiltinTestTargetSet;
 use crate::test::suite_selection::render_available_suites;
 use crate::BuiltinError;
 use effigy_cli::TaskInvocation;
@@ -13,7 +13,7 @@ use super::plan_projection::project_target_plan;
 pub(super) fn render_builtin_test_plan_text(
     task: &TaskInvocation,
     root: &Path,
-    targets: &[BuiltinTestTarget],
+    target_set: &BuiltinTestTargetSet,
     requested_suite: Option<&str>,
     passthrough: &[String],
     runnable_count: usize,
@@ -27,24 +27,41 @@ pub(super) fn render_builtin_test_plan_text(
         KeyValue::new("targets", runnable_count.to_string()),
         KeyValue::new("runtime", runtime_mode.to_owned()),
     ])?;
+    if !target_set.excluded_targets.is_empty() {
+        renderer.text("")?;
+        renderer.bullet_list("excluded-targets", &target_set.excluded_targets)?;
+    }
+    if !target_set.warnings.is_empty() {
+        renderer.text("")?;
+        for warning in &target_set.warnings {
+            renderer.notice(NoticeLevel::Warning, warning)?;
+        }
+    }
     renderer.text("")?;
     renderer.section("Target Summary")?;
-    let summary_lines = targets
+    let summary_lines = target_set
+        .targets
         .iter()
         .map(|target| {
             let projection = project_target_plan(target, requested_suite, passthrough);
             let available_suites = projection.available_suites.join(", ");
+            let default_suites = projection.default_suites.join(", ");
             format!(
-                "{}: source={} suites={} cargo-env-match={}",
-                target.name, target.suite_source, available_suites, projection.cargo_env_match
+                "{}: source={} suites={} defaults={} cargo-env-match={}",
+                target.name,
+                target.suite_source,
+                available_suites,
+                default_suites,
+                projection.cargo_env_match
             )
         })
         .collect::<Vec<String>>();
     renderer.bullet_list("targets", &summary_lines)?;
     renderer.text("")?;
-    for target in targets {
+    for target in &target_set.targets {
         let projection = project_target_plan(target, requested_suite, passthrough);
         let available_suites = projection.available_suites.join(", ");
+        let default_suites = projection.default_suites.join(", ");
         renderer.section(&format!("Target: {}", target.name))?;
         if !projection.selected_suites.is_empty() {
             let runners = projection.selected_suites.join(", ");
@@ -52,6 +69,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("root", target.root.display().to_string()),
                 KeyValue::new("runner", runners),
                 KeyValue::new("available-suites", available_suites.clone()),
+                KeyValue::new("default-suites", default_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
                 KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
             ])?;
@@ -67,8 +85,9 @@ pub(super) fn render_builtin_test_plan_text(
                     .iter()
                     .map(|suite| {
                         format!(
-                            "{}: suite-env={} suite-env-files={} setup-steps={} teardown-steps={} teardown-policy={}",
+                            "{}: default={} suite-env={} suite-env-files={} setup-steps={} teardown-steps={} teardown-policy={}",
                             suite.suite,
+                            suite.is_default,
                             suite.suite_env.as_deref().unwrap_or("<none>"),
                             render_suite_env_files(&suite.suite_env_files),
                             suite.setup_steps,
@@ -83,6 +102,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("root", target.root.display().to_string()),
                 KeyValue::new("runner", "<none>".to_owned()),
                 KeyValue::new("available-suites", available_suites.clone()),
+                KeyValue::new("default-suites", default_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
                 KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
                 KeyValue::new("command", "<none>".to_owned()),

@@ -27,6 +27,7 @@ pub(super) struct BuiltinConfiguredSuite {
     pub(super) teardown_command: Option<String>,
     pub(super) teardown_steps: usize,
     pub(super) teardown_policy: ManifestTestSuiteTeardownPolicy,
+    pub(super) is_default: bool,
 }
 
 pub(super) struct BuiltinTestTargetConfig {
@@ -153,6 +154,7 @@ fn resolve_configured_suites(
                 teardown_command,
                 teardown_steps: suite.teardown().len(),
                 teardown_policy: suite.teardown_policy(),
+                is_default: suite.is_default(),
             })
         })
         .collect::<Result<Vec<BuiltinConfiguredSuite>, BuiltinError>>()

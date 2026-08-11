@@ -95,6 +95,36 @@ integration = "sh -lc 'printf integration > \"{}\"'"
 }
 
 #[test]
+fn run_manifest_task_builtin_test_skips_on_demand_suites_by_default() {
+    let root = temp_workspace("builtin-test-on-demand-suite");
+    let unit_marker = root.join("unit-suite.log");
+    let focused_marker = root.join("focused-suite.log");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"[test.suites.unit]
+run = "sh -lc 'printf unit > \"{}\"'"
+
+[test.suites.focused]
+run = "sh -lc 'printf focused > \"{}\"'"
+default = false
+"#,
+            unit_marker.display(),
+            focused_marker.display()
+        ),
+    );
+
+    let default_out = run_builtin_ok(root.to_path_buf(), "test", &[]);
+    assert_output_contains_all(&default_out, &["Test Results", "root/unit: ok"]);
+    assert_path_exists(&unit_marker, "default suite marker");
+    assert_path_missing(&focused_marker, "on-demand suite marker");
+
+    let focused_out = run_builtin_ok(root, "test", &["focused"]);
+    assert_output_contains_all(&focused_out, &["Test Results", "root/focused: ok"]);
+    assert_path_exists(&focused_marker, "selected on-demand suite marker");
+}
+
+#[test]
 fn run_manifest_task_builtin_test_multi_suite_selector_errors_include_recovery_hints() {
     let cases = [
         BuiltinInvocationCase {

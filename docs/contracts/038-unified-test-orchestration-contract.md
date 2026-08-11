@@ -36,6 +36,10 @@ Vitest plus one Rust runner (`cargo nextest` preferred, `cargo test` fallback).
   running setup, suites, teardown, task references, or scripts.
 - runner passthrough is allowed only when selection resolves unambiguously.
 
+Suites are on the default board unless a full suite table sets
+`default = false`. On-demand suites remain available through
+`effigy test <suite>` but do not run for bare `effigy test`.
+
 `--plan` is a hard no-execution boundary. Future routing or configuration
 changes may enrich its output but may not delegate to an executable task.
 
@@ -49,6 +53,20 @@ dependencies, timeouts, and retries stay declarative under `[test]`.
 Suite planning renders the resolved target, source, suite, command or step
 chain, cwd, lifecycle stages, and forwarded arguments. Opaque runtime behavior
 must be labelled; planning must not execute it to discover more detail.
+
+## Workspace Ownership
+
+Root fanout includes declared catalogs by default. When a parent suite already
+owns a nested workspace, exclude the child alias explicitly:
+
+```toml
+[test]
+exclude_catalogs = ["api"]
+```
+
+The exclusion applies only to root fanout. `effigy api/test` remains available.
+Plans report excluded aliases and warn about nested Cargo targets that may run
+overlapping tests.
 
 ## Migration
 
@@ -86,6 +104,8 @@ must name this migration directly.
 - mixed Rust and TypeScript roots plan and run both supported ecosystems
 - named suites, catalog targeting, suite targeting, lifecycle steps, task
   references, Rhai, and passthrough retain focused coverage
+- on-demand suites stay selectable without joining the default board
+- root exclusions preserve direct catalog selection and plan visibility
 - migration preview/apply writes `[test.suites]`, never `tasks.test`
 - text and JSON plan contracts remain aligned
 

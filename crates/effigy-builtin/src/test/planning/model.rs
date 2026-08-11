@@ -15,6 +15,7 @@ pub(crate) struct BuiltinResolvedPlan {
     pub(crate) teardown_command: Option<String>,
     pub(crate) teardown_steps: usize,
     pub(crate) teardown_policy: ManifestTestSuiteTeardownPolicy,
+    pub(crate) is_default: bool,
     pub(crate) evidence: Vec<String>,
 }
 
@@ -49,4 +50,12 @@ pub(crate) struct BuiltinTestRunnable {
     pub(crate) setup_command: Option<String>,
     pub(crate) teardown_command: Option<String>,
     pub(crate) teardown_policy: ManifestTestSuiteTeardownPolicy,
+    pub(crate) is_default: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BuiltinTestTargetSet {
+    pub(crate) targets: Vec<BuiltinTestTarget>,
+    pub(crate) excluded_targets: Vec<String>,
+    pub(crate) warnings: Vec<String>,
 }

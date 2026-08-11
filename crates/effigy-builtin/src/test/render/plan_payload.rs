@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::test::planning::BuiltinTestTarget;
+use crate::test::planning::BuiltinTestTargetSet;
 use effigy_cli::TaskInvocation;
 
 use super::super::super::super::response::schema_payload_versioned;
@@ -12,12 +12,13 @@ use super::plan_projection::project_target_plan;
 pub(super) fn build_builtin_test_plan_payload(
     task: &TaskInvocation,
     resolved_root: &Path,
-    targets: &[BuiltinTestTarget],
+    target_set: &BuiltinTestTargetSet,
     requested_suite: Option<&str>,
     passthrough: &[String],
     runtime_mode: &str,
 ) -> serde_json::Value {
-    let target_values = targets
+    let target_values = target_set
+        .targets
         .iter()
         .map(|target| {
             let projection = project_target_plan(target, requested_suite, passthrough);
@@ -28,6 +29,7 @@ pub(super) fn build_builtin_test_plan_payload(
                 "cargo_env_match": projection.cargo_env_match,
                 "available_suites": projection.available_suites,
                 "selected_suites": projection.selected_suites,
+                "default_suites": projection.default_suites,
                 "commands": projection.commands,
                 "evidence": projection.evidence,
                 "suite_details": projection.suite_details.iter().map(|suite| json!({
@@ -39,6 +41,7 @@ pub(super) fn build_builtin_test_plan_payload(
                     "setup_steps": suite.setup_steps,
                     "teardown_steps": suite.teardown_steps,
                     "teardown_policy": suite.teardown_policy,
+                    "default": suite.is_default,
                 })).collect::<Vec<serde_json::Value>>(),
                 "fallback_chain": target.fallback_chain,
             })
@@ -51,6 +54,8 @@ pub(super) fn build_builtin_test_plan_payload(
             "root": resolved_root.display().to_string(),
             "runtime": runtime_mode,
             "targets": target_values,
+            "excluded_targets": target_set.excluded_targets,
+            "warnings": target_set.warnings,
             "recovery": serde_json::Value::Null,
         }),
     )

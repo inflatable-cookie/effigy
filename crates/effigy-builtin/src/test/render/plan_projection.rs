@@ -14,11 +14,13 @@ pub(super) struct ProjectedSuitePlan {
     pub(super) setup_steps: usize,
     pub(super) teardown_steps: usize,
     pub(super) teardown_policy: String,
+    pub(super) is_default: bool,
 }
 
 pub(super) struct ProjectedTargetPlan {
     pub(super) available_suites: Vec<String>,
     pub(super) selected_suites: Vec<String>,
+    pub(super) default_suites: Vec<String>,
     pub(super) commands: Vec<String>,
     pub(super) evidence: Vec<String>,
     pub(super) suite_details: Vec<ProjectedSuitePlan>,
@@ -42,6 +44,12 @@ pub(super) fn project_target_plan(
         .map(|arg| shell_quote(arg))
         .collect::<Vec<String>>()
         .join(" ");
+    let default_suites = target
+        .plans
+        .iter()
+        .filter(|plan| plan.is_default)
+        .map(|plan| plan.suite.clone())
+        .collect::<Vec<String>>();
 
     let mut selected_suites = Vec::<String>::new();
     let mut commands = Vec::<String>::new();
@@ -49,6 +57,9 @@ pub(super) fn project_target_plan(
     let mut suite_details = Vec::<ProjectedSuitePlan>::new();
     for plan in &target.plans {
         if requested_suite.is_some_and(|requested| plan.suite != requested) {
+            continue;
+        }
+        if requested_suite.is_none() && !plan.is_default {
             continue;
         }
         let command = if args_rendered.is_empty() {
@@ -73,12 +84,14 @@ pub(super) fn project_target_plan(
                 ManifestTestSuiteTeardownPolicy::Always => "always".to_owned(),
                 ManifestTestSuiteTeardownPolicy::OnSuccess => "on-success".to_owned(),
             },
+            is_default: plan.is_default,
         });
     }
 
     ProjectedTargetPlan {
         available_suites,
         selected_suites,
+        default_suites,
         commands,
         evidence,
         suite_details,

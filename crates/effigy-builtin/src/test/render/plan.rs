@@ -12,7 +12,7 @@ use effigy_cli::TaskInvocation;
 
 use super::super::super::response::render_text_or_json_lazy;
 use super::super::execution::should_run_builtin_test_tui;
-use super::super::planning::{BuiltinTestCliFlags, BuiltinTestTarget};
+use super::super::planning::{BuiltinTestCliFlags, BuiltinTestTargetSet};
 use super::super::suite_selection::BuiltinSuiteSelectionError;
 use crate::BuiltinError;
 
@@ -41,7 +41,7 @@ pub(crate) fn render_suite_selection_failure(
 pub(crate) fn render_builtin_test_plan(
     task: &TaskInvocation,
     root: &Path,
-    targets: &[BuiltinTestTarget],
+    target_set: &BuiltinTestTargetSet,
     requested_suite: Option<&str>,
     passthrough: &[String],
     runnable_count: usize,
@@ -58,7 +58,7 @@ pub(crate) fn render_builtin_test_plan(
             render_builtin_test_plan_text(
                 task,
                 root,
-                targets,
+                target_set,
                 requested_suite,
                 passthrough,
                 runnable_count,
@@ -69,7 +69,7 @@ pub(crate) fn render_builtin_test_plan(
             build_builtin_test_plan_payload(
                 task,
                 root,
-                targets,
+                target_set,
                 requested_suite,
                 passthrough,
                 runtime_mode,

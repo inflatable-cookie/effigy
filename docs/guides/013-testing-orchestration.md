@@ -58,6 +58,20 @@ Operational notes:
 - use `effigy test managed -- --package my-crate --test my_test` when forwarding raw runner args
 - use `effigy test --plan` to inspect `suite-env`, `suite-env-files`, `setup-steps`, `teardown-steps`, and `teardown-policy`
 
+Focused suites can stay off the default board:
+
+```toml
+[test.suites.workspace]
+run = "cargo test --workspace"
+
+[test.suites.controller]
+run = "cargo test -p controller"
+default = false
+```
+
+Bare `effigy test` runs `workspace`; `effigy test controller` runs the focused
+suite.
+
 ## Built-in Cargo Env Auto-Apply
 
 When built-in `test` runs cargo suites (detected or configured), Effigy automatically applies manifest `[env]` entries whose keys start with `CARGO_`.
@@ -131,7 +145,14 @@ Concurrency is configured in root `effigy.toml`:
 ```toml
 [test]
 max_parallel = 2
+exclude_catalogs = ["api"]
 ```
+
+`exclude_catalogs` removes aliases only from root fanout. Direct selection such
+as `effigy api/test` still works. Use it when a parent workspace suite already
+covers a nested child or when mounted sibling catalogs are outside the repo's
+test board. `test --plan` reports exclusions and warns about likely nested
+Cargo overlap.
 
 If unset, Effigy defaults to `3` workers.
 

@@ -15,6 +15,11 @@ During v0.x, MINOR bumps may include breaking changes.
   resolves those sequences without executing setup, suite, or teardown work.
 
 ### Changed
+- Built-in test plans now distinguish default-board suites from focused
+  on-demand suites through `test.suites.<name>.default = false`. Root test
+  fanout can omit catalogs with `test.exclude_catalogs` while direct
+  `catalog/test` selection remains available. Plans report exclusions and warn
+  when nested Cargo targets appear to cover overlapping workspaces.
 - Manually dispatched binary release runs now include the selected version tag
   in their GitHub Actions title.
 

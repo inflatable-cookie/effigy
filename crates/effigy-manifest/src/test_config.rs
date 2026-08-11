@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::task_runtime::{
     ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv,
@@ -11,6 +11,8 @@ pub struct ManifestTestConfig {
     pub max_parallel: Option<usize>,
     #[serde(default)]
     pub cargo_env_match: ManifestCargoEnvMatchMode,
+    #[serde(default)]
+    pub exclude_catalogs: BTreeSet<String>,
     #[serde(default)]
     pub runners: BTreeMap<String, ManifestTestRunnerOverride>,
     #[serde(default)]
@@ -71,6 +73,8 @@ pub enum ManifestTestSuite {
 #[serde(deny_unknown_fields)]
 pub struct ManifestTestSuiteTable {
     pub run: ManifestManagedRun,
+    #[serde(default = "default_true")]
+    pub default: bool,
     #[serde(default)]
     pub env: Option<ManifestRunStepEnv>,
     #[serde(default)]
@@ -83,6 +87,10 @@ pub struct ManifestTestSuiteTable {
     pub teardown_policy: ManifestTestSuiteTeardownPolicy,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ManifestTestSuiteTeardownPolicy {
@@ -93,6 +101,13 @@ pub enum ManifestTestSuiteTeardownPolicy {
 
 #[allow(dead_code)]
 impl ManifestTestSuite {
+    pub fn is_default(&self) -> bool {
+        match self {
+            ManifestTestSuite::Command(_) => true,
+            ManifestTestSuite::Config(table) => table.default,
+        }
+    }
+
     pub fn command(&self) -> Option<&str> {
         match self {
             ManifestTestSuite::Command(command) => Some(command.as_str()),
