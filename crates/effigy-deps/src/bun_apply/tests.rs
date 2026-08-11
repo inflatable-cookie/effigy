@@ -435,8 +435,16 @@ fn duplicate_peer_resolution_fails_verification_and_rolls_back_link() {
         &fixture.packages[0].package_path.join("package.json"),
         "{\"name\":\"underlay\",\"version\":\"0.1.0\",\"peerDependencies\":{\"svelte\":\"^5\"}}\n",
     );
-    fs::create_dir_all(fixture.repo.join("node_modules/svelte")).unwrap();
-    fs::create_dir_all(fixture.packages[0].package_path.join("node_modules/svelte")).unwrap();
+    write(
+        &fixture.repo.join("node_modules/svelte/package.json"),
+        "{\"name\":\"svelte\",\"version\":\"5.56.8\"}\n",
+    );
+    write(
+        &fixture.packages[0]
+            .package_path
+            .join("node_modules/svelte/package.json"),
+        "{\"name\":\"svelte\",\"version\":\"5.53.10\"}\n",
+    );
     let process = FixtureProcess::new(&fixture.home);
     let report = apply_bun_link_plan(
         plan(&fixture, false),
@@ -466,6 +474,48 @@ fn duplicate_peer_resolution_fails_verification_and_rolls_back_link() {
             .unwrap(),
         BunPathObservation::Missing
     );
+}
+
+#[test]
+fn same_version_peer_paths_across_repos_verify_as_shared() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    write(
+        &fixture.packages[0].package_path.join("package.json"),
+        "{\"name\":\"underlay\",\"version\":\"0.1.0\",\"peerDependencies\":{\"svelte\":\"^5\"}}\n",
+    );
+    write(
+        &fixture.repo.join("node_modules/svelte/package.json"),
+        "{\"name\":\"svelte\",\"version\":\"5.56.8\"}\n",
+    );
+    write(
+        &fixture.packages[0]
+            .package_path
+            .join("node_modules/.bun/svelte@5.56.8/node_modules/svelte/package.json"),
+        "{\"name\":\"svelte\",\"version\":\"5.56.8\"}\n",
+    );
+    symlink(
+        fixture.packages[0]
+            .package_path
+            .join("node_modules/.bun/svelte@5.56.8/node_modules/svelte"),
+        fixture.packages[0].package_path.join("node_modules/svelte"),
+    )
+    .unwrap();
+    let process = FixtureProcess::new(&fixture.home);
+    let report = apply_bun_link_plan(
+        plan(&fixture, false),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::Applied);
+    assert_eq!(report.peer_diagnostics.len(), 1);
+    assert_eq!(
+        report.peer_diagnostics[0].status,
+        BunPeerResolutionStatus::Shared
+    );
+    assert!(!report.rollback.attempted);
 }
 
 #[test]

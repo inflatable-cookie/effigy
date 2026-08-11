@@ -140,10 +140,12 @@ error because duplicate shared types can result. Managed re-link restores
 either shape idempotently. An unmanaged partial closure is rejected because
 Effigy has no desired-state ownership proof.
 
-Raw-source symlinks can also resolve a framework peer twice. Status and doctor
-report both exact paths for cases such as Svelte. Remove the library-local peer
-copy and hoist or dedupe the peer so consumer and library resolve one physical
-path.
+Raw-source links can resolve a framework peer from two physical trees (consumer
+hoist vs library `node_modules` / `.bun`). Same peer version is treated as
+shared and does not fail the link. Mismatched peer versions are duplicate
+errors — status and doctor report both paths and versions. Align the library
+peer (or remove the mismatched local copy) so both resolve to one compatible
+version.
 
 Unlink removes only consumer symlinks that still target the expected library.
 It unregisters a package only when Effigy created the registration, the target
@@ -183,7 +185,8 @@ Key states:
 | Cargo lock contains linked path resolution | error | do not commit; unlink before handoff |
 | complete Bun symlink loss | warning | re-run the same Bun link command |
 | partial Bun closure | error | re-link when Effigy desired state exists |
-| duplicate Bun peer paths | error | remove local peer copy and hoist/dedupe |
+| same-version Bun peer paths across repos | healthy/info | no action |
+| mismatched Bun peer versions | error | align or remove the local peer copy |
 | library checkout missing | error | restore the checkout or unlink using the recorded path |
 | compatible pre-Effigy Cargo patch | migration | link to adopt it, or unlink to remove it directly |
 | mixed/mismatched Cargo patch or foreign Bun registration | error | resolve ownership manually; Effigy will not overwrite it |

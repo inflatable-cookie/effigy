@@ -1396,8 +1396,17 @@ mod tests {
                 &fixture.consumer.path().join("bun.lock"),
                 "\"@scope/core\" = \"link:../core\"\n",
             );
-            fs::create_dir_all(fixture.consumer.path().join("node_modules/svelte")).unwrap();
-            fs::create_dir_all(package.local_path.join("node_modules/svelte")).unwrap();
+            write(
+                &fixture
+                    .consumer
+                    .path()
+                    .join("node_modules/svelte/package.json"),
+                "{\"name\":\"svelte\",\"version\":\"5.56.8\"}\n",
+            );
+            write(
+                &package.local_path.join("node_modules/svelte/package.json"),
+                "{\"name\":\"svelte\",\"version\":\"5.53.10\"}\n",
+            );
             let manifest_before = fs::read(fixture.consumer.path().join("package.json")).unwrap();
             let lock_before = fs::read(fixture.consumer.path().join("bun.lock")).unwrap();
 

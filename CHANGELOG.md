@@ -24,6 +24,10 @@ During v0.x, MINOR bumps may include breaking changes.
   in their GitHub Actions title.
 
 ### Fixed
+- `effigy deps link bun` now treats same-version peer installs across consumer
+  and library trees (including Bun `.bun` copies) as shared instead of
+  duplicate. Only mismatched peer versions fail verification, status, and
+  doctor.
 - Mutating `effigy deps` commands now exit non-zero when their operation report
   contains errors or a failed outcome, while preserving the detailed human or
   JSON report. Shell recovery such as `effigy deps link bun ... || recovery`

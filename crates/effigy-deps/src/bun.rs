@@ -101,15 +101,33 @@ pub fn inspect_bun_peer_resolutions(
                 (Some(consumer), Some(local)) if consumer == local => {
                     (BunPeerResolutionStatus::Shared, None)
                 }
-                (Some(consumer), Some(local)) => (
-                    BunPeerResolutionStatus::Duplicate,
-                    Some(format!(
-                        "peer `{peer}` resolves twice for `{}`: consumer `{}` and local package `{}`; remove the local peer copy and hoist/dedupe `{peer}` so both resolve to one path",
-                        package.name,
-                        consumer.display(),
-                        local.display()
-                    )),
-                ),
+                (Some(consumer), Some(local)) => {
+                    // Cross-repo links normally resolve the same peer version
+                    // from two physical trees (consumer hoist vs library
+                    // `node_modules`/`.bun`). That is Shared when versions
+                    // match; only mismatched peer installs are Duplicate.
+                    match (
+                        read_package_version(consumer),
+                        read_package_version(local),
+                    ) {
+                        (Some(consumer_version), Some(local_version))
+                            if consumer_version == local_version =>
+                        {
+                            (BunPeerResolutionStatus::Shared, None)
+                        }
+                        (consumer_version, local_version) => (
+                            BunPeerResolutionStatus::Duplicate,
+                            Some(format!(
+                                "peer `{peer}` resolves twice for `{}`: consumer `{}`{} and local package `{}`{}; remove the mismatched local peer copy and hoist/dedupe `{peer}` so both resolve to one compatible version",
+                                package.name,
+                                consumer.display(),
+                                version_suffix(consumer_version.as_deref()),
+                                local.display(),
+                                version_suffix(local_version.as_deref()),
+                            )),
+                        ),
+                    }
+                }
                 (Some(_), None) => (BunPeerResolutionStatus::ConsumerOnly, None),
                 (None, Some(local)) => (
                     BunPeerResolutionStatus::LocalOnly,
@@ -148,6 +166,19 @@ fn resolve_node_module(start: &Path, package_name: &str) -> Option<PathBuf> {
         .ancestors()
         .map(|ancestor| ancestor.join("node_modules").join(package_name))
         .find_map(|candidate| fs::canonicalize(candidate).ok())
+}
+
+fn read_package_version(package_root: &Path) -> Option<String> {
+    let manifest_path = package_root.join("package.json");
+    let raw = fs::read(&manifest_path).ok()?;
+    let manifest: PackageManifest = serde_json::from_slice(&raw).ok()?;
+    manifest.version.filter(|version| !version.is_empty())
+}
+
+fn version_suffix(version: Option<&str>) -> String {
+    version
+        .map(|version| format!(" (version {version})"))
+        .unwrap_or_default()
 }
 
 fn dependency_requirement(value: &serde_json::Value) -> String {
@@ -470,8 +501,14 @@ mod tests {
             &package.join("package.json"),
             r#"{"name":"@acme/ui","peerDependencies":{"svelte":"^5.0.0"}}"#,
         );
-        fs::create_dir_all(consumer.path().join("node_modules/svelte")).unwrap();
-        fs::create_dir_all(package.join("node_modules/svelte")).unwrap();
+        write(
+            &consumer.path().join("node_modules/svelte/package.json"),
+            r#"{"name":"svelte","version":"5.56.8"}"#,
+        );
+        write(
+            &package.join("node_modules/svelte/package.json"),
+            r#"{"name":"svelte","version":"5.53.10"}"#,
+        );
         let packages = vec![DependencyPackage {
             name: "@acme/ui".to_owned(),
             local_path: fs::canonicalize(&package).unwrap(),
@@ -486,6 +523,24 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("hoist/dedupe `svelte`"));
+        assert!(duplicate[0]
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("version 5.56.8"));
+        assert!(duplicate[0]
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("version 5.53.10"));
+
+        write(
+            &package.join("node_modules/svelte/package.json"),
+            r#"{"name":"svelte","version":"5.56.8"}"#,
+        );
+        let same_version = inspect_bun_peer_resolutions(consumer.path(), &packages).unwrap();
+        assert_eq!(same_version[0].status, BunPeerResolutionStatus::Shared);
+        assert!(same_version[0].message.is_none());
 
         fs::remove_dir_all(package.join("node_modules/svelte")).unwrap();
         symlink(
