@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
 use effigy_deps::{
     execute_bun_link, execute_bun_unlink, execute_cargo_link, execute_cargo_unlink,
-    inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome, BunRegistrationIndexStore,
+    inspect_dependency_status, BunLinkOperationReport, BunRegistrationIndexStore,
     BunUnlinkOperationReport, CargoLinkOperationReport, CargoUnlinkOperationReport,
     CommittedSource, DependencyHealthSeverity, DependencyLinkReport, DependencyStatusReport,
     ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore, StdReadOnlyProcess,
@@ -98,20 +98,13 @@ fn run_bun_link(
     let report = execute_bun_link(&repo_root, library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
     let rendered = render_bun_link(&repo_root, &report, output_json);
-    if !report.errors.is_empty()
-        || !matches!(
-            report.outcome,
-            BunLinkOutcome::DryRun | BunLinkOutcome::Applied
-        )
-    {
-        return Err(RunnerError::DepsOperationNonZero {
-            command: "deps link bun",
-            outcome: report.outcome.as_str(),
-            error_count: report.errors.len(),
-            rendered,
-        });
-    }
-    Ok(rendered)
+    finish_deps_operation(
+        "deps link bun",
+        report.outcome.as_str(),
+        report.outcome.is_success(),
+        &report.errors,
+        rendered,
+    )
 }
 
 fn render_bun_link(repo_root: &Path, report: &BunLinkOperationReport, output_json: bool) -> String {
@@ -262,7 +255,14 @@ fn run_bun_unlink(
     let repo_root = resolved.resolved_root;
     let report = execute_bun_unlink(&repo_root, library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
-    Ok(render_bun_unlink(&repo_root, &report, output_json))
+    let rendered = render_bun_unlink(&repo_root, &report, output_json);
+    finish_deps_operation(
+        "deps unlink bun",
+        report.outcome.as_str(),
+        report.outcome.is_success(),
+        &report.errors,
+        rendered,
+    )
 }
 
 fn render_bun_unlink(
@@ -400,7 +400,14 @@ fn run_cargo_unlink(
     let repo_root = resolved.resolved_root;
     let report = execute_cargo_unlink(&repo_root, library_path, dry_run, &StdReadOnlyProcess)
         .map_err(map_deps_error)?;
-    Ok(render_cargo_unlink(&repo_root, &report, output_json))
+    let rendered = render_cargo_unlink(&repo_root, &report, output_json);
+    finish_deps_operation(
+        "deps unlink cargo",
+        report.outcome.as_str(),
+        report.outcome.is_success(),
+        &report.errors,
+        rendered,
+    )
 }
 
 fn render_cargo_unlink(
@@ -547,7 +554,14 @@ fn run_cargo_link(
     let repo_root = resolved.resolved_root;
     let report = execute_cargo_link(&repo_root, library_path, dry_run, &StdReadOnlyProcess)
         .map_err(map_deps_error)?;
-    Ok(render_cargo_link(&repo_root, &report, output_json))
+    let rendered = render_cargo_link(&repo_root, &report, output_json);
+    finish_deps_operation(
+        "deps link cargo",
+        report.outcome.as_str(),
+        report.outcome.is_success(),
+        &report.errors,
+        rendered,
+    )
 }
 
 fn render_cargo_link(
@@ -675,7 +689,30 @@ fn render_cargo_link(
             report.rollback.failures.len()
         ));
     }
+    if !report.errors.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("Errors ({})", report.errors.len()));
+        lines.extend(report.errors.iter().map(|error| format!("- {error}")));
+    }
     lines.join("\n")
+}
+
+fn finish_deps_operation(
+    command: &'static str,
+    outcome: &'static str,
+    outcome_succeeded: bool,
+    errors: &[String],
+    rendered: String,
+) -> Result<String, RunnerError> {
+    if outcome_succeeded && errors.is_empty() {
+        return Ok(rendered);
+    }
+    Err(RunnerError::DepsOperationNonZero {
+        command,
+        outcome,
+        error_count: errors.len(),
+        rendered,
+    })
 }
 
 fn render_snapshot(lines: &mut Vec<String>, label: &str, snapshot: Option<&str>) {
@@ -873,10 +910,11 @@ mod tests {
     use std::process::Command;
 
     use effigy_deps::{
-        BunPeerDiagnostic, BunPeerResolutionStatus, CargoLinkOwnership, ConsumerRoot,
-        DependencyLinkKey, DependencyPackage, DependencyVerification, DepsError,
-        DesiredDependencyLink, DriftReason, LinkMechanism, ObservedDependencyLink, ProcessOutput,
-        ProcessRequest, RepoLinkState, VerificationStatus,
+        BunLinkOutcome, BunPeerDiagnostic, BunPeerResolutionStatus, BunUnlinkOutcome,
+        CargoLinkOutcome, CargoLinkOwnership, CargoUnlinkOutcome, ConsumerRoot, DependencyLinkKey,
+        DependencyPackage, DependencyVerification, DepsError, DesiredDependencyLink, DriftReason,
+        LinkMechanism, ObservedDependencyLink, ProcessOutput, ProcessRequest, RepoLinkState,
+        VerificationStatus,
     };
     use tempfile::TempDir;
 
@@ -1340,6 +1378,81 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("fixture link failed"));
+    }
+
+    #[test]
+    fn dependency_mutation_outcomes_have_explicit_shell_success_contracts() {
+        assert!(BunLinkOutcome::DryRun.is_success());
+        assert!(BunLinkOutcome::Applied.is_success());
+        assert!(!BunLinkOutcome::ApplyFailed.is_success());
+        assert!(!BunLinkOutcome::InvariantFailed.is_success());
+        assert!(!BunLinkOutcome::VerificationFailed.is_success());
+
+        assert!(BunUnlinkOutcome::DryRun.is_success());
+        assert!(BunUnlinkOutcome::Unlinked.is_success());
+        assert!(BunUnlinkOutcome::NoOp.is_success());
+        assert!(!BunUnlinkOutcome::ApplyFailed.is_success());
+        assert!(!BunUnlinkOutcome::InvariantFailed.is_success());
+        assert!(!BunUnlinkOutcome::VerificationFailed.is_success());
+
+        assert!(CargoLinkOutcome::DryRun.is_success());
+        assert!(CargoLinkOutcome::Applied.is_success());
+        assert!(!CargoLinkOutcome::ApplyFailed.is_success());
+        assert!(!CargoLinkOutcome::VerificationFailed.is_success());
+
+        assert!(CargoUnlinkOutcome::DryRun.is_success());
+        assert!(CargoUnlinkOutcome::Unlinked.is_success());
+        assert!(CargoUnlinkOutcome::NoOp.is_success());
+        assert!(!CargoUnlinkOutcome::ApplyFailed.is_success());
+        assert!(!CargoUnlinkOutcome::VerificationFailed.is_success());
+    }
+
+    #[test]
+    fn every_dependency_mutation_surface_promotes_failure_reports() {
+        for (command, outcome) in [
+            ("deps link bun", BunLinkOutcome::ApplyFailed.as_str()),
+            ("deps unlink bun", BunUnlinkOutcome::ApplyFailed.as_str()),
+            ("deps link cargo", CargoLinkOutcome::ApplyFailed.as_str()),
+            (
+                "deps unlink cargo",
+                CargoUnlinkOutcome::ApplyFailed.as_str(),
+            ),
+        ] {
+            let error = finish_deps_operation(
+                command,
+                outcome,
+                false,
+                &["fixture failure".to_owned()],
+                "full report".to_owned(),
+            )
+            .unwrap_err();
+            assert_eq!(error.rendered_output(), Some("full report"));
+            assert!(error.to_string().contains(command));
+        }
+
+        let error = finish_deps_operation(
+            "deps link cargo",
+            CargoLinkOutcome::Applied.as_str(),
+            true,
+            &["cleanup failed".to_owned()],
+            "full report".to_owned(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("1 reported error"));
+    }
+
+    #[test]
+    fn cargo_link_human_failure_report_includes_errors() {
+        let _process_lock = crate::contract_test_support::lock_test();
+        let (consumer, library) = cargo_link_fixture();
+        let mut report =
+            execute_cargo_link(consumer.path(), library.path(), true, &StdReadOnlyProcess).unwrap();
+        report.outcome = CargoLinkOutcome::VerificationFailed;
+        report.errors = vec!["fixture verification failed".to_owned()];
+
+        let rendered = render_cargo_link(consumer.path(), &report, false);
+        assert!(rendered.contains("Errors (1)"));
+        assert!(rendered.contains("fixture verification failed"));
     }
 
     #[test]

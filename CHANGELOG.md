@@ -24,10 +24,11 @@ During v0.x, MINOR bumps may include breaking changes.
   in their GitHub Actions title.
 
 ### Fixed
-- `effigy deps link bun` now exits non-zero when its operation report contains
-  errors or a failed outcome, while preserving the detailed human or JSON
-  report. Shell recovery such as `effigy deps link bun ... || recovery` now
-  runs as expected.
+- Mutating `effigy deps` commands now exit non-zero when their operation report
+  contains errors or a failed outcome, while preserving the detailed human or
+  JSON report. Shell recovery such as `effigy deps link bun ... || recovery`
+  now runs as expected. Cargo link failures also include their error list in
+  human output.
 - `effigy doctor` now warns and skips project health delegation when
   `tasks.health` reaches `qa`, built-in `test`, or a recognizable full-suite
   command. Agent guidance and the Northstar starter now enforce the intended

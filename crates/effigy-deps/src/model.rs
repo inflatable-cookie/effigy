@@ -318,6 +318,10 @@ impl BunLinkOutcome {
             Self::VerificationFailed => "verification-failed",
         }
     }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::DryRun | Self::Applied)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -504,6 +508,10 @@ impl BunUnlinkOutcome {
             Self::VerificationFailed => "verification-failed",
         }
     }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::DryRun | Self::Unlinked | Self::NoOp)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,6 +573,10 @@ impl CargoLinkOutcome {
             Self::VerificationFailed => "verification-failed",
         }
     }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::DryRun | Self::Applied)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -613,6 +625,10 @@ impl CargoUnlinkOutcome {
             Self::ApplyFailed => "apply-failed",
             Self::VerificationFailed => "verification-failed",
         }
+    }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::DryRun | Self::Unlinked | Self::NoOp)
     }
 }
 
