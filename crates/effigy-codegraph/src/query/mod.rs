@@ -275,15 +275,161 @@ pub fn affected(
     let edges = store.list_edges()?;
     let limit = limit.unwrap_or(100);
     let depth = depth.max(1);
-    affected_from_graph(
-        &files,
-        &symbols,
-        &edges,
-        freshness,
-        changed_paths,
-        depth,
-        limit,
-    )
+    PreparedAffectedQuery::new(&files, &symbols, &edges, freshness).run(changed_paths, depth, limit)
+}
+
+/// Graph data and lookup indexes prepared for one or more affected queries.
+///
+/// Batch consumers such as `scan validation-gaps` should prepare this once
+/// rather than reopening SQLite and rebuilding the edge indexes per path.
+pub struct PreparedAffectedQuery<'a> {
+    freshness: GraphFreshnessPayload,
+    file_by_path: BTreeMap<String, &'a FileRecord>,
+    file_by_id: BTreeMap<String, &'a FileRecord>,
+    symbols_by_file: BTreeMap<String, Vec<&'a SymbolRecord>>,
+    symbol_by_id: BTreeMap<String, &'a SymbolRecord>,
+    resolved_edges_by_node: BTreeMap<&'a str, Vec<(&'a EdgeRecord, bool)>>,
+    unresolved_edges: Vec<&'a EdgeRecord>,
+    unresolved_edges_by_symbol: Option<BTreeMap<String, Vec<&'a EdgeRecord>>>,
+    likely_test_tasks: Vec<GraphAffectedTaskPayload>,
+}
+
+impl<'a> PreparedAffectedQuery<'a> {
+    pub fn new(
+        files: &'a [FileRecord],
+        symbols: &'a [SymbolRecord],
+        edges: &'a [EdgeRecord],
+        freshness: GraphFreshnessPayload,
+    ) -> Self {
+        let file_by_path = files
+            .iter()
+            .map(|file| (file.path.as_str().to_owned(), file))
+            .collect::<BTreeMap<_, _>>();
+        let file_by_id = files
+            .iter()
+            .map(|file| (file.id.as_str().to_owned(), file))
+            .collect::<BTreeMap<_, _>>();
+        let symbols_by_file = symbols.iter().fold(
+            BTreeMap::<String, Vec<&SymbolRecord>>::new(),
+            |mut map, symbol| {
+                map.entry(symbol.file_id.as_str().to_owned())
+                    .or_default()
+                    .push(symbol);
+                map
+            },
+        );
+        let symbol_by_id = symbols
+            .iter()
+            .map(|symbol| (symbol.id.as_str().to_owned(), symbol))
+            .collect::<BTreeMap<_, _>>();
+        let mut resolved_edges_by_node = BTreeMap::<&str, Vec<(&EdgeRecord, bool)>>::new();
+        let mut unresolved_edges = Vec::new();
+        for edge in edges {
+            if let Some(to_id) = &edge.to_id {
+                resolved_edges_by_node
+                    .entry(edge.from_id.as_str())
+                    .or_default()
+                    .push((edge, true));
+                if to_id != &edge.from_id {
+                    resolved_edges_by_node
+                        .entry(to_id.as_str())
+                        .or_default()
+                        .push((edge, false));
+                }
+            } else if edge.unresolved_target.is_some() {
+                unresolved_edges.push(edge);
+            }
+        }
+        let likely_test_tasks = symbols
+            .iter()
+            .filter(|symbol| {
+                matches!(symbol.kind.as_str(), "task" | "test-suite" | "test-runner")
+                    && likely_test_task_name(symbol)
+            })
+            .map(|symbol| GraphAffectedTaskPayload {
+                name: symbol.display_name.clone(),
+                kind: symbol.kind.clone(),
+                path: symbol.provenance.source_path.clone(),
+                confidence: if symbol.kind == "task" {
+                    "heuristic".to_owned()
+                } else {
+                    "exact".to_owned()
+                },
+                reasons: vec![
+                    "manifest test workflow symbol matches affected-test query surface".to_owned(),
+                ],
+            })
+            .collect();
+
+        Self {
+            freshness,
+            file_by_path,
+            file_by_id,
+            symbols_by_file,
+            symbol_by_id,
+            resolved_edges_by_node,
+            unresolved_edges,
+            unresolved_edges_by_symbol: None,
+            likely_test_tasks,
+        }
+    }
+
+    pub fn prepare_heuristic_index(&mut self) -> Result<(), CodeGraphError> {
+        if self.unresolved_edges_by_symbol.is_some() {
+            return Ok(());
+        }
+        let symbol_names = self
+            .symbol_by_id
+            .values()
+            .map(|symbol| symbol.display_name.as_str())
+            .filter(|name| !name.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if symbol_names.is_empty() {
+            self.unresolved_edges_by_symbol = Some(BTreeMap::new());
+            return Ok(());
+        }
+        let matcher = aho_corasick::AhoCorasick::new(&symbol_names).map_err(|error| {
+            CodeGraphError::validation(format!(
+                "failed to build unresolved-symbol matcher: {error}"
+            ))
+        })?;
+        let mut edges_by_symbol = BTreeMap::<String, Vec<&EdgeRecord>>::new();
+        for edge in &self.unresolved_edges {
+            let target = edge
+                .unresolved_target
+                .as_deref()
+                .expect("unresolved edge should carry a target");
+            for matched in matcher.find_overlapping_iter(target) {
+                edges_by_symbol
+                    .entry(symbol_names[matched.pattern().as_usize()].to_owned())
+                    .or_default()
+                    .push(edge);
+            }
+        }
+        self.unresolved_edges_by_symbol = Some(edges_by_symbol);
+        Ok(())
+    }
+
+    pub fn run(
+        &self,
+        changed_paths: &[String],
+        depth: usize,
+        limit: usize,
+    ) -> Result<GraphAffectedPayload, CodeGraphError> {
+        self.run_with_heuristics(changed_paths, depth, limit, true)
+    }
+
+    pub fn run_with_heuristics(
+        &self,
+        changed_paths: &[String],
+        depth: usize,
+        limit: usize,
+        include_heuristic: bool,
+    ) -> Result<GraphAffectedPayload, CodeGraphError> {
+        affected_from_prepared(self, changed_paths, depth.max(1), limit, include_heuristic)
+    }
 }
 
 pub(crate) fn affected_from_graph(
@@ -295,45 +441,27 @@ pub(crate) fn affected_from_graph(
     depth: usize,
     limit: usize,
 ) -> Result<GraphAffectedPayload, CodeGraphError> {
-    let file_by_path = files
-        .iter()
-        .map(|file| (file.path.as_str().to_owned(), file))
-        .collect::<BTreeMap<_, _>>();
-    let file_by_id = files
-        .iter()
-        .map(|file| (file.id.as_str().to_owned(), file))
-        .collect::<BTreeMap<_, _>>();
-    let symbols_by_file = symbols.iter().fold(
-        BTreeMap::<String, Vec<&SymbolRecord>>::new(),
-        |mut map, symbol| {
-            map.entry(symbol.file_id.as_str().to_owned())
-                .or_default()
-                .push(symbol);
-            map
-        },
-    );
-    let symbol_by_id = symbols
-        .iter()
-        .map(|symbol| (symbol.id.as_str().to_owned(), symbol))
-        .collect::<BTreeMap<_, _>>();
-    let mut resolved_edges_by_node = BTreeMap::<&str, Vec<(&EdgeRecord, bool)>>::new();
-    let mut unresolved_edges = Vec::new();
-    for edge in edges {
-        if let Some(to_id) = &edge.to_id {
-            resolved_edges_by_node
-                .entry(edge.from_id.as_str())
-                .or_default()
-                .push((edge, true));
-            if to_id != &edge.from_id {
-                resolved_edges_by_node
-                    .entry(to_id.as_str())
-                    .or_default()
-                    .push((edge, false));
-            }
-        } else if edge.unresolved_target.is_some() {
-            unresolved_edges.push(edge);
-        }
-    }
+    PreparedAffectedQuery::new(files, symbols, edges, freshness).run(changed_paths, depth, limit)
+}
+
+fn affected_from_prepared(
+    query: &PreparedAffectedQuery<'_>,
+    changed_paths: &[String],
+    depth: usize,
+    limit: usize,
+    include_heuristic: bool,
+) -> Result<GraphAffectedPayload, CodeGraphError> {
+    let PreparedAffectedQuery {
+        freshness,
+        file_by_path,
+        file_by_id,
+        symbols_by_file,
+        symbol_by_id,
+        resolved_edges_by_node,
+        unresolved_edges,
+        unresolved_edges_by_symbol,
+        likely_test_tasks,
+    } = query;
 
     let changed_paths = changed_paths
         .iter()
@@ -367,43 +495,60 @@ pub(crate) fn affected_from_graph(
         }
     }
 
-    let changed_symbol_names = changed_paths
-        .iter()
-        .filter_map(|path| file_by_path.get(path))
-        .flat_map(|file| {
-            symbols_by_file
-                .get(file.id.as_str())
-                .into_iter()
-                .flat_map(|items| items.iter())
-        })
-        .map(|symbol| symbol.display_name.clone())
-        .collect::<BTreeSet<_>>();
-    let changed_symbol_matcher = (!changed_symbol_names.is_empty())
-        .then(|| aho_corasick::AhoCorasick::new(changed_symbol_names.iter()))
-        .transpose()
-        .map_err(|error| {
-            CodeGraphError::validation(format!("failed to build changed-symbol matcher: {error}"))
-        })?;
+    let changed_symbol_names = if include_heuristic {
+        changed_paths
+            .iter()
+            .filter_map(|path| file_by_path.get(path))
+            .flat_map(|file| {
+                symbols_by_file
+                    .get(file.id.as_str())
+                    .into_iter()
+                    .flat_map(|items| items.iter())
+            })
+            .map(|symbol| symbol.display_name.clone())
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
 
-    if !queue.is_empty() {
-        if let Some(changed_symbol_matcher) = changed_symbol_matcher {
+    if !queue.is_empty() && !changed_symbol_names.is_empty() {
+        let mut enqueue_unresolved = |edge: &EdgeRecord| {
+            if visited.insert(edge.from_id.as_str().to_owned()) {
+                let next_id = edge.from_id.as_str().to_owned();
+                queue.push_back((next_id.clone(), 1));
+                record_affected_reason(
+                    &next_id,
+                    file_by_id,
+                    symbol_by_id,
+                    &mut file_reasons,
+                    format!("unresolved `{}` references changed symbol", edge.kind),
+                );
+            }
+        };
+        if let Some(edges_by_symbol) = unresolved_edges_by_symbol {
+            for symbol_name in &changed_symbol_names {
+                for edge in edges_by_symbol
+                    .get(symbol_name)
+                    .into_iter()
+                    .flat_map(|edges| edges.iter())
+                {
+                    enqueue_unresolved(edge);
+                }
+            }
+        } else {
+            let changed_symbol_matcher =
+                aho_corasick::AhoCorasick::new(changed_symbol_names.iter()).map_err(|error| {
+                    CodeGraphError::validation(format!(
+                        "failed to build changed-symbol matcher: {error}"
+                    ))
+                })?;
             for edge in unresolved_edges {
                 let target = edge
                     .unresolved_target
                     .as_deref()
                     .expect("unresolved edge should carry a target");
-                if changed_symbol_matcher.is_match(target)
-                    && visited.insert(edge.from_id.as_str().to_owned())
-                {
-                    let next_id = edge.from_id.as_str().to_owned();
-                    queue.push_back((next_id.clone(), 1));
-                    record_affected_reason(
-                        &next_id,
-                        &file_by_id,
-                        &symbol_by_id,
-                        &mut file_reasons,
-                        format!("unresolved `{}` references changed symbol", edge.kind),
-                    );
+                if changed_symbol_matcher.is_match(target) {
+                    enqueue_unresolved(edge);
                 }
             }
         }
@@ -437,8 +582,8 @@ pub(crate) fn affected_from_graph(
                 };
                 record_affected_reason(
                     &next_id,
-                    &file_by_id,
-                    &symbol_by_id,
+                    file_by_id,
+                    symbol_by_id,
                     &mut file_reasons,
                     reason,
                 );
@@ -481,26 +626,10 @@ pub(crate) fn affected_from_graph(
         .cloned()
         .collect::<Vec<_>>();
 
-    let likely_test_tasks = symbols
+    let likely_test_tasks = likely_test_tasks
         .iter()
-        .filter(|symbol| {
-            matches!(symbol.kind.as_str(), "task" | "test-suite" | "test-runner")
-                && likely_test_task_name(symbol)
-        })
         .take(limit)
-        .map(|symbol| GraphAffectedTaskPayload {
-            name: symbol.display_name.clone(),
-            kind: symbol.kind.clone(),
-            path: symbol.provenance.source_path.clone(),
-            confidence: if symbol.kind == "task" {
-                "heuristic".to_owned()
-            } else {
-                "exact".to_owned()
-            },
-            reasons: vec![
-                "manifest test workflow symbol matches affected-test query surface".to_owned(),
-            ],
-        })
+        .cloned()
         .collect::<Vec<_>>();
 
     let mut notes = vec![
@@ -515,7 +644,7 @@ pub(crate) fn affected_from_graph(
 
     Ok(GraphAffectedPayload {
         changed_paths,
-        freshness,
+        freshness: freshness.clone(),
         depth,
         affected_files,
         likely_test_files,

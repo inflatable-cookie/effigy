@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_codegraph::json::{GraphAffectedFilePayload, GraphAffectedTaskPayload};
 use effigy_codegraph::model::{Confidence, FileIndexStatus};
-use effigy_codegraph::{affected, GraphId};
+use effigy_codegraph::{GraphId, PreparedAffectedQuery};
 use effigy_scan::{
     ValidationGapConfidence, ValidationGapFinding, ValidationGapFindingKind,
     ValidationGapScanOptions, ValidationGapScanResult, ValidationGapSeverity,
@@ -27,7 +27,7 @@ pub(super) fn run_validation_gap_scan(
         .validate()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
 
-    let store = open_fresh_graph_store(target_root, "validation-gaps")?;
+    let (store, freshness) = open_fresh_graph_store(target_root, "validation-gaps")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
@@ -47,7 +47,8 @@ pub(super) fn run_validation_gap_scan(
     let supported_languages = supported_language_map(&extractors);
     let allow_paths = compile_globs("scan.validation_gaps.allow_paths", &options.allow_paths)?;
     let file_by_id: BTreeMap<_, _> = files
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|file| (file.id.clone(), file))
         .collect();
     let symbol_by_id: BTreeMap<_, _> = symbols
@@ -178,19 +179,26 @@ pub(super) fn run_validation_gap_scan(
     let mut seen_file_targets = BTreeSet::new();
     let mut seen_task_targets = BTreeSet::new();
     let mut findings = Vec::new();
+    let mut affected_query = PreparedAffectedQuery::new(&files, &symbols, &edges, freshness);
+    if options.include_heuristic {
+        affected_query
+            .prepare_heuristic_index()
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    }
 
     if changed_paths.is_empty() {
         for candidate in candidates
             .iter()
             .filter(|candidate| candidate.stats.connectivity() >= options.hotspot_threshold)
         {
-            let affected = affected(
-                target_root,
-                std::slice::from_ref(&candidate.path),
-                options.affected_depth,
-                Some(25),
-            )
-            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+            let affected = affected_query
+                .run_with_heuristics(
+                    std::slice::from_ref(&candidate.path),
+                    options.affected_depth,
+                    25,
+                    options.include_heuristic,
+                )
+                .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
             if affected.likely_test_files.is_empty() && affected.likely_test_tasks.is_empty() {
                 findings.push(ValidationGapFinding {
                     kind: ValidationGapFindingKind::HotspotWithoutNearbyTests,
@@ -217,13 +225,14 @@ pub(super) fn run_validation_gap_scan(
             let Some(candidate) = candidate_by_path.get(changed_path) else {
                 continue;
             };
-            let affected = affected(
-                target_root,
-                std::slice::from_ref(changed_path),
-                options.affected_depth,
-                Some(25),
-            )
-            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+            let affected = affected_query
+                .run_with_heuristics(
+                    std::slice::from_ref(changed_path),
+                    options.affected_depth,
+                    25,
+                    options.include_heuristic,
+                )
+                .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
             merge_file_targets(
                 &mut likely_test_files,
                 &mut seen_file_targets,

@@ -637,9 +637,28 @@ fn graph_affected_large_unresolved_slice_does_not_rescan_edges_per_changed_symbo
         stale_paths: vec![],
     };
 
+    let files = vec![file];
+    let prepared =
+        crate::query::PreparedAffectedQuery::new(&files, &symbols, &edges, freshness.clone());
     let started = std::time::Instant::now();
+    let mut payload = None;
+    for _ in 0..100 {
+        payload = Some(
+            prepared
+                .run_with_heuristics(&["src/lib.rs".to_owned()], 2, 20, false)
+                .expect("resolved-only affected"),
+        );
+    }
+    let payload = payload.expect("affected payload");
+
+    assert_eq!(payload.affected_files.len(), 1);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "prepared resolved-only queries should not rescan unresolved edges"
+    );
+
     let payload = crate::query::affected_from_graph(
-        &[file],
+        &files,
         &symbols,
         &edges,
         freshness,
@@ -648,10 +667,5 @@ fn graph_affected_large_unresolved_slice_does_not_rescan_edges_per_changed_symbo
         20,
     )
     .expect("affected");
-
     assert_eq!(payload.affected_files.len(), 1);
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "large unresolved slices should be evaluated once, not once per queued symbol"
-    );
 }

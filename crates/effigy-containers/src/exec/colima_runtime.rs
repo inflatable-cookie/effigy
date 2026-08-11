@@ -680,6 +680,7 @@ mod tests {
 
     #[test]
     fn runtime_detection_for_policy_prefers_repo_backend_override_over_user_global_preference() {
+        let _lock = crate::test_env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let repo_root = temp.path().join("repo");
         let home = temp.path().join(".effigy-home");

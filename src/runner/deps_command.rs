@@ -95,7 +95,8 @@ fn run_bun_link(
 ) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(repo_override)?;
     let repo_root = resolved.resolved_root;
-    let report = execute_bun_link(&repo_root, library_path, home, dry_run, process)
+    let library_path = resolve_link_library_path(&repo_root, library_path);
+    let report = execute_bun_link(&repo_root, &library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
     let rendered = render_bun_link(&repo_root, &report, output_json);
     finish_deps_operation(
@@ -552,7 +553,8 @@ fn run_cargo_link(
 ) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(repo_override)?;
     let repo_root = resolved.resolved_root;
-    let report = execute_cargo_link(&repo_root, library_path, dry_run, &StdReadOnlyProcess)
+    let library_path = resolve_link_library_path(&repo_root, library_path);
+    let report = execute_cargo_link(&repo_root, &library_path, dry_run, &StdReadOnlyProcess)
         .map_err(map_deps_error)?;
     let rendered = render_cargo_link(&repo_root, &report, output_json);
     finish_deps_operation(
@@ -903,6 +905,14 @@ fn map_deps_error(error: effigy_deps::DepsError) -> RunnerError {
     RunnerError::task_invocation(error.to_string())
 }
 
+fn resolve_link_library_path(repo_root: &Path, library_path: &Path) -> PathBuf {
+    if library_path.is_absolute() {
+        library_path.to_path_buf()
+    } else {
+        repo_root.join(library_path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1011,6 +1021,26 @@ mod tests {
             repo_override: Some(repo.to_path_buf()),
             output_json,
         }
+    }
+
+    #[test]
+    fn relative_link_library_paths_resolve_from_the_selected_repo() {
+        let consumer = repo();
+        let relative = Path::new("missing-library");
+        let expected = consumer.path().join(relative);
+
+        assert_eq!(
+            resolve_link_library_path(consumer.path(), consumer.path()),
+            consumer.path()
+        );
+
+        let error =
+            run_cargo_link(Some(consumer.path().to_path_buf()), relative, true, false).unwrap_err();
+
+        assert!(
+            error.to_string().contains(&expected.display().to_string()),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

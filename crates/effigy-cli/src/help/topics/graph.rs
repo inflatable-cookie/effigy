@@ -9,8 +9,8 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "graph",
     notices: &[
         "Build and query a deterministic local code graph for agent-facing navigation.",
-        "The graph stays local under `.effigy/graph/`; queries do not rebuild it implicitly.",
-        "Use `graph status` first; when `freshness.state` is not `ready` or `freshness.usable` is false, refresh with `graph index`, then use `graph explore` or `graph context` before broader file scanning.",
+        "The graph stays local under `.effigy/graph/`; data queries refresh a stale or missing index on demand.",
+        "Use `graph status` only for a report-only freshness check; start code understanding with `graph explore` or `graph context` directly.",
         "Use `graph affected` after edits to narrow likely validation targets before widening to full-suite checks.",
         "Treat graph packets as bounded guidance; exact-token confirmation still belongs to `rg`.",
         "`graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1` payloads instead of a single command envelope.",

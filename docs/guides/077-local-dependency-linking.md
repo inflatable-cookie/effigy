@@ -22,6 +22,10 @@ effigy deps unlink cargo ../signal --dry-run
 effigy deps unlink cargo ../signal
 ```
 
+Relative library paths resolve from the selected consumer repo. This remains
+true when `--repo <PATH>` targets that repo from another working directory.
+Absolute library paths are used unchanged.
+
 Use `bun` instead of `cargo` for a Bun package library:
 
 ```sh

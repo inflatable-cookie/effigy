@@ -68,16 +68,16 @@
 # CI mirrors and release gates
 "qa:released-surface" = "cargo test --test cli_output_tests released_surface_ -- --nocapture"
 "qa:ci:fast" = [
-  "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --no-fail-fast\" >&2; cargo test --no-fail-fast; fi'",
-  "cargo test --doc",
+  "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --workspace --no-fail-fast\" >&2; cargo test --workspace --no-fail-fast; fi'",
+  "cargo test --workspace --doc",
   { task = "qa:released-surface" },
   { task = "qa:ci:json" },
 ]
 "qa:ci:local" = [
   { task = "fmt:check" },
-  "cargo clippy --all-targets -- -D warnings",
-  "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --no-fail-fast\" >&2; cargo test --no-fail-fast; fi'",
-  "cargo test --doc",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --workspace --no-fail-fast\" >&2; cargo test --workspace --no-fail-fast; fi'",
+  "cargo test --workspace --doc",
   { task = "qa:released-surface" },
   "cargo run --bin effigy -- docs check links",
   { task = "qa:ci:json" },
@@ -99,5 +99,6 @@
 ]
 
 # Default validation shortcuts
-health = [{ task = "qa:docs" }, { task = "qa:json" }]
+health = [{ task = "fmt:check" }, "cargo check --workspace --locked"]
+validate = [{ task = "health" }, "cargo clippy --workspace --all-targets -- -D warnings"]
 qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]

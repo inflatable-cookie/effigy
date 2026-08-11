@@ -88,6 +88,38 @@ fn detect_test_runner_falls_back_to_cargo_test_when_nextest_missing() {
 }
 
 #[test]
+fn detect_test_runner_selects_all_cargo_workspace_members() {
+    let _guard = lock_test();
+    let root = temp_workspace("test-detect-cargo-workspace");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/member\"]\n\n[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let nextest = bin_dir.join("cargo-nextest");
+    fs::write(&nextest, "#!/bin/sh\nexit 0\n").expect("write nextest");
+    let mut perms = fs::metadata(&nextest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&nextest, perms).expect("chmod");
+
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    let _env = EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))]);
+
+    let report = detect_test_runner_detailed(&root);
+    let plan = report.selected.expect("plan");
+    assert_eq!(plan.runner, TestRunner::CargoNextest);
+    assert_eq!(plan.command, "cargo nextest run --workspace");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("full workspace")));
+    assert_eq!(report.candidates[2].command, "cargo test --workspace");
+}
+
+#[test]
 fn detect_test_runner_prefers_vitest_when_js_and_rust_markers_both_exist() {
     let _guard = lock_test();
     let root = temp_workspace("test-detect-prefers-vitest");

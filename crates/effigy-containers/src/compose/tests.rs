@@ -9,7 +9,6 @@ use effigy_manifest::{
 };
 use std::cell::Cell;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 
 thread_local! {
     static TEST_COMPOSE_BACKEND_OVERRIDE: Cell<Option<ComposeBackend>> = const { Cell::new(None) };
@@ -29,10 +28,7 @@ pub(super) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl Fn
 }
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    crate::test_env_lock()
 }
 
 #[test]

@@ -29,7 +29,7 @@ pub(super) fn run_boundary_violation_scan(
         });
     }
 
-    let store = open_fresh_graph_store(target_root, "boundary-violations")?;
+    let (store, _) = open_fresh_graph_store(target_root, "boundary-violations")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;

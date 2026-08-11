@@ -15,6 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
   resolves those sequences without executing setup, suite, or teardown work.
 
 ### Changed
+- Auto-detected Cargo test runners now select `--workspace` when the root
+  manifest declares `[workspace]`, so `effigy test` covers member-crate tests
+  without requiring a custom suite. Explicit runner and suite overrides remain
+  the authority for intentionally narrower boards.
 - Built-in test plans now distinguish default-board suites from focused
   on-demand suites through `test.suites.<name>.default = false`. Root test
   fanout can omit catalogs with `test.exclude_catalogs` while direct
@@ -24,6 +28,15 @@ During v0.x, MINOR bumps may include breaking changes.
   in their GitHub Actions title.
 
 ### Fixed
+- `effigy deps link` now resolves relative Cargo and Bun library paths from the
+  selected consumer repo, including when `--repo` targets it from another
+  working directory. Absolute library paths remain unchanged.
+- Graph help now matches runtime behavior: data queries self-refresh stale or
+  missing indexes, while `graph status` remains the report-only surface.
+- `scan validation-gaps` now prepares graph traversal indexes once per scan
+  instead of reopening and rebuilding the full affected-query state for every
+  hotspot. Its `include_heuristic` option now also governs unresolved-symbol
+  matching during nearby-test traversal.
 - Cargo workspace release preparation now bumps version requirements on
   coordinated `[workspace.dependencies]` path entries alongside
   `workspace.package.version`. Plans preview the edits, failed preparation

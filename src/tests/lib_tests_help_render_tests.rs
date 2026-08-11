@@ -217,7 +217,7 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("--debounce-ms <MS>"));
     assert!(rendered.contains("--language <ID>"));
     assert!(rendered.contains("--path <PREFIX>"));
-    assert!(rendered.contains("Use `graph status` first"));
+    assert!(rendered.contains("Use `graph status` only for a report-only freshness check"));
     assert!(rendered.contains("effigy.graph.watch.event.v1"));
     assert!(rendered.contains("effigy graph context \"trace deploy provider export\""));
     assert!(rendered.contains("effigy graph explore \"trace graph watch implementation\""));

@@ -48,6 +48,7 @@ fn run_manifest_task_builtin_scan_validation_gaps_surfaces_likely_tests_for_chan
             r#"[scan.validation_gaps]
 doctor = false
 hotspot_threshold = 1
+include_heuristic = true
 
 [test.suites]
 rust-test = "cargo test"

@@ -618,6 +618,8 @@ Current validation-gap finding types:
 Safe review posture:
 
 - treat likely tests as bounded graph hints, not coverage proof
+- keep `include_heuristic = false` for resolved graph evidence only; set it to
+  `true` when unresolved symbol-name matches should count as nearby tests
 - use changed-path mode when the review question is "what should I validate now?"
 - use hotspot mode when the review question is "which central owners lack nearby tests?"
 - keep release or merge gates on explicit task/test surfaces, not on this scan alone

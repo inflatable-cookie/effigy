@@ -52,7 +52,7 @@ pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// Query helpers over the stored graph.
 pub use query::{
     affected, callees, callers, context, explore, files as query_files, impact, node,
-    search as query_search,
+    search as query_search, PreparedAffectedQuery,
 };
 /// Lazy on-query graph refresh (rebuilds stale indexes on demand).
 pub use refresh::{ensure_fresh, RefreshOutcome};

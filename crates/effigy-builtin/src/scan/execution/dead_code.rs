@@ -32,7 +32,7 @@ pub(super) fn run_dead_code_scan(
     // opened through the lazy-refresh gate, so a stale or missing index is
     // rebuilt on demand; the scan only refuses when the refresh could not
     // complete.
-    let store = open_fresh_graph_store(target_root, "dead-code")?;
+    let (store, _) = open_fresh_graph_store(target_root, "dead-code")?;
     let files = store
         .list_files()
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;

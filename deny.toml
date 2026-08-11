@@ -37,6 +37,9 @@ ignore = [
     # proc-macro-error2 is unmaintained; transitive build-time proc-macro dep,
     # not shipped at runtime. No vuln. Reviewed 2026-06-10.
     { id = "RUSTSEC-2026-0173", reason = "reviewed 2026-06-10: unmaintained-only; transitive build-time proc-macro dep; no runtime exposure" },
+    # smartstring is unmaintained; Rhai uses it internally and currently offers
+    # no feature or release that removes it. No vulnerability. Reviewed 2026-08-11.
+    { id = "RUSTSEC-2026-0249", reason = "reviewed 2026-08-11: unmaintained-only; transitive via Rhai runtime; no safe upgrade yet" },
 ]
 
 [licenses]

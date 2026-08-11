@@ -534,7 +534,7 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
                 "smoke",
                 "cargo build --bin effigy && ./target/debug/effigy smoke:release"
             ),
-            ("test", "cargo test"),
+            ("test", "cargo test --workspace"),
         ]
     );
 

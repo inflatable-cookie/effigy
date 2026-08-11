@@ -19,6 +19,10 @@ Per target root:
 2. `cargo nextest run` when `Cargo.toml` exists and `cargo-nextest` is available.
 3. `cargo test` when `Cargo.toml` exists and `cargo-nextest` is unavailable.
 
+When the root `Cargo.toml` declares `[workspace]`, both Cargo runners add
+`--workspace` automatically. Use `[test.runners]` or `[test.suites]` only when
+the repository intentionally needs a narrower or otherwise custom board.
+
 `effigy test --plan` prints selected runner, command, evidence, fallback chain,
 and per-target `cargo-env-match` mode. Planning never runs setup, suite, or
 teardown commands.

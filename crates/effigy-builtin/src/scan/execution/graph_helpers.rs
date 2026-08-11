@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use effigy_codegraph::json::GraphFreshnessPayload;
 use effigy_codegraph::model::{ExtractorCapability, ExtractorRecord, SymbolRecord};
 use effigy_codegraph::{ensure_fresh, GraphId, GraphStore};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -171,7 +172,7 @@ pub(super) fn first_symbol_line(
 pub(super) fn open_fresh_graph_store(
     target_root: &Path,
     scan_label: &str,
-) -> Result<GraphStore, BuiltinError> {
+) -> Result<(GraphStore, GraphFreshnessPayload), BuiltinError> {
     let store = GraphStore::open(target_root)
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
     let outcome = ensure_fresh(target_root, &store)
@@ -182,5 +183,5 @@ pub(super) fn open_fresh_graph_store(
             outcome.freshness.summary
         )));
     }
-    Ok(store)
+    Ok((store, outcome.freshness))
 }

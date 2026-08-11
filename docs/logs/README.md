@@ -78,6 +78,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/11-173550-v011-pre-release-hardening-sweep.md`](./2026-08/11-173550-v011-pre-release-hardening-sweep.md)
 - [`2026-08/11-144402-unified-test-orchestration-v011-closeout.md`](./2026-08/11-144402-unified-test-orchestration-v011-closeout.md)
 - [`2026-08/10-105636-explicit-catalog-membership-closeout.md`](./2026-08/10-105636-explicit-catalog-membership-closeout.md)
 - [`2026-08/10-104558-delete-discovery-and-align-diagnostics.md`](./2026-08/10-104558-delete-discovery-and-align-diagnostics.md)
@@ -158,6 +159,4 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card
-[`1073`](../roadmaps/g08/batch-cards/1073-cut-routing-over-to-explicit-membership.md).
-Release mutation remains outside the active lane.
+Await operator review of v0.11 readiness. No release mutation is implied.
