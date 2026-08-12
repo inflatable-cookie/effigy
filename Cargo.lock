@@ -1211,7 +1211,7 @@ dependencies = [
  "portable-pty",
  "regex",
  "reqwest",
- "reqx",
+ "reqx 0.2.0",
  "rhai",
  "ring",
  "rpassword",
@@ -3255,6 +3255,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "reqx"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9f0a84f43a067a97ca9d6476c6f02bb4857f9cb7e3e87ce3cfa3f510754f99"
+dependencies = [
+ "bytes",
+ "http",
+ "httpdate",
+ "rand 0.10.2",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror 2.0.19",
+ "tracing",
+ "ureq",
+ "url",
+ "webpki-root-certs",
+]
+
+[[package]]
 name = "rhai"
 version = "1.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3537,7 +3559,7 @@ dependencies = [
  "httpdate",
  "md-5",
  "quick-xml",
- "reqx",
+ "reqx 0.1.41",
  "serde",
  "time",
  "url",
