@@ -9,6 +9,7 @@ description = "Machine-local dependency link models and state stores for Effigy"
 [dependencies]
 fs2 = "0.4"
 globset = "0.4"
+jsonc-parser = "0.33.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"

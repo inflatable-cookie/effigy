@@ -397,6 +397,10 @@ Companion references:
   "writes": [],
   "warnings": [
     {
+      "code": "lockfile-enumeration-fallback",
+      "message": "`bun` dependency process failed in `/workspace/app` with exit status 1: Error loading lockfile: InvalidPackageInfo; pin planning used read-only package inventory from `/workspace/app/bun.lock`"
+    },
+    {
       "code": "checkout-topology-portability",
       "message": "pin for `@inflatable-cookie/poodle-core` escapes the consumer repository; CI and teammates need the same relative checkout topology",
       "package": "@inflatable-cookie/poodle-core"

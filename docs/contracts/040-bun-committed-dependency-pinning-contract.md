@@ -15,8 +15,9 @@ Pinning authors consumer-level Bun `overrides` as reviewable repository state.
 It is not a mode of `deps link`: links are ephemeral and machine-local, while
 pins are committed and inherited by CI and teammates.
 
-The command, domain, and disposable Soundcheck/Poodle consumer proof are
-complete. Roadmap `g08.031` records the closed implementation lane.
+The command, domain, disposable Soundcheck/Poodle proof, and six-consumer
+lockfile-enumeration follow-up are complete. Roadmap `g08.031` records the
+closed implementation lane.
 
 ## Terminology
 
@@ -68,13 +69,28 @@ Pin planning:
 1. resolves the consumer and canonical library path
 2. inventories named root and workspace packages from the library
 3. inspects the consumer dependency tree with read-only `bun pm ls --all`
-4. selects every library package present in the direct or transitive graph
-5. collapses duplicate resolved copies by package name
-6. produces one atomic override plan for the complete matched closure
+4. when that process fails, and only for pin planning, parses the consumer's
+   text `bun.lock` as JSONC and inventories package records from its `packages`
+   object
+5. derives each fallback package name from the package record's first package
+   specifier, not from its possibly nested lockfile key
+6. selects every library package present in the direct or transitive graph
+7. collapses duplicate resolved copies by package name
+8. produces one atomic override plan for the complete matched closure
 
 No match reports a no-write outcome. Pin does not require an earlier link
 plan. A direct match and all matched transitive library packages belong to one
 operation; partial pinning is a correctness error.
+
+The fallback must emit a warning that names the failed Bun command, its
+diagnostic, and the lockfile used. Missing `bun.lock`, invalid JSONC, a missing
+or invalid `packages` object, or a package record whose identity cannot be
+derived safely is a hard no-write failure. Pin must not guess from
+`package.json` alone and does not fall back to binary `bun.lockb`.
+
+This fallback does not apply to `deps link bun`, status, doctor, or shared
+physical dependency inventory. Those surfaces keep process-resolved inventory
+because their safety decisions depend on the installed graph.
 
 Each value is a relative `file:` specifier from the consumer `package.json`
 directory to the canonical local package root:
@@ -186,6 +202,8 @@ and next action where known. They include:
 - concurrent manifest change
 - inability to preserve or atomically replace the manifest
 - any observed Bun lockfile mutation
+- a failed `bun pm ls --all` when no valid, safely enumerable text `bun.lock`
+  can supply pin-only package inventory
 
 No error path may leave a partial package closure in the manifest.
 
@@ -215,6 +233,11 @@ The runner must not own package matching or ad hoc JSON text surgery.
 - Text and JSON identify committed behavior and the required install step.
 - A Soundcheck/Poodle consumer fixture proves the transitive override removes
   duplicate package identity after the operator runs Bun install.
+- A text `bun.lock` fallback fixture proves direct and nested/transitive
+  package records can be selected after `bun pm ls --all` fails, with an
+  explicit warning and zero lockfile writes.
+- The fallback is pin-only; Bun link inventory still refuses a failed process
+  enumeration.
 
 ## Out of Scope
 
@@ -227,6 +250,7 @@ The runner must not own package matching or ad hoc JSON text surgery.
 - package-explicit unpin without a library checkout
 - committed pin state in the machine-local link ledger
 - automatic CI checkout orchestration for sibling repositories
+- package-manifest-only closure guessing or binary `bun.lockb` fallback
 
 ## Change Policy
 

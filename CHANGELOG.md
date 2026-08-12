@@ -20,6 +20,11 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- `deps pin bun` now falls back to read-only package enumeration from a valid
+  text `bun.lock` when `bun pm ls --all` fails. The warning-bearing fallback
+  understands Bun's JSONC format and nested package keys, while malformed or
+  unsafe lock data still refuses with zero writes and Bun link inventory stays
+  process-authoritative.
 - `deps link bun` mixed-closure refusals now explain that consumer-level Bun
   overrides are the transitive cross-repository mechanism and print a
   paste-ready block covering every matched local-library package. The command

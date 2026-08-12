@@ -110,6 +110,13 @@ It then adds one relative `file:` override per match at the consumer root:
 }
 ```
 
+Pin normally reads the installed tree through `bun pm ls --all`. If Bun fails
+to enumerate a valid text lockfile, pin can read that `bun.lock` as JSONC and
+reports a `lockfile-enumeration-fallback` warning with the original Bun error.
+Missing, malformed, or structurally unsafe lock data still refuses with no
+manifest write. This fallback is pin-only: links continue to require the
+process-resolved installed graph for their safety decisions.
+
 The operation is atomic. An existing conflicting override, an overlapping
 Effigy-managed link, a concurrent manifest edit, or a partial closure refuses
 the whole write. Unrelated overrides, field order, indentation, final-newline

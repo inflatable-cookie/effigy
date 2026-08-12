@@ -46,7 +46,8 @@ Archived strict lanes:
 - [`103`](./archive/103-pre-release-ci-proof.md) is archived after making
   exact-candidate hosted CI proof release-blocking
 - [`104`](./archive/104-bun-committed-dependency-pinning.md) is archived after
-  completing committed Bun pinning and disposable consumer proof
+  completing committed Bun pinning, the consumer proof, and the bounded
+  `InvalidPackageInfo` follow-up
 - `097`, `099`, and `100` are complete and awaiting archive on the next
   planning sweep
 

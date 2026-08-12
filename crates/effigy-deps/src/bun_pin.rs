@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::bun::inventory_bun_consumer_from_text_lock;
 use crate::state::write_atomic;
 use crate::{
     canonical_existing_path, inventory_bun_consumer, inventory_bun_library, BunPackageInventory,
@@ -217,7 +218,38 @@ pub fn plan_bun_pin(
         });
     }
 
-    let consumer = inventory_bun_consumer(&repo_root, &library_packages, process)?;
+    let (consumer, inventory_warning) = match inventory_bun_consumer(
+        &repo_root,
+        &library_packages,
+        process,
+    ) {
+        Ok(consumer) => (consumer, None),
+        Err(process_error @ DepsError::ProcessFailed { .. }) => {
+            let lock_path = repo_root.join("bun.lock");
+            let process_message = process_error.to_string();
+            let consumer = inventory_bun_consumer_from_text_lock(&repo_root, &library_packages)
+                .map_err(|fallback_error| {
+                    DepsError::invalid(
+                        &lock_path,
+                        format!(
+                            "{process_message}; text lockfile fallback failed: {fallback_error}"
+                        ),
+                    )
+                })?;
+            (
+                consumer,
+                Some(BunPinWarning {
+                    code: "lockfile-enumeration-fallback".to_owned(),
+                    message: format!(
+                        "{process_message}; pin planning used read-only package inventory from `{}`",
+                        lock_path.display()
+                    ),
+                    package: None,
+                }),
+            )
+        }
+        Err(error) => return Err(error),
+    };
     let mut matches = BTreeMap::new();
     for (package, depth) in consumer.library_matches {
         matches
@@ -238,7 +270,7 @@ pub fn plan_bun_pin(
             manifest_path,
             library_path,
             packages: Vec::new(),
-            warnings: Vec::new(),
+            warnings: inventory_warning.into_iter().collect(),
             manifest_before,
             manifest_after: None,
             immutable_files: Vec::new(),
@@ -246,7 +278,7 @@ pub fn plan_bun_pin(
     }
 
     let mut packages = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings = inventory_warning.into_iter().collect::<Vec<_>>();
     let mut additions = BTreeMap::new();
     let mut conflict = false;
     for (name, depth) in matches {

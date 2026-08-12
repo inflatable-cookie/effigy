@@ -78,6 +78,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md`](./2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
+- [`2026-08/12-090342-bun-pin-lockfile-fallback-planning.md`](./2026-08/12-090342-bun-pin-lockfile-fallback-planning.md)
 - [`2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md`](./2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
 - [`2026-08/11-232228-bun-pin-cli-json-and-interlocks.md`](./2026-08/11-232228-bun-pin-cli-json-and-interlocks.md)
 - [`2026-08/11-224711-bun-pin-domain-foundation.md`](./2026-08/11-224711-bun-pin-domain-foundation.md)
@@ -163,4 +165,4 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Await operator review of v0.11 readiness. No release mutation is implied.
+Await operator intent. No ready strict card or release mutation is implied.

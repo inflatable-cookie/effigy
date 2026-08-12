@@ -8,7 +8,7 @@ extended with the 2026-06-10 security and posture hardening tranche
 `g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`,
 explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
 `g08.029`, exact-candidate pre-release CI proof in `g08.030`, and committed Bun
-dependency pinning in `g08.031`.
+dependency pinning and its bounded enumeration fallback in `g08.031`.
 
 ## Purpose
 
@@ -29,7 +29,8 @@ v0.11 test authority under `[test]`.
 
 The completed dependency follow-up adds an explicit committed Bun override
 mode for cross-repository graphs. It remains separate from machine-local links
-and never mutates intermediate repositories.
+and never mutates intermediate repositories. Card `1081` handles consumers
+where Bun cannot enumerate its own text lockfile.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -115,6 +116,8 @@ This generation should help agents and maintainers answer questions like:
   interlocks.
 - Completed proof and closeout: card `1080` owns disposable Soundcheck/Poodle
   proof, public guidance, full validation, and lane archival.
+- Completed pin resilience follow-up: card `1081` owns a warning-bearing,
+  pin-only text-lockfile fallback and six-consumer proof.
 - Foundation complete: `g08.019` established shared inventory, desired state,
   status, and JSON foundations through cards `1051` to `1053`.
 - Cargo planning complete: `1054` established the pure full-closure and safety
@@ -165,7 +168,7 @@ completed `g08.027` through cards `1070` and `1071`.
 Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 Strict spec `102` and `g08.029` are complete through card `1076`.
 Strict spec `103` and `g08.030` are complete through card `1077`.
-Strict spec `104` and `g08.031` are complete through card `1080`.
+Strict spec `104` and `g08.031` are complete through card `1081`.
 
 ## Batch Cards
 
@@ -221,6 +224,7 @@ Strict spec `104` and `g08.031` are complete through card `1080`.
 - [`1078-build-bun-pin-planner-and-manifest-transaction.md`](./batch-cards/1078-build-bun-pin-planner-and-manifest-transaction.md)
 - [`1079-wire-bun-pin-cli-json-and-link-interlocks.md`](./batch-cards/1079-wire-bun-pin-cli-json-and-link-interlocks.md)
 - [`1080-prove-bun-pin-consumer-workflow-and-closeout.md`](./batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md)
+- [`1081-decouple-bun-pin-from-pm-ls-lockfile-failures.md`](./batch-cards/1081-decouple-bun-pin-from-pm-ls-lockfile-failures.md)
 
 ## Current State
 
@@ -239,7 +243,7 @@ are complete.
 make hosted CI evidence for the exact candidate SHA release-blocking.
 
 `g08.031` is complete under contract `040`; strict spec `104` is archived and
-cards `1078` through `1080` are complete.
+cards `1078` through `1081` are complete.
 
 ## Next Task
 

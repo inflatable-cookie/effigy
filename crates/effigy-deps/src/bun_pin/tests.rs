@@ -34,6 +34,30 @@ impl ReadOnlyProcess for FixtureProcess {
     }
 }
 
+struct FailingProcess {
+    requests: RefCell<Vec<ProcessRequest>>,
+}
+
+impl FailingProcess {
+    fn new() -> Self {
+        Self {
+            requests: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl ReadOnlyProcess for FailingProcess {
+    fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
+        self.requests.borrow_mut().push(request.clone());
+        Err(DepsError::ProcessFailed {
+            program: request.program.clone(),
+            cwd: request.cwd.clone(),
+            status: Some(1),
+            stderr: "Error loading lockfile: InvalidPackageInfo".to_owned(),
+        })
+    }
+}
+
 struct Fixture {
     _temp: TempDir,
     consumer: PathBuf,
@@ -104,6 +128,118 @@ fn pin_plans_the_unique_full_closure_in_package_order() {
     assert_eq!(plan.packages[1].depth, Some(DependencyDepth::Direct));
     assert_eq!(process.requests.borrow().len(), 1);
     assert_eq!(process.requests.borrow()[0].args, ["pm", "ls", "--all"]);
+}
+
+#[test]
+fn pin_falls_back_to_jsonc_lock_packages_after_bun_enumeration_fails() {
+    let fixture = fixture(&[("@acme/ui", "ui"), ("@acme/core", "core")]);
+    let manifest = r#"{"name":"consumer","dependencies":{"@acme/ui":"^1"}}"#;
+    write(&fixture.consumer.join("package.json"), manifest);
+    write(
+        &fixture.consumer.join("bun.lock"),
+        concat!(
+            "{\n",
+            "  // Bun text locks are JSONC.\n",
+            "  \"lockfileVersion\": 1,\n",
+            "  \"packages\": {\n",
+            "    \"@acme/ui\": [\"@acme/ui@1.0.0\", {}, \"sha512-ui\"],\n",
+            "    \"host/@acme/core\": [\"@acme/core@file:../cache/core\", {}, \"sha512-core\"],\n",
+            "  },\n",
+            "}\n",
+        ),
+    );
+    let process = FailingProcess::new();
+
+    let plan = plan_bun_pin(&fixture.consumer, &fixture.library, true, &process).unwrap();
+
+    assert_eq!(plan.disposition, BunPinPlanDisposition::Apply);
+    assert_eq!(
+        plan.packages
+            .iter()
+            .map(|package| (package.name.as_str(), package.depth))
+            .collect::<Vec<_>>(),
+        [
+            ("@acme/core", Some(DependencyDepth::Transitive)),
+            ("@acme/ui", Some(DependencyDepth::Direct)),
+        ]
+    );
+    let warning = plan
+        .warnings
+        .iter()
+        .find(|warning| warning.code == "lockfile-enumeration-fallback")
+        .unwrap();
+    assert!(warning.message.contains("InvalidPackageInfo"));
+    assert!(warning.message.contains("bun.lock"));
+    assert_eq!(process.requests.borrow().len(), 1);
+    assert_eq!(
+        fs::read_to_string(fixture.consumer.join("package.json")).unwrap(),
+        manifest
+    );
+}
+
+#[test]
+fn pin_lock_fallback_refuses_missing_malformed_and_unsafe_lock_data() {
+    let fixture = fixture(&[("@acme/core", "core")]);
+    let manifest = r#"{"name":"consumer","dependencies":{"@acme/core":"^1"}}"#;
+    write(&fixture.consumer.join("package.json"), manifest);
+
+    let missing = plan_bun_pin(
+        &fixture.consumer,
+        &fixture.library,
+        false,
+        &FailingProcess::new(),
+    )
+    .unwrap_err();
+    assert!(missing
+        .to_string()
+        .contains("text lockfile fallback failed"));
+
+    write(&fixture.consumer.join("bun.lock"), "{ not-jsonc");
+    let malformed = plan_bun_pin(
+        &fixture.consumer,
+        &fixture.library,
+        false,
+        &FailingProcess::new(),
+    )
+    .unwrap_err();
+    assert!(malformed.to_string().contains("failed to parse"));
+
+    write(
+        &fixture.consumer.join("bun.lock"),
+        r#"{"packages":{"@acme/core":{"specifier":"@acme/core@1.0.0"}}}"#,
+    );
+    let unsafe_record = plan_bun_pin(
+        &fixture.consumer,
+        &fixture.library,
+        false,
+        &FailingProcess::new(),
+    )
+    .unwrap_err();
+    assert!(unsafe_record.to_string().contains("must be an array"));
+    assert!(unsafe_record.to_string().contains("InvalidPackageInfo"));
+    assert_eq!(
+        fs::read_to_string(fixture.consumer.join("package.json")).unwrap(),
+        manifest
+    );
+}
+
+#[test]
+fn shared_bun_inventory_does_not_use_the_pin_lockfile_fallback() {
+    let fixture = fixture(&[("@acme/core", "core")]);
+    write(
+        &fixture.consumer.join("package.json"),
+        r#"{"dependencies":{"@acme/core":"^1"}}"#,
+    );
+    write(
+        &fixture.consumer.join("bun.lock"),
+        r#"{"packages":{"@acme/core":["@acme/core@1.0.0",{},""]}}"#,
+    );
+    let packages = inventory_bun_library(&fixture.library).unwrap();
+
+    let error =
+        inventory_bun_consumer(&fixture.consumer, &packages, &FailingProcess::new()).unwrap_err();
+
+    assert!(matches!(error, DepsError::ProcessFailed { .. }));
 }
 
 #[test]

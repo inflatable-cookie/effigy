@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-08-10
+Updated: 2026-08-12
 
 This contract defines how Effigy executes active roadmap work under the strict
 Northstar posture.

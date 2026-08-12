@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use jsonc_parser::{parse_to_value, JsonValue};
 use serde::Deserialize;
 use walkdir::{DirEntry, WalkDir};
 
@@ -50,13 +51,7 @@ pub fn inventory_bun_consumer(
 ) -> Result<BunConsumerInventory, DepsError> {
     let root = canonical_existing_path(root)?;
     let manifests = selected_bun_manifests(&root)?;
-    let mut direct_dependencies = BTreeSet::new();
-    for (_, manifest) in &manifests {
-        direct_dependencies.extend(manifest.dependencies.keys().cloned());
-        direct_dependencies.extend(manifest.dev_dependencies.keys().cloned());
-        direct_dependencies.extend(manifest.peer_dependencies.keys().cloned());
-        direct_dependencies.extend(manifest.optional_dependencies.keys().cloned());
-    }
+    let direct_dependencies = direct_dependencies(&manifests);
     let request = ProcessRequest {
         program: "bun".to_owned(),
         args: vec!["pm".to_owned(), "ls".to_owned(), "--all".to_owned()],
@@ -64,6 +59,90 @@ pub fn inventory_bun_consumer(
     };
     let output = process.run(&request)?;
     let packages = parse_bun_dependency_tree(&root, &output.stdout);
+    Ok(consumer_inventory(
+        root,
+        packages,
+        direct_dependencies,
+        library_packages,
+    ))
+}
+
+pub(crate) fn inventory_bun_consumer_from_text_lock(
+    root: impl AsRef<Path>,
+    library_packages: &[BunPackageInventory],
+) -> Result<BunConsumerInventory, DepsError> {
+    let root = canonical_existing_path(root)?;
+    let manifests = selected_bun_manifests(&root)?;
+    let direct_dependencies = direct_dependencies(&manifests);
+    let lock_path = root.join("bun.lock");
+    let raw = fs::read_to_string(&lock_path)
+        .map_err(|error| DepsError::io("read Bun text lockfile", &lock_path, error))?;
+    let value = parse_to_value(&raw, &Default::default()).map_err(|error| {
+        DepsError::invalid(
+            &lock_path,
+            format!("failed to parse Bun text lockfile as JSONC: {error}"),
+        )
+    })?;
+    let Some(JsonValue::Object(mut root_value)) = value else {
+        return Err(DepsError::invalid(
+            &lock_path,
+            "Bun text lockfile root must be an object",
+        ));
+    };
+    let Some(packages_value) = root_value.take("packages") else {
+        return Err(DepsError::invalid(
+            &lock_path,
+            "Bun text lockfile is missing a `packages` object",
+        ));
+    };
+    let JsonValue::Object(packages_value) = packages_value else {
+        return Err(DepsError::invalid(
+            &lock_path,
+            "Bun text lockfile `packages` must be an object",
+        ));
+    };
+    let mut packages = BTreeSet::new();
+    for (lock_key, record) in packages_value {
+        let JsonValue::Array(record) = record else {
+            return Err(DepsError::invalid(
+                &lock_path,
+                format!("Bun package record `{lock_key}` must be an array"),
+            ));
+        };
+        let Some(JsonValue::String(specifier)) = record.get(0) else {
+            return Err(DepsError::invalid(
+                &lock_path,
+                format!("Bun package record `{lock_key}` has no package specifier"),
+            ));
+        };
+        let Some((name, version)) = split_package_spec(specifier) else {
+            return Err(DepsError::invalid(
+                &lock_path,
+                format!(
+                    "Bun package record `{lock_key}` has an unrecognized package specifier `{specifier}`"
+                ),
+            ));
+        };
+        packages.insert(BunPackageInventory {
+            package_path: root.join("node_modules").join(&name),
+            name,
+            version: Some(version),
+        });
+    }
+    Ok(consumer_inventory(
+        root,
+        packages.into_iter().collect(),
+        direct_dependencies,
+        library_packages,
+    ))
+}
+
+fn consumer_inventory(
+    root: PathBuf,
+    packages: Vec<BunPackageInventory>,
+    direct_dependencies: BTreeSet<String>,
+    library_packages: &[BunPackageInventory],
+) -> BunConsumerInventory {
     let library_names: BTreeSet<_> = library_packages
         .iter()
         .map(|package| package.name.as_str())
@@ -82,12 +161,23 @@ pub fn inventory_bun_consumer(
         })
         .collect::<Vec<_>>();
     library_matches.sort();
-    Ok(BunConsumerInventory {
+    BunConsumerInventory {
         root,
         packages,
         direct_dependencies: direct_dependencies.into_iter().collect(),
         library_matches,
-    })
+    }
+}
+
+fn direct_dependencies(manifests: &[(PathBuf, PackageManifest)]) -> BTreeSet<String> {
+    let mut direct_dependencies = BTreeSet::new();
+    for (_, manifest) in manifests {
+        direct_dependencies.extend(manifest.dependencies.keys().cloned());
+        direct_dependencies.extend(manifest.dev_dependencies.keys().cloned());
+        direct_dependencies.extend(manifest.peer_dependencies.keys().cloned());
+        direct_dependencies.extend(manifest.optional_dependencies.keys().cloned());
+    }
+    direct_dependencies
 }
 
 pub(crate) fn inventory_bun_file_dependencies(

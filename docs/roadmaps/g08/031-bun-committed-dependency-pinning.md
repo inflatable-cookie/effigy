@@ -28,6 +28,8 @@ without weakening save-less links or mutating intermediate repositories.
 - [x] expose deterministic text and versioned JSON reports
 - [x] prove the committed override against the Soundcheck/Poodle graph
 - [x] publish the operator boundary and close the strict lane
+- [x] tolerate Bun's `InvalidPackageInfo` enumeration failure through a
+      pin-only, fail-closed text-lockfile fallback
 
 ## Execution Plan
 
@@ -35,6 +37,8 @@ without weakening save-less links or mutating intermediate repositories.
 - [x] card 1079: wire CLI, JSON, and machine-local link interlocks
 - [x] card 1080: prove the consumer workflow, publish guidance, and close the
       lane
+- [x] card 1081: decouple pin inventory from Bun process enumeration failures
+      without weakening link inventory
 
 ## Owner And Seam
 
@@ -73,6 +77,9 @@ specific.
 - [x] focused tests, JSON validation, docs QA, Clippy, and full QA pass
 - [x] spec, roadmap, cards, front doors, and evidence close without a stale
       ready card
+- [x] five affected consumers pin through lockfile fallback while cp-front
+      remains on the primary process path
+- [x] fallback warnings are explicit and unsafe lock data writes nothing
 
 ## Runway
 
@@ -80,7 +87,8 @@ specific.
 - completed command surface: `1079`, public CLI, JSON, and link/pin interlocks
 - completed proof and closeout: `1080`, disposable consumer proof, public
   guidance, full validation, and spec archival
-- planning checkpoint: lane complete; no implementation card remains
+- completed follow-up: `1081`, pin-only text-lockfile enumeration after a Bun
+  process failure, six-consumer proof, and lane re-closeout
 
 ## Stop Conditions
 
@@ -91,6 +99,8 @@ Stop and return to contract review if:
 - full closure cannot be selected deterministically by package name
 - correct behavior requires running install or changing a Bun lockfile
 - implementation must mutate another repository or fold pinning into link
+- fallback requires manifest-only guessing, binary `bun.lockb` parsing, or
+  weakening process-authoritative Bun link inventory
 
 ## Next Task
 

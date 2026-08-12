@@ -269,6 +269,19 @@ mod tests {
         }
     }
 
+    struct FailingProcess;
+
+    impl ReadOnlyProcess for FailingProcess {
+        fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
+            Err(DepsError::ProcessFailed {
+                program: request.program.clone(),
+                cwd: request.cwd.clone(),
+                status: Some(1),
+                stderr: "Error loading lockfile: InvalidPackageInfo".to_owned(),
+            })
+        }
+    }
+
     fn fixture() -> (TempDir, TempDir) {
         let consumer = TempDir::new().unwrap();
         let library = TempDir::new().unwrap();
@@ -360,5 +373,59 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&unpin).unwrap()["library_path"],
             expected.display().to_string()
         );
+    }
+
+    #[test]
+    fn pin_text_and_json_report_lockfile_enumeration_fallback() {
+        let (consumer, library) = fixture();
+        fs::write(
+            consumer.path().join("bun.lock"),
+            concat!(
+                "{\n",
+                "  // valid Bun JSONC\n",
+                "  \"packages\": {\n",
+                "    \"nested/@acme/core\": [\"@acme/core@1.0.0\", {}, \"\"],\n",
+                "  },\n",
+                "}\n",
+            ),
+        )
+        .unwrap();
+
+        let text = run_bun_pin(
+            Some(consumer.path().to_path_buf()),
+            library.path(),
+            true,
+            false,
+            &FailingProcess,
+        )
+        .unwrap();
+        let rendered = run_bun_pin(
+            Some(consumer.path().to_path_buf()),
+            library.path(),
+            true,
+            true,
+            &FailingProcess,
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert!(text.contains("[lockfile-enumeration-fallback]"));
+        assert!(text.contains("InvalidPackageInfo"));
+        assert_eq!(
+            json["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|warning| warning["code"] == "lockfile-enumeration-fallback")
+                .unwrap()["package"],
+            serde_json::Value::Null
+        );
+        assert!(json["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("bun.lock"))));
     }
 }

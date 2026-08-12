@@ -7,19 +7,15 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] Bun pin depends on fallible lockfile enumeration — 2026-08-12
-- Friction: `deps pin bun` aborts when `bun pm ls --all` returns
-  `Error loading lockfile: InvalidPackageInfo`, even after lockfile regeneration.
-- Impact: `cp-admin`, `compli-me/front`, `songsprout/bloom`,
-  `songsprout/greenhouse`, and `cream` required identical overrides to be
-  written by hand. The failure is per lockfile: `cp-front` works beside
-  `cp-admin` in the same repository.
-- Possible fix: decouple closure enumeration from `bun pm ls`; use a safe
-  manifest/lockfile fallback or accept an explicit package list when Bun cannot
-  enumerate the tree.
-- Surface: `effigy deps pin bun` package-closure inventory.
-
 ## Closed
+
+### [x] Bun pin depends on fallible lockfile enumeration — 2026-08-12
+- Friction: `deps pin bun` aborted when `bun pm ls --all` returned
+  `Error loading lockfile: InvalidPackageInfo`, even after regeneration.
+- Fix (2026-08-12): pin-only fallback reads valid text `bun.lock` package
+  records as JSONC, warns with the original Bun failure, and fails closed on
+  unsafe lock data. Bun links remain process-authoritative.
+- Surface: `effigy deps pin bun` package-closure inventory.
 
 ### [x] Bun status hides linked packages exposed through `file:` dependencies — 2026-08-11
 - Friction: a repository consumed through `file:` can expose linked packages
