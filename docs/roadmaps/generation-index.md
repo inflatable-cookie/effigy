@@ -180,8 +180,33 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1081` and strict specs `099` through `104` are complete.
+Cards `1051` through `1084` and strict specs `099` through `105` are complete.
 No ready strict card remains.
+
+## Strategic runway (Atlas 2026-08-17)
+
+`g08` feature tranches are complete. The next era is operator-selected, not
+inferred from card exhaustion.
+
+Canonical atlas artifact:
+[`docs/vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md)
+
+Candidate themes (not scheduled until intent lands):
+[`docs/roadmaps/backlog/g09-candidate-themes.md`](./backlog/g09-candidate-themes.md)
+
+Horizon summary:
+
+1. **Stabilize and choose** — refresh instruction surfaces; operator picks one
+   lane owner.
+2. **Governed operations** — populate vision governance registers and run
+   reviews on live data.
+3. **Agent-native maintainer experience** — graph/scan/papercuts adoption with
+   measured proof.
+4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
+   research Phase 3 only after B–C discipline.
+
+Do not open `g09` or start release work until the operator confirms Horizon A
+intent and planning compiles ready cards.
 
 ## Research Roadmaps
 
@@ -214,5 +239,5 @@ closeout there first.
 
 ## Next Task
 
-No ready strict card remains. Await operator intent before compiling another
-lane. No release action or generation rollover is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. No release action or `g09` rollover is implied.

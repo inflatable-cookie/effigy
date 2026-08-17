@@ -39,17 +39,22 @@ Archived strict lanes:
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
 - `076` through `096` are archived
-- [`101`](./archive/101-explicit-catalog-membership-strict-lane.md) is archived
-  after completing explicit catalog membership
-- [`102`](./archive/102-unified-test-orchestration-v011.md) is archived after
-  completing v0.11 unified test orchestration
-- [`103`](./archive/103-pre-release-ci-proof.md) is archived after making
-  exact-candidate hosted CI proof release-blocking
-- [`104`](./archive/104-bun-committed-dependency-pinning.md) is archived after
-  completing committed Bun pinning, the consumer proof, and the bounded
-  `InvalidPackageInfo` follow-up
-- `097`, `099`, and `100` are complete and awaiting archive on the next
-  planning sweep
+- [`097`](./archive/097-graph-aware-scan-intelligence-strict-lane.md) archived
+  after graph-aware scan intelligence closeout
+- [`099`](./archive/099-local-dependency-management-strict-lane.md) archived
+  after local dependency management suite closeout
+- [`100`](./archive/100-papercuts-discovery-and-capture-strict-lane.md) archived
+  after papercuts discovery closeout
+- [`101`](./archive/101-explicit-catalog-membership-strict-lane.md) archived
+  after explicit catalog membership
+- [`102`](./archive/102-unified-test-orchestration-v011.md) archived after
+  unified v0.11 test orchestration
+- [`103`](./archive/103-pre-release-ci-proof.md) archived after exact-candidate
+  hosted CI proof
+- [`104`](./archive/104-bun-committed-dependency-pinning.md) archived after
+  committed Bun pinning
+- [`105`](./archive/105-vision-governance-operationalization-strict-lane.md)
+  archived after vision governance operationalization
 
 Other planning specs:
 
@@ -58,5 +63,5 @@ Other planning specs:
 
 ## Next Task
 
-No ready strict card remains. Keep the unrelated `098` uninstall draft paused
-until the operator selects the next planning direction.
+Run the second governance review by 2026-09-17. Keep draft `098` paused until
+the operator selects the next Horizon theme.

@@ -5,6 +5,8 @@ Use this folder for planning threads that are important but not yet scheduled in
 
 ## Current Backlog Items
 
+- [g09 Candidate Themes](./g09-candidate-themes.md) — Atlas-shaped strategic
+  options awaiting operator selection (2026-08-17)
 - [Breaking Command Surface and Container Compaction](./breaking-command-surface-and-container-compaction.md)
 
 The earlier release/distribution backlog items were promoted into the active

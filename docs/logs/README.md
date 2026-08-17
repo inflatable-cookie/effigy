@@ -22,6 +22,14 @@ When a feature spans multiple same-day checkpoints, add a consolidation log that
 - Create logs per completed batch or update cycle.
 - Do not create a separate log for every task.
 
+## Governance reviews
+
+Monthly governance reviews use template
+[`009-vision-governance-review-template-v1`](../vision/009-vision-governance-review-template-v1.md).
+Store them under `docs/logs/<month>/` with a `vision-governance-review` slug.
+Reference the artifact register and decision index from
+[`docs/vision/governance/`](../vision/governance/).
+
 ## Vision Target Delta Requirement
 
 All new logs that act as release or validation reports should include a `## Vision Target Delta` section that states:
@@ -78,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/17-153000-vision-governance-operationalization-closeout.md`](./2026-08/17-153000-vision-governance-operationalization-closeout.md)
 - [`2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md`](./2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
 - [`2026-08/12-090342-bun-pin-lockfile-fallback-planning.md`](./2026-08/12-090342-bun-pin-lockfile-fallback-planning.md)
 - [`2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md`](./2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
@@ -165,4 +174,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Await operator intent. No ready strict card or release mutation is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme.

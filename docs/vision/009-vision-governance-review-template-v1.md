@@ -65,6 +65,11 @@ Actions
 3. Every expiring or overdue exception needs explicit disposition.
 4. Use consistent IDs so trends can be followed across cycles.
 
+## 4. Adoption Status
+
+Integrated into [`docs/logs/README.md`](../../logs/README.md). First review
+logged 2026-08-17.
+
 ## Next Task
 
-Integrate this template into logs guidance so governance reviews use a single consistent structure.
+Run the second governance review by 2026-09-17.

@@ -16,9 +16,8 @@ the active `docs/specs/` tree.
 ## Current Archive State
 
 Completed or paused strict-lane specs `076` through `096` are archived here.
-Specs `101` through `104` are also archived after their lane closeouts. The
-active tree retains a small number of completed specs awaiting the next
-planning sweep plus provisional spec `098`.
+Specs `097` through `105` are also archived after their lane closeouts. The
+active tree retains provisional spec `098` only.
 
 ## Next Task
 

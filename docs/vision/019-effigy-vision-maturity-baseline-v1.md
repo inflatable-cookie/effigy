@@ -45,4 +45,5 @@ Promote from stage 2 to stage 3 when:
 
 ## Next Task
 
-Create the first populated governance review artifact using the template and this baseline as input.
+Run the second governance review by 2026-09-17 using the first review log as
+baseline evidence.

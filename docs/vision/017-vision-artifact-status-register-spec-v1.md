@@ -49,4 +49,5 @@ Each artifact row should include:
 
 ## Next Task
 
-Create the initial populated artifact status register for current `001` to `016` vision artifacts.
+Update the register on the monthly cadence at
+[`governance/artifact-status-register.md`](./governance/artifact-status-register.md).

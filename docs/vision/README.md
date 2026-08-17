@@ -39,6 +39,16 @@ Effigy should be a deterministic, automation-grade, operator-first orchestration
 17. [017-vision-artifact-status-register-spec-v1](./017-vision-artifact-status-register-spec-v1.md)
 18. [018-vision-decision-record-index-spec-v1](./018-vision-decision-record-index-spec-v1.md)
 19. [019-effigy-vision-maturity-baseline-v1](./019-effigy-vision-maturity-baseline-v1.md)
+20. [020-strategic-runway-atlas-v1](./020-strategic-runway-atlas-v1.md)
+
+## Governance
+
+Live registers and decision indexes:
+
+- [`governance/README.md`](./governance/README.md)
+- [`governance/artifact-status-register.md`](./governance/artifact-status-register.md)
+- [`governance/decision-record-index.md`](./governance/decision-record-index.md)
+- [`decisions/`](./decisions/) — full decision record bodies
 
 ## Vision History
 
@@ -53,4 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Create the first populated vision artifact status register and decision index entries so governance can run on real data instead of templates.
+Run the second governance review by 2026-09-17 per
+[`governance/README.md`](./governance/README.md). Await operator intent for the
+next Horizon theme.

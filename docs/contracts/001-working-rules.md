@@ -96,6 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-No ready strict card remains after roadmap `g08.031`. Await operator intent
-before compiling another lane; do not infer release work or generation
-rollover.
+Run the second governance review by 2026-09-17 per
+[`docs/vision/governance/README.md`](../vision/governance/README.md). Await
+operator intent for the next Horizon theme; do not infer release work or
+generation rollover.

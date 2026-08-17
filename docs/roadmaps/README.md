@@ -101,12 +101,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.031`](./g08/031-bun-committed-dependency-pinning.md) delivers
   the separate committed Bun override workflow and pin-only text-lockfile
   fallback under contract `040`; cards `1078` through `1081` are complete.
+  Completed [`g08.032`](./g08/032-vision-governance-operationalization.md)
+  operationalizes vision governance registers and the first review cycle under
+  archived strict spec `105`; cards `1082` through `1084` are complete.
 
 ## Active Strict Lane
 
 None. Strict spec
-[`104`](../specs/archive/104-bun-committed-dependency-pinning.md) and roadmap
-[`g08.031`](./g08/031-bun-committed-dependency-pinning.md) are complete.
+[`105`](../specs/archive/105-vision-governance-operationalization-strict-lane.md)
+and roadmap [`g08.032`](./g08/032-vision-governance-operationalization.md) are
+complete.
 
 ## Research Program
 
@@ -161,8 +165,8 @@ Before rollover:
 
 ## Next Task
 
-No ready strict card remains. Await operator intent before compiling another
-lane. No release action or `g09` rollover is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. No release action or `g09` rollover is implied.
 
 ## Historical language boundary
 

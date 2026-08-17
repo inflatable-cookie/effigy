@@ -3,119 +3,83 @@
 Effigy is a Rust-based unified task runner for monorepos. Behavior is
 **manifest-driven** (`effigy.toml`, often split across included files): most
 `effigy <name>` invocations are **repo tasks**; built-ins include `test`, `init`,
-`doctor`, and a short list from `effigy --help`. Names like **`dev`** are
-usually tasks the repo defines.
+`doctor`, and a short list from `effigy --help`.
 
-## Build & Test
+## Always-loaded boundaries
+
+- Use canonical docs and ready-card surfaces; do not invent parallel planning
+  authority.
+- Normal-mode agents use the current checkout. Worker mode activates only from
+  an orchestrator handoff declaring `handoff_mode: worker-pr-loop`.
+- Do not add a current-directory repo override when already inside the target
+  repo; use `--repo <PATH>` only for a different repo.
+- Do not add `package.json` scripts that re-export Effigy tasks.
+- Never modify `.github/workflows/` or run release mutations without explicit
+  human instruction.
+- When planning authority is ambiguous, stop and ask instead of guessing.
+
+## Common commands
 
 ```bash
-cargo test                    # run all tests
-cargo fmt --all -- --check    # format check
-cargo clippy --all-targets -- -D warnings   # lint check
+effigy tasks
+effigy test --plan
+effigy qa                 # test + docs + json contracts
+effigy release gates
 ```
 
-First-party code has no repo-wide Clippy allowances. A plain `cargo clippy`
-matches CI — no `-A` flags are needed.
+Without `effigy` on PATH: `cargo run --bin effigy -- ...`.
+Bootstrap from outside:
+`effigy bootstrap git@github.com:inflatable-cookie/effigy.git`.
 
-If `effigy` is on PATH, this repository's own Effigy tasks are available
-(including **`qa:*`** aggregators defined only here):
+Rust QA when needed: `cargo test`, `cargo fmt --all -- --check`,
+`cargo clippy --all-targets -- -D warnings` (plain `cargo clippy` matches CI).
 
-```bash
-effigy test --plan   # show test plan
-effigy qa            # full QA (test + docs + json contracts)
-effigy release gates # release-gate pass for the current repo
-```
+Route by job: `effigy graph` for code understanding; `effigy tasks` for
+selectors; `effigy doctor` for routing/health; `effigy test --plan` for test
+shape.
 
-Otherwise bootstrap with `cargo run --bin effigy -- ...`.
+## Docs authority
 
-For first-time local bring-up from outside this repo:
-- use `effigy bootstrap git@github.com:inflatable-cookie/effigy.git`
+- `docs/README.md` — docs front door
+- `docs/vision/README.md` — long-horizon direction
+- `docs/roadmaps/README.md` — active milestone queue
+- `docs/logs/README.md` — evidence log
+- `docs/contracts/001-working-rules.md` — strict execution rules
+- `docs/policy/internal-writing-style.md` — internal writing style
 
-Default local rule:
-- do not add a current-directory repo override when already running inside the target repo
-- use `--repo <PATH>` only when intentionally targeting a different repo
-- do not add `package.json` scripts that re-export Effigy tasks; run
-  `effigy <task>` directly and keep package scripts package-native
+Bare `continue` in the strict lane resolves through the previous `Next Task`.
+Anchor on the current ready batch card when one exists; otherwise stay in
+planning.
+
+During execution, append solvable friction to `PAPERCUTS.md` per the Northstar
+papercuts loop; do not stop the current task to fix papercuts unless already in
+scope.
 
 ## Changelog
 
-When making changes that affect user-facing behavior, append an entry to
-`CHANGELOG.md` under the appropriate `[Unreleased]` subsection:
+Append user-facing changes to `CHANGELOG.md` under `[Unreleased]`:
+**Breaking**, **Added**, **Changed**, **Fixed**.
 
-- **Breaking** — CLI behavior changes, config format changes, removed features
-  (forces MINOR bump)
-- **Added** — new features, commands, options
-- **Changed** — non-breaking modifications to existing behavior
-- **Fixed** — bug fixes
+## Release protocol
 
-## Release Protocol
+Never initiate release without explicit human instruction. Never bypass gates
+or re-tag failed releases. Canonical references:
+[`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md),
+[`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md).
 
-Agents must never initiate a release without explicit human instruction.
-Full protocol: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
+## Cross-repo agent skill
 
-Key rules:
-- Never modify `.github/workflows/` without explicit human approval
-- Never prepare or execute a release until `ci.yml` is green for the exact
-  candidate source commit
-- Never bypass release gates — fix the underlying issue instead
-- Never re-tag a failed release — fix goes into the next PATCH
+Other repos: `npx skills add inflatable-cookie/effigy`. This repo's
+`.agents/skills/effigy` copy is authoritative here.
 
-Preferred release command path:
-- push the clean candidate commit to `main`
-- `gh workflow run ci.yml --ref main`, then watch that exact-SHA run to success
-- `effigy release simulate`
-- `effigy release status --check-gates`
-- `effigy release prepare --plan`
-- `effigy release prepare --yes --check-gates`
-- `effigy release execute --plan`
-- `effigy release execute --yes`
-- `gh workflow run release-binaries.yml -f tag=v0.__.__` (explicit human approval)
-- `effigy release verify-install --tag v0.__.__`
-- `effigy changelog extract CHANGELOG.md --version X.Y.Z`
-
-Canonical reference:
-- [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
-
-## Key Documentation
+## Key documentation
 
 - Guides hub: [`docs/guides/README.md`](./docs/guides/README.md)
 - Strict planning lane: [`docs/specs/README.md`](./docs/specs/README.md)
-- Working rules: [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 - Task routing: [`docs/guides/016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md)
 - JSON contracts: [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
-- CI & release: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
-- Release orchestration: [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 - Agent adoption: [`docs/guides/047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
-- Northstar + Effigy repo contract: [`docs/guides/056-northstar-effigy-consumer-repo-contract.md`](./docs/guides/056-northstar-effigy-consumer-repo-contract.md)
-- Env schema: [`docs/guides/050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
-
-## Terminology
-
-- **selector**: a task request string (`test`, `api/test`)
-- **routing**: how a selector resolves to a catalog and task
-- **deferral**: fallback execution when no selector matches local tasks
-
-## Strict Continuation Rule
-
-- In the active strict lane, `continue` should resolve through the previous
-  `Next Task`.
-- If there is an active ready batch card, execution should anchor on that card.
-- If there is no ready card, stop in planning instead of improvising execution.
-- When the next move is materially ambiguous, ask for intent instead of
-  guessing.
-
-## Internal Writing Style
-
-Use the repo-local style reference for internal work and normal replies:
-
-- `docs/policy/internal-writing-style.md`
-
-## Cross-Repo Agent Skill
-
-Agents working in other repos that use Effigy should install the bundled
-agent skill: `npx skills add inflatable-cookie/effigy`. Source lives at
-[`skills/effigy/`](./skills/effigy/) and works in Claude Code, Codex CLI,
-Cursor, and any other agent that consumes the open `SKILL.md` standard.
+- Northstar consumer contract: [`docs/guides/056-northstar-effigy-consumer-repo-contract.md`](./docs/guides/056-northstar-effigy-consumer-repo-contract.md)
 
 <!-- BEGIN EFFIGY AGENT CONTRACT -->
 ## Effigy Agent Contract

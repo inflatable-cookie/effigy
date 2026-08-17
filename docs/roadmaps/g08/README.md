@@ -7,8 +7,9 @@ extended with the 2026-06-10 security and posture hardening tranche
 (g08.018–g08.023), and bounded release-orchestration follow-through in
 `g08.024` through `g08.026`, papercut portfolio discovery in `g08.027`,
 explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
-`g08.029`, exact-candidate pre-release CI proof in `g08.030`, and committed Bun
-dependency pinning and its bounded enumeration fallback in `g08.031`.
+`g08.029`, exact-candidate pre-release CI proof in `g08.030`, committed Bun
+dependency pinning and its bounded enumeration fallback in `g08.031`, and vision
+governance operationalization in `g08.032`.
 
 ## Purpose
 
@@ -73,6 +74,7 @@ This generation should help agents and maintainers answer questions like:
 - [`029-unified-test-orchestration-v011.md`](./029-unified-test-orchestration-v011.md)
 - [`030-pre-release-ci-proof.md`](./030-pre-release-ci-proof.md)
 - [`031-bun-committed-dependency-pinning.md`](./031-bun-committed-dependency-pinning.md)
+- [`032-vision-governance-operationalization.md`](./032-vision-governance-operationalization.md)
 
 ## Design Posture
 
@@ -169,6 +171,7 @@ Strict spec `101` and `g08.028` are complete through cards `1072` to `1075`.
 Strict spec `102` and `g08.029` are complete through card `1076`.
 Strict spec `103` and `g08.030` are complete through card `1077`.
 Strict spec `104` and `g08.031` are complete through card `1081`.
+Strict spec `105` and `g08.032` are complete through card `1084`.
 
 ## Batch Cards
 
@@ -225,6 +228,9 @@ Strict spec `104` and `g08.031` are complete through card `1081`.
 - [`1079-wire-bun-pin-cli-json-and-link-interlocks.md`](./batch-cards/1079-wire-bun-pin-cli-json-and-link-interlocks.md)
 - [`1080-prove-bun-pin-consumer-workflow-and-closeout.md`](./batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md)
 - [`1081-decouple-bun-pin-from-pm-ls-lockfile-failures.md`](./batch-cards/1081-decouple-bun-pin-from-pm-ls-lockfile-failures.md)
+- [`1082-populate-artifact-status-register.md`](./batch-cards/1082-populate-artifact-status-register.md)
+- [`1083-create-decision-index-and-seeded-records.md`](./batch-cards/1083-create-decision-index-and-seeded-records.md)
+- [`1084-run-first-governance-review-and-closeout.md`](./batch-cards/1084-run-first-governance-review-and-closeout.md)
 
 ## Current State
 
@@ -245,7 +251,11 @@ make hosted CI evidence for the exact candidate SHA release-blocking.
 `g08.031` is complete under contract `040`; strict spec `104` is archived and
 cards `1078` through `1081` are complete.
 
+`g08.032` is complete under archived strict spec `105`. Cards `1082` through
+`1084` delivered governance registers, seeded decisions, and the first review
+cycle.
+
 ## Next Task
 
-No ready strict card remains. Await operator intent before compiling another
-lane. Do not infer release work or a generation rollover.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. Do not infer release work or a generation rollover.

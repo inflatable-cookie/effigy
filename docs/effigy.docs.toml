@@ -2,7 +2,7 @@
 file = "docs/vision/README.md"
 dir = "docs/vision"
 section = "Vision Artifacts"
-exclude = ["history/**"]
+exclude = ["history/**", "governance/**", "decisions/**"]
 
 [docs_policy.next_actions.vision]
 index = "vision"

@@ -51,4 +51,5 @@ Each decision record entry should include:
 
 ## Next Task
 
-Create a starter decision index file and add the first seeded decision record entries used by the current vision rollout.
+Update the index when decision status changes at
+[`governance/decision-record-index.md`](./governance/decision-record-index.md).
