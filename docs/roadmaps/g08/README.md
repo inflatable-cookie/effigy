@@ -9,7 +9,8 @@ extended with the 2026-06-10 security and posture hardening tranche
 explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
 `g08.029`, exact-candidate pre-release CI proof in `g08.030`, committed Bun
 dependency pinning and its bounded enumeration fallback in `g08.031`, and vision
-governance operationalization in `g08.032`.
+governance operationalization in `g08.032`, and doctor secret-schema parity in
+`g08.033`.
 
 ## Purpose
 
@@ -75,6 +76,7 @@ This generation should help agents and maintainers answer questions like:
 - [`030-pre-release-ci-proof.md`](./030-pre-release-ci-proof.md)
 - [`031-bun-committed-dependency-pinning.md`](./031-bun-committed-dependency-pinning.md)
 - [`032-vision-governance-operationalization.md`](./032-vision-governance-operationalization.md)
+- [`033-doctor-secrets-schema-parity.md`](./033-doctor-secrets-schema-parity.md)
 
 ## Design Posture
 
@@ -231,6 +233,7 @@ Strict spec `105` and `g08.032` are complete through card `1084`.
 - [`1082-populate-artifact-status-register.md`](./batch-cards/1082-populate-artifact-status-register.md)
 - [`1083-create-decision-index-and-seeded-records.md`](./batch-cards/1083-create-decision-index-and-seeded-records.md)
 - [`1084-run-first-governance-review-and-closeout.md`](./batch-cards/1084-run-first-governance-review-and-closeout.md)
+- [`1085-align-doctor-with-secrets-schema.md`](./batch-cards/1085-align-doctor-with-secrets-schema.md)
 
 ## Current State
 
@@ -254,6 +257,10 @@ cards `1078` through `1081` are complete.
 `g08.032` is complete under archived strict spec `105`. Cards `1082` through
 `1084` delivered governance registers, seeded decisions, and the first review
 cycle.
+
+`g08.033` is complete under archived strict spec `106`. Card `1085` restored
+doctor parity with the supported secret manifest surface and proved the
+corrected installed CLI against Bovine.
 
 ## Next Task
 

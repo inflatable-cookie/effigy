@@ -108,8 +108,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 None. Strict spec
-[`105`](../specs/archive/105-vision-governance-operationalization-strict-lane.md)
-and roadmap [`g08.032`](./g08/032-vision-governance-operationalization.md) are
+[`106`](../specs/archive/106-doctor-secrets-schema-parity.md), roadmap
+[`g08.033`](./g08/033-doctor-secrets-schema-parity.md), and card
+[`1085`](./g08/batch-cards/1085-align-doctor-with-secrets-schema.md) are
 complete.
 
 ## Research Program

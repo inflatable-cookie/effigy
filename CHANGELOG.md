@@ -20,6 +20,8 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- `effigy doctor` now accepts the supported root `[secrets]` surface and task
+  `secrets = "required"` mode instead of reporting them as unsupported keys.
 - `deps pin bun` now falls back to read-only package enumeration from a valid
   text `bun.lock` when `bun pm ls --all` fails. The warning-bearing fallback
   understands Bun's JSONC format and nested package keys, while malformed or

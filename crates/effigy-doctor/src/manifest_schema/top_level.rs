@@ -22,6 +22,7 @@ pub(super) fn validate_top_level_keys(
         "package_manager",
         "release",
         "scan",
+        "secrets",
         "shell",
         "test",
         "tasks",

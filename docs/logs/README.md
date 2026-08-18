@@ -25,7 +25,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation log that
 ## Governance reviews
 
 Monthly governance reviews use template
-[`009-vision-governance-review-template-v1`](../vision/009-vision-governance-review-template-v1.md).
+`docs/vision/009-vision-governance-review-template-v1.md`.
 Store them under `docs/logs/<month>/` with a `vision-governance-review` slug.
 Reference the artifact register and decision index from
 [`docs/vision/governance/`](../vision/governance/).
@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/18-112147-doctor-secrets-schema-parity-closeout.md`](./2026-08/18-112147-doctor-secrets-schema-parity-closeout.md)
 - [`2026-08/17-153000-vision-governance-operationalization-closeout.md`](./2026-08/17-153000-vision-governance-operationalization-closeout.md)
 - [`2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md`](./2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
 - [`2026-08/12-090342-bun-pin-lockfile-fallback-planning.md`](./2026-08/12-090342-bun-pin-lockfile-fallback-planning.md)

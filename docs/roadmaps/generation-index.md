@@ -180,8 +180,11 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1084` and strict specs `099` through `105` are complete.
-No ready strict card remains.
+Cards `1051` through `1085` and strict specs `099` through `106` are complete.
+
+`g08.033` restored doctor parity with the contract-032 secret surface and
+proved the corrected installed CLI against the operator-selected Bovine
+consumer. No ready strict card remains.
 
 ## Strategic runway (Atlas 2026-08-17)
 

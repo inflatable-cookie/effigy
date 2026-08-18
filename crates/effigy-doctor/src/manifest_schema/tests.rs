@@ -155,6 +155,63 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
 }
 
 #[test]
+fn validate_manifest_schema_accepts_secret_root_and_required_task_mode() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.package]
+run = "scripts/package.sh"
+secrets = "required"
+
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.signing_identity]
+required = true
+targets = ["tasks"]
+description = "Package signing identity"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected secret declarations to validate cleanly, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_task_secret_mode() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.dev]
+run = "cargo run"
+secrets = "optional"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("tasks.dev.secrets")),
+        "expected invalid task secret mode to be flagged, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_rejects_non_boolean_initial_tag_current_version() {
     let manifest: Value = toml::from_str(
         r#"
