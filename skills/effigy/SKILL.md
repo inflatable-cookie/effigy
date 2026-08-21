@@ -159,6 +159,22 @@ Details: `references/json-envelope.md`.
 
 Read these only when the repo or task needs them.
 
+**Managed task sessions** — a repo task with `mode = "tui"` can run without a
+terminal UI through `effigy <task> --headless` or
+`EFFIGY_MANAGED_HEADLESS=1`. Inspect it from another shell with task-local
+`status`, `logs [process] [--follow]`, and `stop`. Start ranks remain spawn
+order; readiness covers container-owned routes started by the lifecycle entry
+and uses `health_wait_timeout_secs`. Optional container secrets stay optional
+even during forced local-dev unlock. Guide:
+`docs/guides/012-dev-process-manager-tui.md`.
+
+**Workspace identity** — primary-service `effigy exec` and host-routed
+workspace tasks use the declared `workspace_user` and `workspace_home`.
+`effigy exec` from a non-console caller does not request a TTY. Use
+`effigy doctor --verbose` to find
+read-only `container.workspace-ownership` findings for root-owned managed
+volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
+
 **Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
 `[secrets]` is declared. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
 
@@ -197,6 +213,7 @@ Sequence: `references/release-protocol.md`.
 | JSON contracts | `docs/guides/017-json-output-contracts.md` |
 | Quick start | `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
+| Managed task sessions | `docs/guides/012-dev-process-manager-tui.md` |
 | Local dependency linking | `docs/guides/077-local-dependency-linking.md` |
 | Papercuts discovery | `docs/guides/078-papercuts-discovery-and-capture.md` |
 | Distribution evidence | `docs/guides/062-distribution-system-guide.md` |

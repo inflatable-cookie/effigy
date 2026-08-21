@@ -224,7 +224,7 @@ pub fn plan_bun_pin(
         process,
     ) {
         Ok(consumer) => (consumer, None),
-        Err(process_error @ DepsError::ProcessFailed { .. }) => {
+        Err(process_error @ (DepsError::ProcessFailed { .. } | DepsError::ProcessSpawn { .. })) => {
             let lock_path = repo_root.join("bun.lock");
             let process_message = process_error.to_string();
             let consumer = inventory_bun_consumer_from_text_lock(&repo_root, &library_packages)

@@ -9,6 +9,7 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
             "Explain task resolution with `effigy doctor <task> <args>`.",
             "Also surfaces runtime/backend context when Docker Desktop and Colima coexist.",
+            "For running workspaces, reports `container.workspace-ownership` when managed volumes or the Bun install cache contain root-owned paths that conflict with the declared workspace user.",
         ],
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",

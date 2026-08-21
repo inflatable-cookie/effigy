@@ -33,6 +33,9 @@ fn render_help_writes_structured_sections() {
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(rendered.contains("--env-schema <PATH>"));
+    assert!(rendered.contains("effigy <managed-task> --headless"));
+    assert!(rendered.contains("EFFIGY_MANAGED_HEADLESS=1"));
+    assert!(rendered.contains("logs [process] [--follow]"));
     assert!(rendered.contains("--version"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
@@ -80,6 +83,7 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor --verbose"));
     assert!(rendered.contains("effigy doctor <task> <args>"));
     assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
+    assert!(rendered.contains("container.workspace-ownership"));
 }
 
 #[test]
@@ -183,6 +187,8 @@ fn render_exec_help_shows_service_and_examples() {
     assert!(rendered.contains("effigy exec [--repo <PATH>] [--service <NAME>]"));
     assert!(rendered.contains("effigy exec composer install"));
     assert!(rendered.contains("[containers.<name>.aliases]"));
+    assert!(rendered.contains("declared workspace user and HOME"));
+    assert!(rendered.contains("non-console sessions run without a TTY"));
 }
 
 #[test]

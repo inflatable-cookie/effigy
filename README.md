@@ -285,6 +285,13 @@ concurrent = [
 
 Run `effigy dev` (or whatever task name you chose). One TUI. Five tabs. Effigy starts services in order, restarts crashed processes, and shuts the whole session down cleanly when you quit. No `tmux` rituals, no PID files.
 
+For agents, CI, or another non-interactive caller, use `effigy dev --headless`
+or `EFFIGY_MANAGED_HEADLESS=1`. Inspect the same supervisor from another shell
+with `effigy dev status`, `effigy dev logs [process] [--follow]`, and
+`effigy dev stop`. See the
+[managed-session guide](./docs/guides/012-dev-process-manager-tui.md) for
+readiness, ordering, secrets, state, and log behavior.
+
 ### Local HTTPS Gateway
 
 Stop editing `/etc/hosts` and memorising port numbers. Effigy's built-in gateway gives your local stack real domains with automatic TLS:

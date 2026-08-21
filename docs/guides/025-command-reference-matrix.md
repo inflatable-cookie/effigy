@@ -34,7 +34,8 @@ For narrative workflow guidance instead of lookup, start with:
 ## Pick The Right Command Quickly
 
 - Need to discover tasks or inspect routing: use `effigy tasks`.
-- Need health checks or routing diagnosis for one selector: use `effigy doctor`.
+- Need health checks, workspace ownership diagnosis, or routing diagnosis for
+  one selector: use `effigy doctor`.
 - Need tests, watch mode, repo init, or package-script import: use
   `effigy test`, `watch`, `init`, or `tasks migrate`.
 - Need to inspect bundled service fragments or take local ownership: use
@@ -89,10 +90,10 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
-| `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
+| `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared `workspace_user` and `workspace_home`, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, import declared keys from a `.env`-style file, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `import`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
-| `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
+| `effigy doctor` | Run health checks, report workspace ownership conflicts as `container.workspace-ownership`, and provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md` |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy release` | Inspect release readiness, run gates, prepare/execute releases, verify installs, run release preflight, check binary floors, capture proof evidence, validate artifacts, and generate closeout evidence | `status`, `gates`, `resume`, `verify-install`, `preflight`, `validate`, `check-binary`, `proof`, `evidence validate`, `evidence closeout`, `evidence summary`, `simulate`, `prepare`, `execute`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.verify-install.v1`, `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `051-release-orchestration.md`, `062-distribution-system-guide.md` |
@@ -117,7 +118,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy config completion` | Prompt for shell completion setup on a real TTY, export raw shell completion scripts, install user-local completion files, wire bash/zsh startup automatically when needed, and surface selector candidates | `bash\|zsh\|fish`, `--install`, `--export`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v2`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../contracts/016-state-stack-and-layered-seed-framework-contract.md) |
-| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; managed tasks also support a concurrent headless supervisor | leading `--repo`, `--verbose-root`, `--env-schema`; managed `--headless`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1` | `012-dev-process-manager-tui.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
+| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1` | `012-dev-process-manager-tui.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
 
 ## JSON Envelope
 
@@ -354,7 +355,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `watch --owner` is required
 - `watch --json` requires bounded mode such as `--once` or `--max-runs`
 - `exec` runs inside the manifest default system workspace container and
-  defaults to that container's `primary_service` unless `--service` is supplied
+  defaults to that container's `primary_service` unless `--service` is
+  supplied; primary-service commands use the declared `workspace_user` and
+  `workspace_home`, interactive callers retain a TTY, and non-console callers
+  run without one
 - `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
   approval
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
@@ -409,6 +413,13 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   several tasks into a shared lock scope
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>`
 - managed `concurrent` entries accept `shutdown_on_exit = true`
+- managed `start` ranks define spawn order in both TUI and headless modes; ties
+  preserve manifest order
+- managed readiness probes only container-owned routes started by the lifecycle
+  entry, and `health_wait_timeout_secs` controls the deadline
+- managed headless runs keep task-local state and logs under
+  `.effigy/runtime/managed/`; `EFFIGY_MANAGED_HEADLESS=1` is equivalent to
+  `--headless`
 - `--verbose-root` and `--env-schema` apply to manifest task invocations; the
   passthrough-style built-ins `doctor`, `watch`, and `scan` reject them on the
   built-in invocation itself (use `effigy <builtin> --help` and
@@ -427,6 +438,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `tasks cache invalidate` accepts selectors or `--all`, not both
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts
+- there is no top-level `effigy distribution` command; distribution validation
+  and evidence live under `effigy release`
 - top-level `[env]`, task-local `env`, and run-array env directives all
   participate in task execution; use the env guide for the full fallback and
   indirection rules

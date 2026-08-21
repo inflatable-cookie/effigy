@@ -10,7 +10,7 @@ explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
 `g08.029`, exact-candidate pre-release CI proof in `g08.030`, committed Bun
 dependency pinning and its bounded enumeration fallback in `g08.031`, and vision
 governance operationalization in `g08.032`, doctor secret-schema parity in
-`g08.033`, and the active documentation coverage parity lane in `g08.034`.
+`g08.033`, and documentation coverage parity in `g08.034`.
 
 ## Purpose
 
@@ -175,8 +175,7 @@ Strict spec `102` and `g08.029` are complete through card `1076`.
 Strict spec `103` and `g08.030` are complete through card `1077`.
 Strict spec `104` and `g08.031` are complete through card `1081`.
 Strict spec `105` and `g08.032` are complete through card `1084`.
-Strict spec `107` and `g08.034` are active through ready cards `1086` and
-`1087`.
+Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
 
 ## Batch Cards
 
@@ -267,11 +266,12 @@ cycle.
 doctor parity with the supported secret manifest surface and proved the
 corrected installed CLI against Bovine.
 
-`g08.034` is active under strict spec `107`. Cards `1086` and `1087` own a
-whole-repository documentation coverage audit, all verified gap repairs,
-proportional recurrence guards, validation, and closeout.
+`g08.034` is complete under archived strict spec `107`. Cards `1086` and
+`1087` delivered the whole-repository documentation coverage audit, all
+verified gap repairs, proportional recurrence guards, validation, and
+closeout.
 
 ## Next Task
 
-Execute card `1086`, then card `1087`, through the orchestrator-dispatched
-worker lane. Do not infer release work or a generation rollover.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. Do not infer release work or a generation rollover.

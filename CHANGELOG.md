@@ -30,6 +30,9 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- Updated the locked `h2` dependency to `0.4.16`, resolving
+  `RUSTSEC-2026-0258`. `deps pin bun --dry-run` can now use its existing
+  read-only text-lock fallback when the Bun executable is unavailable.
 - `effigy exec` now works from non-console sessions without requesting a TTY.
   Primary-service execs use the same declared workspace user and `HOME` as
   host-routed tasks, while explicit non-primary service execs retain their
@@ -57,6 +60,10 @@ During v0.x, MINOR bumps may include breaking changes.
   next-action policy.
 
 ### Changed
+- CLI help, generated task configuration guidance, active reference docs, and
+  the bundled agent skill now expose managed headless companions, readiness
+  scope and timeout, process ordering, workspace ownership diagnosis, and
+  non-console exec identity consistently.
 - `effigy dev` now unlocks task, container, and Rhai secrets through a separate
   mode-`0600` local-dev key after vault setup. Direct vault commands remain
   passphrase-gated; existing vaults prompt once on the next `dev` run to add

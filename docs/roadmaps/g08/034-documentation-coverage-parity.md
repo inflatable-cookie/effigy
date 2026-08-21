@@ -1,8 +1,8 @@
 # g08.034 - Documentation Coverage Parity
 
-Status: Active
+Status: Complete
 Depends on: current `main` behavior and completed `g08.033`
-Spec: [`107`](../../specs/107-documentation-coverage-parity.md)
+Spec: [`107`](../../specs/archive/107-documentation-coverage-parity.md)
 
 ## Goal
 
@@ -20,9 +20,9 @@ mechanically detectable drift fail close to the change that caused it.
 
 ## Execution Plan
 
-- [ ] card `1086`: inventory current public behavior and repair all verified
+- [x] card `1086`: inventory current public behavior and repair all verified
       gaps across active user, agent, built-in, and generated docs
-- [ ] card `1087`: add proportional recurrence guards, run full validation,
+- [x] card `1087`: add proportional recurrence guards, run full validation,
       publish the evidence matrix, and close the lane
 
 ## Owner And Seam
@@ -41,20 +41,22 @@ meaning to make documentation easier.
 
 ## Acceptance
 
-- [ ] the evidence matrix covers the whole current public surface by behavior
+- [x] the evidence matrix covers the whole current public surface by behavior
       family, not only the August managed-runtime changes
-- [ ] all verified documentation gaps are repaired
-- [ ] the skill and built-in docs explain the recent headless, secret,
+- [x] all verified documentation gaps are repaired
+- [x] the skill and built-in docs explain the recent headless, secret,
       readiness, workspace-ownership, and non-console exec behavior
-- [ ] recurrence checks cover relationships that are stable enough to enforce
-- [ ] required focused and full validation pass
-- [ ] one dated closeout log records findings, changes, checks, and residuals
+- [x] recurrence checks cover relationships that are stable enough to enforce
+- [x] required focused and full validation pass
+- [x] one dated closeout log records findings, changes, checks, and residuals
 
 ## Evidence
 
 - Planning: [`2026-08/21-224918-documentation-coverage-parity-planning.md`](../../logs/2026-08/21-224918-documentation-coverage-parity-planning.md)
-- Closeout: pending card `1087`
+- Closeout: [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Next Task
 
-Execute card `1086` from the orchestrator-dispatched worker handoff.
+Lane complete. Review the worker PR; do not merge without operator
+authorization. Run the second governance review by 2026-09-17 and await
+operator intent for the next Horizon theme.

@@ -1,11 +1,11 @@
 # 1086 - Audit And Align Documentation Coverage
 
 Roadmap: [`../034-documentation-coverage-parity.md`](../034-documentation-coverage-parity.md)
-Spec: [`../../../specs/107-documentation-coverage-parity.md`](../../../specs/107-documentation-coverage-parity.md)
+Spec: [`../../../specs/archive/107-documentation-coverage-parity.md`](../../../specs/archive/107-documentation-coverage-parity.md)
 Guides: [`037`](../../../guides/037-documentation-contribution-playbook.md),
 [`035`](../../../guides/035-guide-ownership-and-update-triggers.md)
 
-Status: Ready
+Status: Complete
 Owner: documentation and public discovery surfaces
 Created: 2026-08-21
 Ready after: operator-selected repository-wide docs coverage audit
@@ -36,15 +36,15 @@ documentation batch.
 
 ## Acceptance
 
-- [ ] the inventory covers every current public command family and manifest
+- [x] the inventory covers every current public command family and manifest
       behavior family through an explicit source owner
-- [ ] active user docs, agent guidance, built-in help, and generated config
+- [x] active user docs, agent guidance, built-in help, and generated config
       docs contain no unresolved in-scope gaps
-- [ ] the recent managed-runtime seed case is fully discoverable without
+- [x] the recent managed-runtime seed case is fully discoverable without
       relying on historical ledger logs
-- [ ] changes remain documentation-only except for rendering/check tests or
+- [x] changes remain documentation-only except for rendering/check tests or
       other documentation infrastructure
-- [ ] the evidence matrix distinguishes fixed, already-covered, and blocked
+- [x] the evidence matrix distinguishes fixed, already-covered, and blocked
       findings
 
 ## Validation
@@ -60,6 +60,9 @@ documentation batch.
 Carry the matrix and exact changed-surface list into the card `1087` closeout
 log. Do not claim whole-repo coverage from a keyword search alone.
 
+Evidence:
+[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
+
 ## Stop Conditions
 
 Stop on production behavior changes, a new contract, workflow/release edits,
@@ -67,5 +70,5 @@ historical rewrites, or an unresolved product choice.
 
 ## Next Task
 
-Execute card `1087` after the gap-repair batch is coherent and focused checks
-pass.
+Card `1087` is complete. Return the reviewable worker PR to the orchestrator;
+do not merge.

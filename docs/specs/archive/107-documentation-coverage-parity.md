@@ -1,11 +1,11 @@
 # 107 - Documentation Coverage Parity
 
-Status: Active
+Status: Complete
 Owner: documentation and public discovery surfaces
-Roadmap: [`g08.034`](../roadmaps/g08/034-documentation-coverage-parity.md)
-Contracts: [`001`](../contracts/001-working-rules.md)
-Guides: [`037`](../guides/037-documentation-contribution-playbook.md),
-[`035`](../guides/035-guide-ownership-and-update-triggers.md)
+Roadmap: [`g08.034`](../../roadmaps/g08/034-documentation-coverage-parity.md)
+Contracts: [`001`](../../contracts/001-working-rules.md)
+Guides: [`037`](../../guides/037-documentation-contribution-playbook.md),
+[`035`](../../guides/035-guide-ownership-and-update-triggers.md)
 
 ## Problem
 
@@ -65,19 +65,23 @@ secrets under forced unlock, workspace ownership diagnosis, and non-console
 
 ## Acceptance
 
-- [ ] a repository-wide evidence matrix maps current public behavior families
+- [x] a repository-wide evidence matrix maps current public behavior families
       to implementation owners and active documentation surfaces
-- [ ] every in-scope gap found by the matrix is fixed or named as a blocked
+- [x] every in-scope gap found by the matrix is fixed or named as a blocked
       item with a concrete reason
-- [ ] the project-local and distributed Effigy skills remain synchronized and
+- [x] the project-local and distributed Effigy skills remain synchronized and
       route agents to all current operational surfaces they need
-- [ ] built-in help and generated configuration documentation expose the
+- [x] built-in help and generated configuration documentation expose the
       relevant commands, flags, environment overrides, findings, and fields
-- [ ] active front doors, command/reference guides, deep guides, and
+- [x] active front doors, command/reference guides, deep guides, and
       troubleshooting agree without unnecessary duplication
-- [ ] deterministic regression coverage protects mechanically checkable
+- [x] deterministic regression coverage protects mechanically checkable
       relationships
-- [ ] docs checks, focused tests, formatting, Clippy, and full Effigy QA pass
+- [x] docs checks, focused tests, formatting, Clippy, and full Effigy QA pass
+
+## Evidence
+
+- [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Stop Conditions
 
@@ -87,5 +91,5 @@ that cannot be resolved from current code and canonical docs.
 
 ## Next Task
 
-Execute card `1086`, then card `1087`. Do not widen beyond the documentation
-coverage lane.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme; do not infer release work or generation rollover.

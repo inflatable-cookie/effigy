@@ -49,6 +49,11 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
                 "Run task from explicit catalog alias",
                 None,
             ),
+            (
+                "effigy <managed-task> --headless",
+                "Run a managed concurrent task without the terminal UI; inspect it with task-local status, logs, and stop companions",
+                None,
+            ),
         ])
         .collect::<Vec<_>>();
     renderer.section("Commands")?;
@@ -68,6 +73,10 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     renderer.notice(
         NoticeLevel::Info,
         "Global `--json` and `--repo <PATH>` now work before built-ins and task selectors. Generic task invocations also accept `--verbose-root` and `--env-schema <PATH>` before the selector.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "`EFFIGY_MANAGED_HEADLESS=1` selects the same managed headless runtime as `--headless`; use `effigy <task> status`, `logs [process] [--follow]`, and `stop` from another shell.",
     )?;
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),
