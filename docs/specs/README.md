@@ -28,7 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`107-documentation-coverage-parity.md`](./107-documentation-coverage-parity.md)
+  — active whole-repository audit and repair across user, agent, built-in, and
+  generated documentation surfaces
 
 Queued strict lanes:
 
@@ -63,5 +65,5 @@ Other planning specs:
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Keep draft `098` paused until
-the operator selects the next Horizon theme.
+Execute cards `1086` and `1087` under strict spec `107`. Keep draft `098`
+paused and do not infer release work or generation rollover.

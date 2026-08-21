@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-08-12
+Updated: 2026-08-21
 
 ## Generation history
 
@@ -184,7 +184,12 @@ Cards `1051` through `1085` and strict specs `099` through `106` are complete.
 
 `g08.033` restored doctor parity with the contract-032 secret surface and
 proved the corrected installed CLI against the operator-selected Bovine
-consumer. No ready strict card remains.
+consumer.
+
+`g08.034` is active under strict spec `107`. Ready cards `1086` and `1087`
+audit the whole current public behavior surface against active user, agent,
+built-in, and generated docs, repair verified gaps, add proportional recurrence
+guards, and close with full evidence.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -242,5 +247,5 @@ closeout there first.
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme. No release action or `g09` rollover is implied.
+Execute cards `1086` and `1087` through the documentation coverage worker
+lane. No release action or `g09` rollover is implied.
