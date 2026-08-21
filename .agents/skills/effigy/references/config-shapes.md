@@ -59,6 +59,27 @@ run = { rhai = "scripts/check-release-smoke.rhai" }
 Keep `health` seconds-scale because `effigy doctor` delegates to it. Never
 point `health` at `qa`, directly or through another task.
 
+Managed multi-process tasks use the same selector surface. `start` controls
+spawn order; `tab` controls presentation order:
+
+```toml
+[tasks.dev]
+mode = "tui"
+health_wait = true
+health_wait_timeout_secs = 90
+secrets = "required"
+concurrent = [
+  { task = "api", start = 1, tab = 2 },
+  { run = "bun run web:dev", start = 2, tab = 1 },
+]
+```
+
+Run `effigy dev --headless` or set `EFFIGY_MANAGED_HEADLESS=1` for an attached
+supervisor without the TUI. Use `effigy dev status`, `logs [process]
+[--follow]`, and `stop` from another shell. Readiness covers container-owned
+routes started by the lifecycle entry. Forced local-dev secret unlock still
+skips missing keys declared `required = false`.
+
 Typical Rhai wrappers for typed deploy / distribution helpers:
 
 ```rhai

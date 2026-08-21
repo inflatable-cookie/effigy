@@ -363,6 +363,28 @@ Fix:
 - correct flag shape and placement,
 - for machine usage, prefer `effigy --json <command>`.
 
+### Symptom: a headless managed task failed or appears stuck
+
+Diagnosis:
+
+```sh
+effigy <task> status
+effigy <task> logs
+effigy <task> logs <process> --follow
+```
+
+The supervisor stores session state and numbered process logs under
+`.effigy/runtime/managed/<task>-<profile>/`. A failed run reports the failing
+process log path and tail. Readiness waits cover only container-owned routes
+started by the lifecycle entry; `health_wait_timeout_secs` controls their
+deadline.
+
+Fix:
+- inspect the named process log before restarting the whole stack
+- correct the failing lifecycle, setup, or process command
+- use `effigy <task> stop` to terminate a surviving supervisor cleanly
+- use `EFFIGY_MANAGED_HEADLESS=1` when automation cannot pass `--headless`
+
 ## 7) Container and System Recovery
 
 ### Symptom: Docker Desktop is installed but Effigy still tries to use Colima, or vice versa
@@ -425,6 +447,29 @@ Use `system reset-runtime` when:
 - compose state is corrupted or inconsistent
 - multiple services are stuck in a bad state
 - `repair` did not resolve the issue
+
+### Symptom: doctor reports `container.workspace-ownership`
+
+The running primary service contains root-owned paths in an Effigy-managed
+workspace volume or `$BUN_INSTALL/install`, while workspace commands are
+declared to run as another user.
+
+Diagnosis:
+
+```sh
+effigy doctor --verbose
+```
+
+Fix:
+- use the reported mount samples to locate the affected paths
+- repair their ownership for the declared workspace user inside the workspace
+  environment
+- rerun `effigy doctor --verbose`
+
+The finding is read-only. Host-routed workspace tasks and primary-service
+`effigy exec` calls use the declared workspace user and HOME. Explicit
+non-primary `--service` execs keep that service's configured user; pipes and
+agents run without requesting a TTY.
 
 ### Symptom: caches or named volumes are piling up
 

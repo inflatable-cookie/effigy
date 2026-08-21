@@ -57,6 +57,10 @@ During v0.x, MINOR bumps may include breaking changes.
   next-action policy.
 
 ### Changed
+- CLI help, generated task configuration guidance, active reference docs, and
+  the bundled agent skill now expose managed headless companions, readiness
+  scope and timeout, process ordering, workspace ownership diagnosis, and
+  non-console exec identity consistently.
 - `effigy dev` now unlocks task, container, and Rhai secrets through a separate
   mode-`0600` local-dev key after vault setup. Direct vault commands remain
   passphrase-gated; existing vaults prompt once on the next `dev` run to add
