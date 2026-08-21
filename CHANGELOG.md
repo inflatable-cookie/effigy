@@ -30,6 +30,9 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- Updated the locked `h2` dependency to `0.4.16`, resolving
+  `RUSTSEC-2026-0258`. `deps pin bun --dry-run` can now use its existing
+  read-only text-lock fallback when the Bun executable is unavailable.
 - `effigy exec` now works from non-console sessions without requesting a TTY.
   Primary-service execs use the same declared workspace user and `HOME` as
   host-routed tasks, while explicit non-primary service execs retain their

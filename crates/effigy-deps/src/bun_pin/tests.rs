@@ -46,6 +46,18 @@ impl FailingProcess {
     }
 }
 
+struct MissingProcess;
+
+impl ReadOnlyProcess for MissingProcess {
+    fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
+        Err(DepsError::ProcessSpawn {
+            program: request.program.clone(),
+            cwd: request.cwd.clone(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "fixture Bun missing"),
+        })
+    }
+}
+
 impl ReadOnlyProcess for FailingProcess {
     fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
         self.requests.borrow_mut().push(request.clone());
@@ -175,6 +187,31 @@ fn pin_falls_back_to_jsonc_lock_packages_after_bun_enumeration_fails() {
         fs::read_to_string(fixture.consumer.join("package.json")).unwrap(),
         manifest
     );
+}
+
+#[test]
+fn pin_falls_back_to_jsonc_lock_when_bun_is_unavailable() {
+    let fixture = fixture(&[("@acme/ui", "ui")]);
+    write(
+        &fixture.consumer.join("package.json"),
+        r#"{"name":"consumer","dependencies":{"@acme/ui":"^1"}}"#,
+    );
+    write(
+        &fixture.consumer.join("bun.lock"),
+        r#"{"packages":{"@acme/ui":["@acme/ui@1.0.0",{},""]}}"#,
+    );
+
+    let plan = plan_bun_pin(&fixture.consumer, &fixture.library, true, &MissingProcess).unwrap();
+
+    assert_eq!(plan.disposition, BunPinPlanDisposition::Apply);
+    assert_eq!(plan.packages[0].name, "@acme/ui");
+    let warning = plan
+        .warnings
+        .iter()
+        .find(|warning| warning.code == "lockfile-enumeration-fallback")
+        .unwrap();
+    assert!(warning.message.contains("fixture Bun missing"));
+    assert!(warning.message.contains("bun.lock"));
 }
 
 #[test]

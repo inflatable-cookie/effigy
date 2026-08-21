@@ -861,7 +861,26 @@ fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
     std::fs::write(consumer.join("src/lib.rs"), "pub fn consumer() {}\n")
         .map_err(|error| error.to_string())?;
     run_fixture_command(&consumer, "cargo", &["generate-lockfile"])?;
-    run_fixture_command(&consumer, "bun", &["install", "--ignore-scripts"])?;
+    std::fs::write(
+        consumer.join("bun.lock"),
+        concat!(
+            "{\n",
+            "  \"lockfileVersion\": 1,\n",
+            "  \"configVersion\": 1,\n",
+            "  \"workspaces\": {\n",
+            "    \"\": {\n",
+            "      \"dependencies\": {\n",
+            "        \"@effigy/contract-link-fixture\": \"file:../library\",\n",
+            "      },\n",
+            "    },\n",
+            "  },\n",
+            "  \"packages\": {\n",
+            "    \"@effigy/contract-link-fixture\": [\"@effigy/contract-link-fixture@file:../library\", {}],\n",
+            "  },\n",
+            "}\n",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
     run_fixture_command(&consumer, "git", &["init", "-q"])?;
     Ok((consumer, library))
 }

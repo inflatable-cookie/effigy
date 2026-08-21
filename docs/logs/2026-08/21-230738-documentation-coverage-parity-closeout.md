@@ -18,8 +18,10 @@ Cards: 1086, 1087
 - Added proportional guards for skill parity, built-in-to-command-reference
   routing, managed-runtime discovery tokens, help output, and generated config
   output.
-- No public runtime, manifest, JSON, release, dependency, or workflow behavior
-  changed.
+- The documentation coverage batch changed no public runtime, manifest, JSON,
+  release, dependency, or workflow behavior. Hosted-check follow-up later
+  updated one vulnerable lockfile entry and made Bun pin planning's existing
+  text-lock fallback work when Bun is unavailable.
 
 ## Evidence Matrix
 
@@ -109,6 +111,31 @@ prove prose completeness.
 - `effigy qa:docs`: passed
 - `effigy docs check workflow-paths`: passed
 - `effigy qa:docs:agent-defaults`: passed
+- `effigy qa`: passed
+- `cargo fmt --all -- --check`: passed
+- `cargo clippy --all-targets -- -D warnings`: passed
+- `git diff --check`: passed
+
+## Hosted PR Follow-Up
+
+- Hosted cargo-deny found `RUSTSEC-2026-0258` in locked `h2 0.4.15`.
+  `Cargo.lock` now resolves `h2 0.4.16`, the advisory's patched release.
+- Hosted full JSON validation had no Bun installation and failed while creating
+  dependency fixtures, before the indexed commands ran. The fixture now writes
+  its small deterministic text `bun.lock` directly.
+- `deps pin bun --dry-run` still needed package enumeration after fixture
+  creation. Its existing safe text-lock fallback now covers both a failed Bun
+  process and a missing Bun executable; a focused unit test protects the
+  missing-executable case.
+- No workflow file changed.
+
+Follow-up validation:
+
+- `cargo tree -i h2@0.4.16`: passed; `h2 0.4.15` absent
+- `cargo deny check`: passed; advisories, bans, licenses, and sources green
+- focused Bun fallback tests: passed
+- `cargo test -p effigy-contracts`: passed
+- full `contracts check-json` with Bun deliberately absent from `PATH`: passed
 - `effigy qa`: passed
 - `cargo fmt --all -- --check`: passed
 - `cargo clippy --all-targets -- -D warnings`: passed
