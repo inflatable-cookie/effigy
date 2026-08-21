@@ -170,7 +170,8 @@ even during forced local-dev unlock. Guide:
 
 **Workspace identity** — primary-service `effigy exec` and host-routed
 workspace tasks use the declared `workspace_user` and `workspace_home`.
-Non-console exec does not request a TTY. Use `effigy doctor --verbose` to find
+`effigy exec` from a non-console caller does not request a TTY. Use
+`effigy doctor --verbose` to find
 read-only `container.workspace-ownership` findings for root-owned managed
 volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 

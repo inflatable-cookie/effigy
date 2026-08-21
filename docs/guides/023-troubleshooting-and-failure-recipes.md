@@ -468,8 +468,8 @@ Fix:
 
 The finding is read-only. Host-routed workspace tasks and primary-service
 `effigy exec` calls use the declared workspace user and HOME. Explicit
-non-primary `--service` execs keep that service's configured user; pipes and
-agents run without requesting a TTY.
+non-primary `--service` execs keep that service's configured user; pipes,
+agents, and other non-console callers run without requesting a TTY.
 
 ### Symptom: caches or named volumes are piling up
 

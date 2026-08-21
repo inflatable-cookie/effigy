@@ -90,7 +90,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
-| `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared workspace user and HOME, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
+| `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared `workspace_user` and `workspace_home`, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, import declared keys from a `.env`-style file, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `import`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks, report workspace ownership conflicts as `container.workspace-ownership`, and provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md` |
@@ -356,8 +356,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `watch --json` requires bounded mode such as `--once` or `--max-runs`
 - `exec` runs inside the manifest default system workspace container and
   defaults to that container's `primary_service` unless `--service` is
-  supplied; primary-service commands use the declared workspace user and HOME,
-  interactive callers retain a TTY, and non-console callers run without one
+  supplied; primary-service commands use the declared `workspace_user` and
+  `workspace_home`, interactive callers retain a TTY, and non-console callers
+  run without one
 - `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
   approval
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
@@ -437,6 +438,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `tasks cache invalidate` accepts selectors or `--all`, not both
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts
+- there is no top-level `effigy distribution` command; distribution validation
+  and evidence live under `effigy release`
 - top-level `[env]`, task-local `env`, and run-array env directives all
   participate in task execution; use the env guide for the full fallback and
   indirection rules
