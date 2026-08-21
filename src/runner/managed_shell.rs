@@ -22,6 +22,7 @@ pub(crate) fn managed_readiness_probe_urls(
     policy
         .dns_routes
         .iter()
+        .filter(|route| route.target_host.is_none())
         .filter_map(|route| {
             let domain = route.domain.trim();
             if domain.is_empty() {
@@ -57,6 +58,7 @@ pub(crate) fn render_inline_compose_command(
 pub(crate) struct InlineManagedLifecycle<'a> {
     pub(crate) owner_task: &'a str,
     pub(crate) health_wait: bool,
+    pub(crate) health_wait_timeout_secs: u64,
     pub(crate) ready_message: Option<&'a str>,
     pub(crate) dns_route_lines: &'a [String],
     pub(crate) readiness_probe_urls: &'a [String],
@@ -71,6 +73,7 @@ pub(crate) fn render_inline_managed_lifecycle_command(
     let InlineManagedLifecycle {
         owner_task,
         health_wait,
+        health_wait_timeout_secs,
         ready_message,
         dns_route_lines,
         readiness_probe_urls,
@@ -99,6 +102,7 @@ pub(crate) fn render_inline_managed_lifecycle_command(
     let readiness_wait = managed_lifecycle_readiness_wait(
         health_wait,
         readiness_probe_urls,
+        health_wait_timeout_secs,
         "managed lifecycle readiness wait timed out",
     );
     let setup_sequence = managed_lifecycle_setup_sequence(setup_commands);

@@ -291,7 +291,7 @@ fn setup_managed_stream_readiness(root: &Path) {
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
 ]"#,
-        "health_wait = true\nready_message = \"http://project.test\"",
+        "health_wait = true\nhealth_wait_timeout_secs = 7\nready_message = \"http://project.test\"",
         "working_dir = \"/workspace\"\ncontainer = \"web\"",
         "demo-web-dev",
         "working_dir = \"/workspace\"",
@@ -580,6 +580,45 @@ fn run_manifest_task_managed_stream_injects_task_secrets_into_container_processe
 }
 
 #[test]
+fn run_manifest_task_managed_headless_uses_local_dev_unlock_for_task_and_container_secrets() {
+    let _guard = lock_test();
+    let _mode = EnvGuard::set_many(&[
+        ("EFFIGY_MANAGED_HEADLESS", Some("1".to_owned())),
+        ("EFFIGY_MANAGED_STREAM", None),
+        ("EFFIGY_MANAGED_TUI", None),
+    ]);
+    let _passphrase = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        Some("vault-passphrase".to_owned()),
+    )]);
+    let root = crate::runner::tests::prelude::temp_workspace("managed-headless-lifecycle-secrets");
+    setup_managed_stream_lifecycle_task_secrets(&root);
+    write_test_vault(
+        &root,
+        "vault-passphrase",
+        &[("auth_jwt_private_key", "dev-secret-key")],
+    );
+    let _runtime = install_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect("managed headless secrets run should succeed");
+    assert!(out.contains("session: stopped"), "got: {out}");
+
+    let shell_log = fs::read_to_string(root.join("fake-effigy.log")).expect("read fake effigy log");
+    assert!(
+        shell_log.contains("AUTH_JWT_PRIVATE_KEY=dev-secret-key"),
+        "expected task secret env in managed shell command, got: {shell_log}"
+    );
+    assert!(
+        root.join(".effigy/secrets/local.vault.local-dev-key")
+            .is_file(),
+        "headless dev should establish the local-dev unlock"
+    );
+}
+
+#[test]
 fn run_manifest_task_managed_stream_errors_for_unknown_profile_with_available_profiles() {
     let _guard = lock_test();
     let _env = managed_stream_env();
@@ -723,6 +762,7 @@ fn run_manifest_task_managed_stream_projects_ready_message_from_lifecycle_owner(
     let out =
         crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
     assert!(out.contains("readiness-wait: enabled"), "got: {out}");
+    assert!(out.contains("readiness-timeout: 7s"), "got: {out}");
     assert!(
         out.contains("ready-message: http://project.test"),
         "got: {out}"

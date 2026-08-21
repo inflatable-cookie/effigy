@@ -7,6 +7,13 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Managed `mode = "tui"` tasks now have a headless concurrent runtime through
+  `effigy <task> --headless` or `EFFIGY_MANAGED_HEADLESS=1`, with persisted
+  per-process state and logs under `.effigy/runtime/managed/` plus task-local
+  `status`, `logs`, and `stop` companions. Headless failures report the failing
+  process log and tail instead of reducing lifecycle failures to a bare exit.
+- Managed readiness deadlines are configurable with
+  `health_wait_timeout_secs` (default 60 seconds).
 - `deps pin bun <LIBRARY_PATH>` and `deps unpin bun <LIBRARY_PATH>` now author
   an explicit committed root-consumer override closure without running install
   or changing Bun lockfiles. Text and `effigy.deps.pin.v1` JSON reports expose
@@ -20,6 +27,12 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- Container secret forcing no longer promotes keys declared
+  `required = false` into required values. Managed readiness skips gateway
+  routes targeting host processes that the lifecycle entry has not started,
+  concurrent `start` ranks remain the process spawn order in headless mode,
+  and host-dispatched workspace tasks now run as the declared workspace user
+  instead of root-poisoning shared volumes before the dev handoff.
 - `effigy doctor` now accepts the supported root `[secrets]` surface and task
   `secrets = "required"` mode instead of reporting them as unsupported keys.
 - `deps pin bun` now falls back to read-only package enumeration from a valid

@@ -117,6 +117,10 @@ Use it for:
 - one-off maintenance commands
 - direct investigation inside the runtime environment
 
+Host-dispatched tasks bound to that workspace run as its declared user and
+home. They do not run as root or leave root-owned files in bind-mounted
+workspace volumes for the later `dev` handoff to trip over.
+
 ### `effigy dev`
 
 `dev` keeps its historic meaning:

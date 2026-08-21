@@ -39,7 +39,8 @@ use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
-    managed_execution_mode, render_run_step_sequence, wrap_command_with_env, ManagedExecutionMode,
+    managed_execution_mode, parse_managed_invocation, render_run_step_sequence,
+    wrap_command_with_env, ManagedExecutionMode, ManagedInvocation,
 };
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
@@ -56,7 +57,58 @@ pub(in crate::runner) fn run_managed_task(
     selection_plan: &ExecutionSelectionPlan,
 ) -> Result<Option<String>, RunnerError> {
     let container_handoff = inside_container_handoff();
-    let execution_mode = managed_execution_mode();
+    let managed_invocation = (selection.task.mode.as_deref() == Some("tui"))
+        .then(|| parse_managed_invocation(&preflight.runtime_args_exec))
+        .transpose()?;
+    if let Some(invocation) = managed_invocation.as_ref() {
+        let control = match &invocation.action {
+            ManagedInvocation::Status { profile } => {
+                Some(("status", profile.as_str(), None, false))
+            }
+            ManagedInvocation::Logs {
+                profile,
+                process,
+                follow,
+            } => Some(("logs", profile.as_str(), process.as_deref(), *follow)),
+            ManagedInvocation::Stop { profile } => Some(("stop", profile.as_str(), None, false)),
+            ManagedInvocation::Run { .. } => None,
+        };
+        if let Some((command, profile, process, follow)) = control {
+            if !effigy_managed::has_concurrent_profile(selection.task, profile) {
+                return Err(effigy_managed::ManagedError::TaskManagedProfileNotFound {
+                    task: preflight.selector.task_name.clone(),
+                    profile: profile.to_owned(),
+                    available: effigy_managed::available_concurrent_profiles(selection.task),
+                }
+                .into());
+            }
+            let output = match command {
+                "status" => effigy_managed::runtime::managed_headless_status(
+                    &selection.catalog.catalog_root,
+                    &preflight.selector.task_name,
+                    profile,
+                ),
+                "logs" => effigy_managed::runtime::managed_headless_logs(
+                    &selection.catalog.catalog_root,
+                    &preflight.selector.task_name,
+                    profile,
+                    process,
+                    follow,
+                ),
+                "stop" => effigy_managed::runtime::managed_headless_stop(
+                    &selection.catalog.catalog_root,
+                    &preflight.selector.task_name,
+                    profile,
+                ),
+                _ => unreachable!("managed control command"),
+            }?;
+            return Ok(Some(output));
+        }
+    }
+    let execution_mode = match managed_invocation.as_ref().map(|value| &value.action) {
+        Some(ManagedInvocation::Run { headless: true }) => ManagedExecutionMode::Headless,
+        _ => managed_execution_mode(),
+    };
     let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
@@ -75,11 +127,15 @@ pub(in crate::runner) fn run_managed_task(
         "managed task execution",
     ));
     let container_binding = binding_resolution.binding();
+    let runtime_args = managed_invocation
+        .as_ref()
+        .map(|invocation| &invocation.runtime_args)
+        .unwrap_or(&preflight.runtime_args_exec);
     let plan = resolve_managed_task_plan(
         &preflight.selector,
         selection.catalog,
         selection.task,
-        &preflight.runtime_args_exec,
+        runtime_args,
         &preflight.catalogs,
         &selection.catalog.catalog_root,
         &effigy_routing::resolve_task_selection,
@@ -249,6 +305,7 @@ pub(in crate::runner) fn run_managed_task(
         &repo_for_task,
         &selection.catalog.manifest_path,
         plan,
+        execution_mode,
     );
 
     finish_managed_task(
@@ -661,6 +718,7 @@ fn materialize_special_managed_processes(
     let dns_route_lines = managed_dns_route_lines(inline_policy.as_ref().or(named_policy.as_ref()));
     let readiness_probe_urls =
         managed_readiness_probe_urls(inline_policy.as_ref().or(named_policy.as_ref()));
+    let health_wait_timeout_secs = plan.readiness.timeout_secs;
     let container_repo_root = binding_resolution.exec_working_dir(repo_root)?;
     for process in &mut plan.processes {
         match process.role {
@@ -682,6 +740,7 @@ fn materialize_special_managed_processes(
                         crate::runner::managed_shell::InlineManagedLifecycle {
                             owner_task: &preflight.selector.task_name,
                             health_wait: selection.task.health_wait.unwrap_or(false),
+                            health_wait_timeout_secs,
                             ready_message: ready_message.as_deref(),
                             dns_route_lines: &dns_route_lines,
                             readiness_probe_urls: &readiness_probe_urls,
@@ -694,6 +753,7 @@ fn materialize_special_managed_processes(
                         container_name: container_binding.container_name(),
                         owner_task: &preflight.selector.task_name,
                         health_wait: selection.task.health_wait.unwrap_or(false),
+                        health_wait_timeout_secs,
                         ready_message: ready_message.as_deref(),
                         dns_route_lines: &dns_route_lines,
                         readiness_probe_urls: &readiness_probe_urls,
@@ -1190,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_readiness_probe_urls_follow_dns_routes_only() {
+    fn managed_readiness_probe_urls_skip_routes_owned_by_external_processes() {
         let mut policy = test_policy();
         policy.dns_routes = vec![
             EffectiveDnsRoute {
@@ -1206,6 +1266,13 @@ mod tests {
                 port: Some(41002),
                 service: Some("admin".to_owned()),
                 target_host: None,
+            },
+            EffectiveDnsRoute {
+                domain: "api.project.test".to_owned(),
+                tls: true,
+                port: None,
+                service: None,
+                target_host: Some("host.docker.internal:41001".to_owned()),
             },
         ];
 

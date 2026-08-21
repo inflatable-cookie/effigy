@@ -25,6 +25,10 @@ The default path is still repo-owned task dispatch:
 ```bash
 effigy dev
 effigy dev <profile>
+effigy dev --headless
+effigy dev status
+effigy dev logs [process]
+effigy dev stop
 ```
 
 - `effigy dev` is not a global built-in command.
@@ -32,6 +36,8 @@ effigy dev <profile>
 - `effigy dev <profile>` selects a repo-owned profile under
   `[tasks.dev.profiles.<name>]`.
 - On interactive terminals, Effigy launches the managed session runtime.
+- `--headless` launches the same resolved concurrent profile without a terminal
+  UI. `EFFIGY_MANAGED_HEADLESS=1` selects the same mode.
 - On non-interactive terminals, Effigy renders a managed plan summary or stream
   output depending on task/runtime state.
 
@@ -81,6 +87,7 @@ mode = "tui"
 workspace = "app"
 container_lifecycle = true
 health_wait = true
+health_wait_timeout_secs = 90
 ready_message = "App ready at http://project.test"
 gateway = true
 
@@ -104,7 +111,12 @@ Current bounded fields:
 - `container_lifecycle = true`
   - lets one managed task own the resolved workspace-backed container lifecycle
 - `health_wait = true`
-  - waits on the task-owned container health path before projecting readiness
+  - waits on container-owned routes started by the lifecycle entry before
+    projecting readiness; routes targeting external host processes are not
+    probed at this stage
+- `health_wait_timeout_secs = 90`
+  - sets the readiness deadline; defaults to 60 seconds and requires
+    `health_wait = true`
 - `ready_message = "..."`
   - projects one repo-owned ready message after `health_wait` succeeds
   - requires `health_wait = true`
@@ -141,6 +153,8 @@ Profile entries support:
   small set of processes when their exit should stop the whole managed session
 - optional profile overrides via `[tasks.dev.profiles.<name>]` with their own
   `concurrent = [...]`
+- `start = <N>` controls spawn order. Equal ranks keep manifest order.
+  `start_after_ms` remains an additional delay before that entry is spawned.
 
 Run-array note:
 
@@ -250,8 +264,36 @@ concurrent; use `effigy dev` for daily runtime.
 
 ## 8) Environment Controls
 
+### Headless managed runtime
+
+`effigy dev --headless` stays attached as the supervisor, starts every profile
+entry concurrently in the same resolved order as the TUI, and keeps the same
+setup, lifecycle, shutdown, schema-env, and local-dev secret paths. It writes:
+
+- `.effigy/runtime/managed/<task>-<profile>/session.json`
+- one numbered log file per process in that directory
+
+Use another shell or automation process to inspect or stop it:
+
+```sh
+effigy dev status
+effigy dev status admin
+effigy dev logs
+effigy dev logs api
+effigy dev logs api --follow
+effigy dev logs --profile admin
+effigy dev stop
+effigy dev stop admin
+```
+
+`status` reports each process PID, state, and log path. A failed headless run
+includes the failing process's log path and tail in the task error, so lifecycle
+startup failures do not collapse to an unexplained exit code.
+
 - `EFFIGY_MANAGED_STREAM=1`
   - bypasses TUI and runs the selected profile in stream mode
+- `EFFIGY_MANAGED_HEADLESS=1`
+  - runs the concurrent headless supervisor; takes precedence over stream mode
 - `EFFIGY_MANAGED_TUI=0|false`
   - disables TUI auto-launch and renders managed plan output
 - `EFFIGY_MANAGED_TUI=1|true`

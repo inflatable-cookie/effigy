@@ -16,6 +16,7 @@ use crate::{render_utf8, text_renderer};
 pub enum ManagedExecutionMode {
     RenderPlan,
     Stream,
+    Headless,
     Tui,
 }
 
@@ -50,10 +51,14 @@ pub fn run_or_render_managed_task(
     repo_root: &Path,
     manifest_path: &Path,
     plan: ManagedTaskPlan,
+    execution_mode: ManagedExecutionMode,
 ) -> Result<String, ManagedError> {
-    match managed_execution_mode() {
+    match execution_mode {
         ManagedExecutionMode::Stream => {
             runtime::run_managed_task_runtime(task_name, repo_root, plan)
+        }
+        ManagedExecutionMode::Headless => {
+            runtime::run_managed_task_headless(task_name, repo_root, plan)
         }
         ManagedExecutionMode::Tui => runtime::run_managed_task_tui(task_name, repo_root, plan),
         ManagedExecutionMode::RenderPlan => {
@@ -64,6 +69,12 @@ pub fn run_or_render_managed_task(
 
 pub fn managed_execution_mode() -> ManagedExecutionMode {
     let tui_override = std::env::var("EFFIGY_MANAGED_TUI").ok();
+    if std::env::var("EFFIGY_MANAGED_HEADLESS")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        return ManagedExecutionMode::Headless;
+    }
     if std::env::var("EFFIGY_MANAGED_STREAM")
         .ok()
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))

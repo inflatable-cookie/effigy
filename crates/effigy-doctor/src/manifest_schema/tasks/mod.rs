@@ -4,8 +4,8 @@ use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys, validate_concurrent_array};
 use super::values::{
     validate_optional_boolean_field, validate_optional_enum_string_field,
-    validate_optional_non_empty_string_field, validate_optional_non_empty_string_or_array_field,
-    validate_optional_table_string_values_field,
+    validate_optional_integer_field, validate_optional_non_empty_string_field,
+    validate_optional_non_empty_string_or_array_field, validate_optional_table_string_values_field,
 };
 
 mod profiles;
@@ -110,6 +110,7 @@ fn validate_task_table_keys(
             "container_lifecycle",
             "gateway",
             "health_wait",
+            "health_wait_timeout_secs",
             "ready_message",
             "concurrent",
             "profiles",
@@ -222,6 +223,11 @@ fn validate_task_managed_fields(
         context,
         task_table.get("container_lifecycle"),
         &format!("tasks.{task_name}.container_lifecycle"),
+    );
+    validate_optional_integer_field(
+        context,
+        task_table.get("health_wait_timeout_secs"),
+        &format!("tasks.{task_name}.health_wait_timeout_secs"),
     );
     validate_optional_boolean_field(
         context,

@@ -9,6 +9,7 @@ use effigy_tasks::TaskSelector;
 use crate::profiles::ResolvedConcurrentProfile;
 use crate::{
     ManagedError, ManagedProcessRole, ManagedProcessSpec, ManagedTaskPlan, ManagedTaskReadiness,
+    DEFAULT_MANAGED_HEALTH_WAIT_TIMEOUT_SECS,
 };
 
 #[path = "plan/entries.rs"]
@@ -97,6 +98,9 @@ fn build_managed_task_plan(
         gateway_auto_start: task.gateway.unwrap_or(false),
         readiness: ManagedTaskReadiness {
             health_wait: task.health_wait.unwrap_or(false),
+            timeout_secs: task
+                .health_wait_timeout_secs
+                .unwrap_or(DEFAULT_MANAGED_HEALTH_WAIT_TIMEOUT_SECS),
             ready_message: task.ready_message.clone(),
         },
     })
@@ -175,6 +179,20 @@ fn validate_lifecycle_role_usage(
                 "`ready_message` requires `health_wait = true`",
             ));
         }
+    }
+    if task.health_wait_timeout_secs == Some(0) {
+        return Err(invalid_managed_process_definition(
+            selector,
+            "managed",
+            "`health_wait_timeout_secs` must be greater than zero",
+        ));
+    }
+    if task.health_wait_timeout_secs.is_some() && !task.health_wait.unwrap_or(false) {
+        return Err(invalid_managed_process_definition(
+            selector,
+            "managed",
+            "`health_wait_timeout_secs` requires `health_wait = true`",
+        ));
     }
     Ok(())
 }

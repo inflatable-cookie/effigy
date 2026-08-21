@@ -81,6 +81,10 @@ pub fn managed_plan_overview_fields(
             managed_readiness_wait_label(plan.readiness.health_wait),
         ),
         KeyValue::new(
+            "readiness-timeout",
+            format!("{}s", plan.readiness.timeout_secs),
+        ),
+        KeyValue::new(
             "ready-message",
             plan.readiness
                 .ready_message

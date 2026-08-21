@@ -182,6 +182,7 @@ fn materialize_demo_special_managed_processes(
                         crate::runner::managed_shell::InlineManagedLifecycle {
                             owner_task: task_name,
                             health_wait: task.health_wait.unwrap_or(false),
+                            health_wait_timeout_secs: task.health_wait_timeout_secs.unwrap_or(60),
                             ready_message: task.ready_message.as_deref(),
                             dns_route_lines: &[],
                             readiness_probe_urls: &managed_readiness_probe_urls(
@@ -196,6 +197,7 @@ fn materialize_demo_special_managed_processes(
                         container_name: container_binding.container_name(),
                         owner_task: task_name,
                         health_wait: task.health_wait.unwrap_or(false),
+                        health_wait_timeout_secs: task.health_wait_timeout_secs.unwrap_or(60),
                         ready_message: task.ready_message.as_deref(),
                         dns_route_lines: &[],
                         readiness_probe_urls: &[],

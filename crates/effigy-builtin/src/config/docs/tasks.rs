@@ -21,6 +21,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "gateway = true",
     "# Optional: wait on the task-owned container health path before showing ready.",
     "health_wait = true",
+    "# Optional: readiness deadline in seconds (default 60).",
+    "health_wait_timeout_secs = 90",
     "# Optional: project one manifest-owned ready message through the managed runtime.",
     "ready_message = \"http://projectname.test\"",
     "# Optional: stop the whole managed stack when a specific process exits.",

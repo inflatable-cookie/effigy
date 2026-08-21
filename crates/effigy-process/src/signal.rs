@@ -32,6 +32,57 @@ pub(super) fn send_kill(child: &mut Child) {
     }
 }
 
+pub fn process_is_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        pid > 0 && kill(Pid::from_raw(pid as i32), None).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+pub fn process_is_descendant_of(pid: u32, ancestor_pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        pid > 0
+            && ancestor_pid > 0
+            && process_descendants(ancestor_pid as i32).contains(&(pid as i32))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, ancestor_pid);
+        false
+    }
+}
+
+pub fn terminate_process_tree(pid: u32, force: bool) {
+    #[cfg(unix)]
+    {
+        if pid == 0 {
+            return;
+        }
+        let signal = if force {
+            Signal::SIGKILL
+        } else {
+            Signal::SIGTERM
+        };
+        let targets = signal_targets_for_child(pid as i32);
+        for pgid in targets.groups {
+            let _ = kill(Pid::from_raw(-pgid), signal);
+        }
+        for process in targets.processes {
+            let _ = kill(Pid::from_raw(process), signal);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, force);
+    }
+}
+
 #[cfg(unix)]
 fn signal_process_tree(child: &mut Child, signal: Signal) -> Result<(), nix::Error> {
     let pid = child.id() as i32;

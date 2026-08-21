@@ -44,6 +44,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "container_lifecycle = true",
             "gateway = true",
             "health_wait = true",
+            "health_wait_timeout_secs = 90",
             "ready_message = \"http://projectname.test\"",
             "role = \"shell\"",
             "task = \"test vitest \\\"user service\\\"\"",

@@ -212,6 +212,29 @@ secrets = "optional"
 }
 
 #[test]
+fn validate_manifest_schema_accepts_managed_readiness_timeout() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.dev]
+mode = "tui"
+health_wait = true
+health_wait_timeout_secs = 90
+concurrent = [{ name = "api", run = "cargo run" }]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected managed readiness timeout to validate, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_rejects_non_boolean_initial_tag_current_version() {
     let manifest: Value = toml::from_str(
         r#"

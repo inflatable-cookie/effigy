@@ -154,6 +154,7 @@ pub struct ManagedLifecycleRequest<'a> {
     pub container_name: Option<&'a str>,
     pub owner_task: &'a str,
     pub health_wait: bool,
+    pub health_wait_timeout_secs: u64,
     pub ready_message: Option<&'a str>,
     pub dns_route_lines: &'a [String],
     pub readiness_probe_urls: &'a [String],
@@ -168,6 +169,7 @@ pub fn managed_lifecycle_command(request: ManagedLifecycleRequest<'_>) -> String
         container_name,
         owner_task,
         health_wait,
+        health_wait_timeout_secs,
         ready_message,
         dns_route_lines,
         readiness_probe_urls,
@@ -210,6 +212,7 @@ pub fn managed_lifecycle_command(request: ManagedLifecycleRequest<'_>) -> String
     let readiness_wait = managed_lifecycle_readiness_wait(
         health_wait,
         readiness_probe_urls,
+        health_wait_timeout_secs,
         "managed lifecycle readiness wait timed out",
     );
     let setup_sequence = managed_lifecycle_setup_sequence(setup_commands);
@@ -244,6 +247,7 @@ pub fn managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> Strin
 pub fn managed_lifecycle_readiness_wait(
     health_wait: bool,
     readiness_probe_urls: &[String],
+    timeout_secs: u64,
     timeout_message: &str,
 ) -> String {
     if !health_wait || readiness_probe_urls.is_empty() {
@@ -255,8 +259,9 @@ pub fn managed_lifecycle_readiness_wait(
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "readiness_deadline=$(( $(date +%s) + 60 )); while true; do readiness_ok=1; for readiness_url in {probe_urls}; do readiness_code=$(curl -k -s -o /dev/null -w '%{{http_code}}' \"$readiness_url\" || true); case \"$readiness_code\" in 000|502|503|504) readiness_ok=0; break ;; esac; done; if [ \"$readiness_ok\" = 1 ]; then break; fi; if [ \"$(date +%s)\" -ge \"$readiness_deadline\" ]; then printf '%s\\n' {timeout_message} 1>&2; exit 1; fi; sleep 1; done; ",
+        "readiness_deadline=$(( $(date +%s) + {timeout_secs} )); while true; do readiness_ok=1; for readiness_url in {probe_urls}; do readiness_code=$(curl -k -s -o /dev/null -w '%{{http_code}}' \"$readiness_url\" || true); case \"$readiness_code\" in 000|502|503|504) readiness_ok=0; break ;; esac; done; if [ \"$readiness_ok\" = 1 ]; then break; fi; if [ \"$(date +%s)\" -ge \"$readiness_deadline\" ]; then printf '%s\\n' {timeout_message} 1>&2; exit 1; fi; sleep 1; done; ",
         probe_urls = probe_urls,
+        timeout_secs = timeout_secs,
         timeout_message = shell_quote(timeout_message),
     )
 }
@@ -601,6 +606,7 @@ mod tests {
             container_name: Some("web"),
             owner_task: "dev",
             health_wait: true,
+            health_wait_timeout_secs: 60,
             ready_message: Some("http://project.test"),
             dns_route_lines: &[],
             readiness_probe_urls: &[],
@@ -643,6 +649,7 @@ mod tests {
             container_name: Some("web"),
             owner_task: "dev",
             health_wait: true,
+            health_wait_timeout_secs: 60,
             ready_message: Some("http://project.test"),
             dns_route_lines: &[],
             readiness_probe_urls: &[],
@@ -673,6 +680,7 @@ mod tests {
             container_name: Some("web"),
             owner_task: "dev",
             health_wait: true,
+            health_wait_timeout_secs: 17,
             ready_message: Some("routes: http://project.test"),
             dns_route_lines: &["http://project.test -> app".to_owned()],
             readiness_probe_urls: &["http://project.test".to_owned()],
@@ -686,6 +694,7 @@ mod tests {
             "got: {rendered}"
         );
         assert!(rendered.contains("http://project.test"), "got: {rendered}");
+        assert!(rendered.contains("+ 17"), "got: {rendered}");
         let probe_index = rendered.find("curl -k -s -o /dev/null").expect("probe");
         let ready_index = rendered.find("managed ready:").expect("ready banner");
         assert!(probe_index < ready_index, "got: {rendered}");
@@ -698,6 +707,7 @@ mod tests {
             container_name: Some("web"),
             owner_task: "dev",
             health_wait: false,
+            health_wait_timeout_secs: 60,
             ready_message: None,
             dns_route_lines: &[],
             readiness_probe_urls: &[],

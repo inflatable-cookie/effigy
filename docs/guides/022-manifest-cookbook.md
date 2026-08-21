@@ -464,6 +464,7 @@ workspace = "main"               # pin to a specific workspace inside that syste
 container_lifecycle = true       # ensure the declared system/containers come up
 gateway = true                   # auto-start the host gateway before the first tab
 health_wait = true               # wait for declared service health gates before ready
+health_wait_timeout_secs = 90    # readiness deadline; defaults to 60
 ready_message = "dev up"         # line emitted once the stack is ready to use
 
 concurrent = [
@@ -498,11 +499,17 @@ Lifecycle controls:
 - `gateway = true` starts (or confirms) the host-native gateway before managed
   tabs start, so container-owned DNS and TLS routes resolve from tab one.
 - `health_wait = true` blocks the ready signal until declared service health
-  gates pass (see `[systems.<name>.services.<svc>.health]`).
+  gates pass. Managed lifecycle readiness probes only container-owned routes;
+  host-target routes belong to concurrent app processes and are not probed
+  before those processes start.
+- `health_wait_timeout_secs = <N>` sets the readiness deadline in seconds and
+  requires `health_wait = true`.
 - `ready_message = "..."` is surfaced by the managed session once the ready
   signal fires; keep it short and operator-visible.
 
 Concurrent-entry field reference:
+- `start = <N>` controls process spawn order; ties keep manifest order.
+- `start_after_ms = <N>` adds a delay before that ordered entry is spawned.
 - `role = "lifecycle"` marks an entry whose exit status participates in the
   managed session's overall lifecycle (non-zero exit fails the session).
 - `role = "shell"` opens an interactive workspace shell in that tab; pair with
@@ -512,6 +519,19 @@ Concurrent-entry field reference:
   ordered pre-steps inside that pane before the main `run`/`task` starts.
 - `name = "..."` / `label = "..."` set the machine-stable identifier and the
   TUI-visible label; label defaults from `name` or the underlying task id.
+
+Headless companion surface:
+
+```sh
+effigy dev --headless
+effigy dev status
+effigy dev logs [process] [--follow]
+effigy dev stop
+```
+
+The headless supervisor uses the same concurrent plan and local-dev secret
+unlock as the TUI. State and per-process logs live under
+`.effigy/runtime/managed/<task>-<profile>/`.
 
 Electron-style example:
 

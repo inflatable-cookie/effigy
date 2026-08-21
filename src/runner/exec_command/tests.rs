@@ -373,6 +373,7 @@ fn build_routed_task_exec_args_raw_exec_emits_single_workdir_flag() {
         },
         None,
         None,
+        None,
         "postgres",
         "/ignored/by/raw-exec",
     );
@@ -403,6 +404,7 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
         &effigy_exec::ExecStrategy::Handoff {
             args: vec!["tasks".to_owned(), "--json".to_owned()],
         },
+        None,
         None,
         None,
         "workspace",
@@ -444,11 +446,32 @@ fn build_routed_task_exec_args_forwards_task_env_to_handoff() {
         },
         Some(&task_env),
         None,
+        None,
         "workspace",
         "/workspace-root/repo",
     );
     assert!(args.windows(2).any(|window| window[0] == "-e"
         && window[1] == "EFFIGY_STATE_CAPTURE_CONTEXT=.effigy/context.json"));
+}
+
+#[test]
+fn build_routed_task_exec_args_uses_workspace_identity_for_host_dispatched_tasks() {
+    let args = build_routed_task_exec_args(
+        &effigy_exec::ExecStrategy::RawExec {
+            working_dir: "/workspace-root/repo".to_owned(),
+            command: vec!["bun".to_owned(), "install".to_owned()],
+        },
+        None,
+        None,
+        Some(("dev", Some("/home/dev"))),
+        "workspace",
+        "/workspace-root/repo",
+    );
+
+    assert!(args.windows(2).any(|window| window == ["-u", "dev"]));
+    assert!(args
+        .windows(2)
+        .any(|window| window == ["-e", "HOME=/home/dev"]));
 }
 
 #[test]

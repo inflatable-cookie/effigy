@@ -34,6 +34,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub health_wait: Option<bool>,
     #[serde(default)]
+    pub health_wait_timeout_secs: Option<u64>,
+    #[serde(default)]
     pub ready_message: Option<String>,
     #[serde(default)]
     pub concurrent: Vec<ManifestManagedConcurrentEntry>,

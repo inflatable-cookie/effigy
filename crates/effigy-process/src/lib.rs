@@ -15,6 +15,7 @@ mod supervisor_lookup;
 mod supervisor_shutdown;
 
 use diagnostics::collect_exit_diagnostics;
+pub use signal::{process_is_descendant_of, process_is_running, terminate_process_tree};
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,5 +138,15 @@ impl ProcessSupervisor {
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
         let process_map = crate::locks::lock_tolerant(&self.processes);
         collect_exit_diagnostics(&self.specs, &process_map)
+    }
+
+    pub fn process_ids(&self) -> Vec<(String, u32)> {
+        let process_map = crate::locks::lock_tolerant(&self.processes);
+        let mut ids = process_map
+            .iter()
+            .map(|(name, child)| (name.clone(), crate::locks::lock_tolerant(child).id()))
+            .collect::<Vec<_>>();
+        ids.sort_by(|left, right| left.0.cmp(&right.0));
+        ids
     }
 }

@@ -351,7 +351,22 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     if strategy_requires_workspace_effigy_install(&strategy) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
     }
-    let args = build_routed_task_exec_args(&strategy, *task_env, *secret_env, service, mapped_cwd);
+    let workspace_identity = if *service == policy.primary_service {
+        policy
+            .workspace_user
+            .as_deref()
+            .map(|user| (user, policy.workspace_home.as_deref()))
+    } else {
+        None
+    };
+    let args = build_routed_task_exec_args(
+        &strategy,
+        *task_env,
+        *secret_env,
+        workspace_identity,
+        service,
+        mapped_cwd,
+    );
 
     run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
 }

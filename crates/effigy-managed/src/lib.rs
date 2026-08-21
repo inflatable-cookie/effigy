@@ -16,6 +16,7 @@ use effigy_process::ProcessManagerError;
 use effigy_ui::{OutputMode, PlainRenderer, UiError};
 
 pub mod command;
+pub mod invocation;
 pub mod plan;
 pub mod presentation;
 pub mod profiles;
@@ -27,6 +28,7 @@ pub mod scheduler;
 
 pub use command::resolve_managed_task_plan;
 pub use effigy_core::builtin_tasks::BUILTIN_TASKS;
+pub use invocation::{parse_managed_invocation, ManagedInvocation, ParsedManagedInvocation};
 pub use plan::{
     invalid_managed_process_definition, resolve_managed_concurrent_task_plan,
     ManagedConcurrentPlanInput,
@@ -82,10 +84,23 @@ pub struct ManagedTaskPlan {
     pub readiness: ManagedTaskReadiness,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ManagedTaskReadiness {
     pub health_wait: bool,
+    pub timeout_secs: u64,
     pub ready_message: Option<String>,
+}
+
+pub const DEFAULT_MANAGED_HEALTH_WAIT_TIMEOUT_SECS: u64 = 60;
+
+impl Default for ManagedTaskReadiness {
+    fn default() -> Self {
+        Self {
+            health_wait: false,
+            timeout_secs: DEFAULT_MANAGED_HEALTH_WAIT_TIMEOUT_SECS,
+            ready_message: None,
+        }
+    }
 }
 
 /// Default shell command used when a managed profile's `shell` entry

@@ -231,6 +231,9 @@ secrets = "required"
 That forces declared `targets = ["tasks"]` values into the managed child
 process environment before launch, which is useful when the child commands
 expect runtime auth/env keys without spelling them out in the shell command.
+The same startup eagerly unlocks container-targeted values, but it does not
+promote optional keys: a container key with `required = false` may be absent
+without blocking the managed task.
 
 If `[secrets.vault].generate` is configured, Effigy may run `effigy secrets init`
 during `secrets = "required"` startup when required task-target secrets are
@@ -252,6 +255,10 @@ general deploy/state/artifact generation hook.
 
 Secrets with `targets = ["containers"]` are resolved before `effigy container
 up`. No repo-root `.env` file is written.
+
+Stored optional values are injected when the vault is unlocked. Missing
+optional values are skipped; only keys declared with `required = true` gate
+container startup.
 
 By default, Effigy passes those values through the compose process environment.
 

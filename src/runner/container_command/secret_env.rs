@@ -23,7 +23,7 @@ pub(in crate::runner) struct ResolvedContainerSecretRuntime {
 pub(super) fn resolve_container_secret_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    force_required: bool,
+    force_unlock: bool,
 ) -> Result<ResolvedContainerSecretRuntime, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let delivery = policy.secret_delivery;
@@ -47,7 +47,7 @@ pub(super) fn resolve_container_secret_runtime(
 
     let required_names = container_keys
         .iter()
-        .filter(|(_, key)| force_required || key.required)
+        .filter(|(_, key)| key.required)
         .map(|(name, _)| (*name).clone())
         .collect::<Vec<_>>();
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
@@ -86,7 +86,7 @@ pub(super) fn resolve_container_secret_runtime(
             Err(_) => {
                 let Some(passphrase) =
                     crate::runner::secret_session::read_local_dev_upgrade_passphrase(
-                    required_names.is_empty(),
+                    required_names.is_empty() && !force_unlock,
                     "Vault passphrase (one-time local-dev setup): ",
                     "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
                 )? else {
@@ -109,7 +109,7 @@ pub(super) fn resolve_container_secret_runtime(
         }
     } else {
         let Some(passphrase) = crate::runner::secret_session::read_secret_passphrase(
-            required_names.is_empty(),
+            required_names.is_empty() && !force_unlock,
             "Vault passphrase: ",
             "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
         )? else {
@@ -128,7 +128,7 @@ pub(super) fn resolve_container_secret_runtime(
                 container_secret_env_name(name),
                 SecretString::new(record.value.expose().to_owned()),
             )),
-            None if force_required || key.required => missing_required.push(name.to_owned()),
+            None if key.required => missing_required.push(name.to_owned()),
             None => {}
         }
     }
@@ -458,7 +458,7 @@ catalog = "php-fpm"
     }
 
     #[test]
-    fn container_secret_env_force_required_loads_optional_container_values() {
+    fn container_secret_env_forced_unlock_loads_optional_container_values() {
         let root = temp_repo("container-secret-force-required");
         fs::write(
             root.join("effigy.toml"),
@@ -498,7 +498,7 @@ catalog = "php-fpm"
     }
 
     #[test]
-    fn container_secret_env_force_required_blocks_missing_optional_container_values() {
+    fn container_secret_env_forced_unlock_honors_optional_container_values() {
         let root = temp_repo("container-secret-force-required-missing");
         fs::write(
             root.join("effigy.toml"),
@@ -529,12 +529,10 @@ catalog = "php-fpm"
         write_test_vault(&root, "vault-passphrase", &[]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let error = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
-            .expect_err("missing should fail");
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
+            .expect("optional missing value should not fail");
 
-        assert!(error
-            .to_string()
-            .contains("required container secret(s) missing from the vault: api_token"));
+        assert!(runtime.env.is_empty());
     }
 
     #[test]

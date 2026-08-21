@@ -15,6 +15,8 @@ effigy-tasks = { path = "../effigy-tasks" }
 effigy-tui = { path = "../effigy-tui" }
 effigy-ui = { path = "../effigy-ui" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+signal-hook = "0.4"
 
 [lints]
 workspace = true

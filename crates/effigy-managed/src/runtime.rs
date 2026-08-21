@@ -10,10 +10,17 @@ use crate::ManagedError;
 use crate::ManagedTaskPlan;
 use crate::{render_utf8, text_renderer};
 
+#[path = "runtime/headless.rs"]
+mod headless;
 #[path = "runtime/policy.rs"]
 mod policy;
 #[path = "runtime/stream.rs"]
 mod stream;
+
+pub use headless::{
+    managed_headless_logs, managed_headless_status, managed_headless_stop,
+    run_managed_task_headless,
+};
 
 pub fn run_managed_task_tui(
     task_name: &str,
@@ -116,6 +123,10 @@ fn managed_runtime_readiness_fields(plan: &ManagedTaskPlan) -> Vec<KeyValue> {
             } else {
                 "disabled"
             },
+        ),
+        KeyValue::new(
+            "readiness-timeout",
+            format!("{}s", plan.readiness.timeout_secs),
         ),
         KeyValue::new(
             "ready-message",

@@ -36,6 +36,7 @@ pub(super) fn build_routed_task_exec_args(
     strategy: &effigy_exec::ExecStrategy,
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
+    workspace_identity: Option<(&str, Option<&str>)>,
     service: &str,
     mapped_cwd: &str,
 ) -> Vec<OsString> {
@@ -43,6 +44,14 @@ pub(super) fn build_routed_task_exec_args(
     append_task_exec_env(&mut args, task_env);
     append_exec_env(&mut args, secret_env);
     append_color_exec_env(&mut args, false);
+    if let Some((user, home)) = workspace_identity {
+        args.push(OsString::from("-u"));
+        args.push(OsString::from(user));
+        if let Some(home) = home {
+            args.push(OsString::from("-e"));
+            args.push(OsString::from(format!("HOME={home}")));
+        }
+    }
 
     match strategy {
         effigy_exec::ExecStrategy::Handoff { args: handoff_args } => {
