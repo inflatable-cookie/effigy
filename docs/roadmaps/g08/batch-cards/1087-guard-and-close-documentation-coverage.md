@@ -1,10 +1,10 @@
 # 1087 - Guard And Close Documentation Coverage
 
 Roadmap: [`../034-documentation-coverage-parity.md`](../034-documentation-coverage-parity.md)
-Spec: [`../../../specs/107-documentation-coverage-parity.md`](../../../specs/107-documentation-coverage-parity.md)
+Spec: [`../../../specs/archive/107-documentation-coverage-parity.md`](../../../specs/archive/107-documentation-coverage-parity.md)
 Predecessor: [`1086`](./1086-audit-and-align-documentation-coverage.md)
 
-Status: Ready
+Status: Complete
 Owner: documentation validation and lane closeout
 Created: 2026-08-21
 Ready after: card `1086` gap inventory and repair
@@ -28,13 +28,13 @@ then close the strict lane without overstating what prose checks can prove.
 
 ## Acceptance
 
-- [ ] stable, mechanically detectable coverage relationships have regression
+- [x] stable, mechanically detectable coverage relationships have regression
       checks
-- [ ] no test asserts arbitrary prose when a semantic or routing assertion is
+- [x] no test asserts arbitrary prose when a semantic or routing assertion is
       available
-- [ ] the closeout log supports every coverage and validation claim
-- [ ] focused checks and full QA pass
-- [ ] cards, roadmap, spec archive, generation/front-door state, and next task
+- [x] the closeout log supports every coverage and validation claim
+- [x] focused checks and full QA pass
+- [x] cards, roadmap, spec archive, generation/front-door state, and next task
       agree
 
 ## Validation
@@ -49,6 +49,9 @@ then close the strict lane without overstating what prose checks can prove.
 
 Close with one dated log under `docs/logs/2026-08/` and link it from both cards
 and the roadmap.
+
+Evidence:
+[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Stop Conditions
 

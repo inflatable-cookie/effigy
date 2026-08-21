@@ -180,16 +180,16 @@ preflight detects a stale/absent colima-forwarded SSH-agent socket, and both
 the shared `effigy deps` foundation, Cargo links, Bun links, doctor/hygiene,
 portfolio proof, and operator closeout.
 
-Cards `1051` through `1085` and strict specs `099` through `106` are complete.
+Cards `1051` through `1087` and strict specs `099` through `107` are complete.
 
 `g08.033` restored doctor parity with the contract-032 secret surface and
 proved the corrected installed CLI against the operator-selected Bovine
 consumer.
 
-`g08.034` is active under strict spec `107`. Ready cards `1086` and `1087`
-audit the whole current public behavior surface against active user, agent,
-built-in, and generated docs, repair verified gaps, add proportional recurrence
-guards, and close with full evidence.
+`g08.034` is complete under archived strict spec `107`. Cards `1086` and
+`1087` audited the whole current public behavior surface against active user,
+agent, built-in, and generated docs, repaired verified gaps, added proportional
+recurrence guards, and closed with full evidence.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -247,5 +247,5 @@ closeout there first.
 
 ## Next Task
 
-Execute cards `1086` and `1087` through the documentation coverage worker
-lane. No release action or `g09` rollover is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. No release action or `g09` rollover is implied.

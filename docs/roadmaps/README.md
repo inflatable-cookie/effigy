@@ -104,16 +104,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.032`](./g08/032-vision-governance-operationalization.md)
   operationalizes vision governance registers and the first review cycle under
   archived strict spec `105`; cards `1082` through `1084` are complete.
-  Active [`g08.034`](./g08/034-documentation-coverage-parity.md) audits current
-  public behavior against active user, agent, built-in, and generated docs
-  under strict spec `107`; cards `1086` and `1087` are ready.
+  Completed [`g08.034`](./g08/034-documentation-coverage-parity.md) audits
+  current public behavior against active user, agent, built-in, and generated
+  docs under archived strict spec `107`; cards `1086` and `1087` are complete.
 
 ## Active Strict Lane
 
-Strict spec [`107`](../specs/107-documentation-coverage-parity.md), roadmap
-[`g08.034`](./g08/034-documentation-coverage-parity.md), and ready cards
-[`1086`](./g08/batch-cards/1086-audit-and-align-documentation-coverage.md) and
-[`1087`](./g08/batch-cards/1087-guard-and-close-documentation-coverage.md).
+None. Completed spec `107` lives in [`specs/archive/`](../specs/archive/).
 
 ## Research Program
 
@@ -168,8 +165,8 @@ Before rollover:
 
 ## Next Task
 
-Execute cards `1086` and `1087` through the documentation coverage worker
-lane. No release action or `g09` rollover is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. No release action or `g09` rollover is implied.
 
 ## Historical language boundary
 

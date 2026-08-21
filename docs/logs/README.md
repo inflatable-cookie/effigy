@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](./2026-08/21-230738-documentation-coverage-parity-closeout.md)
 - [`2026-08/21-224918-documentation-coverage-parity-planning.md`](./2026-08/21-224918-documentation-coverage-parity-planning.md)
 - [`2026-08/18-112147-doctor-secrets-schema-parity-closeout.md`](./2026-08/18-112147-doctor-secrets-schema-parity-closeout.md)
 - [`2026-08/17-153000-vision-governance-operationalization-closeout.md`](./2026-08/17-153000-vision-governance-operationalization-closeout.md)
@@ -176,5 +177,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute cards `1086` and `1087` through the documentation coverage worker
-lane. No release action or generation rollover is implied.
+Run the second governance review by 2026-09-17. Await operator intent for the
+next Horizon theme. No release action or generation rollover is implied.
