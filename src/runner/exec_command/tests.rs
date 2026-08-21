@@ -10,7 +10,7 @@ use crate::runner::container_runtime_prep::ContainerTaskActivation;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::surface::{
     build_alias_table, build_raw_exec_args, resolve_default_exec_surface, resolve_exec_working_dir,
-    resolve_named_exec_surface,
+    resolve_named_exec_surface, RawExecOptions,
 };
 use crate::runner::exec_command::transport::{
     build_routed_task_exec_args, copy_file_into_service_invocation, parse_compose_exec_args,
@@ -227,6 +227,64 @@ fn build_raw_exec_args_uses_mapped_cwd() {
         &config,
         "app",
         &["php".to_owned(), "artisan".to_owned()],
+        RawExecOptions {
+            workspace_identity: Some(("dev", Some("/home/dev"))),
+            allocate_tty: false,
+        },
+    )
+    .expect("args");
+    assert_eq!(
+        args,
+        vec![
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from("-u"),
+            OsString::from("dev"),
+            OsString::from("-e"),
+            OsString::from("HOME=/home/dev"),
+            OsString::from("-w"),
+            OsString::from("/var/www/html/app"),
+            OsString::from("app"),
+            OsString::from("php"),
+            OsString::from("artisan"),
+        ]
+    );
+}
+
+#[test]
+fn build_raw_exec_args_keeps_tty_and_service_user_for_non_primary_services() {
+    let root = temp_repo("raw-args-interactive");
+    write_container_manifest(&root, "/var/www/html");
+    let config = ManifestContainerConfig {
+        driver: None,
+        startup: None,
+        profile: None,
+        compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
+        project_name: None,
+        primary_service: Some("app".to_owned()),
+        services: Default::default(),
+        working_dir: Some("/var/www/html".to_owned()),
+        aliases: Default::default(),
+        dns: None,
+        lifecycle: None,
+        health: None,
+        secrets: None,
+        host: None,
+        data: None,
+        host_processes: Vec::new(),
+    };
+
+    let args = build_raw_exec_args(
+        &root,
+        &root,
+        "web",
+        &config,
+        "postgres",
+        &["psql".to_owned()],
+        RawExecOptions {
+            workspace_identity: None,
+            allocate_tty: true,
+        },
     )
     .expect("args");
     assert_eq!(
@@ -234,10 +292,9 @@ fn build_raw_exec_args_uses_mapped_cwd() {
         vec![
             OsString::from("exec"),
             OsString::from("-w"),
-            OsString::from("/var/www/html/app"),
-            OsString::from("app"),
-            OsString::from("php"),
-            OsString::from("artisan"),
+            OsString::from("/var/www/html"),
+            OsString::from("postgres"),
+            OsString::from("psql"),
         ]
     );
 }

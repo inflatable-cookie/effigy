@@ -437,6 +437,19 @@ Default lease behavior:
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.
 
+### Workspace Exec Identity
+
+Host-routed tasks and `effigy exec` use the container's declared
+`workspace_user` and `workspace_home` when they target the primary service.
+Explicit execs against another service keep that service's configured user.
+Interactive terminals retain a TTY; pipes, agents, and other non-console
+callers run without one.
+
+For a running workspace, `effigy doctor` scans primary-service managed volumes
+and `$BUN_INSTALL/install` for root-owned paths. A regression is reported as
+`container.workspace-ownership`, with one sample from each affected mount.
+The check is read-only and skips stopped workspace services.
+
 ## Data Lifecycle
 
 Generated-compose environments support:

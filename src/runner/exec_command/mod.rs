@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Output;
 
@@ -22,7 +23,7 @@ use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
     resolve_default_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
-    ResolvedExecSurface,
+    RawExecOptions, ResolvedExecSurface,
 };
 use transport::build_routed_task_exec_args;
 
@@ -252,6 +253,14 @@ fn run_raw_exec(request: RawExecRequest<'_>) -> Result<String, RunnerError> {
         alias_name,
     } = request;
     ensure_container_running(repo_root, policy, container_name)?;
+    let workspace_identity = if service == policy.primary_service {
+        policy
+            .workspace_user
+            .as_deref()
+            .map(|user| (user, policy.workspace_home.as_deref()))
+    } else {
+        None
+    };
     let args = build_raw_exec_args(
         repo_root,
         invocation_cwd,
@@ -259,6 +268,12 @@ fn run_raw_exec(request: RawExecRequest<'_>) -> Result<String, RunnerError> {
         config,
         service,
         command,
+        RawExecOptions {
+            workspace_identity,
+            allocate_tty: !output_json
+                && std::io::stdin().is_terminal()
+                && std::io::stdout().is_terminal(),
+        },
     )?;
     let output = run_compose_exec(repo_root, policy, &args, output_json, "docker compose exec")?;
     render_exec_result(

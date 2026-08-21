@@ -16,12 +16,13 @@ use effigy_cli::TaskInvocation;
 use effigy_manifest::{DeferredCommand, LoadedCatalog};
 use effigy_tasks::TaskSelector;
 
-use crate::DoctorError;
+use crate::{DoctorError, DoctorFinding};
 
 #[derive(Debug, Clone, Default)]
 pub struct DoctorRuntimeDiagnostics {
     pub evidence: Vec<String>,
     pub warnings: Vec<String>,
+    pub findings: Vec<DoctorFinding>,
 }
 
 pub trait DoctorRuntimePorts {

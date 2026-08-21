@@ -119,6 +119,7 @@ pub(super) fn build_raw_exec_args(
     config: &ManifestContainerConfig,
     service: &str,
     command: &[String],
+    options: RawExecOptions<'_>,
 ) -> Result<Vec<std::ffi::OsString>, RunnerError> {
     if command.is_empty() {
         return Err(RunnerError::task_invocation(
@@ -127,11 +128,27 @@ pub(super) fn build_raw_exec_args(
     }
     let mapped_cwd = map_host_cwd(repo_root, invocation_cwd, container_name, config)?;
     let mut args = vec![std::ffi::OsString::from("exec")];
+    if !options.allocate_tty {
+        args.push(std::ffi::OsString::from("-T"));
+    }
+    if let Some((user, home)) = options.workspace_identity {
+        args.push(std::ffi::OsString::from("-u"));
+        args.push(std::ffi::OsString::from(user));
+        if let Some(home) = home {
+            args.push(std::ffi::OsString::from("-e"));
+            args.push(std::ffi::OsString::from(format!("HOME={home}")));
+        }
+    }
     args.push(std::ffi::OsString::from("-w"));
     args.push(std::ffi::OsString::from(mapped_cwd));
     args.push(std::ffi::OsString::from(service));
     args.extend(command.iter().cloned().map(std::ffi::OsString::from));
     Ok(args)
+}
+
+pub(super) struct RawExecOptions<'a> {
+    pub(super) workspace_identity: Option<(&'a str, Option<&'a str>)>,
+    pub(super) allocate_tty: bool,
 }
 
 pub(super) fn resolve_exec_working_dir(

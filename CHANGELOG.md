@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy doctor` now reports a named `container.workspace-ownership` finding
+  when a running workspace has root-owned paths in managed workspace volumes
+  or its Bun install cache.
 - Managed `mode = "tui"` tasks now have a headless concurrent runtime through
   `effigy <task> --headless` or `EFFIGY_MANAGED_HEADLESS=1`, with persisted
   per-process state and logs under `.effigy/runtime/managed/` plus task-local
@@ -27,6 +30,10 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- `effigy exec` now works from non-console sessions without requesting a TTY.
+  Primary-service execs use the same declared workspace user and `HOME` as
+  host-routed tasks, while explicit non-primary service execs retain their
+  service-defined user.
 - Container secret forcing no longer promotes keys declared
   `required = false` into required values. Managed readiness skips gateway
   routes targeting host processes that the lifecycle entry has not started,

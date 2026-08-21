@@ -7,6 +7,13 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Parallel contracts tests can share a timestamp temp directory — 2026-08-21
+- Friction: full `cargo nextest` intermittently failed
+  `validate_selection_accepts_valid_payload`; its isolated rerun passed. The
+  valid and wrong-count tests both use a nanosecond timestamp as the complete
+  temporary-directory identity and can overwrite each other's artifact.
+- Surface: `crates/effigy-contracts/src/tests.rs::tempfile_root`.
+
 ## Closed
 
 ### [x] Bun pin depends on fallible lockfile enumeration — 2026-08-12

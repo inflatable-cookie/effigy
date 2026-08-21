@@ -96,3 +96,35 @@ fn root_resolution_finding_tracks_expected_mode_labels_and_contract() {
         assert_eq!(finding.remediation, remediation::USE_REPO_OVERRIDE);
     }
 }
+
+#[test]
+fn runtime_diagnostic_findings_are_included_before_summary() {
+    let state = DoctorState::new();
+    let resolved = ResolvedTarget {
+        resolved_root: PathBuf::from("/tmp/doctor-workspace"),
+        resolution_mode: ResolutionMode::Explicit,
+        evidence: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let diagnostics = crate::DoctorRuntimeDiagnostics {
+        evidence: Vec::new(),
+        warnings: Vec::new(),
+        findings: vec![crate::DoctorFinding {
+            check_id: check_id::CONTAINER_WORKSPACE_OWNERSHIP.to_owned(),
+            severity: DoctorSeverity::Warning,
+            evidence: "root-owned cache path".to_owned(),
+            remediation: "repair ownership".to_owned(),
+            fixable: false,
+        }],
+    };
+
+    let output = handler::summarize_and_report_with_diagnostics(state, resolved, diagnostics);
+
+    assert_eq!(output.report.summary.warning, 1);
+    assert_eq!(output.report.summary.checks, 20);
+    assert_eq!(output.report.findings.len(), 1);
+    assert_eq!(
+        output.report.findings[0].check_id,
+        check_id::CONTAINER_WORKSPACE_OWNERSHIP
+    );
+}

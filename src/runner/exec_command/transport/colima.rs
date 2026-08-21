@@ -52,7 +52,7 @@ pub(super) fn run_colima_direct_exec(
         repo_root,
         policy,
         &parsed,
-        stdin_file.is_some(),
+        stdin_file.is_some() || !capture,
         run_command_capture_allow_failure,
         format_args,
     )?;
@@ -112,7 +112,7 @@ fn resolve_colima_direct_exec_invocation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     parsed: &ParsedComposeExec,
-    has_stdin_file: bool,
+    attach_stdin: bool,
     run_command_capture_allow_failure: &CaptureCommand,
     format_args: &FormatArgs,
 ) -> Result<Vec<OsString>, RunnerError> {
@@ -131,7 +131,7 @@ fn resolve_colima_direct_exec_invocation(
         OsString::from("--"),
         OsString::from("exec"),
     ];
-    if parsed.tty || has_stdin_file {
+    if parsed.tty || attach_stdin {
         args.push(OsString::from("-i"));
     }
     if parsed.tty {

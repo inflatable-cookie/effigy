@@ -8,6 +8,7 @@ pub(crate) fn render_exec_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         &[
             "Run one ad-hoc command inside the manifest's default system workspace container.",
             "If `--service` is omitted, Effigy targets the container's `primary_service`.",
+            "Primary-service commands use the declared workspace user and HOME; piped and other non-console sessions run without a TTY.",
             "Bare alias commands still route through the same exec path when declared in `[containers.<name>.aliases]`.",
         ],
         &[
