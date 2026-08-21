@@ -2,7 +2,10 @@ use crate::runner::tests::prelude::{
     assert_file_text_equals, assert_run_task_ok_empty, assert_task_invocation_error_contains, fs,
     parse_json_output_with_schema_version, run_task, temp_workspace, write_root_manifest, EnvGuard,
 };
-use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
+use effigy_secrets::{
+    local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue, VaultPlaintextPayload,
+    VaultSecretRecord,
+};
 
 #[test]
 fn run_manifest_task_applies_task_env_with_project_substitution() {
@@ -341,6 +344,45 @@ run = "printf %s \"$DATABASE_URL\""
 }
 
 #[test]
+fn run_dev_injects_vault_secrets_without_a_passphrase() {
+    let root = temp_workspace("dev-vault-secret-local-unlock");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.dev]
+run = "printf %s \"$DATABASE_URL\""
+"#,
+    );
+    write_test_vault_with_local_dev_unlock(
+        &root,
+        "vault-passphrase",
+        &[("database_url", "postgres://secret-value")],
+    );
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+    ]);
+
+    let out = run_task(&root, "dev", &["--json"]).expect("dev should succeed");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.task.run.v1", 1);
+
+    assert_eq!(parsed["stdout"].as_str(), Some("[REDACTED]"));
+    assert!(!out.contains("postgres://secret-value"));
+}
+
+#[test]
 fn run_manifest_task_blocks_missing_required_vault_secret_before_spawn() {
     let root = temp_workspace("task-vault-secret-missing");
     let marker = root.join("should-not-run.out");
@@ -565,4 +607,37 @@ fn write_test_vault(root: &std::path::Path, passphrase: &str, records: &[(&str, 
         envelope.to_json_pretty().expect("serialize test vault"),
     )
     .expect("write test vault");
+}
+
+fn write_test_vault_with_local_dev_unlock(
+    root: &std::path::Path,
+    passphrase: &str,
+    records: &[(&str, &str)],
+) {
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+    let envelope = payload
+        .encrypt_with_passphrase_and_local_dev_key(passphrase, &key)
+        .expect("encrypt test vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        &vault_path,
+        envelope.to_json_pretty().expect("serialize test vault"),
+    )
+    .expect("write test vault");
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    fs::write(&key_path, key.expose()).expect("write local-dev key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+            .expect("secure local-dev key");
+    }
 }

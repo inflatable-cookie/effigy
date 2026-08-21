@@ -296,6 +296,7 @@ pub(super) fn secrets_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         "path = \".effigy/secrets/local.vault\"",
         "# Unlock policy: passphrase, key-and-passphrase, or external.",
         "unlock = \"key-and-passphrase\"",
+        "# `effigy dev` uses a separate ignored local-dev key after vault setup.",
         "",
         "[secrets.keys.database_url]",
         "required = true",

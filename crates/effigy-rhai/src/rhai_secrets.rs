@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use effigy_manifest::{
     ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TASK_MANIFEST_FILE,
 };
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
+use effigy_secrets::{
+    inspect_vault_permissions, local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue,
+    VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
+};
 use rhai::{EvalAltResult, ImmutableString, Map};
 
 use crate::{RhaiHostError, RhaiSecretStore, RhaiSecretTarget};
@@ -82,10 +85,15 @@ pub(crate) fn resolve_rhai_secret_store(
             )));
         }
 
-        let passphrase = read_rhai_secret_passphrase(false)?
-            .ok_or_else(|| RhaiHostError::new("vault passphrase is required"))?;
-        let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
-        store.unlocked_passphrase = Some(passphrase);
+        let (payload, passphrase) = if local_dev_secret_access_active() {
+            (read_rhai_local_dev_vault_payload(&vault_path)?, None)
+        } else {
+            let passphrase = read_rhai_secret_passphrase(false)?
+                .ok_or_else(|| RhaiHostError::new("vault passphrase is required"))?;
+            let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
+            (payload, Some(passphrase))
+        };
+        store.unlocked_passphrase = passphrase;
         store.vault_loaded = true;
         for name in &store.declared_rhai {
             if let Some(record) = payload.records.get(name) {
@@ -163,6 +171,49 @@ fn read_rhai_secret_vault_payload(
         VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
     envelope
         .decrypt_with_passphrase(passphrase)
+        .map_err(|error| RhaiHostError::new(error.to_string()))
+}
+
+fn local_dev_secret_access_active() -> bool {
+    std::env::var_os("EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS").is_some()
+}
+
+fn read_rhai_local_dev_vault_payload(
+    vault_path: &Path,
+) -> Result<VaultPlaintextPayload, RhaiHostError> {
+    let raw = std::fs::read_to_string(vault_path).map_err(|error| {
+        RhaiHostError::new(format!(
+            "failed to read vault {}: {error}",
+            vault_path.display()
+        ))
+    })?;
+    let envelope =
+        VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
+    let key_path = local_dev_unlock_key_path(vault_path);
+    match inspect_vault_permissions(&key_path) {
+        Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
+        Ok(VaultPermissionStatus::Unsafe { mode, max_mode }) => {
+            return Err(RhaiHostError::new(format!(
+                "local-dev unlock key permissions are unsafe: mode {mode:o}, expected at most {max_mode:o}"
+            )));
+        }
+        Err(error) => {
+            return Err(RhaiHostError::new(format!(
+                "failed to inspect local-dev unlock key {}: {error}",
+                key_path.display()
+            )));
+        }
+    }
+    let key = std::fs::read(&key_path).map_err(|error| {
+        RhaiHostError::new(format!(
+            "failed to read local-dev unlock key {}: {error}",
+            key_path.display()
+        ))
+    })?;
+    let key = LocalDevUnlockKey::from_bytes(key)
+        .map_err(|error| RhaiHostError::new(error.to_string()))?;
+    envelope
+        .decrypt_with_local_dev_key(&key)
         .map_err(|error| RhaiHostError::new(error.to_string()))
 }
 
@@ -263,15 +314,20 @@ fn active_rhai_load_vault_if_needed(
         return Ok(());
     }
 
-    let Some(passphrase) = read_rhai_secret_passphrase(!require_unlock)? else {
-        super::ACTIVE_RHAI_SECRETS.with(|active| {
-            if let Some(store) = active.borrow_mut().as_mut() {
-                store.vault_loaded = true;
-            }
-        });
-        return Ok(());
+    let (payload, passphrase) = if local_dev_secret_access_active() {
+        (read_rhai_local_dev_vault_payload(&vault_path)?, None)
+    } else {
+        let Some(passphrase) = read_rhai_secret_passphrase(!require_unlock)? else {
+            super::ACTIVE_RHAI_SECRETS.with(|active| {
+                if let Some(store) = active.borrow_mut().as_mut() {
+                    store.vault_loaded = true;
+                }
+            });
+            return Ok(());
+        };
+        let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
+        (payload, Some(passphrase))
     };
-    let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
     super::ACTIVE_RHAI_SECRETS.with(|active| {
         if let Some(store) = active.borrow_mut().as_mut() {
             for name in &store.declared_rhai {
@@ -281,7 +337,7 @@ fn active_rhai_load_vault_if_needed(
                         .insert(name.clone(), record.value.expose().to_owned());
                 }
             }
-            store.unlocked_passphrase = Some(passphrase);
+            store.unlocked_passphrase = passphrase;
             store.vault_loaded = true;
         }
     });
@@ -369,9 +425,25 @@ fn active_rhai_set_secret_records(
             .records
             .insert(name.clone(), VaultSecretRecord::new(value.clone()));
     }
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
+    let local_dev_key_path = local_dev_unlock_key_path(&vault_path);
+    let envelope = match std::fs::read(&local_dev_key_path) {
+        Ok(bytes) => {
+            let key = LocalDevUnlockKey::from_bytes(bytes)
+                .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
+            payload
+                .encrypt_with_passphrase_and_local_dev_key(passphrase.expose(), &key)
+                .map_err(|error| crate::rhai_runtime_error(error.to_string()))?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => payload
+            .encrypt_with_passphrase(passphrase.expose())
+            .map_err(|error| crate::rhai_runtime_error(error.to_string()))?,
+        Err(error) => {
+            return Err(crate::rhai_runtime_error(format!(
+                "failed to read local-dev unlock key {}: {error}",
+                local_dev_key_path.display()
+            )));
+        }
+    };
     write_rhai_secret_vault_file(&vault_path, &envelope)
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
 

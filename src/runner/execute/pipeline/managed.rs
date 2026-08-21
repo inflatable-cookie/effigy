@@ -134,6 +134,7 @@ pub(in crate::runner) fn run_managed_task(
             &preflight.secret_targets,
             selection.task,
             true,
+            preflight.selector.task_name == "dev",
         )?
     } else {
         Vec::new()

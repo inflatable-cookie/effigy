@@ -98,7 +98,28 @@ effigy secrets init
 Creates the vault file if it does not exist and prints guidance. If
 `[secrets.vault].generate` is configured, `effigy secrets init` creates the
 local vault and then runs that configured inline hook instead of stopping at
-an empty vault.
+an empty vault. Initialization also creates an ignored, mode-`0600` local-dev
+key beside the vault.
+
+### Local dev unlock
+
+`effigy dev` uses a separately encrypted local-dev payload and does not prompt
+for the vault passphrase after setup. This applies to task, container, and Rhai
+secret injection reached from the resolved `dev` task, including catalog
+selectors such as `api/dev`.
+
+Direct vault commands still follow the configured passphrase policy. In
+particular, `secrets get`, `set`, `unset`, `doctor`, `change-passphrase`, and
+`export` do not use the local-dev key to unlock secret values.
+
+Existing vaults prompt once on their next `effigy dev` run, then add the
+local-dev payload and key in place. Delete the adjacent
+`local.vault.local-dev-key` file to revoke unattended dev unlock; the next dev
+run requires the passphrase and creates a new key.
+
+This is a command boundary, not isolation from code allowed to run as the app.
+An agent that can change or inspect the running application may also influence
+how injected secrets are consumed.
 
 ### List declared secrets
 
@@ -304,8 +325,11 @@ context automatically.
 - Values are redacted in logs, errors, and provider reports
 - Injection uses `Command::env()` instead of shell command strings to avoid `ps`
   exposure
-- The vault requires a human-gated unlock factor (passphrase or key + passphrase)
-- `key-only` unlock is not supported without explicit justification
+- Direct vault access requires a human-gated unlock factor
+- `effigy dev` uses an ignored, mode-`0600` local-dev key and never writes
+  plaintext secret values to that key file
+- Local-dev unlock is a runtime capability, not a security boundary against
+  code allowed to run as the application
 
 ## JSON Output
 

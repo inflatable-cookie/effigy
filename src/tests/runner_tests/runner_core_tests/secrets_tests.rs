@@ -3,7 +3,9 @@ use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest, EnvGuard,
 };
 use effigy_cli::{Command, SecretsArgs, SecretsExportFormat, SecretsSubcommand};
-use effigy_secrets::{VaultEnvelope, VaultPlaintextPayload};
+use effigy_secrets::{
+    local_dev_unlock_key_path, LocalDevUnlockKey, VaultEnvelope, VaultPlaintextPayload,
+};
 use std::fs;
 
 #[test]
@@ -125,6 +127,25 @@ fn secrets_init_creates_empty_encrypted_vault() {
         .decrypt_with_passphrase("vault-passphrase")
         .expect("decrypt");
     assert!(decrypted.records.is_empty());
+    let local_dev_key = LocalDevUnlockKey::from_bytes(
+        fs::read(local_dev_unlock_key_path(&vault_path)).expect("read local-dev key"),
+    )
+    .expect("parse local-dev key");
+    assert!(envelope
+        .decrypt_with_local_dev_key(&local_dev_key)
+        .expect("decrypt for local dev")
+        .records
+        .is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(local_dev_unlock_key_path(&vault_path))
+            .expect("local-dev key metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 }
 
 #[test]
@@ -177,6 +198,25 @@ targets = ["rhai"]
             .records
             .get("database_url")
             .expect("record")
+            .value
+            .expose(),
+        "postgres://secret-value"
+    );
+    let local_dev_key = LocalDevUnlockKey::from_bytes(
+        fs::read(local_dev_unlock_key_path(
+            &root.join(".effigy/secrets/local.vault"),
+        ))
+        .expect("read local-dev key"),
+    )
+    .expect("parse local-dev key");
+    let local_dev = envelope
+        .decrypt_with_local_dev_key(&local_dev_key)
+        .expect("decrypt generated local-dev payload");
+    assert_eq!(
+        local_dev
+            .records
+            .get("database_url")
+            .expect("local-dev record")
             .value
             .expose(),
         "postgres://secret-value"
@@ -496,6 +536,36 @@ fn secrets_doctor_reports_locked_vault_without_passphrase() {
     let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
     assert_eq!(parsed["vault_state"]["status"].as_str(), Some("locked"));
     assert_eq!(parsed["ok"].as_bool(), Some(true));
+}
+
+#[cfg(unix)]
+#[test]
+fn secrets_doctor_blocks_unsafe_local_dev_key_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_workspace("secrets-doctor-local-dev-key-permissions");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", None);
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    let key_path = local_dev_unlock_key_path(&root.join(".effigy/secrets/local.vault"));
+    fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644))
+        .expect("loosen local-dev key permissions");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("doctor should block unsafe local-dev key permissions");
+
+    assert!(error
+        .to_string()
+        .contains("local-dev unlock key permissions are unsafe"));
 }
 
 #[test]

@@ -151,6 +151,7 @@ fn run_standard_task_inner(
                 selection.task.secrets,
                 Some(effigy_manifest::ManifestTaskSecretsMode::Required)
             ),
+            preflight.selector.task_name == "dev",
         )?
     } else {
         Vec::new()
@@ -481,6 +482,7 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
     extra_targets: &[String],
     task: &effigy_manifest::ManifestTask,
     eager_load: bool,
+    local_dev: bool,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
@@ -535,17 +537,43 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
         }
     }
 
-    let passphrase = read_task_secret_passphrase(required_names.is_empty())?;
-    let Some(passphrase) = passphrase else {
-        return Ok(Vec::new());
+    let mut payload = if local_dev {
+        match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
+            Ok(payload) => payload,
+            Err(_) => {
+                let Some(passphrase) =
+                    read_local_dev_upgrade_passphrase(required_names.is_empty())?
+                else {
+                    return Ok(Vec::new());
+                };
+                let payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+                crate::runner::secret_vault::write_effigy_vault_payload(
+                    &vault_path,
+                    &payload,
+                    passphrase.expose(),
+                )?;
+                payload
+            }
+        }
+    } else {
+        let Some(passphrase) = read_task_secret_passphrase(required_names.is_empty())? else {
+            return Ok(Vec::new());
+        };
+        read_task_secret_vault_payload(&vault_path, passphrase.expose())?
     };
-    let mut payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
 
     let mut missing_required =
         task_required_secret_names_missing_from_payload(&payload, &task_keys);
     if !missing_required.is_empty() && eager_load {
         maybe_generate_required_task_secrets(repo_root, secrets)?;
-        payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+        payload = if local_dev {
+            crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path)?
+        } else {
+            let Some(passphrase) = read_task_secret_passphrase(false)? else {
+                unreachable!("required task secret generation needs an unlock passphrase")
+            };
+            read_task_secret_vault_payload(&vault_path, passphrase.expose())?
+        };
         missing_required = task_required_secret_names_missing_from_payload(&payload, &task_keys);
     }
 
@@ -629,6 +657,16 @@ fn read_task_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue
         optional_only,
         "Vault passphrase: ",
         "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+    )
+}
+
+fn read_local_dev_upgrade_passphrase(
+    optional_only: bool,
+) -> Result<Option<SecretValue>, RunnerError> {
+    crate::runner::secret_session::read_local_dev_upgrade_passphrase(
+        optional_only,
+        "Vault passphrase (one-time local-dev setup): ",
+        "local-dev secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
     )
 }
 

@@ -80,18 +80,46 @@ pub(super) fn resolve_container_secret_runtime(
         )));
     }
 
-    let Some(passphrase) = crate::runner::secret_session::read_secret_passphrase(
-        required_names.is_empty(),
-        "Vault passphrase: ",
-        "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-    )? else {
-        return Ok(ResolvedContainerSecretRuntime {
-            delivery,
-            env: Vec::new(),
-        });
+    let payload = if crate::runner::secret_session::local_dev_secret_access_active() {
+        match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
+            Ok(payload) => payload,
+            Err(_) => {
+                let Some(passphrase) =
+                    crate::runner::secret_session::read_local_dev_upgrade_passphrase(
+                    required_names.is_empty(),
+                    "Vault passphrase (one-time local-dev setup): ",
+                    "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
+                )? else {
+                    return Ok(ResolvedContainerSecretRuntime {
+                        delivery,
+                        env: Vec::new(),
+                    });
+                };
+                let payload = crate::runner::secret_vault::read_effigy_vault_payload(
+                    &vault_path,
+                    passphrase.expose(),
+                )?;
+                crate::runner::secret_vault::write_effigy_vault_payload(
+                    &vault_path,
+                    &payload,
+                    passphrase.expose(),
+                )?;
+                payload
+            }
+        }
+    } else {
+        let Some(passphrase) = crate::runner::secret_session::read_secret_passphrase(
+            required_names.is_empty(),
+            "Vault passphrase: ",
+            "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+        )? else {
+            return Ok(ResolvedContainerSecretRuntime {
+                delivery,
+                env: Vec::new(),
+            });
+        };
+        crate::runner::secret_vault::read_effigy_vault_payload(&vault_path, passphrase.expose())?
     };
-    let payload =
-        crate::runner::secret_vault::read_effigy_vault_payload(&vault_path, passphrase.expose())?;
     let mut injected = Vec::new();
     let mut missing_required = Vec::new();
     for (name, key) in container_keys {

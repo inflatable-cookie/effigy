@@ -37,6 +37,10 @@ During v0.x, MINOR bumps may include breaking changes.
   next-action policy.
 
 ### Changed
+- `effigy dev` now unlocks task, container, and Rhai secrets through a separate
+  mode-`0600` local-dev key after vault setup. Direct vault commands remain
+  passphrase-gated; existing vaults prompt once on the next `dev` run to add
+  the local-dev channel.
 - Effigy's release protocol now requires a successful manually dispatched
   `ci.yml` run for the exact candidate source commit before release prepare or
   execute. The self-hosted release configuration enforces the

@@ -23,6 +23,7 @@ pub const DEFAULT_CIPHER: &str = "xchacha20poly1305";
 pub const DEFAULT_SALT_LEN: usize = 32;
 pub const XCHACHA20POLY1305_NONCE_LEN: usize = 24;
 pub const VAULT_KEY_LEN: usize = 32;
+pub const LOCAL_DEV_KEY_SUFFIX: &str = ".local-dev-key";
 pub const ARGON2_M_COST_KIB: u32 = 19_456;
 pub const ARGON2_T_COST: u32 = 2;
 pub const ARGON2_P_COST: u32 = 1;
@@ -56,6 +57,10 @@ pub enum VaultFileError {
     },
     #[error("invalid vault nonce length `{actual}` (expected `{expected}`)")]
     InvalidNonceLength { expected: usize, actual: usize },
+    #[error("invalid local-dev unlock key length `{actual}` (expected `{expected}`)")]
+    InvalidLocalDevKeyLength { expected: usize, actual: usize },
+    #[error("vault has no local-dev encrypted payload")]
+    MissingLocalDevPayload,
     #[error("failed to derive vault key")]
     KeyDerivation,
     #[error("failed to encrypt vault payload")]
@@ -76,6 +81,8 @@ pub struct VaultEnvelope {
     pub kdf: VaultKdf,
     pub cipher: VaultCipher,
     pub payload: EncryptedVaultPayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_dev: Option<VaultLocalDevPayload>,
 }
 
 impl VaultEnvelope {
@@ -92,6 +99,7 @@ impl VaultEnvelope {
             kdf,
             cipher,
             payload,
+            local_dev: None,
         }
     }
 
@@ -144,6 +152,23 @@ impl VaultEnvelope {
                 expected: XCHACHA20POLY1305_NONCE_LEN,
                 actual: self.cipher.nonce.len(),
             });
+        }
+        if let Some(local_dev) = &self.local_dev {
+            if local_dev.cipher.name != DEFAULT_CIPHER {
+                return Err(VaultFileError::UnsupportedCipher {
+                    expected: DEFAULT_CIPHER,
+                    actual: local_dev.cipher.name.clone(),
+                });
+            }
+            if local_dev.cipher.nonce.len() != XCHACHA20POLY1305_NONCE_LEN {
+                return Err(VaultFileError::InvalidNonceLength {
+                    expected: XCHACHA20POLY1305_NONCE_LEN,
+                    actual: local_dev.cipher.nonce.len(),
+                });
+            }
+            if local_dev.payload.ciphertext.is_empty() {
+                return Err(VaultFileError::EmptyCiphertext);
+            }
         }
         Ok(())
     }
@@ -222,6 +247,55 @@ impl VaultCipher {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncryptedVaultPayload {
     pub ciphertext: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultLocalDevPayload {
+    pub cipher: VaultCipher,
+    pub payload: EncryptedVaultPayload,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct LocalDevUnlockKey {
+    inner: Zeroizing<Vec<u8>>,
+}
+
+impl LocalDevUnlockKey {
+    pub fn generate() -> Result<Self, VaultFileError> {
+        let mut bytes = vec![0; VAULT_KEY_LEN];
+        getrandom::fill(&mut bytes).map_err(|_| VaultFileError::Randomness)?;
+        Ok(Self {
+            inner: Zeroizing::new(bytes),
+        })
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, VaultFileError> {
+        if bytes.len() != VAULT_KEY_LEN {
+            return Err(VaultFileError::InvalidLocalDevKeyLength {
+                expected: VAULT_KEY_LEN,
+                actual: bytes.len(),
+            });
+        }
+        Ok(Self {
+            inner: Zeroizing::new(bytes),
+        })
+    }
+
+    pub fn expose(&self) -> &[u8] {
+        &self.inner
+    }
+}
+
+impl fmt::Debug for LocalDevUnlockKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LocalDevUnlockKey([REDACTED])")
+    }
+}
+
+pub fn local_dev_unlock_key_path(vault_path: &Path) -> std::path::PathBuf {
+    let mut path = vault_path.as_os_str().to_os_string();
+    path.push(LOCAL_DEV_KEY_SUFFIX);
+    path.into()
 }
 
 impl EncryptedVaultPayload {
@@ -355,6 +429,24 @@ impl VaultPlaintextPayload {
             EncryptedVaultPayload::new(ciphertext),
         ))
     }
+
+    pub fn encrypt_with_passphrase_and_local_dev_key(
+        &self,
+        passphrase: &str,
+        local_dev_key: &LocalDevUnlockKey,
+    ) -> Result<VaultEnvelope, VaultFileError> {
+        let mut envelope = self.encrypt_with_passphrase(passphrase)?;
+        let mut nonce = vec![0; XCHACHA20POLY1305_NONCE_LEN];
+        getrandom::fill(&mut nonce).map_err(|_| VaultFileError::Randomness)?;
+        let cipher = VaultCipher::xchacha20poly1305(nonce);
+        let plaintext = serde_json::to_vec(self).map_err(VaultFileError::PayloadJson)?;
+        let encrypted = encrypt_with_local_dev_key(&plaintext, &cipher, local_dev_key)?;
+        envelope.local_dev = Some(VaultLocalDevPayload {
+            cipher,
+            payload: EncryptedVaultPayload::new(encrypted),
+        });
+        Ok(envelope)
+    }
 }
 
 impl VaultEnvelope {
@@ -372,6 +464,46 @@ impl VaultEnvelope {
             .map_err(|_| VaultFileError::Decrypt)?;
         serde_json::from_slice(&plaintext).map_err(VaultFileError::PayloadJson)
     }
+
+    pub fn decrypt_with_local_dev_key(
+        &self,
+        local_dev_key: &LocalDevUnlockKey,
+    ) -> Result<VaultPlaintextPayload, VaultFileError> {
+        self.validate()?;
+        let local_dev = self
+            .local_dev
+            .as_ref()
+            .ok_or(VaultFileError::MissingLocalDevPayload)?;
+        let nonce = xnonce_from_cipher(&local_dev.cipher)?;
+        let key = local_dev_aead_key(local_dev_key)?;
+        let aead = XChaCha20Poly1305::new(&key);
+        let plaintext = aead
+            .decrypt(nonce, local_dev.payload.ciphertext.as_ref())
+            .map_err(|_| VaultFileError::Decrypt)?;
+        serde_json::from_slice(&plaintext).map_err(VaultFileError::PayloadJson)
+    }
+}
+
+fn encrypt_with_local_dev_key(
+    plaintext: &[u8],
+    cipher: &VaultCipher,
+    local_dev_key: &LocalDevUnlockKey,
+) -> Result<Vec<u8>, VaultFileError> {
+    let nonce = xnonce_from_cipher(cipher)?;
+    let key = local_dev_aead_key(local_dev_key)?;
+    let aead = XChaCha20Poly1305::new(&key);
+    aead.encrypt(nonce, plaintext)
+        .map_err(|_| VaultFileError::Encrypt)
+}
+
+fn local_dev_aead_key(local_dev_key: &LocalDevUnlockKey) -> Result<Key, VaultFileError> {
+    let bytes: &[u8; VAULT_KEY_LEN] = local_dev_key.expose().try_into().map_err(|_| {
+        VaultFileError::InvalidLocalDevKeyLength {
+            expected: VAULT_KEY_LEN,
+            actual: local_dev_key.expose().len(),
+        }
+    })?;
+    Ok(Key::from(*bytes))
 }
 
 fn derive_vault_key(
@@ -624,6 +756,45 @@ mod tests {
 
         assert_eq!(error.to_string(), "failed to decrypt vault payload");
         assert!(!error.to_string().contains("sk-live-secret"));
+    }
+
+    #[test]
+    fn vault_payload_supports_separate_local_dev_unlock() {
+        let mut payload = VaultPlaintextPayload::empty();
+        payload.records.insert(
+            "api_key".to_owned(),
+            VaultSecretRecord::new(SecretValue::new("sk-local-dev")),
+        );
+        let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+        let envelope = payload
+            .encrypt_with_passphrase_and_local_dev_key("vault-passphrase", &local_dev_key)
+            .expect("encrypt");
+
+        let decrypted = envelope
+            .decrypt_with_local_dev_key(&local_dev_key)
+            .expect("decrypt with local-dev key");
+
+        assert_eq!(decrypted.records["api_key"].value.expose(), "sk-local-dev");
+        assert!(envelope
+            .decrypt_with_passphrase("wrong-passphrase")
+            .is_err());
+    }
+
+    #[test]
+    fn passphrase_only_vault_has_no_local_dev_unlock() {
+        let envelope = VaultPlaintextPayload::empty()
+            .encrypt_with_passphrase("vault-passphrase")
+            .expect("encrypt");
+        let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+
+        let error = envelope
+            .decrypt_with_local_dev_key(&local_dev_key)
+            .expect_err("legacy vault should need upgrade");
+
+        assert_eq!(
+            error.to_string(),
+            "vault has no local-dev encrypted payload"
+        );
     }
 
     #[test]

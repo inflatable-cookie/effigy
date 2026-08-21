@@ -8,8 +8,8 @@ use effigy_manifest::{
     ManifestSecretsUnlockPolicy, ManifestSecretsVaultIdentity,
 };
 use effigy_secrets::{
-    inspect_vault_permissions, SecretValue, VaultEnvelope, VaultPermissionStatus,
-    VaultPlaintextPayload, VaultSecretRecord,
+    inspect_vault_permissions, local_dev_unlock_key_path, SecretValue, VaultEnvelope,
+    VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
 };
 use serde_json::{json, Value};
 
@@ -131,10 +131,11 @@ fn run_secrets_init(
         "EFFIGY_TEST_SECRETS_PASSPHRASE",
     )?;
     let payload = VaultPlaintextPayload::empty();
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file(&vault_path, &envelope)?;
+    crate::runner::secret_vault::write_effigy_vault_payload(
+        &vault_path,
+        &payload,
+        passphrase.expose(),
+    )?;
     if run_configured_vault_generate_task(repo_root, secrets)? {
         return render_mutation_result(
             repo_root,
@@ -221,10 +222,11 @@ fn run_secrets_change_passphrase(
     let payload = read_vault_payload(&vault_path, current.expose())?;
     let preserved = payload.records.len();
     let new_passphrase = read_confirmed_new_passphrase()?;
-    let envelope = payload
-        .encrypt_with_passphrase(new_passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file(&vault_path, &envelope)?;
+    crate::runner::secret_vault::write_effigy_vault_payload(
+        &vault_path,
+        &payload,
+        new_passphrase.expose(),
+    )?;
 
     let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
     if let Some(object) = payload.as_object_mut() {
@@ -264,10 +266,11 @@ fn run_secrets_set(
         name.to_owned(),
         VaultSecretRecord::new(SecretValue::new(value.expose())),
     );
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file(&vault_path, &envelope)?;
+    crate::runner::secret_vault::write_effigy_vault_payload(
+        &vault_path,
+        &payload,
+        passphrase.expose(),
+    )?;
     render_mutation_result(
         repo_root,
         Some(secrets),
@@ -358,10 +361,11 @@ fn run_secrets_import(
             .records
             .insert(name, VaultSecretRecord::new(SecretValue::new(value)));
     }
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file(&vault_path, &envelope)?;
+    crate::runner::secret_vault::write_effigy_vault_payload(
+        &vault_path,
+        &payload,
+        passphrase.expose(),
+    )?;
 
     let summary = if vault_exists {
         "imported declared secrets into existing vault"
@@ -424,10 +428,11 @@ fn run_secrets_unset(
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
     let mut payload = read_vault_payload(&vault_path, passphrase.expose())?;
     payload.records.remove(name);
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file(&vault_path, &envelope)?;
+    crate::runner::secret_vault::write_effigy_vault_payload(
+        &vault_path,
+        &payload,
+        passphrase.expose(),
+    )?;
     render_mutation_result(
         repo_root,
         Some(secrets),
@@ -921,64 +926,6 @@ fn read_vault_payload(
     crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
 }
 
-fn write_vault_file(vault_path: &Path, envelope: &VaultEnvelope) -> Result<(), RunnerError> {
-    if let Some(parent) = vault_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to create vault directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    let rendered = envelope
-        .to_json_pretty()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    write_vault_file_inner(vault_path, rendered.as_bytes())
-}
-
-#[cfg(unix)]
-fn write_vault_file_inner(vault_path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(vault_path)
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to write vault {}: {error}",
-                vault_path.display()
-            ))
-        })?;
-    file.write_all(bytes).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to write vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    fs::set_permissions(vault_path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to secure vault permissions {}: {error}",
-            vault_path.display()
-        ))
-    })
-}
-
-#[cfg(not(unix))]
-fn write_vault_file_inner(vault_path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
-    fs::write(vault_path, bytes).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to write vault {}: {error}",
-            vault_path.display()
-        ))
-    })
-}
-
 fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, RunnerError> {
     if test_env == crate::runner::secret_session::internal_secret_passphrase_env()
         || test_env == "EFFIGY_TEST_SECRETS_PASSPHRASE"
@@ -1173,6 +1120,25 @@ fn inspect_vault_doctor_state(
         )),
     }
 
+    let local_dev_key_path = local_dev_unlock_key_path(&vault_path);
+    if local_dev_key_path.exists() {
+        match inspect_vault_permissions(&local_dev_key_path) {
+            Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
+            Ok(VaultPermissionStatus::Unsafe { mode, max_mode }) => blockers.push(format!(
+                "local-dev unlock key permissions are unsafe: mode {mode:o}, expected at most {max_mode:o}"
+            )),
+            Err(error) => blockers.push(format!(
+                "failed to inspect local-dev unlock key permissions {}: {error}",
+                local_dev_key_path.display()
+            )),
+        }
+    } else {
+        warnings.push(
+            "local-dev unlock is not configured; the next `effigy dev` requires one passphrase unlock"
+                .to_owned(),
+        );
+    }
+
     let Some(passphrase) = read_optional_vault_passphrase("Vault passphrase: ")? else {
         warnings
             .push("secrets vault is locked; set a passphrase to validate stored values".to_owned());
@@ -1227,6 +1193,18 @@ fn inspect_vault_doctor_state(
             });
         }
     };
+    if local_dev_key_path.exists() {
+        match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
+            Ok(local_dev_payload) if local_dev_payload == payload => {}
+            Ok(_) => blockers.push(
+                "local-dev vault payload does not match the passphrase-protected payload"
+                    .to_owned(),
+            ),
+            Err(error) => {
+                blockers.push(format!("failed to unlock local-dev vault payload: {error}"))
+            }
+        }
+    }
 
     let mut stored_keys = payload.records.keys().cloned().collect::<Vec<_>>();
     stored_keys.sort();

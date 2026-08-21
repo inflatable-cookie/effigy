@@ -37,7 +37,9 @@ and consumer repo setup.
   consumers, and validation rules are repo-portable.
 - Secret values must not be committed to the repo.
 - Secret values must not be written to persistent `.env` files by default.
-- Secret unlock must be an explicit operator act.
+- Direct vault inspection and mutation must remain an explicit operator act.
+- `dev` task execution may use a repo-local runtime unlock key created during
+  an earlier operator-authorized vault write or unlock.
 - SSH-agent access alone is not enough to make a vault agent-safe.
 - The default Effigy vault must require a human-gated unlock factor, such as a
   passphrase, in addition to any key identity.
@@ -123,6 +125,8 @@ novel crypto design:
 - key wrapping for configured identities
 - passphrase-derived unlock material using a memory-hard KDF
 - explicit metadata for algorithm and version
+- a separately encrypted local-dev payload, unlocked by ignored machine-local
+  state rather than the vault passphrase
 
 The MVP should support one local operator vault. Team recipient management,
 remote sharing, and hosted secret sync are future work.
@@ -138,11 +142,16 @@ Supported policy targets:
 - `key-and-passphrase`: require an available key identity and passphrase
 - `external`: reserved for a future backend adapter contract
 
-`key-only` is not the default and should not be accepted for the built-in vault
-unless a later roadmap explicitly justifies its safety boundary.
+Direct `effigy secrets get`, mutation, doctor, and export operations follow the
+configured passphrase policy. A resolved `dev` task may instead decrypt the
+separate local-dev payload with `.effigy` state. New vaults create that key at
+initialization. A legacy vault requires one final passphrase unlock from
+`effigy dev`, which upgrades it in place.
 
-Reason: an agent process with filesystem and SSH-agent access may otherwise be
-able to decrypt without a human decision.
+The local-dev key is a runtime capability, not an isolation boundary against a
+repo-owner process. A process allowed to run or alter the application can also
+influence how injected secrets are consumed. The boundary prevents accidental
+direct CLI disclosure while allowing unattended local app startup.
 
 ## Runtime Injection
 
@@ -163,6 +172,8 @@ Injection rules:
 - managed tasks that set `secrets = "required"` receive declared
   `targets = ["tasks"]` values across their child process launches, even when
   the child shell commands do not spell out the env names directly
+- resolved `dev` tasks use the local-dev payload without prompting; other task
+  names and direct vault commands keep the configured passphrase behavior
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
 - deploy provider package scripts run with `targets = ["deploy"]` access
