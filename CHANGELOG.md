@@ -6,6 +6,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- Effigy now requires Rust 1.97.1. The Rhai and vendored S3 transport graph is
+  unified on reqx 0.2.0 instead of carrying separate reqx major versions.
+
 ### Added
 - `effigy doctor` now reports a named `container.workspace-ownership` finding
   when a running workspace has root-owned paths in managed workspace volumes
