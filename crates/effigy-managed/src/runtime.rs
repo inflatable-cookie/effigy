@@ -32,8 +32,6 @@ pub fn run_managed_task_tui(
         tab_order,
         fail_on_non_zero,
         profile,
-        gateway_auto_start: _,
-        readiness: _,
         ..
     } = plan;
     let specs = managed_process_specs(processes);

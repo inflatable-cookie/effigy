@@ -145,10 +145,7 @@ pub fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBu
         if has_task_manifest(current) {
             return Some(current.to_path_buf());
         }
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => return None,
-        }
+        current = current.parent()?;
     }
     None
 }

@@ -9,7 +9,7 @@ documentation = "https://docs.rs/s3"
 keywords = ["s3", "object-storage", "aws", "minio", "sigv4"]
 categories = ["api-bindings", "web-programming::http-client"]
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.97.1"
 license = "MIT"
 include = [
   "Cargo.toml",
@@ -37,7 +37,7 @@ graviola = { version = "0.3.4", default-features = false }
 md-5 = { version = "0.11.0", default-features = false }
 
 # Transport backend (feature-gated)
-reqx = { version = "0.1.40", default-features = false, optional = true }
+reqx = { version = "0.2.0", default-features = false, optional = true }
 http-body-util = { version = "0.1.3", default-features = false, optional = true }
 
 # XML and data decoding
