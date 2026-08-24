@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-24
+
 ### Breaking
 - Effigy now requires Rust 1.97.1. The Rhai and vendored S3 transport graph is
   unified on reqx 0.2.0 instead of carrying separate reqx major versions.
@@ -32,6 +34,20 @@ During v0.x, MINOR bumps may include breaking changes.
   dependency exposes a package symlink from its own `node_modules` into a
   third checkout. Findings name the dependency, package, symlink, target, and
   unlink-or-override remediation.
+
+### Changed
+- CLI help, generated task configuration guidance, active reference docs, and
+  the bundled agent skill now expose managed headless companions, readiness
+  scope and timeout, process ordering, workspace ownership diagnosis, and
+  non-console exec identity consistently.
+- `effigy dev` now unlocks task, container, and Rhai secrets through a separate
+  mode-`0600` local-dev key after vault setup. Direct vault commands remain
+  passphrase-gated; existing vaults prompt once on the next `dev` run to add
+  the local-dev channel.
+- Effigy's release protocol now requires a successful manually dispatched
+  `ci.yml` run for the exact candidate source commit before release prepare or
+  execute. The self-hosted release configuration enforces the
+  proof and rejects missing, red, pending, or different-commit CI runs.
 
 ### Fixed
 - Debug builds now embed bundled catalog and starter assets, preventing
@@ -67,20 +83,6 @@ During v0.x, MINOR bumps may include breaking changes.
   files discovered under its directory. Linked child indexes in excluded
   subtrees are no longer misreported as nonexistent or subjected to the parent
   next-action policy.
-
-### Changed
-- CLI help, generated task configuration guidance, active reference docs, and
-  the bundled agent skill now expose managed headless companions, readiness
-  scope and timeout, process ordering, workspace ownership diagnosis, and
-  non-console exec identity consistently.
-- `effigy dev` now unlocks task, container, and Rhai secrets through a separate
-  mode-`0600` local-dev key after vault setup. Direct vault commands remain
-  passphrase-gated; existing vaults prompt once on the next `dev` run to add
-  the local-dev channel.
-- Effigy's release protocol now requires a successful manually dispatched
-  `ci.yml` run for the exact candidate source commit before release prepare or
-  execute. The self-hosted release configuration enforces the
-  proof and rejects missing, red, pending, or different-commit CI runs.
 
 ## [0.11.0] - 2026-08-11
 
