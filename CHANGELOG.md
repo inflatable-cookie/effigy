@@ -34,6 +34,9 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- Debug builds now embed bundled catalog and starter assets, preventing
+  parallel tests that change process cwd from making `effigy init` and
+  container fixtures fail nondeterministically.
 - Release preparation no longer fails nondeterministically when parallel
   contract-selection tests race on a timestamp-derived temporary directory.
 - Updated the locked `h2` dependency to `0.4.16`, resolving

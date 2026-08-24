@@ -12,7 +12,7 @@ serde_json = "1"
 toml = "1"
 minijinja = "2"
 indexmap = { version = "2", features = ["serde"] }
-rust-embed = "8"
+rust-embed = { version = "8", features = ["debug-embed"] }
 serde_yaml = "0.9"
 thiserror = "2"
 
