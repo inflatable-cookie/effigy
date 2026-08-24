@@ -34,6 +34,8 @@ During v0.x, MINOR bumps may include breaking changes.
   unlink-or-override remediation.
 
 ### Fixed
+- Release preparation no longer fails nondeterministically when parallel
+  contract-selection tests race on a timestamp-derived temporary directory.
 - Updated the locked `h2` dependency to `0.4.16`, resolving
   `RUSTSEC-2026-0258`. `deps pin bun --dry-run` can now use its existing
   read-only text-lock fallback when the Bun executable is unavailable.

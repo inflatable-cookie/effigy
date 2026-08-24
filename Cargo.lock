@@ -943,6 +943,7 @@ version = "0.11.0"
 dependencies = [
  "effigy-cli",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

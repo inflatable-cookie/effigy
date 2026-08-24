@@ -1,10 +1,11 @@
 use super::{resolve_schema_payload, split_shell_like_args, validate_selection, SelectionPayload};
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[test]
 fn validate_selection_accepts_valid_payload() {
-    let repo_root = tempfile_root();
+    let repo = tempfile::tempdir().expect("temp repo");
+    let repo_root = repo.path();
     let contract_path = repo_root.join("contract.json");
     let artifact_path = repo_root.join("artifact.json");
     std::fs::write(
@@ -33,7 +34,7 @@ fn validate_selection_accepts_valid_payload() {
     .expect("artifact");
 
     let report = validate_selection(
-        &repo_root,
+        repo_root,
         Some(&Path::new("contract.json").to_path_buf()),
         Some(&Path::new("artifact.json").to_path_buf()),
     )
@@ -43,7 +44,8 @@ fn validate_selection_accepts_valid_payload() {
 
 #[test]
 fn validate_selection_rejects_wrong_count() {
-    let repo_root = tempfile_root();
+    let repo = tempfile::tempdir().expect("temp repo");
+    let repo_root = repo.path();
     let contract_path = repo_root.join("contract.json");
     let artifact_path = repo_root.join("artifact.json");
     std::fs::write(
@@ -72,7 +74,7 @@ fn validate_selection_rejects_wrong_count() {
     .expect("artifact");
 
     let report = validate_selection(
-        &repo_root,
+        repo_root,
         Some(&Path::new("contract.json").to_path_buf()),
         Some(&Path::new("artifact.json").to_path_buf()),
     )
@@ -138,16 +140,4 @@ fn resolve_schema_payload_prefers_nested_result_schema() {
     assert_eq!(resolved.schema, "effigy.contracts.selection-validation.v1");
     assert_eq!(resolved.schema_version, "1");
     assert_eq!(resolved.payload["ok"], true);
-}
-
-fn tempfile_root() -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-contracts-tests-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("create temp root");
-    root
 }
