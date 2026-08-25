@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-25
+
 ### Added
 - Release `sync-files` now accepts secondary `package.json` manifests and
   updates their root version during prepare with layout-preserving edits.
