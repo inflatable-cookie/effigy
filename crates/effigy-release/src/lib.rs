@@ -127,6 +127,7 @@ pub struct ResolvedSyncFile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncFileKind {
     CargoLock,
+    PackageJson,
 }
 
 /// Blockers describing a rollback that could not complete.
@@ -382,9 +383,27 @@ pub fn resolve_sync_files(
                     "release.sync-files `Cargo.lock` is only supported when the release version file is Cargo.toml".to_owned(),
                 ));
             }
+            Some("package.json") if path == version_source.path => {
+                return Err(ReleaseError::TaskInvocation(
+                    "release.sync-files must not repeat the primary release version file"
+                        .to_owned(),
+                ));
+            }
+            Some("package.json") => {
+                let source = ResolvedVersionSource {
+                    path: path.clone(),
+                    kind: VersionFileKind::PackageJson,
+                    field_path: Some("version".to_owned()),
+                };
+                read_current_version(&source)?;
+                resolved.push(ResolvedSyncFile {
+                    path,
+                    kind: SyncFileKind::PackageJson,
+                });
+            }
             Some(other) => {
                 return Err(ReleaseError::TaskInvocation(format!(
-                    "unsupported release.sync-files entry `{other}`; currently only `Cargo.lock` is supported"
+                    "unsupported release.sync-files entry `{other}`; supported entries are `Cargo.lock` and `package.json`"
                 )));
             }
             None => {
@@ -777,7 +796,7 @@ pub fn build_release_prepare_plan(
         mutations.extend(build_sync_mutations(
             &context.config.sync_files,
             &next_version,
-        ));
+        )?);
     }
 
     blockers.extend(gate_blockers_if_checked(check_gates, &gate_report.results));

@@ -8,8 +8,11 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{
-    FileMutationApply, FileMutationPlan, GateResult, ReleaseError, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints, ReleasePreparedState, ResolvedSyncFile, SyncFileKind,
+    build_diff_preview, build_version_mutation_detail_lines, read_current_version,
+    render_updated_version_contents, render_version_preview_line, FileMutationApply,
+    FileMutationPlan, GateResult, ReleaseError, ReleasePreparedFileFingerprint,
+    ReleasePreparedSourceFingerprints, ReleasePreparedState, ResolvedSyncFile,
+    ResolvedVersionSource, SyncFileKind, VersionFileKind,
 };
 
 #[derive(Debug, Deserialize)]
@@ -145,16 +148,16 @@ pub(super) fn apply_bump(version: &semver::Version, bump: BumpKind) -> Option<se
 
 pub(super) fn build_sync_mutations(
     sync_files: &[ResolvedSyncFile],
-    workspace_version: &semver::Version,
-) -> Vec<FileMutationPlan> {
-    sync_files
-        .iter()
-        .map(|sync| match sync.kind {
-            SyncFileKind::CargoLock => FileMutationPlan {
+    selected_version: &semver::Version,
+) -> Result<Vec<FileMutationPlan>, ReleaseError> {
+    let mut mutations = Vec::new();
+    for sync in sync_files {
+        let mutation = match sync.kind {
+            SyncFileKind::CargoLock => Some(FileMutationPlan {
                 path: sync.path.clone(),
                 kind: "sync-file",
                 summary: format!(
-                    "sync Cargo.lock to workspace version {workspace_version} via \
+                    "sync Cargo.lock to workspace version {selected_version} via \
                      `cargo update --workspace --quiet`"
                 ),
                 before_preview: if sync.path.exists() {
@@ -164,25 +167,71 @@ pub(super) fn build_sync_mutations(
                     "Cargo.lock is missing and will be created".to_owned()
                 },
                 after_preview: format!(
-                    "Cargo.lock workspace members recorded at {workspace_version}"
+                    "Cargo.lock workspace members recorded at {selected_version}"
                 ),
                 detail_lines: vec![
                     "sync command: cargo update --workspace --quiet".to_owned(),
                     "third-party dependencies are not re-resolved; only workspace member \
-                     versions move"
+                         versions move"
                         .to_owned(),
                     format!(
                         "refuses to apply if any other line changes or any version other than \
-                         {workspace_version} appears"
+                         {selected_version} appears"
                     ),
                 ],
                 diff_preview: Vec::new(),
                 apply: FileMutationApply::SyncCargoLock {
-                    workspace_version: workspace_version.to_string(),
+                    workspace_version: selected_version.to_string(),
                 },
-            },
-        })
-        .collect()
+            }),
+            SyncFileKind::PackageJson => {
+                let source = ResolvedVersionSource {
+                    path: sync.path.clone(),
+                    kind: VersionFileKind::PackageJson,
+                    field_path: Some("version".to_owned()),
+                };
+                let current_version = read_current_version(&source)?;
+                let before = std::fs::read_to_string(&sync.path).map_err(|error| {
+                    ReleaseError::TaskInvocation(format!(
+                        "failed to read release sync file {}: {error}",
+                        sync.path.display()
+                    ))
+                })?;
+                let after = render_updated_version_contents(&source, selected_version)?;
+                (before != after).then(|| FileMutationPlan {
+                    path: sync.path.clone(),
+                    kind: "sync-version-file",
+                    summary: format!(
+                        "sync package.json version from {current_version} to {selected_version}"
+                    ),
+                    before_preview: render_version_preview_line(
+                        &source,
+                        &before,
+                        &current_version.to_string(),
+                    ),
+                    after_preview: render_version_preview_line(
+                        &source,
+                        &after,
+                        &selected_version.to_string(),
+                    ),
+                    detail_lines: build_version_mutation_detail_lines(
+                        &source,
+                        selected_version,
+                        &before,
+                        &after,
+                    ),
+                    diff_preview: build_diff_preview(&before, &after),
+                    apply: FileMutationApply::Write {
+                        after_contents: after,
+                    },
+                })
+            }
+        };
+        if let Some(mutation) = mutation {
+            mutations.push(mutation);
+        }
+    }
+    Ok(mutations)
 }
 
 pub fn gate_blockers(results: &[GateResult]) -> Vec<String> {

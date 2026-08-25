@@ -167,9 +167,15 @@ Supported `[release]` fields:
   - does not permit a lower version or a repeated release
 - `sync-files`
   - optional list of extra files Effigy should keep in sync during prepare
-  - currently supported:
+  - supported:
     - `Cargo.lock`
-      - synced with `cargo generate-lockfile --quiet`
+      - refreshes workspace member versions without accepting unrelated
+        dependency changes
+    - `package.json`
+      - updates the root `version` field to the selected release version while
+        preserving file layout
+      - may be used when another file, such as `Cargo.toml`, is the primary
+        version source
 - `tag-format`
   - optional tag template
   - supports `{version}` placeholder
@@ -224,6 +230,14 @@ tag-format = "v{version}"
 
 Default version path:
 - `package.version`
+
+Mixed Rust/Node packages can keep both manifests aligned:
+
+```toml
+[release]
+version-file = "Cargo.toml"
+sync-files = ["Cargo.lock", "package.json"]
+```
 
 ### Node.js (`package.json`)
 

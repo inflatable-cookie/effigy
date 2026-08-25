@@ -1,7 +1,7 @@
 use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
-    build_release_prepare_plan, compare_release_state_fingerprints, format_release_tag,
-    gate_blockers, git_create_tag, is_release_state_file, load_release_config,
+    apply_release_mutations, build_release_prepare_plan, compare_release_state_fingerprints,
+    format_release_tag, gate_blockers, git_create_tag, is_release_state_file, load_release_config,
     load_release_context, load_release_prepared_state, normalized_expected_files,
     restore_mutation_snapshots, snapshot_mutation_paths, test_support,
     validate_planned_release_version, write_release_prepared_state, FileMutationApply,
@@ -319,6 +319,78 @@ serde = "1"
         fs::read_to_string(root.join("Cargo.toml")).expect("restored manifest"),
         cargo_before
     );
+}
+
+#[test]
+fn prepare_plan_syncs_secondary_package_json_version() {
+    let root = temp_repo("secondary-package-version");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"package.json\"]\n",
+    )
+    .expect("manifest");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.3.1\"\nedition = \"2021\"\n",
+    )
+    .expect("cargo manifest");
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"fixture\",\n  \"version\"  :  \"0.3.1\"\n}\n",
+    )
+    .expect("package manifest");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Sync package metadata\n",
+    )
+    .expect("changelog");
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status()
+        .expect("git init");
+    assert!(status.success());
+
+    let context = load_release_context(&root).expect("release context");
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    assert!(plan.ready, "{:?}", plan.blockers);
+    let package_mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.path == root.join("package.json"))
+        .expect("package mutation");
+    assert_eq!(package_mutation.kind, "sync-version-file");
+    assert!(package_mutation
+        .diff_preview
+        .iter()
+        .any(|line| line.contains("\"0.3.2\"")));
+
+    apply_release_mutations(&root, &plan.mutations).expect("apply release mutations");
+    let package_json = fs::read_to_string(root.join("package.json")).expect("read package");
+    assert!(package_json.contains("\"version\"  :  \"0.3.2\""));
+}
+
+#[test]
+fn load_release_config_rejects_secondary_package_json_without_version() {
+    let root = temp_repo("secondary-package-missing-version");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"package.json\"]\n",
+    )
+    .expect("manifest");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.3.1\"\nedition = \"2021\"\n",
+    )
+    .expect("cargo manifest");
+    fs::write(root.join("package.json"), "{\"name\":\"fixture\"}\n").expect("package manifest");
+    fs::write(root.join("CHANGELOG.md"), "# Changelog\n").expect("changelog");
+
+    let error = load_release_config(&root).expect_err("missing package version should fail");
+    assert!(error
+        .to_string()
+        .contains("release version path `version` was not found"));
 }
 
 #[test]

@@ -5252,6 +5252,36 @@ fn cli_release_prepare_yes_json_mode_syncs_configured_cargo_lock() {
 }
 
 #[test]
+fn cli_release_prepare_yes_json_mode_syncs_secondary_package_json_version() {
+    let root = temp_workspace("cli-release-prepare-yes-json-sync-package");
+    write_cargo_release_prepare_fixture(&root, false);
+    fs::write(
+        root.join("package.json"),
+        "{\n  \"name\": \"fixture\",\n  \"version\": \"0.2.4\"\n}\n",
+    )
+    .expect("write package manifest");
+    write_release_manifest(
+        &root,
+        "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"package.json\"]\ntag-format = \"release-{version}\"\n",
+    );
+
+    let output = run_json_cli_command(&root, &["release", "prepare", "--yes"]);
+    let parsed = parse_stdout_json(&output);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(parsed["result"]["prepared"], true);
+    assert_eq!(parsed["result"]["prepared_version"], "0.2.5");
+    let package_json = fs::read_to_string(root.join("package.json")).expect("read package");
+    assert!(package_json.contains("\"version\": \"0.2.5\""));
+    let state = fs::read_to_string(root.join(".release-prepared.json")).expect("read state");
+    assert!(state.contains("package.json"));
+}
+
+#[test]
 fn cli_release_prepare_yes_requires_gate_check_when_gates_are_configured() {
     let root = temp_workspace("cli-release-prepare-yes-gates-required");
     fs::write(

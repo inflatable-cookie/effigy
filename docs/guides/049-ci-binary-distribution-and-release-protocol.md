@@ -280,10 +280,10 @@ and resolve the failure before continuing.
      - interactive operator path: `effigy release prepare`
      - non-interactive apply path:
        `effigy release prepare --yes --check-gates`
-   - For repos using `[release]` config with `sync-files = ["Cargo.lock"]`,
-     `effigy release prepare --yes` updates the version file, moves
-     `[Unreleased]` entries into a dated release heading, syncs `Cargo.lock`
-     when configured, and writes `.release-prepared.json`.
+   - For repos using `[release].sync-files`, `effigy release prepare --yes`
+     updates the primary version file, moves `[Unreleased]` entries into a
+     dated release heading, syncs configured `Cargo.lock` and secondary
+     `package.json` files, and writes `.release-prepared.json`.
    - Review versioned install examples in user-facing docs, especially the root
      `README.md`, and refresh any explicit release tags so the front door does
      not lag the newly prepared version.
