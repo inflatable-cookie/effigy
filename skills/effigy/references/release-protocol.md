@@ -33,7 +33,7 @@ Never run these unprompted:
 | `effigy release prepare --yes` | Writes prepare artifacts |
 | `effigy release execute --yes` | Commits prepared files and pushes the annotated tag |
 | `gh workflow run release-binaries.yml -f tag=vX.Y.Z` | Starts binary publication for the immutable tag |
-| `effigy release verify-install --tag vX.Y.Z` | Network-side verification |
+| `effigy release verify-install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
 
 ## Canonical sequence
 
@@ -50,9 +50,12 @@ When a human explicitly asks for a release:
 7. `effigy release prepare --yes --check-gates`
 8. `effigy release execute --plan`
 9. `effigy release execute --yes`
-10. `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
-11. `effigy release verify-install --tag vX.Y.Z`
-12. `effigy changelog extract CHANGELOG.md --version X.Y.Z`
+10. Run the target repo's declared publication and consumer verification.
+    - Effigy itself: `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
+      followed by `effigy release verify-install --tag vX.Y.Z`.
+    - Library or service repos: use their repo-owned consumer smoke. Do not run
+      Effigy's fixed binary verifier.
+11. `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 
 Use this query to select the run; never substitute a merely recent green run:
 
@@ -69,6 +72,11 @@ file mutations; they do not replace hosted CI on the candidate source.
 
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
+
+`release verify-install` is not a generic release closer. It installs the
+`effigy` Cargo package and runs Effigy CLI checks against a fixture repo.
+Invoking it from a non-Effigy root is a routing error, not evidence that the
+target library or service tag is broken.
 
 ## Failed release recovery
 

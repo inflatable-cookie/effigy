@@ -11,6 +11,7 @@ const RELEASE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "release",
     notices: text_lines![
         "Inspect release readiness from changelog state, version files, and configured gates.",
+        "`release verify-install` is Effigy's self-hosting tagged-binary check. Library and service repositories should use a repo-owned consumer smoke instead.",
         "Text-mode release preparation and execution now use compact review menus by default; interactive prepare can jump between version review, mutation inspection, gate results, and final approval, while interactive execute can jump between stale warnings, prepared-state review, working-tree inspection, and final approval. Those menus now keep a compact command legend plus the current selected version or stale-acknowledgement state visible while you review, mark which sections were already reviewed, and blocked prepare/execute output now adds suggested remediation actions instead of only raw blocker lines. `effigy release resume` is the dedicated prepared-state recovery entrypoint: it summarizes `.release-prepared.json`, highlights drift since prepare time, and can hand off directly into execute review. Prepared release state now records source fingerprints, so `resume` and `execute` can detect branch drift, HEAD movement, and prepared-file content drift instead of relying only on raw working-tree presence checks. Those recovery menus now also expose direct `gates`, `reprepare`, and `discard` shortcuts so operators can inspect gates, regenerate prepared state, or clear stale state without leaving the interactive flow. `--plan` stays non-destructive, `--dry-run` aliases that preview mode, and `--yes` stays the explicit non-interactive path.",
     ],
     usage: text_lines![
@@ -82,8 +83,8 @@ const RELEASE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
 const RELEASE_OPTIONS: &[(&str, &str)] = option_rows![
     "--version <SEMVER>" => "Override the changelog-derived selected version for `release simulate`, `release prepare --plan`, or `release prepare --yes`",
     "--allow-stale" => "Acknowledge age-based `.release-prepared.json` staleness; source drift still requires `release prepare`",
-    "--tag <TAG>" => "Release tag used for install verification (falls back to `GITHUB_REF_NAME` when omitted)",
-    "--repo-url <URL>" => "Git repository URL used for tag install verification",
+    "--tag <TAG>" => "Effigy release tag used for binary install verification (falls back to `GITHUB_REF_NAME` when omitted)",
+    "--repo-url <URL>" => "Effigy Git repository URL used for binary tag install verification",
     "--glibc-floor <VER>" => "Maximum allowed GLIBC version for Linux release binaries",
     "--artifacts-dir <DIR>" => "Artifact directory containing release proof logs",
     "--skip-docs" => "Skip docs QA during release preflight",

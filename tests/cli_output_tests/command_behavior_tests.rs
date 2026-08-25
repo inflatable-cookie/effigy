@@ -12,8 +12,8 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
-    temp_workspace, wait_for_path_exists, write_fake_effigy_install_repo, write_release_changelog,
-    write_release_manifest,
+    temp_workspace, wait_for_path_exists, write_effigy_release_root_marker,
+    write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -4149,6 +4149,7 @@ fn cli_release_gates_json_mode_stops_after_first_failure() {
 #[test]
 fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     let root = temp_workspace("cli-release-verify-install-json-success");
+    write_effigy_release_root_marker(&root);
     let repo = temp_workspace("cli-release-verify-install-repo");
     let repo_url = write_fake_effigy_install_repo(&repo, "0.1.0", "v0.1.0");
 
@@ -4195,6 +4196,7 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
 #[test]
 fn cli_release_verify_install_json_mode_fails_fast_when_install_step_fails() {
     let root = temp_workspace("cli-release-verify-install-json-failure");
+    write_effigy_release_root_marker(&root);
 
     let output = run_json_cli_command(
         &root,
@@ -4233,6 +4235,46 @@ fn cli_release_verify_install_json_mode_fails_fast_when_install_step_fails() {
         .expect("blockers");
     assert!(blockers.iter().any(|value| {
         value.as_str() == Some("install verification step `cargo install from git tag` failed")
+    }));
+}
+
+#[test]
+fn cli_release_verify_install_rejects_non_effigy_roots_before_network_work() {
+    let root = temp_workspace("cli-release-verify-install-non-effigy-root");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    )
+    .expect("write library workspace manifest");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "release",
+            "verify-install",
+            "--tag",
+            "v0.9.2",
+            "--repo-url",
+            "file:///definitely/missing/repo",
+        ],
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.release.verify-install.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["executed_check_count"], 0);
+    assert_eq!(parsed["error"]["details"]["results"], serde_json::json!([]));
+    let blockers = parsed["error"]["details"]["blockers"]
+        .as_array()
+        .expect("blockers");
+    assert!(blockers.iter().any(|value| {
+        value.as_str().is_some_and(|message| {
+            message.contains("validates Effigy's tagged binary only")
+                && message.contains("repo-owned consumer smoke")
+        })
     }));
 }
 

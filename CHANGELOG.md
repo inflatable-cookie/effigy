@@ -50,6 +50,11 @@ During v0.x, MINOR bumps may include breaking changes.
   proof and rejects missing, red, pending, or different-commit CI runs.
 
 ### Fixed
+- `release verify-install` now rejects non-Effigy repository roots before
+  network work and directs library or service releases to repo-owned consumer
+  smoke validation. CLI help, release docs, and the bundled agent protocol now
+  describe the command as Effigy's self-hosting binary verifier instead of a
+  generic release closer.
 - Debug builds now embed bundled catalog and starter assets, preventing
   parallel tests that change process cwd from making `effigy init` and
   container fixtures fail nondeterministically.

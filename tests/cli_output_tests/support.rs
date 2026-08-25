@@ -16,6 +16,14 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
     root
 }
 
+pub(super) fn write_effigy_release_root_marker(root: &Path) {
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"effigy\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write Effigy release root marker");
+}
+
 pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     let started = Instant::now();
     while !path.exists() {

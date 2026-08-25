@@ -105,8 +105,9 @@ Current built-in release commands:
     equals the rendered tag; age-based staleness requires explicit
     `--allow-stale`
 - `effigy release verify-install`
-  - install the tagged binary from git into a temporary root and validate the
-    installed command against a fixture repo
+  - Effigy self-hosting only: install the tagged `effigy` binary from git into
+    a temporary root and validate the installed command against a fixture repo
+  - library and service repos must use a repo-owned consumer smoke instead
   - when Effigy auto-detects `origin`, scp-style SSH remotes such as
     `git@github.com:owner/repo.git` are normalized for install verification, so
     operators do not need to translate them into `ssh://...` form by hand
@@ -291,6 +292,7 @@ effigy release execute
 effigy release execute --dry-run
 effigy release execute --plan
 effigy release execute --yes
+# Effigy binary releases only:
 effigy release verify-install --tag vX.Y.Z
 ```
 
@@ -355,9 +357,10 @@ What each step is for:
 9. `execute --yes`
    - commits, creates an annotated tag whose message equals the rendered tag,
      pushes, and removes prepared state on success
-10. `verify-install`
-   - validates the tagged install path after the manually dispatched release
-     workflow publishes its artifacts
+10. `verify-install` (Effigy binary releases only)
+   - validates Effigy's tagged install path after the manually dispatched
+     release workflow publishes its artifacts
+   - library and service repos use their own consumer smoke instead
 
 ## 6) Gate Configuration
 
@@ -452,7 +455,9 @@ Recommended migration direction:
 - keep wrapper scripts only when an external caller still depends on them
 - prefer `effigy release simulate/status/prepare/execute` for operator-driven
   runs
-- use `effigy release verify-install` instead of bespoke tag-install helpers
+- for Effigy's binary release, use `effigy release verify-install` instead of
+  bespoke tag-install helpers
+- for library and service repos, retain an honest repo-owned consumer smoke
 
 ## 10) Current Limits
 
@@ -464,6 +469,8 @@ Still intentionally not shipped:
   approval
 - a claim that the fuller `release proof` path is already universally generic
   across non-Cargo consumer repos
+- generic library or service install verification through `release
+  verify-install`; that command deliberately validates the Effigy binary
 
 ## Expected Outcome
 

@@ -205,11 +205,62 @@ fn format_command(program: &str, args: &[String]) -> String {
     format!("{program} {}", args.join(" "))
 }
 
+fn verify_install_target_blocker(repo_root: &Path) -> Option<String> {
+    let manifest_path = repo_root.join("Cargo.toml");
+    let raw = match std::fs::read_to_string(&manifest_path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Some(format!(
+                "`release verify-install` validates Effigy's tagged binary only; failed to read `{}`: {error}. Library and service repositories must use a repo-owned consumer smoke instead",
+                manifest_path.display()
+            ));
+        }
+    };
+    let parsed = match toml::from_str::<toml::Value>(&raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return Some(format!(
+                "`release verify-install` validates Effigy's tagged binary only; failed to parse `{}`: {error}. Library and service repositories must use a repo-owned consumer smoke instead",
+                manifest_path.display()
+            ));
+        }
+    };
+    let package_name = parsed
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str);
+    if package_name == Some("effigy") {
+        return None;
+    }
+
+    let observed = package_name
+        .map(|name| format!("root package `{name}`"))
+        .unwrap_or_else(|| "no root package".to_owned());
+    Some(format!(
+        "`release verify-install` validates Effigy's tagged binary only; target repository has {observed}. Library and service repositories must use a repo-owned consumer smoke instead"
+    ))
+}
+
 pub fn run_release_verify_install(
     repo_root: PathBuf,
     tag: String,
     repo_url: String,
 ) -> Result<ReleaseVerifyInstall, ReleaseError> {
+    if let Some(blocker) = verify_install_target_blocker(&repo_root) {
+        return Ok(ReleaseVerifyInstall {
+            repo_root,
+            tag,
+            repo_url,
+            installed_bin: None,
+            configured_check_count: 5,
+            executed_check_count: 0,
+            stopped_early: true,
+            results: Vec::new(),
+            blockers: vec![blocker],
+            verified: false,
+        });
+    }
+
     let temp_root = make_release_temp_dir("verify-install")?;
     let install_root = temp_root.join("install-root");
     let fixture_dir = temp_root.join("fixture");

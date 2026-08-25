@@ -35,6 +35,9 @@ owns a child catalog's tests; direct `catalog/test` selection still works.
 - **Never bypass release gates.** Fix the underlying issue.
 - **Never re-tag a failed release.** Fix lands in next PATCH.
 - **Never run release mutations** (`release prepare/execute`) without explicit human ask.
+- **Never use `release verify-install` for a library or service repo.** It is
+  Effigy's fixed self-hosting binary verifier; other repos need a repo-owned
+  consumer smoke.
 - **Don't add `package.json` scripts** that re-export Effigy tasks.
 - **Don't add a current-directory repo override** when already inside the
   target repo.

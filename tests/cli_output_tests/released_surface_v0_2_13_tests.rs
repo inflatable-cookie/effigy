@@ -5,7 +5,7 @@ use std::process::Command;
 
 use super::support::{
     parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace,
-    write_fake_effigy_install_repo,
+    write_effigy_release_root_marker, write_fake_effigy_install_repo,
 };
 
 #[derive(Deserialize)]
@@ -266,6 +266,7 @@ fn v0_2_13_release_gates_keep_json_contract_and_fail_fast_behavior() {
 fn v0_2_13_release_verify_install_still_installs_tagged_binary() {
     let baseline = load_baseline();
     let root = temp_workspace("released-surface-v0-2-13-verify-install");
+    write_effigy_release_root_marker(&root);
     let repo = temp_workspace("released-surface-v0-2-13-verify-install-repo");
     let repo_url = write_fake_effigy_install_repo(&repo, "0.2.13", &baseline.baseline_tag);
 
