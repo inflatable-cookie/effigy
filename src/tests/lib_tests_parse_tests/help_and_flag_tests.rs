@@ -153,6 +153,32 @@ fn parse_command_applies_leading_task_runtime_flags_to_task_selectors() {
 }
 
 #[test]
+fn parse_command_injects_leading_repo_when_task_repo_is_after_passthrough_delimiter() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/global".to_owned(),
+        "snapshot".to_owned(),
+        "--".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/task".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "snapshot".to_owned(),
+            args: vec![
+                "--repo".to_owned(),
+                "/tmp/global".to_owned(),
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/task".to_owned(),
+            ],
+        })
+    );
+}
+
+#[test]
 fn parse_command_rejects_task_only_global_flags_for_builtin_commands() {
     let err = parse_command(vec!["--verbose-root".to_owned(), "doctor".to_owned()])
         .expect_err("parse should fail");

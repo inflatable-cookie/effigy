@@ -34,3 +34,50 @@ fn runtime_args_parse_is_stable() {
     assert!(parsed.verbose_root);
     assert_eq!(parsed.passthrough, vec!["--watch".to_owned()]);
 }
+
+#[test]
+fn runtime_args_stop_at_passthrough_delimiter() {
+    let parsed = parse_task_runtime_args(&[
+        "--verbose-root".to_owned(),
+        "--".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/task-repo".to_owned(),
+        "--env-schema".to_owned(),
+        "env.toml".to_owned(),
+    ])
+    .expect("runtime args");
+    assert_eq!(parsed.repo_override, None);
+    assert!(parsed.verbose_root);
+    assert_eq!(parsed.env_schema_override, None);
+    assert_eq!(
+        parsed.passthrough,
+        vec![
+            "--".to_owned(),
+            "--repo".to_owned(),
+            "/tmp/task-repo".to_owned(),
+            "--env-schema".to_owned(),
+            "env.toml".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_args_keep_repo_override_before_passthrough_delimiter() {
+    let parsed = parse_task_runtime_args(&[
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/task-repo".to_owned(),
+    ])
+    .expect("runtime args");
+    assert_eq!(parsed.repo_override, Some(PathBuf::from("/tmp/repo")));
+    assert_eq!(
+        parsed.passthrough,
+        vec![
+            "--".to_owned(),
+            "--repo".to_owned(),
+            "/tmp/task-repo".to_owned(),
+        ]
+    );
+}

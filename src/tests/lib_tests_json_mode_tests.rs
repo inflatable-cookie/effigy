@@ -65,6 +65,13 @@ fn command_requests_json_checks_task_or_global_mode() {
     });
     assert!(command_requests_json(&cmd_with_json, false));
 
+    let cmd_json_after_delimiter = Command::Task(TaskInvocation {
+        name: "snapshot".to_owned(),
+        args: vec!["--".to_owned(), "--json".to_owned()],
+    });
+    assert!(!command_requests_json(&cmd_json_after_delimiter, false));
+    assert!(command_requests_json(&cmd_json_after_delimiter, true));
+
     let cmd_tasks = Command::Tasks(TasksArgs {
         repo_override: None,
         task_name: None,

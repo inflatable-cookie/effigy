@@ -40,6 +40,11 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
             continue;
         };
 
+        if is_compact_inline_task_table(task_table) {
+            validate_compact_inline_task_table(context, task_name, task_table);
+            continue;
+        }
+
         validate_task_table_keys(context, task_name, task_table);
         validate_task_run_in_field(context, task_name, task_table.get("run_in"));
         validate_task_lock_field(context, task_name, task_table.get("lock"));
@@ -63,6 +68,40 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
             validate_task_profiles(context, task_name, profiles);
         }
     }
+}
+
+fn is_compact_inline_task_table(task_table: &toml::map::Map<String, Value>) -> bool {
+    task_table.contains_key("rhai") || task_table.contains_key("task")
+}
+
+fn validate_compact_inline_task_table(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    task_table: &toml::map::Map<String, Value>,
+) {
+    let task_path = format!("tasks.{task_name}");
+    validate_allowed_keys(
+        context,
+        &task_path,
+        task_table,
+        &["run", "task", "rhai", "run_in"],
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        task_table.get("run"),
+        &format!("{task_path}.run"),
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        task_table.get("task"),
+        &format!("{task_path}.task"),
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        task_table.get("rhai"),
+        &format!("{task_path}.rhai"),
+    );
+    validate_task_run_in_field(context, task_name, task_table.get("run_in"));
 }
 
 fn validate_compact_task_value(

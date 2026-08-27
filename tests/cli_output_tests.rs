@@ -22,3 +22,5 @@ mod state_command_tests;
 mod support;
 #[path = "cli_output_tests/tasks_rendering_tests/mod.rs"]
 mod tasks_rendering_tests;
+#[path = "cli_output_tests/wave1_papercuts_tests.rs"]
+mod wave1_papercuts_tests;

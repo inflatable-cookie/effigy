@@ -4,8 +4,9 @@ use crate::{
     run_graph_watch_command, run_help_command, CliExecutionContext,
 };
 use effigy_cli::{
-    apply_global_cli_flags, command_requests_json, parse_command, strip_global_cli_flags, Command,
-    GlobalCliOptions, GraphSubcommand,
+    apply_global_cli_flags, command_requests_json, parse_command,
+    runtime_flag_present_before_passthrough, strip_global_cli_flags, Command, GlobalCliOptions,
+    GraphSubcommand,
 };
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
@@ -14,7 +15,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
-    let requested_root_json = raw_args.iter().any(|arg| arg == "--json");
+    let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
     let (args, global_options) = match strip_global_cli_flags(raw_args) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -305,6 +306,9 @@ fn deferred_builtin_root(
 fn repo_override_from_args(args: &[String]) -> Option<PathBuf> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
+        if arg == "--" {
+            return None;
+        }
         if arg == "--repo" {
             return iter.next().map(PathBuf::from);
         }
@@ -398,5 +402,28 @@ mod tests {
             parsed,
             Command::Task(task) if task.name == "test" && task.args == vec!["--plan".to_owned()]
         ));
+    }
+
+    #[test]
+    fn repo_override_from_args_stops_at_passthrough_delimiter() {
+        assert_eq!(
+            super::repo_override_from_args(&[
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+            ]),
+            None
+        );
+        assert_eq!(
+            super::repo_override_from_args(&[
+                "--verbose-root".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/repo".to_owned(),
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+            ]),
+            Some(std::path::PathBuf::from("/tmp/repo"))
+        );
     }
 }

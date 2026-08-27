@@ -19,6 +19,10 @@ pub fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, Strin
     let mut i = 0usize;
     while i < args.len() {
         let arg = &args[i];
+        if arg == "--" {
+            passthrough.extend(args[i..].iter().cloned());
+            break;
+        }
         if arg == "--repo" {
             let Some(value) = args.get(i + 1) else {
                 return Err("task argument --repo requires a value".to_owned());
