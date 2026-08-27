@@ -805,9 +805,9 @@ fn append_bun_file_dependency_finder_metadata(
         None,
         evidence,
         format!(
-            "remove Finder metadata from `{}` (for example `find {} -name .DS_Store -o -name '._*' -delete`), then re-run the install",
+            "remove Finder metadata from `{}` with `{}`, then re-run the install",
             dependency.target_path.display(),
-            dependency.target_path.display()
+            crate::bun::finder_metadata_cleanup_command(&dependency.target_path)
         ),
     ));
 }

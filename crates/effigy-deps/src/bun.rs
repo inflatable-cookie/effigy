@@ -260,6 +260,37 @@ pub(crate) fn finder_metadata_paths(root: &Path, limit: usize) -> Vec<PathBuf> {
     found
 }
 
+/// Shell command that clears every Finder class [`finder_metadata_paths`]
+/// reports, for the remediation line on the diagnostic.
+///
+/// Built from the same constants as the detector so the two cannot drift, and
+/// grouped with `\( ... \)` on purpose: in `find P -name a -o -name b
+/// -delete` the action binds to the last branch only, so the ungrouped form
+/// silently leaves `.DS_Store` behind. Directory classes need `rm -rf` rather
+/// than `-delete`, which refuses a non-empty directory, and `-prune` stops
+/// `find` descending into a tree it is about to remove.
+pub(crate) fn finder_metadata_cleanup_command(root: &Path) -> String {
+    let mut predicates = vec![
+        format!("-name {}", shell_quote(".DS_Store")),
+        format!("-name {}", shell_quote("._*")),
+    ];
+    predicates.extend(
+        FINDER_METADATA_DIRS
+            .iter()
+            .map(|dir| format!("-name {}", shell_quote(dir))),
+    );
+    format!(
+        "find {} \\( {} \\) -prune -exec rm -rf {{}} +",
+        shell_quote(&root.display().to_string()),
+        predicates.join(" -o ")
+    )
+}
+
+/// POSIX single-quote a shell word, including paths with embedded quotes.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn inspect_bun_peer_resolutions(
     consumer_root: impl AsRef<Path>,
     packages: &[DependencyPackage],
@@ -834,5 +865,63 @@ mod tests {
         assert!(rendered.contains(".DS_Store"));
         assert!(rendered.contains("._index.ts"));
         assert!(!rendered.contains("node_modules"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finder_metadata_cleanup_command_clears_every_reported_class() {
+        let root = TempDir::new().expect("tempdir");
+        let path = root.path();
+        fs::create_dir_all(path.join("src")).expect("src");
+        fs::create_dir_all(path.join("__MACOSX/nested")).expect("macosx");
+        fs::create_dir_all(path.join(".AppleDouble")).expect("appledouble");
+        fs::write(path.join(".DS_Store"), b"x").expect("ds store");
+        fs::write(path.join("src/._index.ts"), b"x").expect("sidecar");
+        fs::write(path.join("src/index.ts"), b"export {}").expect("source");
+        fs::write(path.join("__MACOSX/nested/junk"), b"x").expect("junk");
+        fs::write(path.join(".AppleDouble/package.json"), b"\x00").expect("shadow manifest");
+        assert!(
+            !super::finder_metadata_paths(path, 10).is_empty(),
+            "fixture should report metadata before cleanup"
+        );
+
+        let command = super::finder_metadata_cleanup_command(path);
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .status()
+            .expect("run cleanup command");
+
+        assert!(status.success(), "cleanup command failed: {command}");
+        assert_eq!(
+            super::finder_metadata_paths(path, 10),
+            Vec::<std::path::PathBuf>::new(),
+            "cleanup left metadata behind: {command}"
+        );
+        assert!(
+            path.join("src/index.ts").is_file(),
+            "cleanup removed real source: {command}"
+        );
+    }
+
+    #[test]
+    fn finder_metadata_cleanup_command_groups_predicates_and_quotes_the_path() {
+        let command = super::finder_metadata_cleanup_command(std::path::Path::new(
+            "/tmp/it's a path/library",
+        ));
+
+        // Ungrouped `-name a -o -name b -delete` binds the action to the last
+        // branch only, which is the precedence bug this guards.
+        assert!(command.contains("\\( -name"), "{command}");
+        assert!(command.contains(") -prune -exec rm -rf {} +"), "{command}");
+        assert!(
+            command.contains("'/tmp/it'\\''s a path/library'"),
+            "{command}"
+        );
+        for dir in super::FINDER_METADATA_DIRS {
+            assert!(command.contains(&format!("-name '{dir}'")), "{command}");
+        }
+        assert!(command.contains("-name '.DS_Store'"), "{command}");
+        assert!(command.contains("-name '._*'"), "{command}");
     }
 }
