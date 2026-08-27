@@ -1,0 +1,58 @@
+{
+  "deviations_file": "docs/contracts/rust-quality-deviations.json",
+  "exclusions": {
+    "generated": [],
+    "vendored": [
+      "vendor/s3"
+    ]
+  },
+  "language": "rust",
+  "msrv": {
+    "cargo_manifests": [
+      "Cargo.toml",
+      "crates/effigy-artifacts/Cargo.toml",
+      "crates/effigy-bootstrap/Cargo.toml",
+      "crates/effigy-builtin/Cargo.toml",
+      "crates/effigy-catalog/Cargo.toml",
+      "crates/effigy-changelog/Cargo.toml",
+      "crates/effigy-cli/Cargo.toml",
+      "crates/effigy-codegraph/Cargo.toml",
+      "crates/effigy-containers/Cargo.toml",
+      "crates/effigy-context/Cargo.toml",
+      "crates/effigy-contracts/Cargo.toml",
+      "crates/effigy-core/Cargo.toml",
+      "crates/effigy-data/Cargo.toml",
+      "crates/effigy-demo/Cargo.toml",
+      "crates/effigy-deps/Cargo.toml",
+      "crates/effigy-distribution/Cargo.toml",
+      "crates/effigy-docs-policy/Cargo.toml",
+      "crates/effigy-doctor/Cargo.toml",
+      "crates/effigy-env/Cargo.toml",
+      "crates/effigy-exec/Cargo.toml",
+      "crates/effigy-execution/Cargo.toml",
+      "crates/effigy-gateway/Cargo.toml",
+      "crates/effigy-managed/Cargo.toml",
+      "crates/effigy-manifest/Cargo.toml",
+      "crates/effigy-papercuts/Cargo.toml",
+      "crates/effigy-process/Cargo.toml",
+      "crates/effigy-release/Cargo.toml",
+      "crates/effigy-rhai/Cargo.toml",
+      "crates/effigy-routing/Cargo.toml",
+      "crates/effigy-runtime-plan/Cargo.toml",
+      "crates/effigy-runtime/Cargo.toml",
+      "crates/effigy-scan/Cargo.toml",
+      "crates/effigy-secrets/Cargo.toml",
+      "crates/effigy-state/Cargo.toml",
+      "crates/effigy-tasks/Cargo.toml",
+      "crates/effigy-tui/Cargo.toml",
+      "crates/effigy-ui/Cargo.toml"
+    ],
+    "source": "repository_policy",
+    "toolchain_policy_paths": [
+      "rust-toolchain.toml"
+    ],
+    "when_unresolved": "stop"
+  },
+  "profile": "strict",
+  "schema_version": "1.0.0"
+}

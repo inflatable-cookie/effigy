@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/27-173611-northstar-agents-rust-audit.md`](./2026-08/27-173611-northstar-agents-rust-audit.md)
 - [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](./2026-08/21-230738-documentation-coverage-parity-closeout.md)
 - [`2026-08/21-224918-documentation-coverage-parity-planning.md`](./2026-08/21-224918-documentation-coverage-parity-planning.md)
 - [`2026-08/18-112147-doctor-secrets-schema-parity-closeout.md`](./2026-08/18-112147-doctor-secrets-schema-parity-closeout.md)
