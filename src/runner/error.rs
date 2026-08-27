@@ -135,6 +135,11 @@ pub enum RunnerError {
     CommandJsonFailure {
         rendered: String,
     },
+    GraphOperationTimeout {
+        command: String,
+        timeout_ms: u64,
+        rendered: String,
+    },
     DepsOperationNonZero {
         command: &'static str,
         outcome: &'static str,

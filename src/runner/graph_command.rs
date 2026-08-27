@@ -1,3 +1,7 @@
+use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
+
 use effigy_cli::{GraphArgs, GraphSubcommand};
 use effigy_codegraph::json::{
     GraphAffectedPayload, GraphCommandPayload, GraphContextPayload, GraphExplorePayload,
@@ -13,10 +17,128 @@ use crate::runner::command_context::resolve_active_repo_root;
 
 use super::error::RunnerError;
 
+/// Default wall-clock budget for a single graph command.
+///
+/// Graph reads refresh a stale index on demand, so any query can turn into a
+/// full repo walk. Unbounded, that walk is indistinguishable from a hang: the
+/// caller waits forever with no way to tell "slow first index" from "wedged".
+/// Two minutes is well clear of a cold index on a pruned tree and still ends.
+const DEFAULT_GRAPH_TIMEOUT_MS: u64 = 120_000;
+
+/// Env override for the budget. `0` disables the bound entirely.
+const GRAPH_TIMEOUT_ENV: &str = "EFFIGY_GRAPH_TIMEOUT_MS";
+
 pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
+    match graph_time_budget().filter(|_| subcommand_is_bounded(&args.subcommand)) {
+        Some(budget) => run_graph_operation_bounded(&repo_root, args, budget),
+        None => run_graph_operation(&repo_root, args),
+    }
+}
 
+/// Whether a subcommand runs under the time budget.
+///
+/// Queries do: they refresh a stale index behind the caller's back, so a slow
+/// walk shows up as an unexplained hang. `graph index` and `graph watch` are
+/// exempt — the caller explicitly asked for the long-running build.
+fn subcommand_is_bounded(subcommand: &GraphSubcommand) -> bool {
+    !matches!(
+        subcommand,
+        GraphSubcommand::Index | GraphSubcommand::Watch { .. }
+    )
+}
+
+/// Resolve the configured budget, or `None` when the bound is switched off.
+fn graph_time_budget() -> Option<Duration> {
+    let millis = match std::env::var(GRAPH_TIMEOUT_ENV) {
+        Ok(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .unwrap_or(DEFAULT_GRAPH_TIMEOUT_MS),
+        Err(_) => DEFAULT_GRAPH_TIMEOUT_MS,
+    };
+    (millis > 0).then(|| Duration::from_millis(millis))
+}
+
+/// Run a graph command on a worker thread and give up on it after `budget`.
+///
+/// The worker is deliberately detached rather than cancelled: graph work runs
+/// under a cross-process refresh lock that the OS releases when the process
+/// exits, and a half-written index is worse than a slow one. The caller gets a
+/// bounded failure carrying the health snapshot; the CLI exits right after.
+fn run_graph_operation_bounded(
+    repo_root: &Path,
+    args: GraphArgs,
+    budget: Duration,
+) -> Result<String, RunnerError> {
+    let label = graph_command_label(&args.subcommand);
+    let (sender, receiver) = mpsc::channel();
+    let worker_root = repo_root.to_path_buf();
+    let worker_args = args.clone();
+    let spawned = std::thread::Builder::new()
+        .name("effigy-graph".to_owned())
+        .spawn(move || {
+            let _ = sender.send(run_graph_operation(&worker_root, worker_args));
+        });
+    if spawned.is_err() {
+        // No worker thread available: an unbounded run still beats refusing.
+        return run_graph_operation(repo_root, args);
+    }
+    match receiver.recv_timeout(budget) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(graph_timeout_error(repo_root, label, budget)),
+        // The worker died without sending; surface it as a bounded failure too.
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(graph_timeout_error(repo_root, label, budget))
+        }
+    }
+}
+
+fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> RunnerError {
+    let timeout_ms = budget.as_millis().min(u128::from(u64::MAX)) as u64;
+    let health = effigy_codegraph::health(repo_root);
+    let rendered = serde_json::json!({
+        "schema": "effigy.graph.timeout.v1",
+        "schema_version": 1,
+        "command": command,
+        "repo_root": repo_root.display().to_string(),
+        "timeout_ms": timeout_ms,
+        "timeout_env": GRAPH_TIMEOUT_ENV,
+        "health": health,
+        "next": [
+            "run `effigy graph status --json` to inspect index freshness",
+            format!("raise the budget with `{GRAPH_TIMEOUT_ENV}=<ms>` (0 disables it)"),
+            "run `effigy graph index --json` once to pay the cold build separately",
+        ],
+    })
+    .to_string();
+    RunnerError::GraphOperationTimeout {
+        command: command.to_owned(),
+        timeout_ms,
+        rendered,
+    }
+}
+
+fn graph_command_label(subcommand: &GraphSubcommand) -> &'static str {
+    match subcommand {
+        GraphSubcommand::Index => "graph index",
+        GraphSubcommand::Status { .. } => "graph status",
+        GraphSubcommand::Watch { .. } => "graph watch",
+        GraphSubcommand::Search { .. } => "graph search",
+        GraphSubcommand::Files { .. } => "graph files",
+        GraphSubcommand::Node { .. } => "graph node",
+        GraphSubcommand::Callers { .. } => "graph callers",
+        GraphSubcommand::Callees { .. } => "graph callees",
+        GraphSubcommand::Impact { .. } => "graph impact",
+        GraphSubcommand::Affected { .. } => "graph affected",
+        GraphSubcommand::Context { .. } => "graph context",
+        GraphSubcommand::Explore { .. } => "graph explore",
+    }
+}
+
+fn run_graph_operation(repo_root: &Path, args: GraphArgs) -> Result<String, RunnerError> {
+    let repo_root = repo_root.to_path_buf();
     match args.subcommand {
         GraphSubcommand::Index => {
             let report = run_index(&repo_root).map_err(map_graph_error)?;

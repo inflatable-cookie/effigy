@@ -28,6 +28,19 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
         .require_git(has_git_dir)
         .parents(has_git_dir)
         .follow_links(false);
+    // Prune skipped directories instead of descending and filtering per file:
+    // a single installed `node_modules` tree otherwise dominates every walk,
+    // and every graph query pays for one.
+    walk.filter_entry(|entry| {
+        !entry
+            .file_type()
+            .map(|file_type| file_type.is_dir())
+            .unwrap_or(false)
+            || entry
+                .file_name()
+                .to_str()
+                .is_none_or(|name| !SKIPPED_DIR_SEGMENTS.contains(&name))
+    });
     for entry in walk.build() {
         let entry = entry.map_err(|error| {
             CodeGraphError::validation(format!(
@@ -70,17 +83,40 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
     Ok(entries)
 }
 
+/// Directory names the graph never indexes.
+///
+/// Two families, both matched on *any* path segment rather than only the repo
+/// root — a monorepo installs `node_modules` and emits `dist` per package, so
+/// a root-only prefix check left every nested copy in the index:
+///
+/// - Effigy/VCS internals (`.git`, `.effigy`)
+/// - dependency and build output (installed packages, compiled artifacts,
+///   framework output directories, coverage reports)
+///
+/// Ambiguous names that are commonly hand-written source (`build`, `out`,
+/// `lib`) stay indexable on purpose.
+const SKIPPED_DIR_SEGMENTS: &[&str] = &[
+    ".effigy",
+    ".git",
+    ".next",
+    ".nuxt",
+    ".output",
+    ".parcel-cache",
+    ".svelte-kit",
+    ".turbo",
+    ".venv",
+    "__pycache__",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+];
+
 pub(crate) fn should_skip_path(relative_path: &str) -> bool {
-    relative_path == ".git"
-        || relative_path.starts_with(".git/")
-        || relative_path == ".effigy"
-        || relative_path.starts_with(".effigy/")
-        || relative_path == "target"
-        || relative_path.starts_with("target/")
-        || relative_path == "node_modules"
-        || relative_path.starts_with("node_modules/")
-        || relative_path == "vendor"
-        || relative_path.starts_with("vendor/")
+    relative_path
+        .split('/')
+        .any(|segment| SKIPPED_DIR_SEGMENTS.contains(&segment))
 }
 
 #[cfg(test)]
@@ -93,5 +129,24 @@ mod tests {
         assert!(should_skip_path(".effigy/graph/graph.db"));
         assert!(should_skip_path(".effigy/runtime/session.json"));
         assert!(!should_skip_path("src/lib.rs"));
+    }
+
+    #[test]
+    fn should_skip_path_skips_nested_installed_and_built_output() {
+        assert!(should_skip_path("apps/web/node_modules/pkg/index.js"));
+        assert!(should_skip_path("packages/ui/dist/index.js"));
+        assert!(should_skip_path(
+            "apps/web/.svelte-kit/output/server/index.js"
+        ));
+        assert!(should_skip_path("services/api/target/debug/build.rs"));
+        assert!(should_skip_path("coverage/lcov-report/index.html"));
+    }
+
+    #[test]
+    fn should_skip_path_keeps_ambiguous_source_directories() {
+        assert!(!should_skip_path("src/build/pipeline.ts"));
+        assert!(!should_skip_path("packages/core/out/index.ts"));
+        assert!(!should_skip_path("crates/effigy-core/src/lib.rs"));
+        assert!(!should_skip_path("docs/distribution.md"));
     }
 }

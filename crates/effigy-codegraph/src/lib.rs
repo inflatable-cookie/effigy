@@ -27,6 +27,7 @@
 mod error;
 pub mod extractor;
 mod git;
+pub mod health;
 mod ids;
 pub mod index;
 pub mod json;
@@ -43,6 +44,8 @@ pub mod watch;
 
 /// Shared error type for graph indexing, query, storage, and watch failures.
 pub use error::CodeGraphError;
+/// Cheap index/refresh health snapshot for bounded-failure reporting.
+pub use health::{health, GraphHealthPayload};
 /// Stable extractor identity for stored graph facts.
 pub use ids::{ExtractorId, GraphId};
 /// Build or refresh the local graph, then inspect freshness and counts.
