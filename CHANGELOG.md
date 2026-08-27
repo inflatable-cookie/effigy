@@ -16,6 +16,25 @@ During v0.x, MINOR bumps may include breaking changes.
   `--` is a task argument, not the CLI JSON envelope.
 - `effigy doctor` accepts built-in `docs` sequence references and compact
   `{ rhai = "..." }` task values that the runner already executes.
+- Graph queries now run under a wall-clock budget and report an
+  `effigy.graph.timeout.v1` error envelope with index and refresh-lock health
+  instead of stalling. Override with `EFFIGY_GRAPH_TIMEOUT_MS` (`0` disables);
+  `graph index` and `graph watch` stay unbounded.
+- The graph index skips installed packages and build output at any depth
+  (nested `node_modules`, `dist`, `.svelte-kit`, `.next`, `.nuxt`, `.output`,
+  `.turbo`, `.parcel-cache`, `coverage`, `__pycache__`, `.venv`) and prunes
+  them during the walk.
+- Workspace containers started from a linked git worktree now mount the shared
+  git directory, so in-container `git` works instead of failing on a host-only
+  gitdir pointer.
+- A missing non-catalog workspace extra mount now warns and is skipped instead
+  of aborting `container status` and `doctor`. Catalog members still fail.
+- Bun package discovery skips macOS Finder metadata (`__MACOSX/`,
+  `.AppleDouble/`, `.DS_Store`, `._*`), and `deps status bun` reports Finder
+  metadata found inside a `file:` dependency with a removal command.
+- Secret vault reads from a linked git worktree fall back to the primary
+  checkout's vault, so worktrees share one machine-local vault. `secrets init`
+  still writes where it was asked to.
 
 ## [0.12.1] - 2026-08-25
 
