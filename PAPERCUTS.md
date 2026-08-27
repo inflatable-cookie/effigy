@@ -57,8 +57,9 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   along into a container install.
 - Fix (2026-08-27): Effigy's Bun package walk skips Finder metadata
   directories and sidecar files, and `deps status bun` reports the exact
-  offending paths with a removal command. Bun's own `file:` copy is not
-  Effigy's to change; naming the files is.
+  offending paths with a removal command built from the same constants as the
+  detector, so it clears every class the diagnostic reports. Bun's own `file:`
+  copy is not Effigy's to change; naming the files is.
 - Surface: `crates/effigy-deps/src/bun.rs`, `deps status bun`.
 
 ### [x] Launcher worktrees miss the Effigy local vault — 2026-08-27
@@ -66,11 +67,13 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   a fresh `git worktree` starts without one and every secret-backed task fails,
   even though the same machine already holds an unlocked vault in the primary
   checkout.
-- Fix (2026-08-27): vault *reads* in a linked worktree fall back to the primary
-  checkout's vault; when neither exists the warning names the primary checkout
-  and the `secrets init` to run there. `secrets init` still writes where it was
+- Fix (2026-08-27): vault reads *and* mutations in a linked worktree resolve
+  through one shared path that falls back to the primary checkout's vault, so
+  `secrets set` cannot fork a partial local vault that shadows primary-only
+  records. When neither vault exists the warning names the primary checkout and
+  the `secrets init` to run there. Vault *creation* still writes where it was
   asked to. No new secrets backend.
-- Surface: `resolve_effigy_vault_read_path`, `resolve_rhai_secret_vault_read_path`.
+- Surface: `resolve_shared_effigy_vault_path`, `resolve_shared_rhai_secret_vault_path`.
 
 
 ### [x] Doctor schema rejects inline `{ rhai = ... }` task values — 2026-08-27

@@ -31,10 +31,12 @@ During v0.x, MINOR bumps may include breaking changes.
   of aborting `container status` and `doctor`. Catalog members still fail.
 - Bun package discovery skips macOS Finder metadata (`__MACOSX/`,
   `.AppleDouble/`, `.DS_Store`, `._*`), and `deps status bun` reports Finder
-  metadata found inside a `file:` dependency with a removal command.
-- Secret vault reads from a linked git worktree fall back to the primary
-  checkout's vault, so worktrees share one machine-local vault. `secrets init`
-  still writes where it was asked to.
+  metadata found inside a `file:` dependency with a removal command that clears
+  every reported class.
+- Secret vault reads and mutations from a linked git worktree resolve to the
+  primary checkout's vault, so worktrees share one machine-local vault instead
+  of forking a partial local one. Vault creation still writes where it was
+  asked to.
 
 ## [0.12.1] - 2026-08-25
 
