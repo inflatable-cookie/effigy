@@ -42,6 +42,8 @@ Batch: northstar-agents-rust-audit
 - `cargo clippy --all-targets -- -D warnings` — passed with Cargo's
   future-incompatibility warning above.
 - `effigy health` — completed with the same pre-existing Cargo warning.
+- `effigy qa` — succeeded; task report recorded completion at
+  `2026-08-27T16:38:57Z`.
 
 ## Vision Target Delta
 
