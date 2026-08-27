@@ -77,7 +77,7 @@ pub(crate) fn resolve_rhai_secret_store(
     }
 
     if !required.is_empty() {
-        let vault_path = resolve_rhai_secret_vault_read_path(repo_root, secrets)?;
+        let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)?;
         if !vault_path.exists() {
             return Err(RhaiHostError::new(format!(
                 "required Rhai secrets are declared but the vault is missing at {}",
@@ -130,14 +130,16 @@ fn resolve_rhai_secret_vault_path(
     }
 }
 
-/// Vault path for reading Rhai secrets, shared across linked worktrees.
+/// The vault every Rhai secret operation acts on, shared across worktrees.
 ///
 /// The local vault is machine-local state outside version control, so a fresh
-/// `git worktree` has none. Reads fall back to the primary checkout's vault
-/// rather than failing on a checkout topology the author never chose. The
-/// write path in `rhai_secret_set` keeps using
-/// [`resolve_rhai_secret_vault_path`].
-fn resolve_rhai_secret_vault_read_path(
+/// `git worktree` has none. Reads *and* mutations resolve through here so a
+/// linked worktree operates on the one machine-local vault: resolving reads
+/// and writes differently would let `secrets::set` fork a partial worktree
+/// vault that then shadows every primary-only record.
+///
+/// Only vault *creation* uses [`resolve_rhai_secret_vault_path`] directly.
+fn resolve_shared_rhai_secret_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
 ) -> Result<PathBuf, RhaiHostError> {
@@ -326,7 +328,7 @@ fn active_rhai_load_vault_if_needed(
             "Rhai secrets require `[secrets].backend = \"effigy-vault\"`",
         ));
     }
-    let vault_path = resolve_rhai_secret_vault_read_path(repo_root, secrets)?;
+    let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)?;
     if !vault_path.exists() {
         if require_unlock {
             return Err(RhaiHostError::new(format!(
@@ -432,7 +434,7 @@ fn active_rhai_set_secret_records(
         }
     }
 
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)
+    let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
     let passphrase = match active_rhai_unlocked_passphrase()
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?

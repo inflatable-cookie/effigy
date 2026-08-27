@@ -22,16 +22,19 @@ pub(in crate::runner) fn resolve_effigy_vault_path(
     }
 }
 
-/// Vault path for *reading* secrets, shared across linked worktrees.
+/// The vault every command acts on, shared across linked worktrees.
 ///
 /// The local vault deliberately lives outside version control, so a freshly
 /// created `git worktree` starts without one and every secret-backed task in
 /// it fails — even though the same machine already holds an unlocked vault in
-/// the primary checkout. Reads fall back to that vault rather than inventing a
-/// second secrets backend. Writes keep using
-/// [`resolve_effigy_vault_path`]: authoring a vault stays where the caller
-/// asked for it.
-pub(in crate::runner) fn resolve_effigy_vault_read_path(
+/// the primary checkout. Reads *and* read-modify-writes resolve through here
+/// so a worktree operates on the one machine-local vault: resolving reads and
+/// writes differently would let a mutation fork a partial worktree vault that
+/// then shadows every primary-only record.
+///
+/// Only vault *creation* (`secrets init`) uses [`resolve_effigy_vault_path`]
+/// directly, so authoring a new vault stays where the caller asked for it.
+pub(in crate::runner) fn resolve_shared_effigy_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
     purpose: &str,
@@ -219,7 +222,7 @@ mod tests {
     use effigy_manifest::config_sections::{ManifestSecretsConfig, ManifestSecretsVaultConfig};
     use tempfile::TempDir;
 
-    use super::{resolve_effigy_vault_path, resolve_effigy_vault_read_path};
+    use super::{resolve_effigy_vault_path, resolve_shared_effigy_vault_path};
 
     const VAULT_RELATIVE: &str = ".effigy/secrets/local.vault";
 
@@ -258,7 +261,7 @@ mod tests {
         fs::write(&primary_vault, "{}").expect("vault");
 
         let resolved =
-            resolve_effigy_vault_read_path(&worktree, &secrets(), "test").expect("read path");
+            resolve_shared_effigy_vault_path(&worktree, &secrets(), "test").expect("read path");
 
         assert_eq!(resolved, primary_vault);
     }
@@ -273,7 +276,7 @@ mod tests {
         }
 
         let resolved =
-            resolve_effigy_vault_read_path(&worktree, &secrets(), "test").expect("read path");
+            resolve_shared_effigy_vault_path(&worktree, &secrets(), "test").expect("read path");
 
         assert_eq!(resolved, worktree.join(VAULT_RELATIVE));
     }
@@ -296,7 +299,7 @@ mod tests {
         fs::create_dir_all(root.path().join(".git")).expect("git dir");
 
         let resolved =
-            resolve_effigy_vault_read_path(root.path(), &secrets(), "test").expect("read path");
+            resolve_shared_effigy_vault_path(root.path(), &secrets(), "test").expect("read path");
 
         assert_eq!(resolved, root.path().join(VAULT_RELATIVE));
     }

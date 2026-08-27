@@ -637,7 +637,7 @@ fn resolve_task_secret_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
 ) -> Result<PathBuf, RunnerError> {
-    crate::runner::secret_vault::resolve_effigy_vault_read_path(
+    crate::runner::secret_vault::resolve_shared_effigy_vault_path(
         repo_root,
         secrets,
         "task secret injection",

@@ -62,7 +62,7 @@ pub(super) fn resolve_container_secret_runtime(
         ));
     }
 
-    let vault_path = crate::runner::secret_vault::resolve_effigy_vault_read_path(
+    let vault_path = crate::runner::secret_vault::resolve_shared_effigy_vault_path(
         repo_root,
         secrets,
         "container secret injection",
