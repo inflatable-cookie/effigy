@@ -142,9 +142,15 @@ Please keep this run inside the two ordered audits:
   `docs/contracts/rust-quality-profile.json`, and
   `docs/contracts/rust-quality-deviations.json` were absent at dispatch. Follow
   the canonical setup route; do not hand-author those surfaces.
-- **Audit scope:** `repository`, covering every Cargo workspace/package/target
-  discovered by the checked tool. Full coverage is assessment coverage, not
-  blanket rewrite authority.
+- **Audit scope:** `repository`, covering Effigy-owned workspace code. After
+  dispatch, Cargo discovery found the patched third-party `vendor/s3`
+  workspace. The operator selected vendor exclusion: add it to the root
+  `workspace.exclude` and the strict profile's vendored exclusions. Keep its
+  discovered workspace/package/target inventory exact in the recorder plan,
+  but assign its manifest and targets only as immutable read-only context so
+  they are preserved rather than assessed or repaired. Name this limitation in
+  the final record. Full coverage is inventory coverage, not blanket rewrite
+  authority.
 - **Decisions and preferences:** keep the AGENTS audit read-only; prefer
   surgical Rust repair waves; preserve Effigy's manifest-driven routing,
   machine-readable contracts, explainability, operator safety, and modular
