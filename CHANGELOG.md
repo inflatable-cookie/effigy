@@ -10,6 +10,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Generated compose can now combine explicitly pinned host ports with
   automatically allocated ports without panicking. Container status reports a
   stopped or non-exec-ready primary service instead of failing the command.
+- `--` now ends task runtime-flag parsing, so `effigy <task> -- --repo <path>`
+  forwards `--repo` to the task instead of switching catalogs. Leading
+  `effigy --repo <PATH> <task>` still selects the target repo.
+- `effigy doctor` accepts built-in `docs` sequence references and compact
+  `{ rhai = "..." }` task values that the runner already executes.
 
 ## [0.12.1] - 2026-08-25
 

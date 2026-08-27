@@ -34,14 +34,22 @@ pub(in crate::runner) fn run_defer(args: DeferArgs) -> Result<String, RunnerErro
 
 fn normalize_defer_task(args: DeferArgs) -> TaskInvocation {
     let mut task = args.task;
-    if args.output_json && !task.args.iter().any(|arg| arg == "--json") {
-        task.args.push("--json".to_owned());
+    if args.output_json && !flag_present_before_passthrough(&task.args, "--json") {
+        task.args.insert(0, "--json".to_owned());
     }
     if let Some(repo_override) = args.repo_override {
-        task.args.push("--repo".to_owned());
-        task.args.push(repo_override.display().to_string());
+        if !flag_present_before_passthrough(&task.args, "--repo") {
+            task.args.insert(0, repo_override.display().to_string());
+            task.args.insert(0, "--repo".to_owned());
+        }
     }
     task
+}
+
+fn flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == flag)
 }
 
 #[cfg(test)]
@@ -69,10 +77,32 @@ mod tests {
         assert_eq!(
             task.args,
             vec![
-                "--watch".to_owned(),
-                "--json".to_owned(),
                 "--repo".to_owned(),
                 "/tmp/repo".to_owned(),
+                "--json".to_owned(),
+                "--watch".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_defer_task_injects_repo_before_passthrough_delimiter() {
+        let task = normalize_defer_task(DeferArgs {
+            task: TaskInvocation {
+                name: "release".to_owned(),
+                args: vec!["--".to_owned(), "--dry-run".to_owned()],
+            },
+            repo_override: Some(std::path::PathBuf::from("/tmp/repo")),
+            output_json: false,
+        });
+
+        assert_eq!(
+            task.args,
+            vec![
+                "--repo".to_owned(),
+                "/tmp/repo".to_owned(),
+                "--".to_owned(),
+                "--dry-run".to_owned(),
             ]
         );
     }

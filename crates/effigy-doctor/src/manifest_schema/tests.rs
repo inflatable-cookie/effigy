@@ -235,6 +235,52 @@ concurrent = [{ name = "api", run = "cargo run" }]
 }
 
 #[test]
+fn validate_manifest_schema_accepts_compact_inline_rhai_task() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks]
+script = { rhai = "scripts/ok.rhai", run_in = "host" }
+qa = [
+  { task = "docs check" },
+]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected compact rhai and docs sequence steps to validate, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_key_on_compact_inline_rhai_task() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.script]
+rhai = "scripts/ok.rhai"
+mode = "tui"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("tasks.script.mode")),
+        "expected unknown compact-task key to be flagged, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_rejects_non_boolean_initial_tag_current_version() {
     let manifest: Value = toml::from_str(
         r#"

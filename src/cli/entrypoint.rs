@@ -305,6 +305,9 @@ fn deferred_builtin_root(
 fn repo_override_from_args(args: &[String]) -> Option<PathBuf> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
+        if arg == "--" {
+            return None;
+        }
         if arg == "--repo" {
             return iter.next().map(PathBuf::from);
         }
@@ -398,5 +401,28 @@ mod tests {
             parsed,
             Command::Task(task) if task.name == "test" && task.args == vec!["--plan".to_owned()]
         ));
+    }
+
+    #[test]
+    fn repo_override_from_args_stops_at_passthrough_delimiter() {
+        assert_eq!(
+            super::repo_override_from_args(&[
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+            ]),
+            None
+        );
+        assert_eq!(
+            super::repo_override_from_args(&[
+                "--verbose-root".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/repo".to_owned(),
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+            ]),
+            Some(std::path::PathBuf::from("/tmp/repo"))
+        );
     }
 }

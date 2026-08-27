@@ -27,6 +27,33 @@ fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
 }
 
 #[test]
+fn parse_task_runtime_args_stops_at_passthrough_delimiter() {
+    let args = vec![
+        "--repo".to_owned(),
+        "/tmp/home".to_owned(),
+        "--".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/other".to_owned(),
+        "--flag".to_owned(),
+    ];
+    let parsed = parse_task_runtime_args(&args).expect("parse");
+    assert_eq!(
+        parsed,
+        TaskRuntimeArgs {
+            repo_override: Some(PathBuf::from("/tmp/home")),
+            verbose_root: false,
+            env_schema_override: None,
+            passthrough: vec![
+                "--".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+                "--flag".to_owned(),
+            ],
+        }
+    );
+}
+
+#[test]
 fn parse_task_runtime_args_requires_env_schema_value() {
     let err = parse_task_runtime_args(&["--env-schema".to_owned()]).expect_err("parse should fail");
     match err {
