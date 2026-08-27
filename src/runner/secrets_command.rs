@@ -214,7 +214,7 @@ fn run_secrets_change_passphrase(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let secrets = require_secrets(secrets)?;
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let current = read_secret_input(
         "Current vault passphrase: ",
         "EFFIGY_TEST_SECRETS_PASSPHRASE",
@@ -255,7 +255,7 @@ fn run_secrets_set(
 ) -> Result<String, RunnerError> {
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
     let value = read_secret_input(
         &format!("Secret value for `{name}`: "),
@@ -322,7 +322,7 @@ fn run_secrets_import(
     imported.sort();
     skipped_undeclared.sort();
 
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let vault_exists = vault_path.exists();
     if matched_records.is_empty() && !vault_exists {
         return render_import_result(
@@ -397,7 +397,7 @@ fn run_secrets_get(
 ) -> Result<String, RunnerError> {
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
     let payload = read_vault_payload(&vault_path, passphrase.expose())?;
     let value = payload
@@ -424,7 +424,7 @@ fn run_secrets_unset(
 ) -> Result<String, RunnerError> {
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
     let mut payload = read_vault_payload(&vault_path, passphrase.expose())?;
     payload.records.remove(name);
@@ -462,7 +462,7 @@ fn run_secrets_export(
     }
     validate_export_destination(repo_root, output)?;
     let secrets = require_secrets(secrets)?;
-    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
     let payload = read_vault_payload(&vault_path, passphrase.expose())?;
 
@@ -884,25 +884,46 @@ fn require_secrets(
     secrets.ok_or_else(|| RunnerError::task_invocation("no `[secrets]` section declared"))
 }
 
+fn require_vault_backend(
+    secrets: Option<&ManifestSecretsConfig>,
+) -> Result<&ManifestSecretsConfig, RunnerError> {
+    let secrets = require_secrets(secrets)?;
+    match secrets.backend {
+        Some(ManifestSecretsBackend::EffigyVault) => Ok(secrets),
+        Some(ManifestSecretsBackend::External) => Err(RunnerError::task_invocation(
+            "`effigy-vault` backend is required for local vault commands",
+        )),
+        None => Err(RunnerError::task_invocation(
+            "`[secrets].backend` must be `effigy-vault` for local vault commands",
+        )),
+    }
+}
+
 fn resolve_vault_path(
     repo_root: &Path,
     secrets: Option<&ManifestSecretsConfig>,
 ) -> Result<PathBuf, RunnerError> {
-    let secrets = require_secrets(secrets)?;
-    match secrets.backend {
-        Some(ManifestSecretsBackend::EffigyVault) => {}
-        Some(ManifestSecretsBackend::External) => {
-            return Err(RunnerError::task_invocation(
-                "`effigy-vault` backend is required for local vault commands",
-            ));
-        }
-        None => {
-            return Err(RunnerError::task_invocation(
-                "`[secrets].backend` must be `effigy-vault` for local vault commands",
-            ));
-        }
-    }
+    let secrets = require_vault_backend(secrets)?;
     crate::runner::secret_vault::resolve_effigy_vault_path(
+        repo_root,
+        secrets,
+        "local vault commands",
+    )
+}
+
+/// Vault path for every command that operates on an existing vault.
+///
+/// In a linked worktree with no vault of its own this resolves to the primary
+/// checkout's vault, so `get`/`set`/`export` all act on the one machine-local
+/// vault instead of failing or silently forking a second one. `secrets init`
+/// deliberately does not use this: creating a vault stays where it was asked
+/// for.
+fn resolve_shared_vault_path(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+) -> Result<PathBuf, RunnerError> {
+    let secrets = require_vault_backend(secrets)?;
+    crate::runner::secret_vault::resolve_shared_effigy_vault_path(
         repo_root,
         secrets,
         "local vault commands",
@@ -1091,7 +1112,7 @@ fn inspect_vault_doctor_state(
     warnings: &mut Vec<String>,
     blockers: &mut Vec<String>,
 ) -> Result<VaultDoctorState, RunnerError> {
-    let Ok(vault_path) = resolve_vault_path(repo_root, Some(secrets)) else {
+    let Ok(vault_path) = resolve_shared_vault_path(repo_root, Some(secrets)) else {
         return Ok(VaultDoctorState::none());
     };
     let path = Some(vault_path.display().to_string());

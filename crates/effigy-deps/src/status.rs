@@ -736,6 +736,7 @@ fn append_bun_file_dependency_exposures(
 ) -> Result<(), crate::DepsError> {
     let consumer_repo = canonical_or_original(repo_root);
     for dependency in inventory_bun_file_dependencies(repo_root)? {
+        append_bun_file_dependency_finder_metadata(&dependency, reports);
         let dependency_repo = containing_repo_root(&dependency.target_path);
         if dependency_repo == consumer_repo {
             continue;
@@ -776,6 +777,39 @@ fn append_bun_file_dependency_exposures(
         }
     }
     Ok(())
+}
+
+/// Report macOS Finder metadata sitting inside a `file:` dependency tree.
+///
+/// Bun installs `file:` dependencies by copying the directory. Finder
+/// droppings copy along with it and break the install inside a Linux
+/// container, where they are neither expected nor removable after the fact.
+/// Effigy does not own Bun's copy, so it names the offending paths up front.
+fn append_bun_file_dependency_finder_metadata(
+    dependency: &crate::bun::BunFileDependency,
+    reports: &mut Vec<DependencyLinkReport>,
+) {
+    const REPORTED_PATH_LIMIT: usize = 10;
+    let found = crate::bun::finder_metadata_paths(&dependency.target_path, REPORTED_PATH_LIMIT);
+    if found.is_empty() {
+        return;
+    }
+    let mut evidence = vec![dependency.target_path.display().to_string()];
+    evidence.extend(found.iter().map(|path| path.display().to_string()));
+    reports.push(unowned_warning_report(
+        "bun-file-dependency-finder-metadata",
+        format!(
+            "file dependency `{}` ({}) carries macOS Finder metadata that Bun copies into the install",
+            dependency.name, dependency.specifier
+        ),
+        None,
+        evidence,
+        format!(
+            "remove Finder metadata from `{}` with `{}`, then re-run the install",
+            dependency.target_path.display(),
+            crate::bun::finder_metadata_cleanup_command(&dependency.target_path)
+        ),
+    ));
 }
 
 fn containing_repo_root(path: &Path) -> PathBuf {

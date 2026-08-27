@@ -221,6 +221,76 @@ pub(crate) fn inventory_bun_file_dependencies(
     Ok(dependencies.into_iter().collect())
 }
 
+/// Finder metadata found inside a `file:` dependency tree, capped at `limit`.
+///
+/// Bun installs a `file:` dependency by copying the directory, so anything
+/// Finder left in it is copied too — and a Linux container install trips over
+/// AppleDouble sidecars that were never meant to leave macOS. Effigy cannot
+/// change how Bun copies, but it can name the exact files to remove instead of
+/// leaving an operator to decode a copy failure.
+pub(crate) fn finder_metadata_paths(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0 || {
+                let name = entry.file_name().to_str().unwrap_or_default();
+                !entry.file_type().is_dir()
+                    || !matches!(name, ".git" | ".effigy" | "node_modules" | "target")
+            }
+        })
+        .filter_map(Result::ok)
+    {
+        if found.len() >= limit {
+            break;
+        }
+        let Some(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        let is_metadata = if entry.file_type().is_dir() {
+            FINDER_METADATA_DIRS.contains(&name)
+        } else {
+            is_finder_metadata_file(name)
+        };
+        if is_metadata {
+            found.push(entry.into_path());
+        }
+    }
+    found
+}
+
+/// Shell command that clears every Finder class [`finder_metadata_paths`]
+/// reports, for the remediation line on the diagnostic.
+///
+/// Built from the same constants as the detector so the two cannot drift, and
+/// grouped with `\( ... \)` on purpose: in `find P -name a -o -name b
+/// -delete` the action binds to the last branch only, so the ungrouped form
+/// silently leaves `.DS_Store` behind. Directory classes need `rm -rf` rather
+/// than `-delete`, which refuses a non-empty directory, and `-prune` stops
+/// `find` descending into a tree it is about to remove.
+pub(crate) fn finder_metadata_cleanup_command(root: &Path) -> String {
+    let mut predicates = vec![
+        format!("-name {}", shell_quote(".DS_Store")),
+        format!("-name {}", shell_quote("._*")),
+    ];
+    predicates.extend(
+        FINDER_METADATA_DIRS
+            .iter()
+            .map(|dir| format!("-name {}", shell_quote(dir))),
+    );
+    format!(
+        "find {} \\( {} \\) -prune -exec rm -rf {{}} +",
+        shell_quote(&root.display().to_string()),
+        predicates.join(" -o ")
+    )
+}
+
+/// POSIX single-quote a shell word, including paths with embedded quotes.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn inspect_bun_peer_resolutions(
     consumer_root: impl AsRef<Path>,
     packages: &[DependencyPackage],
@@ -452,14 +522,40 @@ fn bun_manifests(root: &Path) -> Result<Vec<(PathBuf, PackageManifest)>, DepsErr
         .collect()
 }
 
+/// Directories macOS drops into a tree that carry no package content.
+///
+/// A `file:` dependency is a plain host directory, so anything Finder or
+/// Spotlight leaves behind rides along with it. `__MACOSX` and `.AppleDouble`
+/// hold AppleDouble *copies* of real files — including a byte-for-byte
+/// unparseable copy of `package.json` — so walking into them turns a Bun
+/// operation over a Finder-touched checkout into a hard parse failure.
+const FINDER_METADATA_DIRS: &[&str] = &[
+    ".AppleDouble",
+    ".DocumentRevisions-V100",
+    ".Spotlight-V100",
+    ".TemporaryItems",
+    ".Trashes",
+    ".fseventsd",
+    "__MACOSX",
+];
+
+/// Whether a file name is macOS Finder metadata rather than package content.
+///
+/// `.DS_Store` is Finder's per-directory state; `._name` is the AppleDouble
+/// sidecar carrying resource forks for `name`.
+fn is_finder_metadata_file(name: &str) -> bool {
+    name == ".DS_Store" || name.starts_with("._")
+}
+
 fn include_entry(entry: &DirEntry) -> bool {
-    if !entry.file_type().is_dir() {
+    let Some(name) = entry.file_name().to_str() else {
         return true;
+    };
+    if !entry.file_type().is_dir() {
+        return !is_finder_metadata_file(name);
     }
-    !matches!(
-        entry.file_name().to_str(),
-        Some(".git" | ".effigy" | "node_modules" | "target")
-    )
+    !matches!(name, ".git" | ".effigy" | "node_modules" | "target")
+        && !FINDER_METADATA_DIRS.contains(&name)
 }
 
 fn workspace_patterns(manifest: &PackageManifest) -> Result<Option<GlobSet>, DepsError> {
@@ -727,5 +823,105 @@ mod tests {
         let shared = inspect_bun_peer_resolutions(consumer.path(), &packages).unwrap();
         assert_eq!(shared[0].status, BunPeerResolutionStatus::Shared);
         assert!(shared[0].message.is_none());
+    }
+
+    #[test]
+    fn finder_metadata_does_not_break_package_discovery() {
+        let root = TempDir::new().expect("tempdir");
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"@acme/core","version":"1.0.0"}"#,
+        )
+        .expect("root manifest");
+        fs::write(root.path().join(".DS_Store"), b"\x00\x01binary").expect("ds store");
+        fs::write(root.path().join("._package.json"), b"\x00\x05AppleDouble").expect("sidecar");
+        let apple_double = root.path().join("__MACOSX");
+        fs::create_dir_all(&apple_double).expect("macosx dir");
+        fs::write(apple_double.join("package.json"), b"\x00not json").expect("shadow manifest");
+
+        let packages = inventory_bun_library(root.path()).expect("inventory");
+
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "@acme/core");
+    }
+
+    #[test]
+    fn finder_metadata_paths_lists_droppings_under_a_file_dependency() {
+        let root = TempDir::new().expect("tempdir");
+        fs::create_dir_all(root.path().join("src")).expect("src");
+        fs::create_dir_all(root.path().join("node_modules/dep")).expect("node_modules");
+        fs::write(root.path().join(".DS_Store"), b"x").expect("ds store");
+        fs::write(root.path().join("src/._index.ts"), b"x").expect("sidecar");
+        fs::write(root.path().join("node_modules/dep/.DS_Store"), b"x").expect("ignored");
+
+        let found = super::finder_metadata_paths(root.path(), 10);
+
+        let rendered = found
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(found.len(), 2, "{rendered}");
+        assert!(rendered.contains(".DS_Store"));
+        assert!(rendered.contains("._index.ts"));
+        assert!(!rendered.contains("node_modules"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finder_metadata_cleanup_command_clears_every_reported_class() {
+        let root = TempDir::new().expect("tempdir");
+        let path = root.path();
+        fs::create_dir_all(path.join("src")).expect("src");
+        fs::create_dir_all(path.join("__MACOSX/nested")).expect("macosx");
+        fs::create_dir_all(path.join(".AppleDouble")).expect("appledouble");
+        fs::write(path.join(".DS_Store"), b"x").expect("ds store");
+        fs::write(path.join("src/._index.ts"), b"x").expect("sidecar");
+        fs::write(path.join("src/index.ts"), b"export {}").expect("source");
+        fs::write(path.join("__MACOSX/nested/junk"), b"x").expect("junk");
+        fs::write(path.join(".AppleDouble/package.json"), b"\x00").expect("shadow manifest");
+        assert!(
+            !super::finder_metadata_paths(path, 10).is_empty(),
+            "fixture should report metadata before cleanup"
+        );
+
+        let command = super::finder_metadata_cleanup_command(path);
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .status()
+            .expect("run cleanup command");
+
+        assert!(status.success(), "cleanup command failed: {command}");
+        assert_eq!(
+            super::finder_metadata_paths(path, 10),
+            Vec::<std::path::PathBuf>::new(),
+            "cleanup left metadata behind: {command}"
+        );
+        assert!(
+            path.join("src/index.ts").is_file(),
+            "cleanup removed real source: {command}"
+        );
+    }
+
+    #[test]
+    fn finder_metadata_cleanup_command_groups_predicates_and_quotes_the_path() {
+        let command = super::finder_metadata_cleanup_command(std::path::Path::new(
+            "/tmp/it's a path/library",
+        ));
+
+        // Ungrouped `-name a -o -name b -delete` binds the action to the last
+        // branch only, which is the precedence bug this guards.
+        assert!(command.contains("\\( -name"), "{command}");
+        assert!(command.contains(") -prune -exec rm -rf {} +"), "{command}");
+        assert!(
+            command.contains("'/tmp/it'\\''s a path/library'"),
+            "{command}"
+        );
+        for dir in super::FINDER_METADATA_DIRS {
+            assert!(command.contains(&format!("-name '{dir}'")), "{command}");
+        }
+        assert!(command.contains("-name '.DS_Store'"), "{command}");
+        assert!(command.contains("-name '._*'"), "{command}");
     }
 }

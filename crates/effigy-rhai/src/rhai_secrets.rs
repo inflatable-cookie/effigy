@@ -77,7 +77,7 @@ pub(crate) fn resolve_rhai_secret_store(
     }
 
     if !required.is_empty() {
-        let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+        let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)?;
         if !vault_path.exists() {
             return Err(RhaiHostError::new(format!(
                 "required Rhai secrets are declared but the vault is missing at {}",
@@ -122,6 +122,41 @@ fn resolve_rhai_secret_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
 ) -> Result<PathBuf, RhaiHostError> {
+    let declared = declared_rhai_secret_vault_path(secrets)?;
+    if declared.is_absolute() {
+        Ok(declared)
+    } else {
+        Ok(repo_root.join(declared))
+    }
+}
+
+/// The vault every Rhai secret operation acts on, shared across worktrees.
+///
+/// The local vault is machine-local state outside version control, so a fresh
+/// `git worktree` has none. Reads *and* mutations resolve through here so a
+/// linked worktree operates on the one machine-local vault: resolving reads
+/// and writes differently would let `secrets::set` fork a partial worktree
+/// vault that then shadows every primary-only record.
+///
+/// Only vault *creation* uses [`resolve_rhai_secret_vault_path`] directly.
+fn resolve_shared_rhai_secret_vault_path(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+) -> Result<PathBuf, RhaiHostError> {
+    let declared = declared_rhai_secret_vault_path(secrets)?;
+    let resolved = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+    if resolved.exists() || declared.is_absolute() {
+        return Ok(resolved);
+    }
+    Ok(
+        effigy_core::git_worktree::primary_checkout_fallback(repo_root, &declared)
+            .unwrap_or(resolved),
+    )
+}
+
+fn declared_rhai_secret_vault_path(
+    secrets: &ManifestSecretsConfig,
+) -> Result<PathBuf, RhaiHostError> {
     let vault = secrets.vault.as_ref().ok_or_else(|| {
         RhaiHostError::new("`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing")
     })?;
@@ -129,12 +164,7 @@ fn resolve_rhai_secret_vault_path(
         .path
         .as_deref()
         .ok_or_else(|| RhaiHostError::new("`[secrets.vault].path` is required for Rhai secrets"))?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
+    Ok(PathBuf::from(path))
 }
 
 fn read_rhai_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RhaiHostError> {
@@ -298,7 +328,7 @@ fn active_rhai_load_vault_if_needed(
             "Rhai secrets require `[secrets].backend = \"effigy-vault\"`",
         ));
     }
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+    let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)?;
     if !vault_path.exists() {
         if require_unlock {
             return Err(RhaiHostError::new(format!(
@@ -404,7 +434,7 @@ fn active_rhai_set_secret_records(
         }
     }
 
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)
+    let vault_path = resolve_shared_rhai_secret_vault_path(repo_root, secrets)
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
     let passphrase = match active_rhai_unlocked_passphrase()
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?

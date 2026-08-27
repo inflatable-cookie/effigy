@@ -326,3 +326,90 @@ fn execute_rhai_script_can_use_deploy_target_secret_when_allowed() {
 
     assert_eq!(fs::read_to_string(marker).expect("marker"), "deploy_secret");
 }
+
+/// A linked worktree must mutate the primary checkout's vault, not fork a
+/// partial local one. Resolving reads and writes differently would let
+/// `secrets::set` create a worktree vault holding only the written record,
+/// which then shadows every primary-only record on the next read.
+#[test]
+fn rhai_secret_set_from_a_linked_worktree_mutates_the_shared_vault() {
+    let root = temp_root("rhai-secret-set-worktree");
+    let primary = root.join("primary");
+    let worktree = root.join("worktrees/feature");
+    let worktree_git_dir = primary.join(".git/worktrees/feature");
+    fs::create_dir_all(&worktree_git_dir).expect("worktree git dir");
+    fs::create_dir_all(&worktree).expect("worktree root");
+    fs::write(worktree_git_dir.join("commondir"), "../..\n").expect("commondir");
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", worktree_git_dir.display()),
+    )
+    .expect("gitdir pointer");
+
+    let manifest = r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = false
+targets = ["tasks", "rhai"]
+
+[secrets.keys.oauth_key]
+required = false
+targets = ["tasks", "rhai"]
+"#;
+    // The manifest is version controlled, so both checkouts have it. The vault
+    // is not, so only the primary checkout has one.
+    fs::write(primary.join("effigy.toml"), manifest).expect("primary manifest");
+    fs::write(worktree.join("effigy.toml"), manifest).expect("worktree manifest");
+    write_test_vault(
+        &primary,
+        "vault-passphrase",
+        &[("api_token", "primary_token"), ("oauth_key", "primary_key")],
+    );
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+
+    execute_rhai_script(
+        &script_context(&worktree),
+        r#"secrets::set("api_token", "worktree_token");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+
+    assert!(
+        !worktree.join(".effigy/secrets/local.vault").exists(),
+        "the worktree must not fork its own vault"
+    );
+    let raw = fs::read_to_string(primary.join(".effigy/secrets/local.vault")).expect("read vault");
+    let payload = VaultEnvelope::from_json(&raw)
+        .expect("parse vault")
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt vault");
+    assert_eq!(
+        payload
+            .records
+            .get("api_token")
+            .expect("written secret")
+            .value
+            .expose(),
+        "worktree_token"
+    );
+    assert_eq!(
+        payload
+            .records
+            .get("oauth_key")
+            .expect("primary-only secret survives")
+            .value
+            .expose(),
+        "primary_key"
+    );
+}

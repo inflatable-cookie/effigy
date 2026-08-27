@@ -14,6 +14,58 @@ pub(in crate::runner) fn resolve_effigy_vault_path(
     secrets: &ManifestSecretsConfig,
     purpose: &str,
 ) -> Result<PathBuf, RunnerError> {
+    let declared = declared_vault_path(secrets, purpose)?;
+    if declared.is_absolute() {
+        Ok(declared)
+    } else {
+        Ok(repo_root.join(declared))
+    }
+}
+
+/// The vault every command acts on, shared across linked worktrees.
+///
+/// The local vault deliberately lives outside version control, so a freshly
+/// created `git worktree` starts without one and every secret-backed task in
+/// it fails — even though the same machine already holds an unlocked vault in
+/// the primary checkout. Reads *and* read-modify-writes resolve through here
+/// so a worktree operates on the one machine-local vault: resolving reads and
+/// writes differently would let a mutation fork a partial worktree vault that
+/// then shadows every primary-only record.
+///
+/// Only vault *creation* (`secrets init`) uses [`resolve_effigy_vault_path`]
+/// directly, so authoring a new vault stays where the caller asked for it.
+pub(in crate::runner) fn resolve_shared_effigy_vault_path(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+    purpose: &str,
+) -> Result<PathBuf, RunnerError> {
+    let declared = declared_vault_path(secrets, purpose)?;
+    let resolved = resolve_effigy_vault_path(repo_root, secrets, purpose)?;
+    if resolved.exists() || declared.is_absolute() {
+        return Ok(resolved);
+    }
+    if let Some(shared) = effigy_core::git_worktree::primary_checkout_fallback(repo_root, &declared)
+    {
+        return Ok(shared);
+    }
+    // Still worth saying where a shared vault would have to live: the caller's
+    // own "vault is missing" error only names this worktree.
+    if let Some(primary) = effigy_core::git_worktree::detect_linked_worktree(repo_root)
+        .and_then(|layout| layout.primary_checkout_root)
+    {
+        eprintln!(
+            "[warn] no local vault for {purpose} at {} and none in the primary checkout {}; run `effigy secrets init` there so registered worktrees share one vault",
+            resolved.display(),
+            primary.display()
+        );
+    }
+    Ok(resolved)
+}
+
+fn declared_vault_path(
+    secrets: &ManifestSecretsConfig,
+    purpose: &str,
+) -> Result<PathBuf, RunnerError> {
     let vault = secrets.vault.as_ref().ok_or_else(|| {
         RunnerError::task_invocation(
             "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
@@ -22,12 +74,7 @@ pub(in crate::runner) fn resolve_effigy_vault_path(
     let path = vault.path.as_deref().ok_or_else(|| {
         RunnerError::task_invocation(format!("`[secrets.vault].path` is required for {purpose}"))
     })?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
+    Ok(PathBuf::from(path))
 }
 
 pub(in crate::runner) fn read_effigy_vault_payload(
@@ -166,4 +213,94 @@ fn write_private_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerError
             path.display()
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use effigy_manifest::config_sections::{ManifestSecretsConfig, ManifestSecretsVaultConfig};
+    use tempfile::TempDir;
+
+    use super::{resolve_effigy_vault_path, resolve_shared_effigy_vault_path};
+
+    const VAULT_RELATIVE: &str = ".effigy/secrets/local.vault";
+
+    fn secrets() -> ManifestSecretsConfig {
+        ManifestSecretsConfig {
+            vault: Some(ManifestSecretsVaultConfig {
+                path: Some(VAULT_RELATIVE.to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Primary checkout with a vault, plus a linked worktree that has none.
+    fn worktree_fixture() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let root = TempDir::new().expect("tempdir");
+        let primary = root.path().join("primary");
+        let worktree = root.path().join("wt/feature");
+        let worktree_git_dir = primary.join(".git/worktrees/feature");
+        fs::create_dir_all(&worktree_git_dir).expect("worktree git dir");
+        fs::create_dir_all(&worktree).expect("worktree root");
+        fs::write(worktree_git_dir.join("commondir"), "../..\n").expect("commondir");
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .expect("gitdir pointer");
+        (root, primary, worktree)
+    }
+
+    #[test]
+    fn worktree_read_falls_back_to_the_primary_checkout_vault() {
+        let (_root, primary, worktree) = worktree_fixture();
+        let primary_vault = primary.join(VAULT_RELATIVE);
+        fs::create_dir_all(primary_vault.parent().expect("vault parent")).expect("vault dir");
+        fs::write(&primary_vault, "{}").expect("vault");
+
+        let resolved =
+            resolve_shared_effigy_vault_path(&worktree, &secrets(), "test").expect("read path");
+
+        assert_eq!(resolved, primary_vault);
+    }
+
+    #[test]
+    fn worktree_read_prefers_the_worktrees_own_vault() {
+        let (_root, primary, worktree) = worktree_fixture();
+        for root in [&primary, &worktree] {
+            let vault = root.join(VAULT_RELATIVE);
+            fs::create_dir_all(vault.parent().expect("vault parent")).expect("vault dir");
+            fs::write(&vault, "{}").expect("vault");
+        }
+
+        let resolved =
+            resolve_shared_effigy_vault_path(&worktree, &secrets(), "test").expect("read path");
+
+        assert_eq!(resolved, worktree.join(VAULT_RELATIVE));
+    }
+
+    #[test]
+    fn write_path_never_redirects_to_the_primary_checkout() {
+        let (_root, primary, worktree) = worktree_fixture();
+        let primary_vault = primary.join(VAULT_RELATIVE);
+        fs::create_dir_all(primary_vault.parent().expect("vault parent")).expect("vault dir");
+        fs::write(&primary_vault, "{}").expect("vault");
+
+        let resolved = resolve_effigy_vault_path(&worktree, &secrets(), "test").expect("path");
+
+        assert_eq!(resolved, worktree.join(VAULT_RELATIVE));
+    }
+
+    #[test]
+    fn ordinary_checkout_read_path_is_unchanged() {
+        let root = TempDir::new().expect("tempdir");
+        fs::create_dir_all(root.path().join(".git")).expect("git dir");
+
+        let resolved =
+            resolve_shared_effigy_vault_path(root.path(), &secrets(), "test").expect("read path");
+
+        assert_eq!(resolved, root.path().join(VAULT_RELATIVE));
+    }
 }
