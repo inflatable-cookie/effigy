@@ -33,10 +33,12 @@ mod structured_mount_tests {
         });
 
         let legacy = parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &legacy)
-            .expect("legacy mount");
+            .expect("legacy mount")
+            .expect("legacy mount source present");
         let structured =
             parse_workspace_extra_mount(&repo_root, "dev", workspace_root, &structured)
-                .expect("structured mount");
+                .expect("structured mount")
+                .expect("structured mount source present");
 
         assert_eq!(structured.rendered, legacy.rendered);
         assert_eq!(structured.source, legacy.source);
@@ -58,7 +60,8 @@ mod structured_mount_tests {
 
         let rendered =
             parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
-                .expect("structured mount");
+                .expect("structured mount")
+                .expect("structured mount source present");
 
         assert_eq!(rendered.target, "/workspace-root/shared-tools");
         let _ = fs::remove_dir_all(repo_root);
@@ -83,7 +86,8 @@ mod structured_mount_tests {
         });
         let rendered =
             parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
-                .expect("structured mount");
+                .expect("structured mount")
+                .expect("catalog mount source present");
 
         let isolation = build_isolation_mounts(
             &repo_root,
@@ -95,6 +99,55 @@ mod structured_mount_tests {
 
         assert_eq!(isolation.len(), 1);
         assert_eq!(isolation[0].target, "/workspace-root/producer/vendor");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn absent_sibling_mount_is_skipped_instead_of_aborting() {
+        let repo_root = temp_dir("absent-sibling");
+        let legacy = ManifestSystemMount::Spec("../book".to_owned());
+        let structured = ManifestSystemMount::Table(ManifestSystemMountTable {
+            member: None,
+            source: Some("../book".to_owned()),
+            target: Some("/workspace-root/book".to_owned()),
+            options: vec![],
+            catalog: false,
+        });
+
+        assert!(parse_workspace_extra_mount(
+            &repo_root,
+            "dev",
+            Path::new("/workspace-root"),
+            &legacy
+        )
+        .expect("legacy mount resolves")
+        .is_none());
+        assert!(parse_workspace_extra_mount(
+            &repo_root,
+            "dev",
+            Path::new("/workspace-root"),
+            &structured
+        )
+        .expect("structured mount resolves")
+        .is_none());
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn absent_catalog_member_mount_still_fails() {
+        let repo_root = temp_dir("absent-catalog");
+        let mount = ManifestSystemMount::Table(ManifestSystemMountTable {
+            member: Some("book".to_owned()),
+            source: Some("../book".to_owned()),
+            target: Some("/workspace-root/book".to_owned()),
+            options: vec![],
+            catalog: true,
+        });
+
+        let error =
+            parse_workspace_extra_mount(&repo_root, "dev", Path::new("/workspace-root"), &mount)
+                .expect_err("catalog member must exist");
+        assert!(error.to_string().contains("../book"));
         let _ = fs::remove_dir_all(repo_root);
     }
 }
@@ -883,5 +936,55 @@ mod host_git_mount_tests {
         let strings: Vec<&str> = env.iter().filter_map(|v| v.as_str()).collect();
         assert!(strings.contains(&"EXISTING=keep"));
         assert!(strings.contains(&"SSH_AUTH_SOCK=/sock"));
+    }
+}
+
+#[cfg(test)]
+mod worktree_git_mount_tests {
+    use super::super::*;
+    use std::fs;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-worktree-git-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("mkdir");
+        path
+    }
+
+    #[test]
+    fn linked_worktree_exposes_the_shared_git_dir_at_its_own_path() {
+        let root = temp_dir("linked");
+        let primary = root.join("primary");
+        let worktree = root.join("wt/feature");
+        let worktree_git_dir = primary.join(".git/worktrees/feature");
+        fs::create_dir_all(&worktree_git_dir).expect("worktree git dir");
+        fs::create_dir_all(&worktree).expect("worktree root");
+        fs::write(worktree_git_dir.join("commondir"), "../..\n").expect("commondir");
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .expect("gitdir pointer");
+
+        let mounts = build_worktree_git_mounts(&worktree);
+
+        let shared = primary.join(".git").display().to_string();
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].target, shared);
+        assert_eq!(mounts[0].rendered, format!("{shared}:{shared}"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ordinary_checkout_adds_no_git_mount() {
+        let root = temp_dir("ordinary");
+        fs::create_dir_all(root.join(".git")).expect("git dir");
+        assert!(build_worktree_git_mounts(&root).is_empty());
+        let _ = fs::remove_dir_all(root);
     }
 }

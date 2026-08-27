@@ -142,10 +142,11 @@ fn build_workspace_runtime_mounts(
         source: Some(canonical_repo_root.clone()),
         named_volume: None,
     }];
+    mounts.extend(build_worktree_git_mounts(&canonical_repo_root));
     let catalog_capabilities =
         load_workspace_catalog_capabilities(repo_root, config, primary_service)?;
     for mount in &workspace.mounts {
-        mounts.push(parse_workspace_extra_mount(
+        mounts.extend(parse_workspace_extra_mount(
             repo_root,
             container_name,
             workspace_root,
@@ -197,12 +198,63 @@ fn build_workspace_runtime_mounts(
     Ok(mounts)
 }
 
+/// Expose the shared git directory behind a linked worktree checkout.
+///
+/// A linked worktree's `.git` is a file holding an absolute host path into the
+/// primary checkout's `.git`. Bind-mounting only the repo root carries that
+/// pointer into the container while its target does not exist there, so every
+/// in-container `git` call fails with "not a git repository". Mounting the
+/// shared git directory at *its own absolute path* keeps the recorded pointer
+/// valid without rewriting repository state.
+///
+/// Returns nothing for an ordinary checkout, a bare repo, or a non-git tree.
+fn build_worktree_git_mounts(canonical_repo_root: &Path) -> Vec<RenderedWorkspaceMount> {
+    let Some(layout) = effigy_core::git_worktree::detect_linked_worktree(canonical_repo_root)
+    else {
+        return Vec::new();
+    };
+    let mut mounts = Vec::new();
+    let mut push = |path: &Path| {
+        // Already inside the repo-root mount: nothing extra to expose.
+        if path.starts_with(canonical_repo_root) {
+            return;
+        }
+        let rendered_path = path.display().to_string();
+        if mounts
+            .iter()
+            .any(|mount: &RenderedWorkspaceMount| mount.target == rendered_path)
+        {
+            return;
+        }
+        mounts.push(RenderedWorkspaceMount {
+            target: rendered_path.clone(),
+            rendered: format!("{rendered_path}:{rendered_path}"),
+            source: None,
+            named_volume: None,
+        });
+    };
+    push(&layout.common_git_dir);
+    // Normally nested under the common dir; mount separately when it is not.
+    if !layout.worktree_git_dir.starts_with(&layout.common_git_dir) {
+        push(&layout.worktree_git_dir);
+    }
+    mounts
+}
+
+/// Resolve one `[containers.<name>.workspace].mounts` entry.
+///
+/// Returns `Ok(None)` when a non-catalog sibling source is simply absent on
+/// this machine — the same tolerance user-global library mounts already have.
+/// A `../book`-style sibling checkout that a teammate has and you do not must
+/// not take down `container status` or `doctor` for the whole repo. Catalog
+/// members stay a hard error: those are declared repository members, and a
+/// missing one is broken state, not machine variance.
 fn parse_workspace_extra_mount(
     repo_root: &Path,
     container_name: &str,
     workspace_root: &Path,
     mount: &ManifestSystemMount,
-) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
     match mount {
         ManifestSystemMount::Spec(raw) => {
             parse_legacy_workspace_extra_mount(repo_root, container_name, workspace_root, raw)
@@ -218,7 +270,7 @@ fn parse_legacy_workspace_extra_mount(
     container_name: &str,
     workspace_root: &Path,
     raw: &str,
-) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
     let mut parts = raw.splitn(3, ':');
     let source_raw = parts.next().unwrap_or_default().trim();
     let target_raw = parts
@@ -240,6 +292,10 @@ fn parse_legacy_workspace_extra_mount(
     } else {
         repo_root.join(source_path)
     };
+    if !resolved_source.exists() {
+        warn_skipped_absent_mount(container_name, source_raw, &resolved_source);
+        return Ok(None);
+    }
     let canonical_source = resolved_source.canonicalize().map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
@@ -264,12 +320,12 @@ fn parse_legacy_workspace_extra_mount(
         rendered.push(':');
         rendered.push_str(options);
     }
-    Ok(RenderedWorkspaceMount {
+    Ok(Some(RenderedWorkspaceMount {
         target,
         rendered,
         source: Some(canonical_source),
         named_volume: None,
-    })
+    }))
 }
 
 fn parse_structured_workspace_extra_mount(
@@ -277,7 +333,7 @@ fn parse_structured_workspace_extra_mount(
     container_name: &str,
     workspace_root: &Path,
     mount: &ManifestSystemMountTable,
-) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
     let source_raw = mount.source.as_deref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace mount member was not resolved"
@@ -289,6 +345,11 @@ fn parse_structured_workspace_extra_mount(
     } else {
         repo_root.join(source_path)
     };
+    let catalog_member = mount.catalog || mount.member.is_some();
+    if !catalog_member && !resolved_source.exists() {
+        warn_skipped_absent_mount(container_name, source_raw, &resolved_source);
+        return Ok(None);
+    }
     let canonical_source = resolved_source.canonicalize().map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
@@ -314,12 +375,20 @@ fn parse_structured_workspace_extra_mount(
         rendered.push(':');
         rendered.push_str(&mount.options.join(","));
     }
-    Ok(RenderedWorkspaceMount {
+    Ok(Some(RenderedWorkspaceMount {
         target,
         rendered,
         source: Some(canonical_source),
         named_volume: None,
-    })
+    }))
+}
+
+/// Report a sibling mount that this machine does not have, then carry on.
+fn warn_skipped_absent_mount(container_name: &str, source_raw: &str, resolved_source: &Path) {
+    eprintln!(
+        "[warn] container `{container_name}` workspace extra mount `{source_raw}` is not present at {}; skipping it",
+        resolved_source.display()
+    );
 }
 
 #[cfg(test)]
