@@ -7,8 +7,8 @@ use std::path::Path;
 use effigy_containers::{
     exec::{
         capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
-        list_running_compose_containers_for_policy, runtime_backend_is_running,
-        selected_backend_label,
+        list_running_compose_containers_for_policy, run_compose_invocation_capture,
+        runtime_backend_is_running, selected_backend_label, ContainerExecError,
     },
     health::probe_health_status,
     load_container_exec_working_dir, load_container_policy, logs_report, status_report,
@@ -83,11 +83,12 @@ pub fn run_container_status(
     } else {
         None
     };
-    let (primary_service_exec_ready, primary_service_exec_warning) = if runtime_running {
-        probe_primary_service_exec_ready(repo_root, &policy, name)?
-    } else {
-        (None, None)
-    };
+    let (primary_service_exec_ready, primary_service_exec_warning) =
+        if should_probe_primary_service_exec(runtime_running, &services) {
+            probe_primary_service_exec_ready(repo_root, &policy, name)?
+        } else {
+            (None, None)
+        };
     let mut report = status_report(
         &policy,
         selected_backend_label(&policy, repo_root),
@@ -354,6 +355,13 @@ fn discover_running_services_for_policy(
     )
 }
 
+fn should_probe_primary_service_exec(
+    runtime_running: bool,
+    services: &[ContainerStatusService],
+) -> bool {
+    runtime_running && !services.is_empty()
+}
+
 fn probe_primary_service_exec_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -376,12 +384,31 @@ fn probe_primary_service_exec_ready(
         ContainerAction::Status,
         "docker compose exec readiness status probe",
     )?;
-    let output = run_compose_plan_capture(policy, &plan)?;
+    let exec_ready = classify_exec_probe_result(
+        run_compose_invocation_capture(
+            &plan.repo_root,
+            policy,
+            &plan.program,
+            &plan.args,
+            &plan.label,
+        )
+        .map(|_| ()),
+    )?;
     Ok(primary_service_exec_readiness(
         policy.primary_service.as_str(),
         &working_dir,
-        output.status.success(),
+        exec_ready,
     ))
+}
+
+fn classify_exec_probe_result(
+    result: Result<(), ContainerExecError>,
+) -> Result<bool, EffigyRuntimeError> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(ContainerExecError::Failure { .. }) => Ok(false),
+        Err(error) => Err(EffigyRuntimeError::task_invocation(error.to_string())),
+    }
 }
 
 fn primary_service_exec_readiness(
@@ -407,9 +434,13 @@ fn primary_service_exec_readiness(
 mod tests {
     use std::path::Path;
 
-    use super::{primary_service_exec_readiness, read_operation_plan};
+    use super::{
+        classify_exec_probe_result, primary_service_exec_readiness, read_operation_plan,
+        should_probe_primary_service_exec,
+    };
     use effigy_containers::{
-        ContainerOperationKind, ContainerReadOperation, ContainerSideEffectClass,
+        exec::ContainerExecError, ContainerOperationKind, ContainerReadOperation,
+        ContainerSideEffectClass, ContainerStatusService,
     };
 
     use crate::test_support::generated_policy;
@@ -469,5 +500,31 @@ mod tests {
         assert!(warning.contains("primary service `workspace`"));
         assert!(warning.contains("/workspace-root/app"));
         assert!(warning.contains("runtime state may be drifted"));
+    }
+
+    #[test]
+    fn primary_service_exec_readiness_failure_is_reported_instead_of_failing_status() {
+        let exec_ready = classify_exec_probe_result(Err(ContainerExecError::Failure {
+            command: "docker compose exec readiness status probe".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "no running containers from service app".to_owned(),
+        }))
+        .expect("ordinary probe failure should remain reportable");
+
+        assert!(!exec_ready);
+    }
+
+    #[test]
+    fn primary_service_exec_readiness_skips_stopped_stack() {
+        assert!(!should_probe_primary_service_exec(true, &[]));
+
+        let services = [ContainerStatusService {
+            name: "app".to_owned(),
+            container_name: "acme-app-1".to_owned(),
+            status: "Up".to_owned(),
+            ports: Vec::new(),
+        }];
+        assert!(should_probe_primary_service_exec(true, &services));
     }
 }

@@ -669,11 +669,7 @@ fn apply_generated_compose_port_policy(
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
     let mut effective_ports = Vec::new();
 
-    let mut registry = if explicit_bindings.is_empty() {
-        Some(load_port_registry()?.unwrap_or_default())
-    } else {
-        None
-    };
+    let mut registry = None;
 
     for service_name in compose_document.sorted_service_names() {
         let Some(service) = compose_document.services.get_mut(&service_name) else {
@@ -706,6 +702,9 @@ fn apply_generated_compose_port_policy(
                 used_explicit_ports.insert(explicit.container);
                 explicit.host
             } else {
+                if registry.is_none() {
+                    registry = Some(load_port_registry()?.unwrap_or_default());
+                }
                 let registry = registry.as_mut().expect("registry exists");
                 registry
                     .assign_port(
@@ -1444,6 +1443,59 @@ services:
             assert!(matches!(
                 &ports[0],
                 GeneratedComposePort::String(raw) if raw == "0.0.0.0:18080:80"
+            ));
+        });
+    }
+
+    #[test]
+    fn typed_generated_compose_port_policy_allocates_unpinned_ports() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        with_test_effigy_home(tempdir.path(), || {
+            let mut compose_document = GeneratedComposeDocument::parse(
+                "acme",
+                "test parse",
+                r#"
+services:
+  app:
+    image: php:8.4-fpm
+    ports:
+      - "8080:80"
+      - "9000:9000"
+"#,
+            )
+            .expect("parse generated compose");
+
+            let effective_ports = apply_generated_compose_port_policy(
+                Path::new("/tmp/acme"),
+                "acme",
+                &[PortBinding {
+                    host: 18080,
+                    container: 80,
+                }],
+                &[],
+                std::net::Ipv4Addr::LOCALHOST,
+                &mut compose_document,
+            )
+            .expect("apply port policy");
+
+            assert_eq!(effective_ports.len(), 2);
+            assert_eq!(effective_ports[0], "18080:80");
+            assert!(effective_ports[1].ends_with(":9000"));
+            assert_ne!(effective_ports[1], "9000:9000");
+
+            let ports = compose_document
+                .services
+                .get("app")
+                .and_then(|service| service.ports.clone())
+                .expect("service ports");
+            assert!(matches!(
+                &ports[0],
+                GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
+            ));
+            assert!(matches!(
+                &ports[1],
+                GeneratedComposePort::String(raw)
+                    if raw == &format!("127.0.0.1:{}", effective_ports[1])
             ));
         });
     }

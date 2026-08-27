@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Generated compose can now combine explicitly pinned host ports with
+  automatically allocated ports without panicking. Container status reports a
+  stopped or non-exec-ready primary service instead of failing the command.
+
 ## [0.12.1] - 2026-08-25
 
 ### Added
