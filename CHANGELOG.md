@@ -12,7 +12,8 @@ During v0.x, MINOR bumps may include breaking changes.
   stopped or non-exec-ready primary service instead of failing the command.
 - `--` now ends task runtime-flag parsing, so `effigy <task> -- --repo <path>`
   forwards `--repo` to the task instead of switching catalogs. Leading
-  `effigy --repo <PATH> <task>` still selects the target repo.
+  `effigy --repo <PATH> <task>` still selects the target repo. `--json` after
+  `--` is a task argument, not the CLI JSON envelope.
 - `effigy doctor` accepts built-in `docs` sequence references and compact
   `{ rhai = "..." }` task values that the runner already executes.
 

@@ -307,7 +307,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
-        Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
+        Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
@@ -317,7 +317,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
     }
 }
 
-fn runtime_flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
+pub fn runtime_flag_present_before_passthrough(args: &[String], flag: &str) -> bool {
     args.iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg == flag)

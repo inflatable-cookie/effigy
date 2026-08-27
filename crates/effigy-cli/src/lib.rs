@@ -16,7 +16,7 @@ pub mod header;
 pub mod help;
 mod value_parsing;
 
-pub use global_json::GlobalCliOptions;
+pub use global_json::{runtime_flag_present_before_passthrough, GlobalCliOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {

@@ -87,6 +87,69 @@ fn cli_leading_repo_still_switches_catalog() {
 }
 
 #[test]
+fn cli_json_after_passthrough_delimiter_does_not_emit_envelope() {
+    let root = temp_workspace("cli-json-after-delimiter");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.echo]\nrun = \"printf home\"\n",
+    )
+    .expect("write manifest");
+
+    let json_after = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(&root)
+        .args(["definitely-not-a-task", "--", "--json"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+    let not_json_after = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(&root)
+        .args(["definitely-not-a-task", "--", "--not-json"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    let json_stdout = String::from_utf8_lossy(&json_after.stdout);
+    let text_stdout = String::from_utf8_lossy(&not_json_after.stdout);
+    assert!(
+        !json_after.status.success() && !not_json_after.status.success(),
+        "missing task should fail"
+    );
+    assert!(
+        !looks_like_command_envelope(&json_stdout),
+        "post-delimiter --json should not emit a JSON envelope, stdout={json_stdout}"
+    );
+    assert_eq!(
+        looks_like_command_envelope(&json_stdout),
+        looks_like_command_envelope(&text_stdout),
+        "post-delimiter --json should match ordinary text output, json={json_stdout} text={text_stdout}"
+    );
+
+    let parse_error = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(&root)
+        .args(["--not-a-global", "--", "--json"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+    let parse_stdout = String::from_utf8_lossy(&parse_error.stdout);
+    assert!(
+        !parse_error.status.success(),
+        "unknown leading flag should fail"
+    );
+    assert!(
+        !looks_like_command_envelope(&parse_stdout),
+        "post-delimiter --json should not JSON-wrap early parse errors, stdout={parse_stdout}"
+    );
+}
+
+fn looks_like_command_envelope(stdout: &str) -> bool {
+    let trimmed = stdout.trim();
+    trimmed.starts_with('{')
+        && serde_json::from_str::<Value>(trimmed)
+            .ok()
+            .is_some_and(|parsed| parsed["schema"] == "effigy.command.v1")
+}
+
+#[test]
 fn cli_doctor_accepts_docs_sequence_and_inline_rhai_task() {
     let root = temp_workspace("cli-doctor-docs-rhai");
     fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
