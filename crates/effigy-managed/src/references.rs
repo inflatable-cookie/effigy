@@ -24,6 +24,10 @@ pub(crate) struct ReferenceResolution<'request, 'catalog> {
     pub(crate) runtime_env_schema_override: Option<&'request Path>,
     pub(crate) depth: usize,
     pub(crate) resolver: TaskResolverFn<'catalog>,
+    /// True when the rendered command will run on the host (suite/sequence
+    /// expansion). False when a managed parent will already exec it in a
+    /// selected container.
+    pub(crate) host_launched: bool,
 }
 
 pub fn resolve_task_reference_run<'a>(
@@ -48,6 +52,7 @@ pub fn resolve_task_reference_run<'a>(
             runtime_env_schema_override: None,
             depth: 0,
             resolver,
+            host_launched: false,
         },
         |detail| context.invalid(detail),
         |detail| context.invalid(detail),
