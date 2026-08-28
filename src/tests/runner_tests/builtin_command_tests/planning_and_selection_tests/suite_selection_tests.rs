@@ -241,6 +241,97 @@ run_in = "container"
 }
 
 #[test]
+fn run_manifest_task_builtin_test_suite_task_ref_honors_inherited_container_run_in() {
+    let root = temp_workspace("builtin-test-suite-task-ref-inherited-run-in");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/test:unit" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[task_defaults]
+run_in = "container"
+
+[tasks."test:unit"]
+run = "printf inherited-container"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "api"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let command = parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command");
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        !command.contains("printf inherited-container"),
+        "inherited container task-ref was inlined onto the host: {command}"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_suite_task_ref_honors_workspace_binding() {
+    let root = temp_workspace("builtin-test-suite-task-ref-workspace-bound");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/test:unit" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[tasks."test:unit"]
+run = "printf workspace-bound"
+workspace = "app"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "api"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let command = parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command");
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        !command.contains("printf workspace-bound"),
+        "workspace-bound task-ref was inlined onto the host: {command}"
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector-unavailable");
     write_package_json_with_test_script(&root);

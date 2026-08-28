@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
     resolve_task_execution_binding, LoadedCatalog, ManifestManagedRun, ManifestTaskRunIn,
-    TaskResolverFn, TaskSelection,
+    ResolvedTaskExecutionBinding, TaskResolverFn, TaskSelection,
 };
 
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
@@ -82,10 +82,23 @@ fn render_selected_task_invocation<F>(
 where
     F: FnOnce() -> ManagedError,
 {
-    let explicit_container = selection.task.run_in == Some(ManifestTaskRunIn::Container)
-        || selection.task.container_lifecycle.unwrap_or(false);
+    let default_run_in = selection
+        .catalog
+        .manifest
+        .task_defaults
+        .as_ref()
+        .and_then(|defaults| defaults.run_in);
+    let effective_run_in = selection.task.effective_run_in(default_run_in);
+    let execution_binding =
+        resolve_task_execution_binding(&selection.catalog.manifest, task_name, selection.task)
+            .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
+    let host_needs_container = effective_run_in == ManifestTaskRunIn::Container
+        || matches!(
+            execution_binding,
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
+        );
     if let Some(run_spec) = selection.task.run.as_ref() {
-        if resolution.host_launched && explicit_container {
+        if resolution.host_launched && host_needs_container {
             return render_builtin_reference_invocation(
                 selector_rendered,
                 resolution.args_rendered,
@@ -94,10 +107,6 @@ where
         }
         return render_selected_task_run(selection, run_spec, task_name, resolution);
     }
-
-    let execution_binding =
-        resolve_task_execution_binding(&selection.catalog.manifest, task_name, selection.task)
-            .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
 
     if selection.task.mode.is_some()
         || has_concurrent_schema(selection.task)

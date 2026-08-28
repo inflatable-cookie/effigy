@@ -17,8 +17,11 @@ During v0.x, MINOR bumps may include breaking changes.
   without renaming gates.
 - `container volume list` marks a declared volume in use when its service
   container is Up, even if inspect missed the mount.
-- Test suite task-refs keep `run_in = "container"` by dispatching through the
-  nested task instead of inlining the command on the host.
+- Test suite task-refs keep container routing — explicit `run_in`, inherited
+  `[task_defaults]`, or a workspace binding — by dispatching through the nested
+  task instead of inlining the command on the host.
+- `effigy tasks` still lists managed profiles alphabetically after
+  `[release.gates]` started preserving declaration order.
 - `effigy scan attention-markers --warning-marker/--high-marker/--critical-marker`
   now changes the rendered pattern lists.
 - Generated compose can now combine explicitly pinned host ports with
