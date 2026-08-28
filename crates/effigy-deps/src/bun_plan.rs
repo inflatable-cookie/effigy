@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{
     canonical_existing_path, BunConsumerInventory, BunConsumerLinkDisposition,
@@ -685,9 +685,25 @@ fn is_consumer_bun_registry_store_path(repo_root: &Path, link_path: &Path, targe
             .unwrap_or_else(|| Path::new("."))
             .join(target)
     };
-    let normalized = canonical_or_original(&resolved);
-    let store = canonical_or_original(&repo_root.join("node_modules").join(".bun"));
+    let normalized = lexically_normalize(&resolved);
+    let store = lexically_normalize(&repo_root.join("node_modules").join(".bun"));
     normalized.starts_with(&store)
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn refuse_unmanaged_partial_consumer_closure(
@@ -1412,6 +1428,37 @@ mod tests {
                 .contains("conflicting symlink target `/foreign/node_modules/.bun/underlay`"),
             "got {error}"
         );
+    }
+
+    #[test]
+    fn escaped_bun_store_symlink_targets_remain_conflicts() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let escaped = fixture.repo.join("node_modules/.bun/../../foreign-package");
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: escaped.clone(),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect_err("escaped .bun symlink must stay a conflict");
+        assert!(
+            error.to_string().contains("conflicting symlink target"),
+            "got {error}"
+        );
+        assert!(error.to_string().contains("foreign-package"), "got {error}");
     }
 
     #[test]
