@@ -91,6 +91,46 @@ fn run_manifest_task_builtin_scan_attention_markers_json_emits_machine_payload()
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_attention_markers_cli_overrides_change_patterns() {
+    let root = temp_workspace("builtin-scan-attention-markers-cli-overrides");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// TODO: tidy before refactor", "const live = 1;"],
+    );
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "attention-markers",
+            "--json",
+            "--warning-marker",
+            "CUSTOM_WARN",
+            "--high-marker",
+            "CUSTOM_HIGH",
+            "--critical-marker",
+            "CUSTOM_CRIT",
+        ],
+    );
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.attention-markers.v1");
+    assert_eq!(
+        parsed["patterns"]["warning"],
+        serde_json::json!(["CUSTOM_WARN"])
+    );
+    assert_eq!(
+        parsed["patterns"]["high"],
+        serde_json::json!(["CUSTOM_HIGH"])
+    );
+    assert_eq!(
+        parsed["patterns"]["critical"],
+        serde_json::json!(["CUSTOM_CRIT"])
+    );
+    assert_eq!(parsed["finding_count"], 0);
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_attention_markers_graph_context_enriches_findings() {
     let root = temp_workspace("builtin-scan-attention-markers-graph-context-enrich");
     write_root_manifest(&root, "");

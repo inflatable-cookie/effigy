@@ -18,9 +18,10 @@ pub(in crate::scan::execution) use api::{
     ScanPayloadResult, ScanThresholdOverrideOptions, ScanThresholds,
 };
 pub(in crate::scan::execution) use overrides::{
-    apply_comment_ratio_request_overrides, apply_common_request_overrides,
-    apply_generated_in_src_request_overrides, apply_stale_suppression_request_overrides,
-    apply_threshold_request_overrides, reject_threshold_overrides,
+    apply_attention_marker_request_overrides, apply_comment_ratio_request_overrides,
+    apply_common_request_overrides, apply_generated_in_src_request_overrides,
+    apply_stale_suppression_request_overrides, apply_threshold_request_overrides,
+    reject_threshold_overrides,
 };
 use response::{
     build_scan_payload, fail_on_findings_error, render_scan_output, render_scan_response,

@@ -659,6 +659,9 @@ fn classify_consumer_link(
         BunPathObservation::Symlink { target } if same_path(target, expected) => {
             Ok(BunConsumerLinkDisposition::Linked)
         }
+        BunPathObservation::Symlink { target } if is_bun_registry_store_path(target) => {
+            Ok(BunConsumerLinkDisposition::Registry)
+        }
         BunPathObservation::Symlink { target } => Err(DepsError::invalid(
             link_path,
             format!(
@@ -667,6 +670,11 @@ fn classify_consumer_link(
             ),
         )),
     }
+}
+
+fn is_bun_registry_store_path(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == ".bun")
 }
 
 fn refuse_unmanaged_partial_consumer_closure(
@@ -1325,6 +1333,41 @@ mod tests {
         let index: BunRegistrationIndex =
             serde_json::from_str(index_change.after.as_ref().unwrap()).unwrap();
         assert!(!index.registrations[0].effigy_created);
+    }
+
+    #[test]
+    fn registry_package_symlinks_are_replaceable() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: fixture
+                        .repo
+                        .join("node_modules/.bun/underlay@1.2.3/node_modules/underlay"),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let plan = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect("registry symlink should be replaceable");
+        assert_eq!(
+            plan.packages[0].consumer_link,
+            BunConsumerLinkDisposition::Registry
+        );
+        assert!(plan
+            .process_intents
+            .iter()
+            .any(|intent| intent.action == BunProcessAction::LinkConsumer));
     }
 
     #[test]

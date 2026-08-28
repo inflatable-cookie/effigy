@@ -81,3 +81,31 @@ fn runtime_args_keep_repo_override_before_passthrough_delimiter() {
         ]
     );
 }
+
+#[test]
+fn command_passthrough_args_strips_leading_delimiter() {
+    assert_eq!(
+        crate::command_passthrough_args(&["--".to_owned(), "src/foo.test.ts".to_owned(),]),
+        &["src/foo.test.ts".to_owned()]
+    );
+    assert_eq!(
+        crate::render_passthrough_args(&["--".to_owned(), "src/foo.test.ts".to_owned(),]),
+        "'src/foo.test.ts'"
+    );
+}
+
+#[test]
+fn command_passthrough_args_keeps_embedded_delimiter() {
+    assert_eq!(
+        crate::command_passthrough_args(&[
+            "unit".to_owned(),
+            "--".to_owned(),
+            "src/foo.test.ts".to_owned(),
+        ]),
+        &[
+            "unit".to_owned(),
+            "--".to_owned(),
+            "src/foo.test.ts".to_owned(),
+        ]
+    );
+}

@@ -98,8 +98,18 @@ fn split_task_reference_words(raw: &str) -> Result<Vec<String>, String> {
 }
 
 pub fn render_passthrough_args(args: &[String]) -> String {
-    args.iter()
+    command_passthrough_args(args)
+        .iter()
         .map(|arg| shell_quote(arg))
         .collect::<Vec<String>>()
         .join(" ")
+}
+
+/// Drop a leading `--` delimiter so `{args}` receives the tokens after it.
+/// Nested `effigy` re-invocations still see the raw delimiter in `exec` argv.
+pub fn command_passthrough_args(args: &[String]) -> &[String] {
+    match args {
+        [first, rest @ ..] if first == "--" => rest,
+        other => other,
+    }
 }

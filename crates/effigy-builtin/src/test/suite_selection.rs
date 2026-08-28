@@ -67,7 +67,10 @@ pub(super) fn select_builtin_test_suite(
                 available_runners,
             });
         }
-    } else if !passthrough.is_empty() && default_runners.len() > 1 {
+    } else if !passthrough.is_empty()
+        && default_runners.len() > 1
+        && !runnable_matches_catalog(&runnable, &passthrough[0])
+    {
         let first = requested_suite_raw.unwrap_or_else(|| passthrough[0].clone());
         if let Some(suggested_suite) = suggest_suite_name(&first, &available_runners) {
             let remainder = passthrough.iter().skip(1).cloned().collect::<Vec<String>>();
@@ -99,6 +102,8 @@ pub(super) fn select_builtin_test_suite(
         });
     }
 
+    peel_catalog_target(&mut runnable, &mut passthrough);
+
     if requested_suite.is_none() {
         runnable.retain(|entry| entry.is_default);
         if runnable.is_empty() {
@@ -114,6 +119,29 @@ pub(super) fn select_builtin_test_suite(
         requested_suite,
         passthrough,
     })
+}
+
+fn runnable_catalog_name(name: &str) -> &str {
+    name.split_once('/')
+        .map(|(catalog, _)| catalog)
+        .unwrap_or(name)
+}
+
+fn runnable_matches_catalog(runnable: &[BuiltinTestRunnable], catalog: &str) -> bool {
+    runnable
+        .iter()
+        .any(|entry| runnable_catalog_name(&entry.name) == catalog)
+}
+
+fn peel_catalog_target(runnable: &mut Vec<BuiltinTestRunnable>, passthrough: &mut Vec<String>) {
+    let Some(catalog) = passthrough.first().cloned() else {
+        return;
+    };
+    if !runnable_matches_catalog(runnable, &catalog) {
+        return;
+    }
+    runnable.retain(|entry| runnable_catalog_name(&entry.name) == catalog);
+    passthrough.remove(0);
 }
 
 pub(super) fn render_available_suites(available_runners: &BTreeSet<String>) -> String {
