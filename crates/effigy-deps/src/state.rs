@@ -79,6 +79,16 @@ impl RepoLinkStateStore {
         }
     }
 
+    /// The ledger for the checkout that owns `path`.
+    ///
+    /// Machine-local link state is one file per checkout, so a nested Bun
+    /// package root and its checkout resolve to the same store. Use this
+    /// wherever a repo path — rather than an exact ledger path — selects the
+    /// store, so reads and writes cannot drift apart.
+    pub fn for_checkout(path: impl AsRef<Path>) -> Self {
+        Self::for_repo(repo_state_root(path.as_ref()))
+    }
+
     pub fn at(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
     }
@@ -253,22 +263,22 @@ pub fn plan_repo_local_state_ignore(
 /// backups still belong to the enclosing checkout, so both a bare invocation
 /// and `--repo <nested-root>` resolve to the same state location. A path
 /// outside any checkout owns its own state.
-pub(crate) fn repo_state_root(path: &Path) -> PathBuf {
+pub fn repo_state_root(path: &Path) -> PathBuf {
     path.ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
         .map(|ancestor| fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf()))
         .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
-/// Whether a link recorded against `consumer_repo` belongs to `repo_root`.
+/// Whether two paths are owned by the same checkout.
 ///
 /// A Bun link is keyed by package root, so a repo whose Bun tree sits below
-/// the checkout records `studio/` rather than the checkout itself.
-pub(crate) fn link_belongs_to_repo(consumer_repo: &Path, repo_root: &Path) -> bool {
-    let consumer_repo =
-        fs::canonicalize(consumer_repo).unwrap_or_else(|_| consumer_repo.to_path_buf());
-    let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
-    consumer_repo.starts_with(&repo_root)
+/// the checkout records `studio/` rather than the checkout itself. Comparing
+/// resolved checkout identities rather than path prefixes keeps an
+/// independently nested checkout — a vendored clone with its own `.git` — out
+/// of its parent's link state.
+pub(crate) fn shares_checkout(left: &Path, right: &Path) -> bool {
+    repo_state_root(left) == repo_state_root(right)
 }
 
 pub fn canonical_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, DepsError> {

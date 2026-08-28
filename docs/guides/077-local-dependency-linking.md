@@ -167,6 +167,13 @@ Both identities are resolved from whichever path you name, so
 `effigy deps link bun ../longhorn` from the repo root produce the same link.
 Relative library paths still resolve from the path you passed.
 
+Every command that reads link state resolves the same single ledger, so
+`deps status`, `deps pin`, and `doctor` see a nested-root link from either
+entry point. In particular `deps pin bun --repo studio` still refuses while a
+link overlaps, instead of reading an empty nested store and writing overrides
+over it. A vendored checkout with its own `.git` owns its own state and is
+never claimed by its parent.
+
 ## Cargo Workflow
 
 Cargo mode inventories the library and every real consumer workspace. It

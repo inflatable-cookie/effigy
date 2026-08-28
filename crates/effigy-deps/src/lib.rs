@@ -59,10 +59,10 @@ pub use model::{
 };
 pub use process::{ProcessOutput, ProcessRequest, ReadOnlyProcess, StdReadOnlyProcess};
 pub use state::{
-    canonical_existing_path, plan_repo_local_state_ignore, BunRegistrationIndexStore,
-    IgnoreFileChange, LocalStateIgnorePlan, RepoLinkState, RepoLinkStateStore,
-    BUN_REGISTRATION_INDEX_SCHEMA, BUN_REGISTRATION_INDEX_SCHEMA_VERSION, REPO_LINK_STATE_SCHEMA,
-    REPO_LINK_STATE_SCHEMA_VERSION,
+    canonical_existing_path, plan_repo_local_state_ignore, repo_state_root,
+    BunRegistrationIndexStore, IgnoreFileChange, LocalStateIgnorePlan, RepoLinkState,
+    RepoLinkStateStore, BUN_REGISTRATION_INDEX_SCHEMA, BUN_REGISTRATION_INDEX_SCHEMA_VERSION,
+    REPO_LINK_STATE_SCHEMA, REPO_LINK_STATE_SCHEMA_VERSION,
 };
 pub use status::{
     cargo_managed_block_markers, detect_repo_package_managers, inspect_dependency_status,

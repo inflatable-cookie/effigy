@@ -758,12 +758,15 @@ fn append_orphan_bun_registrations(
     reports: &mut Vec<DependencyLinkReport>,
 ) {
     for registration in &index.registrations {
-        let references_repo = registration.consumers.iter().any(|consumer| {
-            canonical_or_original(&consumer.consumer_repo) == canonical_or_original(repo_root)
-        });
+        // A link records its Bun package root, so a `studio/` reference still
+        // belongs to the checkout being inspected.
+        let references_repo = registration
+            .consumers
+            .iter()
+            .any(|consumer| crate::state::shares_checkout(&consumer.consumer_repo, repo_root));
         let represented = state.links.iter().any(|link| {
             link.mechanism == LinkMechanism::BunLink
-                && crate::state::link_belongs_to_repo(&link.key.consumer_repo, repo_root)
+                && crate::state::shares_checkout(&link.key.consumer_repo, repo_root)
                 && link
                     .packages
                     .iter()
@@ -1476,6 +1479,82 @@ mod tests {
             .borrow()
             .iter()
             .all(|request| request.program == "cargo" || request.program == "git"));
+    }
+
+    fn bun_registration(
+        package_name: &str,
+        package_path: &Path,
+        consumer_repo: &Path,
+    ) -> BunRegistration {
+        BunRegistration {
+            package_name: package_name.to_owned(),
+            package_path: package_path.to_path_buf(),
+            effigy_created: true,
+            consumers: vec![BunConsumerReference {
+                consumer_repo: consumer_repo.to_path_buf(),
+                library_path: package_path.to_path_buf(),
+            }],
+        }
+    }
+
+    /// Links record their Bun package root, so a `studio/` reference is still a
+    /// reference to the checkout being inspected.
+    #[test]
+    fn orphan_bun_registration_from_a_nested_root_is_reported_at_the_checkout() {
+        let temp = TempDir::new().unwrap();
+        let checkout = temp.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::create_dir_all(checkout.join("studio")).unwrap();
+        let checkout = fs::canonicalize(&checkout).unwrap();
+        let studio = fs::canonicalize(checkout.join("studio")).unwrap();
+        let mut index = BunRegistrationIndex::empty();
+        index
+            .registrations
+            .push(bun_registration("@acme/core", &studio, &studio));
+
+        let report = inspect_dependency_status(
+            &checkout,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &index,
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report
+                .links
+                .iter()
+                .map(|link| link.observed.drift[0].code.as_str())
+                .collect::<Vec<_>>(),
+            ["bun-registration-without-ledger"]
+        );
+    }
+
+    /// A vendored clone carries its own `.git`, so its links are its own.
+    #[test]
+    fn registration_from_an_independently_nested_checkout_is_not_claimed() {
+        let temp = TempDir::new().unwrap();
+        let checkout = temp.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::create_dir_all(checkout.join("vendor/other/.git")).unwrap();
+        let checkout = fs::canonicalize(&checkout).unwrap();
+        let nested = fs::canonicalize(checkout.join("vendor/other")).unwrap();
+        let mut index = BunRegistrationIndex::empty();
+        index
+            .registrations
+            .push(bun_registration("@acme/core", &nested, &nested));
+
+        let report = inspect_dependency_status(
+            &checkout,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &index,
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert!(report.links.is_empty());
     }
 
     #[test]

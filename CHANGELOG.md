@@ -29,6 +29,11 @@ During v0.x, MINOR bumps may include breaking changes.
   backups stay with the enclosing checkout, so `deps status` still reports them
   from the repo root and `deps unlink` removes the entry it wrote.
   `deps status` detects Bun below the root the same way.
+- Machine-local link state resolves to one ledger per checkout for every read
+  path, so `deps status`, `deps pin`, and `doctor` see a nested-root link from
+  either entry point. `deps pin bun --repo <nested-root>` no longer reads an
+  empty nested store and bypasses its own active-link guard, and a vendored
+  checkout with its own `.git` is no longer claimed by its parent's status.
 - Workspace permission prep keeps one recursive chown for the authoritative
   root `node_modules` / `vendor` tree, shallow-chowns redundant child package
   trees, skips targets nested under another recursive prep path, and reports

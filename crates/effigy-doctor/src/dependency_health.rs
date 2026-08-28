@@ -38,7 +38,7 @@ pub(super) fn run_dependency_health_check(repo_root: &Path, state: &mut DoctorSt
 }
 
 fn inspect(repo_root: &Path) -> Result<DependencyStatusReport, String> {
-    let state = RepoLinkStateStore::for_repo(repo_root)
+    let state = RepoLinkStateStore::for_checkout(repo_root)
         .read()
         .map_err(|error| error.to_string())?;
     let home = std::env::var_os("HOME")
