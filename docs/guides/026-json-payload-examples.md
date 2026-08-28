@@ -60,6 +60,7 @@ Companion references:
   "command": "deps status",
   "repo_root": "/workspace/app",
   "manager": "cargo",
+  "detected_managers": ["cargo"],
   "summary": {
     "total": 1,
     "missing": 0,

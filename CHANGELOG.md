@@ -6,7 +6,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy --json deps status` detects a root Bun workspace (`package.json` plus
+  `bun.lock` / `bun.lockb`, Bun `packageManager`, or workspaces) and reports
+  `manager: "bun"` with `detected_managers` even when no local-link record
+  exists.
+
 ### Fixed
+- Workspace container handoff reuses an existing linux Effigy artifact with a
+  matching rehearsal receipt instead of rebuilding through Docker Hub while the
+  consumer stack is already Up. When a rebuild is still required and fails, the
+  error names cached-image / offline reuse options.
 - Agent skill task-inventory examples now query `.result.catalog_tasks[].task`
   instead of the stale `.result.payload.tasks[]` path.
 - Parallel git-bundle materialization serializes clone/fetch/checkout and

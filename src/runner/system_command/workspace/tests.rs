@@ -12,6 +12,7 @@ use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
     expected_workspace_effigy_install_identity, linux_workspace_artifact_lock_path,
+    linux_workspace_artifact_offline_hint, linux_workspace_effigy_artifact_is_reusable,
     linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
     linux_workspace_effigy_release_url, read_trimmed_workspace_effigy_active_version,
     render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
@@ -227,6 +228,57 @@ fn linux_artifact_refreshes_when_rehearsal_receipt_is_missing_or_wrong_target() 
         &artifact,
         LinuxWorkspaceTarget::X86_64Gnu,
     ));
+}
+
+#[test]
+fn linux_artifact_is_reusable_when_file_and_receipt_match_even_if_stale() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-linux-artifact-reusable-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let artifacts_dir = root.join("artifacts");
+    std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
+    let host = root.join("effigy-host");
+    let artifact = artifacts_dir.join("effigy-linux");
+    let receipt = artifacts_dir.join("rehearsal.txt");
+    std::fs::write(&host, "host").expect("write host");
+    std::fs::write(&artifact, "artifact").expect("write artifact");
+    std::fs::write(
+        &receipt,
+        "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
+    )
+    .expect("write receipt");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::write(&host, "host-new").expect("rewrite host");
+
+    assert!(linux_workspace_effigy_artifact_needs_refresh(
+        &host,
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+    ));
+    assert!(linux_workspace_effigy_artifact_is_reusable(
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu,
+    ));
+}
+
+#[test]
+fn linux_artifact_offline_hint_names_hub_images_and_reuse_path() {
+    let artifact = std::path::Path::new("/tmp/effigy-x86_64-unknown-linux-gnu");
+    let hinted = linux_workspace_artifact_offline_hint(
+        crate::runner::error::RunnerError::task_invocation("build failed"),
+        artifact,
+    );
+    let message = hinted.to_string();
+    assert!(message.contains("build failed"));
+    assert!(message.contains("ubuntu:22.04"));
+    assert!(message.contains("effigy-linux-release-builder"));
+    assert!(message.contains(artifact.to_string_lossy().as_ref()));
+    assert!(message.contains(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV));
+    assert!(message.contains("download"));
 }
 
 #[test]

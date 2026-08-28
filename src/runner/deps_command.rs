@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
 use effigy_deps::{
-    execute_bun_link, execute_bun_unlink, execute_cargo_link, execute_cargo_unlink,
-    inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome, BunRegistrationIndexStore,
-    BunUnlinkOperationReport, CargoLinkOperationReport, CargoUnlinkOperationReport,
-    CommittedSource, DependencyHealthSeverity, DependencyLinkReport, DependencyStatusReport,
-    ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore, StdReadOnlyProcess,
+    detect_repo_package_managers, execute_bun_link, execute_bun_unlink, execute_cargo_link,
+    execute_cargo_unlink, inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome,
+    BunRegistrationIndexStore, BunUnlinkOperationReport, CargoLinkOperationReport,
+    CargoUnlinkOperationReport, CommittedSource, DependencyHealthSeverity, DependencyLinkReport,
+    DependencyStatusReport, ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore,
+    StdReadOnlyProcess,
 };
 use serde_json::json;
 
@@ -795,6 +796,7 @@ fn run_deps_status(
     Ok(render_deps_status(
         &repo_root,
         manager,
+        &detect_repo_package_managers(&repo_root),
         &report,
         output_json,
     ))
@@ -803,16 +805,22 @@ fn run_deps_status(
 fn render_deps_status(
     repo_root: &Path,
     manager: Option<DepsManager>,
+    detected_managers: &[PackageManager],
     report: &DependencyStatusReport,
     output_json: bool,
 ) -> String {
+    let reported_manager = status_manager_label(manager, detected_managers);
     if output_json {
         return json!({
             "schema": "effigy.deps.status.v1",
             "schema_version": 1,
             "command": "deps status",
             "repo_root": repo_root,
-            "manager": manager.map(DepsManager::as_str),
+            "manager": reported_manager,
+            "detected_managers": detected_managers
+                .iter()
+                .map(|manager| manager.as_str())
+                .collect::<Vec<_>>(),
             "summary": status_summary(report),
             "links": report.links,
         })
@@ -822,12 +830,19 @@ fn render_deps_status(
     let mut lines = vec![
         "[deps] status".to_owned(),
         format!("repo: {}", repo_root.display()),
-        format!(
-            "manager: {}",
-            manager.map(DepsManager::as_str).unwrap_or("all")
-        ),
+        format!("manager: {}", reported_manager.unwrap_or("all")),
         format!("links: {}", report.links.len()),
     ];
+    if manager.is_none() && !detected_managers.is_empty() {
+        lines.push(format!(
+            "detected: {}",
+            detected_managers
+                .iter()
+                .map(|manager| manager.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     if report.links.is_empty() {
         lines.push("no machine-local dependency links configured".to_owned());
         return lines.join("\n");
@@ -836,6 +851,20 @@ fn render_deps_status(
         render_link_text(&mut lines, link);
     }
     lines.join("\n")
+}
+
+fn status_manager_label(
+    filter: Option<DepsManager>,
+    detected_managers: &[PackageManager],
+) -> Option<&'static str> {
+    if let Some(manager) = filter {
+        return Some(manager.as_str());
+    }
+    match detected_managers {
+        [PackageManager::Bun] => Some("bun"),
+        [PackageManager::Cargo] => Some("cargo"),
+        _ => None,
+    }
 }
 
 fn render_link_text(lines: &mut Vec<String>, link: &DependencyLinkReport) {
@@ -1125,6 +1154,31 @@ mod tests {
         assert!(text.contains("no machine-local dependency links configured"));
         assert_eq!(json["schema"], "effigy.deps.status.v1");
         assert_eq!(json["manager"], serde_json::Value::Null);
+        assert_eq!(json["detected_managers"], json!([]));
+        assert_eq!(json["summary"]["total"], 0);
+        assert_eq!(json["links"], json!([]));
+    }
+
+    #[test]
+    fn bare_status_reports_bun_for_root_bun_workspace_without_links() {
+        let repo = repo();
+        let home = TempDir::new().unwrap();
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{"name":"@acme/root","private":true,"packageManager":"bun@1.3.14","workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
+        fs::write(repo.path().join("bun.lock"), "{}\n").unwrap();
+
+        let text = run_deps_with_home(status_args(None, repo.path(), false), home.path()).unwrap();
+        let rendered =
+            run_deps_with_home(status_args(None, repo.path(), true), home.path()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert!(text.contains("manager: bun"));
+        assert!(text.contains("detected: bun"));
+        assert_eq!(json["manager"], "bun");
+        assert_eq!(json["detected_managers"], json!(["bun"]));
         assert_eq!(json["summary"]["total"], 0);
         assert_eq!(json["links"], json!([]));
     }
@@ -1191,8 +1245,8 @@ mod tests {
             }],
         };
 
-        let text = render_deps_status(&repo_root, None, &report, false);
-        let rendered = render_deps_status(&repo_root, None, &report, true);
+        let text = render_deps_status(&repo_root, None, &[], &report, false);
+        let rendered = render_deps_status(&repo_root, None, &[], &report, true);
         let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
         assert!(text.contains("mechanism: bun-link"));

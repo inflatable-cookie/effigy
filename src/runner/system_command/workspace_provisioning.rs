@@ -589,7 +589,18 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
         linux_workspace_effigy_artifact_needs_refresh(&freshness_anchor, &artifact_path, target);
 
     if needs_refresh {
-        if wait_for_in_progress_linux_workspace_artifact_build(
+        // Workspace handoff only runs when the consumer stack is already Up.
+        // Prefer a reusable on-disk artifact over rebuilding via the
+        // linux-release container, which pulls `ubuntu:22.04` from Docker Hub.
+        if linux_workspace_effigy_artifact_is_reusable(&artifact_path, target) {
+            workspace::emit_workspace_info(
+                &format!(
+                    "reusing existing linux effigy artifact at `{}` (skipping rebuild that would require Docker Hub)",
+                    artifact_path.display()
+                ),
+                false,
+            );
+        } else if wait_for_in_progress_linux_workspace_artifact_build(
             effigy_repo_root,
             &freshness_anchor,
             &artifact_path,
@@ -601,28 +612,32 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
             )?;
             ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
             return Ok(artifact_path);
-        }
-        workspace::emit_workspace_info(
-            "building linux effigy artifact for workspace container access",
-            false,
-        );
-        if let Err(error) =
-            run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)
-        {
-            if wait_for_in_progress_linux_workspace_artifact_build(
-                effigy_repo_root,
-                &freshness_anchor,
-                &artifact_path,
-                target,
-            )? {
-                ensure_workspace_effigy_active_version_file(
+        } else {
+            workspace::emit_workspace_info(
+                "building linux effigy artifact for workspace container access",
+                false,
+            );
+            if let Err(error) =
+                run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)
+            {
+                if wait_for_in_progress_linux_workspace_artifact_build(
+                    effigy_repo_root,
+                    &freshness_anchor,
                     &artifact_path,
-                    &effigy_core::build_info::active_version(),
-                )?;
-                ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
-                return Ok(artifact_path);
+                    target,
+                )? {
+                    ensure_workspace_effigy_active_version_file(
+                        &artifact_path,
+                        &effigy_core::build_info::active_version(),
+                    )?;
+                    ensure_workspace_effigy_install_identity_file(
+                        &artifact_path,
+                        &install_identity,
+                    )?;
+                    return Ok(artifact_path);
+                }
+                return Err(linux_workspace_artifact_offline_hint(error, &artifact_path));
             }
-            return Err(error);
         }
     }
 
@@ -638,6 +653,24 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     )?;
     ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
     Ok(artifact_path)
+}
+
+pub(super) fn linux_workspace_effigy_artifact_is_reusable(
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+) -> bool {
+    artifact_path.is_file()
+        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+}
+
+pub(super) fn linux_workspace_artifact_offline_hint(
+    error: RunnerError,
+    artifact_path: &Path,
+) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "{error}; linux workspace artifact rebuild needs Docker Hub for `ubuntu:22.04` / `effigy-linux-release-builder`. Reuse a cached artifact at `{}`, pre-load those images for an offline rebuild, run `effigy workspace:linux:artifact` when Hub is reachable, or set `{EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV}=download` to use a GitHub release binary",
+        artifact_path.display()
+    ))
 }
 
 pub(super) fn linux_workspace_artifact_lock_path(effigy_repo_root: &Path) -> PathBuf {
@@ -925,10 +958,7 @@ pub(super) fn linux_workspace_effigy_artifact_needs_refresh(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
 ) -> bool {
-    if !artifact_path.is_file() {
-        return true;
-    }
-    if !linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target) {
+    if !linux_workspace_effigy_artifact_is_reusable(artifact_path, target) {
         return true;
     }
 
