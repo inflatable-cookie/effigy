@@ -44,6 +44,7 @@ struct LegacyVolumeInference {
 struct ProjectVolumeState {
     repo_root: String,
     mounted_names: BTreeSet<String>,
+    running_services: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -138,8 +139,7 @@ where
                 orphan_reason(repo_root, logical_volume_name, &mut ownership_cache)
             });
             let orphaned = orphan_reason.is_some();
-            let in_use =
-                project_state.is_some_and(|state| state.mounted_names.contains(&metadata.name));
+            let in_use = volume_is_in_use(project_state, ownership_hint, &metadata.name);
             if orphans_only && !orphaned {
                 continue;
             }
@@ -321,7 +321,12 @@ where
     let mut states = BTreeMap::new();
     for environment in discover_running_environments()? {
         let mut mounted_names = BTreeSet::new();
+        let mut running_services = BTreeSet::new();
         for service in &environment.services {
+            if let Some(name) = service.service.as_deref() {
+                running_services.insert(name.to_owned());
+            }
+            running_services.insert(service.container_name.clone());
             let mounts = inspect_runtime_volume_mounts(
                 cwd,
                 &environment.runtime_profile,
@@ -338,6 +343,7 @@ where
             ProjectVolumeState {
                 repo_root: environment.repo_root,
                 mounted_names,
+                running_services,
             },
         );
     }
@@ -348,6 +354,20 @@ where
 struct RuntimeVolumeMount {
     name: String,
     destination: String,
+}
+
+fn volume_is_in_use(
+    project_state: Option<&ProjectVolumeState>,
+    ownership_hint: Option<&VolumeOwnershipHint>,
+    volume_name: &str,
+) -> bool {
+    let Some(state) = project_state else {
+        return false;
+    };
+    if state.mounted_names.contains(volume_name) {
+        return true;
+    }
+    ownership_hint.is_some_and(|hint| state.running_services.contains(&hint.service))
 }
 
 fn inspect_runtime_volume_mounts<F>(
@@ -645,12 +665,57 @@ fn load_repo_ownership(repo_root: &str) -> RepoOwnershipState {
 mod tests {
     use super::{
         infer_legacy_volume_details, parse_runtime_volume_mounts, should_skip_legacy_noise_volume,
-        volume_has_effigy_ownership_signal, volume_project_name, DeclaredMountKey,
-        DeclaredProjectVolumes, DeclaredRepoVolumes,
+        volume_has_effigy_ownership_signal, volume_is_in_use, volume_project_name,
+        DeclaredMountKey, DeclaredProjectVolumes, DeclaredRepoVolumes, ProjectVolumeState,
+        VolumeOwnershipHint,
     };
     use effigy_catalog::volumes::RuntimeVolumeMetadata;
     use effigy_containers::ContainerVolumeGlobalEntry;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn declared_volume_is_in_use_when_its_service_is_running() {
+        let state = ProjectVolumeState {
+            repo_root: "/tmp/contact-patch".to_owned(),
+            mounted_names: BTreeSet::new(),
+            running_services: BTreeSet::from(["postgres".to_owned()]),
+        };
+        let hint = VolumeOwnershipHint {
+            repo_root: "/tmp/contact-patch".to_owned(),
+            service: "postgres".to_owned(),
+            mount_target: Some("/var/lib/postgresql/data".to_owned()),
+            persist: true,
+        };
+
+        assert!(volume_is_in_use(
+            Some(&state),
+            Some(&hint),
+            "contact-patch-dev-postgres-data"
+        ));
+        assert!(!volume_is_in_use(
+            Some(&state),
+            Some(&VolumeOwnershipHint {
+                service: "workspace".to_owned(),
+                ..hint.clone()
+            }),
+            "contact-patch-dev-workspace-data"
+        ));
+    }
+
+    #[test]
+    fn mounted_volume_stays_in_use_without_a_service_hint() {
+        let state = ProjectVolumeState {
+            repo_root: "/tmp/contact-patch".to_owned(),
+            mounted_names: BTreeSet::from(["contact-patch-dev-postgres-data".to_owned()]),
+            running_services: BTreeSet::new(),
+        };
+
+        assert!(volume_is_in_use(
+            Some(&state),
+            None,
+            "contact-patch-dev-postgres-data"
+        ));
+    }
 
     #[test]
     fn legacy_compose_labeled_volume_counts_as_owned_signal() {

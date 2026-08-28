@@ -520,22 +520,22 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
     assert_eq!(
         gate_pairs,
         vec![
-            ("build", "cargo build --release --bin effigy"),
             ("ci", "sh scripts/check-release-ci.sh"),
             ("format", "cargo fmt --all -- --check"),
-            (
-                "metadata",
-                "cargo build --bin effigy && ./target/debug/effigy release validate"
-            ),
+            ("test", "cargo test --workspace"),
             (
                 "qa",
                 "cargo build --bin effigy && ./target/debug/effigy qa:ci"
             ),
+            ("build", "cargo build --release --bin effigy"),
             (
                 "smoke",
                 "cargo build --bin effigy && ./target/debug/effigy smoke:release"
             ),
-            ("test", "cargo test --workspace"),
+            (
+                "metadata",
+                "cargo build --bin effigy && ./target/debug/effigy release validate"
+            ),
         ]
     );
 

@@ -9,6 +9,56 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] Attention-marker CLI overrides are ignored — 2026-08-28
+- Friction: `effigy scan attention-markers --warning-marker ...` accepted the
+  flags but still used the stock marker lists.
+- Fix (2026-08-28): apply warning/high/critical marker request overrides in
+  the attention-marker path. CLI contract test asserts the JSON `patterns`
+  lists change.
+- Surface: `effigy scan attention-markers`.
+
+### [x] Root test suite task-refs drop `run_in = "container"` — 2026-08-28
+- Friction: a suite `{ task = "cp-api/test:unit" }` inlined the cargo command
+  on the host and dropped `run_in = "container"`.
+- Fix (2026-08-28): container-bound task-refs expand to a nested `effigy`
+  invocation so the referenced task's run_in is honored.
+- Surface: `[test.suites]` task-refs.
+
+### [x] Volume list reports a running postgres volume as not in use — 2026-08-28
+- Friction: `container volume list` reported `in_use: false` while the
+  postgres service was Up and compose mounts the volume.
+- Fix (2026-08-28): a declared volume is in use when inspect lists the mount
+  or the volume's service is among the running compose services.
+- Surface: `effigy container volume list`.
+
+### [x] Release gates execute in name order, so cheap-first is unbuyable — 2026-08-28
+- Friction: `[release.gates]` sorted by name, so an expensive MSRV floor ran
+  before a cheap candidate check.
+- Fix (2026-08-28): gates keep TOML declaration order. No rename required.
+- Surface: `[release.gates]`, `effigy release gates`.
+
+### [x] `deps link bun` refuses Bun registry package symlinks — 2026-08-28
+- Friction: after `bun install`, `deps link bun` treated Bun's
+  `node_modules/.bun/...` package symlinks as conflicting targets.
+- Fix (2026-08-28): registry store symlinks classify as replaceable Registry
+  links, same as non-symlink installs.
+- Surface: `effigy deps link bun`.
+
+### [x] `effigy test <target>` passes the target as a suite filter — 2026-08-28
+- Friction: `effigy test vitest stem --plan` scheduled every catalog and
+  forwarded `stem` to each Vitest command.
+- Fix (2026-08-28): a passthrough token that matches a catalog alias selects
+  that catalog; it is not copied as a filter across siblings.
+- Surface: `effigy test`.
+
+### [x] Effigy task arguments silently widen when preceded by `--` — 2026-08-28
+- Friction: `effigy test:unit -- <paths>` dropped the paths, while
+  `effigy test:unit <paths>` forwarded them.
+- Fix (2026-08-28): `{args}` strips a leading `--` delimiter and keeps the
+  tokens after it.
+- Surface: task argument forwarding / `{args}`.
+
+
 ### [x] Graph failures are unbounded and unexplained — 2026-08-27
 - Friction: a `graph explore`/`context` that triggered a lazy re-index could
   sit indefinitely; the caller could not tell a slow first build from a wedged

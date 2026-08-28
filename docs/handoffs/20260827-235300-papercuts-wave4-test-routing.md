@@ -5,10 +5,10 @@ handoff_mode: worker-pr-loop
 worker_mode: implementation
 dispatch_authority: orchestrator
 handoff: single-file-path-only
-status: ready-to-launch
+status: awaiting-review
 owner: Tom / papercuts orchestrator
 created: 2026-08-27
-updated: 2026-08-27
+updated: 2026-08-28
 handoff_path: /Users/tom/Dev/projects/effigy/docs/handoffs/20260827-235300-papercuts-wave4-test-routing.md
 base_required: pushed-main
 tags: [coordination, handoff, worker, pr, papercuts]
@@ -41,22 +41,9 @@ symlink.
 - **Pushed main verification:** local `HEAD` and `origin/main` both resolved
   to that SHA before this handoff was created.
 - **Planning checkout:** clean before this handoff file was created.
-- **Worker mode:** implementation worker dispatched by the orchestrator.
-- **Worker branch:** `worker/papercuts-wave4-test-routing`
-- **Worker worktree:** launcher first. Named fallback under
-  `AGENTS_WORKTREE_CONTAINER_DIR=/Users/tom/Dev/worktrees`.
-- **Ready work items, in order:**
-  1. Effigy task arguments silently widen when preceded by `--` (Underlay
-     `test:unit -- paths`)
-  2. `effigy test <target>` passes the target as a suite filter
-     (Songsprout)
-  3. `deps link bun` refuses Bun registry package symlinks (Longhorn)
-  4. Release gates execute in name order, so cheap-first is unbuyable
-     (Longhorn)
-  5. Volume list reports a running postgres volume as not in use
-     (Contact Patch)
-  6. Root test suite task-refs drop `run_in = "container"` (Contact Patch)
-  7. Attention-marker CLI overrides are ignored (Underlay)
+- **Worker mode:** implementation complete; do not dispatch another worker.
+- **Worker branch:** `t3code/review-wave4-test-routing`
+- **Ready work items:** all seven implemented on the PR. Do not re-run them.
 - **Out of scope:** Linux Docker Hub artifact rebuilds; catalog-member
   sibling hard-fail (intentional); recursive chown; Clippy image;
   isolation key; GitHub Release create on execute (protocol call);
@@ -71,7 +58,7 @@ symlink.
   (Longhorn asserts two gate lines verbatim); volume `in_use` true when
   the service is Up; suite expansion honors `run_in`; attention-marker
   flags change the rendered pattern lists (CLI contract test).
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/48
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
@@ -88,7 +75,8 @@ symlink.
 
 ## Suggested Next Move
 
-Read this file, run the worktree preflight, then prove `test:unit -- paths`.
+Orchestrator review of https://github.com/inflatable-cookie/effigy/pull/48.
+Do not launch another implementation worker. Merge is operator-authorised only.
 
 ## Completion Protocol
 

@@ -7,6 +7,23 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `effigy <task> -- <args>` now forwards the tokens after `--` into `{args}`
+  instead of dropping them, so focused `test:unit -- paths` stays focused.
+- `effigy test <suite> <catalog>` treats a matching catalog alias as a target,
+  not a Vitest filter copied across sibling suites.
+- `deps link bun` replaces Bun registry package symlinks (targets under
+  `node_modules/.bun`) instead of refusing them as conflicting.
+- `[release.gates]` run in declaration order, so cheap-first is buyable
+  without renaming gates.
+- `container volume list` marks a declared volume in use when its service
+  container is Up, even if inspect missed the mount.
+- Test suite task-refs keep container routing — explicit `run_in`, inherited
+  `[task_defaults]`, or a workspace binding — by dispatching through the nested
+  task instead of inlining the command on the host.
+- `effigy tasks` still lists managed profiles alphabetically after
+  `[release.gates]` started preserving declaration order.
+- `effigy scan attention-markers --warning-marker/--high-marker/--critical-marker`
+  now changes the rendered pattern lists.
 - Generated compose can now combine explicitly pinned host ports with
   automatically allocated ports without panicking. Container status reports a
   stopped or non-exec-ready primary service instead of failing the command.

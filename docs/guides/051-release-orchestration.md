@@ -200,6 +200,8 @@ command = "cargo test"
 description = "Run the Rust test suite"
 ```
 
+Gates run in declaration order. Put cheap checks first.
+
 For a new project that already declares its intended first release version,
 opt in explicitly:
 

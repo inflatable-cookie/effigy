@@ -1,6 +1,9 @@
 use crate::runner::tests::prelude::cases::*;
 use crate::runner::tests::prelude::harness::*;
+use crate::runner::tests::prelude::json::*;
 use crate::runner::tests::prelude::output::*;
+use crate::runner::tests::prelude::setup_fanout_catalog_repo;
+use std::fs;
 
 #[test]
 fn run_manifest_task_builtin_test_uses_configured_suites_as_source_of_truth() {
@@ -166,6 +169,166 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     assert_output_contains_all(&out, &["Test Results", "root/vitest"]);
     assert_output_excludes_all(&out, &["root/cargo-"]);
     assert_path_exists(&vitest_marker, "vitest suite marker");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_treats_package_name_as_catalog_not_filter() {
+    let root = temp_workspace("builtin-test-catalog-not-filter");
+    let (catalog_a, catalog_b) = setup_fanout_catalog_repo(&root);
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "vitest", "catalog_a"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let names = parsed["targets"]
+        .as_array()
+        .expect("targets")
+        .iter()
+        .filter_map(|target| target["name"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["catalog_a"]);
+    let commands = parsed["targets"][0]["commands"]
+        .as_array()
+        .expect("commands")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        commands
+            .iter()
+            .all(|command| !command.contains("catalog_a")),
+        "package name was forwarded as a vitest filter: {commands:?}"
+    );
+    assert!(catalog_a.exists() && catalog_b.exists());
+}
+
+#[test]
+fn run_manifest_task_builtin_test_suite_task_ref_keeps_container_run_in() {
+    let root = temp_workspace("builtin-test-suite-task-ref-run-in");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/test:unit" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[tasks."test:unit"]
+run = "cargo test --workspace --all-features"
+run_in = "container"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "api"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let command = parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command");
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        !command.contains("cargo test --workspace --all-features"),
+        "container task-ref was inlined onto the host: {command}"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_suite_task_ref_honors_inherited_container_run_in() {
+    let root = temp_workspace("builtin-test-suite-task-ref-inherited-run-in");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/test:unit" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[task_defaults]
+run_in = "container"
+
+[tasks."test:unit"]
+run = "printf inherited-container"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "api"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let command = parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command");
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        !command.contains("printf inherited-container"),
+        "inherited container task-ref was inlined onto the host: {command}"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_suite_task_ref_honors_workspace_binding() {
+    let root = temp_workspace("builtin-test-suite-task-ref-workspace-bound");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/test:unit" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[tasks."test:unit"]
+run = "printf workspace-bound"
+workspace = "app"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json", "api"]);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    let command = parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command");
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        !command.contains("printf workspace-bound"),
+        "workspace-bound task-ref was inlined onto the host: {command}"
+    );
 }
 
 #[test]

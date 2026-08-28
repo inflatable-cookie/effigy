@@ -3,10 +3,10 @@ use std::path::Path;
 use super::super::request::ScanRequest;
 use super::boundaries::run_boundary_violation_scan;
 use super::core::{
-    apply_comment_ratio_request_overrides, apply_common_request_overrides,
-    apply_generated_in_src_request_overrides, apply_stale_suppression_request_overrides,
-    apply_threshold_request_overrides, reject_threshold_overrides, run_scan_mode, ScanExecution,
-    ScanModeConfig,
+    apply_attention_marker_request_overrides, apply_comment_ratio_request_overrides,
+    apply_common_request_overrides, apply_generated_in_src_request_overrides,
+    apply_stale_suppression_request_overrides, apply_threshold_request_overrides,
+    reject_threshold_overrides, run_scan_mode, ScanExecution, ScanModeConfig,
 };
 use super::dead_code::run_dead_code_scan;
 use super::validation_gaps::run_validation_gap_scan;
@@ -257,7 +257,7 @@ pub(super) fn run_attention_markers(
         |root| load_root_attention_marker_options(root).map_err(Into::into),
         |options, request| {
             reject_threshold_overrides("attention-markers", request)?;
-            apply_common_request_overrides(options, request);
+            apply_attention_marker_request_overrides(options, request);
             Ok(())
         },
         |root, scan_roots, options| {

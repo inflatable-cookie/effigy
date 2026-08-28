@@ -20,7 +20,10 @@ pub use parsing::{
     render_task_selector,
 };
 pub use probe::{probe_task_resolution, ProbeTaskResolutionRequest, TaskResolutionProbe};
-pub use reference::{parse_task_reference_invocation, render_passthrough_args};
+pub use reference::{
+    command_passthrough_args, parse_task_reference_invocation, render_passthrough_args,
+    render_template_args,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskContext {

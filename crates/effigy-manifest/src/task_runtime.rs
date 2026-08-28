@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
-
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestTask {
@@ -39,8 +37,10 @@ pub struct ManifestTask {
     pub ready_message: Option<String>,
     #[serde(default)]
     pub concurrent: Vec<ManifestManagedConcurrentEntry>,
+    /// Alphabetical regardless of TOML declaration order (`preserve_order` is
+    /// enabled for `[release.gates]`).
     #[serde(default)]
-    pub profiles: IndexMap<String, ManifestManagedProfile>,
+    pub profiles: BTreeMap<String, ManifestManagedProfile>,
     #[serde(default)]
     pub cache: Option<ManifestTaskCache>,
 }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{
     canonical_existing_path, BunConsumerInventory, BunConsumerLinkDisposition,
@@ -179,6 +179,7 @@ pub fn plan_bun_link(
         let consumer_link = classify_consumer_link(
             &package.name,
             &package.local_path,
+            &repo_root,
             &consumer_link_path,
             &consumer_observation,
         )?;
@@ -650,6 +651,7 @@ fn classify_registration(
 fn classify_consumer_link(
     package_name: &str,
     expected: &Path,
+    repo_root: &Path,
     link_path: &Path,
     observed: &BunPathObservation,
 ) -> Result<BunConsumerLinkDisposition, DepsError> {
@@ -659,6 +661,11 @@ fn classify_consumer_link(
         BunPathObservation::Symlink { target } if same_path(target, expected) => {
             Ok(BunConsumerLinkDisposition::Linked)
         }
+        BunPathObservation::Symlink { target }
+            if is_consumer_bun_registry_store_path(repo_root, link_path, target) =>
+        {
+            Ok(BunConsumerLinkDisposition::Registry)
+        }
         BunPathObservation::Symlink { target } => Err(DepsError::invalid(
             link_path,
             format!(
@@ -667,6 +674,36 @@ fn classify_consumer_link(
             ),
         )),
     }
+}
+
+fn is_consumer_bun_registry_store_path(repo_root: &Path, link_path: &Path, target: &Path) -> bool {
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        link_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(target)
+    };
+    let normalized = lexically_normalize(&resolved);
+    let store = lexically_normalize(&repo_root.join("node_modules").join(".bun"));
+    normalized.starts_with(&store)
+}
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn refuse_unmanaged_partial_consumer_closure(
@@ -1325,6 +1362,103 @@ mod tests {
         let index: BunRegistrationIndex =
             serde_json::from_str(index_change.after.as_ref().unwrap()).unwrap();
         assert!(!index.registrations[0].effigy_created);
+    }
+
+    #[test]
+    fn registry_package_symlinks_are_replaceable() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: fixture
+                        .repo
+                        .join("node_modules/.bun/underlay@1.2.3/node_modules/underlay"),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let plan = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect("registry symlink should be replaceable");
+        assert_eq!(
+            plan.packages[0].consumer_link,
+            BunConsumerLinkDisposition::Registry
+        );
+        assert!(plan
+            .process_intents
+            .iter()
+            .any(|intent| intent.action == BunProcessAction::LinkConsumer));
+    }
+
+    #[test]
+    fn foreign_bun_store_symlinks_remain_conflicts() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: PathBuf::from("/foreign/node_modules/.bun/underlay"),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect_err("foreign .bun symlink must stay a conflict");
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting symlink target `/foreign/node_modules/.bun/underlay`"),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn escaped_bun_store_symlink_targets_remain_conflicts() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let escaped = fixture.repo.join("node_modules/.bun/../../foreign-package");
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: escaped.clone(),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect_err("escaped .bun symlink must stay a conflict");
+        assert!(
+            error.to_string().contains("conflicting symlink target"),
+            "got {error}"
+        );
+        assert!(error.to_string().contains("foreign-package"), "got {error}");
     }
 
     #[test]

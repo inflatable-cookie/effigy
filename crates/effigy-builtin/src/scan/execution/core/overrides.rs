@@ -2,7 +2,8 @@ use super::{ScanCommonOptions, ScanThresholdOverrideOptions, ScanThresholds};
 use crate::scan::request::ScanRequest;
 use crate::BuiltinError;
 use effigy_scan::{
-    CommentRatioScanOptions, GeneratedInSrcScanOptions, StaleSuppressionScanOptions,
+    AttentionMarkerScanOptions, CommentRatioScanOptions, GeneratedInSrcScanOptions,
+    StaleSuppressionScanOptions,
 };
 
 pub(in crate::scan::execution) fn apply_common_request_overrides<T>(
@@ -96,18 +97,45 @@ pub(in crate::scan::execution) fn apply_generated_in_src_request_overrides(
     }
 }
 
+pub(in crate::scan::execution) fn apply_marker_pattern_overrides(
+    warning: &mut Vec<String>,
+    high: &mut Vec<String>,
+    critical: &mut Vec<String>,
+    request: &ScanRequest,
+) {
+    if !request.warning_markers.is_empty() {
+        *warning = request.warning_markers.clone();
+    }
+    if !request.high_markers.is_empty() {
+        *high = request.high_markers.clone();
+    }
+    if !request.critical_markers.is_empty() {
+        *critical = request.critical_markers.clone();
+    }
+}
+
+pub(in crate::scan::execution) fn apply_attention_marker_request_overrides(
+    options: &mut AttentionMarkerScanOptions,
+    request: &ScanRequest,
+) {
+    apply_common_request_overrides(options, request);
+    apply_marker_pattern_overrides(
+        &mut options.patterns.warning,
+        &mut options.patterns.high,
+        &mut options.patterns.critical,
+        request,
+    );
+}
+
 pub(in crate::scan::execution) fn apply_stale_suppression_request_overrides(
     options: &mut StaleSuppressionScanOptions,
     request: &ScanRequest,
 ) {
     apply_common_request_overrides(options, request);
-    if !request.warning_markers.is_empty() {
-        options.patterns.warning = request.warning_markers.clone();
-    }
-    if !request.high_markers.is_empty() {
-        options.patterns.high = request.high_markers.clone();
-    }
-    if !request.critical_markers.is_empty() {
-        options.patterns.critical = request.critical_markers.clone();
-    }
+    apply_marker_pattern_overrides(
+        &mut options.patterns.warning,
+        &mut options.patterns.high,
+        &mut options.patterns.critical,
+        request,
+    );
 }

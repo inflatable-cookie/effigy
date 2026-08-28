@@ -24,3 +24,5 @@ mod support;
 mod tasks_rendering_tests;
 #[path = "cli_output_tests/wave1_papercuts_tests.rs"]
 mod wave1_papercuts_tests;
+#[path = "cli_output_tests/wave4_papercuts_tests.rs"]
+mod wave4_papercuts_tests;

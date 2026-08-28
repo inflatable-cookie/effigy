@@ -103,3 +103,16 @@ pub fn render_passthrough_args(args: &[String]) -> String {
         .collect::<Vec<String>>()
         .join(" ")
 }
+
+/// Drop a leading `--` delimiter so `{args}` receives the tokens after it.
+/// Nested `effigy` re-invocations keep the delimiter via `render_passthrough_args`.
+pub fn command_passthrough_args(args: &[String]) -> &[String] {
+    match args {
+        [first, rest @ ..] if first == "--" => rest,
+        other => other,
+    }
+}
+
+pub fn render_template_args(args: &[String]) -> String {
+    render_passthrough_args(command_passthrough_args(args))
+}
