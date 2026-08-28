@@ -179,6 +179,7 @@ pub fn plan_bun_link(
         let consumer_link = classify_consumer_link(
             &package.name,
             &package.local_path,
+            &repo_root,
             &consumer_link_path,
             &consumer_observation,
         )?;
@@ -650,6 +651,7 @@ fn classify_registration(
 fn classify_consumer_link(
     package_name: &str,
     expected: &Path,
+    repo_root: &Path,
     link_path: &Path,
     observed: &BunPathObservation,
 ) -> Result<BunConsumerLinkDisposition, DepsError> {
@@ -659,7 +661,9 @@ fn classify_consumer_link(
         BunPathObservation::Symlink { target } if same_path(target, expected) => {
             Ok(BunConsumerLinkDisposition::Linked)
         }
-        BunPathObservation::Symlink { target } if is_bun_registry_store_path(target) => {
+        BunPathObservation::Symlink { target }
+            if is_consumer_bun_registry_store_path(repo_root, link_path, target) =>
+        {
             Ok(BunConsumerLinkDisposition::Registry)
         }
         BunPathObservation::Symlink { target } => Err(DepsError::invalid(
@@ -672,9 +676,18 @@ fn classify_consumer_link(
     }
 }
 
-fn is_bun_registry_store_path(path: &Path) -> bool {
-    path.components()
-        .any(|component| component.as_os_str() == ".bun")
+fn is_consumer_bun_registry_store_path(repo_root: &Path, link_path: &Path, target: &Path) -> bool {
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        link_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(target)
+    };
+    let normalized = canonical_or_original(&resolved);
+    let store = canonical_or_original(&repo_root.join("node_modules").join(".bun"));
+    normalized.starts_with(&store)
 }
 
 fn refuse_unmanaged_partial_consumer_closure(
@@ -1368,6 +1381,37 @@ mod tests {
             .process_intents
             .iter()
             .any(|intent| intent.action == BunProcessAction::LinkConsumer));
+    }
+
+    #[test]
+    fn foreign_bun_store_symlinks_remain_conflicts() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                fixture.repo.join("node_modules").join("underlay"),
+                BunPathObservation::Symlink {
+                    target: PathBuf::from("/foreign/node_modules/.bun/underlay"),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &fixture.consumer,
+            &fixture.home,
+            true,
+            &observer,
+        )
+        .expect_err("foreign .bun symlink must stay a conflict");
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting symlink target `/foreign/node_modules/.bun/underlay`"),
+            "got {error}"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ use serde_json;
 use super::RunSpecContext;
 use crate::ManagedError;
 use effigy_core::shell::shell_quote;
+use effigy_tasks::render_template_args;
 
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 
@@ -15,7 +16,7 @@ pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String
             command,
             context.repo_root,
             context.bundle_root,
-            context.args_rendered,
+            &render_template_args(context.args_raw),
         ),
         context.task_env,
         context.repo_root,
@@ -27,7 +28,7 @@ pub fn render_step_command(command: &str, context: RunSpecContext<'_>) -> String
         command,
         context.repo_root,
         context.bundle_root,
-        context.args_rendered,
+        &render_template_args(context.args_raw),
     )
 }
 

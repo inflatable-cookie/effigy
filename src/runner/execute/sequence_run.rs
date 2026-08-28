@@ -529,7 +529,7 @@ fn resolve_step_action(
                 command,
                 &selection.catalog.catalog_root,
                 selection.catalog.bundle_root.as_deref(),
-                &effigy_tasks::render_passthrough_args(passthrough),
+                &effigy_tasks::render_template_args(passthrough),
             )))
         }
         ManifestManagedRunStep::Step(table) => {
@@ -543,7 +543,7 @@ fn resolve_step_action(
                     run,
                     &selection.catalog.catalog_root,
                     selection.catalog.bundle_root.as_deref(),
-                    &effigy_tasks::render_passthrough_args(passthrough),
+                    &effigy_tasks::render_template_args(passthrough),
                 ))),
                 (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
                 (None, None, Some(path)) => Ok(StepAction::Rhai {

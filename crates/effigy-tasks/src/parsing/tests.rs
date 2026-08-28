@@ -89,8 +89,16 @@ fn command_passthrough_args_strips_leading_delimiter() {
         &["src/foo.test.ts".to_owned()]
     );
     assert_eq!(
-        crate::render_passthrough_args(&["--".to_owned(), "src/foo.test.ts".to_owned(),]),
+        crate::render_template_args(&["--".to_owned(), "src/foo.test.ts".to_owned(),]),
         "'src/foo.test.ts'"
+    );
+}
+
+#[test]
+fn render_passthrough_args_keeps_leading_delimiter_for_nested_invocations() {
+    assert_eq!(
+        crate::render_passthrough_args(&["--".to_owned(), "--force".to_owned(),]),
+        "'--' '--force'"
     );
 }
 

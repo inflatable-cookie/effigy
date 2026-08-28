@@ -22,6 +22,7 @@ pub use parsing::{
 pub use probe::{probe_task_resolution, ProbeTaskResolutionRequest, TaskResolutionProbe};
 pub use reference::{
     command_passthrough_args, parse_task_reference_invocation, render_passthrough_args,
+    render_template_args,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
