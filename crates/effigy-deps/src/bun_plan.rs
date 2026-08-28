@@ -67,11 +67,11 @@ pub fn plan_bun_link(
     // owns `package.json`, `node_modules`, and every `bun` invocation. They are
     // the same directory only when the repo keeps Bun at its root.
     let consumer_root = canonical_existing_path(&consumer.root)?;
-    if !consumer_root.starts_with(&repo_root) {
+    if !crate::state::contained_in_checkout(&repo_root, &consumer_root) {
         return Err(DepsError::invalid(
             &consumer.root,
             format!(
-                "Bun consumer inventory belongs to `{}` rather than a package root inside requested repo `{}`",
+                "Bun consumer inventory belongs to `{}` rather than a package root inside requested checkout `{}`; an independently nested checkout owns its own links",
                 consumer_root.display(),
                 repo_root.display()
             ),
@@ -1154,6 +1154,39 @@ mod tests {
                 None => fs::remove_file(&change.target).unwrap(),
             }
         }
+    }
+
+    /// A parent-level invocation must not plan Bun processes or `node_modules`
+    /// changes inside a vendored clone while writing the ledger to the parent.
+    #[test]
+    fn refuses_a_consumer_root_inside_an_independently_nested_checkout() {
+        let fixture = fixture(&[("@acme/core", DependencyDepth::Direct)]);
+        fs::create_dir_all(fixture.repo.join(".git")).unwrap();
+        let vendored = fixture.repo.join("vendor/other");
+        fs::create_dir_all(vendored.join(".git")).unwrap();
+        write(&vendored.join("package.json"), b"{\"name\":\"vendored\"}\n");
+        let vendored = fs::canonicalize(&vendored).unwrap();
+        let consumer = BunConsumerInventory {
+            root: vendored,
+            ..fixture.consumer.clone()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &consumer,
+            &fixture.home,
+            true,
+            &FixtureObserver::default(),
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.contains("independently nested checkout"),
+            "{message}"
+        );
     }
 
     #[test]

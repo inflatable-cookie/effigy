@@ -150,10 +150,18 @@ second kind, so walking every manifest failed the whole link. A library with no
 root manifest still falls back to every workspace root in the tree.
 
 Bun resolves the consumer root the same way. A root `package.json` owns the
-tree. Without one, the shallowest manifests are independent Bun roots, and the
-library names the right one: the root declaring a library package wins. When
-none or several do, Effigy refuses and lists the candidates rather than picking
-a tree the caller did not name — select one with `--repo <PATH>`.
+tree. Without one, every manifest that has no package-root ancestor is an
+independent Bun root — `harness/` and `apps/studio/` sit at different depths
+and neither owns the other, so both are roots, while anything under a root is
+that root's workspace member. The library then names the right one: the root
+declaring a library package wins. When none or several do, Effigy refuses and
+lists the candidates rather than picking a tree the caller did not name —
+select one with `--repo <PATH>`.
+
+A vendored clone carrying its own `.git` is an independent checkout. Discovery
+stops at that boundary and planning refuses a consumer root inside one, so a
+parent-level invocation never runs Bun or changes `node_modules` in a checkout
+that owns its own link state.
 
 Links are keyed by the resolved Bun package root, so a repo with Bun under
 `studio/` records `studio/` as its consumer root. That key selects manifests,

@@ -270,15 +270,30 @@ pub fn repo_state_root(path: &Path) -> PathBuf {
         .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
+/// Whether `path` lies inside `repo_root` without crossing a nested checkout.
+///
+/// A vendored clone carries its own `.git`; its packages and its link state
+/// belong to it. A lexical prefix test would let a parent-level invocation
+/// plan Bun processes and `node_modules` changes inside it while writing the
+/// ledger to the parent.
+pub(crate) fn contained_in_checkout(repo_root: &Path, path: &Path) -> bool {
+    path.starts_with(repo_root)
+        && path
+            .ancestors()
+            .take_while(|ancestor| *ancestor != repo_root)
+            .all(|ancestor| !ancestor.join(".git").exists())
+}
+
 /// Whether two paths are owned by the same checkout.
 ///
 /// A Bun link is keyed by package root, so a repo whose Bun tree sits below
-/// the checkout records `studio/` rather than the checkout itself. Comparing
-/// resolved checkout identities rather than path prefixes keeps an
-/// independently nested checkout — a vendored clone with its own `.git` — out
-/// of its parent's link state.
+/// the checkout records `studio/` rather than the checkout itself. Either path
+/// may be the outer one — status runs from the checkout, pin can run from the
+/// nested root — and neither claims an independently nested checkout.
 pub(crate) fn shares_checkout(left: &Path, right: &Path) -> bool {
-    repo_state_root(left) == repo_state_root(right)
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    contained_in_checkout(&right, &left) || contained_in_checkout(&left, &right)
 }
 
 pub fn canonical_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, DepsError> {

@@ -469,32 +469,36 @@ fn named_bun_packages(root: &Path) -> Result<Vec<BunPackageInventory>, DepsError
 
 /// Bun package roots inside a checkout.
 ///
-/// A root `package.json` owns the whole tree, so it wins outright. Without one
-/// the shallowest manifests are independent Bun roots: Figmatic has no root
-/// manifest and keeps Bun under `studio/`, `harness/`, and `preview-builder/`,
-/// so anchoring on the git root found no manifest at all.
+/// A root `package.json` owns the whole tree, so it wins outright. Without one,
+/// a manifest with no package-root ancestor is an independent root: Figmatic
+/// has no root manifest and keeps Bun under `studio/`, `harness/`, and
+/// `preview-builder/`, so anchoring on the git root found no manifest at all.
+///
+/// Independence is ancestry, not depth. `harness/` and `apps/studio/` sit at
+/// different depths and neither owns the other, so both are roots; anything
+/// under a root is that root's own workspace member.
 pub(crate) fn bun_package_roots(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
     if root.join("package.json").is_file() {
         return Ok(vec![root.to_path_buf()]);
     }
-    let mut shallowest = usize::MAX;
-    let mut roots = Vec::new();
-    for manifest in bun_manifest_paths(root)? {
-        let package_root = manifest.parent().unwrap_or(root);
-        let depth = package_root
-            .strip_prefix(root)
-            .map(|relative| relative.components().count())
-            .unwrap_or(usize::MAX);
-        if depth > shallowest {
-            continue;
-        }
-        if depth < shallowest {
-            shallowest = depth;
-            roots.clear();
-        }
-        roots.push(package_root.to_path_buf());
-    }
-    Ok(roots)
+    let candidates = bun_manifest_paths(root)?
+        .into_iter()
+        .map(|manifest| manifest.parent().unwrap_or(root).to_path_buf())
+        .collect::<Vec<_>>();
+    let owned = candidates
+        .iter()
+        .map(PathBuf::as_path)
+        .collect::<BTreeSet<_>>();
+    Ok(candidates
+        .iter()
+        .filter(|candidate| {
+            !candidate
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| owned.contains(ancestor))
+        })
+        .cloned()
+        .collect())
 }
 
 /// The single Bun package root a link or status operation acts on.
@@ -589,7 +593,7 @@ fn bun_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(include_entry)
+        .filter_entry(|entry| include_entry(entry) && !nested_checkout(entry))
     {
         let entry = entry.map_err(|error| {
             let path = error.path().unwrap_or(root).to_path_buf();
@@ -633,6 +637,14 @@ const FINDER_METADATA_DIRS: &[&str] = &[
 /// sidecar carrying resource forks for `name`.
 fn is_finder_metadata_file(name: &str) -> bool {
     name == ".DS_Store" || name.starts_with("._")
+}
+
+/// A directory carrying its own `.git` is an independent checkout.
+///
+/// Its packages belong to it, so discovery from an enclosing tree stops at the
+/// boundary rather than selecting a vendored clone's `package.json`.
+fn nested_checkout(entry: &DirEntry) -> bool {
+    entry.depth() > 0 && entry.file_type().is_dir() && entry.path().join(".git").exists()
 }
 
 fn include_entry(entry: &DirEntry) -> bool {
@@ -780,6 +792,71 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["@acme/library"]
         );
+    }
+
+    /// Independent roots are defined by ancestry, not by equal depth.
+    #[test]
+    fn keeps_independent_bun_roots_that_sit_at_different_depths() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("harness/package.json"),
+            r#"{"name":"harness"}"#,
+        );
+        write(
+            &consumer.join("apps/studio/package.json"),
+            r#"{"name":"studio","dependencies":{"@acme/library":"1.0.0"}}"#,
+        );
+        // Owned by `apps/studio`, not a root of its own.
+        write(
+            &consumer.join("apps/studio/packages/ui/package.json"),
+            r#"{"name":"ui"}"#,
+        );
+        let consumer = fs::canonicalize(&consumer).unwrap();
+
+        let roots = bun_package_roots(&consumer).unwrap();
+
+        assert_eq!(
+            roots,
+            [consumer.join("apps/studio"), consumer.join("harness")]
+        );
+
+        // The deeper root still wins selection when it declares the library.
+        let library_packages = vec![BunPackageInventory {
+            name: "@acme/library".to_owned(),
+            package_path: temp.path().join("library"),
+            version: Some("1.0.0".to_owned()),
+        }];
+        let process = FixtureProcess {
+            stdout: "studio@0.0.0\n└── @acme/library@1.0.0\n".to_owned(),
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let inventory = inventory_bun_consumer(&consumer, &library_packages, &process).unwrap();
+
+        assert_eq!(inventory.root, consumer.join("apps/studio"));
+    }
+
+    /// A vendored clone owns its own packages; discovery stops at its `.git`.
+    #[test]
+    fn discovery_does_not_cross_into_an_independently_nested_checkout() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        fs::create_dir_all(consumer.join("vendor/other/.git")).unwrap();
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio"}"#,
+        );
+        write(
+            &consumer.join("vendor/other/package.json"),
+            r#"{"name":"vendored"}"#,
+        );
+        let consumer = fs::canonicalize(&consumer).unwrap();
+
+        let roots = bun_package_roots(&consumer).unwrap();
+
+        assert_eq!(roots, [consumer.join("studio")]);
     }
 
     #[test]

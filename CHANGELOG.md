@@ -29,6 +29,13 @@ During v0.x, MINOR bumps may include breaking changes.
   backups stay with the enclosing checkout, so `deps status` still reports them
   from the repo root and `deps unlink` removes the entry it wrote.
   `deps status` detects Bun below the root the same way.
+- Bun root discovery keeps every manifest with no package-root ancestor rather
+  than only the shallowest, so independent roots at different depths
+  (`harness/` and `apps/studio/`) are both candidates for selection and
+  package-manager detection. Discovery stops at a vendored checkout's `.git`,
+  and `deps link bun` refuses a consumer root inside one, so a parent-level
+  invocation cannot run Bun or change `node_modules` in a checkout that owns
+  its own link state.
 - Machine-local link state resolves to one ledger per checkout for every read
   path, so `deps status`, `deps pin`, and `doctor` see a nested-root link from
   either entry point. `deps pin bun --repo <nested-root>` no longer reads an
