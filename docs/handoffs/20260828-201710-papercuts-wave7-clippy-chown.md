@@ -58,7 +58,7 @@ chown after root Bun consolidation.
   clippy`. Permission-plan unit tests cover root-vs-child Bun trees and
   nested skip. Do not run `release prepare/execute`. Never modify
   `.github/workflows/`.
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/51
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
