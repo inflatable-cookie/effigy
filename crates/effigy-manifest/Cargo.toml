@@ -9,6 +9,7 @@ description = "Shared manifest contracts and composition for Effigy"
 [dependencies]
 effigy-artifacts = { path = "../effigy-artifacts" }
 effigy-core = { path = "../effigy-core" }
+fs2 = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }

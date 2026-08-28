@@ -1,3 +1,4 @@
+use std::fs::{File, OpenOptions};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,6 +9,7 @@ use effigy_artifacts::{
 use effigy_core::container_detection::process_is_inside_effigy_workspace_container;
 use effigy_core::git_exec::run_git_output;
 use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
+use fs2::FileExt;
 
 use crate::ManifestError;
 
@@ -130,6 +132,10 @@ fn resolve_git_bundle_source(
     refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
+    // Parallel manifest loads (e.g. overlapping docs/qa:* selectors) share this
+    // cache. Serialize clone/fetch/checkout/HEAD reads so one process cannot
+    // rev-parse while another is mid-checkout.
+    let _lock = GitBundleCacheLock::acquire(&local_path)?;
     let remote_status_path = git_bundle_remote_status_path(&local_path);
     let reference = reference
         .map(str::trim)
@@ -444,6 +450,50 @@ fn git_bundle_cache_path(
         .join(sanitize_cache_segment(reference)))
 }
 
+fn git_bundle_cache_lock_path(local_path: &Path) -> PathBuf {
+    let mut path = local_path.as_os_str().to_owned();
+    path.push(".lock");
+    PathBuf::from(path)
+}
+
+/// Cross-process exclusive lock for one git bundle cache checkout.
+struct GitBundleCacheLock {
+    file: File,
+}
+
+impl GitBundleCacheLock {
+    fn acquire(local_path: &Path) -> Result<Self, ManifestError> {
+        let lock_path = git_bundle_cache_lock_path(local_path);
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+                path: parent.to_path_buf(),
+                error,
+            })?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| ManifestError::Read {
+                path: lock_path.clone(),
+                error,
+            })?;
+        file.lock_exclusive().map_err(|error| ManifestError::Read {
+            path: lock_path,
+            error,
+        })?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for GitBundleCacheLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBuf, ManifestError> {
     let locator = oci_bundle_cache_locator(reference);
     Ok(bundle_cache_home_dir(manifest_path)?
@@ -748,6 +798,7 @@ fn read_cached_git_bundle_version(
     if !local_path.join(".git").is_dir() {
         return Ok(None);
     }
+    let _lock = GitBundleCacheLock::acquire(&local_path)?;
     git_head_revision(manifest_path, &local_path).map(Some)
 }
 
@@ -800,6 +851,8 @@ mod tests {
     use std::process::Command;
     use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     struct TestBundleHomeGuard(Option<PathBuf>);
     struct TestOciArtifactAdapterGuard(Option<Rc<dyn OciArtifactAdapter>>);
@@ -1016,6 +1069,63 @@ run = "serve {{ inputs.host }}"
         assert!(bundle_root.starts_with(bundle_home.join(".effigy/cache/bundles/git")));
         assert!(bundle_root.join("bundle.toml").exists());
         assert!(bundle_root.join("effigy.toml").exists());
+    }
+
+    #[test]
+    fn parallel_git_bundle_refreshes_serialize_head_reads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_repo = tmp.path().join("bundle-source");
+        write_local_bundle_repo(&source_repo);
+
+        let consumer = tmp.path().join("consumer");
+        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
+        let manifest_path = consumer.join("effigy.toml");
+        let url = source_repo.display().to_string();
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[bundle]\nbase = {{ type = \"git\", url = {url:?}, ref = \"main\" }}\nhost = \"acme.test\"\n"
+            ),
+        )
+        .expect("write manifest");
+
+        let selection = BundleSelection::Git {
+            url: url.clone(),
+            reference: Some("main".to_owned()),
+        };
+        let warm =
+            resolve_materialized_bundle_source_with_options(&manifest_path, &selection, true)
+                .expect("warm cache");
+        let expected = warm.version_hint.expect("warm version");
+
+        let workers = 8;
+        let barrier = Arc::new(Barrier::new(workers));
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let manifest_path = manifest_path.clone();
+            let selection = BundleSelection::Git {
+                url: url.clone(),
+                reference: Some("main".to_owned()),
+            };
+            let barrier = Arc::clone(&barrier);
+            let expected = expected.clone();
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..4 {
+                    let resolved = resolve_materialized_bundle_source_with_options(
+                        &manifest_path,
+                        &selection,
+                        true,
+                    )
+                    .expect("parallel resolve");
+                    assert_eq!(resolved.version_hint.as_deref(), Some(expected.as_str()));
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("worker finished");
+        }
     }
 
     #[test]
