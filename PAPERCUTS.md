@@ -9,6 +9,21 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] Parallel docs QA can fail `git rev-parse HEAD` — 2026-08-28
+- Friction: overlapping `effigy docs/qa:*` loads raced on a shared git-bundle
+  cache; one process `rev-parse HEAD` while another was mid-checkout and hit
+  `ambiguous argument 'HEAD'`.
+- Fix (2026-08-28): per-cache exclusive file lock around git-bundle
+  materialization and HEAD reads. Concurrent refresh contract test covers it.
+- Surface: `[bundle]` git source / manifest parse.
+
+### [x] Skill task inventory jq path is stale — 2026-08-28
+- Friction: skill examples queried `.result.payload.tasks[]` while live
+  `effigy --json tasks` exposes `.result.catalog_tasks[]`.
+- Fix (2026-08-28): retarget `skills/effigy` and `.agents/skills/effigy`
+  examples to `.result.catalog_tasks[].task`.
+- Surface: agent skill JSON envelope examples.
+
 ### [x] Attention-marker CLI overrides are ignored — 2026-08-28
 - Friction: `effigy scan attention-markers --warning-marker ...` accepted the
   flags but still used the stock marker lists.

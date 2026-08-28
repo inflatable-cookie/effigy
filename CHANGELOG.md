@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Agent skill task-inventory examples now query `.result.catalog_tasks[].task`
+  instead of the stale `.result.payload.tasks[]` path.
+- Parallel git-bundle materialization serializes clone/fetch/checkout and
+  `rev-parse HEAD` behind a per-cache file lock, so overlapping
+  `docs/qa:*`-style manifest loads no longer lose HEAD mid-checkout.
 - `effigy <task> -- <args>` now forwards the tokens after `--` into `{args}`
   instead of dropping them, so focused `test:unit -- paths` stays focused.
 - `effigy test <suite> <catalog>` treats a matching catalog alias as a target,

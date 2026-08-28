@@ -1104,6 +1104,7 @@ version = "0.12.1"
 dependencies = [
  "effigy-artifacts",
  "effigy-core",
+ "fs2",
  "indexmap",
  "minijinja",
  "semver",
