@@ -9,6 +9,22 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] Ship Clippy in the workspace container image — 2026-08-28
+- Friction: generated `workspace-rust-bun` images shipped rustc without Clippy,
+  so consumer validate tasks needed an undocumented `rustup component add clippy`.
+- Fix (2026-08-28): Dockerfile runs `rustup component add clippy` and puts
+  `cargo-clippy` / `clippy-driver` on PATH. Catalog contract test asserts the
+  fragment.
+- Surface: `crates/effigy-catalog/catalog/workspace-rust-bun/Dockerfile`.
+
+### [x] Avoid recursive ownership prep across every workspace dependency tree — 2026-08-28
+- Friction: `effigy health` recursively chowned every child `node_modules` /
+  `vendor` volume after root Bun consolidation, spending minutes before checks.
+- Fix (2026-08-28): prep the authoritative root dependency tree recursively,
+  shallow-chown redundant child package trees, skip targets nested under another
+  recursive prep path, and report prep counts / per-path progress.
+- Surface: workspace permission prep (`plan_workspace_permission_prep`).
+
 ### [x] Workspace container exec rebuilds a linux artifact via Docker Hub — 2026-08-28
 - Friction: `run_in = "container"` selectors rebuilt `effigy-linux-release-builder`
   from `ubuntu:22.04` even when the consumer workspace was already Up; Hub DNS

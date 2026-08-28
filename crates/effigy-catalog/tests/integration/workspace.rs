@@ -58,6 +58,10 @@ fn resolve_workspace_rust_bun_fragment() {
         dockerfile.contains("useradd --uid \"${WORKSPACE_UID}\""),
         "Dockerfile should create a non-root `dev` user aligned with host UID/GID"
     );
+    assert!(
+        dockerfile.contains("rustup component add clippy"),
+        "Dockerfile should install Clippy so consumer validate tasks need no extra rustup step"
+    );
 }
 
 #[test]
