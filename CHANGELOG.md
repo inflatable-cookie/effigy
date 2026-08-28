@@ -7,12 +7,19 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Generated `workspace-rust-bun` images install Clippy (`rustup component add
+  clippy`) so consumer validate tasks do not need an extra rustup step after
+  `container up`.
 - `effigy --json deps status` detects a root Bun workspace (`package.json` plus
   `bun.lock` / `bun.lockb`, Bun `packageManager`, or workspaces) and reports
   `manager: "bun"` with `detected_managers` even when no local-link record
   exists.
 
 ### Fixed
+- Workspace permission prep keeps one recursive chown for the authoritative
+  root `node_modules` / `vendor` tree, shallow-chowns redundant child package
+  trees, skips targets nested under another recursive prep path, and reports
+  prep progress counts instead of silently walking every dependency volume.
 - Workspace container handoff reuses an existing linux Effigy artifact with a
   matching rehearsal receipt instead of rebuilding through Docker Hub while the
   consumer stack is already Up. Reuse preserves the artifact's install identity

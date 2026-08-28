@@ -5,7 +5,7 @@ handoff_mode: worker-pr-loop
 worker_mode: implementation
 dispatch_authority: orchestrator
 handoff: single-file-path-only
-status: ready-to-launch
+status: awaiting-review
 owner: Tom / papercuts orchestrator
 created: 2026-08-28
 updated: 2026-08-28
@@ -38,31 +38,27 @@ chown after root Bun consolidation.
 - **Pushed main verification:** local `HEAD` and `origin/main` both resolved
   to that SHA before this handoff was created.
 - **Planning checkout:** clean before this handoff file was created.
-- **Worker mode:** implementation worker dispatched by the orchestrator.
-- **Worker branch:** `worker/papercuts-wave7-clippy-chown`
-- **Worker worktree:** launcher first.
-  `AGENTS_WORKTREE_CONTAINER_DIR=/Users/tom/Dev/worktrees`.
-- **Ready work items, in order:**
-  1. Ship Clippy in the workspace container image — add the clippy
-     component to the generated workspace image toolchain so
-     `farmyard/validate` does not need an undocumented rustup step. If
-     the recipe lives only in Underlay, stop and report; do not edit
-     Underlay from this repo
+- **Worker mode:** implementation complete; do not dispatch another worker.
+- **Worker branch:** `t3code/fix-clippy-chown-papercuts`
+- **Worker worktree:** `/Users/tom/.t3/worktrees/effigy/t3code-3abcf710`
+- **Ready work items:** both implemented on the PR. Do not re-run them.
+  1. Ship Clippy in the workspace container image — `workspace-rust-bun`
+     Dockerfile installs Clippy; catalog contract test asserts the fragment
   2. Avoid recursive ownership prep across every workspace dependency
-     tree — prep the authoritative root Bun tree once, skip redundant
-     child trees, and report permission-prep progress
+     tree — authoritative root `node_modules`/`vendor` stay recursive;
+     child package trees are shallow; nested targets under a recursive
+     parent are skipped; prep reports counts and per-path progress
 - **Out of scope:** GitHub Release create on execute (protocol vs
   provider-publication; do not choose); worktree bind-mounts of main;
   catalog-member sibling hard-fail (intentional); Finder metadata in
   Bun's own `file:` copy; doctor scan-as-structural policy.
 - **Canonical refs:** `AGENTS.md`; `PAPERCUTS.md`; generated workspace
   Dockerfiles / rustup fragments; container path preparation.
-- **Required validation:** generated workspace image lists clippy, or a
-  contract test on the Dockerfile fragment. Chown path prep skips nested
-  `node_modules` once the root tree is owned. Add/close both items in
-  this repo's `PAPERCUTS.md`. Do not run `release prepare/execute`.
-  Never modify `.github/workflows/`.
-- **PR URL:** pending
+- **Required validation:** catalog fragment asserts `rustup component add
+  clippy`. Permission-plan unit tests cover root-vs-child Bun trees and
+  nested skip. Do not run `release prepare/execute`. Never modify
+  `.github/workflows/`.
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/51
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
@@ -78,8 +74,7 @@ chown after root Bun consolidation.
 
 ## Suggested Next Move
 
-Read this file, run the worktree preflight, then add clippy to the
-workspace image and stop redundant child-tree chown.
+Orchestrator review of the PR. Merge is operator-authorised only.
 
 ## Completion Protocol
 

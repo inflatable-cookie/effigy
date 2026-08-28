@@ -84,6 +84,14 @@ RUN ln -sf /usr/local/cargo/bin/cargo /usr/local/bin/cargo \
     && ln -sf /usr/local/cargo/bin/rustc /usr/local/bin/rustc \
     && ln -sf /usr/local/cargo/bin/rustup /usr/local/bin/rustup
 
+# ── Clippy ────────────────────────────────────────────────────────────
+# Official `rust:` tags ship rustc/cargo but do not always include Clippy.
+# Consumer validate tasks (`cargo clippy`) need it on a clean `container up`
+# without an undocumented `rustup component add` step.
+RUN rustup component add clippy \
+    && ln -sf /usr/local/cargo/bin/cargo-clippy /usr/local/bin/cargo-clippy \
+    && ln -sf /usr/local/cargo/bin/clippy-driver /usr/local/bin/clippy-driver
+
 # ── Ownership alignment ───────────────────────────────────────────────
 RUN mkdir -p /home/dev/.cargo "${WORKSPACE_MOUNT}" \
     && chown -R dev:"${WORKSPACE_GID}" /home/dev /usr/local/cargo /usr/local/bun "${WORKSPACE_MOUNT}"

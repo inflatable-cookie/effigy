@@ -97,21 +97,159 @@ pub(super) fn ensure_workspace_permissions_ready(
         return Ok(());
     }
 
+    let plan = plan_workspace_permission_prep(&targets);
+    if plan.targets.is_empty() {
+        return Ok(());
+    }
+    let progress_label = render_workspace_permission_progress_label(&plan);
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
-        "preparing workspace permissions",
+        &progress_label,
         false,
     );
     run_workspace_permission_prep(
         workspace_repo_root,
         policy,
         container_name,
-        &render_workspace_permission_command(user, &targets),
+        &render_workspace_permission_command(user, &plan.targets),
         repo_override.as_deref(),
     )
     .inspect_err(|_| progress.finish(false))?;
     progress.finish(true);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WorkspacePermissionMode {
+    Recursive,
+    Shallow,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WorkspacePermissionTarget {
+    pub(super) path: String,
+    pub(super) mode: WorkspacePermissionMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WorkspacePermissionPlan {
+    pub(super) targets: Vec<WorkspacePermissionTarget>,
+    pub(super) skipped_nested: usize,
+    pub(super) shallow_dependency_trees: usize,
+}
+
+pub(super) fn plan_workspace_permission_prep(targets: &[String]) -> WorkspacePermissionPlan {
+    let mut sorted = targets.to_vec();
+    sorted.sort_by(|left, right| {
+        path_depth(left)
+            .cmp(&path_depth(right))
+            .then_with(|| left.cmp(right))
+    });
+
+    let mut kept: Vec<WorkspacePermissionTarget> = Vec::new();
+    let mut skipped_nested = 0usize;
+    let mut shallow_dependency_trees = 0usize;
+
+    for path in sorted {
+        if kept.iter().any(|existing| {
+            existing.mode == WorkspacePermissionMode::Recursive
+                && path_is_under(&path, &existing.path)
+        }) {
+            skipped_nested += 1;
+            continue;
+        }
+
+        let mode = if is_dependency_tree_path(&path)
+            && kept.iter().any(|existing| {
+                existing.mode == WorkspacePermissionMode::Recursive
+                    && is_dependency_tree_path(&existing.path)
+                    && dependency_tree_is_under_authoritative_root(&path, &existing.path)
+            }) {
+            shallow_dependency_trees += 1;
+            WorkspacePermissionMode::Shallow
+        } else {
+            WorkspacePermissionMode::Recursive
+        };
+
+        kept.push(WorkspacePermissionTarget { path, mode });
+    }
+
+    WorkspacePermissionPlan {
+        targets: kept,
+        skipped_nested,
+        shallow_dependency_trees,
+    }
+}
+
+fn render_workspace_permission_progress_label(plan: &WorkspacePermissionPlan) -> String {
+    let recursive = plan
+        .targets
+        .iter()
+        .filter(|target| target.mode == WorkspacePermissionMode::Recursive)
+        .count();
+    let shallow = plan
+        .targets
+        .iter()
+        .filter(|target| target.mode == WorkspacePermissionMode::Shallow)
+        .count();
+    if plan.skipped_nested == 0 && plan.shallow_dependency_trees == 0 {
+        return format!(
+            "preparing workspace permissions ({recursive} path{})",
+            if recursive == 1 { "" } else { "s" }
+        );
+    }
+    format!(
+        "preparing workspace permissions ({recursive} recursive, {shallow} shallow; skipped {} nested)",
+        plan.skipped_nested
+    )
+}
+
+fn is_dependency_tree_path(path: &str) -> bool {
+    let trimmed = path.trim_end_matches('/');
+    matches!(
+        Path::new(trimmed)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("node_modules" | "vendor")
+    )
+}
+
+fn dependency_tree_is_under_authoritative_root(candidate: &str, authoritative: &str) -> bool {
+    let Some(root_parent) = parent_unix_path(authoritative) else {
+        return false;
+    };
+    let Some(candidate_parent) = parent_unix_path(candidate) else {
+        return false;
+    };
+    candidate_parent == root_parent || path_is_under(candidate_parent, root_parent)
+}
+
+fn parent_unix_path(path: &str) -> Option<&str> {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rsplit_once('/') {
+        Some(("", _)) => Some("/"),
+        Some((parent, _)) if !parent.is_empty() => Some(parent),
+        _ => None,
+    }
+}
+
+fn path_is_under(path: &str, parent: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    let parent = parent.trim_end_matches('/');
+    if parent.is_empty() || path == parent {
+        return false;
+    }
+    if parent == "/" {
+        return path.starts_with('/');
+    }
+    path.starts_with(parent) && path.as_bytes().get(parent.len()) == Some(&b'/')
+}
+
+fn path_depth(path: &str) -> usize {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .count()
 }
 
 pub(super) fn run_workspace_permission_prep(
@@ -148,20 +286,22 @@ pub(super) fn run_workspace_permission_prep(
     }))
 }
 
-pub(super) fn render_workspace_permission_command(user: &str, targets: &[String]) -> String {
+pub(super) fn render_workspace_permission_command(
+    user: &str,
+    targets: &[WorkspacePermissionTarget],
+) -> String {
     let workspace_home = targets
         .iter()
-        .find(|target| target.starts_with("/home/"))
-        .cloned();
-    let quoted_targets = targets
+        .find(|target| target.path.starts_with("/home/"))
+        .map(|target| target.path.clone());
+    let volume_targets = targets
         .iter()
-        .filter(|target| Some((*target).as_str()) != workspace_home.as_deref())
-        .map(|target| shell_quote(target))
-        .collect::<Vec<_>>()
-        .join(" ");
+        .filter(|target| Some(target.path.as_str()) != workspace_home.as_deref())
+        .collect::<Vec<_>>();
     let mut command = format!(
-        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); prep_path() {{ path=\"$1\"; mode=\"$2\"; mkdir -p \"$path\" && owner=$(stat -c '%u:%g' \"$path\" 2>/dev/null || printf ''); if [ \"$owner\" != \"$uid:$gid\" ]; then if [ \"$mode\" = recursive ]; then chown -fR \"$uid:$gid\" \"$path\" || true; else chown -f \"$uid:$gid\" \"$path\" || true; fi; fi; }};",
+        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); total={total}; index=0; prep_path() {{ path=\"$1\"; mode=\"$2\"; index=$((index + 1)); printf 'permission prep [%s/%s] %s (%s)\\n' \"$index\" \"$total\" \"$path\" \"$mode\"; mkdir -p \"$path\" && owner=$(stat -c '%u:%g' \"$path\" 2>/dev/null || printf ''); if [ \"$owner\" != \"$uid:$gid\" ]; then if [ \"$mode\" = recursive ]; then chown -fR \"$uid:$gid\" \"$path\" || true; else chown -f \"$uid:$gid\" \"$path\" || true; fi; fi; }};",
         user = shell_quote(user),
+        total = permission_prep_step_count(workspace_home.is_some(), volume_targets.len()),
     );
     if let Some(workspace_home) = workspace_home {
         let quoted_home = shell_quote(&workspace_home);
@@ -170,14 +310,24 @@ pub(super) fn render_workspace_permission_command(user: &str, targets: &[String]
             home = quoted_home,
         ));
     }
-    if !quoted_targets.is_empty() {
+    for target in volume_targets {
+        let mode = match target.mode {
+            WorkspacePermissionMode::Recursive => "recursive",
+            WorkspacePermissionMode::Shallow => "shallow",
+        };
         command.push_str(&format!(
-            " for path in {targets}; do prep_path \"$path\" recursive; done;",
-            targets = quoted_targets,
+            " prep_path {path} {mode};",
+            path = shell_quote(&target.path),
+            mode = mode,
         ));
     }
     command.push_str(" fi");
     command
+}
+
+fn permission_prep_step_count(has_workspace_home: bool, volume_target_count: usize) -> usize {
+    let home_steps = if has_workspace_home { 4 } else { 0 };
+    home_steps + volume_target_count
 }
 
 pub(super) fn ensure_workspace_effigy_available_for_policy(

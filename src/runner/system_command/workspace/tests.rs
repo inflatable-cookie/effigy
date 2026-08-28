@@ -15,14 +15,15 @@ use crate::runner::system_command::workspace_provisioning::{
     linux_workspace_artifact_lock_path, linux_workspace_artifact_offline_hint,
     linux_workspace_effigy_artifact_is_reusable, linux_workspace_effigy_artifact_needs_refresh,
     linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
-    read_trimmed_workspace_effigy_active_version, render_workspace_effigy_install_command,
-    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
-    sibling_effigy_repo_root, wait_for_in_progress_linux_workspace_artifact_build,
-    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
-    workspace_effigy_install_is_current, workspace_effigy_local_install_identity,
-    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    plan_workspace_permission_prep, read_trimmed_workspace_effigy_active_version,
+    render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
+    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
+    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
+    wait_for_in_progress_linux_workspace_artifact_build, workspace_effigy_active_version_file,
+    workspace_effigy_install_identity_file, workspace_effigy_install_is_current,
+    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
+    WorkspacePermissionTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use crate::runner::test_support::effective_container_policy;
@@ -48,8 +49,19 @@ fn temp_repo(manifest: &str) -> std::path::PathBuf {
 
 #[test]
 fn permission_command_tolerates_read_only_bind_mounts() {
-    let cmd =
-        render_workspace_permission_command("dev", &["/home/dev".to_owned(), "/cache".to_owned()]);
+    let cmd = render_workspace_permission_command(
+        "dev",
+        &[
+            WorkspacePermissionTarget {
+                path: "/home/dev".to_owned(),
+                mode: WorkspacePermissionMode::Recursive,
+            },
+            WorkspacePermissionTarget {
+                path: "/cache".to_owned(),
+                mode: WorkspacePermissionMode::Recursive,
+            },
+        ],
+    );
     assert!(
         cmd.contains("chown -fR"),
         "permission prep should use `chown -fR` so the per-entry error \
@@ -70,7 +82,60 @@ fn permission_command_tolerates_read_only_bind_mounts() {
     assert!(cmd.contains("prep_path '/home/dev'/.cache recursive"));
     assert!(cmd.contains("prep_path '/home/dev'/.config recursive"));
     assert!(cmd.contains("prep_path '/home/dev'/.local recursive"));
-    assert!(cmd.contains("'/cache'"));
+    assert!(cmd.contains("prep_path '/cache' recursive"));
+    assert!(
+        cmd.contains("permission prep ["),
+        "permission prep should report per-path progress:\n{cmd}"
+    );
+}
+
+#[test]
+fn permission_plan_keeps_root_bun_tree_and_shallows_child_package_trees() {
+    let plan = plan_workspace_permission_prep(&[
+        "/home/dev".to_owned(),
+        "/workspace-root/acowtancy/node_modules".to_owned(),
+        "/workspace-root/acowtancy/dairy/node_modules".to_owned(),
+        "/workspace-root/acowtancy/cream/node_modules".to_owned(),
+        "/workspace-root/underlay/node_modules".to_owned(),
+        "/cache".to_owned(),
+    ]);
+
+    assert_eq!(plan.skipped_nested, 0);
+    assert_eq!(plan.shallow_dependency_trees, 2);
+    assert!(plan.targets.iter().any(|target| {
+        target.path == "/workspace-root/acowtancy/node_modules"
+            && target.mode == WorkspacePermissionMode::Recursive
+    }));
+    assert!(plan.targets.iter().any(|target| {
+        target.path == "/workspace-root/acowtancy/dairy/node_modules"
+            && target.mode == WorkspacePermissionMode::Shallow
+    }));
+    assert!(plan.targets.iter().any(|target| {
+        target.path == "/workspace-root/acowtancy/cream/node_modules"
+            && target.mode == WorkspacePermissionMode::Shallow
+    }));
+    assert!(plan.targets.iter().any(|target| {
+        target.path == "/workspace-root/underlay/node_modules"
+            && target.mode == WorkspacePermissionMode::Recursive
+    }));
+}
+
+#[test]
+fn permission_plan_skips_targets_nested_under_a_recursive_parent() {
+    let plan = plan_workspace_permission_prep(&[
+        "/workspace-root/vendor".to_owned(),
+        "/workspace-root/vendor/bin".to_owned(),
+        "/cache".to_owned(),
+    ]);
+
+    assert_eq!(plan.skipped_nested, 1);
+    assert!(!plan
+        .targets
+        .iter()
+        .any(|target| target.path == "/workspace-root/vendor/bin"));
+    assert!(plan.targets.iter().any(|target| {
+        target.path == "/workspace-root/vendor" && target.mode == WorkspacePermissionMode::Recursive
+    }));
 }
 
 #[test]
