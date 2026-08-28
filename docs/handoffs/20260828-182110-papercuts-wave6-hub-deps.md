@@ -5,7 +5,7 @@ handoff_mode: worker-pr-loop
 worker_mode: implementation
 dispatch_authority: orchestrator
 handoff: single-file-path-only
-status: ready-to-launch
+status: awaiting-review
 owner: Tom / papercuts orchestrator
 created: 2026-08-28
 updated: 2026-08-28
@@ -38,11 +38,10 @@ see its root Bun workspace on `deps status`.
 - **Pushed main verification:** local `HEAD` and `origin/main` both resolved
   to that SHA before this handoff was created.
 - **Planning checkout:** clean before this handoff file was created.
-- **Worker mode:** implementation worker dispatched by the orchestrator.
-- **Worker branch:** `worker/papercuts-wave6-hub-deps`
-- **Worker worktree:** launcher first.
-  `AGENTS_WORKTREE_CONTAINER_DIR=/Users/tom/Dev/worktrees`.
-- **Ready work items, in order:**
+- **Worker mode:** implementation complete; do not dispatch another worker.
+- **Worker branch:** `t3code/fix-wave6-hub-dependencies`
+- **Worker worktree:** `/Users/tom/.t3/worktrees/effigy/t3code-678338ee`
+- **Ready work items:** both implemented on the PR. Do not re-run them.
   1. Workspace container exec rebuilds a linux artifact via Docker Hub —
      reuse an existing linux workspace artifact when the stack is already
      running, or fail with a cached-image/offline hint instead of a Hub
@@ -64,7 +63,7 @@ see its root Bun workspace on `deps status`.
   `manager: null`. Add/close both items in this repo's `PAPERCUTS.md`.
   Do not run `release prepare/execute`. Never modify
   `.github/workflows/`.
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/50
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
@@ -80,9 +79,8 @@ see its root Bun workspace on `deps status`.
 
 ## Suggested Next Move
 
-Read this file, run the worktree preflight, then stop the Hub rebuild
-when the workspace is already Up. Then teach `deps status` the root Bun
-workspace.
+Orchestrator review of https://github.com/inflatable-cookie/effigy/pull/50.
+Do not dispatch another worker for this lane.
 
 ## Completion Protocol
 

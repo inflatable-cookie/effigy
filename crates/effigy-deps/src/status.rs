@@ -26,8 +26,10 @@ pub fn cargo_managed_block_markers(library_path: &Path) -> (String, String) {
 
 /// Detect package managers present at the repo root without requiring link state.
 ///
-/// Bun is recognized from a root `package.json` plus a Bun lockfile, a Bun
-/// `packageManager` field, or a non-empty `workspaces` declaration.
+/// Bun is recognized from a root `package.json` plus a Bun lockfile, an
+/// explicit Bun `packageManager` field, or (when `packageManager` is absent) a
+/// non-empty `workspaces` declaration. An explicit non-Bun `packageManager`
+/// wins over workspace syntax alone.
 pub fn detect_repo_package_managers(repo_root: &Path) -> Vec<PackageManager> {
     let mut managers = Vec::new();
     if repo_root.join("Cargo.toml").is_file() {
@@ -44,20 +46,22 @@ fn root_looks_like_bun_workspace(repo_root: &Path) -> bool {
     if !manifest_path.is_file() {
         return false;
     }
-    if repo_root.join("bun.lock").is_file() || repo_root.join("bun.lockb").is_file() {
-        return true;
-    }
     let Ok(raw) = fs::read_to_string(&manifest_path) else {
         return false;
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
         return false;
     };
-    if value
+    match value
         .get("packageManager")
         .and_then(|value| value.as_str())
-        .is_some_and(|manager| manager.starts_with("bun@") || manager == "bun")
+        .map(str::trim)
     {
+        Some(manager) if manager == "bun" || manager.starts_with("bun@") => return true,
+        Some(_) => return false,
+        None => {}
+    }
+    if repo_root.join("bun.lock").is_file() || repo_root.join("bun.lockb").is_file() {
         return true;
     }
     match value.get("workspaces") {
@@ -1751,7 +1755,10 @@ mod tests {
     #[test]
     fn detect_repo_package_managers_finds_cargo_and_bun_together() {
         let temp = TempDir::new().unwrap();
-        write(&temp.path().join("Cargo.toml"), "[package]\nname=\"demo\"\n");
+        write(
+            &temp.path().join("Cargo.toml"),
+            "[package]\nname=\"demo\"\n",
+        );
         write(
             &temp.path().join("package.json"),
             r#"{"name":"demo","packageManager":"bun@1.2.0"}"#,
@@ -1769,6 +1776,17 @@ mod tests {
         write(
             &temp.path().join("package.json"),
             r#"{"name":"demo","dependencies":{"left-pad":"1.0.0"}}"#,
+        );
+
+        assert!(detect_repo_package_managers(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn detect_repo_package_managers_respects_explicit_non_bun_package_manager() {
+        let temp = TempDir::new().unwrap();
+        write(
+            &temp.path().join("package.json"),
+            r#"{"private":true,"packageManager":"npm@10","workspaces":["packages/*"]}"#,
         );
 
         assert!(detect_repo_package_managers(temp.path()).is_empty());

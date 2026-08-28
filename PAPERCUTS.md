@@ -14,9 +14,10 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   from `ubuntu:22.04` even when the consumer workspace was already Up; Hub DNS
   timeouts aborted Contact Patch / Composer package selectors.
 - Fix (2026-08-28): workspace handoff reuses a reusable on-disk linux artifact
-  (file + matching rehearsal receipt) instead of rebuilding; failed rebuilds
-  name cached-image / offline / `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download`
-  options.
+  (file + matching rehearsal receipt) instead of rebuilding; reuse keeps the
+  artifact's install identity honest (does not stamp current host freshness onto
+  a stale binary); failed rebuilds name cached-image / offline /
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` options.
 - Surface: `ensure_local_linux_workspace_effigy_artifact`, linux artifact build.
 
 ### [x] Detect the root Bun workspace in Effigy dependency status — 2026-08-28

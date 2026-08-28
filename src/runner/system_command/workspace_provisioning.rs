@@ -600,7 +600,9 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
                 ),
                 false,
             );
-        } else if wait_for_in_progress_linux_workspace_artifact_build(
+            return finalize_reused_linux_workspace_effigy_artifact(&artifact_path);
+        }
+        if wait_for_in_progress_linux_workspace_artifact_build(
             effigy_repo_root,
             &freshness_anchor,
             &artifact_path,
@@ -612,32 +614,28 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
             )?;
             ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
             return Ok(artifact_path);
-        } else {
-            workspace::emit_workspace_info(
-                "building linux effigy artifact for workspace container access",
-                false,
-            );
-            if let Err(error) =
-                run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)
-            {
-                if wait_for_in_progress_linux_workspace_artifact_build(
-                    effigy_repo_root,
-                    &freshness_anchor,
+        }
+        workspace::emit_workspace_info(
+            "building linux effigy artifact for workspace container access",
+            false,
+        );
+        if let Err(error) =
+            run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)
+        {
+            if wait_for_in_progress_linux_workspace_artifact_build(
+                effigy_repo_root,
+                &freshness_anchor,
+                &artifact_path,
+                target,
+            )? {
+                ensure_workspace_effigy_active_version_file(
                     &artifact_path,
-                    target,
-                )? {
-                    ensure_workspace_effigy_active_version_file(
-                        &artifact_path,
-                        &effigy_core::build_info::active_version(),
-                    )?;
-                    ensure_workspace_effigy_install_identity_file(
-                        &artifact_path,
-                        &install_identity,
-                    )?;
-                    return Ok(artifact_path);
-                }
-                return Err(linux_workspace_artifact_offline_hint(error, &artifact_path));
+                    &effigy_core::build_info::active_version(),
+                )?;
+                ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
+                return Ok(artifact_path);
             }
+            return Err(linux_workspace_artifact_offline_hint(error, &artifact_path));
         }
     }
 
@@ -653,6 +651,32 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     )?;
     ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
     Ok(artifact_path)
+}
+
+/// Keep sidecars honest when reusing a stale artifact: never stamp the current
+/// host freshness identity onto an older binary.
+pub(super) fn finalize_reused_linux_workspace_effigy_artifact(
+    artifact_path: &Path,
+) -> Result<PathBuf, RunnerError> {
+    if !artifact_path.is_file() {
+        return Err(RunnerError::task_invocation(format!(
+            "expected reusable linux effigy artifact at `{}`",
+            artifact_path.display()
+        )));
+    }
+    let identity_file = workspace_effigy_install_identity_file(artifact_path);
+    if !identity_file.is_file() {
+        let identity = workspace_effigy_local_install_identity(artifact_path)?;
+        ensure_workspace_effigy_install_identity_file(artifact_path, &identity)?;
+    }
+    let version_file = workspace_effigy_active_version_file(artifact_path);
+    if !version_file.is_file() {
+        ensure_workspace_effigy_active_version_file(
+            artifact_path,
+            &effigy_core::build_info::active_version(),
+        )?;
+    }
+    Ok(artifact_path.to_path_buf())
 }
 
 pub(super) fn linux_workspace_effigy_artifact_is_reusable(

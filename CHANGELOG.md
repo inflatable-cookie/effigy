@@ -15,8 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - Workspace container handoff reuses an existing linux Effigy artifact with a
   matching rehearsal receipt instead of rebuilding through Docker Hub while the
-  consumer stack is already Up. When a rebuild is still required and fails, the
-  error names cached-image / offline reuse options.
+  consumer stack is already Up. Reuse preserves the artifact's install identity
+  instead of stamping the current host freshness onto a stale binary. When a
+  rebuild is still required and fails, the error names cached-image / offline
+  reuse options.
 - Agent skill task-inventory examples now query `.result.catalog_tasks[].task`
   instead of the stale `.result.payload.tasks[]` path.
 - Parallel git-bundle materialization serializes clone/fetch/checkout and

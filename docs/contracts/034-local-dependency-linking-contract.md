@@ -224,9 +224,11 @@ Unix.
 `effigy deps` and `effigy deps status` report desired and observed state for
 both managers, optionally filtered by manager. Bare status also discovers root
 package managers from committed manifests (`Cargo.toml`; Bun via `package.json`
-plus lockfile, `packageManager`, or workspaces) and reports them in
-`detected_managers`. When exactly one root manager is detected and no filter is
-passed, JSON `manager` is that manager instead of `null`.
+plus lockfile, Bun `packageManager`, or workspaces when `packageManager` is
+absent) and reports them in `detected_managers`. An explicit non-Bun
+`packageManager` is not treated as Bun even when `workspaces` is present. When
+exactly one root manager is detected and no filter is passed, JSON `manager` is
+that manager instead of `null`.
 
 Minimum per-link fields:
 
