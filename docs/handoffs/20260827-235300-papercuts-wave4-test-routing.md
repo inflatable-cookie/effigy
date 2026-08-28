@@ -71,7 +71,7 @@ symlink.
   (Longhorn asserts two gate lines verbatim); volume `in_use` true when
   the service is Up; suite expansion honors `run_in`; attention-marker
   flags change the rendered pattern lists (CLI contract test).
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/48
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
