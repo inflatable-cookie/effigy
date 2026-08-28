@@ -138,6 +138,28 @@ repository. Physical linked-package contamination in Longhorn remained visible
 through `deps status bun`; an override changes resolver policy, not the
 underlying filesystem warning.
 
+## Manifest Root Selection
+
+Neither manager assumes the Git root is the package root.
+
+Cargo library inventory anchors on the library's root `Cargo.toml` and takes
+only that workspace's members. A repo often carries packages the root does not
+list — self-contained prototype workspaces, or example packages with neither
+membership nor their own `[workspace]` table. `cargo metadata` refuses on the
+second kind, so walking every manifest failed the whole link. A library with no
+root manifest still falls back to every workspace root in the tree.
+
+Bun resolves the consumer root the same way. A root `package.json` owns the
+tree. Without one, the shallowest manifests are independent Bun roots, and the
+library names the right one: the root declaring a library package wins. When
+none or several do, Effigy refuses and lists the candidates rather than picking
+a tree the caller did not name — select one with `--repo <PATH>`.
+
+Links are keyed by the resolved Bun package root, so a repo with Bun under
+`studio/` records `studio/` as its consumer root. Machine-local link state
+still lives at the repo root, so `effigy deps status` reports those links from
+the repo root as usual.
+
 ## Cargo Workflow
 
 Cargo mode inventories the library and every real consumer workspace. It

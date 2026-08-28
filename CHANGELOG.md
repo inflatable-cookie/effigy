@@ -16,6 +16,16 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Fixed
+- `deps link cargo <library>` anchors the library inventory on the library's
+  root workspace and links only its members, so a package the root does not
+  list — a `[workspace]`-less example under `examples/`, or a self-contained
+  prototype workspace whose package name collides with a root member — no
+  longer fails the whole link.
+- `deps link bun <library>` resolves the consumer's Bun package root instead of
+  requiring `package.json` at the Git root. Without a root manifest the
+  shallowest manifests are candidate roots, and the one declaring a library
+  package is selected; an ambiguous choice is refused with the candidates.
+  `deps status` detects Bun below the root the same way.
 - Workspace permission prep keeps one recursive chown for the authoritative
   root `node_modules` / `vendor` tree, shallow-chowns redundant child package
   trees, skips targets nested under another recursive prep path, and reports

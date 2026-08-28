@@ -35,7 +35,13 @@ pub fn detect_repo_package_managers(repo_root: &Path) -> Vec<PackageManager> {
     if repo_root.join("Cargo.toml").is_file() {
         managers.push(PackageManager::Cargo);
     }
-    if root_looks_like_bun_workspace(repo_root) {
+    // A repo without a root package.json can still be Bun-managed below the
+    // root, which is where Figmatic keeps `studio/`.
+    if crate::bun::bun_package_roots(repo_root)
+        .unwrap_or_default()
+        .iter()
+        .any(|root| root_looks_like_bun_workspace(root))
+    {
         managers.push(PackageManager::Bun);
     }
     managers
