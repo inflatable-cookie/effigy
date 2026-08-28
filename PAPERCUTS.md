@@ -9,6 +9,24 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] Workspace container exec rebuilds a linux artifact via Docker Hub — 2026-08-28
+- Friction: `run_in = "container"` selectors rebuilt `effigy-linux-release-builder`
+  from `ubuntu:22.04` even when the consumer workspace was already Up; Hub DNS
+  timeouts aborted Contact Patch / Composer package selectors.
+- Fix (2026-08-28): workspace handoff reuses a reusable on-disk linux artifact
+  (file + matching rehearsal receipt) instead of rebuilding; reuse keeps the
+  artifact's install identity honest (does not stamp current host freshness onto
+  a stale binary); failed rebuilds name cached-image / offline /
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` options.
+- Surface: `ensure_local_linux_workspace_effigy_artifact`, linux artifact build.
+
+### [x] Detect the root Bun workspace in Effigy dependency status — 2026-08-28
+- Friction: `effigy --json deps status` reported `manager: null` on a root
+  `package.json` + Bun workspaces + `bun.lock` with no local-link record.
+- Fix (2026-08-28): status detects root Bun (and Cargo) managers and reports
+  `manager: "bun"` plus `detected_managers` when Bun is the sole root manager.
+- Surface: `detect_repo_package_managers`, `effigy deps status`.
+
 ### [x] Parallel docs QA can fail `git rev-parse HEAD` — 2026-08-28
 - Friction: overlapping `effigy docs/qa:*` loads raced on a shared git-bundle
   cache; one process `rev-parse HEAD` while another was mid-checkout and hit

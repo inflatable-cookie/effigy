@@ -24,6 +24,56 @@ pub fn cargo_managed_block_markers(library_path: &Path) -> (String, String) {
     )
 }
 
+/// Detect package managers present at the repo root without requiring link state.
+///
+/// Bun is recognized from a root `package.json` plus a Bun lockfile, an
+/// explicit Bun `packageManager` field, or (when `packageManager` is absent) a
+/// non-empty `workspaces` declaration. An explicit non-Bun `packageManager`
+/// wins over workspace syntax alone.
+pub fn detect_repo_package_managers(repo_root: &Path) -> Vec<PackageManager> {
+    let mut managers = Vec::new();
+    if repo_root.join("Cargo.toml").is_file() {
+        managers.push(PackageManager::Cargo);
+    }
+    if root_looks_like_bun_workspace(repo_root) {
+        managers.push(PackageManager::Bun);
+    }
+    managers
+}
+
+fn root_looks_like_bun_workspace(repo_root: &Path) -> bool {
+    let manifest_path = repo_root.join("package.json");
+    if !manifest_path.is_file() {
+        return false;
+    }
+    let Ok(raw) = fs::read_to_string(&manifest_path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    match value
+        .get("packageManager")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+    {
+        Some(manager) if manager == "bun" || manager.starts_with("bun@") => return true,
+        Some(_) => return false,
+        None => {}
+    }
+    if repo_root.join("bun.lock").is_file() || repo_root.join("bun.lockb").is_file() {
+        return true;
+    }
+    match value.get("workspaces") {
+        Some(serde_json::Value::Array(entries)) => !entries.is_empty(),
+        Some(serde_json::Value::Object(map)) => map
+            .get("packages")
+            .and_then(|value| value.as_array())
+            .is_some_and(|entries| !entries.is_empty()),
+        _ => false,
+    }
+}
+
 pub fn inspect_dependency_status(
     repo_root: &Path,
     bun_home: &Path,
@@ -1685,5 +1735,60 @@ mod tests {
             );
             assert!(fixture.library.path().exists());
         }
+    }
+
+    #[test]
+    fn detect_repo_package_managers_finds_root_bun_workspace() {
+        let temp = TempDir::new().unwrap();
+        write(
+            &temp.path().join("package.json"),
+            r#"{"private":true,"workspaces":["packages/*"],"packageManager":"bun@1.3.14"}"#,
+        );
+        write(&temp.path().join("bun.lock"), "{}\n");
+
+        assert_eq!(
+            detect_repo_package_managers(temp.path()),
+            vec![PackageManager::Bun]
+        );
+    }
+
+    #[test]
+    fn detect_repo_package_managers_finds_cargo_and_bun_together() {
+        let temp = TempDir::new().unwrap();
+        write(
+            &temp.path().join("Cargo.toml"),
+            "[package]\nname=\"demo\"\n",
+        );
+        write(
+            &temp.path().join("package.json"),
+            r#"{"name":"demo","packageManager":"bun@1.2.0"}"#,
+        );
+
+        assert_eq!(
+            detect_repo_package_managers(temp.path()),
+            vec![PackageManager::Cargo, PackageManager::Bun]
+        );
+    }
+
+    #[test]
+    fn detect_repo_package_managers_ignores_package_json_without_bun_signals() {
+        let temp = TempDir::new().unwrap();
+        write(
+            &temp.path().join("package.json"),
+            r#"{"name":"demo","dependencies":{"left-pad":"1.0.0"}}"#,
+        );
+
+        assert!(detect_repo_package_managers(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn detect_repo_package_managers_respects_explicit_non_bun_package_manager() {
+        let temp = TempDir::new().unwrap();
+        write(
+            &temp.path().join("package.json"),
+            r#"{"private":true,"packageManager":"npm@10","workspaces":["packages/*"]}"#,
+        );
+
+        assert!(detect_repo_package_managers(temp.path()).is_empty());
     }
 }

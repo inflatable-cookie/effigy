@@ -64,4 +64,6 @@ pub use state::{
     BUN_REGISTRATION_INDEX_SCHEMA, BUN_REGISTRATION_INDEX_SCHEMA_VERSION, REPO_LINK_STATE_SCHEMA,
     REPO_LINK_STATE_SCHEMA_VERSION,
 };
-pub use status::{cargo_managed_block_markers, inspect_dependency_status};
+pub use status::{
+    cargo_managed_block_markers, detect_repo_package_managers, inspect_dependency_status,
+};
