@@ -7,6 +7,16 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `effigy-rhai` runtime-context tests flake under parallel runs
+- Friction: `cargo test --workspace` intermittently failed
+  `runtime::execute_rhai_script_exposes_state_capture_set_in_capture_hook_context`
+  (1 of 3 runs); it passes in isolation every time. Noise while validating an
+  unrelated change.
+- Suspect: `tests::temp_root` names its directory from
+  `SystemTime::now().as_nanos()` alone, with no PID or counter, unlike the
+  `process::id()` + atomic-counter helper in `runner/command_context.rs`.
+- Surface: `crates/effigy-rhai/src/tests/mod.rs` `temp_root`.
+
 ### [ ] `deps link` cannot adopt committed path / `file:` local dependencies
 - Friction: once root selection was fixed, `deps link cargo ../longhorn` from
   Figmatic refuses with `pre-migration path dependency` and `deps link bun`

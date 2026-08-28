@@ -25,6 +25,9 @@ During v0.x, MINOR bumps may include breaking changes.
   requiring `package.json` at the Git root. Without a root manifest the
   shallowest manifests are candidate roots, and the one declaring a library
   package is selected; an ambiguous choice is refused with the candidates.
+  Links are keyed by that package root while the ledger, `.gitignore`, and link
+  backups stay with the enclosing checkout, so `deps status` still reports them
+  from the repo root and `deps unlink` removes the entry it wrote.
   `deps status` detects Bun below the root the same way.
 - Workspace permission prep keeps one recursive chown for the authoritative
   root `node_modules` / `vendor` tree, shallow-chowns redundant child package

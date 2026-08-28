@@ -705,7 +705,8 @@ fn active_bun_link_overlap(
         .collect::<BTreeSet<_>>();
     let mut overlap = BTreeSet::new();
     for link in state.links.iter().filter(|link| {
-        link.mechanism == LinkMechanism::BunLink && link.key.consumer_repo == repo_root
+        link.mechanism == LinkMechanism::BunLink
+            && crate::state::link_belongs_to_repo(&link.key.consumer_repo, repo_root)
     }) {
         let before = overlap.len();
         overlap.extend(

@@ -156,9 +156,16 @@ none or several do, Effigy refuses and lists the candidates rather than picking
 a tree the caller did not name — select one with `--repo <PATH>`.
 
 Links are keyed by the resolved Bun package root, so a repo with Bun under
-`studio/` records `studio/` as its consumer root. Machine-local link state
-still lives at the repo root, so `effigy deps status` reports those links from
-the repo root as usual.
+`studio/` records `studio/` as its consumer root. That key selects manifests,
+`node_modules`, and every `bun` invocation. Machine-local state — the link
+ledger, `.gitignore`, and link backups — belongs to the enclosing checkout, so
+`effigy deps status` reports those links from the repo root as usual and unlink
+removes the ledger entry it wrote.
+
+Both identities are resolved from whichever path you name, so
+`effigy deps link bun ../../longhorn --repo studio` and a bare
+`effigy deps link bun ../longhorn` from the repo root produce the same link.
+Relative library paths still resolve from the path you passed.
 
 ## Cargo Workflow
 

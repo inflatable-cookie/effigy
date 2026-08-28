@@ -61,7 +61,7 @@ pub fn plan_bun_link(
     dry_run: bool,
     observer: &impl BunPlanObserver,
 ) -> Result<BunDependencyPlan, DepsError> {
-    let repo_root = canonical_existing_path(repo_root)?;
+    let repo_root = crate::state::repo_state_root(&canonical_existing_path(repo_root)?);
     let library_root = canonical_existing_path(library_root)?;
     // The repo identity owns the ledger and `.gitignore`; the Bun package root
     // owns `package.json`, `node_modules`, and every `bun` invocation. They are
@@ -91,6 +91,7 @@ pub fn plan_bun_link(
     )?;
     if !committed_pin_packages.is_empty() {
         return Ok(BunDependencyPlan {
+            repo_root: repo_root.clone(),
             desired: None,
             operation: DependencyLinkPlan {
                 action: PlanAction::Link,
@@ -276,6 +277,7 @@ pub fn plan_bun_link(
     )?;
 
     Ok(BunDependencyPlan {
+        repo_root: repo_root.clone(),
         desired: Some(desired),
         operation: DependencyLinkPlan {
             action: PlanAction::Link,
@@ -307,17 +309,19 @@ pub fn plan_bun_unlink(
     dry_run: bool,
     observer: &impl BunPlanObserver,
 ) -> Result<BunDependencyPlan, DepsError> {
-    let repo_root = canonical_existing_path(repo_root)?;
-    let library_path = resolve_unlink_library_path(&repo_root, library_path.as_ref())?;
+    let requested_root = canonical_existing_path(repo_root)?;
+    let library_path = resolve_unlink_library_path(&requested_root, library_path.as_ref())?;
+    let repo_root = crate::state::repo_state_root(&requested_root);
     let absent_key = DependencyLinkKey {
         manager: PackageManager::Bun,
-        consumer_repo: repo_root.clone(),
+        consumer_repo: requested_root.clone(),
         library_path: library_path.clone(),
     };
     let state_store = RepoLinkStateStore::for_repo(&repo_root);
     let state = state_store.read()?;
-    let Some(desired) = select_unlink_link(&repo_root, &state, &library_path)?.cloned() else {
+    let Some(desired) = select_unlink_link(&requested_root, &state, &library_path)?.cloned() else {
         return Ok(BunDependencyPlan {
+            repo_root: repo_root.clone(),
             desired: None,
             operation: DependencyLinkPlan {
                 action: PlanAction::Unlink,
@@ -455,6 +459,7 @@ pub fn plan_bun_unlink(
     )?;
 
     Ok(BunDependencyPlan {
+        repo_root: repo_root.clone(),
         desired: None,
         operation: DependencyLinkPlan {
             action: PlanAction::Unlink,
@@ -965,7 +970,7 @@ fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, DepsError> {
 /// match, accept a single recorded root, and refuse a genuinely ambiguous
 /// choice instead of unlinking a tree the caller did not name.
 fn select_unlink_link<'a>(
-    repo_root: &Path,
+    requested_root: &Path,
     state: &'a crate::RepoLinkState,
     library_path: &Path,
 ) -> Result<Option<&'a DesiredDependencyLink>, DepsError> {
@@ -978,7 +983,7 @@ fn select_unlink_link<'a>(
         .collect::<Vec<_>>();
     if let Some(exact) = matches
         .iter()
-        .find(|link| link.key.consumer_repo == repo_root)
+        .find(|link| link.key.consumer_repo == requested_root)
     {
         return Ok(Some(exact));
     }
@@ -986,7 +991,7 @@ fn select_unlink_link<'a>(
         [] => Ok(None),
         [single] => Ok(Some(single)),
         several => Err(DepsError::invalid(
-            repo_root,
+            requested_root,
             format!(
                 "`{}` is linked from {} Bun package roots ({}); re-run with `--repo <PATH>` naming one root",
                 library_path.display(),

@@ -281,6 +281,10 @@ pub struct CargoDependencyPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BunDependencyPlan {
+    /// The checkout that owns machine-local state: ledger, `.gitignore`, and
+    /// link backups. `operation.key.consumer_repo` is the Bun package root,
+    /// which sits below this whenever the repo keeps Bun out of its root.
+    pub repo_root: PathBuf,
     pub desired: Option<DesiredDependencyLink>,
     pub operation: DependencyLinkPlan,
     pub packages: Vec<BunPackagePlan>,

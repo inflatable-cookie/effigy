@@ -246,6 +246,31 @@ pub fn plan_repo_local_state_ignore(
     })
 }
 
+/// The checkout that owns machine-local Effigy state for a path.
+///
+/// Bun links are keyed by package root, which can sit below the checkout —
+/// `studio/` in a repo with no root manifest. The ledger, `.gitignore`, and
+/// backups still belong to the enclosing checkout, so both a bare invocation
+/// and `--repo <nested-root>` resolve to the same state location. A path
+/// outside any checkout owns its own state.
+pub(crate) fn repo_state_root(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(|ancestor| fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf()))
+        .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// Whether a link recorded against `consumer_repo` belongs to `repo_root`.
+///
+/// A Bun link is keyed by package root, so a repo whose Bun tree sits below
+/// the checkout records `studio/` rather than the checkout itself.
+pub(crate) fn link_belongs_to_repo(consumer_repo: &Path, repo_root: &Path) -> bool {
+    let consumer_repo =
+        fs::canonicalize(consumer_repo).unwrap_or_else(|_| consumer_repo.to_path_buf());
+    let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    consumer_repo.starts_with(&repo_root)
+}
+
 pub fn canonical_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, DepsError> {
     fs::canonicalize(path.as_ref())
         .map_err(|error| DepsError::io("canonicalize", path.as_ref(), error))

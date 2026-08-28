@@ -763,8 +763,7 @@ fn append_orphan_bun_registrations(
         });
         let represented = state.links.iter().any(|link| {
             link.mechanism == LinkMechanism::BunLink
-                && canonical_or_original(&link.key.consumer_repo)
-                    == canonical_or_original(repo_root)
+                && crate::state::link_belongs_to_repo(&link.key.consumer_repo, repo_root)
                 && link
                     .packages
                     .iter()
