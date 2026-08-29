@@ -230,14 +230,40 @@ absent) and reports them in `detected_managers`. An explicit non-Bun
 exactly one root manager is detected and no filter is passed, JSON `manager` is
 that manager instead of `null`.
 
+Status also reports committed local dependencies as observed links. A Cargo
+`path` dependency or a Bun `file:`/`link:` specifier whose declared target
+resolves to a directory outside the enclosing checkout is grouped by the
+containing library checkout and reported with `committed_local` set and
+`desired` absent. The boundary is the checkout, not the inspected root, so
+status pointed at a workspace member or a nested Bun package root still treats
+that repo's own crates and packages as in-repo. Declarations made by a nested
+checkout belong to that checkout and are not reported for its parent. These
+reports are observations, not ledger entries: state is `healthy`, the single
+drift reason is informational, and neither `deps link` nor `deps unlink` acts
+on them. Declarations that do not resolve are left to the package manager.
+
+Only targets that can be in force are reported. Bun `overrides` and
+`resolutions` replace a package's resolved target for the whole install and are
+read from the root manifest only, so they supersede any declared range for the
+same package — including when the override sends it back to a registry version,
+which reports no local at all. `overrides` wins when both spellings name the
+same package.
+
+Within a library group, a committed local is identified by package name *and*
+resolved target, and each target keeps its own observed package and
+verification record. One name can legitimately resolve twice: renamed Cargo
+path dependencies both declaring `package = "foo"` at different directories are
+simultaneously in force.
+
 Minimum per-link fields:
 
 - manager
-- mechanism (`cargo-patch` or `bun-link`)
+- mechanism (`cargo-patch` or `bun-link` for a managed link;
+  `cargo-path-dependency` or `bun-file-dependency` for a committed local)
 - library path
 - consumer roots
 - package names
-- desired state
+- desired state, or committed-local identity
 - observed state
 - drift reasons
 - lockfile or manifest hygiene
@@ -246,6 +272,7 @@ Minimum per-link fields:
 Doctor behavior:
 
 - healthy active links: informational
+- committed path or `file:` local dependency in force: informational
 - missing library path or partial closure: error
 - tracked local Cargo config or hand-managed collision: error
 - Cargo lockfile carrying active path-link resolution: error with

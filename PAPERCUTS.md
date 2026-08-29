@@ -19,7 +19,9 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: `crates/effigy-rhai/src/tests/mod.rs` scoped-env helper;
   `crates/effigy-rhai/src/tests/runtime.rs`.
 
-### [ ] `deps link` cannot adopt committed path / `file:` local dependencies
+## Closed
+
+### [x] `deps link` cannot adopt committed path / `file:` local dependencies — 2026-08-29
 - Friction: once root selection was fixed, `deps link cargo ../longhorn` from
   Figmatic refuses with `pre-migration path dependency` and `deps link bun`
   reports `committed-pin-active`, because Figmatic already declares Longhorn
@@ -27,12 +29,13 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   correct — a Cargo `[patch]` cannot redirect a path dep and a committed
   override outranks an ephemeral link — but `deps status` still cannot report
   the local dependency that is already in force.
-- Wanted: a read-only way to register/report committed path and `file:` local
-  dependencies as observed links.
-- Surface: `cargo_closure` `MatchDisposition::PreMigrationPath`,
-  `bun_pin::matching_committed_overrides`, `deps status`.
-
-## Closed
+- Fix (2026-08-29): `deps status` reads committed manifests and reports each
+  cross-checkout Cargo `path` dependency and Bun `file:`/`link:` specifier as
+  an observed link, grouped by library checkout, with `committed_local` set and
+  `desired` absent. Read-only: the link refusals are unchanged, and the
+  informational reason says so.
+- Surface: `inventory_cargo_committed_path_locals`,
+  `inventory_bun_committed_file_locals`, `deps status`.
 
 ### [x] `deps link` assumed the Git root was the manifest root — 2026-08-28
 - Friction: `effigy deps link cargo ../longhorn --dry-run` walked into

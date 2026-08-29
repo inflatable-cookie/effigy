@@ -697,10 +697,50 @@ pub struct DependencyVerification {
     pub evidence: Vec<VerificationEvidence>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommittedLocalMechanism {
+    CargoPathDependency,
+    BunFileDependency,
+}
+
+impl CommittedLocalMechanism {
+    pub fn manager(self) -> PackageManager {
+        match self {
+            Self::CargoPathDependency => PackageManager::Cargo,
+            Self::BunFileDependency => PackageManager::Bun,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CargoPathDependency => "cargo-path-dependency",
+            Self::BunFileDependency => "bun-file-dependency",
+        }
+    }
+}
+
+/// A local dependency the repository already declares in a committed manifest.
+///
+/// Effigy does not own these. A Cargo `path` dependency and a Bun `file:`
+/// specifier are versioned, they outrank an ephemeral machine-local link, and
+/// `deps link` refuses to rewrite either. Status still has to name them,
+/// because they are the local dependency actually in force.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommittedLocalLink {
+    pub mechanism: CommittedLocalMechanism,
+    pub library_path: PathBuf,
+    pub consumer_roots: Vec<ConsumerRoot>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyLinkReport {
     pub manager: PackageManager,
     pub desired: Option<DesiredDependencyLink>,
+    /// Set when the report describes a committed local dependency rather than
+    /// an Effigy-managed link. Mutually exclusive with `desired`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_local: Option<CommittedLocalLink>,
     pub observed: ObservedDependencyLink,
     pub plan: Option<DependencyLinkPlan>,
     pub verification: DependencyVerification,
