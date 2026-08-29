@@ -307,7 +307,7 @@ fn build_distribution_module(
 }
 
 fn required_deploy_env(name: &str) -> Result<String, Box<EvalAltResult>> {
-    std::env::var(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
+    crate::lookup_host_env(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
 }
 
 fn build_system_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {

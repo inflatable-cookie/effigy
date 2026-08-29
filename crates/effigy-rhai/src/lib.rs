@@ -37,6 +37,10 @@ static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static ACTIVE_RUNTIME_CONTEXT: RefCell<Option<EffigyRuntimeContext>> = const { RefCell::new(None) };
     static ACTIVE_RHAI_SECRETS: RefCell<Option<RhaiSecretStore>> = const { RefCell::new(None) };
+    /// Test/in-process overrides for host env keys normally supplied by a parent
+    /// process (state capture/apply, deploy provider hooks). Empty in production.
+    static ACTIVE_HOST_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 type TaskRunner = Arc<dyn Fn(&Path, &str, &[String]) -> Result<String, String> + Send + Sync>;
@@ -306,6 +310,47 @@ fn with_rhai_runtime_context<T>(
         active.replace(previous);
         output
     })
+}
+
+pub(crate) fn lookup_host_env(name: &str) -> Result<String, std::env::VarError> {
+    if let Some(value) =
+        ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| overrides.borrow().get(name).cloned())
+    {
+        return Ok(value);
+    }
+    std::env::var(name)
+}
+
+/// Thread-local host-env inject seam for in-process tests.
+///
+/// Production capture/apply/deploy hooks leave this empty and keep reading the
+/// real process environment set by the parent Effigy process.
+#[derive(Debug)]
+pub(crate) struct ScopedHostEnvOverrides {
+    previous: BTreeMap<String, String>,
+}
+
+impl ScopedHostEnvOverrides {
+    pub(crate) fn set_many(values: &[(&str, String)]) -> Self {
+        ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| {
+            let previous = overrides.borrow().clone();
+            {
+                let mut map = overrides.borrow_mut();
+                for (key, value) in values {
+                    map.insert((*key).to_owned(), value.clone());
+                }
+            }
+            Self { previous }
+        })
+    }
+}
+
+impl Drop for ScopedHostEnvOverrides {
+    fn drop(&mut self) {
+        ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| {
+            *overrides.borrow_mut() = std::mem::take(&mut self.previous);
+        });
+    }
 }
 
 fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce() -> T) -> T {
