@@ -61,14 +61,17 @@ pub fn plan_bun_link(
     dry_run: bool,
     observer: &impl BunPlanObserver,
 ) -> Result<BunDependencyPlan, DepsError> {
-    let repo_root = canonical_existing_path(repo_root)?;
+    let repo_root = crate::state::repo_state_root(&canonical_existing_path(repo_root)?);
     let library_root = canonical_existing_path(library_root)?;
+    // The repo identity owns the ledger and `.gitignore`; the Bun package root
+    // owns `package.json`, `node_modules`, and every `bun` invocation. They are
+    // the same directory only when the repo keeps Bun at its root.
     let consumer_root = canonical_existing_path(&consumer.root)?;
-    if consumer_root != repo_root {
+    if !crate::state::contained_in_checkout(&repo_root, &consumer_root) {
         return Err(DepsError::invalid(
             &consumer.root,
             format!(
-                "Bun consumer inventory belongs to `{}` rather than requested repo `{}`",
+                "Bun consumer inventory belongs to `{}` rather than a package root inside requested checkout `{}`; an independently nested checkout owns its own links",
                 consumer_root.display(),
                 repo_root.display()
             ),
@@ -76,18 +79,19 @@ pub fn plan_bun_link(
     }
     let key = DependencyLinkKey {
         manager: PackageManager::Bun,
-        consumer_repo: repo_root.clone(),
+        consumer_repo: consumer_root.clone(),
         library_path: library_root.clone(),
     };
-    let closure = bun_closure(&repo_root, library_packages, consumer)?;
+    let closure = bun_closure(&consumer_root, library_packages, consumer)?;
     let committed_pin_packages = crate::bun_pin::matching_committed_overrides(
-        &repo_root,
+        &consumer_root,
         closure
             .iter()
             .map(|package| (package.name.as_str(), package.local_path.as_path())),
     )?;
     if !committed_pin_packages.is_empty() {
         return Ok(BunDependencyPlan {
+            repo_root: repo_root.clone(),
             desired: None,
             operation: DependencyLinkPlan {
                 action: PlanAction::Link,
@@ -117,13 +121,13 @@ pub fn plan_bun_link(
             physical_preconditions: Vec::new(),
             state_preconditions: Vec::new(),
             immutable_files: immutable_bun_files(
-                &repo_root,
+                &consumer_root,
                 closure.iter().map(|package| package.local_path.as_path()),
             )?,
         });
     }
     let reference = BunConsumerReference {
-        consumer_repo: repo_root.clone(),
+        consumer_repo: consumer_root.clone(),
         library_path: library_root.clone(),
     };
     let state_store = RepoLinkStateStore::for_repo(&repo_root);
@@ -170,7 +174,7 @@ pub fn plan_bun_link(
             registration_intents.push(register_intent(package));
         }
 
-        let consumer_link_path = repo_root.join("node_modules").join(&package.name);
+        let consumer_link_path = consumer_root.join("node_modules").join(&package.name);
         let consumer_observation = observer.observe_path(&consumer_link_path)?;
         physical_preconditions.push(BunPhysicalPrecondition {
             path: consumer_link_path.clone(),
@@ -179,7 +183,7 @@ pub fn plan_bun_link(
         let consumer_link = classify_consumer_link(
             &package.name,
             &package.local_path,
-            &repo_root,
+            &consumer_root,
             &consumer_link_path,
             &consumer_observation,
         )?;
@@ -195,21 +199,21 @@ pub fn plan_bun_link(
         });
     }
     let managed_relink = state.links.iter().any(|link| link.key == key);
-    refuse_unmanaged_partial_consumer_closure(&repo_root, &package_plans, managed_relink)?;
+    refuse_unmanaged_partial_consumer_closure(&consumer_root, &package_plans, managed_relink)?;
 
     let all_linked = consumer_observations
         .iter()
         .all(|state| *state == BunConsumerLinkDisposition::Linked);
     let mut process_intents = registration_intents;
     if !all_linked {
-        process_intents.push(link_consumer_intent(&repo_root, &closure));
+        process_intents.push(link_consumer_intent(&consumer_root, &closure));
     }
 
     let desired = DesiredDependencyLink {
         key: key.clone(),
         mechanism: LinkMechanism::BunLink,
         consumer_roots: vec![ConsumerRoot {
-            canonical_path: repo_root.clone(),
+            canonical_path: consumer_root.clone(),
         }],
         packages: closure
             .iter()
@@ -273,6 +277,7 @@ pub fn plan_bun_link(
     )?;
 
     Ok(BunDependencyPlan {
+        repo_root: repo_root.clone(),
         desired: Some(desired),
         operation: DependencyLinkPlan {
             action: PlanAction::Link,
@@ -291,7 +296,7 @@ pub fn plan_bun_link(
         physical_preconditions,
         state_preconditions,
         immutable_files: immutable_bun_files(
-            &repo_root,
+            &consumer_root,
             closure.iter().map(|package| package.local_path.as_path()),
         )?,
     })
@@ -304,22 +309,24 @@ pub fn plan_bun_unlink(
     dry_run: bool,
     observer: &impl BunPlanObserver,
 ) -> Result<BunDependencyPlan, DepsError> {
-    let repo_root = canonical_existing_path(repo_root)?;
-    let library_path = resolve_unlink_library_path(&repo_root, library_path.as_ref())?;
-    let key = DependencyLinkKey {
+    let requested_root = canonical_existing_path(repo_root)?;
+    let library_path = resolve_unlink_library_path(&requested_root, library_path.as_ref())?;
+    let repo_root = crate::state::repo_state_root(&requested_root);
+    let absent_key = DependencyLinkKey {
         manager: PackageManager::Bun,
-        consumer_repo: repo_root.clone(),
+        consumer_repo: requested_root.clone(),
         library_path: library_path.clone(),
     };
     let state_store = RepoLinkStateStore::for_repo(&repo_root);
     let state = state_store.read()?;
-    let Some(desired) = state.links.iter().find(|link| link.key == key).cloned() else {
+    let Some(desired) = select_unlink_link(&requested_root, &state, &library_path)?.cloned() else {
         return Ok(BunDependencyPlan {
+            repo_root: repo_root.clone(),
             desired: None,
             operation: DependencyLinkPlan {
                 action: PlanAction::Unlink,
                 dry_run,
-                key,
+                key: absent_key,
                 changes: Vec::new(),
                 warnings: vec![
                     "Bun dependency link is already absent; nothing to remove".to_owned()
@@ -333,9 +340,17 @@ pub fn plan_bun_unlink(
             immutable_files: Vec::new(),
         });
     };
+    let key = desired.key.clone();
+    // The link records the Bun package root it was made against, so unlink
+    // repairs that tree even when the repo keeps Bun below its root.
+    let consumer_root = desired
+        .consumer_roots
+        .first()
+        .map(|root| root.canonical_path.clone())
+        .unwrap_or_else(|| key.consumer_repo.clone());
     let reference = BunConsumerReference {
-        consumer_repo: repo_root.clone(),
-        library_path: library_path.clone(),
+        consumer_repo: key.consumer_repo.clone(),
+        library_path: key.library_path.clone(),
     };
     let index_store = BunRegistrationIndexStore::for_home(home);
     let index = index_store.read()?;
@@ -367,7 +382,7 @@ pub fn plan_bun_unlink(
             indexed,
         )?;
 
-        let consumer_path = repo_root.join("node_modules").join(&package.name);
+        let consumer_path = consumer_root.join("node_modules").join(&package.name);
         let consumer_observation = observer.observe_path(&consumer_path)?;
         physical_preconditions.push(BunPhysicalPrecondition {
             path: consumer_path.clone(),
@@ -444,6 +459,7 @@ pub fn plan_bun_unlink(
     )?;
 
     Ok(BunDependencyPlan {
+        repo_root: repo_root.clone(),
         desired: None,
         operation: DependencyLinkPlan {
             action: PlanAction::Unlink,
@@ -458,7 +474,7 @@ pub fn plan_bun_unlink(
         physical_preconditions,
         state_preconditions,
         immutable_files: immutable_bun_files(
-            &repo_root,
+            &consumer_root,
             desired
                 .packages
                 .iter()
@@ -947,6 +963,49 @@ fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, DepsError> {
     }
 }
 
+/// The recorded Bun link an unlink request names.
+///
+/// Links are keyed by Bun package root, so a repo whose Bun tree sits below
+/// the git root records `studio/` rather than the repo. Prefer an exact repo
+/// match, accept a single recorded root, and refuse a genuinely ambiguous
+/// choice instead of unlinking a tree the caller did not name.
+fn select_unlink_link<'a>(
+    requested_root: &Path,
+    state: &'a crate::RepoLinkState,
+    library_path: &Path,
+) -> Result<Option<&'a DesiredDependencyLink>, DepsError> {
+    let matches = state
+        .links
+        .iter()
+        .filter(|link| {
+            link.key.manager == PackageManager::Bun && link.key.library_path == library_path
+        })
+        .collect::<Vec<_>>();
+    if let Some(exact) = matches
+        .iter()
+        .find(|link| link.key.consumer_repo == requested_root)
+    {
+        return Ok(Some(exact));
+    }
+    match matches.as_slice() {
+        [] => Ok(None),
+        [single] => Ok(Some(single)),
+        several => Err(DepsError::invalid(
+            requested_root,
+            format!(
+                "`{}` is linked from {} Bun package roots ({}); re-run with `--repo <PATH>` naming one root",
+                library_path.display(),
+                several.len(),
+                several
+                    .iter()
+                    .map(|link| link.key.consumer_repo.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )),
+    }
+}
+
 fn resolve_unlink_library_path(
     repo_root: &Path,
     library_path: &Path,
@@ -1095,6 +1154,39 @@ mod tests {
                 None => fs::remove_file(&change.target).unwrap(),
             }
         }
+    }
+
+    /// A parent-level invocation must not plan Bun processes or `node_modules`
+    /// changes inside a vendored clone while writing the ledger to the parent.
+    #[test]
+    fn refuses_a_consumer_root_inside_an_independently_nested_checkout() {
+        let fixture = fixture(&[("@acme/core", DependencyDepth::Direct)]);
+        fs::create_dir_all(fixture.repo.join(".git")).unwrap();
+        let vendored = fixture.repo.join("vendor/other");
+        fs::create_dir_all(vendored.join(".git")).unwrap();
+        write(&vendored.join("package.json"), b"{\"name\":\"vendored\"}\n");
+        let vendored = fs::canonicalize(&vendored).unwrap();
+        let consumer = BunConsumerInventory {
+            root: vendored,
+            ..fixture.consumer.clone()
+        };
+
+        let error = plan_bun_link(
+            &fixture.repo,
+            &fixture.library,
+            &fixture.packages,
+            &consumer,
+            &fixture.home,
+            true,
+            &FixtureObserver::default(),
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.contains("independently nested checkout"),
+            "{message}"
+        );
     }
 
     #[test]

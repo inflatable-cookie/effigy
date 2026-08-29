@@ -173,7 +173,7 @@ pub fn plan_bun_pin(
         &repo_root,
         &library_path,
         &library_packages,
-        &RepoLinkStateStore::for_repo(&repo_root).read()?,
+        &RepoLinkStateStore::for_checkout(&repo_root).read()?,
     );
     if !active_link_packages.is_empty() {
         let mut packages = Vec::new();
@@ -705,7 +705,8 @@ fn active_bun_link_overlap(
         .collect::<BTreeSet<_>>();
     let mut overlap = BTreeSet::new();
     for link in state.links.iter().filter(|link| {
-        link.mechanism == LinkMechanism::BunLink && link.key.consumer_repo == repo_root
+        link.mechanism == LinkMechanism::BunLink
+            && crate::state::shares_checkout(&link.key.consumer_repo, repo_root)
     }) {
         let before = overlap.len();
         overlap.extend(

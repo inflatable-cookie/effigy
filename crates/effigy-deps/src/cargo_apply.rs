@@ -50,7 +50,7 @@ pub fn apply_cargo_link_plan(
     if !plan.lockfile_guard_packages.is_empty() && !plan.affected_lockfiles.is_empty() {
         validate_owned_lockfile_drift(&plan, process)?;
     }
-    let ledger_path = RepoLinkStateStore::for_repo(&plan.operation.key.consumer_repo)
+    let ledger_path = RepoLinkStateStore::for_checkout(&plan.operation.key.consumer_repo)
         .path()
         .to_path_buf();
     let (ledger_changes, physical_changes): (Vec<_>, Vec<_>) = plan

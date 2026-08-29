@@ -16,6 +16,31 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Fixed
+- `deps link cargo <library>` anchors the library inventory on the library's
+  root workspace and links only its members, so a package the root does not
+  list — a `[workspace]`-less example under `examples/`, or a self-contained
+  prototype workspace whose package name collides with a root member — no
+  longer fails the whole link.
+- `deps link bun <library>` resolves the consumer's Bun package root instead of
+  requiring `package.json` at the Git root. Without a root manifest the
+  shallowest manifests are candidate roots, and the one declaring a library
+  package is selected; an ambiguous choice is refused with the candidates.
+  Links are keyed by that package root while the ledger, `.gitignore`, and link
+  backups stay with the enclosing checkout, so `deps status` still reports them
+  from the repo root and `deps unlink` removes the entry it wrote.
+  `deps status` detects Bun below the root the same way.
+- Bun root discovery keeps every manifest with no package-root ancestor rather
+  than only the shallowest, so independent roots at different depths
+  (`harness/` and `apps/studio/`) are both candidates for selection and
+  package-manager detection. Discovery stops at a vendored checkout's `.git`,
+  and `deps link bun` refuses a consumer root inside one, so a parent-level
+  invocation cannot run Bun or change `node_modules` in a checkout that owns
+  its own link state.
+- Machine-local link state resolves to one ledger per checkout for every read
+  path, so `deps status`, `deps pin`, and `doctor` see a nested-root link from
+  either entry point. `deps pin bun --repo <nested-root>` no longer reads an
+  empty nested store and bypasses its own active-link guard, and a vendored
+  checkout with its own `.git` is no longer claimed by its parent's status.
 - Workspace permission prep keeps one recursive chown for the authoritative
   root `node_modules` / `vendor` tree, shallow-chowns redundant child package
   trees, skips targets nested under another recursive prep path, and reports

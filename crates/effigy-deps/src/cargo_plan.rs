@@ -80,7 +80,7 @@ pub fn plan_cargo_link(
     };
     let (consumer_roots, packages, patch_groups, expected_resolutions) =
         cargo_closure(&repo_root, library, workspaces)?;
-    let state_store = RepoLinkStateStore::for_repo(&repo_root);
+    let state_store = RepoLinkStateStore::for_checkout(&repo_root);
     let state = state_store.read()?;
     let lockfile_guard_packages = cargo_link_package_names(state.links.iter());
     let previous = state.links.iter().find(|link| link.key == key);
@@ -213,7 +213,7 @@ pub fn plan_cargo_unlink(
         consumer_repo: repo_root.clone(),
         library_path: library_path.clone(),
     };
-    let state_store = RepoLinkStateStore::for_repo(&repo_root);
+    let state_store = RepoLinkStateStore::for_checkout(&repo_root);
     let state = state_store.read()?;
     let desired = state.links.iter().find(|link| link.key == key).cloned();
     let config_path = repo_root.join(".cargo/config.toml");

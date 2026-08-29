@@ -780,7 +780,9 @@ fn run_deps_status(
 ) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(repo_override)?;
     let repo_root = resolved.resolved_root;
-    let state = RepoLinkStateStore::for_repo(&repo_root)
+    // Link state is one ledger per checkout, so `--repo <nested-root>` must
+    // read the same file a bare invocation from the checkout does.
+    let state = RepoLinkStateStore::for_checkout(&repo_root)
         .read()
         .map_err(map_deps_error)?;
     let bun_index = BunRegistrationIndexStore::for_home(home)
@@ -1266,6 +1268,63 @@ mod tests {
             json["links"][0]["peer_diagnostics"][0]["local_resolution"],
             local_peer.display().to_string()
         );
+    }
+
+    /// A nested Bun root stores its link in the enclosing checkout ledger, so
+    /// `--repo <nested-root>` must read that ledger rather than an empty local
+    /// one.
+    #[test]
+    fn nested_root_repo_override_reads_the_checkout_ledger() {
+        let checkout = TempDir::new().unwrap();
+        fs::create_dir_all(checkout.path().join(".git")).unwrap();
+        write(&checkout.path().join("studio/package.json"), "{}\n");
+        let checkout_root = fs::canonicalize(checkout.path()).unwrap();
+        let studio = fs::canonicalize(checkout.path().join("studio")).unwrap();
+        let home = TempDir::new().unwrap();
+        RepoLinkStateStore::for_repo(&checkout_root)
+            .write(&RepoLinkState {
+                schema: effigy_deps::REPO_LINK_STATE_SCHEMA.to_owned(),
+                schema_version: effigy_deps::REPO_LINK_STATE_SCHEMA_VERSION,
+                links: vec![DesiredDependencyLink {
+                    key: DependencyLinkKey {
+                        manager: PackageManager::Bun,
+                        consumer_repo: studio.clone(),
+                        library_path: checkout_root.join("missing-library"),
+                    },
+                    mechanism: LinkMechanism::BunLink,
+                    consumer_roots: vec![ConsumerRoot {
+                        canonical_path: studio.clone(),
+                    }],
+                    packages: vec![DependencyPackage {
+                        name: "example".to_owned(),
+                        local_path: checkout_root.join("missing-library/example"),
+                        committed_sources: Vec::new(),
+                    }],
+                    cargo_resolutions: Vec::new(),
+                    cargo_ownership: None,
+                }],
+            })
+            .unwrap();
+
+        for entry_point in [&checkout_root, &studio] {
+            let rendered = run_deps_with_home(
+                status_args(Some(DepsManager::Bun), entry_point, true),
+                home.path(),
+            )
+            .unwrap();
+            let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+            assert_eq!(
+                json["summary"]["total"],
+                1,
+                "entry point {}",
+                entry_point.display()
+            );
+            assert_eq!(
+                json["links"][0]["desired"]["key"]["consumer_repo"],
+                studio.display().to_string()
+            );
+        }
+        assert!(!RepoLinkStateStore::for_repo(&studio).path().exists());
     }
 
     #[test]

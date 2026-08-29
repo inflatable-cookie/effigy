@@ -79,6 +79,16 @@ impl RepoLinkStateStore {
         }
     }
 
+    /// The ledger for the checkout that owns `path`.
+    ///
+    /// Machine-local link state is one file per checkout, so a nested Bun
+    /// package root and its checkout resolve to the same store. Use this
+    /// wherever a repo path — rather than an exact ledger path — selects the
+    /// store, so reads and writes cannot drift apart.
+    pub fn for_checkout(path: impl AsRef<Path>) -> Self {
+        Self::for_repo(repo_state_root(path.as_ref()))
+    }
+
     pub fn at(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
     }
@@ -244,6 +254,52 @@ pub fn plan_repo_local_state_ignore(
         pattern: ".effigy/",
         change,
     })
+}
+
+/// The checkout that owns machine-local Effigy state for a path.
+///
+/// Bun links are keyed by package root, which can sit below the checkout —
+/// `studio/` in a repo with no root manifest. The ledger, `.gitignore`, and
+/// backups still belong to the enclosing checkout, so both a bare invocation
+/// and `--repo <nested-root>` resolve to the same state location. A path
+/// outside any checkout owns its own state.
+pub fn repo_state_root(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(|ancestor| fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf()))
+        .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// Whether `path` lies inside `repo_root` without crossing a nested checkout.
+///
+/// A vendored clone carries its own `.git`; its packages and its link state
+/// belong to it. A lexical prefix test would let a parent-level invocation
+/// plan Bun processes and `node_modules` changes inside it while writing the
+/// ledger to the parent.
+pub(crate) fn contained_in_checkout(repo_root: &Path, path: &Path) -> bool {
+    path.starts_with(repo_root)
+        && path
+            .ancestors()
+            .take_while(|ancestor| *ancestor != repo_root)
+            .all(|ancestor| !ancestor.join(".git").exists())
+}
+
+/// Whether two paths are owned by the same checkout.
+///
+/// A Bun link is keyed by package root, so one checkout can hold several —
+/// `studio/` and `harness/` are siblings that share a ledger, and either may
+/// be the path a command was pointed at. Resolved checkout identity covers
+/// that; an independently nested checkout resolves to itself and is excluded.
+///
+/// Outside a checkout there is no `.git` to resolve to, so every directory
+/// would resolve to itself. Containment without crossing a checkout boundary
+/// keeps a non-git project and its nested Bun root together.
+pub(crate) fn shares_checkout(left: &Path, right: &Path) -> bool {
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    repo_state_root(&left) == repo_state_root(&right)
+        || contained_in_checkout(&right, &left)
+        || contained_in_checkout(&left, &right)
 }
 
 pub fn canonical_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, DepsError> {

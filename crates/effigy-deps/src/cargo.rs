@@ -55,7 +55,7 @@ pub fn inventory_cargo_library(
     process: &impl ReadOnlyProcess,
 ) -> Result<CargoLibraryInventory, DepsError> {
     let root = canonical_existing_path(root)?;
-    let manifests = cargo_manifests(&root)?;
+    let manifests = cargo_library_manifests(&root)?;
     if manifests.is_empty() {
         return Err(DepsError::invalid(
             &root,
@@ -67,7 +67,12 @@ pub fn inventory_cargo_library(
     for manifest in manifests {
         let metadata = run_metadata(&root, &manifest, true, false, process)?;
         let declarations = declared_sources(&metadata)?;
+        let workspace_member_ids: BTreeSet<String> =
+            metadata.workspace_members.iter().cloned().collect();
         for package in metadata.packages {
+            if !workspace_member_ids.contains(&package.id) {
+                continue;
+            }
             let package = normalize_package(package, &declarations);
             packages.insert(package.manifest_path.clone(), package);
         }
@@ -84,7 +89,7 @@ pub fn inventory_cargo_consumers(
     process: &impl ReadOnlyProcess,
 ) -> Result<Vec<CargoWorkspaceInventory>, DepsError> {
     let repo_root = canonical_existing_path(repo_root)?;
-    let manifests = cargo_consumer_manifests(&repo_root)?;
+    let manifests = cargo_manifest_roots(&repo_root)?;
     inventory_cargo_consumer_manifests(&repo_root, manifests, library, true, process)
 }
 
@@ -231,7 +236,30 @@ fn cargo_manifests(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
     Ok(manifests)
 }
 
-fn cargo_consumer_manifests(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
+/// The manifests that define what a library offers.
+///
+/// A root manifest owns the library, so its members are the whole offer:
+/// Longhorn keeps self-contained prototype workspaces under `prototypes/`
+/// whose package names collide with root members, and treating those as part
+/// of the library refused the link on a duplicate name. Only a repo with no
+/// root manifest falls back to every workspace in the tree.
+fn cargo_library_manifests(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
+    let root_manifest = root.join("Cargo.toml");
+    if root_manifest.is_file() {
+        return Ok(vec![root_manifest]);
+    }
+    cargo_manifest_roots(root)
+}
+
+/// Manifests that own a Cargo resolution: workspace roots plus standalone
+/// packages that sit outside every workspace in the tree.
+///
+/// A package nested under a workspace root that the root does not list is not
+/// a member, so `cargo metadata` on its own manifest refuses rather than
+/// resolving. Longhorn keeps such packages under `examples/`; walking into
+/// them turned `deps link cargo ../longhorn` into a hard failure instead of a
+/// link over the workspace members.
+fn cargo_manifest_roots(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
     let manifests = cargo_manifests(root)?;
     let mut candidates = Vec::with_capacity(manifests.len());
     let mut workspace_roots = Vec::new();
@@ -605,6 +633,73 @@ mod tests {
             "resolve": { "nodes": nodes }
         })
         .to_string()
+    }
+
+    #[test]
+    fn library_inventory_skips_nested_non_member_cargo_packages() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("Cargo.toml");
+        let member = temp.path().join("crates/core/Cargo.toml");
+        // Longhorn shape: an example package under the workspace root that the
+        // root does not list, so `cargo metadata` on it refuses outright.
+        let non_member = temp.path().join("examples/proof/rust/jetstream/Cargo.toml");
+        let prototype = temp.path().join("prototypes/spike/Cargo.toml");
+        write(
+            &root,
+            "[workspace]\nmembers = [\"crates/core\"]\nresolver = \"2\"\n",
+        );
+        write(
+            &member,
+            "[package]\nname = \"signal-core\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &non_member,
+            "[package]\nname = \"signal-proof\"\nversion = \"0.0.0\"\n",
+        );
+        write(
+            &prototype,
+            "[workspace]\n\n[package]\nname = \"signal-core\"\nversion = \"9.9.9\"\n",
+        );
+        let mut outputs = BTreeMap::new();
+        outputs.insert(
+            root.clone(),
+            metadata(
+                vec![
+                    package("core", "signal-core", &member, None),
+                    package("proof", "signal-proof", &non_member, None),
+                ],
+                &["core"],
+                temp.path(),
+                Vec::new(),
+            ),
+        );
+        let process = FixtureProcess {
+            outputs,
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let inventory = inventory_cargo_library(temp.path(), &process).unwrap();
+
+        let names = inventory
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["signal-core"]);
+        let requested = process
+            .requests
+            .borrow()
+            .iter()
+            .map(|request| {
+                let index = request
+                    .args
+                    .iter()
+                    .position(|argument| argument == "--manifest-path")
+                    .unwrap();
+                PathBuf::from(&request.args[index + 1])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(requested, [canonical_or_original(&root)]);
     }
 
     #[test]

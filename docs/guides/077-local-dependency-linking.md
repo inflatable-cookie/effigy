@@ -138,6 +138,50 @@ repository. Physical linked-package contamination in Longhorn remained visible
 through `deps status bun`; an override changes resolver policy, not the
 underlying filesystem warning.
 
+## Manifest Root Selection
+
+Neither manager assumes the Git root is the package root.
+
+Cargo library inventory anchors on the library's root `Cargo.toml` and takes
+only that workspace's members. A repo often carries packages the root does not
+list — self-contained prototype workspaces, or example packages with neither
+membership nor their own `[workspace]` table. `cargo metadata` refuses on the
+second kind, so walking every manifest failed the whole link. A library with no
+root manifest still falls back to every workspace root in the tree.
+
+Bun resolves the consumer root the same way. A root `package.json` owns the
+tree. Without one, every manifest that has no package-root ancestor is an
+independent Bun root — `harness/` and `apps/studio/` sit at different depths
+and neither owns the other, so both are roots, while anything under a root is
+that root's workspace member. The library then names the right one: the root
+declaring a library package wins. When none or several do, Effigy refuses and
+lists the candidates rather than picking a tree the caller did not name —
+select one with `--repo <PATH>`.
+
+A vendored clone carrying its own `.git` is an independent checkout. Discovery
+stops at that boundary and planning refuses a consumer root inside one, so a
+parent-level invocation never runs Bun or changes `node_modules` in a checkout
+that owns its own link state.
+
+Links are keyed by the resolved Bun package root, so a repo with Bun under
+`studio/` records `studio/` as its consumer root. That key selects manifests,
+`node_modules`, and every `bun` invocation. Machine-local state — the link
+ledger, `.gitignore`, and link backups — belongs to the enclosing checkout, so
+`effigy deps status` reports those links from the repo root as usual and unlink
+removes the ledger entry it wrote.
+
+Both identities are resolved from whichever path you name, so
+`effigy deps link bun ../../longhorn --repo studio` and a bare
+`effigy deps link bun ../longhorn` from the repo root produce the same link.
+Relative library paths still resolve from the path you passed.
+
+Every command that reads link state resolves the same single ledger, so
+`deps status`, `deps pin`, and `doctor` see a nested-root link from either
+entry point. In particular `deps pin bun --repo studio` still refuses while a
+link overlaps, instead of reading an empty nested store and writing overrides
+over it. A vendored checkout with its own `.git` owns its own state and is
+never claimed by its parent.
+
 ## Cargo Workflow
 
 Cargo mode inventories the library and every real consumer workspace. It

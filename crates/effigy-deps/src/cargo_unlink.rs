@@ -101,7 +101,7 @@ pub fn apply_cargo_unlink_plan(
         ));
     }
 
-    let ledger_path = RepoLinkStateStore::for_repo(&plan.operation.key.consumer_repo)
+    let ledger_path = RepoLinkStateStore::for_checkout(&plan.operation.key.consumer_repo)
         .path()
         .to_path_buf();
     let (ledger_changes, physical_changes): (Vec<_>, Vec<_>) = plan

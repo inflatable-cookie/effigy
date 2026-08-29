@@ -74,7 +74,7 @@ pub fn apply_bun_link_plan(
 
     let home = home.as_ref();
     let index_store = BunRegistrationIndexStore::for_home(home);
-    let ledger_path = RepoLinkStateStore::for_repo(&plan.operation.key.consumer_repo)
+    let ledger_path = RepoLinkStateStore::for_repo(&plan.repo_root)
         .path()
         .to_path_buf();
     let index_path = index_store.path().to_path_buf();
@@ -326,9 +326,7 @@ fn backup_consumer_package(
         .join(package_name);
     let backup = if package.consumer_link == BunConsumerLinkDisposition::Registry {
         let backup = plan
-            .operation
-            .key
-            .consumer_repo
+            .repo_root
             .join(".effigy/local/bun-link-backups")
             .join(std::process::id().to_string())
             .join(index.to_string());

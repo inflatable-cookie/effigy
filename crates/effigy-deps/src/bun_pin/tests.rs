@@ -708,6 +708,54 @@ fn lockfile_change_after_planning_refuses_manifest_write() {
     );
 }
 
+/// A link for a nested Bun root is stored in the enclosing checkout ledger, so
+/// pinning that root must still see the guard rather than an empty local store.
+#[test]
+fn active_nested_root_link_refuses_pin_from_the_nested_root() {
+    let fixture = fixture(&[("@acme/core", "core")]);
+    fs::create_dir_all(fixture.consumer.join(".git")).unwrap();
+    let manifest = r#"{"name":"studio","dependencies":{"@acme/core":"^1"}}"#;
+    write(&fixture.consumer.join("studio/package.json"), manifest);
+    let checkout = fs::canonicalize(&fixture.consumer).unwrap();
+    let studio = fs::canonicalize(fixture.consumer.join("studio")).unwrap();
+    let library = fs::canonicalize(&fixture.library).unwrap();
+    let package_path = fs::canonicalize(fixture.library.join("packages/core")).unwrap();
+    let mut state = RepoLinkState::empty();
+    state.links.push(DesiredDependencyLink {
+        key: DependencyLinkKey {
+            manager: PackageManager::Bun,
+            consumer_repo: studio.clone(),
+            library_path: library.clone(),
+        },
+        mechanism: LinkMechanism::BunLink,
+        consumer_roots: vec![ConsumerRoot {
+            canonical_path: studio.clone(),
+        }],
+        packages: vec![DependencyPackage {
+            name: "@acme/core".to_owned(),
+            local_path: package_path,
+            committed_sources: Vec::new(),
+        }],
+        cargo_resolutions: Vec::new(),
+        cargo_ownership: None,
+    });
+    RepoLinkStateStore::for_repo(&checkout)
+        .write(&state)
+        .unwrap();
+    let process = FixtureProcess::new(&package_tree(&["@acme/core"]));
+
+    let report = apply_bun_pin_plan(plan_bun_pin(&studio, &library, false, &process).unwrap());
+
+    assert_eq!(report.outcome, BunPinOutcome::Conflict);
+    assert!(report.writes.is_empty());
+    assert!(report.errors[0].contains("effigy deps unlink bun"));
+    assert!(process.requests.borrow().is_empty());
+    assert_eq!(
+        fs::read_to_string(studio.join("package.json")).unwrap(),
+        manifest
+    );
+}
+
 #[test]
 fn active_effigy_link_refuses_pin_before_consumer_inventory_or_manifest_write() {
     let fixture = fixture(&[("@acme/core", "core")]);

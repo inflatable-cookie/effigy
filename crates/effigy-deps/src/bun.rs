@@ -41,7 +41,26 @@ pub fn inventory_bun_library(
     root: impl AsRef<Path>,
 ) -> Result<Vec<BunPackageInventory>, DepsError> {
     let root = canonical_existing_path(root)?;
-    inventory_bun_packages(&root)
+    let package_roots = bun_package_roots(&root)?;
+    if package_roots.is_empty() {
+        return Err(DepsError::invalid(
+            &root,
+            "no package.json manifest was found",
+        ));
+    }
+    let mut packages = Vec::new();
+    for package_root in &package_roots {
+        packages.extend(named_bun_packages(package_root)?);
+    }
+    packages.sort();
+    packages.dedup();
+    if packages.is_empty() {
+        return Err(DepsError::invalid(
+            &root,
+            "package layout contains no named root or workspace packages",
+        ));
+    }
+    Ok(packages)
 }
 
 pub fn inventory_bun_consumer(
@@ -49,7 +68,7 @@ pub fn inventory_bun_consumer(
     library_packages: &[BunPackageInventory],
     process: &impl ReadOnlyProcess,
 ) -> Result<BunConsumerInventory, DepsError> {
-    let root = canonical_existing_path(root)?;
+    let root = select_bun_consumer_root(canonical_existing_path(root)?, library_packages)?;
     let manifests = selected_bun_manifests(&root)?;
     let direct_dependencies = direct_dependencies(&manifests);
     let request = ProcessRequest {
@@ -71,7 +90,7 @@ pub(crate) fn inventory_bun_consumer_from_text_lock(
     root: impl AsRef<Path>,
     library_packages: &[BunPackageInventory],
 ) -> Result<BunConsumerInventory, DepsError> {
-    let root = canonical_existing_path(root)?;
+    let root = select_bun_consumer_root(canonical_existing_path(root)?, library_packages)?;
     let manifests = selected_bun_manifests(&root)?;
     let direct_dependencies = direct_dependencies(&manifests);
     let lock_path = root.join("bun.lock");
@@ -434,34 +453,103 @@ fn split_package_spec(entry: &str) -> Option<(String, String)> {
     Some((name.to_owned(), version.to_owned()))
 }
 
-fn inventory_bun_packages(root: &Path) -> Result<Vec<BunPackageInventory>, DepsError> {
-    let manifests = selected_bun_manifests(root)?;
-    if manifests.is_empty() {
-        return Err(DepsError::invalid(
-            root,
-            "no package.json manifest was found",
-        ));
-    }
-    let mut packages = Vec::new();
-    for (manifest_path, manifest) in manifests {
-        let package_path = manifest_path.parent().unwrap_or(root).to_path_buf();
-        if let Some(name) = manifest.name {
-            packages.push(BunPackageInventory {
+fn named_bun_packages(root: &Path) -> Result<Vec<BunPackageInventory>, DepsError> {
+    Ok(selected_bun_manifests(root)?
+        .into_iter()
+        .filter_map(|(manifest_path, manifest)| {
+            let package_path = manifest_path.parent().unwrap_or(root).to_path_buf();
+            manifest.name.map(|name| BunPackageInventory {
                 name,
                 package_path,
                 version: manifest.version,
-            });
-        }
+            })
+        })
+        .collect())
+}
+
+/// Bun package roots inside a checkout.
+///
+/// A root `package.json` owns the whole tree, so it wins outright. Without one,
+/// a manifest with no package-root ancestor is an independent root: Figmatic
+/// has no root manifest and keeps Bun under `studio/`, `harness/`, and
+/// `preview-builder/`, so anchoring on the git root found no manifest at all.
+///
+/// Independence is ancestry, not depth. `harness/` and `apps/studio/` sit at
+/// different depths and neither owns the other, so both are roots; anything
+/// under a root is that root's own workspace member.
+pub(crate) fn bun_package_roots(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
+    if root.join("package.json").is_file() {
+        return Ok(vec![root.to_path_buf()]);
     }
-    packages.sort();
-    packages.dedup();
-    if packages.is_empty() {
+    let candidates = bun_manifest_paths(root)?
+        .into_iter()
+        .map(|manifest| manifest.parent().unwrap_or(root).to_path_buf())
+        .collect::<Vec<_>>();
+    let owned = candidates
+        .iter()
+        .map(PathBuf::as_path)
+        .collect::<BTreeSet<_>>();
+    Ok(candidates
+        .iter()
+        .filter(|candidate| {
+            !candidate
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| owned.contains(ancestor))
+        })
+        .cloned()
+        .collect())
+}
+
+/// The single Bun package root a link or status operation acts on.
+///
+/// Several independent roots are only ambiguous until the library names them:
+/// exactly one Figmatic root declares the Longhorn packages. Anything still
+/// ambiguous is refused with the candidates rather than guessed at.
+fn select_bun_consumer_root(
+    root: PathBuf,
+    library_packages: &[BunPackageInventory],
+) -> Result<PathBuf, DepsError> {
+    let mut package_roots = bun_package_roots(&root)?;
+    if package_roots.len() == 1 {
+        return Ok(package_roots.remove(0));
+    }
+    if package_roots.is_empty() {
         return Err(DepsError::invalid(
-            root,
-            "package layout contains no named root or workspace packages",
+            &root,
+            "no package.json manifest was found",
         ));
     }
-    Ok(packages)
+    let library_names = library_packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut declaring = Vec::new();
+    for candidate in &package_roots {
+        let manifests = selected_bun_manifests(candidate)?;
+        if direct_dependencies(&manifests)
+            .iter()
+            .any(|name| library_names.contains(name.as_str()))
+        {
+            declaring.push(candidate.clone());
+        }
+    }
+    if declaring.len() == 1 {
+        return Ok(declaring.remove(0));
+    }
+    let candidates = package_roots
+        .iter()
+        .map(|candidate| candidate.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(DepsError::invalid(
+        &root,
+        format!(
+            "no root package.json; {} of the {} Bun package roots ({candidates}) declare a library package, so the consumer root is ambiguous; re-run with `--repo <PATH>` naming one root",
+            declaring.len(),
+            package_roots.len()
+        ),
+    ))
 }
 
 fn selected_bun_manifests(root: &Path) -> Result<Vec<(PathBuf, PackageManifest)>, DepsError> {
@@ -488,11 +576,24 @@ fn selected_bun_manifests(root: &Path) -> Result<Vec<(PathBuf, PackageManifest)>
 }
 
 fn bun_manifests(root: &Path) -> Result<Vec<(PathBuf, PackageManifest)>, DepsError> {
+    bun_manifest_paths(root)?
+        .into_iter()
+        .map(|path| {
+            let raw = fs::read(&path)
+                .map_err(|error| DepsError::io("read package manifest", &path, error))?;
+            let manifest = serde_json::from_slice(&raw)
+                .map_err(|error| DepsError::json("parse package manifest", &path, error))?;
+            Ok((path, manifest))
+        })
+        .collect()
+}
+
+fn bun_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
     let mut paths = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(include_entry)
+        .filter_entry(|entry| include_entry(entry) && !nested_checkout(entry))
     {
         let entry = entry.map_err(|error| {
             let path = error.path().unwrap_or(root).to_path_buf();
@@ -510,16 +611,7 @@ fn bun_manifests(root: &Path) -> Result<Vec<(PathBuf, PackageManifest)>, DepsErr
         }
     }
     paths.sort();
-    paths
-        .into_iter()
-        .map(|path| {
-            let raw = fs::read(&path)
-                .map_err(|error| DepsError::io("read package manifest", &path, error))?;
-            let manifest = serde_json::from_slice(&raw)
-                .map_err(|error| DepsError::json("parse package manifest", &path, error))?;
-            Ok((path, manifest))
-        })
-        .collect()
+    Ok(paths)
 }
 
 /// Directories macOS drops into a tree that carry no package content.
@@ -545,6 +637,14 @@ const FINDER_METADATA_DIRS: &[&str] = &[
 /// sidecar carrying resource forks for `name`.
 fn is_finder_metadata_file(name: &str) -> bool {
     name == ".DS_Store" || name.starts_with("._")
+}
+
+/// A directory carrying its own `.git` is an independent checkout.
+///
+/// Its packages belong to it, so discovery from an enclosing tree stops at the
+/// boundary rather than selecting a vendored clone's `package.json`.
+fn nested_checkout(entry: &DirEntry) -> bool {
+    entry.depth() > 0 && entry.file_type().is_dir() && entry.path().join(".git").exists()
 }
 
 fn include_entry(entry: &DirEntry) -> bool {
@@ -650,6 +750,143 @@ mod tests {
             .map(|package| package.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(names, ["@acme/a", "@acme/root", "@acme/z"]);
+    }
+
+    #[test]
+    fn selects_the_bun_package_root_that_declares_the_library() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        // Figmatic shape: no root manifest, Bun split across sibling roots.
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio","dependencies":{"@acme/library":"1.0.0"}}"#,
+        );
+        write(
+            &consumer.join("harness/package.json"),
+            r#"{"name":"harness"}"#,
+        );
+        write(
+            &consumer.join("preview-builder/package.json"),
+            r#"{"name":"preview-builder"}"#,
+        );
+        let library_packages = vec![BunPackageInventory {
+            name: "@acme/library".to_owned(),
+            package_path: temp.path().join("library"),
+            version: Some("1.0.0".to_owned()),
+        }];
+        let process = FixtureProcess {
+            stdout: "consumer@0.0.0\n└── @acme/library@1.0.0\n".to_owned(),
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let inventory = inventory_bun_consumer(&consumer, &library_packages, &process).unwrap();
+
+        let studio = fs::canonicalize(consumer.join("studio")).unwrap();
+        assert_eq!(inventory.root, studio);
+        assert_eq!(process.requests.borrow()[0].cwd, studio);
+        assert_eq!(
+            inventory
+                .library_matches
+                .iter()
+                .map(|(package, _)| package.name.as_str())
+                .collect::<Vec<_>>(),
+            ["@acme/library"]
+        );
+    }
+
+    /// Independent roots are defined by ancestry, not by equal depth.
+    #[test]
+    fn keeps_independent_bun_roots_that_sit_at_different_depths() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("harness/package.json"),
+            r#"{"name":"harness"}"#,
+        );
+        write(
+            &consumer.join("apps/studio/package.json"),
+            r#"{"name":"studio","dependencies":{"@acme/library":"1.0.0"}}"#,
+        );
+        // Owned by `apps/studio`, not a root of its own.
+        write(
+            &consumer.join("apps/studio/packages/ui/package.json"),
+            r#"{"name":"ui"}"#,
+        );
+        let consumer = fs::canonicalize(&consumer).unwrap();
+
+        let roots = bun_package_roots(&consumer).unwrap();
+
+        assert_eq!(
+            roots,
+            [consumer.join("apps/studio"), consumer.join("harness")]
+        );
+
+        // The deeper root still wins selection when it declares the library.
+        let library_packages = vec![BunPackageInventory {
+            name: "@acme/library".to_owned(),
+            package_path: temp.path().join("library"),
+            version: Some("1.0.0".to_owned()),
+        }];
+        let process = FixtureProcess {
+            stdout: "studio@0.0.0\n└── @acme/library@1.0.0\n".to_owned(),
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let inventory = inventory_bun_consumer(&consumer, &library_packages, &process).unwrap();
+
+        assert_eq!(inventory.root, consumer.join("apps/studio"));
+    }
+
+    /// A vendored clone owns its own packages; discovery stops at its `.git`.
+    #[test]
+    fn discovery_does_not_cross_into_an_independently_nested_checkout() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        fs::create_dir_all(consumer.join("vendor/other/.git")).unwrap();
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio"}"#,
+        );
+        write(
+            &consumer.join("vendor/other/package.json"),
+            r#"{"name":"vendored"}"#,
+        );
+        let consumer = fs::canonicalize(&consumer).unwrap();
+
+        let roots = bun_package_roots(&consumer).unwrap();
+
+        assert_eq!(roots, [consumer.join("studio")]);
+    }
+
+    #[test]
+    fn refuses_an_ambiguous_bun_consumer_root_instead_of_guessing() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio"}"#,
+        );
+        write(
+            &consumer.join("harness/package.json"),
+            r#"{"name":"harness"}"#,
+        );
+        let library_packages = vec![BunPackageInventory {
+            name: "@acme/library".to_owned(),
+            package_path: temp.path().join("library"),
+            version: Some("1.0.0".to_owned()),
+        }];
+        let process = FixtureProcess {
+            stdout: String::new(),
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let error = inventory_bun_consumer(&consumer, &library_packages, &process).unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("consumer root is ambiguous"), "{message}");
+        assert!(message.contains("--repo <PATH>"), "{message}");
+        assert!(process.requests.borrow().is_empty());
     }
 
     #[test]

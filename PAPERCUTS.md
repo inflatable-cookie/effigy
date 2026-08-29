@@ -7,7 +7,44 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `effigy-rhai` runtime-context tests race on process-wide env vars
+- Friction: `cargo test --workspace` intermittently fails
+  `runtime::execute_rhai_script_exposes_state_capture_context_helpers` or
+  `..._state_capture_set_in_capture_hook_context` with
+  `Runtime error: missing EFFIGY_STATE_CAPTURE_CONTEXT`. Each passes in
+  isolation. Recurring noise when validating unrelated changes.
+- Cause: the scoped-env helper uses `std::env::set_var` / `remove_var`, which
+  are process-wide. Both tests set `EFFIGY_STATE_CAPTURE_CONTEXT`, so one
+  test's teardown clears it while the other is mid-run.
+- Surface: `crates/effigy-rhai/src/tests/mod.rs` scoped-env helper;
+  `crates/effigy-rhai/src/tests/runtime.rs`.
+
+### [ ] `deps link` cannot adopt committed path / `file:` local dependencies
+- Friction: once root selection was fixed, `deps link cargo ../longhorn` from
+  Figmatic refuses with `pre-migration path dependency` and `deps link bun`
+  reports `committed-pin-active`, because Figmatic already declares Longhorn
+  through Cargo `path` deps and Bun `file:` overrides. Both refusals are
+  correct — a Cargo `[patch]` cannot redirect a path dep and a committed
+  override outranks an ephemeral link — but `deps status` still cannot report
+  the local dependency that is already in force.
+- Wanted: a read-only way to register/report committed path and `file:` local
+  dependencies as observed links.
+- Surface: `cargo_closure` `MatchDisposition::PreMigrationPath`,
+  `bun_pin::matching_committed_overrides`, `deps status`.
+
 ## Closed
+
+### [x] `deps link` assumed the Git root was the manifest root — 2026-08-28
+- Friction: `effigy deps link cargo ../longhorn --dry-run` walked into
+  Longhorn's non-member `examples/command-system-proof/rust/jetstream` and died
+  on `cargo metadata`; the Bun form looked for `package.json` at the Figmatic
+  repo root while Figmatic keeps Bun in `studio/`.
+- Fix (2026-08-28): Cargo library inventory anchors on the library root
+  workspace and keeps only its members; Bun resolves the consumer package root,
+  using the library to pick between sibling roots and refusing a genuinely
+  ambiguous choice. `deps status` detects Bun below the repo root too.
+- Surface: `inventory_cargo_library`, `inventory_bun_consumer`,
+  `plan_bun_link`, `detect_repo_package_managers`.
 
 ### [x] Ship Clippy in the workspace container image — 2026-08-28
 - Friction: generated `workspace-rust-bun` images shipped rustc without Clippy,
