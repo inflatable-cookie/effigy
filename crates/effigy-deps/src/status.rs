@@ -1531,6 +1531,42 @@ mod tests {
         );
     }
 
+    /// One checkout can hold several Bun roots, and any of them can be the
+    /// path a command was pointed at.
+    #[test]
+    fn orphan_bun_registration_is_reported_from_a_sibling_bun_root() {
+        let temp = TempDir::new().unwrap();
+        let checkout = temp.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::create_dir_all(checkout.join("studio")).unwrap();
+        fs::create_dir_all(checkout.join("harness")).unwrap();
+        let checkout = fs::canonicalize(&checkout).unwrap();
+        let studio = fs::canonicalize(checkout.join("studio")).unwrap();
+        let harness = fs::canonicalize(checkout.join("harness")).unwrap();
+        let mut index = BunRegistrationIndex::empty();
+        index
+            .registrations
+            .push(bun_registration("@acme/core", &studio, &studio));
+
+        let report = inspect_dependency_status(
+            &harness,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &index,
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report
+                .links
+                .iter()
+                .map(|link| link.observed.drift[0].code.as_str())
+                .collect::<Vec<_>>(),
+            ["bun-registration-without-ledger"]
+        );
+    }
+
     /// A vendored clone carries its own `.git`, so its links are its own.
     #[test]
     fn registration_from_an_independently_nested_checkout_is_not_claimed() {

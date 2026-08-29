@@ -286,14 +286,20 @@ pub(crate) fn contained_in_checkout(repo_root: &Path, path: &Path) -> bool {
 
 /// Whether two paths are owned by the same checkout.
 ///
-/// A Bun link is keyed by package root, so a repo whose Bun tree sits below
-/// the checkout records `studio/` rather than the checkout itself. Either path
-/// may be the outer one — status runs from the checkout, pin can run from the
-/// nested root — and neither claims an independently nested checkout.
+/// A Bun link is keyed by package root, so one checkout can hold several —
+/// `studio/` and `harness/` are siblings that share a ledger, and either may
+/// be the path a command was pointed at. Resolved checkout identity covers
+/// that; an independently nested checkout resolves to itself and is excluded.
+///
+/// Outside a checkout there is no `.git` to resolve to, so every directory
+/// would resolve to itself. Containment without crossing a checkout boundary
+/// keeps a non-git project and its nested Bun root together.
 pub(crate) fn shares_checkout(left: &Path, right: &Path) -> bool {
     let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
     let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
-    contained_in_checkout(&right, &left) || contained_in_checkout(&left, &right)
+    repo_state_root(&left) == repo_state_root(&right)
+        || contained_in_checkout(&right, &left)
+        || contained_in_checkout(&left, &right)
 }
 
 pub fn canonical_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, DepsError> {

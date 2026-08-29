@@ -7,15 +7,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] `effigy-rhai` runtime-context tests flake under parallel runs
-- Friction: `cargo test --workspace` intermittently failed
-  `runtime::execute_rhai_script_exposes_state_capture_set_in_capture_hook_context`
-  (1 of 3 runs); it passes in isolation every time. Noise while validating an
-  unrelated change.
-- Suspect: `tests::temp_root` names its directory from
-  `SystemTime::now().as_nanos()` alone, with no PID or counter, unlike the
-  `process::id()` + atomic-counter helper in `runner/command_context.rs`.
-- Surface: `crates/effigy-rhai/src/tests/mod.rs` `temp_root`.
+### [ ] `effigy-rhai` runtime-context tests race on process-wide env vars
+- Friction: `cargo test --workspace` intermittently fails
+  `runtime::execute_rhai_script_exposes_state_capture_context_helpers` or
+  `..._state_capture_set_in_capture_hook_context` with
+  `Runtime error: missing EFFIGY_STATE_CAPTURE_CONTEXT`. Each passes in
+  isolation. Recurring noise when validating unrelated changes.
+- Cause: the scoped-env helper uses `std::env::set_var` / `remove_var`, which
+  are process-wide. Both tests set `EFFIGY_STATE_CAPTURE_CONTEXT`, so one
+  test's teardown clears it while the other is mid-run.
+- Surface: `crates/effigy-rhai/src/tests/mod.rs` scoped-env helper;
+  `crates/effigy-rhai/src/tests/runtime.rs`.
 
 ### [ ] `deps link` cannot adopt committed path / `file:` local dependencies
 - Friction: once root selection was fixed, `deps link cargo ../longhorn` from
