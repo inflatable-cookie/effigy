@@ -109,14 +109,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   docs under archived strict spec `107`; cards `1086` and `1087` are complete.
   Active [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
   implements repository-owned documentation graph profiles and bounded context
-  retrieval under strict spec `108`; card `1088` is ready.
+  retrieval under strict spec `108`; card `1088` is complete and card `1089`
+  is ready.
 
 ## Active Strict Lane
 
 Strict spec
 [`108`](../specs/108-documentation-graph-profiles-strict-lane.md) governs
 `g08.035`. Current ready card:
-[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 
 ## Research Program
 
@@ -172,7 +173,7 @@ Before rollover:
 ## Next Task
 
 Execute ready card
-[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.
 

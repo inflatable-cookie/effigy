@@ -6,7 +6,7 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: manifest and codegraph documentation semantics
 Created: 2026-08-29
 Ready after: operator selected the repository-defined documentation graph lane
@@ -44,17 +44,17 @@ or Northstar-specific defaults in this card.
 
 ## Acceptance
 
-- [ ] missing profile selects baseline mode without error
-- [ ] arbitrary field, kind, and relation tokens parse and round-trip through
+- [x] missing profile selects baseline mode without error
+- [x] arbitrary field, kind, and relation tokens parse and round-trip through
       the composed manifest
-- [ ] invalid roots, escapes, overlaps, duplicate single-valued fields, and
+- [x] invalid roots, escapes, overlaps, duplicate single-valued fields, and
       bad currentness references fail deterministically
-- [ ] section spans end at the correct peer/ancestor heading or EOF
-- [ ] field lines inside code fences are ignored
-- [ ] configured label and heading links produce only the requested typed edges
-- [ ] a profile-only edit forces semantic re-indexing
-- [ ] no Northstar path, status, or kind appears in generic runtime logic
-- [ ] no public command or JSON contract is added in this card
+- [x] section spans end at the correct peer/ancestor heading or EOF
+- [x] field lines inside code fences are ignored
+- [x] configured label and heading links produce only the requested typed edges
+- [x] a profile-only edit forces semantic re-indexing
+- [x] no Northstar path, status, or kind appears in generic runtime logic
+- [x] no public command or JSON contract is added in this card
 
 ## Validation
 
@@ -69,7 +69,8 @@ or Northstar-specific defaults in this card.
 
 Close with one dated log containing fixture cases, test counts, profile
 fingerprint proof, exact-span examples, affected analysis, and the explicit
-readiness transition for card `1089`.
+readiness transition for card `1089`. Evidence:
+[`30-004016-documentation-graph-1088.md`](../../../logs/2026-08/30-004016-documentation-graph-1088.md).
 
 ## Stop Conditions
 
@@ -79,5 +80,5 @@ model inference, or if generic extraction needs Northstar-specific branches.
 
 ## Next Task
 
-After evidence-backed closeout, make
-[`1089`](./1089-add-bounded-documentation-context-query.md) ready.
+Execute ready card
+[`1089`](./1089-add-bounded-documentation-context-query.md).

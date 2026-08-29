@@ -17,6 +17,7 @@ use std::fs;
 use std::path::Path;
 
 mod context_quality;
+mod docs_profile;
 mod git_gate;
 mod index_lifecycle;
 mod language_indexers;

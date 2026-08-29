@@ -29,7 +29,7 @@ Historical command-reference rule:
 Active strict lane:
 
 - [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
-  documentation graph profiles; current ready card `1088`
+  documentation graph profiles; current ready card `1089`
 
 Queued strict lanes:
 
@@ -67,6 +67,6 @@ Other planning specs:
 ## Next Task
 
 Execute ready card
-[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.

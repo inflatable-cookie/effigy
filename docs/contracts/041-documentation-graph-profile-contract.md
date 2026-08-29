@@ -210,4 +210,4 @@ freshness identity, or Northstar runtime independence.
 ## Next Task
 
 Execute ready card
-[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).

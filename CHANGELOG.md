@@ -7,6 +7,16 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Optional `[docs_policy.graph]` lets a repository name documentation roots,
+  field labels, currentness sets, kinds, authority weights, and typed link
+  relations. Invalid roots, currentness references, overlaps, and unknown keys
+  fail before indexing. A normalized profile fingerprint participates in graph
+  freshness, so a profile-only edit reindexes Markdown semantics.
+- Markdown heading records now span the exact hierarchical section (heading
+  through the next same-or-higher heading, or EOF) instead of the whole file.
+  Configured `Label: value` facts and heading/label relations are stored on the
+  shared graph with exact provenance. Repositories without a profile keep
+  baseline document/section/link extraction with kind `document`.
 - `effigy deps status` reports committed local dependencies as observed links.
   A Cargo `path` dependency or a Bun `file:`/`link:` specifier resolving into a
   sibling checkout is grouped by library checkout and reported with
@@ -22,6 +32,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `bun.lock` / `bun.lockb`, Bun `packageManager`, or workspaces) and reports
   `manager: "bun"` with `detected_managers` even when no local-link record
   exists.
+
+### Changed
+- Markdown graph documents no longer infer kinds from path prefixes such as
+  `docs/contracts/` or `docs/guides/`. Baseline kind is `document`; a
+  repository profile assigns kinds.
 
 ### Fixed
 - `effigy-rhai` state/deploy host helpers read an optional thread-local env
