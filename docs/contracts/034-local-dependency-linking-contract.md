@@ -242,6 +242,12 @@ reports are observations, not ledger entries: state is `healthy`, the single
 drift reason is informational, and neither `deps link` nor `deps unlink` acts
 on them. Declarations that do not resolve are left to the package manager.
 
+Within a library group, a committed local is identified by package name *and*
+resolved target. One package name can arrive from two directories in the same
+library — renamed Cargo path dependencies both declaring `package = "foo"`, or
+a Bun override redirecting a dependency — and each target keeps its own
+observed package and verification record.
+
 Minimum per-link fields:
 
 - manager

@@ -932,9 +932,15 @@ fn append_committed_local_dependencies(
     Ok(())
 }
 
+/// Committed locals for one library checkout.
+///
+/// Declarations are keyed by package name *and* resolved target. Cargo lets a
+/// consumer rename two path dependencies that both declare
+/// `package = "foo"` at different directories in the same library; collapsing
+/// on the name alone would drop one target while still reporting healthy.
 #[derive(Default)]
 struct CommittedLocalGroup {
-    declarations: BTreeMap<String, CommittedLocalDeclaration>,
+    declarations: BTreeMap<(String, PathBuf), CommittedLocalDeclaration>,
 }
 
 #[derive(Default)]
@@ -950,7 +956,10 @@ impl CommittedLocalGroup {
             .parent()
             .map(canonical_or_original)
             .unwrap_or_else(|| canonical_or_original(manifest_path));
-        let declaration = self.declarations.entry(name.clone()).or_default();
+        let declaration = self
+            .declarations
+            .entry((name.clone(), local_path.clone()))
+            .or_default();
         declaration.manifests.insert(manifest_path.to_path_buf());
         declaration.consumer_roots.insert(declaring_root);
         let package = declaration.package.get_or_insert(DependencyPackage {
@@ -2256,6 +2265,101 @@ mod tests {
         assert_eq!(link.observed.drift.len(), 1);
         assert_eq!(link.observed.drift[0].code, "bun-committed-file-local");
         assert_eq!(link.observed.drift[0].evidence.len(), 1);
+    }
+
+    #[test]
+    fn one_package_name_at_two_targets_stays_two_committed_locals() {
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("library");
+        fs::create_dir_all(library.join(".git")).unwrap();
+        for version in ["v1", "v2"] {
+            write(
+                &library.join(version).join("Cargo.toml"),
+                "[package]\nname = \"foo\"\nversion = \"0.1.0\"\n",
+            );
+            write(
+                &library.join("packages").join(version).join("package.json"),
+                r#"{"name":"@library/core","version":"0.1.0"}"#,
+            );
+        }
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        // Cargo lets one package name arrive twice under different aliases,
+        // and a Bun override can redirect a dependency to another directory.
+        write(
+            &consumer.join("Cargo.toml"),
+            "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nfoo-v1 = { package = \"foo\", path = \"../library/v1\" }\nfoo-v2 = { package = \"foo\", path = \"../library/v2\" }\n",
+        );
+        write(
+            &consumer.join("package.json"),
+            r#"{"name":"consumer","dependencies":{"@library/core":"file:../library/packages/v1"},"overrides":{"@library/core":"file:../library/packages/v2"}}"#,
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(report.links.len(), 2);
+        for (link, name, targets) in [
+            (
+                report
+                    .links
+                    .iter()
+                    .find(|link| link.manager == PackageManager::Cargo)
+                    .expect("cargo report"),
+                "foo",
+                [library.join("v1"), library.join("v2")],
+            ),
+            (
+                report
+                    .links
+                    .iter()
+                    .find(|link| link.manager == PackageManager::Bun)
+                    .expect("bun report"),
+                "@library/core",
+                [library.join("packages/v1"), library.join("packages/v2")],
+            ),
+        ] {
+            assert_eq!(
+                link.observed
+                    .packages
+                    .iter()
+                    .map(|package| (package.name.as_str(), package.local_path.clone()))
+                    .collect::<Vec<_>>(),
+                targets
+                    .iter()
+                    .map(|target| (name, canonical_or_original(target)))
+                    .collect::<Vec<_>>()
+            );
+            // Each target keeps its own declaration, evidence, and verification
+            // record; collapsing on the name alone would silently drop one.
+            assert!(link.observed.drift[0].message.starts_with("2 committed"));
+            assert_eq!(link.observed.drift[0].evidence.len(), 2);
+            assert_eq!(link.verification.evidence.len(), 2);
+            assert_eq!(
+                link.verification
+                    .evidence
+                    .iter()
+                    .map(|evidence| evidence.observed_source.clone().unwrap())
+                    .collect::<Vec<_>>(),
+                targets
+                    .iter()
+                    .map(|target| canonical_or_original(target).display().to_string())
+                    .collect::<Vec<_>>()
+            );
+            for evidence in &link.verification.evidence {
+                assert_eq!(
+                    evidence.observed_source.as_deref(),
+                    Some(evidence.expected_source.as_str())
+                );
+                assert_eq!(evidence.committed_sources.len(), 1);
+            }
+        }
     }
 
     #[test]
