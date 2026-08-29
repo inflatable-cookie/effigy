@@ -2,15 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::bun::inventory_bun_file_dependencies;
+use crate::bun::{inventory_bun_committed_file_locals, inventory_bun_file_dependencies};
+use crate::cargo::inventory_cargo_committed_path_locals;
 use crate::cargo_unlink::{classify_lockfile, git_head_file};
 use crate::{
     inspect_bun_peer_resolutions, inventory_cargo_consumer_roots, BunPeerDiagnostic,
     BunPeerResolutionStatus, BunRegistrationIndex, CargoLibraryInventory, CargoLockfileState,
-    CargoPackageInventory, CargoPlanObserver, DependencyHealthSeverity, DependencyLinkReport,
-    DependencyPackage, DependencyStatusReport, DependencyVerification, DesiredDependencyLink,
-    DriftReason, GitCargoPlanObserver, LinkMechanism, ObservedDependencyLink, ObservedState,
-    PackageManager, ReadOnlyProcess, RepoLinkState, VerificationEvidence, VerificationStatus,
+    CargoPackageInventory, CargoPlanObserver, CommittedLocalLink, CommittedLocalMechanism,
+    CommittedSource, CommittedSourceKind, ConsumerRoot, DependencyHealthSeverity,
+    DependencyLinkReport, DependencyPackage, DependencyStatusReport, DependencyVerification,
+    DesiredDependencyLink, DriftReason, GitCargoPlanObserver, LinkMechanism,
+    ObservedDependencyLink, ObservedState, PackageManager, ReadOnlyProcess, RepoLinkState,
+    VerificationEvidence, VerificationStatus,
 };
 
 const CARGO_MARKER_PREFIX: &str = "# >>> effigy deps cargo ";
@@ -111,11 +114,23 @@ pub fn inspect_dependency_status(
     append_orphan_cargo_blocks(repo_root, &state, &mut links)?;
     append_orphan_bun_registrations(repo_root, &state, &bun_index, &mut links);
     append_bun_file_dependency_exposures(repo_root, &mut links)?;
+    append_committed_local_dependencies(repo_root, &mut links)?;
     links.sort_by(|left, right| {
         left.desired
             .as_ref()
             .map(|desired| &desired.key)
             .cmp(&right.desired.as_ref().map(|desired| &desired.key))
+            .then_with(|| {
+                left.committed_local
+                    .as_ref()
+                    .map(|local| (local.mechanism, &local.library_path))
+                    .cmp(
+                        &right
+                            .committed_local
+                            .as_ref()
+                            .map(|local| (local.mechanism, &local.library_path)),
+                    )
+            })
             .then_with(|| {
                 left.observed
                     .drift
@@ -870,6 +885,184 @@ fn append_bun_file_dependency_finder_metadata(
     ));
 }
 
+/// Report committed path and `file:` local dependencies as observed links.
+///
+/// `deps link` refuses to adopt either — a Cargo `[patch]` cannot redirect a
+/// path dependency, and a committed Bun override outranks an ephemeral link.
+/// Both refusals are correct, which left the local dependency already in force
+/// invisible to `deps status`. These reports are read-only observations: no
+/// ledger entry, no desired state, nothing to repair.
+fn append_committed_local_dependencies(
+    repo_root: &Path,
+    reports: &mut Vec<DependencyLinkReport>,
+) -> Result<(), crate::DepsError> {
+    let mut groups: BTreeMap<(CommittedLocalMechanism, PathBuf), CommittedLocalGroup> =
+        BTreeMap::new();
+    for local in inventory_cargo_committed_path_locals(repo_root)? {
+        groups
+            .entry((
+                CommittedLocalMechanism::CargoPathDependency,
+                containing_repo_root(&local.local_path),
+            ))
+            .or_default()
+            .push(
+                &local.manifest_path,
+                local.package_name,
+                local.local_path,
+                local.declared_path,
+            );
+    }
+    for local in inventory_bun_committed_file_locals(repo_root)? {
+        groups
+            .entry((
+                CommittedLocalMechanism::BunFileDependency,
+                containing_repo_root(&local.target_path),
+            ))
+            .or_default()
+            .push(
+                &local.manifest_path,
+                local.name,
+                local.target_path,
+                local.specifier,
+            );
+    }
+    for ((mechanism, library_path), group) in groups {
+        reports.push(group.into_report(mechanism, library_path));
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct CommittedLocalGroup {
+    consumer_roots: BTreeSet<PathBuf>,
+    manifests: BTreeMap<String, BTreeSet<PathBuf>>,
+    packages: BTreeMap<String, DependencyPackage>,
+}
+
+impl CommittedLocalGroup {
+    fn push(&mut self, manifest_path: &Path, name: String, local_path: PathBuf, identity: String) {
+        let declaring_root = manifest_path
+            .parent()
+            .map(canonical_or_original)
+            .unwrap_or_else(|| canonical_or_original(manifest_path));
+        self.consumer_roots.insert(declaring_root);
+        self.manifests
+            .entry(name.clone())
+            .or_default()
+            .insert(manifest_path.to_path_buf());
+        let package = self
+            .packages
+            .entry(name.clone())
+            .or_insert_with(|| DependencyPackage {
+                name,
+                local_path,
+                committed_sources: Vec::new(),
+            });
+        package.committed_sources.push(CommittedSource {
+            kind: CommittedSourceKind::Path,
+            identity,
+        });
+        package.committed_sources.sort();
+        package.committed_sources.dedup();
+    }
+
+    fn into_report(
+        self,
+        mechanism: CommittedLocalMechanism,
+        library_path: PathBuf,
+    ) -> DependencyLinkReport {
+        let packages = self.packages.into_values().collect::<Vec<_>>();
+        let mut evidence = Vec::new();
+        let mut sources = Vec::new();
+        for package in &packages {
+            for manifest in self.manifests.get(&package.name).into_iter().flatten() {
+                evidence.push(format!(
+                    "{}: {} = {}",
+                    manifest.display(),
+                    package.name,
+                    package
+                        .committed_sources
+                        .iter()
+                        .map(|source| source.identity.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            sources.push(VerificationEvidence {
+                package: package.name.clone(),
+                consumer_root: self.consumer_roots.first().cloned(),
+                committed_sources: package.committed_sources.clone(),
+                expected_source: library_path.display().to_string(),
+                observed_source: Some(package.local_path.display().to_string()),
+                methods: vec!["committed-manifest-declaration".to_owned()],
+                message: None,
+            });
+        }
+        let reason = DriftReason {
+            code: committed_local_code(mechanism).to_owned(),
+            severity: DependencyHealthSeverity::Information,
+            message: format!(
+                "{} committed {} resolve `{}` locally",
+                packages.len(),
+                committed_local_noun(mechanism),
+                library_path.display()
+            ),
+            evidence,
+            remediation: Some(committed_local_remediation(mechanism).to_owned()),
+            package: None,
+        };
+        DependencyLinkReport {
+            manager: mechanism.manager(),
+            desired: None,
+            committed_local: Some(CommittedLocalLink {
+                mechanism,
+                library_path,
+                consumer_roots: self
+                    .consumer_roots
+                    .into_iter()
+                    .map(|canonical_path| ConsumerRoot { canonical_path })
+                    .collect(),
+            }),
+            observed: ObservedDependencyLink {
+                state: ObservedState::Healthy,
+                packages,
+                drift: vec![reason],
+            },
+            plan: None,
+            verification: DependencyVerification {
+                status: VerificationStatus::Passed,
+                evidence: sources,
+            },
+            peer_diagnostics: Vec::new(),
+        }
+    }
+}
+
+fn committed_local_code(mechanism: CommittedLocalMechanism) -> &'static str {
+    match mechanism {
+        CommittedLocalMechanism::CargoPathDependency => "cargo-committed-path-local",
+        CommittedLocalMechanism::BunFileDependency => "bun-committed-file-local",
+    }
+}
+
+fn committed_local_noun(mechanism: CommittedLocalMechanism) -> &'static str {
+    match mechanism {
+        CommittedLocalMechanism::CargoPathDependency => "Cargo path dependencies",
+        CommittedLocalMechanism::BunFileDependency => "Bun `file:` dependencies",
+    }
+}
+
+fn committed_local_remediation(mechanism: CommittedLocalMechanism) -> &'static str {
+    match mechanism {
+        CommittedLocalMechanism::CargoPathDependency => {
+            "no action required; the committed path dependency is the local link, and `deps link cargo` correctly refuses to redirect it"
+        }
+        CommittedLocalMechanism::BunFileDependency => {
+            "no action required; the committed specifier is the local link, and `deps link bun` correctly refuses to outrank it"
+        }
+    }
+}
+
 fn containing_repo_root(path: &Path) -> PathBuf {
     path.ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
@@ -963,6 +1156,7 @@ fn report_with_peers(
     DependencyLinkReport {
         manager: desired.key.manager,
         desired: Some(desired),
+        committed_local: None,
         observed: ObservedDependencyLink {
             state,
             packages,
@@ -996,6 +1190,7 @@ fn problem_report(
     DependencyLinkReport {
         manager,
         desired,
+        committed_local: None,
         observed: ObservedDependencyLink {
             state,
             packages: Vec::new(),
@@ -1026,6 +1221,7 @@ fn unowned_warning_report(
     DependencyLinkReport {
         manager: PackageManager::Bun,
         desired: None,
+        committed_local: None,
         observed: ObservedDependencyLink {
             state: ObservedState::Drifted,
             packages: Vec::new(),
@@ -1768,8 +1964,24 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(report.links.len(), 1);
-            let finding = &report.links[0].observed.drift[0];
+            // The `file:` dependency is itself a committed local, so status
+            // reports the observed link alongside the exposure warning.
+            assert_eq!(report.links.len(), 2);
+            let committed = report
+                .links
+                .iter()
+                .find(|link| link.committed_local.is_some())
+                .expect("committed local report");
+            assert_eq!(
+                committed.committed_local.as_ref().unwrap().library_path,
+                canonical_or_original(&hub)
+            );
+            let exposure = report
+                .links
+                .iter()
+                .find(|link| link.committed_local.is_none())
+                .expect("exposure report");
+            let finding = &exposure.observed.drift[0];
             assert_eq!(finding.code, "bun-file-dependency-exposes-link");
             assert_eq!(finding.severity, DependencyHealthSeverity::Warning);
             assert_eq!(finding.package.as_deref(), Some("@acme/poodle"));
@@ -1910,5 +2122,167 @@ mod tests {
         );
 
         assert!(detect_repo_package_managers(temp.path()).is_empty());
+    }
+
+    fn committed_local_fixture() -> TempDir {
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("library");
+        fs::create_dir_all(library.join(".git")).unwrap();
+        write(
+            &library.join("crates/core/Cargo.toml"),
+            "[package]\nname = \"library-core\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &library.join("packages/core/package.json"),
+            r#"{"name":"@library/core","version":"0.1.0"}"#,
+        );
+        temp
+    }
+
+    #[test]
+    fn committed_cargo_path_locals_report_as_observed_links_without_ledger_state() {
+        let temp = committed_local_fixture();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        );
+        write(
+            &consumer.join("crates/app/Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlibrary-core = { path = \"../../../library/crates/core\" }\nlocal-helper = { path = \"../helper\" }\n",
+        );
+        write(
+            &consumer.join("crates/helper/Cargo.toml"),
+            "[package]\nname = \"local-helper\"\nversion = \"0.1.0\"\n",
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(report.links.len(), 1);
+        let link = &report.links[0];
+        assert_eq!(link.manager, PackageManager::Cargo);
+        assert!(link.desired.is_none());
+        let local = link.committed_local.as_ref().expect("committed local");
+        assert_eq!(
+            local.mechanism,
+            CommittedLocalMechanism::CargoPathDependency
+        );
+        assert_eq!(
+            local.library_path,
+            canonical_or_original(&temp.path().join("library"))
+        );
+        assert_eq!(
+            local.consumer_roots,
+            vec![ConsumerRoot {
+                canonical_path: canonical_or_original(&consumer.join("crates/app")),
+            }]
+        );
+        assert_eq!(link.observed.state, ObservedState::Healthy);
+        // The in-repo `../helper` path dependency is not a cross-checkout link.
+        assert_eq!(
+            link.observed
+                .packages
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>(),
+            ["library-core"]
+        );
+        assert_eq!(link.observed.drift.len(), 1);
+        assert_eq!(link.observed.drift[0].code, "cargo-committed-path-local");
+        assert_eq!(
+            link.observed.drift[0].severity,
+            DependencyHealthSeverity::Information
+        );
+        assert_eq!(link.verification.status, VerificationStatus::Passed);
+        assert_eq!(link.verification.evidence.len(), 1);
+        assert_eq!(link.verification.evidence[0].package, "library-core");
+    }
+
+    #[test]
+    fn committed_bun_file_locals_report_from_a_nested_package_root() {
+        let temp = committed_local_fixture();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio","dependencies":{"@library/core":"file:../../library/packages/core","left-pad":"1.0.0"},"overrides":{"@library/core":"file:../../library/packages/core"}}"#,
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(report.links.len(), 1);
+        let link = &report.links[0];
+        assert_eq!(link.manager, PackageManager::Bun);
+        assert!(link.desired.is_none());
+        let local = link.committed_local.as_ref().expect("committed local");
+        assert_eq!(local.mechanism, CommittedLocalMechanism::BunFileDependency);
+        assert_eq!(
+            local.library_path,
+            canonical_or_original(&temp.path().join("library"))
+        );
+        assert_eq!(
+            local.consumer_roots,
+            vec![ConsumerRoot {
+                canonical_path: canonical_or_original(&consumer.join("studio")),
+            }]
+        );
+        assert_eq!(link.observed.state, ObservedState::Healthy);
+        assert_eq!(link.observed.packages.len(), 1);
+        assert_eq!(link.observed.packages[0].name, "@library/core");
+        // The same specifier declared twice is one observed local, not two.
+        assert_eq!(link.observed.packages[0].committed_sources.len(), 1);
+        assert_eq!(link.observed.drift.len(), 1);
+        assert_eq!(link.observed.drift[0].code, "bun-committed-file-local");
+        assert_eq!(link.observed.drift[0].evidence.len(), 1);
+    }
+
+    #[test]
+    fn in_repo_local_declarations_are_not_reported_as_committed_links() {
+        let temp = TempDir::new().unwrap();
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/app\", \"crates/helper\"]\n",
+        );
+        write(
+            &consumer.join("crates/app/Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nhelper = { path = \"../helper\" }\n",
+        );
+        write(
+            &consumer.join("crates/helper/Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &consumer.join("package.json"),
+            r#"{"name":"consumer","dependencies":{"@consumer/ui":"file:./packages/ui"},"workspaces":["packages/*"]}"#,
+        );
+        write(
+            &consumer.join("packages/ui/package.json"),
+            r#"{"name":"@consumer/ui","version":"0.1.0"}"#,
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert!(report.links.is_empty());
     }
 }

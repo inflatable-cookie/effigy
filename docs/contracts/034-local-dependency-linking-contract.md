@@ -230,14 +230,23 @@ absent) and reports them in `detected_managers`. An explicit non-Bun
 exactly one root manager is detected and no filter is passed, JSON `manager` is
 that manager instead of `null`.
 
+Status also reports committed local dependencies as observed links. A Cargo
+`path` dependency or a Bun `file:`/`link:` specifier whose declared target
+resolves to a directory outside the checkout is grouped by the containing
+library checkout and reported with `committed_local` set and `desired` absent.
+These reports are observations, not ledger entries: state is `healthy`, the
+single drift reason is informational, and neither `deps link` nor `deps unlink`
+acts on them. Declarations that do not resolve are left to the package manager.
+
 Minimum per-link fields:
 
 - manager
-- mechanism (`cargo-patch` or `bun-link`)
+- mechanism (`cargo-patch` or `bun-link` for a managed link;
+  `cargo-path-dependency` or `bun-file-dependency` for a committed local)
 - library path
 - consumer roots
 - package names
-- desired state
+- desired state, or committed-local identity
 - observed state
 - drift reasons
 - lockfile or manifest hygiene
@@ -246,6 +255,7 @@ Minimum per-link fields:
 Doctor behavior:
 
 - healthy active links: informational
+- committed path or `file:` local dependency in force: informational
 - missing library path or partial closure: error
 - tracked local Cargo config or hand-managed collision: error
 - Cargo lockfile carrying active path-link resolution: error with

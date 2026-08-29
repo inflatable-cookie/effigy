@@ -27,6 +27,10 @@ struct PackageManifest {
     peer_dependencies: BTreeMap<String, serde_json::Value>,
     #[serde(default, rename = "optionalDependencies")]
     optional_dependencies: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    overrides: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    resolutions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -238,6 +242,81 @@ pub(crate) fn inventory_bun_file_dependencies(
         }
     }
     Ok(dependencies.into_iter().collect())
+}
+
+/// A committed Bun local specifier that resolves outside the checkout.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct BunCommittedFileLocal {
+    pub manifest_path: PathBuf,
+    pub package_root: PathBuf,
+    pub name: String,
+    pub field: &'static str,
+    pub specifier: String,
+    pub target_path: PathBuf,
+}
+
+/// Committed `file:` and `link:` specifiers that point at another checkout.
+///
+/// `deps link bun` reports `committed-pin-active` against these because a
+/// committed override outranks an ephemeral Bun link. Status still has to name
+/// them. Every Bun package root is walked, not just the repo root, because a
+/// repo can keep Bun below the root — Figmatic keeps it in `studio/`.
+pub(crate) fn inventory_bun_committed_file_locals(
+    repo_root: &Path,
+) -> Result<Vec<BunCommittedFileLocal>, DepsError> {
+    const LOCAL_PREFIXES: [&str; 2] = ["file:", "link:"];
+    let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let mut locals = BTreeSet::new();
+    for package_root in bun_package_roots(&repo_root)? {
+        for (manifest_path, manifest) in selected_bun_manifests(&package_root)? {
+            let manifest_root = manifest_path
+                .parent()
+                .unwrap_or(&package_root)
+                .to_path_buf();
+            let fields = [
+                ("dependencies", &manifest.dependencies),
+                ("devDependencies", &manifest.dev_dependencies),
+                ("peerDependencies", &manifest.peer_dependencies),
+                ("optionalDependencies", &manifest.optional_dependencies),
+                ("overrides", &manifest.overrides),
+                ("resolutions", &manifest.resolutions),
+            ];
+            for (field, entries) in fields {
+                for (name, value) in entries {
+                    let Some(specifier) = value.as_str() else {
+                        continue;
+                    };
+                    let Some(prefix) = LOCAL_PREFIXES
+                        .iter()
+                        .find(|prefix| specifier.starts_with(**prefix))
+                    else {
+                        continue;
+                    };
+                    let path = Path::new(&specifier[prefix.len()..]);
+                    let candidate = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        manifest_root.join(path)
+                    };
+                    let Ok(target_path) = fs::canonicalize(candidate) else {
+                        continue;
+                    };
+                    if !target_path.is_dir() || target_path.starts_with(&repo_root) {
+                        continue;
+                    }
+                    locals.insert(BunCommittedFileLocal {
+                        manifest_path: manifest_path.clone(),
+                        package_root: package_root.clone(),
+                        name: name.clone(),
+                        field,
+                        specifier: specifier.to_owned(),
+                        target_path,
+                    });
+                }
+            }
+        }
+    }
+    Ok(locals.into_iter().collect())
 }
 
 /// Finder metadata found inside a `file:` dependency tree, capped at `limit`.

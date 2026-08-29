@@ -87,15 +87,27 @@ fn link_findings(repo_root: &Path, link: &DependencyLinkReport) -> Vec<DoctorFin
 }
 
 fn context(repo_root: &Path, link: &DependencyLinkReport, package: Option<&str>) -> String {
+    // A committed path or `file:` local is not an Effigy-managed link, so it
+    // carries its own identity instead of the ledger's.
     let mechanism = link
         .desired
         .as_ref()
-        .map(|desired| desired.mechanism)
-        .unwrap_or_else(|| mechanism_for(link.manager));
+        .map(|desired| desired.mechanism.as_str().to_owned())
+        .or_else(|| {
+            link.committed_local
+                .as_ref()
+                .map(|local| local.mechanism.as_str().to_owned())
+        })
+        .unwrap_or_else(|| mechanism_for(link.manager).as_str().to_owned());
     let library = link
         .desired
         .as_ref()
         .map(|desired| desired.key.library_path.display().to_string())
+        .or_else(|| {
+            link.committed_local
+                .as_ref()
+                .map(|local| local.library_path.display().to_string())
+        })
         .unwrap_or_else(|| "<untracked>".to_owned());
     let consumers = link
         .desired
@@ -106,6 +118,15 @@ fn context(repo_root: &Path, link: &DependencyLinkReport, package: Option<&str>)
                 .iter()
                 .map(|root| root.canonical_path.display().to_string())
                 .collect::<Vec<_>>()
+        })
+        .or_else(|| {
+            link.committed_local.as_ref().map(|local| {
+                local
+                    .consumer_roots
+                    .iter()
+                    .map(|root| root.canonical_path.display().to_string())
+                    .collect::<Vec<_>>()
+            })
         })
         .filter(|consumers| !consumers.is_empty())
         .unwrap_or_else(|| vec![repo_root.display().to_string()]);
@@ -119,6 +140,15 @@ fn context(repo_root: &Path, link: &DependencyLinkReport, package: Option<&str>)
                 .map(|package| package.name.clone())
                 .collect::<Vec<_>>()
         })
+        .or_else(|| {
+            link.committed_local.as_ref().map(|_| {
+                link.observed
+                    .packages
+                    .iter()
+                    .map(|package| package.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        })
         .filter(|packages| !packages.is_empty())
         .unwrap_or_else(|| {
             package
@@ -128,7 +158,7 @@ fn context(repo_root: &Path, link: &DependencyLinkReport, package: Option<&str>)
     format!(
         "manager={}; mechanism={}; library={library}; consumer_roots={}; packages={}; package={}; observed={}",
         link.manager.as_str(),
-        mechanism.as_str(),
+        mechanism,
         joined_or_placeholder(&consumers),
         joined_or_placeholder(&packages),
         package.unwrap_or("<none>"),
@@ -312,6 +342,7 @@ mod tests {
         };
         DependencyStatusReport {
             links: vec![DependencyLinkReport {
+                committed_local: None,
                 manager: PackageManager::Bun,
                 desired: Some(desired),
                 observed: ObservedDependencyLink {

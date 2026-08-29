@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy deps status` reports committed local dependencies as observed links.
+  A Cargo `path` dependency or a Bun `file:`/`link:` specifier resolving into a
+  sibling checkout is grouped by library checkout and reported with
+  `committed_local` (`cargo-path-dependency` / `bun-file-dependency`) and no
+  `desired` entry, so a consumer that already declares a sibling library can
+  see the local dependency in force instead of only the correct `deps link`
+  refusal. The reports are read-only observations; `deps link` and
+  `deps unlink` behavior is unchanged.
 - Generated `workspace-rust-bun` images install Clippy (`rustup component add
   clippy`) so consumer validate tasks do not need an extra rustup step after
   `container up`.

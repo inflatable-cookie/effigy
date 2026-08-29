@@ -345,6 +345,61 @@ fn lockfile_needs_update(error: &DepsError) -> bool {
     )
 }
 
+/// A committed Cargo `path` dependency that resolves outside the checkout.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CargoCommittedPathLocal {
+    pub manifest_path: PathBuf,
+    pub package_name: String,
+    pub declared_path: String,
+    pub local_path: PathBuf,
+}
+
+/// Committed `path` dependencies that point at another checkout.
+///
+/// These are the local dependency already in force: `deps link cargo` refuses
+/// to rewrite them because a `[patch]` cannot redirect a path dependency. Read
+/// them straight from the committed manifests rather than from `cargo
+/// metadata`, so status stays a read-only file walk with no resolver run.
+///
+/// A declaration that does not resolve is left alone; Cargo itself is the one
+/// that has to fail on it.
+pub(crate) fn inventory_cargo_committed_path_locals(
+    repo_root: &Path,
+) -> Result<Vec<CargoCommittedPathLocal>, DepsError> {
+    let repo_root = canonical_or_original(repo_root);
+    let mut locals = BTreeSet::new();
+    for manifest in cargo_manifests(&repo_root)? {
+        let raw = fs::read_to_string(&manifest)
+            .map_err(|error| DepsError::io("read Cargo manifest", &manifest, error))?;
+        let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+            // A manifest Cargo cannot parse is not a link observation to make.
+            continue;
+        };
+        let manifest_root = manifest.parent().unwrap_or(&repo_root);
+        let mut declared = Vec::new();
+        collect_dependency_sources(&value, &mut declared);
+        for declaration in declared {
+            if declaration.source.kind != CommittedSourceKind::Path {
+                continue;
+            }
+            let candidate = manifest_root.join(&declaration.source.identity);
+            let Ok(local_path) = fs::canonicalize(candidate) else {
+                continue;
+            };
+            if !local_path.is_dir() || local_path.starts_with(&repo_root) {
+                continue;
+            }
+            locals.insert(CargoCommittedPathLocal {
+                manifest_path: manifest.clone(),
+                package_name: declaration.package_name,
+                declared_path: declaration.source.identity,
+                local_path,
+            });
+        }
+    }
+    Ok(locals.into_iter().collect())
+}
+
 fn manifest_tree_declares_library(
     workspace_manifest: &Path,
     library_names: &BTreeSet<&str>,

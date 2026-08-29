@@ -874,6 +874,11 @@ fn render_link_text(lines: &mut Vec<String>, link: &DependencyLinkReport) {
         .desired
         .as_ref()
         .map(|desired| desired.key.library_path.display().to_string())
+        .or_else(|| {
+            link.committed_local
+                .as_ref()
+                .map(|local| local.library_path.display().to_string())
+        })
         .unwrap_or_else(|| "unowned physical state".to_owned());
     lines.push(String::new());
     lines.push(format!(
@@ -881,6 +886,28 @@ fn render_link_text(lines: &mut Vec<String>, link: &DependencyLinkReport) {
         link.manager.as_str(),
         link.observed.state.as_str()
     ));
+    if let Some(local) = &link.committed_local {
+        lines.push("desired: committed".to_owned());
+        lines.push(format!("mechanism: {}", local.mechanism.as_str()));
+        lines.push(format!(
+            "consumers: {}",
+            local
+                .consumer_roots
+                .iter()
+                .map(|root| root.canonical_path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        lines.push(format!(
+            "packages: {}",
+            link.observed
+                .packages
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     if let Some(desired) = &link.desired {
         lines.push("desired: linked".to_owned());
         lines.push(format!("mechanism: {}", desired.mechanism.as_str()));
@@ -1186,6 +1213,61 @@ mod tests {
     }
 
     #[test]
+    fn status_names_committed_cargo_path_and_bun_file_locals_in_text_and_json() {
+        let temp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let library = temp.path().join("library");
+        fs::create_dir_all(library.join(".git")).unwrap();
+        write(
+            &library.join("crates/core/Cargo.toml"),
+            "[package]\nname = 'library-core'\nversion = '0.1.0'\n",
+        );
+        write(
+            &library.join("packages/core/package.json"),
+            "{\"name\":\"@library/core\",\"version\":\"0.1.0\"}\n",
+        );
+        let consumer = temp.path().join("consumer");
+        write(
+            &consumer.join("Cargo.toml"),
+            "[package]\nname = 'consumer'\nversion = '0.1.0'\n\n[dependencies]\nlibrary-core = { path = '../library/crates/core' }\n",
+        );
+        write(
+            &consumer.join("studio/package.json"),
+            "{\"name\":\"studio\",\"overrides\":{\"@library/core\":\"file:../../library/packages/core\"}}\n",
+        );
+        let library_root = fs::canonicalize(&library).unwrap();
+
+        for (manager, mechanism, package) in [
+            (DepsManager::Cargo, "cargo-path-dependency", "library-core"),
+            (DepsManager::Bun, "bun-file-dependency", "@library/core"),
+        ] {
+            let text =
+                run_deps_with_home(status_args(Some(manager), &consumer, false), home.path())
+                    .unwrap();
+            let rendered =
+                run_deps_with_home(status_args(Some(manager), &consumer, true), home.path())
+                    .unwrap();
+            let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+            assert!(text.contains(&format!("mechanism: {mechanism}")), "{text}");
+            assert!(text.contains(&format!("packages: {package}")), "{text}");
+            assert!(
+                text.contains(&format!("healthy: {}", library_root.display())),
+                "{text}"
+            );
+            assert_eq!(json["summary"]["healthy"], 1);
+            assert_eq!(json["summary"]["errors"], 0);
+            assert_eq!(json["links"][0]["desired"], serde_json::Value::Null);
+            assert_eq!(json["links"][0]["committed_local"]["mechanism"], mechanism);
+            assert_eq!(
+                json["links"][0]["committed_local"]["library_path"],
+                library_root.display().to_string()
+            );
+            assert_eq!(json["links"][0]["observed"]["packages"][0]["name"], package);
+        }
+    }
+
+    #[test]
     fn status_text_and_json_share_health_evidence_and_peer_diagnostics() {
         let repo = repo();
         let repo_root = fs::canonicalize(repo.path()).unwrap();
@@ -1213,6 +1295,7 @@ mod tests {
         };
         let report = DependencyStatusReport {
             links: vec![DependencyLinkReport {
+                committed_local: None,
                 manager: PackageManager::Bun,
                 desired: Some(desired),
                 observed: ObservedDependencyLink {

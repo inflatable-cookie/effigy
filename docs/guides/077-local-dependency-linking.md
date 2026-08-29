@@ -300,6 +300,27 @@ checkout, status names the `file:` dependency, linked package, symlink, and
 resolved target. Bun's internal store links and links that stay inside the
 target repository are ignored. The check is read-only.
 
+Status also reports the local dependencies a repo already declares in committed
+manifests. A Cargo `path` dependency or a Bun `file:`/`link:` specifier that
+resolves into a sibling checkout is the local link already in force, so status
+groups those declarations by library checkout and reports each group with
+`committed_local` set and `desired` absent:
+
+```text
+[cargo] healthy: /Users/you/dev/longhorn
+desired: committed
+mechanism: cargo-path-dependency
+consumers: /Users/you/dev/figmatic/crates/figmatic-studio
+packages: longhorn-core, longhorn-windowing
+- [information] cargo-committed-path-local: 2 committed Cargo path dependencies resolve `/Users/you/dev/longhorn` locally
+```
+
+These are observations, not links Effigy owns. `deps link` still refuses to
+adopt them — a Cargo `[patch]` cannot redirect a path dependency, and a
+committed Bun override outranks an ephemeral link — and `deps unlink` has
+nothing to remove. Declarations that resolve inside the same checkout, and
+declarations that do not resolve at all, are not reported.
+
 Use doctor when dependency health belongs in the repo-wide health report:
 
 ```sh
@@ -312,6 +333,7 @@ Key states:
 | Observation | Result | Action |
 | --- | --- | --- |
 | full closure resolves locally | healthy/info | no action |
+| committed path or `file:` local in force | healthy/info | no action; `deps link` correctly refuses it |
 | Cargo lock contains linked path resolution | error | do not commit; unlink before handoff |
 | complete Bun symlink loss | warning | re-run the same Bun link command |
 | partial Bun closure | error | re-link when Effigy desired state exists |
