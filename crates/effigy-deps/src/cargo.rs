@@ -211,11 +211,29 @@ fn run_metadata_without_repo_config(
 }
 
 fn cargo_manifests(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
+    walk_cargo_manifests(root, include_entry)
+}
+
+/// Cargo manifests owned by this checkout.
+///
+/// The walk stops at a nested checkout's `.git`: a vendored clone declares its
+/// own dependencies against its own topology, so its manifests are not the
+/// parent's committed state to report.
+fn cargo_manifests_in_checkout(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
+    walk_cargo_manifests(root, |entry| {
+        include_entry(entry) && !nested_checkout(entry)
+    })
+}
+
+fn walk_cargo_manifests(
+    root: &Path,
+    filter: impl FnMut(&DirEntry) -> bool,
+) -> Result<Vec<PathBuf>, DepsError> {
     let mut manifests = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(include_entry)
+        .filter_entry(filter)
     {
         let entry = entry.map_err(|error| {
             let path = error.path().unwrap_or(root).to_path_buf();
@@ -295,6 +313,10 @@ fn cargo_manifest_roots(root: &Path) -> Result<Vec<PathBuf>, DepsError> {
         .collect())
 }
 
+fn nested_checkout(entry: &DirEntry) -> bool {
+    entry.depth() > 0 && entry.file_type().is_dir() && entry.path().join(".git").exists()
+}
+
 fn include_entry(entry: &DirEntry) -> bool {
     if !entry.file_type().is_dir() {
         return true;
@@ -361,14 +383,19 @@ pub(crate) struct CargoCommittedPathLocal {
 /// them straight from the committed manifests rather than from `cargo
 /// metadata`, so status stays a read-only file walk with no resolver run.
 ///
+/// "Outside" is the enclosing checkout, not the inspected root: status pointed
+/// at a workspace member still has to treat that member's in-repo siblings as
+/// in-repo.
+///
 /// A declaration that does not resolve is left alone; Cargo itself is the one
 /// that has to fail on it.
 pub(crate) fn inventory_cargo_committed_path_locals(
     repo_root: &Path,
 ) -> Result<Vec<CargoCommittedPathLocal>, DepsError> {
     let repo_root = canonical_or_original(repo_root);
+    let checkout = crate::repo_state_root(&repo_root);
     let mut locals = BTreeSet::new();
-    for manifest in cargo_manifests(&repo_root)? {
+    for manifest in cargo_manifests_in_checkout(&repo_root)? {
         let raw = fs::read_to_string(&manifest)
             .map_err(|error| DepsError::io("read Cargo manifest", &manifest, error))?;
         let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
@@ -386,7 +413,7 @@ pub(crate) fn inventory_cargo_committed_path_locals(
             let Ok(local_path) = fs::canonicalize(candidate) else {
                 continue;
             };
-            if !local_path.is_dir() || local_path.starts_with(&repo_root) {
+            if !local_path.is_dir() || local_path.starts_with(&checkout) {
                 continue;
             }
             locals.insert(CargoCommittedPathLocal {

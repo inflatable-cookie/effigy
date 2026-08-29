@@ -232,11 +232,15 @@ that manager instead of `null`.
 
 Status also reports committed local dependencies as observed links. A Cargo
 `path` dependency or a Bun `file:`/`link:` specifier whose declared target
-resolves to a directory outside the checkout is grouped by the containing
-library checkout and reported with `committed_local` set and `desired` absent.
-These reports are observations, not ledger entries: state is `healthy`, the
-single drift reason is informational, and neither `deps link` nor `deps unlink`
-acts on them. Declarations that do not resolve are left to the package manager.
+resolves to a directory outside the enclosing checkout is grouped by the
+containing library checkout and reported with `committed_local` set and
+`desired` absent. The boundary is the checkout, not the inspected root, so
+status pointed at a workspace member or a nested Bun package root still treats
+that repo's own crates and packages as in-repo. Declarations made by a nested
+checkout belong to that checkout and are not reported for its parent. These
+reports are observations, not ledger entries: state is `healthy`, the single
+drift reason is informational, and neither `deps link` nor `deps unlink` acts
+on them. Declarations that do not resolve are left to the package manager.
 
 Minimum per-link fields:
 

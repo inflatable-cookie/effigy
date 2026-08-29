@@ -261,11 +261,15 @@ pub(crate) struct BunCommittedFileLocal {
 /// committed override outranks an ephemeral Bun link. Status still has to name
 /// them. Every Bun package root is walked, not just the repo root, because a
 /// repo can keep Bun below the root — Figmatic keeps it in `studio/`.
+///
+/// "Outside" is the enclosing checkout, not the inspected root, so status
+/// pointed at one package root still treats its in-repo siblings as in-repo.
 pub(crate) fn inventory_bun_committed_file_locals(
     repo_root: &Path,
 ) -> Result<Vec<BunCommittedFileLocal>, DepsError> {
     const LOCAL_PREFIXES: [&str; 2] = ["file:", "link:"];
     let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let checkout = crate::repo_state_root(&repo_root);
     let mut locals = BTreeSet::new();
     for package_root in bun_package_roots(&repo_root)? {
         for (manifest_path, manifest) in selected_bun_manifests(&package_root)? {
@@ -301,7 +305,7 @@ pub(crate) fn inventory_bun_committed_file_locals(
                     let Ok(target_path) = fs::canonicalize(candidate) else {
                         continue;
                     };
-                    if !target_path.is_dir() || target_path.starts_with(&repo_root) {
+                    if !target_path.is_dir() || target_path.starts_with(&checkout) {
                         continue;
                     }
                     locals.insert(BunCommittedFileLocal {

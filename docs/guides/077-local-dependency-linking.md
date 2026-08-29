@@ -318,8 +318,13 @@ packages: longhorn-core, longhorn-windowing
 These are observations, not links Effigy owns. `deps link` still refuses to
 adopt them — a Cargo `[patch]` cannot redirect a path dependency, and a
 committed Bun override outranks an ephemeral link — and `deps unlink` has
-nothing to remove. Declarations that resolve inside the same checkout, and
-declarations that do not resolve at all, are not reported.
+nothing to remove.
+
+"Outside" means outside the checkout, not outside the directory you pointed
+status at, so running from `crates/app` or `studio/` does not turn the repo's
+own crates and packages into committed locals. A nested checkout's own
+declarations belong to it, not to its parent. Declarations that do not resolve
+are left to the package manager.
 
 Use doctor when dependency health belongs in the repo-wide health report:
 

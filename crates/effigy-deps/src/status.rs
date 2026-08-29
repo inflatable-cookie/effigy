@@ -934,9 +934,14 @@ fn append_committed_local_dependencies(
 
 #[derive(Default)]
 struct CommittedLocalGroup {
+    declarations: BTreeMap<String, CommittedLocalDeclaration>,
+}
+
+#[derive(Default)]
+struct CommittedLocalDeclaration {
+    manifests: BTreeSet<PathBuf>,
     consumer_roots: BTreeSet<PathBuf>,
-    manifests: BTreeMap<String, BTreeSet<PathBuf>>,
-    packages: BTreeMap<String, DependencyPackage>,
+    package: Option<DependencyPackage>,
 }
 
 impl CommittedLocalGroup {
@@ -945,19 +950,14 @@ impl CommittedLocalGroup {
             .parent()
             .map(canonical_or_original)
             .unwrap_or_else(|| canonical_or_original(manifest_path));
-        self.consumer_roots.insert(declaring_root);
-        self.manifests
-            .entry(name.clone())
-            .or_default()
-            .insert(manifest_path.to_path_buf());
-        let package = self
-            .packages
-            .entry(name.clone())
-            .or_insert_with(|| DependencyPackage {
-                name,
-                local_path,
-                committed_sources: Vec::new(),
-            });
+        let declaration = self.declarations.entry(name.clone()).or_default();
+        declaration.manifests.insert(manifest_path.to_path_buf());
+        declaration.consumer_roots.insert(declaring_root);
+        let package = declaration.package.get_or_insert(DependencyPackage {
+            name,
+            local_path,
+            committed_sources: Vec::new(),
+        });
         package.committed_sources.push(CommittedSource {
             kind: CommittedSourceKind::Path,
             identity,
@@ -971,32 +971,42 @@ impl CommittedLocalGroup {
         mechanism: CommittedLocalMechanism,
         library_path: PathBuf,
     ) -> DependencyLinkReport {
-        let packages = self.packages.into_values().collect::<Vec<_>>();
+        let mut packages = Vec::new();
+        let mut consumer_roots = BTreeSet::new();
         let mut evidence = Vec::new();
         let mut sources = Vec::new();
-        for package in &packages {
-            for manifest in self.manifests.get(&package.name).into_iter().flatten() {
+        for declaration in self.declarations.into_values() {
+            let Some(package) = declaration.package else {
+                continue;
+            };
+            let identities = package
+                .committed_sources
+                .iter()
+                .map(|source| source.identity.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            for manifest in &declaration.manifests {
                 evidence.push(format!(
-                    "{}: {} = {}",
+                    "{}: {} = {identities}",
                     manifest.display(),
                     package.name,
-                    package
-                        .committed_sources
-                        .iter()
-                        .map(|source| source.identity.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
                 ));
             }
+            // The declared target is what status resolved, so passed evidence
+            // reads the same way an Effigy-managed link's does: expected and
+            // observed agree on the package path.
+            let resolved = package.local_path.display().to_string();
             sources.push(VerificationEvidence {
                 package: package.name.clone(),
-                consumer_root: self.consumer_roots.first().cloned(),
+                consumer_root: declaration.consumer_roots.first().cloned(),
                 committed_sources: package.committed_sources.clone(),
-                expected_source: library_path.display().to_string(),
-                observed_source: Some(package.local_path.display().to_string()),
+                expected_source: resolved.clone(),
+                observed_source: Some(resolved),
                 methods: vec!["committed-manifest-declaration".to_owned()],
                 message: None,
             });
+            consumer_roots.extend(declaration.consumer_roots);
+            packages.push(package);
         }
         let reason = DriftReason {
             code: committed_local_code(mechanism).to_owned(),
@@ -1017,8 +1027,7 @@ impl CommittedLocalGroup {
             committed_local: Some(CommittedLocalLink {
                 mechanism,
                 library_path,
-                consumer_roots: self
-                    .consumer_roots
+                consumer_roots: consumer_roots
                     .into_iter()
                     .map(|canonical_path| ConsumerRoot { canonical_path })
                     .collect(),
@@ -2247,6 +2256,93 @@ mod tests {
         assert_eq!(link.observed.drift.len(), 1);
         assert_eq!(link.observed.drift[0].code, "bun-committed-file-local");
         assert_eq!(link.observed.drift[0].evidence.len(), 1);
+    }
+
+    #[test]
+    fn committed_locals_measure_outside_against_the_checkout_not_the_inspected_root() {
+        let temp = committed_local_fixture();
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        write(
+            &consumer.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/app\", \"crates/helper\"]\n",
+        );
+        write(
+            &consumer.join("crates/app/Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlocal-helper = { path = \"../helper\" }\nlibrary-core = { path = \"../../../library/crates/core\" }\n",
+        );
+        write(
+            &consumer.join("crates/helper/Cargo.toml"),
+            "[package]\nname = \"local-helper\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &consumer.join("studio/package.json"),
+            r#"{"name":"studio","dependencies":{"@consumer/ui":"file:../packages/ui","@library/core":"file:../../library/packages/core"}}"#,
+        );
+        write(
+            &consumer.join("packages/ui/package.json"),
+            r#"{"name":"@consumer/ui","version":"0.1.0"}"#,
+        );
+
+        // Cargo.toml is a root marker, so status can be pointed at a workspace
+        // member. Its in-repo siblings resolve outside that directory and are
+        // still in-repo.
+        for inspected in [consumer.join("crates/app"), consumer.join("studio")] {
+            let report = inspect_dependency_status(
+                &inspected,
+                temp.path(),
+                &RepoLinkState::empty(),
+                &BunRegistrationIndex::empty(),
+                &NoProcess,
+            )
+            .unwrap();
+
+            assert_eq!(report.links.len(), 1, "{}", inspected.display());
+            let link = &report.links[0];
+            assert_eq!(
+                link.committed_local.as_ref().unwrap().library_path,
+                canonical_or_original(&temp.path().join("library"))
+            );
+            assert_eq!(
+                link.observed
+                    .packages
+                    .iter()
+                    .map(|package| package.name.as_str())
+                    .collect::<Vec<_>>()
+                    .len(),
+                1,
+                "{}",
+                inspected.display()
+            );
+        }
+    }
+
+    #[test]
+    fn a_nested_checkouts_own_path_dependencies_are_not_the_parents_committed_locals() {
+        let temp = committed_local_fixture();
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        write(
+            &consumer.join("Cargo.toml"),
+            "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n",
+        );
+        let vendored = consumer.join("vendor/clone");
+        fs::create_dir_all(vendored.join(".git")).unwrap();
+        write(
+            &vendored.join("Cargo.toml"),
+            "[package]\nname = \"vendored\"\nversion = \"0.1.0\"\n\n[dependencies]\nlibrary-core = { path = \"../../../library/crates/core\" }\n",
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert!(report.links.is_empty());
     }
 
     #[test]
