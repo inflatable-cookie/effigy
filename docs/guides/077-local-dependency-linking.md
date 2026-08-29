@@ -326,6 +326,13 @@ own crates and packages into committed locals. A nested checkout's own
 declarations belong to it, not to its parent. Declarations that do not resolve
 are left to the package manager.
 
+Status reports the target actually in force, not every declaration. A root
+`overrides` or `resolutions` entry replaces the package's resolved target for
+the whole install, so it supersedes the declared dependency — and an override
+back to a registry version means there is no local dependency to report. Cargo
+is different: two renamed path dependencies of the same package resolve to two
+directories at once, and both are reported.
+
 Use doctor when dependency health belongs in the repo-wide health report:
 
 ```sh

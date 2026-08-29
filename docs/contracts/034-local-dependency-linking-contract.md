@@ -242,11 +242,18 @@ reports are observations, not ledger entries: state is `healthy`, the single
 drift reason is informational, and neither `deps link` nor `deps unlink` acts
 on them. Declarations that do not resolve are left to the package manager.
 
+Only targets that can be in force are reported. Bun `overrides` and
+`resolutions` replace a package's resolved target for the whole install and are
+read from the root manifest only, so they supersede any declared range for the
+same package — including when the override sends it back to a registry version,
+which reports no local at all. `overrides` wins when both spellings name the
+same package.
+
 Within a library group, a committed local is identified by package name *and*
-resolved target. One package name can arrive from two directories in the same
-library — renamed Cargo path dependencies both declaring `package = "foo"`, or
-a Bun override redirecting a dependency — and each target keeps its own
-observed package and verification record.
+resolved target, and each target keeps its own observed package and
+verification record. One name can legitimately resolve twice: renamed Cargo
+path dependencies both declaring `package = "foo"` at different directories are
+simultaneously in force.
 
 Minimum per-link fields:
 

@@ -262,65 +262,99 @@ pub(crate) struct BunCommittedFileLocal {
 /// them. Every Bun package root is walked, not just the repo root, because a
 /// repo can keep Bun below the root — Figmatic keeps it in `studio/`.
 ///
+/// Only targets that can actually be in force are reported. A root
+/// `overrides`/`resolutions` entry replaces the resolved target for the whole
+/// install, so it supersedes any declared range for the same package — whether
+/// it redirects to another local directory or back to a registry version.
+/// Effigy reads them from the root manifest only, the same place `deps pin`
+/// writes them.
+///
 /// "Outside" is the enclosing checkout, not the inspected root, so status
 /// pointed at one package root still treats its in-repo siblings as in-repo.
 pub(crate) fn inventory_bun_committed_file_locals(
     repo_root: &Path,
 ) -> Result<Vec<BunCommittedFileLocal>, DepsError> {
-    const LOCAL_PREFIXES: [&str; 2] = ["file:", "link:"];
     let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
     let checkout = crate::repo_state_root(&repo_root);
     let mut locals = BTreeSet::new();
     for package_root in bun_package_roots(&repo_root)? {
-        for (manifest_path, manifest) in selected_bun_manifests(&package_root)? {
-            let manifest_root = manifest_path
-                .parent()
-                .unwrap_or(&package_root)
-                .to_path_buf();
-            let fields = [
+        let manifests = selected_bun_manifests(&package_root)?;
+        let root_manifest_path = package_root.join("package.json");
+        let mut root_overrides = BTreeMap::new();
+        if let Some((_, root)) = manifests
+            .iter()
+            .find(|(path, _)| *path == root_manifest_path)
+        {
+            // npm spells it `overrides` and yarn spells it `resolutions`. When
+            // both name a package, take the npm spelling, which is what
+            // `deps pin bun` writes.
+            for (field, entries) in [
+                ("overrides", &root.overrides),
+                ("resolutions", &root.resolutions),
+            ] {
+                for (name, value) in entries {
+                    root_overrides.entry(name).or_insert((field, value));
+                }
+            }
+        }
+        let mut push = |manifest_path: &Path, field, name: &str, target: (String, PathBuf)| {
+            let (specifier, target_path) = target;
+            if target_path.starts_with(&checkout) {
+                return;
+            }
+            locals.insert(BunCommittedFileLocal {
+                manifest_path: manifest_path.to_path_buf(),
+                package_root: package_root.clone(),
+                name: name.to_owned(),
+                field,
+                specifier,
+                target_path,
+            });
+        };
+        for (name, (field, value)) in &root_overrides {
+            if let Some(target) = bun_local_target(&package_root, value) {
+                push(&root_manifest_path, field, name, target);
+            }
+        }
+        for (manifest_path, manifest) in &manifests {
+            let manifest_root = manifest_path.parent().unwrap_or(&package_root);
+            for (field, entries) in [
                 ("dependencies", &manifest.dependencies),
                 ("devDependencies", &manifest.dev_dependencies),
                 ("peerDependencies", &manifest.peer_dependencies),
                 ("optionalDependencies", &manifest.optional_dependencies),
-                ("overrides", &manifest.overrides),
-                ("resolutions", &manifest.resolutions),
-            ];
-            for (field, entries) in fields {
+            ] {
                 for (name, value) in entries {
-                    let Some(specifier) = value.as_str() else {
-                        continue;
-                    };
-                    let Some(prefix) = LOCAL_PREFIXES
-                        .iter()
-                        .find(|prefix| specifier.starts_with(**prefix))
-                    else {
-                        continue;
-                    };
-                    let path = Path::new(&specifier[prefix.len()..]);
-                    let candidate = if path.is_absolute() {
-                        path.to_path_buf()
-                    } else {
-                        manifest_root.join(path)
-                    };
-                    let Ok(target_path) = fs::canonicalize(candidate) else {
-                        continue;
-                    };
-                    if !target_path.is_dir() || target_path.starts_with(&checkout) {
+                    if root_overrides.contains_key(name) {
                         continue;
                     }
-                    locals.insert(BunCommittedFileLocal {
-                        manifest_path: manifest_path.clone(),
-                        package_root: package_root.clone(),
-                        name: name.clone(),
-                        field,
-                        specifier: specifier.to_owned(),
-                        target_path,
-                    });
+                    if let Some(target) = bun_local_target(manifest_root, value) {
+                        push(manifest_path, field, name, target);
+                    }
                 }
             }
         }
     }
     Ok(locals.into_iter().collect())
+}
+
+/// The directory a Bun specifier selects, when it selects one locally.
+fn bun_local_target(manifest_root: &Path, value: &serde_json::Value) -> Option<(String, PathBuf)> {
+    const LOCAL_PREFIXES: [&str; 2] = ["file:", "link:"];
+    let specifier = value.as_str()?;
+    let prefix = LOCAL_PREFIXES
+        .iter()
+        .find(|prefix| specifier.starts_with(**prefix))?;
+    let path = Path::new(&specifier[prefix.len()..]);
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        manifest_root.join(path)
+    };
+    let target_path = fs::canonicalize(candidate).ok()?;
+    target_path
+        .is_dir()
+        .then(|| (specifier.to_owned(), target_path))
 }
 
 /// Finder metadata found inside a `file:` dependency tree, capped at `limit`.

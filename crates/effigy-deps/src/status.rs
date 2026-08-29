@@ -2268,7 +2268,7 @@ mod tests {
     }
 
     #[test]
-    fn one_package_name_at_two_targets_stays_two_committed_locals() {
+    fn one_cargo_package_name_at_two_targets_stays_two_committed_locals() {
         let temp = TempDir::new().unwrap();
         let library = temp.path().join("library");
         fs::create_dir_all(library.join(".git")).unwrap();
@@ -2277,22 +2277,14 @@ mod tests {
                 &library.join(version).join("Cargo.toml"),
                 "[package]\nname = \"foo\"\nversion = \"0.1.0\"\n",
             );
-            write(
-                &library.join("packages").join(version).join("package.json"),
-                r#"{"name":"@library/core","version":"0.1.0"}"#,
-            );
         }
         let consumer = temp.path().join("consumer");
         fs::create_dir_all(consumer.join(".git")).unwrap();
         // Cargo lets one package name arrive twice under different aliases,
-        // and a Bun override can redirect a dependency to another directory.
+        // and both resolutions are simultaneously in force.
         write(
             &consumer.join("Cargo.toml"),
             "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nfoo-v1 = { package = \"foo\", path = \"../library/v1\" }\nfoo-v2 = { package = \"foo\", path = \"../library/v2\" }\n",
-        );
-        write(
-            &consumer.join("package.json"),
-            r#"{"name":"consumer","dependencies":{"@library/core":"file:../library/packages/v1"},"overrides":{"@library/core":"file:../library/packages/v2"}}"#,
         );
 
         let report = inspect_dependency_status(
@@ -2304,62 +2296,135 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.links.len(), 2);
-        for (link, name, targets) in [
-            (
-                report
-                    .links
-                    .iter()
-                    .find(|link| link.manager == PackageManager::Cargo)
-                    .expect("cargo report"),
-                "foo",
-                [library.join("v1"), library.join("v2")],
-            ),
-            (
-                report
-                    .links
-                    .iter()
-                    .find(|link| link.manager == PackageManager::Bun)
-                    .expect("bun report"),
-                "@library/core",
-                [library.join("packages/v1"), library.join("packages/v2")],
-            ),
-        ] {
+        assert_eq!(report.links.len(), 1);
+        let link = &report.links[0];
+        let targets = [library.join("v1"), library.join("v2")];
+        assert_eq!(
+            link.observed
+                .packages
+                .iter()
+                .map(|package| (package.name.as_str(), package.local_path.clone()))
+                .collect::<Vec<_>>(),
+            targets
+                .iter()
+                .map(|target| ("foo", canonical_or_original(target)))
+                .collect::<Vec<_>>()
+        );
+        // Each target keeps its own declaration, evidence, and verification
+        // record; collapsing on the name alone would silently drop one.
+        assert!(link.observed.drift[0].message.starts_with("2 committed"));
+        assert_eq!(link.observed.drift[0].evidence.len(), 2);
+        assert_eq!(
+            link.verification
+                .evidence
+                .iter()
+                .map(|evidence| evidence.observed_source.clone().unwrap())
+                .collect::<Vec<_>>(),
+            targets
+                .iter()
+                .map(|target| canonical_or_original(target).display().to_string())
+                .collect::<Vec<_>>()
+        );
+        for evidence in &link.verification.evidence {
             assert_eq!(
-                link.observed
-                    .packages
-                    .iter()
-                    .map(|package| (package.name.as_str(), package.local_path.clone()))
-                    .collect::<Vec<_>>(),
-                targets
-                    .iter()
-                    .map(|target| (name, canonical_or_original(target)))
-                    .collect::<Vec<_>>()
+                evidence.observed_source.as_deref(),
+                Some(evidence.expected_source.as_str())
             );
-            // Each target keeps its own declaration, evidence, and verification
-            // record; collapsing on the name alone would silently drop one.
-            assert!(link.observed.drift[0].message.starts_with("2 committed"));
-            assert_eq!(link.observed.drift[0].evidence.len(), 2);
-            assert_eq!(link.verification.evidence.len(), 2);
-            assert_eq!(
-                link.verification
-                    .evidence
-                    .iter()
-                    .map(|evidence| evidence.observed_source.clone().unwrap())
-                    .collect::<Vec<_>>(),
-                targets
-                    .iter()
-                    .map(|target| canonical_or_original(target).display().to_string())
-                    .collect::<Vec<_>>()
-            );
-            for evidence in &link.verification.evidence {
-                assert_eq!(
-                    evidence.observed_source.as_deref(),
-                    Some(evidence.expected_source.as_str())
-                );
-                assert_eq!(evidence.committed_sources.len(), 1);
-            }
+            assert_eq!(evidence.committed_sources.len(), 1);
         }
+    }
+
+    #[test]
+    fn a_bun_root_override_supersedes_the_declared_target_it_replaces() {
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("library");
+        fs::create_dir_all(library.join(".git")).unwrap();
+        for version in ["v1", "v2"] {
+            write(
+                &library.join("packages").join(version).join("package.json"),
+                r#"{"name":"@library/core","version":"0.1.0"}"#,
+            );
+            write(
+                &library
+                    .join("packages")
+                    .join(format!("edge-{version}"))
+                    .join("package.json"),
+                r#"{"name":"@library/edge","version":"0.1.0"}"#,
+            );
+        }
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        // An override replaces the package's resolved target for the whole
+        // install, so only the override target can be in force — including
+        // when it sends the package back to the registry.
+        write(
+            &consumer.join("package.json"),
+            r#"{"name":"consumer","dependencies":{"@library/core":"file:../library/packages/v1","@library/edge":"file:../library/packages/edge-v1"},"overrides":{"@library/core":"file:../library/packages/v2","@library/edge":"1.2.3"}}"#,
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(report.links.len(), 1);
+        let link = &report.links[0];
+        assert_eq!(link.manager, PackageManager::Bun);
+        assert_eq!(
+            link.observed
+                .packages
+                .iter()
+                .map(|package| (package.name.as_str(), package.local_path.clone()))
+                .collect::<Vec<_>>(),
+            [(
+                "@library/core",
+                canonical_or_original(&library.join("packages/v2"))
+            )]
+        );
+        assert_eq!(
+            link.observed.packages[0].committed_sources[0].identity,
+            "file:../library/packages/v2"
+        );
+        assert!(link.observed.drift[0].message.starts_with("1 committed"));
+        assert_eq!(link.verification.evidence.len(), 1);
+    }
+
+    #[test]
+    fn a_bun_resolutions_entry_is_read_when_overrides_does_not_name_the_package() {
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("library");
+        fs::create_dir_all(library.join(".git")).unwrap();
+        for version in ["v1", "v2"] {
+            write(
+                &library.join("packages").join(version).join("package.json"),
+                r#"{"name":"@library/core","version":"0.1.0"}"#,
+            );
+        }
+        let consumer = temp.path().join("consumer");
+        fs::create_dir_all(consumer.join(".git")).unwrap();
+        write(
+            &consumer.join("package.json"),
+            r#"{"name":"consumer","dependencies":{"@library/core":"file:../library/packages/v1"},"resolutions":{"@library/core":"file:../library/packages/v2"}}"#,
+        );
+
+        let report = inspect_dependency_status(
+            &consumer,
+            temp.path(),
+            &RepoLinkState::empty(),
+            &BunRegistrationIndex::empty(),
+            &NoProcess,
+        )
+        .unwrap();
+
+        assert_eq!(report.links.len(), 1);
+        assert_eq!(
+            report.links[0].observed.packages[0].local_path,
+            canonical_or_original(&library.join("packages/v2"))
+        );
     }
 
     #[test]
