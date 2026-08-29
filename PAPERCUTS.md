@@ -7,7 +7,9 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] `effigy-rhai` runtime-context tests race on process-wide env vars
+## Closed
+
+### [x] `effigy-rhai` runtime-context tests race on process-wide env vars — 2026-08-29
 - Friction: `cargo test --workspace` intermittently fails
   `runtime::execute_rhai_script_exposes_state_capture_context_helpers` or
   `..._state_capture_set_in_capture_hook_context` with
@@ -16,10 +18,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Cause: the scoped-env helper uses `std::env::set_var` / `remove_var`, which
   are process-wide. Both tests set `EFFIGY_STATE_CAPTURE_CONTEXT`, so one
   test's teardown clears it while the other is mid-run.
-- Surface: `crates/effigy-rhai/src/tests/mod.rs` scoped-env helper;
+- Fix (2026-08-29): state/deploy host helpers consult a thread-local override
+  map before the process env; runtime-context tests inject capture/apply/
+  deploy keys there instead of `std::env::set_var`. Production capture
+  semantics stay parent-process env when the map is empty.
+- Surface: `lookup_host_env` / `ScopedHostEnvOverrides`;
   `crates/effigy-rhai/src/tests/runtime.rs`.
-
-## Closed
 
 ### [x] `deps link` cannot adopt committed path / `file:` local dependencies — 2026-08-29
 - Friction: once root selection was fixed, `deps link cargo ../longhorn` from

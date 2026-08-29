@@ -186,14 +186,14 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
     module.set_native_fn(
         "capture_destination_ref",
         || -> Result<String, Box<EvalAltResult>> {
-            Ok(std::env::var("EFFIGY_STATE_CAPTURE_DESTINATION_REF").unwrap_or_default())
+            Ok(crate::lookup_host_env("EFFIGY_STATE_CAPTURE_DESTINATION_REF").unwrap_or_default())
         },
     );
     module
 }
 
 fn required_state_env(name: &str) -> Result<String, Box<EvalAltResult>> {
-    std::env::var(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
+    crate::lookup_host_env(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
 }
 
 fn required_state_path_env(

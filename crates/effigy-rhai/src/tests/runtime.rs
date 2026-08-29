@@ -112,7 +112,7 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
         task_name: "state:capture-new-content".to_owned(),
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
-    let _env = ScopedTestEnv::set_many(&[
+    let _env = crate::ScopedHostEnvOverrides::set_many(&[
         (
             "EFFIGY_STATE_CAPTURE_CONTEXT",
             ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
@@ -165,7 +165,7 @@ fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
         task_name: "state:capture-new-content".to_owned(),
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
-    let _env = ScopedTestEnv::set_many(&[
+    let _env = crate::ScopedHostEnvOverrides::set_many(&[
         (
             "EFFIGY_STATE_CAPTURE_CONTEXT",
             ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
@@ -231,7 +231,7 @@ fn execute_rhai_script_exposes_state_apply_context_helpers() {
         task_name: "state:hook:legacy-media".to_owned(),
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
-    let _env = ScopedTestEnv::set_many(&[(
+    let _env = crate::ScopedHostEnvOverrides::set_many(&[(
         "EFFIGY_STATE_APPLY_CONTEXT",
         ".effigy/state/apply-context/acowtancy-uat/legacy-media.json".to_owned(),
     )]);
@@ -270,7 +270,7 @@ fn execute_rhai_script_exposes_deploy_provider_context_and_report_helpers() {
         task_name: "deploy-provider:render:preflight".to_owned(),
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
-    let _env = ScopedTestEnv::set_many(&[
+    let _env = crate::ScopedHostEnvOverrides::set_many(&[
         (
             "EFFIGY_DEPLOY_PROVIDER_CONTEXT",
             context_path.display().to_string(),

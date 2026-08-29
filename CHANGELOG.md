@@ -24,6 +24,11 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Fixed
+- `effigy-rhai` state/deploy host helpers read an optional thread-local env
+  override map before the process environment, so in-process runtime-context
+  tests no longer mutate `EFFIGY_STATE_CAPTURE_CONTEXT` (and kin) with
+  `std::env::set_var`. Production hooks keep using the parent-supplied process
+  env when the override map is empty.
 - `deps link cargo <library>` anchors the library inventory on the library's
   root workspace and links only its members, so a package the root does not
   list — a `[workspace]`-less example under `examples/`, or a self-contained
