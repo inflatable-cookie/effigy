@@ -1,18 +1,7 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::ManifestError;
 use crate::ManifestManagedRun;
-
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-#[serde(deny_unknown_fields)]
-pub struct ManifestDocsPolicyConfig {
-    #[serde(default)]
-    pub indexes: BTreeMap<String, ManifestDocsPolicyIndexConfig>,
-    #[serde(default, alias = "next_actions")]
-    pub next_actions: BTreeMap<String, ManifestDocsPolicyNextActionConfig>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -186,26 +175,4 @@ fn validate_demo_string_list(
         }
     }
     Ok(())
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-#[serde(deny_unknown_fields)]
-pub struct ManifestDocsPolicyIndexConfig {
-    pub file: String,
-    pub dir: String,
-    #[serde(default)]
-    pub section: Option<String>,
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-#[serde(deny_unknown_fields)]
-pub struct ManifestDocsPolicyNextActionConfig {
-    pub index: String,
-    pub heading: String,
-    #[serde(alias = "allowlist_file")]
-    pub allowlist_file: String,
 }

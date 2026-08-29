@@ -3,6 +3,7 @@ use toml::Value;
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys};
 use super::values::{
+    validate_optional_enum_string_field, validate_optional_integer_field,
     validate_optional_non_empty_string_field, validate_optional_string_array_field,
 };
 
@@ -14,7 +15,7 @@ pub(super) fn validate_docs_policy_section(
         context,
         "docs_policy",
         docs_policy,
-        "expected table with optional keys: indexes, next_actions",
+        "expected table with optional keys: indexes, next_actions, graph",
     ) else {
         return;
     };
@@ -23,7 +24,7 @@ pub(super) fn validate_docs_policy_section(
         context,
         "docs_policy",
         docs_policy_table,
-        &["indexes", "next_actions", "next-actions"],
+        &["indexes", "next_actions", "next-actions", "graph"],
     );
 
     if let Some(indexes) = docs_policy_table.get("indexes") {
@@ -34,6 +35,9 @@ pub(super) fn validate_docs_policy_section(
         .or_else(|| docs_policy_table.get("next-actions"))
     {
         validate_docs_policy_next_actions(context, next_actions);
+    }
+    if let Some(graph) = docs_policy_table.get("graph") {
+        validate_docs_policy_graph(context, graph);
     }
 }
 
@@ -131,6 +135,225 @@ fn validate_docs_policy_next_actions(context: &mut SchemaContext<'_, '_>, next_a
                 .get("allowlist_file")
                 .or_else(|| entry_table.get("allowlist-file")),
             &format!("{entry_path}.allowlist_file"),
+        );
+    }
+}
+
+fn validate_docs_policy_graph(context: &mut SchemaContext<'_, '_>, graph: &Value) {
+    let Some(graph_table) = require_table(
+        context,
+        "docs_policy.graph",
+        graph,
+        "expected table with keys: roots, fields, currentness, kinds, relations",
+    ) else {
+        return;
+    };
+
+    validate_allowed_keys(
+        context,
+        "docs_policy.graph",
+        graph_table,
+        &["roots", "fields", "currentness", "kinds", "relations"],
+    );
+    validate_optional_string_array_field(
+        context,
+        graph_table.get("roots"),
+        "docs_policy.graph.roots",
+        "expected array of strings",
+    );
+    if let Some(fields) = graph_table.get("fields") {
+        validate_docs_policy_graph_fields(context, fields);
+    }
+    if let Some(currentness) = graph_table.get("currentness") {
+        validate_docs_policy_graph_currentness(context, currentness);
+    }
+    if let Some(kinds) = graph_table.get("kinds") {
+        validate_docs_policy_graph_kinds(context, kinds);
+    }
+    if let Some(relations) = graph_table.get("relations") {
+        validate_docs_policy_graph_relations(context, relations);
+    }
+}
+
+fn validate_docs_policy_graph_fields(context: &mut SchemaContext<'_, '_>, fields: &Value) {
+    let Some(fields_table) = require_table(
+        context,
+        "docs_policy.graph.fields",
+        fields,
+        "expected table of named field definitions",
+    ) else {
+        return;
+    };
+    for (name, entry_value) in fields_table {
+        let entry_path = format!("docs_policy.graph.fields.{name}");
+        let Some(entry_table) = require_table(
+            context,
+            &entry_path,
+            entry_value,
+            "expected table with keys: labels, cardinality",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &entry_path,
+            entry_table,
+            &["labels", "cardinality"],
+        );
+        validate_optional_string_array_field(
+            context,
+            entry_table.get("labels"),
+            &format!("{entry_path}.labels"),
+            "expected array of strings",
+        );
+        validate_optional_enum_string_field(
+            context,
+            entry_table.get("cardinality"),
+            &format!("{entry_path}.cardinality"),
+            &["one", "many"],
+            "expected \"one\" or \"many\"",
+        );
+    }
+}
+
+fn validate_docs_policy_graph_currentness(
+    context: &mut SchemaContext<'_, '_>,
+    currentness: &Value,
+) {
+    let Some(currentness_table) = require_table(
+        context,
+        "docs_policy.graph.currentness",
+        currentness,
+        "expected table with keys: field, current, historical",
+    ) else {
+        return;
+    };
+    validate_allowed_keys(
+        context,
+        "docs_policy.graph.currentness",
+        currentness_table,
+        &["field", "current", "historical"],
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        currentness_table.get("field"),
+        "docs_policy.graph.currentness.field",
+    );
+    validate_optional_string_array_field(
+        context,
+        currentness_table.get("current"),
+        "docs_policy.graph.currentness.current",
+        "expected array of strings",
+    );
+    validate_optional_string_array_field(
+        context,
+        currentness_table.get("historical"),
+        "docs_policy.graph.currentness.historical",
+        "expected array of strings",
+    );
+}
+
+fn validate_docs_policy_graph_kinds(context: &mut SchemaContext<'_, '_>, kinds: &Value) {
+    let Some(kinds_table) = require_table(
+        context,
+        "docs_policy.graph.kinds",
+        kinds,
+        "expected table of named kind definitions",
+    ) else {
+        return;
+    };
+    for (name, entry_value) in kinds_table {
+        let entry_path = format!("docs_policy.graph.kinds.{name}");
+        let Some(entry_table) = require_table(
+            context,
+            &entry_path,
+            entry_value,
+            "expected table with keys: include, exclude, authority, default_currentness",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &entry_path,
+            entry_table,
+            &[
+                "include",
+                "exclude",
+                "authority",
+                "default_currentness",
+                "default-currentness",
+            ],
+        );
+        validate_optional_string_array_field(
+            context,
+            entry_table.get("include"),
+            &format!("{entry_path}.include"),
+            "expected array of strings",
+        );
+        validate_optional_string_array_field(
+            context,
+            entry_table.get("exclude"),
+            &format!("{entry_path}.exclude"),
+            "expected array of strings",
+        );
+        validate_optional_integer_field(
+            context,
+            entry_table.get("authority"),
+            &format!("{entry_path}.authority"),
+        );
+        if let Some(Value::Integer(authority)) = entry_table.get("authority") {
+            if !(0..=100).contains(authority) {
+                let actual = authority.to_string();
+                context.unsupported_value(
+                    &format!("{entry_path}.authority"),
+                    &actual,
+                    "expected integer from 0 through 100",
+                );
+            }
+        }
+        validate_optional_enum_string_field(
+            context,
+            entry_table
+                .get("default_currentness")
+                .or_else(|| entry_table.get("default-currentness")),
+            &format!("{entry_path}.default_currentness"),
+            &["current", "historical", "unknown"],
+            "expected \"current\", \"historical\", or \"unknown\"",
+        );
+    }
+}
+
+fn validate_docs_policy_graph_relations(context: &mut SchemaContext<'_, '_>, relations: &Value) {
+    let Some(relations_table) = require_table(
+        context,
+        "docs_policy.graph.relations",
+        relations,
+        "expected table of named relation definitions",
+    ) else {
+        return;
+    };
+    for (name, entry_value) in relations_table {
+        let entry_path = format!("docs_policy.graph.relations.{name}");
+        let Some(entry_table) = require_table(
+            context,
+            &entry_path,
+            entry_value,
+            "expected table with keys: labels, headings",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(context, &entry_path, entry_table, &["labels", "headings"]);
+        validate_optional_string_array_field(
+            context,
+            entry_table.get("labels"),
+            &format!("{entry_path}.labels"),
+            "expected array of strings",
+        );
+        validate_optional_string_array_field(
+            context,
+            entry_table.get("headings"),
+            &format!("{entry_path}.headings"),
+            "expected array of strings",
         );
     }
 }

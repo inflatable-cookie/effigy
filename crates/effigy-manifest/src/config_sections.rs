@@ -4,6 +4,7 @@ mod common;
 mod container;
 mod demo;
 mod distribution;
+mod docs_policy;
 mod release;
 mod secrets;
 
@@ -36,14 +37,18 @@ pub use container::{
     ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
 };
-pub use demo::{
-    ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig,
-    ManifestDocsPolicyIndexConfig, ManifestDocsPolicyNextActionConfig,
-};
+pub use demo::{ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus};
 pub use distribution::{
     ManifestDistributionCloseoutConfig, ManifestDistributionConfig,
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
     ManifestDistributionPreflightConfig, ManifestDistributionPublishConfig,
+};
+pub use docs_policy::{
+    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
+    ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
+    ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
+    ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicyIndexConfig,
+    ManifestDocsPolicyNextActionConfig,
 };
 pub use release::{ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails};
 pub use secrets::{

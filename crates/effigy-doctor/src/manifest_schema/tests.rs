@@ -47,6 +47,27 @@ index = "vision"
 heading = "## Next Task"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
+[docs_policy.graph]
+roots = ["handbook", "README.md"]
+
+[docs_policy.graph.fields.state]
+labels = ["State"]
+cardinality = "one"
+
+[docs_policy.graph.currentness]
+field = "state"
+current = ["live"]
+historical = ["retired"]
+
+[docs_policy.graph.kinds.playbook]
+include = ["handbook/playbooks/*.md"]
+authority = 80
+default_currentness = "unknown"
+
+[docs_policy.graph.relations.see-also]
+labels = ["See also"]
+headings = ["See also"]
+
 [bootstrap]
 setup = ["bootstrap:local", "doctor"]
 start = "dev"
@@ -132,6 +153,29 @@ smoke = { command = "printf ok", description = "smoke gate" }
     assert!(
         sink.findings.is_empty(),
         "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_docs_policy_graph_keys() {
+    let manifest: Value = toml::from_str(
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+mystery = true
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("docs_policy.graph.mystery")),
+        "expected unknown graph key to be flagged, got: {:?}",
         sink.findings
     );
 }
