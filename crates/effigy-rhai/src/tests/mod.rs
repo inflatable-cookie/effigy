@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 mod forge;
@@ -125,31 +125,50 @@ fn script_context(root: &Path) -> ScriptContext {
 }
 
 struct ScopedTestEnv {
+    _lock: MutexGuard<'static, ()>,
     previous: Vec<(String, Option<String>)>,
+}
+
+fn test_env_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl ScopedTestEnv {
     fn set_many(values: &[(&str, String)]) -> Self {
+        // Process-wide env mutation must be serialized across parallel tests.
+        let lock = test_env_lock();
         let previous = values
             .iter()
             .map(|(key, value)| {
                 let key = (*key).to_owned();
                 let previous = std::env::var(&key).ok();
-                std::env::set_var(&key, value);
+                // SAFETY: held under `test_env_lock`; restored on Drop.
+                unsafe {
+                    std::env::set_var(&key, value);
+                }
                 (key, previous)
             })
             .collect();
-        Self { previous }
+        Self {
+            _lock: lock,
+            previous,
+        }
     }
 }
 
 impl Drop for ScopedTestEnv {
     fn drop(&mut self) {
         for (key, previous) in self.previous.drain(..) {
-            if let Some(previous) = previous {
-                std::env::set_var(key, previous);
-            } else {
-                std::env::remove_var(key);
+            // SAFETY: still holding `_lock` until this Drop returns.
+            unsafe {
+                if let Some(previous) = previous {
+                    std::env::set_var(key, previous);
+                } else {
+                    std::env::remove_var(key);
+                }
             }
         }
     }

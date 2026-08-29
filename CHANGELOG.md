@@ -24,6 +24,9 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Fixed
+- `effigy-rhai` test `ScopedTestEnv` serializes process-wide env mutation under
+  a mutex so parallel runtime-context tests no longer clear each other's
+  `EFFIGY_STATE_CAPTURE_CONTEXT`.
 - `deps link cargo <library>` anchors the library inventory on the library's
   root workspace and links only its members, so a package the root does not
   list — a `[workspace]`-less example under `examples/`, or a self-contained
