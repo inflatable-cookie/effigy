@@ -37,8 +37,12 @@ static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static ACTIVE_RUNTIME_CONTEXT: RefCell<Option<EffigyRuntimeContext>> = const { RefCell::new(None) };
     static ACTIVE_RHAI_SECRETS: RefCell<Option<RhaiSecretStore>> = const { RefCell::new(None) };
-    /// Test/in-process overrides for host env keys normally supplied by a parent
-    /// process (state capture/apply, deploy provider hooks). Empty in production.
+}
+
+#[cfg(test)]
+thread_local! {
+    /// In-process overrides for host env keys normally supplied by a parent
+    /// process (state capture/apply, deploy provider hooks).
     static ACTIVE_HOST_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> =
         const { RefCell::new(BTreeMap::new()) };
 }
@@ -313,23 +317,28 @@ fn with_rhai_runtime_context<T>(
 }
 
 pub(crate) fn lookup_host_env(name: &str) -> Result<String, std::env::VarError> {
-    if let Some(value) =
-        ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| overrides.borrow().get(name).cloned())
+    #[cfg(test)]
     {
-        return Ok(value);
+        if let Some(value) =
+            ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| overrides.borrow().get(name).cloned())
+        {
+            return Ok(value);
+        }
     }
     std::env::var(name)
 }
 
 /// Thread-local host-env inject seam for in-process tests.
 ///
-/// Production capture/apply/deploy hooks leave this empty and keep reading the
-/// real process environment set by the parent Effigy process.
+/// Production capture/apply/deploy hooks keep reading the real process
+/// environment set by the parent Effigy process.
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct ScopedHostEnvOverrides {
     previous: BTreeMap<String, String>,
 }
 
+#[cfg(test)]
 impl ScopedHostEnvOverrides {
     pub(crate) fn set_many(values: &[(&str, String)]) -> Self {
         ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| {
@@ -345,6 +354,7 @@ impl ScopedHostEnvOverrides {
     }
 }
 
+#[cfg(test)]
 impl Drop for ScopedHostEnvOverrides {
     fn drop(&mut self) {
         ACTIVE_HOST_ENV_OVERRIDES.with(|overrides| {
