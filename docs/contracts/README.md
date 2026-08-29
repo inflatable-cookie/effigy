@@ -16,7 +16,7 @@ This folder contains both:
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
 `030`, `031`, `032`, `033`, `034`, `035`, `036`, `037`, `038`, `039`, and
-`040`.
+`040`, plus active documentation-graph contract `041`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -158,6 +158,9 @@ new reusable-core work.
 - [`040-bun-committed-dependency-pinning-contract.md`](./040-bun-committed-dependency-pinning-contract.md):
   implemented and consumer-proven root-consumer Bun overrides as a committed
   counterpart to machine-local links.
+- [`041-documentation-graph-profile-contract.md`](./041-documentation-graph-profile-contract.md):
+  repository-owned documentation graph profiles, exact Markdown semantics,
+  bounded context retrieval, and the Northstar runtime-independence boundary.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -199,6 +202,7 @@ new reusable-core work.
 | `038-unified-test-orchestration-contract.md` | Platform maintainers | Test selector precedence, `[test]` grammar, suite selection, plan safety, migration, or supported ecosystem detection | Focused manifest, built-in test, migration, runner, docs, and JSON contract proofs |
 | `039-pre-release-ci-proof-contract.md` | Platform maintainers | Exact-candidate hosted CI identity, accepted trigger/branch/conclusion, release gate ordering, or checker ownership | Focused checker fixtures plus release-gate configuration and protocol review |
 | `040-bun-committed-dependency-pinning-contract.md` | Platform maintainers | Pin/unpin grammar, closure selection, override conflict policy, manifest write safety, path portability, link interaction, or JSON payload shape | Focused deps, CLI, runner, JSON, and Soundcheck/Poodle consumer proofs |
+| `041-documentation-graph-profile-contract.md` | Platform maintainers | Profile grammar, section boundaries, currentness, authority ranking, context budgets, JSON shape, freshness identity, or Northstar runtime independence | Planning review against `g08.035`; focused manifest, codegraph, CLI, docs, JSON, generic-fixture, and Northstar-starter proofs during implementation |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -259,9 +263,11 @@ active v0.11 test authority and plan-safety boundary, and
 `039-pre-release-ci-proof-contract.md` as the exact-candidate hosted CI
 release boundary, and `040-bun-committed-dependency-pinning-contract.md` as the
 implemented committed Bun override boundary distinct from machine-local
-linking.
+linking, and `041-documentation-graph-profile-contract.md` as the active
+repository-defined documentation graph and bounded retrieval boundary.
 
 ## Next Task
 
-No ready strict card remains. Await operator intent before compiling another
-lane. No release action is implied.
+Execute ready card
+[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+No release action is implied.

@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
+  documentation graph profiles; current ready card `1088`
 
 Queued strict lanes:
 
@@ -65,6 +66,7 @@ Other planning specs:
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme; keep draft `098` paused and do not infer release work or
-generation rollover.
+Execute ready card
+[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+Keep draft `098` paused; the second governance review remains due by
+2026-09-17. Do not infer release work or generation rollover.

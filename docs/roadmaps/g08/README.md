@@ -10,7 +10,8 @@ explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
 `g08.029`, exact-candidate pre-release CI proof in `g08.030`, committed Bun
 dependency pinning and its bounded enumeration fallback in `g08.031`, and vision
 governance operationalization in `g08.032`, doctor secret-schema parity in
-`g08.033`, and documentation coverage parity in `g08.034`.
+`g08.033`, documentation coverage parity in `g08.034`, and the active
+repository-defined documentation graph in `g08.035`.
 
 ## Purpose
 
@@ -33,6 +34,11 @@ The completed dependency follow-up adds an explicit committed Bun override
 mode for cross-repository graphs. It remains separate from machine-local links
 and never mutates intermediate repositories. Card `1081` handles consumers
 where Bun cannot enumerate its own text lockfile.
+
+The active documentation-graph extension reuses the native graph for exact
+Markdown sections and bounded retrieval. Repositories own their semantic
+profile; Northstar supplies one committed profile without becoming a runtime
+dependency.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -78,6 +84,7 @@ This generation should help agents and maintainers answer questions like:
 - [`032-vision-governance-operationalization.md`](./032-vision-governance-operationalization.md)
 - [`033-doctor-secrets-schema-parity.md`](./033-doctor-secrets-schema-parity.md)
 - [`034-documentation-coverage-parity.md`](./034-documentation-coverage-parity.md)
+- [`035-repository-defined-documentation-graph.md`](./035-repository-defined-documentation-graph.md)
 
 ## Design Posture
 
@@ -110,6 +117,8 @@ This generation should help agents and maintainers answer questions like:
 - no package managers beyond Cargo and Bun in the first dependency tranche
 - no ambient catalog fallback, recursive member expansion, or migration scan
   in the explicit-membership tranche
+- no Northstar-only documentation ontology, generated graph summaries, second
+  graph store, or required daemon/MCP surface in `g08.035`
 
 ## Generation Runway
 
@@ -163,6 +172,8 @@ This generation should help agents and maintainers answer questions like:
   and diagnostics, `1075` migration proof and closeout.
 - Deletion checkpoint: no undeclared consumer, ambient walker, or cache surface
   remains. No generation rollover is implied.
+- Documentation graph active: strict spec `108` and contract `041` govern cards
+  `1088` through `1090`; card `1088` is ready.
 
 ## Execution Rule
 
@@ -176,6 +187,7 @@ Strict spec `103` and `g08.030` are complete through card `1077`.
 Strict spec `104` and `g08.031` are complete through card `1081`.
 Strict spec `105` and `g08.032` are complete through card `1084`.
 Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
+Strict spec `108` governs active `g08.035`; execute only ready card `1088`.
 
 ## Batch Cards
 
@@ -238,6 +250,9 @@ Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
 - [`1085-align-doctor-with-secrets-schema.md`](./batch-cards/1085-align-doctor-with-secrets-schema.md)
 - [`1086-audit-and-align-documentation-coverage.md`](./batch-cards/1086-audit-and-align-documentation-coverage.md)
 - [`1087-guard-and-close-documentation-coverage.md`](./batch-cards/1087-guard-and-close-documentation-coverage.md)
+- [`1088-build-documentation-profile-and-structural-index.md`](./batch-cards/1088-build-documentation-profile-and-structural-index.md)
+- [`1089-add-bounded-documentation-context-query.md`](./batch-cards/1089-add-bounded-documentation-context-query.md)
+- [`1090-prove-generic-and-northstar-profiles.md`](./batch-cards/1090-prove-generic-and-northstar-profiles.md)
 
 ## Current State
 
@@ -271,7 +286,12 @@ corrected installed CLI against Bovine.
 verified gap repairs, proportional recurrence guards, validation, and
 closeout.
 
+`g08.035` is active under contract `041` and strict spec `108`. Card `1088` is
+ready; cards `1089` and `1090` remain pending behind evidence-backed closeout.
+
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme. Do not infer release work or a generation rollover.
+Execute ready card
+[`1088`](./batch-cards/1088-build-documentation-profile-and-structural-index.md).
+The second governance review remains due by 2026-09-17. Do not infer release
+work or a generation rollover.

@@ -1,7 +1,7 @@
 # Effigy Architecture Overview
 
 Status: active
-Updated: 2026-08-10
+Updated: 2026-08-29
 
 Effigy is a Rust CLI task runner with two responsibility layers:
 
@@ -47,6 +47,8 @@ Use these docs intentionally:
   is the deploy/export architecture anchor
 - [023-local-dependency-linking-architecture.md](./023-local-dependency-linking-architecture.md)
   is the active Cargo/Bun machine-local dependency-linking boundary
+- [024-repository-defined-documentation-graph.md](./024-repository-defined-documentation-graph.md)
+  is the active generic documentation-graph and repository-profile boundary
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary

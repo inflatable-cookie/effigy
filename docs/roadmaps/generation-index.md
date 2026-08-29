@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-08-21
+Updated: 2026-08-29
 
 ## Generation history
 
@@ -191,15 +191,19 @@ consumer.
 agent, built-in, and generated docs, repaired verified gaps, added proportional
 recurrence guards, and closed with full evidence.
 
+`g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
+through `1090` cover the generic profile/structural foundation, bounded docs
+context query, and generic plus Northstar adoption proof. Card `1088` is ready.
+
 ## Strategic runway (Atlas 2026-08-17)
 
-`g08` feature tranches are complete. The next era is operator-selected, not
-inferred from card exhaustion.
+The operator selected the agent-native maintainer theme on 2026-08-29 as the
+narrow `g08.035` documentation-graph extension. No `g09` rollover is implied.
 
 Canonical atlas artifact:
 [`docs/vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md)
 
-Candidate themes (not scheduled until intent lands):
+Candidate themes and selection state:
 [`docs/roadmaps/backlog/g09-candidate-themes.md`](./backlog/g09-candidate-themes.md)
 
 Horizon summary:
@@ -213,8 +217,8 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Do not open `g09` or start release work until the operator confirms Horizon A
-intent and planning compiles ready cards.
+Strict spec `108` and ready card `1088` compile the selected intent. Do not open
+`g09` or start release work from this selection.
 
 ## Research Roadmaps
 
@@ -247,5 +251,7 @@ closeout there first.
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme. No release action or `g09` rollover is implied.
+Execute ready card
+[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+The second governance review remains due by 2026-09-17. No release action or
+`g09` rollover is implied.

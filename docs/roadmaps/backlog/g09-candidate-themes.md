@@ -3,11 +3,12 @@
 Status: Exploratory
 Owner: Platform
 Created: 2026-08-17
-Selected: 2026-08-17 — **Theme 1 complete** (`g08.032`, strict spec `105`)
+Selected: 2026-08-29 — **Theme 2 active as a narrow g08 extension**
+(`g08.035`, strict spec `108`)
 Source: Northstar Atlas refresh ([`020-strategic-runway-atlas-v1.md`](../../vision/020-strategic-runway-atlas-v1.md))
 
-These are strategic theme options for the next planning era. None is scheduled
-until the operator picks one Horizon A owner and planning compiles a strict lane.
+These are strategic theme options for the next planning era. Theme 2 is now
+scheduled as a narrow `g08` extension; themes 3–5 remain unscheduled.
 
 Do not treat this file as an execution queue. Promote exactly one theme (or a
 deliberate `g08` extension) into a numbered roadmap, spec, and ready cards.
@@ -32,6 +33,8 @@ governance review cycle run on live Effigy data within two planning iterations.
 **Non-goals:** automating scorecards before manual review discipline exists.
 
 ## Theme 2 — Agent-native maintainer experience
+
+**Status:** active (`g08.035`, cards `1088`–`1090`, strict spec `108`)
 
 **Primary tags:** `OPERATE`, `MAINT`, `ROUTE`
 
@@ -116,5 +119,5 @@ they remain in the active tree.
 
 ## Next Task
 
-Theme 1 is complete. Await operator selection among themes 2–5 for the next
-strict lane.
+Execute ready card `1088` in the selected Theme 2 extension. Themes 3–5 remain
+unscheduled.

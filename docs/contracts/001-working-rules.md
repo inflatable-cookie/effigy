@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-08-12
+Updated: 2026-08-29
 
 This contract defines how Effigy executes active roadmap work under the strict
 Northstar posture.
@@ -96,7 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-Run the second governance review by 2026-09-17 per
-[`docs/vision/governance/README.md`](../vision/governance/README.md). Await
-operator intent for the next Horizon theme; do not infer release work or
-generation rollover.
+Execute ready card
+[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+The scheduled second governance review remains due by 2026-09-17. No release
+work or generation rollover is implied.

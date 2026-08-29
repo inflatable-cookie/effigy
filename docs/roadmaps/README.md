@@ -107,10 +107,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.034`](./g08/034-documentation-coverage-parity.md) audits
   current public behavior against active user, agent, built-in, and generated
   docs under archived strict spec `107`; cards `1086` and `1087` are complete.
+  Active [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
+  implements repository-owned documentation graph profiles and bounded context
+  retrieval under strict spec `108`; card `1088` is ready.
 
 ## Active Strict Lane
 
-None. Completed spec `107` lives in [`specs/archive/`](../specs/archive/).
+Strict spec
+[`108`](../specs/108-documentation-graph-profiles-strict-lane.md) governs
+`g08.035`. Current ready card:
+[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
 
 ## Research Program
 
@@ -165,8 +171,10 @@ Before rollover:
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme. No release action or `g09` rollover is implied.
+Execute ready card
+[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+The second governance review remains due by 2026-09-17. No release action or
+`g09` rollover is implied.
 
 ## Historical language boundary
 

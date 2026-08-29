@@ -63,6 +63,8 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Run the second governance review by 2026-09-17 per
-[`governance/README.md`](./governance/README.md). Await operator intent for the
-next Horizon theme.
+Execute ready card
+[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md)
+under decision
+[`D-2026-04`](./decisions/D-2026-04-repository-defined-documentation-graph.md).
+The second governance review remains due by 2026-09-17.

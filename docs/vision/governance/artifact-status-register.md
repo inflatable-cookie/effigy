@@ -1,4 +1,4 @@
-# Vision Artifact Status Register — 2026-08-17
+# Vision Artifact Status Register — 2026-08-29
 
 | ID | Title | State | Owner | Review Cadence | Last Reviewed | Successor | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -21,4 +21,4 @@
 | 017 | Artifact Status Register Spec v1 | Active | Docs Owners + Platform Lead | Monthly | 2026-08-17 | - | This register implements the spec |
 | 018 | Decision Record Index Spec v1 | Active | Platform Lead | Monthly | 2026-08-17 | - | Index file implements the spec |
 | 019 | Vision Maturity Baseline v1 | Active | Platform + Maintainers | Quarterly | 2026-08-17 | - | Stage 2 baseline; governance uplift in progress |
-| 020 | Strategic Runway Atlas v1 | Active | Platform + Maintainers | Quarterly | 2026-08-17 | - | Horizon A Theme 1 selected 2026-08-17 |
+| 020 | Strategic Runway Atlas v1 | Active | Platform + Maintainers | Quarterly | 2026-08-29 | - | Theme 2 selected as narrow `g08.035` extension; D-2026-04 |
