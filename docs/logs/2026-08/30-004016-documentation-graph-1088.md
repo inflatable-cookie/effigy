@@ -118,9 +118,10 @@ PR 55 requested five blockers. Repairs:
 3. Roots and kind globs normalize `./` and `.`; matching uses `globset` with
    literal separators so `setup*guide.md` does not match `setup-guide-extra.md`.
 4. Typed relations resolve fragments to heading symbol IDs only when that
-   heading exists in an indexable Markdown file. Missing anchors, ignored
-   paths such as `.effigy/`, symlink escapes, non-Markdown files, missing
-   files, and external URLs stay unresolved.
+   heading exists on a path in the same scan inventory used to emit graph
+   records. Missing anchors, `.ignore` / `.effigy` exclusions, internal and
+   escaping symlinks, non-Markdown files, missing files, and external URLs
+   stay unresolved.
 5. Repository relation edges use kind `doc-rel` with the declared token in
    provenance detail, so tokens such as `contains` cannot collide with
    structural traversal.

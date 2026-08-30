@@ -46,14 +46,17 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
 pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
     let profile_state = load_docs_profile_state(repo_root)?;
     let current_fingerprint = profile_state.fingerprint();
-    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let store = GraphStore::open(repo_root)?;
     let existing_states = store.file_scan_state_map()?;
     let stored_extractors = store.extractor_version_map()?;
     let stored_fingerprint = store.metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?;
     let profile_changed = stored_fingerprint.as_deref() != Some(current_fingerprint.as_str());
-    let current_extractors = extractor_version_map(registry.all());
     let scan_entries = crate::walk::scan_repo_files(repo_root)?;
+    let registry = ExtractorRegistry::for_docs_profile(
+        profile_state.compiled().cloned(),
+        scan_paths(&scan_entries),
+    );
+    let current_extractors = extractor_version_map(registry.all());
     let mut current_states = BTreeMap::new();
     for extractor in registry.all() {
         let record = extractor.extractor_record();
@@ -250,9 +253,12 @@ pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeG
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
     let profile_state = load_docs_profile_state(repo_root)?;
-    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
+    let registry = ExtractorRegistry::for_docs_profile(
+        profile_state.compiled().cloned(),
+        scan_paths(&current_entries),
+    );
     let current_extractors = extractor_version_map(registry.all());
     let stored_extractors = store.extractor_version_map()?;
     let profile_changed = store
@@ -311,7 +317,11 @@ pub(crate) fn stale_paths_for_repo(
     let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
     let current_extractors = extractor_version_map(
-        ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned()).all(),
+        ExtractorRegistry::for_docs_profile(
+            profile_state.compiled().cloned(),
+            scan_paths(&current_entries),
+        )
+        .all(),
     );
     let stored_extractors = store.extractor_version_map()?;
     let profile_changed = store
@@ -463,6 +473,13 @@ fn extractor_failure_diagnostic(
             detail: Some("extractor".to_owned()),
         },
     })
+}
+
+fn scan_paths(entries: &[ScanEntry]) -> BTreeSet<String> {
+    entries
+        .iter()
+        .map(|entry| entry.relative_path.clone())
+        .collect()
 }
 
 fn extractor_version_map(

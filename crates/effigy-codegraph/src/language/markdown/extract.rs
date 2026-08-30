@@ -43,12 +43,14 @@ struct MarkdownSource<'a> {
     file: &'a SourceFile,
     file_record: &'a FileRecord,
     file_symbol_id: &'a GraphId,
+    scanned_paths: &'a BTreeSet<String>,
 }
 
 pub(super) fn extract_markdown(
     extractor_id: &ExtractorId,
     extractor_version: &str,
     profile: Option<&CompiledDocsProfile>,
+    scanned_paths: &BTreeSet<String>,
     file: &SourceFile,
     file_record: &FileRecord,
     sink: &mut GraphSink,
@@ -61,6 +63,7 @@ pub(super) fn extract_markdown(
         file,
         file_record,
         file_symbol_id: &file_symbol_id,
+        scanned_paths,
     };
     let document_kind = profile
         .and_then(|profile| profile.kind_for(&file.relative_path))
@@ -566,8 +569,13 @@ fn emit_typed_relations(
         if relation_tokens.is_empty() {
             continue;
         }
-        let (target_id, unresolved_target) =
-            typed_relation_target(file, &link.dest, headings, &mut heading_cache)?;
+        let (target_id, unresolved_target) = typed_relation_target(
+            file,
+            &link.dest,
+            headings,
+            source.scanned_paths,
+            &mut heading_cache,
+        )?;
         for token in relation_tokens {
             let edge_key = format!("{token}:{}", link.dest);
             if emitted_edges.insert(edge_key) {
@@ -618,6 +626,7 @@ fn typed_relation_target(
     file: &SourceFile,
     dest: &str,
     current_headings: &[Heading],
+    scanned_paths: &BTreeSet<String>,
     heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(Option<GraphId>, Option<String>), CodeGraphError> {
     if dest.contains("://") {
@@ -636,7 +645,8 @@ fn typed_relation_target(
         (Some(path), Some(fragment)) => {
             let anchor = slugify(fragment);
             if anchor.is_empty()
-                || !heading_exists(file, &path, &anchor, current_headings, heading_cache)
+                || !heading_anchors_for(file, &path, current_headings, scanned_paths, heading_cache)
+                    .contains(&anchor)
             {
                 return Ok((None, Some(dest.to_owned())));
             }
@@ -646,7 +656,7 @@ fn typed_relation_target(
             ))
         }
         (Some(path), None) => {
-            if !crate::walk::is_indexable_path(&file.repo_root, &path) {
+            if !scanned_paths.contains(&path) {
                 return Ok((None, Some(dest.to_owned())));
             }
             Ok((Some(file_graph_id(&path)?), None))
@@ -655,20 +665,11 @@ fn typed_relation_target(
     }
 }
 
-fn heading_exists(
-    file: &SourceFile,
-    path: &str,
-    anchor: &str,
-    current_headings: &[Heading],
-    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
-) -> bool {
-    heading_anchors_for(file, path, current_headings, heading_cache).contains(anchor)
-}
-
 fn heading_anchors_for(
     file: &SourceFile,
     path: &str,
     current_headings: &[Heading],
+    scanned_paths: &BTreeSet<String>,
     heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> BTreeSet<String> {
     if path == file.relative_path {
@@ -680,7 +681,7 @@ fn heading_anchors_for(
     if let Some(cached) = heading_cache.get(path) {
         return cached.clone();
     }
-    let anchors = if crate::walk::is_indexable_path(&file.repo_root, path)
+    let anchors = if scanned_paths.contains(path)
         && crate::support::language_id_for_path(path) == Some("markdown")
     {
         fs::read_to_string(file.repo_root.join(path))
