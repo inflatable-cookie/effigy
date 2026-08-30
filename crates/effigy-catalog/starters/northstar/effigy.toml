@@ -80,6 +80,43 @@ index = "vision"
 heading = "## Next Task"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
+# Northstar's repository-owned graph ontology is emitted by this starter.
+[docs_policy.graph]
+roots = ["README.md", "docs"]
+
+[docs_policy.graph.fields.status]
+labels = ["Status"]
+cardinality = "one"
+
+[docs_policy.graph.fields.owner]
+labels = ["Owner"]
+cardinality = "one"
+
+[docs_policy.graph.currentness]
+field = "status"
+current = ["active", "ready", "strict-ready", "draft"]
+historical = ["complete", "archived", "superseded"]
+
+[docs_policy.graph.kinds.contract]
+include = ["docs/contracts/*.md"]
+exclude = []
+authority = 100
+default-currentness = "unknown"
+
+[docs_policy.graph.kinds.archived-spec]
+include = ["docs/specs/archive/*.md"]
+exclude = []
+authority = 10
+default-currentness = "historical"
+
+[docs_policy.graph.relations.contract]
+labels = ["Contract", "Contracts"]
+headings = []
+
+[docs_policy.graph.relations.next-task]
+labels = []
+headings = ["Next Task"]
+
 # ---- Release (deferred) ------------------------------------------------------
 # Uncomment and tune once the repo is actually preparing to ship artifacts.
 # See docs/guides/056-northstar-effigy-consumer-repo-contract.md §5.

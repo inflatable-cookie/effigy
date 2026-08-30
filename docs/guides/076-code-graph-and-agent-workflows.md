@@ -86,8 +86,8 @@ working tree, freshness is verified via `git status` without a full scan;
 non-git repos and any git failure (no `.git`, missing `git`, unborn HEAD) fall
 back to the per-file scan-state walk. Refreshes run under a cross-process lock
 (`.effigy/graph/refresh.lock`); concurrent queries wait a short budget and then
-report the true trust state. `graph status` stays report-only — it never
-mutates graph state.
+report the true trust state. Plain `graph status` is report-only and never
+mutates graph state; `--refresh` is the explicit mutating exception.
 
 Graph data queries have a 120000ms wall-clock budget by default. Set
 `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` to override it; `EFFIGY_GRAPH_TIMEOUT_MS=0`
@@ -100,9 +100,10 @@ unbounded.
 effigy graph status --json
 ```
 
-`graph status` is report-only: it never mutates graph state. When you want
-the report *and* the remediation in one step, pass `--refresh` to rebuild a
-stale or missing index on demand (the same lazy-refresh gate queries use):
+`graph status` without `--refresh` reports only. When you want the report *and*
+the remediation in one step, pass `--refresh` as the explicit mutating
+exception to rebuild a stale or missing index on demand (the same lazy-refresh
+gate queries use):
 
 ```sh
 effigy graph status --refresh --json

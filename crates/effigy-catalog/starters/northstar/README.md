@@ -15,12 +15,13 @@ the built-in test orchestrator; configure deterministic repo-owned suites under
 **`[test.suites]`**. See Effigy’s quick start:
 [`021-quick-start-and-command-cookbook.md`](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/021-quick-start-and-command-cookbook.md).
 
-Start here:
+Choose the entrypoint that matches the job:
 
 ```sh
-effigy tasks            # discover repo work
-effigy doctor           # health / routing surface
-effigy test --plan      # inspect the test plan
+effigy graph            # code understanding
+effigy tasks            # selector inventory / QA surfaces
+effigy doctor           # routing or repo health is unclear
+effigy test --plan      # test execution shape matters
 effigy qa               # full validation bundle (repo-defined aggregator)
 ```
 

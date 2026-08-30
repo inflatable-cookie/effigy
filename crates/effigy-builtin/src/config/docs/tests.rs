@@ -4,16 +4,30 @@ use super::{
 };
 
 #[test]
-fn docs_policy_graph_profile_lines_are_canonical() {
+fn docs_policy_graph_profile_lines_are_repository_neutral() {
     for profile in [ConfigDocProfile::Reference, ConfigDocProfile::Schema] {
         let lines = docs_policy_graph_lines(profile);
+        let rendered = lines.join("\n");
 
         assert!(lines.contains(&"[docs_policy.graph]"));
         assert!(lines.contains(&"roots = [\"README.md\", \"docs\"]"));
-        assert!(lines.contains(&"[docs_policy.graph.fields.status]"));
-        assert!(lines.contains(&"[docs_policy.graph.relations.next-task]"));
+        assert!(lines.contains(&"[docs_policy.graph.fields.state]"));
+        assert!(lines.contains(&"[docs_policy.graph.kinds.reference]"));
+        assert!(lines.contains(&"[docs_policy.graph.relations.related]"));
         assert!(lines.contains(&"default-currentness = \"historical\""));
         assert!(!lines.contains(&"default_currentness = \"historical\""));
+        for northstar_token in [
+            "strict-ready",
+            "archived-spec",
+            "docs/contracts",
+            "docs/specs/archive",
+            "Next Task",
+        ] {
+            assert!(
+                !rendered.contains(northstar_token),
+                "generic graph profile contains Northstar token `{northstar_token}`"
+            );
+        }
     }
 }
 

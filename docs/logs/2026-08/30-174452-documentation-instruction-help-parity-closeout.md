@@ -62,7 +62,7 @@ production behavior were left untouched.
 | Manifest family | Source owner / proof | Active route(s) | Disposition |
 | --- | --- | --- | --- |
 | `[manifest]`, includes, and `[task_defaults]` | `effigy-manifest` composition and config docs | Generated `effigy config`, schema, guide `059`, matrix | Current; profile output is adjacent to manifest docs. |
-| `[docs_policy]` indexes/next actions and `[docs_policy.graph]` | `ManifestDocsPolicyGraphConfig`, contract `041`, architecture `024` | Generated reference/schema, guide `025`, docs front doors, both skill config-shape refs | Added canonical graph profile example with roots, fields, currentness, kinds, authority, and relations. |
+| `[docs_policy]` indexes/next actions and `[docs_policy.graph]` | `ManifestDocsPolicyGraphConfig`, contract `041`, architecture `024`, Northstar starter | Generated reference/schema, guide `025`, docs front doors, both skill config-shape refs | Generic output carries a repository-neutral graph grammar example; the bundled Northstar starter owns the exact Northstar profile. |
 | `[tasks]`, managed sessions, cache, `[env]` | manifest task/config types and runtime tests | Generated config, guides `012`, `022`, `050`, `055`, skills | Current; task inventory examples use `.result.catalog_tasks[].task`. |
 | `[systems]` and workspaces | manifest system/workspace types | Generated config, guide `064`, matrix, skills | Current. |
 | `[containers]`, data, lifecycle, health, DNS, mounts | container manifest types and tests | Generated config, guides `063`, `067`, `069`, matrix | Current. |
@@ -99,7 +99,10 @@ so the installed Northstar catalog was used with the target path:
   `rm -rf .effigy/graph` example is absent.
 - `cargo run --quiet --bin effigy -- config` and
   `config --schema --target manifest` both render `[docs_policy.graph]`,
-  `roots = ["README.md", "docs"]`, and canonical `default-currentness`.
+  `roots = ["README.md", "docs"]`, and canonical `default-currentness`;
+  `config --schema --minimal` omits the optional profile.
+- The bundled `northstar` starter emits the Northstar graph profile, while the
+  `minimal` starter remains profile-free.
 - Live JSON spot checks confirmed `tasks.result.catalog_tasks[].task`,
   `test --plan.result.targets[]`, `doctor.result.findings[]`,
   `config completion candidates.result.candidates[]`,
@@ -140,15 +143,20 @@ healthy with 29 built-ins and 30 catalog tasks. The graph status was
 - Extended graph help, render tests, guide `076`, matrix `025`, and both graph
   skill references with `status --refresh`, timeout semantics, the full current
   skip list, and recoverable cache reset guidance.
-- Added canonical `[docs_policy.graph]` reference/schema output and focused
-  renderer tests.
-- Corrected root README JSON selectors and both skill JSON-envelope references
-  for live task, doctor, completion, release, error, and streaming behavior.
+- Added repository-neutral `[docs_policy.graph]` reference/schema output,
+  kept the minimal schema profile-free, and made the bundled Northstar starter
+  the adoption surface for the exact Northstar profile.
+- Corrected root README JSON selectors and job-based agent routing, aligned the
+  Northstar starter and consumer guide entry routes, and corrected both skill
+  JSON-envelope references for live task, doctor, completion, release, error,
+  and streaming behavior.
 - Corrected the JSON changelog invocation in both skill workflow references.
 - Added matrix/front-door routes for the docs graph profile, uninstall, and
   command/help families; kept card `1089` explicitly unshipped.
 - Added deterministic coverage guards for public help families, live JSON
-  paths, matrix profile markers, and project-local/distributed skill parity.
+  paths, matrix profile markers, project-local/distributed skill parity, the
+  neutral generic graph example, the Northstar starter boundary, and the
+  job-based README route plus the qualified graph status mutation boundary.
 - Updated `CHANGELOG.md` under `[Unreleased]`.
 - Archived strict spec `109`, completed card `1091`/roadmap `g08.036`, and
   returned strict spec `108`, roadmap `g08.035`, and card `1089` to active/ready.
@@ -159,8 +167,13 @@ healthy with 29 built-ins and 30 catalog tasks. The graph status was
 - `tests/documentation_coverage_tests.rs` keeps the built-in registry routed to
   matrix `025`, checks special help families and stable live JSON selectors,
   and checks both skill trees for parity markers.
-- `crates/effigy-builtin/src/config/docs/tests.rs` checks the graph profile
-  renderer in both reference and schema modes, including canonical key spelling.
+- `crates/effigy-builtin/src/config/docs/tests.rs` checks the repository-neutral
+  graph profile renderer in both reference and schema modes, including
+  canonical key spelling and the absence of Northstar ontology.
+- `crates/effigy-catalog/src/starter.rs` checks that the Northstar starter owns
+  the Northstar profile and the minimal starter does not.
+- Config schema output tests check that minimal full and manifest-target
+  schemas omit the optional graph profile.
 - `src/tests/lib_tests_help_render_tests.rs` checks the graph help refresh,
   timeout, and recoverable-cache guidance.
 - Existing skill inventory/semantic-parity coverage remains active.
@@ -172,7 +185,9 @@ healthy with 29 built-ins and 30 catalog tasks. The graph status was
 - all scoped help routes: passed
 - rendered `config`, `config --schema --target manifest`, and `graph --help`:
   passed with the expected current tokens
-- `cargo test -p effigy-builtin docs_policy_graph_profile_lines_are_canonical`:
+- `cargo test -p effigy-builtin docs_policy_graph_profile_lines_are_repository_neutral`:
+  passed
+- `cargo test -p effigy-catalog northstar_starter_owns_the_northstar_graph_profile`:
   passed
 - focused `documentation_coverage_tests` parity guard: passed
 - `effigy test --test documentation_coverage_tests`: 4 passed, 0 skipped
@@ -180,7 +195,7 @@ healthy with 29 built-ins and 30 catalog tasks. The graph status was
   policy indexes, next-action checks, and contract selection)
 - `effigy docs check workflow-paths`: passed
 - `effigy qa:docs:agent-defaults`: passed
-- `effigy qa`: 3409 passed, 1 skipped
+- `effigy qa`: 3411 passed, 1 skipped
 - `cargo fmt --all -- --check`: passed
 - `cargo clippy --all-targets -- -D warnings`: passed
 - `git diff --check`: passed

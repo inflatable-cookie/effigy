@@ -456,7 +456,7 @@ effigy --help                    # Every command and flag
 effigy --json release simulate   # Machine-readable dry-runs
 ```
 
-An agent dropped into an Effigy repo can start with `doctor`, `tasks`, and `test --plan`, switch to `effigy graph` when the job is code understanding, then run tests, start dev environments, and cut releases through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
+Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
 Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md)
 

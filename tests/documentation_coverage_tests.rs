@@ -117,6 +117,21 @@ fn public_help_families_and_current_contract_paths_are_documented() {
     assert!(matrix.contains("[docs_policy.graph]"));
 
     let root = read("README.md");
+    assert_contains_all(
+        "root agent route",
+        &root,
+        &[
+            "Route by job",
+            "`effigy graph` for code understanding",
+            "`effigy tasks` for selector inventory",
+            "`effigy doctor` when routing or repo health is unclear",
+            "`effigy test --plan` when test execution shape matters",
+        ],
+    );
+    assert!(!root.contains("start with `doctor`, `tasks`, and `test --plan`"));
+    let graph_guide = read("docs/guides/076-code-graph-and-agent-workflows.md");
+    assert!(graph_guide.contains("Plain `graph status` is report-only"));
+    assert!(graph_guide.contains("`--refresh` is the explicit mutating exception"));
     assert!(root.contains(".result.catalog_tasks[].task"));
     assert!(root.contains(".result.targets[].name"));
     assert!(!root.contains(".tasks[].name"));
