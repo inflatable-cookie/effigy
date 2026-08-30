@@ -104,7 +104,7 @@ Do not insert `doctor` into ordinary code-understanding or task-execution work.
 ```bash
 effigy changelog extract --version X.Y.Z         # extract a release section
 effigy changelog extract CHANGELOG.md --version X.Y.Z  # explicit file
-effigy changelog --json extract --version X.Y.Z  # JSON envelope
+effigy --json changelog extract --version X.Y.Z   # JSON envelope
 ```
 
 ## Secrets import

@@ -148,6 +148,59 @@ pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     ]
 }
 
+fn docs_policy_graph_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Optional repository-defined Markdown graph profile for docs context and navigation."
+        }
+        ConfigDocProfile::Schema => {
+            "# Optional repository-defined Markdown graph profile for docs context and navigation."
+        }
+    }
+}
+
+pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[docs_policy.graph]",
+        docs_policy_graph_comment(profile),
+        "roots = [\"README.md\", \"docs\"]",
+        "",
+        "[docs_policy.graph.fields.status]",
+        "labels = [\"Status\"]",
+        "cardinality = \"one\"",
+        "",
+        "[docs_policy.graph.fields.owner]",
+        "labels = [\"Owner\"]",
+        "cardinality = \"one\"",
+        "",
+        "[docs_policy.graph.currentness]",
+        "field = \"status\"",
+        "current = [\"active\", \"ready\", \"strict-ready\", \"draft\"]",
+        "historical = [\"complete\", \"archived\", \"superseded\"]",
+        "",
+        "[docs_policy.graph.kinds.contract]",
+        "include = [\"docs/contracts/*.md\"]",
+        "exclude = []",
+        "authority = 100",
+        "default-currentness = \"unknown\"",
+        "",
+        "[docs_policy.graph.kinds.archived-spec]",
+        "include = [\"docs/specs/archive/*.md\"]",
+        "exclude = []",
+        "authority = 10",
+        "default-currentness = \"historical\"",
+        "",
+        "[docs_policy.graph.relations.contract]",
+        "labels = [\"Contract\", \"Contracts\"]",
+        "headings = []",
+        "",
+        "[docs_policy.graph.relations.next-task]",
+        "labels = []",
+        "headings = [\"Next Task\"]",
+        "",
+    ]
+}
+
 pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     vec![
         "[package_manager]",

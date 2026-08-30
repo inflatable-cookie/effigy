@@ -85,6 +85,10 @@ During v0.x, MINOR bumps may include breaking changes.
   reuse options.
 - Agent skill task-inventory examples now query `.result.catalog_tasks[].task`
   instead of the stale `.result.payload.tasks[]` path.
+- Documentation and CLI help now agree on live JSON envelope paths, graph
+  refresh/timeout recovery, special help families, and the generated
+  `[docs_policy.graph]` reference; the project-local and distributed Effigy
+  skills remain synchronized.
 - Parallel git-bundle materialization serializes clone/fetch/checkout and
   `rev-parse HEAD` behind a per-cache file lock, so overlapping
   `docs/qa:*`-style manifest loads no longer lose HEAD mid-checkout.

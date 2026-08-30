@@ -123,6 +123,8 @@ Read:
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
+- [`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md)
+- [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
 
 Use when:
 - another tool is calling Effigy

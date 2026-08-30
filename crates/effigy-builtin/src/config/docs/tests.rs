@@ -1,4 +1,21 @@
-use super::{package_manager_lines, tasks_canonical_lines, test_section_lines, ConfigDocProfile};
+use super::{
+    docs_policy_graph_lines, package_manager_lines, tasks_canonical_lines, test_section_lines,
+    ConfigDocProfile,
+};
+
+#[test]
+fn docs_policy_graph_profile_lines_are_canonical() {
+    for profile in [ConfigDocProfile::Reference, ConfigDocProfile::Schema] {
+        let lines = docs_policy_graph_lines(profile);
+
+        assert!(lines.contains(&"[docs_policy.graph]"));
+        assert!(lines.contains(&"roots = [\"README.md\", \"docs\"]"));
+        assert!(lines.contains(&"[docs_policy.graph.fields.status]"));
+        assert!(lines.contains(&"[docs_policy.graph.relations.next-task]"));
+        assert!(lines.contains(&"default-currentness = \"historical\""));
+        assert!(!lines.contains(&"default_currentness = \"historical\""));
+    }
+}
 
 #[test]
 fn package_manager_profile_lines_contract_is_stable() {

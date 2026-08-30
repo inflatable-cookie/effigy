@@ -32,7 +32,11 @@ effigy graph explore "<task-shaped question>" \
 ```
 
 The query builds or refreshes a stale index before reading it. Use
-`graph status --json` only when you need the report-only pre-refresh state.
+`graph status --json` only when you need the report-only pre-refresh state; add
+`--refresh` when the status command should also rebuild a stale or missing
+index. Graph data queries have a 120000ms wall-clock budget by default;
+`EFFIGY_GRAPH_TIMEOUT_MS=<MS>` overrides it and `0` disables the bound. Explicit
+`graph index` and `graph watch` commands are unbounded.
 
 Good query shapes:
 
@@ -77,9 +81,12 @@ git diff --name-only | effigy scan validation-gaps --stdin --json
 - **Rebuild on corruption or unknown future schema:**
 
 ```bash
-rm -rf .effigy/graph
+mv .effigy/graph .effigy/graph.backup-$(date +%s)
 effigy graph index --json
 ```
+
+Move the cache aside so it remains recoverable while the replacement index is
+built.
 
 ## Lower-level context packet
 

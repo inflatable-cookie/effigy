@@ -12,6 +12,10 @@ pub(super) fn render_builtin_config_schema() -> String {
     doc.line(HEADER_CANONICAL);
     doc.blank();
     append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
+    append_doc_lines(
+        &mut doc,
+        docs::docs_policy_graph_lines(ConfigDocProfile::Schema),
+    );
     append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::demos_lines(ConfigDocProfile::Schema));
@@ -41,6 +45,10 @@ pub(super) fn render_builtin_config_schema_minimal() -> String {
     doc.line(HEADER_MINIMAL);
     doc.blank();
     append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
+    append_doc_lines(
+        &mut doc,
+        docs::docs_policy_graph_lines(ConfigDocProfile::Schema),
+    );
     append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::demos_lines(ConfigDocProfile::Schema));
@@ -147,9 +155,11 @@ fn target_schema_lines(
     minimal: bool,
 ) -> Box<dyn Iterator<Item = &'static str>> {
     match target {
-        ConfigSchemaTarget::Manifest => {
-            Box::new(docs::manifest_lines(ConfigDocProfile::Schema).into_iter())
-        }
+        ConfigSchemaTarget::Manifest => Box::new(
+            docs::manifest_lines(ConfigDocProfile::Schema)
+                .into_iter()
+                .chain(docs::docs_policy_graph_lines(ConfigDocProfile::Schema)),
+        ),
         ConfigSchemaTarget::Bundle => unreachable!("bundle target is rendered dynamically"),
         ConfigSchemaTarget::Demos => {
             Box::new(docs::demos_lines(ConfigDocProfile::Schema).into_iter())

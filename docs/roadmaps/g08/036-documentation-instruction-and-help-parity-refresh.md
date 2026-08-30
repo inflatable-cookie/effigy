@@ -1,8 +1,8 @@
 # g08.036 - Documentation, Instruction, And Help Parity Refresh
 
-Status: Active
+Status: Complete
 Depends on: current `main` and completed `g08.034`
-Spec: [`109`](../../specs/109-documentation-instruction-and-help-parity-refresh.md)
+Spec: [`109`](../../specs/archive/109-documentation-instruction-and-help-parity-refresh.md)
 
 ## Goal
 
@@ -21,7 +21,7 @@ help, with scan evidence and proportional recurrence guards.
 
 ## Execution Plan
 
-- [ ] card `1091`: run the scan, AGENTS, feature coverage, active docs, built-in
+- [x] card `1091`: run the scan, AGENTS, feature coverage, active docs, built-in
       help, generated reference, repair, recurrence, validation, and closeout
       loop as one coherent maintenance batch
 
@@ -52,9 +52,9 @@ to restore truthful discovery; runtime meaning may not change in this lane.
 ## Evidence
 
 - Planning: [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](../../logs/2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
-- Closeout: pending card `1091`
+- Closeout: [`30-174452-documentation-instruction-help-parity-closeout.md`](../../logs/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
 
 ## Next Task
 
-Execute ready card
-[`1091`](./batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
+Resume the active documentation graph lane at ready card
+[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).

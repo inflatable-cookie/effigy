@@ -7,7 +7,7 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1088`](./1088-build-documentation-profile-and-structural-index.md)
 
-Status: Pending
+Status: Ready
 Owner: codegraph query and built-in docs command surfaces
 Created: 2026-08-29
 Ready after: card `1088` closeout proves stable structural records and card
@@ -70,5 +70,5 @@ results.
 
 ## Next Task
 
-After card `1091` returns this card to ready, execute it. Its evidence-backed
-closeout makes [`1090`](./1090-prove-generic-and-northstar-profiles.md) ready.
+Execute this card. Its evidence-backed closeout makes
+[`1090`](./1090-prove-generic-and-northstar-profiles.md) ready.

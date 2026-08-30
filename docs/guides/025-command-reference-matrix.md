@@ -69,6 +69,11 @@ For narrative workflow guidance instead of lookup, start with:
 - Need a bounded machine-readable repo map before broad source scanning: use
   `effigy graph` (`explore` first, `affected` after edits, `context`/`search`
   for follow-up).
+- Need repository-defined documentation graph semantics: use the optional
+  `[docs_policy.graph]` profile documented in
+  [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
+  and the architecture note
+  [`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md).
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   proof evidence: use `effigy release`.
@@ -85,6 +90,7 @@ For narrative workflow guidance instead of lookup, start with:
 | --- | --- | --- | --- | --- |
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
+| `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
 | `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
 | `effigy deps` | Inspect dependency state, manage machine-local Cargo and Bun links, and author committed Bun pins | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `pin bun <PATH> [--dry-run]`; `unpin bun <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1`, `effigy.deps.pin.v1` | [`077-local-dependency-linking.md`](./077-local-dependency-linking.md) |
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |
@@ -102,7 +108,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files through configured provider packages, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
-| `effigy graph` | Build, query, and keep the local code graph fresh for file, symbol, edge, impact, changed-file validation narrowing, bounded context packs, one-call exploration, and watcher-driven agent lookup | `index`, `status`, `search`, `files`, `node`, `callers`, `callees`, `impact`, `affected`, `context`, `explore`, `watch`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `--debounce-ms` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.files.v1`, `effigy.graph.node.v1`, `effigy.graph.callers.v1`, `effigy.graph.callees.v1`, `effigy.graph.impact.v1`, `effigy.graph.affected.v1`, `effigy.graph.context.v1`, `effigy.graph.explore.v1`, `effigy.graph.watch.event.v1` | `076-code-graph-and-agent-workflows.md` |
+| `effigy graph` | Build, query, and keep the local code graph fresh for file, symbol, edge, impact, changed-file validation narrowing, bounded context packs, one-call exploration, and watcher-driven agent lookup | `index`, `status`, `status --refresh`, `search`, `files`, `node`, `callers`, `callees`, `impact`, `affected`, `context`, `explore`, `watch`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `--debounce-ms`, `EFFIGY_GRAPH_TIMEOUT_MS` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.files.v1`, `effigy.graph.node.v1`, `effigy.graph.callers.v1`, `effigy.graph.callees.v1`, `effigy.graph.impact.v1`, `effigy.graph.affected.v1`, `effigy.graph.context.v1`, `effigy.graph.explore.v1`, `effigy.graph.watch.event.v1` | `076-code-graph-and-agent-workflows.md` |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
@@ -111,7 +117,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup for deterministic apply/check/repair, wider setup inventory via checklist mode, or explicit named starter emission when requested | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
-| `effigy config` | Render config reference/schema snippets, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
+| `effigy config` | Render config reference/schema snippets, including the optional repository-defined `[docs_policy.graph]` profile, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md) |
 | `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
 | `effigy tasks cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
@@ -276,7 +282,7 @@ effigy deploy status <ENV> [--repo <PATH>] [--json]
 effigy deploy history <ENV> [--repo <PATH>] [--limit <N>] [--json]
 effigy deploy redeploy <ENV> [--repo <PATH>] --deployment <ID> --yes [--json]
 effigy graph index [--repo <PATH>] [--json]
-effigy graph status [--repo <PATH>] [--json]
+effigy graph status [--repo <PATH>] [--refresh] [--json]
 effigy graph search <QUERY> [--repo <PATH>] [--limit <N>] [--json]
 effigy graph files [--repo <PATH>] [--limit <N>] [--json]
 effigy graph node <ID> [--repo <PATH>] [--json]
@@ -485,9 +491,18 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   files with warnings instead of maintaining an index
 - graph data queries build or refresh the index on demand; use explicit
   `graph index` to pre-warm a large repo or recover a broken cache
+- graph data queries have a 120000ms wall-clock budget by default; override it
+  with `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` or use `0` to disable the bound; explicit
+  `graph index` and `graph watch` commands are unbounded
 - `graph status --json` exposes `freshness.state` (`ready`, `refresh-recommended`,
   `degraded`, `missing-index`) and `freshness.usable`; it is the report-only
   pre-refresh view unless passed `--refresh`
+- the graph walk prunes `.git/`, `.effigy/`, `.venv/`, `__pycache__/`,
+  `coverage/`, `dist/`, `node_modules/`, `target/`, `vendor/`, `.svelte-kit/`,
+  `.next/`, `.nuxt/`, `.output/`, `.turbo/`, and `.parcel-cache/` at any depth
+- `[docs_policy.graph]` is optional committed repository configuration for
+  Markdown kinds, fields, currentness, authority, and typed relations; the
+  separate bounded docs-context query remains a planned surface
 - `graph explore` is the preferred one-call agent navigation packet for
   code-understanding work; use `graph context` when you want the lower-level
   ranked item list instead
