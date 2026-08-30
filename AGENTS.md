@@ -11,6 +11,9 @@ Effigy is a Rust-based unified task runner for monorepos. Behavior is
   authority.
 - Normal-mode agents use the current checkout. Worker mode activates only from
   an orchestrator handoff declaring `handoff_mode: worker-pr-loop`.
+- Worker-mode `git fetch origin` must fail fast on blocked SSH. Prefer
+  `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes" git fetch origin`
+  so a prompt does not hang the startup probe.
 - Do not add a current-directory repo override when already inside the target
   repo; use `--repo <PATH>` only for a different repo.
 - Do not add `package.json` scripts that re-export Effigy tasks.
