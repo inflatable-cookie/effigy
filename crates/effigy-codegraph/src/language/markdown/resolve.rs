@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Component, Path};
 
 use super::paths::slugify;
@@ -11,10 +10,7 @@ use crate::GraphId;
 
 const DOC_REL_KIND: &str = "doc-rel";
 
-pub(crate) fn demote_typed_relations(
-    store: &GraphStore,
-    repo_root: &Path,
-) -> Result<bool, CodeGraphError> {
+pub(crate) fn demote_typed_relations(store: &GraphStore) -> Result<bool, CodeGraphError> {
     let mut changed = false;
     for mut edge in store.list_edges()? {
         if edge.kind != DOC_REL_KIND || edge.to_id.is_none() {
@@ -32,7 +28,7 @@ pub(crate) fn demote_typed_relations(
         if reference.kind != DOC_REL_KIND || reference.target_id.is_none() {
             continue;
         }
-        let Some(dest) = typed_reference_dest(repo_root, &reference) else {
+        let Some(dest) = typed_reference_dest(&reference) else {
             continue;
         };
         reference.target_id = None;
@@ -72,7 +68,7 @@ pub(crate) fn resolve_typed_relations(store: &GraphStore) -> Result<bool, CodeGr
         if reference.kind != DOC_REL_KIND {
             continue;
         }
-        let Some(dest) = reference.unresolved_target.clone() else {
+        let Some(dest) = typed_reference_dest(&reference) else {
             continue;
         };
         let (target_id, unresolved_target) =
@@ -96,27 +92,19 @@ fn typed_edge_dest(edge: &EdgeRecord) -> Option<String> {
     edge.id.as_str().strip_prefix(&prefix).map(str::to_owned)
 }
 
-fn typed_reference_dest(repo_root: &Path, reference: &ReferenceRecord) -> Option<String> {
+fn typed_reference_dest(reference: &ReferenceRecord) -> Option<String> {
     if let Some(dest) = &reference.unresolved_target {
         return Some(dest.clone());
     }
-    let content = fs::read_to_string(repo_root.join(&reference.provenance.source_path)).ok()?;
-    let start = usize::try_from(reference.span.start.byte).ok()?;
-    let end = usize::try_from(reference.span.end.byte).ok()?;
-    let slice = content.get(start..end)?;
-    markdown_link_dest(slice)
-}
-
-fn markdown_link_dest(link_markdown: &str) -> Option<String> {
-    let dest_start = link_markdown.rfind("](")?;
-    let dest_part = link_markdown.get(dest_start + 2..)?;
-    let dest_part = dest_part.strip_suffix(')').unwrap_or(dest_part);
-    let dest = dest_part.split_whitespace().next()?.trim();
-    if dest.is_empty() {
-        None
-    } else {
-        Some(dest.to_owned())
-    }
+    let token = reference.provenance.detail.as_deref()?;
+    let prefix = format!(
+        "ref:doc-rel:{}:{}:",
+        reference.provenance.source_path, token
+    );
+    let rest = reference.id.as_str().strip_prefix(&prefix)?;
+    rest.split_once(':')
+        .map(|(_, dest)| dest.to_owned())
+        .filter(|dest| !dest.is_empty())
 }
 
 fn resolve_dest(

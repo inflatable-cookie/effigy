@@ -589,8 +589,10 @@ fn emit_typed_relations(
             }
             sink.push_reference(ReferenceRecord {
                 id: GraphId::new(format!(
-                    "ref:doc-rel:{}:{}:{index}",
-                    file.relative_path, token
+                    "ref:doc-rel:{}:{}:{index}:{}",
+                    file.relative_path,
+                    token,
+                    id_fragment(&link.dest)
                 ))?,
                 file_id: file_record.id.clone(),
                 kind: DOC_REL_KIND.to_owned(),

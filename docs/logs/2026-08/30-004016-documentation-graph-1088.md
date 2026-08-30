@@ -120,11 +120,12 @@ PR 55 requested five blockers. Repairs:
 4. Typed relations extract as unresolved destinations, then a post-index pass
    resolves them against the symbols and files that actually exist in that
    generation. Incremental reindex demotes stored `doc-rel` records first so a
-   deleted or unindexed target cannot drop the source edge. Missing anchors,
-   `.ignore` / `.effigy` exclusions, internal and escaping symlinks,
-   non-Markdown files, missing files, and external URLs stay unresolved. An
-   unchanged source whose target later leaves the inventory keeps the original
-   destination as `unresolved_target`.
+   deleted or unindexed target cannot drop the source edge. Edge and reference
+   IDs keep the parser-normalized destination, so revalidation does not reparse
+   source text. Missing anchors, `.ignore` / `.effigy` exclusions, internal and
+   escaping symlinks, non-Markdown files, missing files, and external URLs stay
+   unresolved. An unchanged source whose target later leaves the inventory keeps
+   the original destination as `unresolved_target`.
 5. Repository relation edges use kind `doc-rel` with the declared token in
    provenance detail, so tokens such as `contains` cannot collide with
    structural traversal.

@@ -47,7 +47,7 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     let profile_state = load_docs_profile_state(repo_root)?;
     let current_fingerprint = profile_state.fingerprint();
     let store = GraphStore::open(repo_root)?;
-    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store, repo_root)?;
+    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store)?;
     let existing_states = store.file_scan_state_map()?;
     let stored_extractors = store.extractor_version_map()?;
     let stored_fingerprint = store.metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?;

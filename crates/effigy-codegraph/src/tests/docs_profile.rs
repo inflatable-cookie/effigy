@@ -627,6 +627,56 @@ labels = ["See also"]
     );
 }
 
+#[test]
+fn typed_relations_revalidate_escaped_destinations_for_edges_and_references() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    let source = temp.path().join("handbook/source.md");
+    fs::write(
+        &source,
+        "# Source\n\nSee also: [target](target\\(one\\).md#section)\n",
+    )
+    .expect("write source");
+    fs::write(
+        temp.path().join("handbook/target(one).md"),
+        "# Target\n\n## Section\n\nBody.\n",
+    )
+    .expect("write target");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.relations.contains]
+labels = ["See also"]
+"#,
+    );
+
+    let resolved = Some("symbol:doc:handbook/target(one).md:#section");
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    assert_contains_relation(&store, resolved, None, "first index");
+    let source_bytes = fs::read(&source).expect("read source");
+
+    fs::write(temp.path().join(".ignore"), "handbook/target(one).md\n").expect("write ignore");
+    run_index(temp.path()).expect("reindex after ignore");
+    assert_eq!(fs::read(&source).expect("reread source"), source_bytes);
+    let store = GraphStore::open(temp.path()).expect("store");
+    assert_contains_relation(
+        &store,
+        None,
+        Some("target(one).md#section"),
+        "ignored escaped target",
+    );
+
+    fs::remove_file(temp.path().join(".ignore")).expect("clear ignore");
+    run_index(temp.path()).expect("reindex after restore");
+    assert_eq!(fs::read(&source).expect("reread source"), source_bytes);
+    let store = GraphStore::open(temp.path()).expect("store");
+    assert_contains_relation(&store, resolved, None, "restored escaped target");
+}
+
 fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
     store
         .list_edges()
@@ -638,6 +688,43 @@ fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
                 && edge.provenance.source_path == "handbook/source.md"
         })
         .collect()
+}
+
+fn source_contains_references(store: &GraphStore) -> Vec<crate::model::ReferenceRecord> {
+    store
+        .list_references()
+        .expect("references")
+        .into_iter()
+        .filter(|reference| {
+            reference.kind == "doc-rel"
+                && reference.provenance.detail.as_deref() == Some("contains")
+                && reference.provenance.source_path == "handbook/source.md"
+        })
+        .collect()
+}
+
+fn assert_contains_relation(
+    store: &GraphStore,
+    resolved: Option<&str>,
+    unresolved: Option<&str>,
+    phase: &str,
+) {
+    let edges = source_contains_edges(store);
+    let references = source_contains_references(store);
+    assert!(
+        edges.iter().any(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str) == resolved
+                && edge.unresolved_target.as_deref() == unresolved
+        }),
+        "{phase} edge: {edges:?}"
+    );
+    assert!(
+        references.iter().any(|reference| {
+            reference.target_id.as_ref().map(GraphId::as_str) == resolved
+                && reference.unresolved_target.as_deref() == unresolved
+        }),
+        "{phase} reference: {references:?}"
+    );
 }
 
 #[test]
