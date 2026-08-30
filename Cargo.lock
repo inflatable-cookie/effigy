@@ -895,6 +895,7 @@ dependencies = [
  "aho-corasick",
  "effigy-manifest",
  "fs2",
+ "globset",
  "hex",
  "ignore",
  "notify",

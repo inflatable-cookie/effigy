@@ -337,3 +337,26 @@ labels = ["State"]
     .expect("parse field");
     assert_eq!(parsed.cardinality, ManifestDocsPolicyGraphCardinality::One);
 }
+
+#[test]
+fn broken_composed_manifest_does_not_silently_disable_a_configured_profile() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_manifest(
+        temp.path(),
+        r#"
+[manifest]
+include = ["missing-graph.toml"]
+
+[docs_policy.graph]
+roots = ["handbook"]
+"#,
+    );
+
+    let error = load_docs_policy_graph_config(&temp.path().join(TASK_MANIFEST_FILE))
+        .expect_err("broken include must fail")
+        .to_string();
+    assert!(
+        error.contains("missing-graph.toml") || error.contains("include"),
+        "{error}"
+    );
+}

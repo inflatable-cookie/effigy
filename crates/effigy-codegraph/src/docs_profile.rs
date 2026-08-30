@@ -5,10 +5,11 @@ use effigy_manifest::{
     load_docs_policy_graph_config, ManifestDocsPolicyGraphCardinality,
     ManifestDocsPolicyGraphConfig, TASK_MANIFEST_FILE,
 };
+use globset::GlobBuilder;
 use serde::Serialize;
 
 use crate::error::CodeGraphError;
-use crate::support::{normalize_rel_path, sha256_hex};
+use crate::support::sha256_hex;
 
 pub(crate) const DOCS_PROFILE_FINGERPRINT_KEY: &str = "docs_profile_fingerprint";
 const BASELINE_FINGERPRINT_SEED: &str = "docs-profile:baseline";
@@ -137,6 +138,9 @@ impl CompiledDocsProfile {
 
 impl CompiledDocsRoot {
     fn contains(&self, relative_path: &str) -> bool {
+        if self.relative.is_empty() {
+            return true;
+        }
         if self.is_dir {
             relative_path == self.relative
                 || relative_path.starts_with(&(self.relative.clone() + "/"))
@@ -216,8 +220,8 @@ pub fn compile_docs_profile(
             token.clone(),
             CompiledDocsKind {
                 token: token.clone(),
-                include: trim_values(&kind.include),
-                exclude: trim_values(&kind.exclude),
+                include: normalize_globs(&kind.include, token, "include")?,
+                exclude: normalize_globs(&kind.exclude, token, "exclude")?,
                 authority: kind.authority,
                 default_currentness: kind.default_currentness.as_str().to_owned(),
             },
@@ -254,8 +258,12 @@ fn compile_root(
     repo_canonical: &Path,
     root: &str,
 ) -> Result<CompiledDocsRoot, CodeGraphError> {
-    let relative = normalize_rel_path(Path::new(root.trim()));
-    let joined = repo_root.join(&relative);
+    let relative = normalize_docs_path(root);
+    let joined = if relative.is_empty() {
+        repo_root.to_path_buf()
+    } else {
+        repo_root.join(&relative)
+    };
     if !joined.exists() {
         return Err(CodeGraphError::validation(format!(
             "docs_policy.graph root `{relative}` does not exist"
@@ -312,6 +320,45 @@ fn trim_values(values: &[String]) -> Vec<String> {
     values.iter().map(|value| value.trim().to_owned()).collect()
 }
 
+fn normalize_docs_path(value: &str) -> String {
+    value
+        .trim()
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn normalize_globs(
+    patterns: &[String],
+    kind: &str,
+    field: &str,
+) -> Result<Vec<String>, CodeGraphError> {
+    let mut normalized = Vec::new();
+    for (index, pattern) in patterns.iter().enumerate() {
+        let candidate = normalize_docs_path(pattern);
+        if candidate.is_empty() {
+            return Err(CodeGraphError::validation(format!(
+                "docs_policy.graph.kinds.{kind}.{field}[{index}] must be a repository-relative glob"
+            )));
+        }
+        compile_glob(&candidate).map_err(|error| {
+            CodeGraphError::validation(format!(
+                "docs_policy.graph.kinds.{kind}.{field}[{index}] is not a valid glob `{pattern}`: {error}"
+            ))
+        })?;
+        normalized.push(candidate);
+    }
+    Ok(normalized)
+}
+
+fn compile_glob(pattern: &str) -> Result<globset::GlobMatcher, globset::Error> {
+    Ok(GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()?
+        .compile_matcher())
+}
+
 fn compare_keys(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -324,63 +371,15 @@ fn normalize_compare(value: &str) -> String {
 }
 
 pub(crate) fn glob_matches(pattern: &str, path: &str) -> bool {
-    glob_match_parts(&split_pattern(pattern), &split_pattern(path))
-}
-
-fn split_pattern(value: &str) -> Vec<&str> {
-    value.split('/').filter(|part| !part.is_empty()).collect()
-}
-
-fn glob_match_parts(pattern: &[&str], path: &[&str]) -> bool {
-    match (pattern.split_first(), path.split_first()) {
-        (None, None) => true,
-        (None, Some(_)) => false,
-        (Some((&"**", rest)), path_head) => {
-            if glob_match_parts(rest, path) {
-                true
-            } else if let Some((_, path_rest)) = path_head {
-                glob_match_parts(pattern, path_rest)
-            } else {
-                rest.is_empty()
-            }
-        }
-        (Some(_), None) => false,
-        (Some((pattern_seg, pattern_rest)), Some((path_seg, path_rest))) => {
-            glob_seg_match(pattern_seg, path_seg) && glob_match_parts(pattern_rest, path_rest)
-        }
-    }
-}
-
-fn glob_seg_match(pattern: &str, segment: &str) -> bool {
-    if !pattern.contains('*') {
-        return pattern == segment;
-    }
-    let mut parts = pattern.split('*');
-    let Some(first) = parts.next() else {
-        return true;
-    };
-    let Some(mut rest) = segment.strip_prefix(first) else {
-        return false;
-    };
-    let remaining: Vec<&str> = parts.collect();
-    for (index, part) in remaining.iter().enumerate() {
-        if part.is_empty() {
-            if index + 1 == remaining.len() {
-                return true;
-            }
-            continue;
-        }
-        match rest.find(part) {
-            Some(at) => rest = &rest[at + part.len()..],
-            None => return false,
-        }
-    }
-    true
+    let normalized = normalize_docs_path(pattern);
+    compile_glob(&normalized)
+        .map(|matcher| matcher.is_match(path))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::glob_matches;
+    use super::{glob_matches, normalize_docs_path};
 
     #[test]
     fn glob_matches_single_segment_and_recursive_patterns() {
@@ -395,5 +394,17 @@ mod tests {
         assert!(glob_matches("handbook/**/*.md", "handbook/a/b.md"));
         assert!(glob_matches("README.md", "README.md"));
         assert!(!glob_matches("handbook/*.md", "notes/intro.md"));
+        assert!(glob_matches("./handbook/*.md", "handbook/setup.md"));
+        assert!(glob_matches("setup*guide.md", "setup-guide.md"));
+        assert!(!glob_matches("setup*guide.md", "setup-guide-extra.md"));
+        assert!(glob_matches("setup?guide.md", "setup-guide.md"));
+        assert!(!glob_matches("setup?guide.md", "setup--guide.md"));
+    }
+
+    #[test]
+    fn normalize_docs_path_drops_current_dir_segments() {
+        assert_eq!(normalize_docs_path("."), "");
+        assert_eq!(normalize_docs_path("./handbook"), "handbook");
+        assert_eq!(normalize_docs_path("./handbook/*.md"), "handbook/*.md");
     }
 }

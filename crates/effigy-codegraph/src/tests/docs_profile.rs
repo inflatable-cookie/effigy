@@ -196,7 +196,9 @@ fn profile_extracts_fields_and_typed_relations_outside_fences() {
     let edges = store.list_edges().expect("edges");
     let typed: Vec<_> = edges
         .iter()
-        .filter(|edge| edge.kind == "see-also")
+        .filter(|edge| {
+            edge.kind == "doc-rel" && edge.provenance.detail.as_deref() == Some("see-also")
+        })
         .collect();
     assert_eq!(typed.len(), 1);
     assert_eq!(
@@ -348,6 +350,125 @@ roots = ["handbook"]
             .to_string()
             .contains("escapes the selected repository"),
         "{error}"
+    );
+}
+
+#[test]
+fn current_dir_roots_and_globs_match_scanned_paths() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_handbook_fixture(temp.path(), "");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = [".", "./handbook"]
+
+[docs_policy.graph.kinds.playbook]
+include = ["./handbook/playbooks/*.md"]
+"#,
+    );
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let playbook = store
+        .list_symbols()
+        .expect("symbols")
+        .into_iter()
+        .find(|symbol| symbol.canonical_name == "handbook/playbooks/setup.md")
+        .expect("playbook");
+    assert_eq!(playbook.kind, "playbook");
+}
+
+#[test]
+fn typed_relations_preserve_fragments_and_namespace_tokens() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    fs::write(
+        temp.path().join("handbook/source.md"),
+        r#"# Source
+
+See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#source) [missing](missing.md#gone) [site](https://example.test/doc#frag)
+
+## See also
+
+- [ops a](target.md#section-a)
+"#,
+    )
+    .expect("write source");
+    fs::write(
+        temp.path().join("handbook/target.md"),
+        "# Target\n\n## Section A\n\nA.\n\n## Section B\n\nB.\n",
+    )
+    .expect("write target");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.relations.contains]
+labels = ["See also"]
+headings = ["See also"]
+"#,
+    );
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let typed: Vec<_> = store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.kind == "doc-rel" && edge.provenance.detail.as_deref() == Some("contains")
+        })
+        .collect();
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str)
+                == Some("symbol:doc:handbook/target.md:#section-a")
+        }),
+        "resolved fragment a: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str)
+                == Some("symbol:doc:handbook/target.md:#section-b")
+        }),
+        "resolved fragment b: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str)
+                == Some("symbol:doc:handbook/source.md:#source")
+        }),
+        "same-document fragment: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("missing.md#gone")
+        }),
+        "unresolved fragment: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none()
+                && edge.unresolved_target.as_deref() == Some("https://example.test/doc#frag")
+        }),
+        "external fragment: {typed:?}"
+    );
+    let markdown_contains_collisions = store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.provenance.source_path == "handbook/source.md"
+                && edge.kind == "contains"
+                && edge.provenance.detail.as_deref() == Some("contains")
+        })
+        .count();
+    assert_eq!(
+        markdown_contains_collisions, 0,
+        "repository relation token must stay namespaced as doc-rel"
     );
 }
 

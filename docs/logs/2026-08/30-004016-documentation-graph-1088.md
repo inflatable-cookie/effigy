@@ -106,6 +106,24 @@ fingerprint joined freshness, so the first graph refresh rebuilt Markdown.
   Card validation used `cargo test -p effigy-manifest` and
   `cargo test -p effigy-codegraph` instead of those heuristic neighbors.
 
+## Review Repair
+
+PR 55 requested five blockers. Repairs:
+
+1. Rebased onto `origin/main` (`d2a679b95`, PR 54 Rhai thread-local env). Kept
+   that changelog/PAPERCUTS closeout; retained the git-fetch papercut.
+2. `load_docs_policy_graph_config` now propagates composition and bundle-default
+   errors. A configured graph behind a broken include cannot fall back to
+   baseline.
+3. Roots and kind globs normalize `./` and `.`; matching uses `globset` with
+   literal separators so `setup*guide.md` does not match `setup-guide-extra.md`.
+4. Typed relations resolve fragments to heading symbol IDs when the local file
+   exists, keep the original dest when unresolved, and keep external URLs
+   unresolved.
+5. Repository relation edges use kind `doc-rel` with the declared token in
+   provenance detail, so tokens such as `contains` cannot collide with
+   structural traversal.
+
 ## Readiness Transition
 
 Card `1088` is complete. Card `1089` is ready: bounded `effigy docs context`

@@ -100,11 +100,8 @@ pub fn load_docs_policy_graph_config(
         return Ok(None);
     }
     let mut session = CompositionSession::default();
-    let mut composed = match load_composed_value(manifest_path, &mut session) {
-        Ok(composed) => composed,
-        Err(_) => return Ok(None),
-    };
-    let _ = apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths);
+    let mut composed = load_composed_value(manifest_path, &mut session)?;
+    apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
     let Some(graph_value) = composed
         .value
         .get("docs_policy")

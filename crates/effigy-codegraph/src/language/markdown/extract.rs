@@ -16,6 +16,8 @@ use crate::model::{
 use crate::support::{full_span, id_fragment, provenance_for_file, span_from_bytes};
 use crate::{ExtractorId, GraphId};
 
+const DOC_REL_KIND: &str = "doc-rel";
+
 struct Heading {
     level: u8,
     text: String,
@@ -562,14 +564,10 @@ fn emit_typed_relations(
         if relation_tokens.is_empty() {
             continue;
         }
-        let resolved_path = resolve_local_path(file, &link.dest);
+        let (target_id, unresolved_target) = typed_relation_target(file, &link.dest)?;
         for token in relation_tokens {
             let edge_key = format!("{token}:{}", link.dest);
             if emitted_edges.insert(edge_key) {
-                let (to_id, unresolved_target) = match &resolved_path {
-                    Some(path) => (Some(file_graph_id(path)?), None),
-                    None => (None, Some(link.dest.clone())),
-                };
                 sink.push_edge(EdgeRecord {
                     id: GraphId::new(format!(
                         "edge:doc-rel:{}:{}:{}",
@@ -577,10 +575,10 @@ fn emit_typed_relations(
                         token,
                         id_fragment(&link.dest)
                     ))?,
-                    kind: token.clone(),
+                    kind: DOC_REL_KIND.to_owned(),
                     from_id: file_symbol_id.clone(),
-                    to_id,
-                    unresolved_target,
+                    to_id: target_id.clone(),
+                    unresolved_target: unresolved_target.clone(),
                     provenance: provenance_for_file(
                         extractor_id,
                         extractor_version,
@@ -590,19 +588,15 @@ fn emit_typed_relations(
                     ),
                 });
             }
-            let (target_id, unresolved_target) = match &resolved_path {
-                Some(path) => (Some(file_graph_id(path)?), None),
-                None => (None, Some(link.dest.clone())),
-            };
             sink.push_reference(ReferenceRecord {
                 id: GraphId::new(format!(
                     "ref:doc-rel:{}:{}:{index}",
                     file.relative_path, token
                 ))?,
                 file_id: file_record.id.clone(),
-                kind: "doc-rel".to_owned(),
-                target_id,
-                unresolved_target,
+                kind: DOC_REL_KIND.to_owned(),
+                target_id: target_id.clone(),
+                unresolved_target: unresolved_target.clone(),
                 span: span_from_bytes(content, link.span.start, link.span.end),
                 provenance: provenance_for_file(
                     extractor_id,
@@ -615,6 +609,38 @@ fn emit_typed_relations(
         }
     }
     Ok(())
+}
+
+fn typed_relation_target(
+    file: &SourceFile,
+    dest: &str,
+) -> Result<(Option<GraphId>, Option<String>), CodeGraphError> {
+    if dest.contains("://") {
+        return Ok((None, Some(dest.to_owned())));
+    }
+    let (path_part, fragment) = match dest.split_once('#') {
+        Some((path, fragment)) => (path, Some(fragment)),
+        None => (dest, None),
+    };
+    let resolved = if path_part.trim().is_empty() {
+        Some(file.relative_path.clone())
+    } else {
+        resolve_local_path(file, path_part)
+    };
+    match (resolved, fragment) {
+        (Some(path), Some(fragment)) => {
+            let anchor = slugify(fragment);
+            if anchor.is_empty() {
+                return Ok((None, Some(dest.to_owned())));
+            }
+            Ok((
+                Some(GraphId::new(format!("symbol:doc:{path}:#{anchor}"))?),
+                None,
+            ))
+        }
+        (Some(path), None) => Ok((Some(file_graph_id(&path)?), None)),
+        (None, _) => Ok((None, Some(dest.to_owned()))),
+    }
 }
 
 fn enclosing_headings<'a>(headings: &'a [Heading], content: &str, byte: usize) -> Vec<&'a Heading> {
