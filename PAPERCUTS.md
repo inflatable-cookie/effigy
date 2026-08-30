@@ -7,6 +7,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Vendored Effigy skills need portfolio-level status and sync
+- Friction: 15 consumer repos under one projects directory had stale copies of
+  all 10 managed Effigy skill files. The supported updater works one repo at a
+  time, and ignored skill trees are easy to miss with ordinary file discovery.
+- Impact: agent routing and safety guidance drift across repos; maintaining the
+  portfolio requires an ad hoc shell loop and manual dirty-tree checks.
+- Plausible fix: add a JSON-first scoped status/sync surface that inventories
+  repo-local installs, fingerprints the bundled skill version, refuses dirty
+  skill trees, and updates only the managed files.
+- Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
+
 ### [ ] `git fetch origin` can hang indefinitely waiting on SSH
 - Friction: worker preflight `git fetch origin` sat silent for minutes until killed; a retry with `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes"` returned immediately.
 - Impact: handoff/startup probes look wedged and waste a long command timeout.

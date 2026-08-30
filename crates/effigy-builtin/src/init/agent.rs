@@ -63,6 +63,10 @@ const SKILL_FILES: &[(&str, &str)] = &[
         include_str!("../../../../skills/effigy/references/agent-operating-loop.md"),
     ),
     (
+        "references/built-in-surfaces.md",
+        include_str!("../../../../skills/effigy/references/built-in-surfaces.md"),
+    ),
+    (
         "references/config-shapes.md",
         include_str!("../../../../skills/effigy/references/config-shapes.md"),
     ),
@@ -725,7 +729,46 @@ fn mode_name(mode: AgentInitMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::inject_internal_skill_metadata;
+    use std::path::Path;
+
+    use super::{inject_internal_skill_metadata, SKILL_FILES};
+
+    fn collect_relative_files(root: &Path, current: &Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(current).expect("skill directory should be readable") {
+            let entry = entry.expect("skill directory entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_relative_files(root, &path, files);
+            } else if path.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("skill file should be inside skill root");
+                files.push(
+                    relative
+                        .components()
+                        .map(|component| component.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn managed_skill_registry_matches_public_skill_tree() {
+        let skill_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/effigy");
+        let mut public_files = Vec::new();
+        collect_relative_files(&skill_root, &skill_root, &mut public_files);
+        public_files.sort();
+
+        let mut managed_files = SKILL_FILES
+            .iter()
+            .map(|(relative, _)| (*relative).to_owned())
+            .collect::<Vec<_>>();
+        managed_files.sort();
+
+        assert_eq!(managed_files, public_files);
+    }
 
     #[test]
     fn inject_internal_skill_metadata_adds_internal_flag_inside_frontmatter() {
