@@ -18,13 +18,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   skill trees, and updates only the managed files.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
-### [ ] `git fetch origin` can hang indefinitely waiting on SSH
-- Friction: worker preflight `git fetch origin` sat silent for minutes until killed; a retry with `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes"` returned immediately.
-- Impact: handoff/startup probes look wedged and waste a long command timeout.
-- Plausible fix: document or wrap worker `git fetch` with BatchMode plus a connect timeout so a blocked SSH prompt fails fast.
-- Surface: worker handoff preflight; GitHub SSH remotes.
-
 ## Closed
+
+### [x] `git fetch origin` can hang indefinitely waiting on SSH — 2026-08-30
+- Friction: worker preflight `git fetch origin` sat silent for minutes until
+  killed; a retry with
+  `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes"` returned
+  immediately.
+- Impact: handoff/startup probes look wedged and waste a long command timeout.
+- Fix (2026-08-30): `AGENTS.md` documents the BatchMode + ConnectTimeout wrap
+  for worker-mode `git fetch origin`. No Git wrapper binary.
+- Surface: `AGENTS.md`; worker handoff preflight; GitHub SSH remotes.
 
 ### [x] `effigy rhai surface` listed regex helpers with reversed args — 2026-08-30
 - Friction: catalog advertised `regex::replace(value, pattern, replacement)`
