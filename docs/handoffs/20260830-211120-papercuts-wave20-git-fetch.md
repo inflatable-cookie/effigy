@@ -5,7 +5,7 @@ handoff_mode: worker-pr-loop
 worker_mode: implementation
 dispatch_authority: orchestrator
 handoff: single-file-path-only
-status: ready-to-launch
+status: pr-open
 owner: Tom / papercuts orchestrator
 created: 2026-08-30
 updated: 2026-08-30
@@ -55,7 +55,7 @@ Startup probes look wedged when GitHub SSH waits on a prompt.
 - **Required validation:** `AGENTS.md` names
   `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes"` for
   worker `git fetch`. The papercut is closed.
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/59
 - **Merge authorisation:** absent; do not merge
 
 ## Boundaries
