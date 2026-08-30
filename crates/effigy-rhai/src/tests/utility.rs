@@ -516,6 +516,67 @@ fn execute_rhai_script_can_match_replace_and_escape_regex() {
 }
 
 #[test]
+fn regex_surface_catalog_matches_live_host_argument_order() {
+    use crate::surface::{
+        rendered_signature, rhai_surface_functions, REGEX_PATTERN_FIRST_SIGNATURES,
+    };
+
+    assert_eq!(
+        REGEX_PATTERN_FIRST_SIGNATURES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        vec!["is_match", "replace", "captures"],
+        "regex pattern-first signature table must stay name-aligned with catalog indexes"
+    );
+
+    let functions = rhai_surface_functions();
+    for (name, expected_signature) in REGEX_PATTERN_FIRST_SIGNATURES {
+        let function = functions
+            .iter()
+            .find(|entry| entry.module == "regex" && entry.name == *name)
+            .unwrap_or_else(|| panic!("missing regex::{name} in surface catalog"));
+        assert_eq!(
+            rendered_signature(function),
+            *expected_signature,
+            "catalog signature for regex::{name} drifted from the live pattern-first host order"
+        );
+        assert_eq!(
+            function.signature, *expected_signature,
+            "raw catalog signature for regex::{name} drifted from REGEX_PATTERN_FIRST_SIGNATURES"
+        );
+    }
+
+    let root = temp_root("regex-catalog-order");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    // Pattern-first is the registered order. Value-first looks like a silent
+    // no-op that returns the pattern string — do not accept both.
+    let script = r#"
+            let pattern_first = regex::replace("[0-9]+", "version-123", "456");
+            if pattern_first != "version-456" { throw("pattern-first host order"); }
+
+            let value_first = regex::replace("version-123", "[0-9]+", "456");
+            if value_first != "[0-9]+" { throw("value-first must not silently rewrite"); }
+            if value_first == "version-456" { throw("must not accept both argument orders"); }
+
+            if !regex::is_match("^v[0-9]+$", "v12") { throw("is_match pattern-first"); }
+            if regex::is_match("v12", "^v[0-9]+$") { throw("is_match value-first must not match"); }
+
+            let captures = regex::captures("(?<n>[0-9]+)", "id-9");
+            if !captures["matched"] || captures["named"]["n"] != "9" { throw("captures pattern-first"); }
+            let swapped = regex::captures("id-9", "(?<n>[0-9]+)");
+            if swapped["matched"] { throw("captures value-first must not match"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_can_capture_regex_groups_and_write_structured_files() {
     let root = temp_root("regex-captures-and-structured-files");
     let context = ScriptContext {

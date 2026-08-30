@@ -452,6 +452,8 @@ fn build_random_module() -> rhai::Module {
 
 fn build_regex_module() -> rhai::Module {
     let mut module = rhai::Module::new();
+    // Argument order is pattern-first; catalog must match
+    // `surface::REGEX_PATTERN_FIRST_SIGNATURES`.
     module.set_native_fn(
         "is_match",
         |pattern: ImmutableString, value: Dynamic| -> Result<bool, Box<EvalAltResult>> {

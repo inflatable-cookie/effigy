@@ -15,6 +15,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] `effigy rhai surface` listed regex helpers with reversed args — 2026-08-30
+- Friction: catalog advertised `regex::replace(value, pattern, replacement)`
+  (and the same swap for `is_match` / `captures`) while the live host and guide
+  use `(pattern, value[, replacement])`. Callers who trust the catalog get a
+  silent no-op that returns the pattern.
+- Fix (2026-08-30): catalog strings follow the live pattern-first order via
+  `REGEX_PATTERN_FIRST_SIGNATURES`; a host self-check asserts catalog matches
+  and that value-first calls do not silently rewrite.
+- Surface: `crates/effigy-rhai/src/surface.rs`;
+  `crates/effigy-rhai/src/tests/utility.rs`.
+
 ### [x] `effigy-rhai` runtime-context tests race on process-wide env vars — 2026-08-29
 - Friction: `cargo test --workspace` intermittently fails
   `runtime::execute_rhai_script_exposes_state_capture_context_helpers` or

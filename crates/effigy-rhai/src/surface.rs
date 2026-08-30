@@ -460,6 +460,15 @@ pub fn rendered_signature(function: &RhaiSurfaceFunction) -> String {
     }
 }
 
+/// Live host argument order for `regex::{is_match,replace,captures}`.
+/// Catalog entries below must use these exact strings; do not silently accept
+/// both orders.
+pub const REGEX_PATTERN_FIRST_SIGNATURES: &[(&str, &str)] = &[
+    ("is_match", "regex::is_match(pattern, value)"),
+    ("replace", "regex::replace(pattern, value, replacement)"),
+    ("captures", "regex::captures(pattern, value)"),
+];
+
 fn feature_surface_function(feature: RhaiFeatureDescriptor) -> RhaiSurfaceFunction {
     RhaiSurfaceFunction {
         module: feature.module(),
@@ -608,21 +617,21 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
     RhaiSurfaceFunction {
         module: MODULE_REGEX,
         name: "is_match",
-        signature: "regex::is_match(value, pattern)",
+        signature: REGEX_PATTERN_FIRST_SIGNATURES[0].1,
         description: "Return true when a regex matches.",
         safety: "read-only",
     },
     RhaiSurfaceFunction {
         module: MODULE_REGEX,
         name: "replace",
-        signature: "regex::replace(value, pattern, replacement)",
+        signature: REGEX_PATTERN_FIRST_SIGNATURES[1].1,
         description: "Replace regex matches.",
         safety: "read-only",
     },
     RhaiSurfaceFunction {
         module: MODULE_REGEX,
         name: "captures",
-        signature: "regex::captures(value, pattern)",
+        signature: REGEX_PATTERN_FIRST_SIGNATURES[2].1,
         description: "Return regex capture groups.",
         safety: "read-only",
     },
