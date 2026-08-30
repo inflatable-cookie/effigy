@@ -114,7 +114,12 @@ Payload examples guide: `026-json-payload-examples.md`
 Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-dependency-linking.md).
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
+- `effigy.version.v1`
+- `effigy.release.status.v1`
 - `effigy.scan.god-files.v1`
+- `effigy.scan.boundary-violations.v1`
+- `effigy.scan.dead-code.v1`
+- `effigy.scan.validation-gaps.v1`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.scan.comment-ratio.v1`
 - `effigy.scan.generated-assets.v1`

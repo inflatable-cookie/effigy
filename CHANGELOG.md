@@ -43,6 +43,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `regex::replace`, and `regex::captures` now match the live host argument
   order `(pattern, value[, replacement])`. The previous catalog order was
   reversed and made wrong-order calls look like silent no-ops.
+- Generic config reference/schema output now uses a repository-neutral
+  `[docs_policy.graph]` example, while the Northstar starter owns its profile
+  and the minimal schema stays profile-free. Agent guidance now routes by job,
+  and graph status documents `--refresh` as its explicit mutation boundary.
 - `effigy-rhai` state/deploy host helpers read an optional thread-local env
   override map before the process environment, so in-process runtime-context
   tests no longer mutate `EFFIGY_STATE_CAPTURE_CONTEXT` (and kin) with
@@ -85,6 +89,10 @@ During v0.x, MINOR bumps may include breaking changes.
   reuse options.
 - Agent skill task-inventory examples now query `.result.catalog_tasks[].task`
   instead of the stale `.result.payload.tasks[]` path.
+- Documentation and CLI help now agree on live JSON envelope paths, graph
+  refresh/timeout recovery, special help families, and the generated
+  `[docs_policy.graph]` reference; the project-local and distributed Effigy
+  skills remain synchronized.
 - Parallel git-bundle materialization serializes clone/fetch/checkout and
   `rev-parse HEAD` behind a per-cache file lock, so overlapping
   `docs/qa:*`-style manifest loads no longer lose HEAD mid-checkout.

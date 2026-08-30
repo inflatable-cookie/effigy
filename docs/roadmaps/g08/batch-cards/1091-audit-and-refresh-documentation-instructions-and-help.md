@@ -1,16 +1,16 @@
 # 1091 - Audit And Refresh Documentation, Instructions, And Help
 
 Roadmap: [`../036-documentation-instruction-and-help-parity-refresh.md`](../036-documentation-instruction-and-help-parity-refresh.md)
-Spec: [`../../../specs/109-documentation-instruction-and-help-parity-refresh.md`](../../../specs/109-documentation-instruction-and-help-parity-refresh.md)
+Spec: [`../../../specs/archive/109-documentation-instruction-and-help-parity-refresh.md`](../../../specs/archive/109-documentation-instruction-and-help-parity-refresh.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md)
 Guides: [`035`](../../../guides/035-guide-ownership-and-update-triggers.md),
 [`037`](../../../guides/037-documentation-contribution-playbook.md)
 Prior evidence: [`g08.034`](../034-documentation-coverage-parity.md)
 
-Status: Ready
+Status: Complete
 Owner: documentation, instruction, help, and documentation-validation surfaces
 Created: 2026-08-30
-Ready after: operator selected the whole-project documentation and help refresh
+Completed: 2026-08-30
 
 ## Purpose
 
@@ -56,24 +56,28 @@ drift.
 
 ## Acceptance
 
-- [ ] the feature matrix covers every current public command and manifest
+- [x] the feature matrix covers every current public command and manifest
       behavior family through an explicit source owner
-- [ ] every behavior family has a truthful route through active docs and the
+- [x] every behavior family has a truthful route through active docs and the
       relevant general or scoped CLI help
-- [ ] generated config/reference output agrees with live manifest types and
+- [x] generated config/reference output agrees with live manifest types and
       routes deeper explanation correctly
-- [ ] Northstar AGENTS review evidence includes size/shape metrics, link and
+- [x] Northstar AGENTS review evidence includes size/shape metrics, link and
       command checks, bridge status, findings, and repair/retention decisions
-- [ ] all scan families and final changed-file validation-gap analysis have
+- [x] all scan families and final changed-file validation-gap analysis have
       recorded results and honest dispositions
-- [ ] all verified in-scope gaps are fixed; blocked items name the exact
+- [x] all verified in-scope gaps are fixed; blocked items name the exact
       authority, product, or scope reason
-- [ ] recurrence guards cover every stable relationship discovered during the
+- [x] recurrence guards cover every stable relationship discovered during the
       audit that is valuable enough to enforce
-- [ ] no production behavior, workflow, release, or historical evidence changes
+- [x] no production behavior, workflow, release, or historical evidence changes
       enter the patch
-- [ ] focused checks and full validation pass
-- [ ] closeout surfaces agree that card `1091` is complete and `1089` is ready
+- [x] focused checks and full validation pass
+- [x] closeout surfaces agree that card `1091` is complete and `1089` is ready
+
+## Evidence
+
+Closeout log: [`30-174452-documentation-instruction-help-parity-closeout.md`](../../../logs/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
 
 ## Validation
 

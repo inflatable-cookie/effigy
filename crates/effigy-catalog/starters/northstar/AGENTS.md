@@ -11,17 +11,18 @@ Effigy is **manifest-driven** (`effigy.toml`, often split across includes): most
 
 ## Operating Loop
 
-1. Start with `effigy tasks` to discover supported repo work.
-2. Use `effigy doctor` (or `effigy health`) for the default health and
-   routing surface.
-3. Inspect tests with `effigy test --plan` before running them.
-4. Prefer `effigy <task>` over raw tooling whenever a task covers the
-   path.
-5. Use `effigy --json <command>` when a machine consumer needs the
-   output.
-6. Only use `--repo <PATH>` when intentionally targeting a different
-   repo. Never teach `--repo .` as a default.
-7. Fall back to raw tools only when Effigy does not cover the path.
+Route by job, not by startup ritual:
+
+1. Use `effigy graph` when the job is code understanding.
+2. Use `effigy tasks` when you need selector inventory or QA surfaces.
+3. Use `effigy doctor` (or `effigy health`) when routing is unclear or repo
+   health is the task.
+4. Inspect tests with `effigy test --plan` when test execution shape matters.
+5. Prefer `effigy <task>` over raw tooling whenever a task covers the path.
+6. Use `effigy --json <command>` when a machine consumer needs the output.
+7. Only use `--repo <PATH>` when intentionally targeting a different repo.
+   Never teach `--repo .` as a default.
+8. Fall back to raw tools only when Effigy does not cover the path.
 
 ## Default test policy
 

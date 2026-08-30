@@ -16,6 +16,10 @@ pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::manifest_lines(profile)
 }
 
+pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    tasks::docs_policy_graph_lines(profile)
+}
+
 pub(super) fn shell_lines() -> &'static [&'static str] {
     sections::shell_lines()
 }

@@ -19,13 +19,12 @@ Use this guide when you are preparing a consuming repo to:
 - add changelog and release readiness
 - validate that the repo contract still holds after edits
 
-Start with this sequence:
+Route by job, not by startup ritual:
 
-```sh
-effigy doctor
-effigy tasks
-effigy test --plan
-```
+- use `effigy graph` when the job is code understanding
+- use `effigy tasks` when you need selector inventory or QA surfaces
+- use `effigy doctor` when routing is unclear or repo health is the task
+- use `effigy test --plan` when test execution shape matters
 
 Then inspect the repo against the file and task checklist in Sections 1 and 2.
 
@@ -155,15 +154,16 @@ or scope clearly.
 
 Minimum semantics:
 
-1. start with `effigy doctor` or `effigy health`
-2. use `effigy tasks`
-3. inspect tests with `effigy test --plan`
-4. use `effigy graph` when the job is code understanding and the repo keeps a
+1. route by job, not by startup ritual
+2. use `effigy graph` when the job is code understanding and the repo keeps a
    fresh local graph
-5. prefer `effigy <task>` for supported repo work
-6. use `effigy --json <command>` for machine consumers
-7. use `--repo <PATH>` only when intentionally targeting another repo
-8. fall back to raw tools only when Effigy does not cover the path
+3. use `effigy tasks` when you need selector inventory
+4. use `effigy doctor` when routing is unclear or repo health is the task
+5. use `effigy test --plan` when test execution shape matters
+6. prefer `effigy <task>` for supported repo work
+7. use `effigy --json <command>` for machine consumers
+8. use `--repo <PATH>` only when intentionally targeting another repo
+9. fall back to raw tools only when Effigy does not cover the path
 
 Minimum policy notes:
 

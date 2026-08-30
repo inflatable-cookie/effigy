@@ -14,6 +14,54 @@ Effigy splits config across:
 **`qa:ci:fast`**. Built-in commands (`test`, `init`, `doctor`, …) come from Effigy
 itself; see `effigy --help` for the list.
 
+## `[docs_policy.graph]`
+
+This optional repository-owned profile teaches the local Markdown graph how to
+classify documentation, resolve currentness, and name typed relations. It is
+configuration consumed by `effigy graph index` and graph queries; it does not
+ship a separate docs-context command.
+
+```toml
+[docs_policy.graph]
+roots = ["README.md", "docs"]
+
+[docs_policy.graph.fields.state]
+labels = ["State"]
+cardinality = "one"
+
+[docs_policy.graph.fields.maintainer]
+labels = ["Maintainer"]
+cardinality = "one"
+
+[docs_policy.graph.currentness]
+field = "state"
+current = ["current", "published"]
+historical = ["historical", "retired"]
+
+[docs_policy.graph.kinds.reference]
+include = ["docs/reference/*.md"]
+exclude = []
+authority = 100
+default-currentness = "unknown"
+
+[docs_policy.graph.kinds.archive]
+include = ["docs/archive/*.md"]
+exclude = []
+authority = 10
+default-currentness = "historical"
+
+[docs_policy.graph.relations.related]
+labels = ["Related", "See also"]
+headings = ["Related"]
+```
+
+Northstar consumers should keep their profile in the committed manifest emitted
+by the Northstar starter; this generic example does not assume Northstar names.
+
+The profile grammar and ranking rules live in
+`docs/contracts/041-documentation-graph-profile-contract.md`; the architecture
+decision is `docs/architecture/024-repository-defined-documentation-graph.md`.
+
 ## `[tasks]`
 
 Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:

@@ -86,8 +86,13 @@ working tree, freshness is verified via `git status` without a full scan;
 non-git repos and any git failure (no `.git`, missing `git`, unborn HEAD) fall
 back to the per-file scan-state walk. Refreshes run under a cross-process lock
 (`.effigy/graph/refresh.lock`); concurrent queries wait a short budget and then
-report the true trust state. `graph status` stays report-only — it never
-mutates graph state.
+report the true trust state. Plain `graph status` is report-only and never
+mutates graph state; `--refresh` is the explicit mutating exception.
+
+Graph data queries have a 120000ms wall-clock budget by default. Set
+`EFFIGY_GRAPH_TIMEOUT_MS=<MS>` to override it; `EFFIGY_GRAPH_TIMEOUT_MS=0`
+disables the bound. Explicit `graph index` and `graph watch` commands are
+unbounded.
 
 ### Check freshness
 
@@ -95,9 +100,10 @@ mutates graph state.
 effigy graph status --json
 ```
 
-`graph status` is report-only: it never mutates graph state. When you want
-the report *and* the remediation in one step, pass `--refresh` to rebuild a
-stale or missing index on demand (the same lazy-refresh gate queries use):
+`graph status` without `--refresh` reports only. When you want the report *and*
+the remediation in one step, pass `--refresh` as the explicit mutating
+exception to rebuild a stale or missing index on demand (the same lazy-refresh
+gate queries use):
 
 ```sh
 effigy graph status --refresh --json
@@ -136,11 +142,12 @@ If the graph DB is corrupt or you hit an unsupported future storage schema,
 rebuild it locally:
 
 ```sh
-rm -rf .effigy/graph
+mv .effigy/graph .effigy/graph.backup-$(date +%s)
 effigy graph index --json
 ```
 
-The graph is a cache. Rebuild is the supported recovery path.
+The graph is a cache. Move it aside so the old state remains recoverable while
+the replacement index is built.
 
 ## Lazy Refresh: How Freshness Works
 
@@ -165,7 +172,9 @@ in the graph metadata. A query counts as fresh without a scan when:
 
 - the recorded HEAD matches the current `git rev-parse HEAD`, and
 - `git status --porcelain` shows no changes outside paths the graph walk skips
-  (`.effigy/`, `target/`, `node_modules/`, `vendor/`).
+  (`.git/`, `.effigy/`, `.venv/`, `__pycache__/`, `coverage/`, `dist/`,
+  `node_modules/`, `target/`, `vendor/`, `.svelte-kit/`, `.next/`, `.nuxt/`,
+  `.output/`, `.turbo/`, `.parcel-cache/`).
 
 The stamp is written only on a clean-tree index. An index built over
 uncommitted edits carries no stamp, so the gate can never mistake a dirty-tree
@@ -633,6 +642,7 @@ Be explicit about the limits:
 - ignored/generated/vendor paths are excluded by default
 - graph queries refresh a stale index before serving, so results track the
   working tree at query time; the cost of that guarantee is the refresh itself
+- the graph walk prunes the current skip list above at any depth
 
 ## Related References
 
@@ -640,3 +650,5 @@ Be explicit about the limits:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+- [`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md)
+- [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)

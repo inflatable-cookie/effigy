@@ -223,12 +223,16 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("--debounce-ms <MS>"));
+    assert!(rendered.contains("--refresh"));
+    assert!(rendered.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
     assert!(rendered.contains("--language <ID>"));
     assert!(rendered.contains("--path <PREFIX>"));
     assert!(rendered.contains("Use `graph status` only for a report-only freshness check"));
     assert!(rendered.contains("effigy.graph.watch.event.v1"));
     assert!(rendered.contains("effigy graph context \"trace deploy provider export\""));
     assert!(rendered.contains("effigy graph explore \"trace graph watch implementation\""));
+    assert!(rendered.contains("graph.backup-"));
+    assert!(!rendered.contains("rm -rf .effigy/graph"));
 }
 
 #[test]

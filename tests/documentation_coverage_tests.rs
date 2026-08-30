@@ -93,6 +93,84 @@ fn public_builtin_registry_routes_through_the_command_reference() {
 }
 
 #[test]
+fn public_help_families_and_current_contract_paths_are_documented() {
+    let matrix = read("docs/guides/025-command-reference-matrix.md");
+    for route in [
+        "`effigy version",
+        "`effigy uninstall",
+        "`effigy tasks migrate",
+        "`effigy tasks unlock",
+        "`effigy tasks cache",
+        "`effigy config completion",
+        "`effigy changelog",
+        "`effigy scan",
+        "`effigy rhai",
+    ] {
+        assert!(
+            matrix.contains(route),
+            "command matrix misses help family `{route}`"
+        );
+    }
+
+    assert!(matrix.contains("status --refresh"));
+    assert!(matrix.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
+    assert!(matrix.contains("[docs_policy.graph]"));
+
+    let root = read("README.md");
+    assert_contains_all(
+        "root agent route",
+        &root,
+        &[
+            "Route by job",
+            "`effigy graph` for code understanding",
+            "`effigy tasks` for selector inventory",
+            "`effigy doctor` when routing or repo health is unclear",
+            "`effigy test --plan` when test execution shape matters",
+        ],
+    );
+    assert!(!root.contains("start with `doctor`, `tasks`, and `test --plan`"));
+    let graph_guide = read("docs/guides/076-code-graph-and-agent-workflows.md");
+    assert!(graph_guide.contains("Plain `graph status` is report-only"));
+    assert!(graph_guide.contains("`--refresh` is the explicit mutating exception"));
+    assert!(root.contains(".result.catalog_tasks[].task"));
+    assert!(root.contains(".result.targets[].name"));
+    assert!(!root.contains(".tasks[].name"));
+    assert!(!root.contains(".selected_runner"));
+
+    for relative in [
+        "skills/effigy/references/json-envelope.md",
+        ".agents/skills/effigy/references/json-envelope.md",
+    ] {
+        let contents = read(relative);
+        assert!(
+            contents.contains(".result.findings[]"),
+            "{relative} misses live doctor path"
+        );
+        assert!(
+            contents.contains(".error.kind"),
+            "{relative} misses live error path"
+        );
+        assert!(
+            !contents.contains(".result.payload.checks[]"),
+            "{relative} keeps stale doctor path"
+        );
+        assert!(
+            !contents.contains("effigy --json completion candidates"),
+            "{relative} keeps stale completion route"
+        );
+    }
+
+    for relative in [
+        "skills/effigy/references/workflow-shortcuts.md",
+        ".agents/skills/effigy/references/workflow-shortcuts.md",
+    ] {
+        let contents = read(relative);
+        assert!(contents.contains("effigy --json changelog extract"));
+        assert!(!contents.contains("effigy changelog --json extract"));
+    }
+}
+
+#[test]
 fn managed_runtime_seed_behavior_has_active_discovery_routes() {
     let seed_tokens = [
         "--headless",

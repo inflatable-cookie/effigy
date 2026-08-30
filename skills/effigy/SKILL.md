@@ -139,7 +139,9 @@ Details: `references/selector-routing.md`.
 effigy --json <command>
 ```
 
-Returns `effigy.command.v1` with command payload in `result` (or `error.details`).
+Returns `effigy.command.v1` with command-specific data in `result` (or
+`error.details` for some failures); graph reports may nest their payload under
+`result.payload`.
 
 **Exception:** `effigy graph watch --json` streams `effigy.graph.watch.event.v1`
 lines — not the one-shot envelope.
@@ -185,7 +187,8 @@ volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 `effigy bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.
 
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
-`[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`.
+`[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
+`[docs_policy.graph]` repository-defined Markdown graph profile.
 Details: `references/config-shapes.md`.
 
 **State stacks** — `effigy state plan`, `apply`, `capture`.
@@ -209,6 +212,7 @@ Sequence: `references/release-protocol.md`.
 | Topic | Guide |
 |-------|-------|
 | Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
+| Documentation graph profile | `docs/architecture/024-repository-defined-documentation-graph.md`, `docs/contracts/041-documentation-graph-profile-contract.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |
 | Rhai host surface audit | `docs/guides/068-rhai-host-surface-audit.md` |

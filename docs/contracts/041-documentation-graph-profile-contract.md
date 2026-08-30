@@ -44,7 +44,7 @@ historical = ["complete", "archived"]
 include = ["docs/contracts/*.md"]
 exclude = []
 authority = 100
-default_currentness = "unknown" # current | historical | unknown
+default-currentness = "unknown" # current | historical | unknown
 
 [docs_policy.graph.relations.<RELATION>]
 labels = ["Contract", "Contracts"]

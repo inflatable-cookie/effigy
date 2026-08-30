@@ -307,5 +307,54 @@ mod tests {
         let guidance = starter.guidance.expect("northstar ships guidance text");
         assert!(guidance.contains("<PROJECT_NAME>"));
         assert!(guidance.contains("qa:northstar"));
+
+        let agents = starter
+            .files
+            .iter()
+            .find(|file| file.target == "AGENTS.md")
+            .expect("northstar agent contract")
+            .contents
+            .as_str();
+        assert!(agents.contains("Route by job, not by startup ritual"));
+    }
+
+    #[test]
+    fn northstar_starter_owns_the_northstar_graph_profile() {
+        let resolver = StarterResolver::new();
+        let northstar = resolver.resolve("northstar").expect("northstar starter");
+        let northstar_manifest = northstar
+            .files
+            .iter()
+            .find(|file| file.target == "effigy.toml")
+            .expect("northstar manifest")
+            .contents
+            .as_str();
+
+        for expected in [
+            "[docs_policy.graph]",
+            "[docs_policy.graph.fields.status]",
+            "current = [\"active\", \"ready\", \"strict-ready\", \"draft\"]",
+            "[docs_policy.graph.kinds.contract]",
+            "include = [\"docs/contracts/*.md\"]",
+            "[docs_policy.graph.kinds.archived-spec]",
+            "include = [\"docs/specs/archive/*.md\"]",
+            "[docs_policy.graph.relations.next-task]",
+            "headings = [\"Next Task\"]",
+        ] {
+            assert!(
+                northstar_manifest.contains(expected),
+                "Northstar starter manifest misses `{expected}`"
+            );
+        }
+
+        let minimal = resolver.resolve("minimal").expect("minimal starter");
+        let minimal_manifest = minimal
+            .files
+            .iter()
+            .find(|file| file.target == "effigy.toml")
+            .expect("minimal manifest")
+            .contents
+            .as_str();
+        assert!(!minimal_manifest.contains("[docs_policy.graph]"));
     }
 }

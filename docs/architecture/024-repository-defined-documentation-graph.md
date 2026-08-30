@@ -88,7 +88,7 @@ authority = 100
 [docs_policy.graph.kinds.archived-spec]
 include = ["docs/specs/archive/*.md"]
 authority = 10
-default_currentness = "historical"
+default-currentness = "historical"
 
 [docs_policy.graph.relations.contract]
 labels = ["Contract", "Contracts"]
@@ -121,7 +121,7 @@ document remains queryable with kind `document`, authority `0`, and currentness
 Currentness resolves in this order:
 
 1. a configured field value in the `current` or `historical` set;
-2. the matched kind's `default_currentness`;
+2. the matched kind's `default-currentness`;
 3. `unknown`.
 
 Profile changes invalidate the documentation semantic layer even when Markdown

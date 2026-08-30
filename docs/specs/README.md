@@ -28,15 +28,12 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`109`](./109-documentation-instruction-and-help-parity-refresh.md) — current
-  scan, AGENTS, feature-documentation, generated-reference, and CLI-help parity;
-  current ready card `1091`
+- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
+  documentation graph profiles; current ready card `1089`
 
 Queued strict lanes:
 
-- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
-  documentation graph profiles; paused at card `1089` until card `1091`
-  closeout
+None.
 
 Archived strict lanes:
 
@@ -61,6 +58,9 @@ Archived strict lanes:
   archived after vision governance operationalization
 - [`107`](./archive/107-documentation-coverage-parity.md) archived after the
   whole-repository documentation coverage audit and recurrence guards
+- [`109`](./archive/109-documentation-instruction-and-help-parity-refresh.md)
+  archived after the documentation, instruction, generated-reference, and
+  shipped-help parity refresh
 
 Other planning specs:
 
@@ -70,6 +70,6 @@ Other planning specs:
 ## Next Task
 
 Execute ready card
-[`1091`](../roadmaps/g08/batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.

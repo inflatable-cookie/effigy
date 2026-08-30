@@ -96,8 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready maintenance card
-[`1091`](../roadmaps/g08/batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
-Its closeout returns card `1089` to ready.
+Execute ready card
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The scheduled second governance review remains due by 2026-09-17. No release
 work or generation rollover is implied.

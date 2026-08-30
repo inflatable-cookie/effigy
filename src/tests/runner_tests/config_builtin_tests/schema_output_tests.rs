@@ -15,6 +15,9 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "[manifest]",
             "minimum_effigy_version = \"0.6.2\"",
             "include = [",
+            "[docs_policy.graph]",
+            "[docs_policy.graph.fields.state]",
+            "[docs_policy.graph.kinds.reference]",
             "[distribution.package]",
             "repo-url = \"https://github.com/example/my-tool.git\"",
             "[distribution.publish]",
@@ -79,7 +82,15 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
             "[tasks]",
         ],
     );
-    assert_output_excludes_all(&out, &["concurrent = ["]);
+    assert_output_excludes_all(
+        &out,
+        &[
+            "concurrent = [",
+            "[docs_policy.graph]",
+            "strict-ready",
+            "docs/contracts",
+        ],
+    );
 }
 
 #[test]
@@ -116,6 +127,22 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_minimal_manifest_target_omits_graph_profile() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-minimal-target-manifest");
+
+    let out = run_config_ok(root, &["--schema", "--minimal", "--target", "manifest"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "(manifest target)",
+            "[manifest]",
+            "minimum_effigy_version = \"0.6.2\"",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[docs_policy.graph]", "docs/contracts"]);
 }
 
 #[test]
