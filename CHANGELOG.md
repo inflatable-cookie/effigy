@@ -39,6 +39,10 @@ During v0.x, MINOR bumps may include breaking changes.
   repository profile assigns kinds.
 
 ### Fixed
+- `effigy rhai surface` catalog signatures for `regex::is_match`,
+  `regex::replace`, and `regex::captures` now match the live host argument
+  order `(pattern, value[, replacement])`. The previous catalog order was
+  reversed and made wrong-order calls look like silent no-ops.
 - `effigy-rhai` state/deploy host helpers read an optional thread-local env
   override map before the process environment, so in-process runtime-context
   tests no longer mutate `EFFIGY_STATE_CAPTURE_CONTEXT` (and kin) with
