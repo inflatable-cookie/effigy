@@ -645,7 +645,12 @@ fn typed_relation_target(
                 None,
             ))
         }
-        (Some(path), None) => Ok((Some(file_graph_id(&path)?), None)),
+        (Some(path), None) => {
+            if !crate::walk::is_indexable_path(&file.repo_root, &path) {
+                return Ok((None, Some(dest.to_owned())));
+            }
+            Ok((Some(file_graph_id(&path)?), None))
+        }
         (None, _) => Ok((None, Some(dest.to_owned()))),
     }
 }
@@ -675,7 +680,9 @@ fn heading_anchors_for(
     if let Some(cached) = heading_cache.get(path) {
         return cached.clone();
     }
-    let anchors = if path.ends_with(".md") {
+    let anchors = if crate::walk::is_indexable_path(&file.repo_root, path)
+        && crate::support::language_id_for_path(path) == Some("markdown")
+    {
         fs::read_to_string(file.repo_root.join(path))
             .map(|content| collect_heading_anchors(&content))
             .unwrap_or_default()

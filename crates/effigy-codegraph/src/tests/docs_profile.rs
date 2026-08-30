@@ -384,11 +384,12 @@ fn typed_relations_preserve_fragments_and_namespace_tokens() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::create_dir_all(temp.path().join(".effigy")).expect("mkdir hidden");
     fs::write(
         temp.path().join("handbook/source.md"),
         r#"# Source
 
-See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#source) [missing](missing.md#gone) [missing anchor](target.md#gone) [code](../src/lib.rs#helper) [site](https://example.test/doc#frag)
+See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#source) [missing](missing.md#gone) [missing anchor](target.md#gone) [code](../src/lib.rs#helper) [hidden](../.effigy/hidden.md#secret) [escaped](escape.md#secret) [site](https://example.test/doc#frag)
 
 ## See also
 
@@ -402,6 +403,14 @@ See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#sour
     )
     .expect("write target");
     fs::write(temp.path().join("src/lib.rs"), "pub fn helper() {}\n").expect("write rust");
+    fs::write(temp.path().join(".effigy/hidden.md"), "# Secret\n").expect("write hidden");
+    let outside = tempfile::tempdir().expect("outside");
+    fs::write(outside.path().join("secret.md"), "# Secret\n").expect("write outside");
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.md"),
+        temp.path().join("handbook/escape.md"),
+    )
+    .expect("symlink");
     write_graph_manifest(
         temp.path(),
         r#"
@@ -463,6 +472,19 @@ headings = ["See also"]
                 && edge.unresolved_target.as_deref() == Some("../src/lib.rs#helper")
         }),
         "non-markdown local fragment stays unresolved: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none()
+                && edge.unresolved_target.as_deref() == Some("../.effigy/hidden.md#secret")
+        }),
+        "ignored target stays unresolved: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("escape.md#secret")
+        }),
+        "symlink escape stays unresolved: {typed:?}"
     );
     assert!(
         typed.iter().any(|edge| {

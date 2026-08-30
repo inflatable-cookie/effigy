@@ -119,6 +119,24 @@ pub(crate) fn should_skip_path(relative_path: &str) -> bool {
         .any(|segment| SKIPPED_DIR_SEGMENTS.contains(&segment))
 }
 
+/// Whether `relative_path` would become a graph file record.
+///
+/// Matches the walk: skip internal/build trees, require a known language, do
+/// not follow a symlink out of the repository, and require a real file.
+pub(crate) fn is_indexable_path(repo_root: &Path, relative_path: &str) -> bool {
+    if should_skip_path(relative_path) || language_id_for_path(relative_path).is_none() {
+        return false;
+    }
+    let joined = repo_root.join(relative_path);
+    let Ok(canonical) = joined.canonicalize() else {
+        return false;
+    };
+    let Ok(repo_canonical) = repo_root.canonicalize() else {
+        return false;
+    };
+    canonical.is_file() && canonical.starts_with(&repo_canonical)
+}
+
 #[cfg(test)]
 mod tests {
     use super::should_skip_path;
@@ -148,5 +166,28 @@ mod tests {
         assert!(!should_skip_path("packages/core/out/index.ts"));
         assert!(!should_skip_path("crates/effigy-core/src/lib.rs"));
         assert!(!should_skip_path("docs/distribution.md"));
+    }
+
+    #[test]
+    fn is_indexable_path_rejects_skipped_trees_and_symlink_escapes() {
+        use super::is_indexable_path;
+        use std::fs;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("handbook")).expect("mkdir handbook");
+        fs::create_dir_all(temp.path().join(".effigy")).expect("mkdir hidden");
+        fs::write(temp.path().join("handbook/visible.md"), "# Visible\n").expect("write visible");
+        fs::write(temp.path().join(".effigy/hidden.md"), "# Secret\n").expect("write hidden");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(outside.path().join("secret.md"), "# Secret\n").expect("write outside");
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.md"),
+            temp.path().join("handbook/escape.md"),
+        )
+        .expect("symlink");
+
+        assert!(is_indexable_path(temp.path(), "handbook/visible.md"));
+        assert!(!is_indexable_path(temp.path(), ".effigy/hidden.md"));
+        assert!(!is_indexable_path(temp.path(), "handbook/escape.md"));
     }
 }
