@@ -1,11 +1,11 @@
 # 108 - Documentation Graph Profiles Strict Lane
 
-Status: Active
+Status: Paused
 Owner: documentation graph and agent retrieval surfaces
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Current ready card: [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
+Current ready card: none; card `1089` resumes after card `1091` closeout
 
 ## Problem
 
@@ -36,8 +36,9 @@ runtime behavior to an agent framework.
    proves generic and Northstar configurations, publishes adoption guidance,
    runs proportional validation, and closes the lane.
 
-Card `1088` is complete. Only `1089` is ready. `1090` becomes ready through
-the previous card's evidence-backed closeout.
+Card `1088` is complete. Card `1089` is temporarily pending behind the
+operator-selected documentation, instruction, and help parity refresh in card
+`1091`. `1090` remains pending behind card `1089`'s evidence-backed closeout.
 
 ## Owner And Seam
 
@@ -79,5 +80,6 @@ Stop and return to planning if:
 
 ## Next Task
 
-Execute ready card
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+Execute ready maintenance card
+[`1091`](../roadmaps/g08/batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
+Its closeout returns card `1089` to ready.

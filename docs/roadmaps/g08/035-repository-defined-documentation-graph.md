@@ -1,6 +1,6 @@
 # g08.035 - Repository-Defined Documentation Graph
 
-Status: Active
+Status: Paused
 Depends on: completed native code graph and graph agent-adoption lanes
 Spec: [`108`](../../specs/108-documentation-graph-profiles-strict-lane.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
@@ -26,7 +26,7 @@ Northstar files or skills.
 - [x] card `1088`: build typed repository profiles, exact sections, fields,
       relations, and profile-aware freshness
 - [ ] card `1089`: add bounded `effigy docs context` retrieval, CLI/help, and
-      versioned JSON
+      versioned JSON after card `1091` closes the overlapping maintenance lane
 - [ ] card `1090`: prove generic and Northstar profiles, publish adoption
       guidance, benchmark retrieval, validate, and close the lane
 
@@ -61,5 +61,6 @@ profile into a repository but are never consulted at runtime.
 
 ## Next Task
 
-Execute ready card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+Execute ready maintenance card
+[`1091`](./batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
+Its closeout resumes this roadmap at card `1089`.

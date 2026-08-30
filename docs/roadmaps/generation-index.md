@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-08-29
+Updated: 2026-08-30
 
 ## Generation history
 
@@ -191,10 +191,15 @@ consumer.
 agent, built-in, and generated docs, repaired verified gaps, added proportional
 recurrence guards, and closed with full evidence.
 
-`g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
+`g08.035` is paused under strict spec `108` and contract `041`. Cards `1088`
 through `1090` cover the generic profile/structural foundation, bounded docs
 context query, and generic plus Northstar adoption proof. Card `1088` is
-complete; card `1089` is ready.
+complete; card `1089` resumes after the overlapping maintenance lane closes.
+
+`g08.036` is active under strict spec `109`. Card `1091` audits the full scan
+family, the root agent instruction surface, current public feature coverage,
+active documentation, generated reference output, and shipped CLI help. Its
+closeout returns card `1089` to ready.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -218,8 +223,9 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Strict spec `108` and ready card `1089` continue the selected intent. Do not open
-`g09` or start release work from this selection.
+Strict spec `109` and ready card `1091` execute the operator-selected
+maintenance interruption before strict spec `108` resumes at card `1089`. Do
+not open `g09` or start release work from this selection.
 
 ## Research Roadmaps
 
@@ -253,6 +259,6 @@ closeout there first.
 ## Next Task
 
 Execute ready card
-[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1091`](./g08/batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

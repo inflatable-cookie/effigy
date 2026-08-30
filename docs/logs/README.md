@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](./2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
 - [`2026-08/30-004016-documentation-graph-1088.md`](./2026-08/30-004016-documentation-graph-1088.md)
 - [`2026-08/29-233709-documentation-graph-profile-planning.md`](./2026-08/29-233709-documentation-graph-profile-planning.md)
 - [`2026-08/27-173611-northstar-agents-rust-audit.md`](./2026-08/27-173611-northstar-agents-rust-audit.md)
