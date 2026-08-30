@@ -39,6 +39,9 @@ During v0.x, MINOR bumps may include breaking changes.
   repository profile assigns kinds.
 
 ### Fixed
+- Project-local skill sync now manages every file in the public Effigy skill,
+  including the built-in surface reference, with a parity test guarding future
+  additions.
 - `effigy rhai surface` catalog signatures for `regex::is_match`,
   `regex::replace`, and `regex::captures` now match the live host argument
   order `(pattern, value[, replacement])`. The previous catalog order was
