@@ -526,6 +526,121 @@ headings = ["See also"]
 }
 
 #[test]
+fn typed_relations_stay_visible_when_an_unchanged_source_loses_its_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    let source = temp.path().join("handbook/source.md");
+    fs::write(
+        &source,
+        "# Source\n\nSee also: [target](target.md#section)\n",
+    )
+    .expect("write source");
+    fs::write(
+        temp.path().join("handbook/target.md"),
+        "# Target\n\n## Section\n\nBody.\n",
+    )
+    .expect("write target");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.relations.contains]
+labels = ["See also"]
+"#,
+    );
+
+    run_index(temp.path()).expect("index");
+    let typed = source_contains_edges(&GraphStore::open(temp.path()).expect("store"));
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str)
+                == Some("symbol:doc:handbook/target.md:#section")
+        }),
+        "resolved before ignore: {typed:?}"
+    );
+    let source_bytes = fs::read(&source).expect("read source");
+
+    fs::write(temp.path().join(".ignore"), "handbook/target.md\n").expect("write ignore");
+    run_index(temp.path()).expect("reindex after ignore");
+    assert_eq!(
+        fs::read(&source).expect("reread source"),
+        source_bytes,
+        "source must stay byte-for-byte unchanged"
+    );
+    let typed = source_contains_edges(&GraphStore::open(temp.path()).expect("store"));
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("target.md#section")
+        }),
+        "ignored target should remain as an unresolved relation: {typed:?}"
+    );
+}
+
+#[test]
+fn typed_relations_stay_visible_when_a_target_heading_is_removed() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    let source = temp.path().join("handbook/source.md");
+    fs::write(
+        &source,
+        "# Source\n\nSee also: [target](target.md#section)\n",
+    )
+    .expect("write source");
+    fs::write(
+        temp.path().join("handbook/target.md"),
+        "# Target\n\n## Section\n\nBody.\n",
+    )
+    .expect("write target");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.relations.contains]
+labels = ["See also"]
+"#,
+    );
+
+    run_index(temp.path()).expect("index");
+    let source_bytes = fs::read(&source).expect("read source");
+    fs::write(
+        temp.path().join("handbook/target.md"),
+        "# Target\n\nNo section.\n",
+    )
+    .expect("remove heading");
+    run_index(temp.path()).expect("reindex after heading removal");
+    assert_eq!(
+        fs::read(&source).expect("reread source"),
+        source_bytes,
+        "source must stay byte-for-byte unchanged"
+    );
+    let store = GraphStore::open(temp.path()).expect("store");
+    let typed = source_contains_edges(&store);
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("target.md#section")
+        }),
+        "removed heading should remain as an unresolved relation: {typed:?}"
+    );
+}
+
+fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
+    store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.kind == "doc-rel"
+                && edge.provenance.detail.as_deref() == Some("contains")
+                && edge.provenance.source_path == "handbook/source.md"
+        })
+        .collect()
+}
+
+#[test]
 fn glob_helper_stays_generic() {
     assert!(glob_matches(
         "handbook/playbooks/*.md",

@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
@@ -43,14 +42,12 @@ struct MarkdownSource<'a> {
     file: &'a SourceFile,
     file_record: &'a FileRecord,
     file_symbol_id: &'a GraphId,
-    scanned_paths: &'a BTreeSet<String>,
 }
 
 pub(super) fn extract_markdown(
     extractor_id: &ExtractorId,
     extractor_version: &str,
     profile: Option<&CompiledDocsProfile>,
-    scanned_paths: &BTreeSet<String>,
     file: &SourceFile,
     file_record: &FileRecord,
     sink: &mut GraphSink,
@@ -63,7 +60,6 @@ pub(super) fn extract_markdown(
         file,
         file_record,
         file_symbol_id: &file_symbol_id,
-        scanned_paths,
     };
     let document_kind = profile
         .and_then(|profile| profile.kind_for(&file.relative_path))
@@ -545,7 +541,6 @@ fn emit_typed_relations(
     } = source;
     let file_symbol_id = source.file_symbol_id.clone();
     let mut emitted_edges = BTreeSet::new();
-    let mut heading_cache = BTreeMap::new();
     for (index, link) in links.iter().enumerate() {
         if in_ranges(
             link.span.start,
@@ -566,16 +561,9 @@ fn emit_typed_relations(
                 relation_tokens.insert(relation.token.clone());
             }
         }
-        if relation_tokens.is_empty() {
+        if relation_tokens.is_empty() || link.dest.trim().is_empty() {
             continue;
         }
-        let (target_id, unresolved_target) = typed_relation_target(
-            file,
-            &link.dest,
-            headings,
-            source.scanned_paths,
-            &mut heading_cache,
-        )?;
         for token in relation_tokens {
             let edge_key = format!("{token}:{}", link.dest);
             if emitted_edges.insert(edge_key) {
@@ -588,8 +576,8 @@ fn emit_typed_relations(
                     ))?,
                     kind: DOC_REL_KIND.to_owned(),
                     from_id: file_symbol_id.clone(),
-                    to_id: target_id.clone(),
-                    unresolved_target: unresolved_target.clone(),
+                    to_id: None,
+                    unresolved_target: Some(link.dest.clone()),
                     provenance: provenance_for_file(
                         extractor_id,
                         extractor_version,
@@ -606,8 +594,8 @@ fn emit_typed_relations(
                 ))?,
                 file_id: file_record.id.clone(),
                 kind: DOC_REL_KIND.to_owned(),
-                target_id: target_id.clone(),
-                unresolved_target: unresolved_target.clone(),
+                target_id: None,
+                unresolved_target: Some(link.dest.clone()),
                 span: span_from_bytes(content, link.span.start, link.span.end),
                 provenance: provenance_for_file(
                     extractor_id,
@@ -620,117 +608,6 @@ fn emit_typed_relations(
         }
     }
     Ok(())
-}
-
-fn typed_relation_target(
-    file: &SourceFile,
-    dest: &str,
-    current_headings: &[Heading],
-    scanned_paths: &BTreeSet<String>,
-    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
-) -> Result<(Option<GraphId>, Option<String>), CodeGraphError> {
-    if dest.contains("://") {
-        return Ok((None, Some(dest.to_owned())));
-    }
-    let (path_part, fragment) = match dest.split_once('#') {
-        Some((path, fragment)) => (path, Some(fragment)),
-        None => (dest, None),
-    };
-    let resolved = if path_part.trim().is_empty() {
-        Some(file.relative_path.clone())
-    } else {
-        resolve_local_path(file, path_part)
-    };
-    match (resolved, fragment) {
-        (Some(path), Some(fragment)) => {
-            let anchor = slugify(fragment);
-            if anchor.is_empty()
-                || !heading_anchors_for(file, &path, current_headings, scanned_paths, heading_cache)
-                    .contains(&anchor)
-            {
-                return Ok((None, Some(dest.to_owned())));
-            }
-            Ok((
-                Some(GraphId::new(format!("symbol:doc:{path}:#{anchor}"))?),
-                None,
-            ))
-        }
-        (Some(path), None) => {
-            if !scanned_paths.contains(&path) {
-                return Ok((None, Some(dest.to_owned())));
-            }
-            Ok((Some(file_graph_id(&path)?), None))
-        }
-        (None, _) => Ok((None, Some(dest.to_owned()))),
-    }
-}
-
-fn heading_anchors_for(
-    file: &SourceFile,
-    path: &str,
-    current_headings: &[Heading],
-    scanned_paths: &BTreeSet<String>,
-    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
-) -> BTreeSet<String> {
-    if path == file.relative_path {
-        return current_headings
-            .iter()
-            .filter_map(|heading| heading_anchor(&heading.text))
-            .collect();
-    }
-    if let Some(cached) = heading_cache.get(path) {
-        return cached.clone();
-    }
-    let anchors = if scanned_paths.contains(path)
-        && crate::support::language_id_for_path(path) == Some("markdown")
-    {
-        fs::read_to_string(file.repo_root.join(path))
-            .map(|content| collect_heading_anchors(&content))
-            .unwrap_or_default()
-    } else {
-        BTreeSet::new()
-    };
-    heading_cache.insert(path.to_owned(), anchors.clone());
-    anchors
-}
-
-fn collect_heading_anchors(content: &str) -> BTreeSet<String> {
-    let mut anchors = BTreeSet::new();
-    let mut heading_level = None;
-    let mut heading_text = String::new();
-    for (event, _) in Parser::new(content).into_offset_iter() {
-        match event {
-            Event::Start(Tag::Heading { level, .. }) => {
-                heading_level = Some(level);
-                heading_text.clear();
-            }
-            Event::End(TagEnd::Heading(_)) => {
-                if heading_level.take().is_some() {
-                    if let Some(anchor) = heading_anchor(&heading_text) {
-                        anchors.insert(anchor);
-                    }
-                }
-            }
-            Event::Text(text) | Event::Code(text) if heading_level.is_some() => {
-                heading_text.push_str(&text);
-            }
-            _ => {}
-        }
-    }
-    anchors
-}
-
-fn heading_anchor(text: &str) -> Option<String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return None;
-    }
-    let anchor = slugify(text);
-    if anchor.is_empty() {
-        None
-    } else {
-        Some(anchor)
-    }
 }
 
 fn enclosing_headings<'a>(headings: &'a [Heading], content: &str, byte: usize) -> Vec<&'a Heading> {

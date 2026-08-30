@@ -47,16 +47,14 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     let profile_state = load_docs_profile_state(repo_root)?;
     let current_fingerprint = profile_state.fingerprint();
     let store = GraphStore::open(repo_root)?;
+    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store, repo_root)?;
     let existing_states = store.file_scan_state_map()?;
     let stored_extractors = store.extractor_version_map()?;
     let stored_fingerprint = store.metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?;
     let profile_changed = stored_fingerprint.as_deref() != Some(current_fingerprint.as_str());
-    let scan_entries = crate::walk::scan_repo_files(repo_root)?;
-    let registry = ExtractorRegistry::for_docs_profile(
-        profile_state.compiled().cloned(),
-        scan_paths(&scan_entries),
-    );
+    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_extractors = extractor_version_map(registry.all());
+    let scan_entries = crate::walk::scan_repo_files(repo_root)?;
     let mut current_states = BTreeMap::new();
     for extractor in registry.all() {
         let record = extractor.extractor_record();
@@ -65,7 +63,6 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
 
     let mut indexed_paths = BTreeSet::new();
     let mut skipped_paths = Vec::new();
-    let mut graph_changed = false;
 
     for entry in &scan_entries {
         indexed_paths.insert(entry.relative_path.clone());
@@ -190,6 +187,9 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         store.delete_file_scan_state(path)?;
         graph_changed = true;
     }
+    if crate::language::markdown::resolve_typed_relations(&store)? {
+        graph_changed = true;
+    }
     let stale_paths = scan_delta_for_entries(
         &existing_states,
         &stored_extractors,
@@ -254,11 +254,8 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
     let profile_state = load_docs_profile_state(repo_root)?;
     let file_states = store.file_scan_state_map()?;
+    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
-    let registry = ExtractorRegistry::for_docs_profile(
-        profile_state.compiled().cloned(),
-        scan_paths(&current_entries),
-    );
     let current_extractors = extractor_version_map(registry.all());
     let stored_extractors = store.extractor_version_map()?;
     let profile_changed = store
@@ -317,11 +314,7 @@ pub(crate) fn stale_paths_for_repo(
     let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
     let current_extractors = extractor_version_map(
-        ExtractorRegistry::for_docs_profile(
-            profile_state.compiled().cloned(),
-            scan_paths(&current_entries),
-        )
-        .all(),
+        ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned()).all(),
     );
     let stored_extractors = store.extractor_version_map()?;
     let profile_changed = store
@@ -473,13 +466,6 @@ fn extractor_failure_diagnostic(
             detail: Some("extractor".to_owned()),
         },
     })
-}
-
-fn scan_paths(entries: &[ScanEntry]) -> BTreeSet<String> {
-    entries
-        .iter()
-        .map(|entry| entry.relative_path.clone())
-        .collect()
 }
 
 fn extractor_version_map(

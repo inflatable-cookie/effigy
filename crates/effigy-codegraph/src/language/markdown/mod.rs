@@ -1,7 +1,6 @@
 mod extract;
 mod paths;
-
-use std::collections::BTreeSet;
+mod resolve;
 
 use crate::docs_profile::CompiledDocsProfile;
 use crate::error::CodeGraphError;
@@ -9,23 +8,20 @@ use crate::extractor::{capability_set, extractor_id, GraphSink, LanguageIndexer,
 use crate::model::{ExtractorCapability, ExtractorRecord, FileRecord};
 use crate::ExtractorId;
 
+pub(crate) use resolve::{demote_typed_relations, resolve_typed_relations};
+
 pub struct MarkdownIndexer {
     extractor_id: ExtractorId,
     version: String,
     profile: Option<CompiledDocsProfile>,
-    scanned_paths: BTreeSet<String>,
 }
 
 impl MarkdownIndexer {
-    pub fn with_profile(
-        profile: Option<CompiledDocsProfile>,
-        scanned_paths: BTreeSet<String>,
-    ) -> Self {
+    pub fn with_profile(profile: Option<CompiledDocsProfile>) -> Self {
         Self {
             extractor_id: extractor_id("markdown-anchors").expect("static extractor id"),
             version: "0.2.0".to_owned(),
             profile,
-            scanned_paths,
         }
     }
 }
@@ -58,7 +54,6 @@ impl LanguageIndexer for MarkdownIndexer {
             &self.extractor_id,
             &self.version,
             self.profile.as_ref(),
-            &self.scanned_paths,
             file,
             file_record,
             sink,

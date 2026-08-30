@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::docs_profile::CompiledDocsProfile;
 use crate::extractor::LanguageIndexer;
 use crate::language::{
@@ -12,15 +10,12 @@ pub struct ExtractorRegistry {
 }
 
 impl ExtractorRegistry {
-    pub fn for_docs_profile(
-        profile: Option<CompiledDocsProfile>,
-        scanned_paths: BTreeSet<String>,
-    ) -> Self {
+    pub fn for_docs_profile(profile: Option<CompiledDocsProfile>) -> Self {
         Self {
             extractors: vec![
                 Box::new(RustIndexer::new()),
                 Box::new(ManifestIndexer::new()),
-                Box::new(MarkdownIndexer::with_profile(profile, scanned_paths)),
+                Box::new(MarkdownIndexer::with_profile(profile)),
                 Box::new(PhpIndexer::new()),
                 Box::new(PythonIndexer::new()),
                 Box::new(JavaScriptIndexer::new()),
