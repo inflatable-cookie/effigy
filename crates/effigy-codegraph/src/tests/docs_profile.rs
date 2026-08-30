@@ -383,11 +383,12 @@ include = ["./handbook/playbooks/*.md"]
 fn typed_relations_preserve_fragments_and_namespace_tokens() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(
         temp.path().join("handbook/source.md"),
         r#"# Source
 
-See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#source) [missing](missing.md#gone) [site](https://example.test/doc#frag)
+See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#source) [missing](missing.md#gone) [missing anchor](target.md#gone) [code](../src/lib.rs#helper) [site](https://example.test/doc#frag)
 
 ## See also
 
@@ -400,6 +401,7 @@ See also: [ops a](target.md#section-a) [ops b](target.md#section-b) [self](#sour
         "# Target\n\n## Section A\n\nA.\n\n## Section B\n\nB.\n",
     )
     .expect("write target");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn helper() {}\n").expect("write rust");
     write_graph_manifest(
         temp.path(),
         r#"
@@ -447,7 +449,20 @@ headings = ["See also"]
         typed.iter().any(|edge| {
             edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("missing.md#gone")
         }),
-        "unresolved fragment: {typed:?}"
+        "unresolved missing file fragment: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("target.md#gone")
+        }),
+        "existing file with missing heading stays unresolved: {typed:?}"
+    );
+    assert!(
+        typed.iter().any(|edge| {
+            edge.to_id.is_none()
+                && edge.unresolved_target.as_deref() == Some("../src/lib.rs#helper")
+        }),
+        "non-markdown local fragment stays unresolved: {typed:?}"
     );
     assert!(
         typed.iter().any(|edge| {

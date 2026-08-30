@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
@@ -541,6 +542,7 @@ fn emit_typed_relations(
     } = source;
     let file_symbol_id = source.file_symbol_id.clone();
     let mut emitted_edges = BTreeSet::new();
+    let mut heading_cache = BTreeMap::new();
     for (index, link) in links.iter().enumerate() {
         if in_ranges(
             link.span.start,
@@ -564,7 +566,8 @@ fn emit_typed_relations(
         if relation_tokens.is_empty() {
             continue;
         }
-        let (target_id, unresolved_target) = typed_relation_target(file, &link.dest)?;
+        let (target_id, unresolved_target) =
+            typed_relation_target(file, &link.dest, headings, &mut heading_cache)?;
         for token in relation_tokens {
             let edge_key = format!("{token}:{}", link.dest);
             if emitted_edges.insert(edge_key) {
@@ -614,6 +617,8 @@ fn emit_typed_relations(
 fn typed_relation_target(
     file: &SourceFile,
     dest: &str,
+    current_headings: &[Heading],
+    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(Option<GraphId>, Option<String>), CodeGraphError> {
     if dest.contains("://") {
         return Ok((None, Some(dest.to_owned())));
@@ -630,7 +635,9 @@ fn typed_relation_target(
     match (resolved, fragment) {
         (Some(path), Some(fragment)) => {
             let anchor = slugify(fragment);
-            if anchor.is_empty() {
+            if anchor.is_empty()
+                || !heading_exists(file, &path, &anchor, current_headings, heading_cache)
+            {
                 return Ok((None, Some(dest.to_owned())));
             }
             Ok((
@@ -640,6 +647,81 @@ fn typed_relation_target(
         }
         (Some(path), None) => Ok((Some(file_graph_id(&path)?), None)),
         (None, _) => Ok((None, Some(dest.to_owned()))),
+    }
+}
+
+fn heading_exists(
+    file: &SourceFile,
+    path: &str,
+    anchor: &str,
+    current_headings: &[Heading],
+    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    heading_anchors_for(file, path, current_headings, heading_cache).contains(anchor)
+}
+
+fn heading_anchors_for(
+    file: &SourceFile,
+    path: &str,
+    current_headings: &[Heading],
+    heading_cache: &mut BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    if path == file.relative_path {
+        return current_headings
+            .iter()
+            .filter_map(|heading| heading_anchor(&heading.text))
+            .collect();
+    }
+    if let Some(cached) = heading_cache.get(path) {
+        return cached.clone();
+    }
+    let anchors = if path.ends_with(".md") {
+        fs::read_to_string(file.repo_root.join(path))
+            .map(|content| collect_heading_anchors(&content))
+            .unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
+    heading_cache.insert(path.to_owned(), anchors.clone());
+    anchors
+}
+
+fn collect_heading_anchors(content: &str) -> BTreeSet<String> {
+    let mut anchors = BTreeSet::new();
+    let mut heading_level = None;
+    let mut heading_text = String::new();
+    for (event, _) in Parser::new(content).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading_level = Some(level);
+                heading_text.clear();
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if heading_level.take().is_some() {
+                    if let Some(anchor) = heading_anchor(&heading_text) {
+                        anchors.insert(anchor);
+                    }
+                }
+            }
+            Event::Text(text) | Event::Code(text) if heading_level.is_some() => {
+                heading_text.push_str(&text);
+            }
+            _ => {}
+        }
+    }
+    anchors
+}
+
+fn heading_anchor(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let anchor = slugify(text);
+    if anchor.is_empty() {
+        None
+    } else {
+        Some(anchor)
     }
 }
 
