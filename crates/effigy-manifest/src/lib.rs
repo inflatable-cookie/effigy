@@ -25,8 +25,8 @@ pub use bundles::{
     BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
 };
 pub use composition::{
-    load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
-    ManifestCompositionOverride, ManifestCompositionValueSource,
+    load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
+    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
     ManifestBootstrapConfig, ManifestBootstrapRun, ManifestBootstrapStart,
@@ -42,7 +42,11 @@ pub use config_sections::{
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
     ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
+    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig,
+    ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
+    ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
+    ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
+    ManifestDocsPolicyGraphRelationConfig, ManifestEnvSchemaConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
     ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend,
@@ -227,6 +231,9 @@ impl TaskManifest {
         }
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;
+        }
+        if let Some(docs_policy) = self.docs_policy.as_ref() {
+            docs_policy.validate(manifest_path)?;
         }
         if let Some(containers) = self.containers.as_ref() {
             for (container_name, container) in &containers.environments {

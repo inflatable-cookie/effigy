@@ -6,7 +6,7 @@ use toml::Value;
 
 use super::TaskManifest;
 use crate::bundles::apply_bundle_defaults;
-use crate::config_sections::ManifestBundleConfig;
+use crate::config_sections::{ManifestBundleConfig, ManifestDocsPolicyGraphConfig};
 use crate::manifest_section::{
     resolve_include_path, validate_minimum_effigy_version, ManifestIncludeEntry,
     ManifestSectionConfig,
@@ -91,6 +91,34 @@ struct CompositionSession {
     evaluation_order: Vec<PathBuf>,
     include_graph: Vec<ManifestCompositionEdge>,
     overridden_paths: Vec<ManifestCompositionOverride>,
+}
+
+pub fn load_docs_policy_graph_config(
+    manifest_path: &Path,
+) -> Result<Option<ManifestDocsPolicyGraphConfig>, ManifestError> {
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let mut session = CompositionSession::default();
+    let mut composed = load_composed_value(manifest_path, &mut session)?;
+    apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
+    let Some(graph_value) = composed
+        .value
+        .get("docs_policy")
+        .and_then(|docs_policy| docs_policy.get("graph"))
+    else {
+        return Ok(None);
+    };
+    let graph: ManifestDocsPolicyGraphConfig =
+        graph_value
+            .clone()
+            .try_into()
+            .map_err(|error| ManifestError::Parse {
+                path: manifest_path.to_path_buf(),
+                error,
+            })?;
+    graph.validate(manifest_path)?;
+    Ok(Some(graph))
 }
 
 pub fn load_task_manifest_with_inspection(

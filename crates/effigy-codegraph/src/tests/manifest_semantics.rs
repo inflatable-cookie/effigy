@@ -245,7 +245,7 @@ start = "dev"
 fn graph_manifest_semantic_failures_fall_back_to_structural_indexing() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::write(
-        temp.path().join("effigy.toml"),
+        temp.path().join("broken.toml"),
         r#"
 [tasks.release]
 run = "cargo test"
@@ -261,7 +261,7 @@ base = { type = "path", dir = "bundles/missing-bundle" }
     assert_eq!(report.counts.diagnostics, 1);
 
     let files = query_files(temp.path(), None).expect("files");
-    assert!(files.files.iter().any(|file| file.path == "effigy.toml"));
+    assert!(files.files.iter().any(|file| file.path == "broken.toml"));
 
     let search = query_search(temp.path(), "release", Some(10)).expect("search");
     assert!(search
@@ -274,7 +274,7 @@ base = { type = "path", dir = "bundles/missing-bundle" }
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("failed to compose manifest effigy.toml")
+            .contains("failed to compose manifest broken.toml")
     }));
 }
 

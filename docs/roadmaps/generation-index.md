@@ -193,7 +193,8 @@ recurrence guards, and closed with full evidence.
 
 `g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
 through `1090` cover the generic profile/structural foundation, bounded docs
-context query, and generic plus Northstar adoption proof. Card `1088` is ready.
+context query, and generic plus Northstar adoption proof. Card `1088` is
+complete; card `1089` is ready.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -217,7 +218,7 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Strict spec `108` and ready card `1088` compile the selected intent. Do not open
+Strict spec `108` and ready card `1089` continue the selected intent. Do not open
 `g09` or start release work from this selection.
 
 ## Research Roadmaps
@@ -252,6 +253,6 @@ closeout there first.
 ## Next Task
 
 Execute ready card
-[`1088`](./g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

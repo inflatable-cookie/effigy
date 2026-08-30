@@ -5,7 +5,7 @@ Owner: documentation graph and agent retrieval surfaces
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Current ready card: [`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md)
+Current ready card: [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
 
 ## Problem
 
@@ -36,8 +36,8 @@ runtime behavior to an agent framework.
    proves generic and Northstar configurations, publishes adoption guidance,
    runs proportional validation, and closes the lane.
 
-Only `1088` is ready. Later cards become ready through the previous card's
-evidence-backed closeout.
+Card `1088` is complete. Only `1089` is ready. `1090` becomes ready through
+the previous card's evidence-backed closeout.
 
 ## Owner And Seam
 
@@ -80,4 +80,4 @@ Stop and return to planning if:
 ## Next Task
 
 Execute ready card
-[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use crate::docs_profile::{load_docs_profile_state, DOCS_PROFILE_FINGERPRINT_KEY};
 use crate::error::CodeGraphError;
 use crate::extractor::{GraphSink, SourceFile};
 use crate::json::{
@@ -43,10 +44,15 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
 }
 
 pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
-    let registry = ExtractorRegistry::builtins();
+    let profile_state = load_docs_profile_state(repo_root)?;
+    let current_fingerprint = profile_state.fingerprint();
     let store = GraphStore::open(repo_root)?;
+    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store)?;
     let existing_states = store.file_scan_state_map()?;
     let stored_extractors = store.extractor_version_map()?;
+    let stored_fingerprint = store.metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?;
+    let profile_changed = stored_fingerprint.as_deref() != Some(current_fingerprint.as_str());
+    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_extractors = extractor_version_map(registry.all());
     let scan_entries = crate::walk::scan_repo_files(repo_root)?;
     let mut current_states = BTreeMap::new();
@@ -57,7 +63,6 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
 
     let mut indexed_paths = BTreeSet::new();
     let mut skipped_paths = Vec::new();
-    let mut graph_changed = false;
 
     for entry in &scan_entries {
         indexed_paths.insert(entry.relative_path.clone());
@@ -73,7 +78,10 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
             let unchanged_metadata = existing_state.language_id == entry.language_id
                 && existing_state.modified_unix_ms == entry.modified_unix_ms
                 && existing_state.byte_size == entry.byte_size;
-            if extractor_version_matches && unchanged_metadata {
+            if extractor_version_matches
+                && unchanged_metadata
+                && !profile_requires_markdown_refresh(profile_changed, &entry.language_id)
+            {
                 current_states.insert(entry.relative_path.clone(), existing_state.clone());
                 continue;
             }
@@ -109,7 +117,9 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
             });
         store.save_file_scan_state(&file_state)?;
         current_states.insert(source.relative_path.clone(), file_state);
-        if reuse_existing_graph {
+        if reuse_existing_graph
+            && !profile_requires_markdown_refresh(profile_changed, &source.language_id)
+        {
             continue;
         }
         graph_changed = true;
@@ -177,11 +187,15 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         store.delete_file_scan_state(path)?;
         graph_changed = true;
     }
+    if crate::language::markdown::resolve_typed_relations(&store)? {
+        graph_changed = true;
+    }
     let stale_paths = scan_delta_for_entries(
         &existing_states,
         &stored_extractors,
         &current_extractors,
         &scan_entries,
+        profile_changed,
     )?
     .stale_paths;
 
@@ -199,6 +213,7 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         edge_count: counts.edges as u64,
     };
     store.save_index_run(&run)?;
+    store.save_metadata(DOCS_PROFILE_FINGERPRINT_KEY, &current_fingerprint)?;
     if graph_changed {
         store.refresh_search_index()?;
     }
@@ -237,16 +252,22 @@ pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeG
 
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
-    let registry = ExtractorRegistry::builtins();
+    let profile_state = load_docs_profile_state(repo_root)?;
     let file_states = store.file_scan_state_map()?;
+    let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
     let current_extractors = extractor_version_map(registry.all());
     let stored_extractors = store.extractor_version_map()?;
+    let profile_changed = store
+        .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
+        .as_deref()
+        != Some(profile_state.fingerprint().as_str());
     let scan_delta = scan_delta_for_entries(
         &file_states,
         &stored_extractors,
         &current_extractors,
         &current_entries,
+        profile_changed,
     )?;
     let counts = store.counts()?;
     let ready = counts.files > 0;
@@ -289,15 +310,23 @@ pub(crate) fn stale_paths_for_repo(
     repo_root: &Path,
     store: &GraphStore,
 ) -> Result<Vec<String>, CodeGraphError> {
+    let profile_state = load_docs_profile_state(repo_root)?;
     let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
-    let current_extractors = extractor_version_map(ExtractorRegistry::builtins().all());
+    let current_extractors = extractor_version_map(
+        ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned()).all(),
+    );
     let stored_extractors = store.extractor_version_map()?;
+    let profile_changed = store
+        .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
+        .as_deref()
+        != Some(profile_state.fingerprint().as_str());
     Ok(scan_delta_for_entries(
         &file_states,
         &stored_extractors,
         &current_extractors,
         &current_entries,
+        profile_changed,
     )?
     .stale_paths)
 }
@@ -344,6 +373,7 @@ fn scan_delta_for_entries(
     stored_extractors: &BTreeMap<String, String>,
     current_extractors: &BTreeMap<String, String>,
     current_entries: &[ScanEntry],
+    profile_changed: bool,
 ) -> Result<ScanDelta, CodeGraphError> {
     let mut stale = BTreeSet::new();
     let mut new_paths = Vec::new();
@@ -368,7 +398,9 @@ fn scan_delta_for_entries(
                     .is_some_and(|(current_version, stored_version)| {
                         stored_version != current_version
                     });
-                if extractor_version_changed {
+                if extractor_version_changed
+                    || profile_requires_markdown_refresh(profile_changed, &entry.language_id)
+                {
                     stale.insert(entry.relative_path.clone());
                     continue;
                 }
@@ -395,6 +427,10 @@ fn scan_delta_for_entries(
         changed_paths,
         deleted_paths,
     })
+}
+
+fn profile_requires_markdown_refresh(profile_changed: bool, language_id: &str) -> bool {
+    profile_changed && language_id == "markdown"
 }
 
 fn index_source(

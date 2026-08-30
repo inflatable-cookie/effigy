@@ -23,7 +23,7 @@ Northstar files or skills.
 
 ## Execution Plan
 
-- [ ] card `1088`: build typed repository profiles, exact sections, fields,
+- [x] card `1088`: build typed repository profiles, exact sections, fields,
       relations, and profile-aware freshness
 - [ ] card `1089`: add bounded `effigy docs context` retrieval, CLI/help, and
       versioned JSON
@@ -62,4 +62,4 @@ profile into a repository but are never consulted at runtime.
 ## Next Task
 
 Execute ready card
-[`1088`](./batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).

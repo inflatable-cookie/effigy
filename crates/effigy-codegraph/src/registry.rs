@@ -1,3 +1,4 @@
+use crate::docs_profile::CompiledDocsProfile;
 use crate::extractor::LanguageIndexer;
 use crate::language::{
     javascript::JavaScriptIndexer, manifest::ManifestIndexer, markdown::MarkdownIndexer,
@@ -9,12 +10,12 @@ pub struct ExtractorRegistry {
 }
 
 impl ExtractorRegistry {
-    pub fn builtins() -> Self {
+    pub fn for_docs_profile(profile: Option<CompiledDocsProfile>) -> Self {
         Self {
             extractors: vec![
                 Box::new(RustIndexer::new()),
                 Box::new(ManifestIndexer::new()),
-                Box::new(MarkdownIndexer::new()),
+                Box::new(MarkdownIndexer::with_profile(profile)),
                 Box::new(PhpIndexer::new()),
                 Box::new(PythonIndexer::new()),
                 Box::new(JavaScriptIndexer::new()),

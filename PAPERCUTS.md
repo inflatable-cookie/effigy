@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `git fetch origin` can hang indefinitely waiting on SSH
+- Friction: worker preflight `git fetch origin` sat silent for minutes until killed; a retry with `GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes"` returned immediately.
+- Impact: handoff/startup probes look wedged and waste a long command timeout.
+- Plausible fix: document or wrap worker `git fetch` with BatchMode plus a connect timeout so a blocked SSH prompt fails fast.
+- Surface: worker handoff preflight; GitHub SSH remotes.
+
 ## Closed
 
 ### [x] `effigy-rhai` runtime-context tests race on process-wide env vars — 2026-08-29

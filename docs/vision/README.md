@@ -64,7 +64,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 ## Next Task
 
 Execute ready card
-[`1088`](../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md)
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
 under decision
 [`D-2026-04`](./decisions/D-2026-04-repository-defined-documentation-graph.md).
 The second governance review remains due by 2026-09-17.
