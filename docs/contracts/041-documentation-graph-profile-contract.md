@@ -209,5 +209,6 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Execute ready card
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+Remain paused at
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
+until external skill-runner card `1092` closes.

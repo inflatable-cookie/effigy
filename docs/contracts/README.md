@@ -16,7 +16,8 @@ This folder contains both:
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
 `030`, `031`, `032`, `033`, `034`, `035`, `036`, `037`, `038`, `039`, and
-`040`, plus active documentation-graph contract `041`.
+`040`, plus documentation-graph contract `041` and active external skill-task
+contract `042`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -203,6 +204,7 @@ new reusable-core work.
 | `039-pre-release-ci-proof-contract.md` | Platform maintainers | Exact-candidate hosted CI identity, accepted trigger/branch/conclusion, release gate ordering, or checker ownership | Focused checker fixtures plus release-gate configuration and protocol review |
 | `040-bun-committed-dependency-pinning-contract.md` | Platform maintainers | Pin/unpin grammar, closure selection, override conflict policy, manifest write safety, path portability, link interaction, or JSON payload shape | Focused deps, CLI, runner, JSON, and Soundcheck/Poodle consumer proofs |
 | `041-documentation-graph-profile-contract.md` | Platform maintainers | Profile grammar, section boundaries, currentness, authority ranking, context budgets, JSON shape, freshness identity, or Northstar runtime independence | Planning review against `g08.035`; focused manifest, codegraph, CLI, docs, JSON, generic-fixture, and Northstar-starter proofs during implementation |
+| `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -264,10 +266,12 @@ active v0.11 test authority and plan-safety boundary, and
 release boundary, and `040-bun-committed-dependency-pinning-contract.md` as the
 implemented committed Bun override boundary distinct from machine-local
 linking, and `041-documentation-graph-profile-contract.md` as the active
-repository-defined documentation graph and bounded retrieval boundary.
+repository-defined documentation graph and bounded retrieval boundary, and
+`042-external-skill-task-runner-contract.md` as the explicit external task
+source and consumer runtime target boundary.
 
 ## Next Task
 
 Execute ready card
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md).
 No release action is implied.

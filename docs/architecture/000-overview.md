@@ -31,6 +31,8 @@ Effigy is a Rust CLI task runner with two responsibility layers:
 - Root resolution may walk invocation ancestors. Catalog membership never
   requires a recursive descendant walk.
 - Execution is cwd-aware but explicit override friendly via `--repo`.
+- Explicit `effigy skill` execution may separate task-definition source from
+  consumer target without changing ordinary catalog/root behavior.
 - Root detection uses nearest marker semantics across `package.json`, `composer.json`, `Cargo.toml`, and `.git`.
 - Unprefixed task resolution is deterministic and fails loudly on ambiguity.
 - Task command payloads remain shell commands for incremental adoption.
@@ -49,9 +51,13 @@ Use these docs intentionally:
   is the active Cargo/Bun machine-local dependency-linking boundary
 - [024-repository-defined-documentation-graph.md](./024-repository-defined-documentation-graph.md)
   is the active generic documentation-graph and repository-profile boundary
+- [025-external-skill-task-execution.md](./025-external-skill-task-execution.md)
+  owns explicit installed-skill source versus consumer-target execution
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
+- [`contract/042`](../contracts/042-external-skill-task-runner-contract.md)
+  defines isolated skill loading and source/target path semantics
 
 For runtime/container behavior rules, prefer the active contracts:
 

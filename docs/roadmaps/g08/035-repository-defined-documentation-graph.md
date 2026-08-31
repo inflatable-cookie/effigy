@@ -1,6 +1,6 @@
 # g08.035 - Repository-Defined Documentation Graph
 
-Status: Active
+Status: Paused
 Depends on: completed native code graph and graph agent-adoption lanes
 Spec: [`108`](../../specs/108-documentation-graph-profiles-strict-lane.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
@@ -30,6 +30,10 @@ Northstar files or skills.
       lane
 - [ ] card `1090`: prove generic and Northstar profiles, publish adoption
       guidance, benchmark retrieval, validate, and close the lane
+
+Operator pause: 2026-08-31. Card `1089` remains fully planned but yields the
+single ready slot to external skill-task execution under `g08.037`. Resume it
+after card `1092` closes.
 
 ## Owner And Seam
 
@@ -62,5 +66,7 @@ profile into a repository but are never consulted at runtime.
 
 ## Next Task
 
-Execute ready card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+Execute external skill-runner card
+[`1092`](./batch-cards/1092-add-external-skill-task-runner.md). Resume
+[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md) after
+that lane closes.

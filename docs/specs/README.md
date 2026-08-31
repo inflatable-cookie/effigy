@@ -28,12 +28,13 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
-  documentation graph profiles; current ready card `1089`
+- [`110`](./110-external-skill-task-runner-strict-lane.md) — explicit installed
+  skill task source with consumer runtime target; current ready card `1092`
 
 Queued strict lanes:
 
-None.
+- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
+  documentation graph profiles; paused at card `1089` until card `1092` closes
 
 Archived strict lanes:
 
@@ -70,6 +71,8 @@ Other planning specs:
 ## Next Task
 
 Execute ready card
+[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md),
+then resume
 [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.

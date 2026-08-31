@@ -11,8 +11,9 @@ explicit catalog membership in `g08.028`, unified v0.11 test orchestration in
 dependency pinning and its bounded enumeration fallback in `g08.031`, and vision
 governance operationalization in `g08.032`, doctor secret-schema parity in
 `g08.033`, documentation coverage parity in `g08.034`, the completed
-documentation, instruction, and help parity refresh in `g08.036`, and the
-active repository-defined documentation graph in `g08.035`.
+documentation, instruction, and help parity refresh in `g08.036`, the paused
+repository-defined documentation graph in `g08.035`, and the active external
+skill-task runner in `g08.037`.
 
 ## Purpose
 
@@ -87,6 +88,7 @@ This generation should help agents and maintainers answer questions like:
 - [`034-documentation-coverage-parity.md`](./034-documentation-coverage-parity.md)
 - [`035-repository-defined-documentation-graph.md`](./035-repository-defined-documentation-graph.md)
 - [`036-documentation-instruction-and-help-parity-refresh.md`](./036-documentation-instruction-and-help-parity-refresh.md)
+- [`037-external-skill-task-runner.md`](./037-external-skill-task-runner.md)
 
 ## Design Posture
 
@@ -177,8 +179,11 @@ This generation should help agents and maintainers answer questions like:
 - Documentation/help parity complete: archived strict spec `109` and card
   `1091` cover the scan evidence, Northstar AGENTS review, active docs,
   generated reference, and shipped CLI help.
-- Documentation graph active: strict spec `108` and contract `041` govern cards
-  `1088` through `1090`; card `1088` is complete and card `1089` is ready.
+- Documentation graph paused: strict spec `108` and contract `041` govern cards
+  `1088` through `1090`; card `1088` is complete and card `1089` resumes after
+  the skill-runner lane.
+- External skill runner active: strict spec `110`, architecture `025`, and
+  contract `042` govern ready card `1092`.
 
 ## Execution Rule
 
@@ -192,8 +197,9 @@ Strict spec `103` and `g08.030` are complete through card `1077`.
 Strict spec `104` and `g08.031` are complete through card `1081`.
 Strict spec `105` and `g08.032` are complete through card `1084`.
 Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
-Strict spec `108` governs active `g08.035`; card `1089` is ready. Strict spec
-`109` and `g08.036` are complete.
+Strict spec `110` governs active `g08.037`; card `1092` is ready. Strict spec
+`108` and `g08.035` are paused at card `1089`. Strict spec `109` and `g08.036`
+are complete.
 
 ## Batch Cards
 
@@ -260,6 +266,7 @@ Strict spec `108` governs active `g08.035`; card `1089` is ready. Strict spec
 - [`1089-add-bounded-documentation-context-query.md`](./batch-cards/1089-add-bounded-documentation-context-query.md)
 - [`1090-prove-generic-and-northstar-profiles.md`](./batch-cards/1090-prove-generic-and-northstar-profiles.md)
 - [`1091-audit-and-refresh-documentation-instructions-and-help.md`](./batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md)
+- [`1092-add-external-skill-task-runner.md`](./batch-cards/1092-add-external-skill-task-runner.md)
 
 ## Current State
 
@@ -293,16 +300,21 @@ corrected installed CLI against Bovine.
 verified gap repairs, proportional recurrence guards, validation, and
 closeout.
 
-`g08.035` is active under contract `041` and strict spec `108`. Card `1088` is
-complete; card `1089` is ready; card `1090` remains pending behind
-evidence-backed closeout of card `1089`.
+`g08.035` is paused under contract `041` and strict spec `108`. Card `1088` is
+complete; card `1089` resumes after card `1092`; card `1090` remains pending
+behind evidence-backed closeout of card `1089`.
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` delivered
 the serial documentation, instruction, help, scan-evidence, and closeout batch.
 
+`g08.037` is active under architecture `025`, contract `042`, and strict spec
+`110`. Ready card `1092` owns the complete external skill-task runner and
+returns the queue to card `1089` on closeout.
+
 ## Next Task
 
 Execute ready card
+[`1092`](./batch-cards/1092-add-external-skill-task-runner.md), then resume
 [`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
 The second governance review remains due by 2026-09-17. Do not infer release
 work or a generation rollover.

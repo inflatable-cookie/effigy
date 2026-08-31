@@ -97,6 +97,8 @@ one vague “polish” lane.
 ## Next Task
 
 Execute ready card
+[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md),
+then resume
 [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The scheduled second governance review remains due by 2026-09-17. No release
 work or generation rollover is implied.

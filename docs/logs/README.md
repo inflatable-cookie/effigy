@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/31-151155-external-skill-task-runner-planning.md`](./2026-08/31-151155-external-skill-task-runner-planning.md)
 - [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](./2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
 - [`2026-08/30-174452-documentation-instruction-help-parity-closeout.md`](./2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
 - [`2026-08/30-004016-documentation-graph-1088.md`](./2026-08/30-004016-documentation-graph-1088.md)
@@ -182,5 +183,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Await operator intent for the
-next Horizon theme. No release action or generation rollover is implied.
+Execute ready card `1092`, then resume card `1089`. The second governance
+review remains due by 2026-09-17. No release action or generation rollover is
+implied.

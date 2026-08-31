@@ -42,6 +42,9 @@ Current authority surfaces:
   request/plan/report/adapter pipeline boundaries
 - `docs/contracts/037-explicit-catalog-membership-contract.md` for root-owned
   catalog membership, typed system mounts, and routing normalization
+- `docs/architecture/025-external-skill-task-execution.md` and
+  `docs/contracts/042-external-skill-task-runner-contract.md` for isolated
+  external task-source and consumer-target ownership
 
 ## Workspace Crates
 
