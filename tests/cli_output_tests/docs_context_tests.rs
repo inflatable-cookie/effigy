@@ -520,3 +520,272 @@ fn docs_help_documents_the_bounded_context_surface() {
     assert!(rendered.contains("default 1, maximum 3"));
     std::fs::remove_dir_all(&repo).ok();
 }
+
+// ---------------------------------------------------------------------------
+// Card 1090: repository neutrality, copied Northstar configuration, and
+// installed-skill independence.
+// ---------------------------------------------------------------------------
+
+/// Every runtime file that participates in profile parsing, Markdown
+/// extraction, scoping, ranking, or rendering for `effigy docs context`.
+/// Fixtures and unit tests are excluded on purpose: they are allowed to name a
+/// vocabulary, the runtime is not.
+const DOCUMENTATION_GRAPH_RUNTIME_FILES: &[&str] = &[
+    "crates/effigy-manifest/src/config_sections/docs_policy.rs",
+    "crates/effigy-codegraph/src/docs_profile.rs",
+    "crates/effigy-codegraph/src/docs_context/mod.rs",
+    "crates/effigy-codegraph/src/docs_context/payload.rs",
+    "crates/effigy-codegraph/src/docs_context/rank.rs",
+    "crates/effigy-codegraph/src/docs_context/scope.rs",
+    "crates/effigy-codegraph/src/language/markdown/mod.rs",
+    "crates/effigy-codegraph/src/language/markdown/extract.rs",
+    "crates/effigy-codegraph/src/language/markdown/paths.rs",
+    "crates/effigy-codegraph/src/language/markdown/resolve.rs",
+    "src/runner/docs_command/context.rs",
+];
+
+/// Northstar vocabulary. None of it may become a fallback rule, a reserved
+/// name, or a default path in generic runtime logic; it belongs in a committed
+/// consumer profile.
+const NORTHSTAR_VOCABULARY: &[&str] = &[
+    "northstar",
+    "roadmap",
+    "ready-card",
+    "ready card",
+    "batch-card",
+    "batch card",
+    "handoff",
+    "archived-spec",
+    "next-task",
+    "next task",
+    "strict-ready",
+    "milestone",
+    "papercut",
+    "docs/contracts",
+    "docs/specs",
+    "docs/roadmaps",
+    "docs/vision",
+    "docs/logs",
+    "docs/guides",
+    "docs/handoffs",
+];
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn documentation_graph_runtime_logic_carries_no_northstar_vocabulary() {
+    let root = repo_root();
+    for relative in DOCUMENTATION_GRAPH_RUNTIME_FILES {
+        let path = root.join(relative);
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"))
+            .to_ascii_lowercase();
+        for token in NORTHSTAR_VOCABULARY {
+            assert!(
+                !contents.contains(token),
+                "`{relative}` names Northstar vocabulary `{token}`; repository \
+                 semantics belong in a committed `[docs_policy.graph]` profile, \
+                 not in generic runtime logic"
+            );
+        }
+    }
+}
+
+/// Materializes the bundled `northstar` starter into a fresh repository and
+/// gives it just enough documentation to query. Nothing else is written: the
+/// emitted `effigy.toml` is the only configuration the process may read.
+fn northstar_consumer_repo(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-northstar-consumer-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir consumer root");
+    let init = run_docs(&root, &["init", "northstar"]);
+    assert!(init.status.success(), "init northstar failed: {init:?}");
+
+    std::fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
+    std::fs::create_dir_all(root.join("docs/specs/archive")).expect("mkdir archived specs");
+    std::fs::write(
+        root.join("docs/contracts/001-widget-calibration-contract.md"),
+        "# 001 - Widget Calibration Contract\n\nStatus: active\nOwner: Platform\n\n## Tolerance band\n\nThe widget calibrator tolerance band is plus or minus four millirads.\n",
+    )
+    .expect("write contract");
+    std::fs::write(
+        root.join("docs/specs/archive/090-widget-calibration-lane.md"),
+        "# 090 - Widget Calibration Lane\n\nStatus: archived\n\n## Tolerance band\n\nThe widget calibrator tolerance band was plus or minus nine millirads.\n",
+    )
+    .expect("write archived spec");
+    root
+}
+
+fn context_result(repo: &Path, query: &str) -> Value {
+    let output = run_docs(repo, &["--json", "docs", "context", query]);
+    assert!(output.status.success(), "docs context failed: {output:?}");
+    json(&output)["result"].clone()
+}
+
+#[test]
+fn northstar_starter_profile_is_queryable_from_the_copied_manifest_alone() {
+    let repo = northstar_consumer_repo("copied");
+    let result = context_result(&repo, "widget calibrator tolerance band");
+
+    assert_eq!(result["profile"]["state"], "configured");
+    let kinds: Vec<String> = result["profile"]["kinds"]
+        .as_array()
+        .expect("profile kinds")
+        .iter()
+        .map(|kind| kind.as_str().expect("kind token").to_owned())
+        .collect();
+    for expected in ["contract", "archived-spec", "roadmap", "ready-card", "log"] {
+        assert!(
+            kinds.contains(&expected.to_owned()),
+            "copied Northstar profile is missing kind `{expected}`; got {kinds:?}"
+        );
+    }
+    let relations: Vec<String> = result["profile"]["relations"]
+        .as_array()
+        .expect("profile relations")
+        .iter()
+        .map(|relation| relation.as_str().expect("relation token").to_owned())
+        .collect();
+    for expected in ["contract", "roadmap", "evidence", "next-task"] {
+        assert!(
+            relations.contains(&expected.to_owned()),
+            "copied Northstar profile is missing relation `{expected}`; got {relations:?}"
+        );
+    }
+
+    let results = result["results"].as_array().expect("results array");
+    let first = &results[0];
+    assert_eq!(
+        first["path"], "docs/contracts/001-widget-calibration-contract.md",
+        "the live contract must outrank the archived spec at equal relevance"
+    );
+    assert_eq!(first["document_kind"], "contract");
+    assert_eq!(first["authority"], 100);
+    assert_eq!(first["currentness"], "current");
+
+    let archived = results
+        .iter()
+        .find(|entry| entry["path"] == "docs/specs/archive/090-widget-calibration-lane.md")
+        .expect("the archived spec stays retrievable");
+    assert_eq!(archived["document_kind"], "archived-spec");
+    assert_eq!(archived["currentness"], "historical");
+    assert!(
+        archived["rank"].as_u64() > first["rank"].as_u64(),
+        "the historical counterpart must not outrank the live contract"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// A decoy template that contradicts the committed consumer profile on every
+/// axis a query can observe: different roots, a different kind name, and a
+/// different authority weight.
+const DECOY_TEMPLATE: &str = r#"
+[docs_policy.graph]
+roots = ["somewhere-else"]
+
+[docs_policy.graph.kinds.decoy]
+include = ["somewhere-else/*.md"]
+authority = 7
+"#;
+
+#[test]
+fn installed_skill_and_template_directories_never_reach_the_query() {
+    let repo = northstar_consumer_repo("independence");
+    let query = "widget calibrator tolerance band";
+    let baseline = context_result(&repo, query);
+
+    // 1. An installed skill tree that ships a contradictory profile is present.
+    for relative in [
+        ".agents/skills/effigy/effigy.toml",
+        ".agents/skills/northstar/effigy.toml",
+        "skills/northstar/effigy.toml",
+        ".claude/skills/northstar/effigy.toml",
+    ] {
+        let path = repo.join(relative);
+        std::fs::create_dir_all(path.parent().expect("skill parent")).expect("mkdir skill dir");
+        std::fs::write(&path, DECOY_TEMPLATE).expect("write decoy template");
+    }
+    let with_skills = context_result(&repo, query);
+    assert_eq!(
+        with_skills["profile"], baseline["profile"],
+        "an installed skill template must not join the profile identity"
+    );
+    assert_eq!(
+        with_skills["results"], baseline["results"],
+        "an installed skill template must not change retrieval"
+    );
+
+    // 2. The installed template changes after the profile was copied.
+    for relative in [
+        ".agents/skills/effigy/effigy.toml",
+        ".agents/skills/northstar/effigy.toml",
+        "skills/northstar/effigy.toml",
+        ".claude/skills/northstar/effigy.toml",
+    ] {
+        std::fs::write(
+            repo.join(relative),
+            format!("{DECOY_TEMPLATE}\n[docs_policy.graph.kinds.second-decoy]\ninclude = [\"somewhere-else/deep/*.md\"]\nauthority = 99\n"),
+        )
+        .expect("rewrite decoy template");
+    }
+    let after_template_change = context_result(&repo, query);
+    assert_eq!(
+        after_template_change["profile"], baseline["profile"],
+        "editing an installed template must not reinterpret a copied profile"
+    );
+    assert_eq!(
+        after_template_change["results"], baseline["results"],
+        "editing an installed template must not change retrieval"
+    );
+
+    // 3. No skill directory is reachable by the process at all.
+    for relative in [".agents", "skills", ".claude"] {
+        std::fs::remove_dir_all(repo.join(relative)).expect("remove skill tree");
+    }
+    let without_skills = context_result(&repo, query);
+    assert_eq!(
+        without_skills["profile"], baseline["profile"],
+        "removing every skill directory must not change the profile identity"
+    );
+    assert_eq!(
+        without_skills["results"], baseline["results"],
+        "removing every skill directory must not change retrieval"
+    );
+
+    // 4. The committed consumer manifest is the authority that does matter.
+    let manifest_path = repo.join("effigy.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).expect("read consumer manifest");
+    let edited = manifest.replace(
+        "[docs_policy.graph.kinds.contract]\ninclude = [\"docs/contracts/*.md\"]\nexclude = []\nauthority = 100",
+        "[docs_policy.graph.kinds.contract]\ninclude = [\"docs/contracts/*.md\"]\nexclude = []\nauthority = 44",
+    );
+    assert_ne!(edited, manifest, "consumer authority weight was not found");
+    std::fs::write(&manifest_path, edited).expect("write consumer manifest");
+
+    let after_consumer_edit = context_result(&repo, query);
+    assert_ne!(
+        after_consumer_edit["profile"]["fingerprint"], baseline["profile"]["fingerprint"],
+        "a consumer profile edit must join the freshness identity"
+    );
+    let contract = after_consumer_edit["results"]
+        .as_array()
+        .expect("results array")
+        .iter()
+        .find(|entry| entry["path"] == "docs/contracts/001-widget-calibration-contract.md")
+        .expect("the contract is still retrievable");
+    assert_eq!(
+        contract["authority"], 44,
+        "the committed consumer profile is the only runtime authority"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
