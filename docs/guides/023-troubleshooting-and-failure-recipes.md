@@ -110,9 +110,13 @@ Fix:
 
 - pass the directory that directly owns `effigy.toml`, or the manifest itself
 - keep all composed includes and bundle roots inside the canonical skill root
+- keep every reachable Rhai path inside the canonical skill root; absolute and
+  symlink paths are accepted only when their canonical target stays inside it
 - remove `[catalog.members]`; the v1 skill surface accepts one isolated catalog
 - make the selected task and every nested source task explicitly host-compatible
   (`run_in = "host"`) and remove system/workspace or manifest-secrets binding
+- replace managed/TUI/concurrent task shapes with standard host run sequences,
+  or keep those tasks in the consumer repository
 
 Do not replace `--path` with `--repo`. `--path` selects task code; `--repo`
 selects the consumer where runtime effects belong.

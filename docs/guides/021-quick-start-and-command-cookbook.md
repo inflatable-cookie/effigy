@@ -170,8 +170,9 @@ effigy skill run --path ~/.agents/skills/northstar northstar/check \
 `--repo`, selects the independent consumer target. Skill assets and `{skill}`
 stay source-relative; process CWD, `{repo}`, env files, cache paths, and nested
 built-ins use the consumer. V1 is host-only and rejects catalog members,
-container-bound tasks, secrets inheritance, and source composition that escapes
-the selected skill root before task side effects.
+container-bound or managed/TUI/concurrent tasks, secrets inheritance, and
+source composition or Rhai assets that canonically escape the selected skill
+root before task side effects.
 
 Use `--json` to audit canonical source, target, invocation, and execution paths.
 This surface executes code from the path you supply, so inspect unfamiliar

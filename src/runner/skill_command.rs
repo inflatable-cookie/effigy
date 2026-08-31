@@ -126,6 +126,18 @@ fn validate_host_only_source(catalog: &LoadedCatalog, root_task: &str) -> Result
                 "skill task `{task_name}` requests manifest-backed secrets; v1 skill execution does not inherit consumer secrets; remove task secret inheritance"
             )));
         }
+        let has_managed_shape = task.mode.as_deref() == Some("tui")
+            || !task.concurrent.is_empty()
+            || task
+                .profiles
+                .values()
+                .any(|profile| !profile.concurrent.is_empty());
+        if has_managed_shape {
+            return Err(RunnerError::task_invocation(format!(
+                "skill task `{task_name}` uses a managed/TUI/concurrent task shape; v1 skill execution accepts standard host tasks only; move this task to the consumer or use a non-managed run sequence"
+            )));
+        }
+        validate_rhai_assets(task, task_name.as_str(), &catalog.catalog_root)?;
         for task_ref in referenced_tasks(task) {
             let (selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)
                 .map_err(RunnerError::task_invocation)?;
@@ -150,6 +162,51 @@ fn validate_host_only_source(catalog: &LoadedCatalog, root_task: &str) -> Result
                 )));
             }
             pending.push(selector.task_name);
+        }
+    }
+    Ok(())
+}
+
+fn validate_rhai_assets(
+    task: &ManifestTask,
+    task_name: &str,
+    source_root: &Path,
+) -> Result<(), RunnerError> {
+    let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() else {
+        return Ok(());
+    };
+    for step in steps {
+        let ManifestManagedRunStep::Step(step) = step else {
+            continue;
+        };
+        let Some(raw_path) = step.rhai.as_deref() else {
+            continue;
+        };
+        let path = Path::new(raw_path);
+        let requested = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            source_root.join(path)
+        };
+        let canonical = std::fs::canonicalize(&requested).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "skill task `{task_name}` Rhai asset `{}` cannot be resolved inside canonical skill source root `{}`: {error}; use a readable script below the selected skill source",
+                requested.display(),
+                source_root.display()
+            ))
+        })?;
+        if !canonical.starts_with(source_root) {
+            return Err(RunnerError::task_invocation(format!(
+                "skill task `{task_name}` Rhai asset `{}` escapes canonical skill source root `{}`; move the script below the selected skill source",
+                canonical.display(),
+                source_root.display()
+            )));
+        }
+        if !canonical.is_file() {
+            return Err(RunnerError::task_invocation(format!(
+                "skill task `{task_name}` Rhai asset `{}` is not a file; use a readable script below the selected skill source",
+                canonical.display()
+            )));
         }
     }
     Ok(())

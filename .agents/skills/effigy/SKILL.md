@@ -197,8 +197,9 @@ skill catalog, then
 The skill path supplies task code; invocation CWD or `--repo` supplies the
 consumer target. Do not use `--repo <SKILL>` as a substitute. V1 is host-only,
 does not merge consumer selectors/defaults/config, and rejects members or
-escaping composition before side effects. Add `--json` when the agent needs to
-verify canonical source, target, invocation, and execution paths. Contract:
+escaping composition/assets, container inheritance, and managed/TUI/concurrent
+shapes before side effects. Add `--json` when the agent needs to verify
+canonical source, target, invocation, and execution paths. Contract:
 `docs/contracts/042-external-skill-task-runner-contract.md`.
 
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,

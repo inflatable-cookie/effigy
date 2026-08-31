@@ -16,6 +16,16 @@ fn run_skill(cwd: &Path, args: &[&str]) -> Output {
         .expect("run skill command")
 }
 
+fn run_skill_with_env(cwd: &Path, args: &[&str], key: &str, value: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(args)
+        .current_dir(cwd)
+        .env("NO_COLOR", "1")
+        .env(key, value)
+        .output()
+        .expect("run skill command")
+}
+
 fn json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("parse command envelope")
 }
@@ -35,6 +45,19 @@ fn unique_temp_consumer(label: &str) -> PathBuf {
         "[catalog]\nalias = \"temp-consumer\"\n",
     )
     .expect("write temporary consumer manifest");
+    root
+}
+
+fn unique_temp_root(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-skill-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("create temporary root");
     root
 }
 
@@ -368,6 +391,199 @@ fn skill_escape_container_and_missing_selector_fail_before_side_effects() {
             "{payload}"
         );
     }
+}
+
+#[test]
+fn skill_rhai_paths_cannot_escape_the_source_before_side_effects() {
+    let root = unique_temp_root("rhai-escape");
+    let source = root.join("source");
+    let consumer = root.join("consumer");
+    std::fs::create_dir_all(&source).expect("create skill source");
+    std::fs::create_dir_all(&consumer).expect("create consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        "[catalog]\nalias = \"rhai-consumer\"\n",
+    )
+    .expect("write consumer manifest");
+    let marker = consumer.join("outside-rhai-ran");
+    let outside_script = root.join("outside.rhai");
+    std::fs::write(
+        &outside_script,
+        format!(
+            "fs::write_file({:?}, \"ran\");\n",
+            marker.display().to_string()
+        ),
+    )
+    .expect("write outside Rhai script");
+    std::fs::write(
+        source.join("effigy.toml"),
+        format!(
+            r#"[catalog]
+alias = "escaping-rhai"
+
+[tasks.relative]
+run = [{{ rhai = "../outside.rhai" }}]
+run_in = "host"
+
+[tasks.nested-relative]
+run = [{{ task = "relative" }}]
+run_in = "host"
+
+[tasks.absolute]
+run = [{{ rhai = {:?} }}]
+run_in = "host"
+"#,
+            outside_script.display().to_string()
+        ),
+    )
+    .expect("write escaping skill manifest");
+
+    for selector in ["nested-relative", "absolute"] {
+        let output = run_skill(
+            &consumer,
+            &[
+                "skill",
+                "run",
+                "--path",
+                source.to_str().expect("utf8 source"),
+                selector,
+                "--json",
+            ],
+        );
+        assert!(!output.status.success(), "{selector}: {output:?}");
+        assert!(
+            !marker.exists(),
+            "{selector} executed an outside Rhai script"
+        );
+        let payload = json(&output);
+        assert!(
+            payload["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("escapes canonical skill source root")),
+            "{payload}"
+        );
+    }
+
+    std::fs::remove_dir_all(&root).expect("remove Rhai escape fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_rhai_symlink_cannot_escape_the_source_before_side_effects() {
+    let root = unique_temp_root("rhai-symlink-escape");
+    let source = root.join("source");
+    let consumer = root.join("consumer");
+    let scripts = source.join("scripts");
+    std::fs::create_dir_all(&scripts).expect("create skill scripts");
+    std::fs::create_dir_all(&consumer).expect("create consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        "[catalog]\nalias = \"rhai-consumer\"\n",
+    )
+    .expect("write consumer manifest");
+    let marker = consumer.join("outside-rhai-ran");
+    let outside_script = root.join("outside.rhai");
+    std::fs::write(
+        &outside_script,
+        format!(
+            "fs::write_file({:?}, \"ran\");\n",
+            marker.display().to_string()
+        ),
+    )
+    .expect("write outside Rhai script");
+    std::os::unix::fs::symlink(&outside_script, scripts.join("linked.rhai"))
+        .expect("link outside Rhai script");
+    std::fs::write(
+        source.join("effigy.toml"),
+        r#"[catalog]
+alias = "escaping-rhai-link"
+
+[tasks.linked]
+run = [{ rhai = "scripts/linked.rhai" }]
+run_in = "host"
+"#,
+    )
+    .expect("write symlink skill manifest");
+
+    let output = run_skill(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "linked",
+            "--json",
+        ],
+    );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(!marker.exists(), "symlink executed an outside Rhai script");
+    let payload = json(&output);
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("escapes canonical skill source root")),
+        "{payload}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove Rhai symlink fixture");
+}
+
+#[test]
+fn skill_managed_tasks_fail_before_source_or_target_state_leaks() {
+    let root = unique_temp_root("managed-rejection");
+    let source = root.join("source");
+    let consumer = root.join("consumer");
+    std::fs::create_dir_all(&source).expect("create skill source");
+    std::fs::create_dir_all(&consumer).expect("create consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        "[catalog]\nalias = \"managed-consumer\"\n",
+    )
+    .expect("write consumer manifest");
+    std::fs::write(
+        source.join("effigy.toml"),
+        r#"[catalog]
+alias = "managed-skill"
+
+[tasks.managed]
+mode = "tui"
+run_in = "host"
+
+[[tasks.managed.concurrent]]
+name = "leak"
+run = "pwd > managed-cwd.txt"
+"#,
+    )
+    .expect("write managed skill manifest");
+
+    let output = run_skill_with_env(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "managed",
+            "--json",
+        ],
+        "EFFIGY_MANAGED_HEADLESS",
+        "1",
+    );
+    assert!(!output.status.success(), "{output:?}");
+    let payload = json(&output);
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("managed/TUI/concurrent")),
+        "{payload}"
+    );
+    for boundary in [&source, &consumer] {
+        assert!(!boundary.join("managed-cwd.txt").exists());
+        assert!(!boundary.join(".effigy/runtime/managed").exists());
+    }
+
+    std::fs::remove_dir_all(&root).expect("remove managed rejection fixture");
 }
 
 #[test]

@@ -19,8 +19,9 @@ effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [
 The source owns task definitions, includes, Rhai/script assets, nested source
 selectors, and `{skill}`. The consumer owns process CWD, `{repo}`/`{project}`,
 env files, cache inputs/outputs, runtime metadata, and nested built-in targets.
-V1 is host-only and rejects member catalogs, escaping composition,
-container/runtime binding, and manifest-backed secrets before side effects.
+V1 accepts standard host tasks and rejects member catalogs, escaping
+composition or Rhai assets, container/runtime binding, managed/TUI/concurrent
+shapes, and manifest-backed secrets before side effects.
 
 ## Vision Target Delta
 
@@ -38,7 +39,8 @@ container/runtime binding, and manifest-backed secrets before side effects.
 | --- | --- | --- |
 | source root / manifest | canonical explicit `--path` only | task inventory and run JSON fixtures |
 | manifest includes / bundle roots | source-relative and bounded by canonical source | isolated routing rejection fixtures |
-| Rhai/script assets / `{skill}` | source-relative | nested Rhai fixture and installed Northstar smoke |
+| Rhai/script assets | source-relative and canonically contained | nested/absolute/symlink escape fixtures and installed Northstar smoke |
+| `{skill}` | canonical source-root placeholder | identity fixture |
 | target root | nearest consumer from invocation CWD or explicit `--repo` | two-consumer override fixture |
 | invocation CWD | retained as evidence | explicit second-consumer fixture |
 | execution CWD / `{repo}` / `{project}` | target-relative | identity fixture |
@@ -63,8 +65,10 @@ container/runtime binding, and manifest-backed secrets before side effects.
 
 Additional no-side-effect failures cover unreadable/missing sources, missing
 selectors, escaping includes, direct and nested container-bound tasks, and an
-unresolved consumer target. Recursive host validation runs across reachable
-source task references before execution.
+unresolved consumer target. Review repair added relative, absolute, and symlink
+Rhai escape rejection plus managed/TUI/concurrent rejection without source or
+target runtime-state leakage. Recursive validation runs across reachable source
+task references before execution.
 
 ## Public And Agent Surfaces
 
@@ -96,14 +100,16 @@ the Effigy worker checkout:
 - focused `effigy-cli`, `effigy-context`, `effigy-manifest`, `effigy-routing`,
   `effigy-execution`, `effigy-managed`, `effigy-rhai`, and `effigy-contracts`
   test runs: passed
-- skill CLI-output fixtures: 12 passed
-- complete CLI-output integration binary: 256 passed, 1 ignored
+- skill CLI-output fixtures: 15 passed
+- complete CLI-output integration binary: 259 passed, 1 ignored
 - indexed JSON fast checks: both skill schemas and all selected contracts passed
 - first full QA attempt: exposed three ordinary container/handoff Rhai/context
   regressions; the explicit source split was narrowed and all three focused
   reruns passed
-- final `effigy qa`: 3433 passed, 1 skipped; docs links, JSON examples,
+- initial implementation `effigy qa`: 3433 passed, 1 skipped; docs links, JSON examples,
   indexes, workflow paths, vision indexes/next actions, and JSON contracts passed
+- review-repair `effigy qa`: passed after the three new no-side-effect CLI
+  regressions; the installed Northstar read-only smoke also remained green
 - `cargo fmt --all -- --check`: passed
 - `cargo clippy --all-targets -- -D warnings`: passed
 - `git diff --check`: passed

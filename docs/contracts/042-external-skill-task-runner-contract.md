@@ -36,6 +36,9 @@ The first version accepts one composed root skill catalog.
 
 - manifest includes, bundle defaults, and Rhai/script assets resolve from the
   source manifest/root
+- every Rhai/script asset reachable from the selected task graph is
+  canonicalized before execution and must remain inside the source root;
+  relative, absolute, and symlink escapes are rejected
 - `[catalog.members]` is rejected on this surface
 - ambient discovery outside the source root is forbidden
 - consumer catalogs never join the skill selector set
@@ -67,6 +70,8 @@ Skill execution is isolated by default.
   or bundle config is inherited
 - skill tasks must resolve to host execution; container-bound/default-container
   sources fail before side effects
+- managed, TUI, and concurrent task shapes are outside v1 and fail before
+  process launch or managed runtime-state creation
 - consumer built-ins invoked through typed nested dispatch target the consumer
   root but do not acquire consumer manifest task configuration
 - skill source files are read-only to Effigy unless the task itself explicitly
@@ -99,7 +104,7 @@ Fail before task side effects when:
 - source composition escapes the accepted boundary
 - `[catalog.members]` is present
 - the selector is missing or resolves outside the isolated catalog
-- the task requires consumer/container runtime inheritance
+- the task requires consumer/container runtime inheritance or managed execution
 - the target cannot be resolved
 - source and target evidence cannot be represented consistently
 

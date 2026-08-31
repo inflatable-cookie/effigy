@@ -359,8 +359,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `skill --path` selects one isolated task source; it never selects the
   consumer. `skill run` resolves the consumer from invocation CWD or `--repo`,
   executes host-only tasks from the consumer root, and rejects members,
-  container/runtime inheritance, manifest secrets, and escaping composition
-  before task side effects
+  container/runtime inheritance, managed/TUI/concurrent shapes, manifest
+  secrets, escaping composition, and canonically escaping Rhai assets before
+  task side effects
 - `deps` and `deps status` are the same read-only inspection path; manager
   filtering is optional; `deps link cargo` applies the verified full closure
   and `deps unlink cargo` proves committed-source and lock recovery; `deps

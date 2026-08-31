@@ -9,7 +9,8 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "skill",
     notices: &[
         "Load one explicit skill-owned task catalog without merging it into the consumer repository task surface.",
-        "Skill tasks run on the host. The skill supplies task code; the current or --repo repository owns runtime effects.",
+        "Standard skill tasks run on the host. Managed/TUI/concurrent shapes and escaping Rhai assets are rejected before execution.",
+        "The skill supplies task code; the current or --repo repository owns runtime effects.",
     ],
     usage: &[
         "effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]",
