@@ -34,8 +34,11 @@ configured, otherwise every indexed Markdown file.
    path, heading, and field facts. A term reaching more than half of a corpus of
    at least 8 scoped documents is reported with `weighted: false` and stays out
    of scoring. Below that floor a shared term is ordinary vocabulary, so the
-   filter does not apply. If every term would be dropped, all terms are kept.
-   This replaces a language- or repository-specific stop-word list.
+   filter does not apply. This replaces a language- or repository-specific
+   stop-word list. Weighting is a ranking optimization only: if the weighted
+   terms seed nothing, every term is re-enabled and seeding runs again, so a
+   zero-hit term can never erase the query's only lexical evidence and produce a
+   false no-match.
 3. Sections score on their own text — the section span cut at the first nested
    heading. Evidence is still the full hierarchical section, but a document's
    top-level heading cannot absorb every nested match and answer with the whole
@@ -43,9 +46,12 @@ configured, otherwise every indexed Markdown file.
 4. Path and field evidence is document-level and lands on one section, so a path
    match cannot flood the budget.
 5. Typed `doc-rel` edges expand breadth-first for at most `--max-hops`.
-6. Order is `hops`, then relevance, then heading depth, then currentness, then
-   authority, then path, span start, and record id. Filesystem iteration never
-   reaches ranking.
+6. Order is `hops`, then relevance, then currentness, then authority, then
+   heading depth, then path, span start, and record id. Filesystem iteration
+   never reaches ranking. Repository currentness and authority policy outranks
+   heading specificity across documents; because sections of one document share
+   its currentness and authority, depth still selects the most specific section
+   within a document.
 7. Overlapping spans from one document deduplicate toward the higher-ranked
    (more specific) section.
 
@@ -67,6 +73,9 @@ Generic vocabulary: roots `handbook`; fields `state` / `steward`; currentness
 | Query `quokka telemetry` | success, `results: []`, `truncated: false`, `used_bytes: 0`, stable profile/freshness metadata |
 | Repeated `widget calibrator` | byte-identical results and terms |
 | Nested `# Retired widget bulletin` vs `## Widget calibrator recall` | one result; the h2 wins and the overlapping h1 is dropped |
+| Query `shared match paragraph` over current/authority-80 `## Shared match` and historical/authority-20 `### Shared match` | current h2 ranks 1 at equal relevance `59`; the deeper historical h3 ranks 2 |
+| Query `state zzzqxjkvnonexistent` where `state` reaches all 8 documents | non-empty results; every term reported `weighted: true` by the seeding fallback |
+| Query `state widget calibrator recall` | `state` stays `weighted: false` (`document_frequency: 8`) because other terms carry evidence; rank 1 is `bulletins/old.md` |
 | Baseline repository (no `[docs_policy.graph]`) | same schema; kind `document`, authority `0`, currentness `unknown`, no traversal |
 | Profile-only authority edit `20` -> `45` | fingerprint changes, result authority becomes `45`, one `.effigy/graph` directory |
 
@@ -86,6 +95,13 @@ fixture, query `widget recall`:
 `record_id` is `symbol:doc:handbook/bulletins/old.md:#widget-recall`;
 provenance is `markdown-anchors` `0.2.0`, confidence `exact`, detail `heading`.
 
+Typed relation steps keep source-exact provenance. A source link `[ops](ops.md)`
+reports `target: "ops.md"` with the exact link span, and carries the resolved
+graph identity separately in `to_path` and in the result's `record_id`. The
+declared destination is recovered through the shared
+`typed_edge_dest` / `typed_reference_dest` helpers, so retrieval and relation
+revalidation read the same recorded destination.
+
 ## Budget Proofs
 
 Defaults are 8 sections, 24000 bytes, 1 hop. Maxima are 32, 100000, 3. Budgets
@@ -96,13 +112,14 @@ parser and the library.
 | --- | --- |
 | `--max-sections 1` | one result identical to the unbounded rank 1; `section_budget_reached: true`; `omitted_sections >= 1`; reason `section budget reached after 1 sections`; next step names `--max-sections` |
 | `--max-bytes <rank-1 bytes>` | exactly the rank-1 section, byte-identical to the unbounded run; `used_bytes` equals that section; `byte_budget_reached: true`; reason `byte budget omitted ...` |
-| `--max-hops 1` | one lexical seed `playbooks/setup.md`, one relation result `playbooks/ops.md` with `relation_path[0].relation = see-also`; `hop_budget_reached: true` |
-| `--max-hops 2` | adds `playbooks/rotation.md` at `hops: 2`; `hop_budget_reached: false` |
+| `--max-hops 1` | one lexical seed `playbooks/setup.md`, one relation result `playbooks/ops.md` with `relation_path[0].relation = see-also` and `target = "ops.md"`; `hop_budget_reached: true`, `truncated: true`, reason `hop budget reached at 1 hop(s): further typed relations were not traversed`, next step names `--max-hops` |
+| `--max-hops 2` | adds `playbooks/rotation.md` at `hops: 2`; step targets are `["ops.md", "rotation.md"]`; `hop_budget_reached: false` and no hop reason |
 
 A section that does not fit the byte budget is omitted whole and named in
 `truncation.reasons` (capped at 8 named omissions). No partial section is ever
 emitted, and skipping one oversized section does not reorder the sections that
-are returned.
+are returned. `truncation.truncated` is the authoritative aggregate: it is true
+for section, byte, or hop exhaustion, and each carries its own reason.
 
 ## Public Surface
 
@@ -118,13 +135,44 @@ are returned.
 - An empty or whitespace-only query is a usage error and exits non-zero. No
   match is a successful empty report.
 
+## Review Repair
+
+PR 62 review on head `6f6ecac9` requested five card-1089 repairs. All five are
+fixed on this branch:
+
+1. `sort_candidates` now orders currentness and authority before heading depth,
+   so repository policy outranks heading specificity across documents while
+   within-document deduplication still prefers the most specific section. Proved
+   by `current_authority_outranks_a_deeper_heading_across_documents`, which fails
+   against the previous ordering with the historical h3 ranked first at equal
+   relevance `59`.
+2. Relation `target` is recovered through `typed_edge_dest` /
+   `typed_reference_dest`, so a resolved edge reports the declared `ops.md`
+   instead of the graph identity `file:handbook/playbooks/ops.md`. The exact
+   span is retained and the resolved identity stays in `to_path`. Asserted in
+   the codegraph traversal test, the CLI JSON test, and the published example.
+3. Corpus weighting is now a ranking optimization only. When the weighted terms
+   seed nothing, every term is re-enabled and seeding runs again. Proved by
+   `a_high_frequency_match_survives_a_zero_hit_term`; the optimization is still
+   proved live by
+   `corpus_weighting_still_drops_a_term_when_other_terms_carry_evidence`.
+4. `truncation.truncated` now includes hop exhaustion and hop-budget stops carry
+   the reason `hop budget reached at N hop(s): further typed relations were not
+   traversed` plus a `--max-hops` next step. Covered in the one-hop codegraph
+   test and in `docs_context_hop_exhaustion_reaches_aggregate_truncation_state`
+   for text and JSON.
+5. The canonical JSON example is one real fixture run showing both results
+   (47 + 39 bytes, `used_bytes: 86`, section budget 2), a real traversal block
+   with `target: "ops.md"`, and a real hop-exhaustion truncation block from the
+   stated fixture variant.
+
 ## Validation
 
 | Check | Result |
 | --- | --- |
-| `cargo test -p effigy-codegraph -p effigy-cli -p effigy-contracts` | passed (101 + 10 + 5 tests; 16 new `docs_context` tests) |
-| `cargo test --lib` | passed (1416 tests; 4 new `docs context` parse tests) |
-| `cargo test --test cli_output_tests` | passed (268 tests, 1 ignored; 8 new `docs_context_tests`) |
+| `cargo test -p effigy-codegraph -p effigy-cli -p effigy-contracts` | passed (104 + 10 + 5 tests; 19 `docs_context` tests) |
+| `cargo test --lib` | passed (1416 tests; 4 `docs context` parse tests) |
+| `cargo test --test cli_output_tests` | passed (270 tests, 1 ignored; 10 `docs_context_tests`) |
 | `cargo test --test documentation_coverage_tests` | passed (4 tests) |
 | `effigy contracts check-json --print-selected=text` | passed; `effigy.docs.context.v1` selected and validated |
 | `effigy docs check links` | passed |

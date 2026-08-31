@@ -125,9 +125,106 @@ fn docs_context_json_uses_the_versioned_payload_inside_the_command_envelope() {
         .as_array()
         .expect("match reasons")
         .is_empty());
-    assert!(results
+    let traversed = results
         .iter()
-        .any(|entry| entry["hops"].as_u64() == Some(1) && entry["match_kind"] == "relation"));
+        .find(|entry| entry["hops"].as_u64() == Some(1) && entry["match_kind"] == "relation")
+        .expect("a traversed relation result");
+    let step = &traversed["relation_path"][0];
+    assert_eq!(step["relation"], "see-also");
+    assert_eq!(step["from_path"], "handbook/playbooks/setup.md");
+    assert_eq!(
+        step["target"], "ops.md",
+        "relation provenance must keep the destination the source declared"
+    );
+    assert_eq!(step["to_path"], "handbook/playbooks/ops.md");
+    assert!(step["span"]["start"]["byte"].is_number());
+
+    let truncation = &result["truncation"];
+    assert_eq!(truncation["hop_budget_reached"], false);
+    assert_eq!(truncation["truncated"], false);
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+#[test]
+fn docs_context_hop_exhaustion_reaches_aggregate_truncation_state() {
+    let repo = unique_repo("hops", Some(GENERIC_PROFILE));
+    std::fs::write(
+        repo.join("handbook/playbooks/ops.md"),
+        "# Ops\n\nState: live\n\nSee also: [setup](setup.md)\n\n## Runbook\n\nRestart the daemon.\n",
+    )
+    .expect("give ops an onward relation");
+
+    let output = run_docs(
+        &repo,
+        &[
+            "--json",
+            "docs",
+            "context",
+            "flux capacitor",
+            "--max-hops",
+            "1",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let result = json(&output)["result"].clone();
+    let truncation = &result["truncation"];
+    assert_eq!(truncation["hop_budget_reached"], true);
+    assert_eq!(
+        truncation["truncated"], true,
+        "aggregate truncation must include hop-budget exhaustion"
+    );
+    let reasons = truncation["reasons"].as_array().expect("reasons");
+    assert!(
+        reasons.iter().any(|reason| reason
+            .as_str()
+            .unwrap_or_default()
+            .contains("hop budget reached at 1 hop(s)")),
+        "hop exhaustion needs a deterministic reason: {reasons:?}"
+    );
+    assert!(result["next"]
+        .as_array()
+        .expect("next")
+        .iter()
+        .any(|step| step.as_str().unwrap_or_default().contains("`--max-hops`")));
+
+    let text = run_docs(
+        &repo,
+        &["docs", "context", "flux capacitor", "--max-hops", "1"],
+    );
+    assert!(text.status.success(), "{text:?}");
+    let rendered = stdout(&text);
+    assert!(rendered.contains("hop budget reached"));
+    assert!(rendered.contains("raise `--max-hops`"));
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+#[test]
+fn docs_context_keeps_a_real_match_when_another_term_has_no_hits() {
+    let repo = unique_repo("fallback", Some(GENERIC_PROFILE));
+    let baseline = json(&run_docs(&repo, &["--json", "docs", "context", "state"]));
+    assert!(
+        !baseline["result"]["results"]
+            .as_array()
+            .expect("results")
+            .is_empty(),
+        "the corpus-wide term alone must retrieve evidence"
+    );
+
+    let output = run_docs(
+        &repo,
+        &["--json", "docs", "context", "state zzzqxjkvnonexistent"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let result = json(&output)["result"].clone();
+    assert!(
+        !result["results"].as_array().expect("results").is_empty(),
+        "corpus weighting must not turn a real lexical match into a no-match"
+    );
+    assert!(result["terms"]
+        .as_array()
+        .expect("terms")
+        .iter()
+        .all(|term| term["weighted"] == true));
     std::fs::remove_dir_all(&repo).ok();
 }
 

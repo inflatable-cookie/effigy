@@ -12,10 +12,13 @@ During v0.x, MINOR bumps may include breaking changes.
   exact deduplicated Markdown sections with path, heading, span, source text,
   extracted fields, typed relation path, and machine-readable match reasons.
   Relevance gates inclusion, so currentness and authority only order results
-  that already match; a query naming historical material still retrieves it.
+  that already match, and they outrank heading specificity across documents; a
+  query naming historical material still retrieves it. Corpus term weighting
+  only reorders and never suppresses the query's only lexical evidence.
   Budgets default to 8 sections, 24000 bytes, and 1 hop, with maxima of 32,
   100000, and 3; a section that does not fit is omitted whole and reported
-  rather than truncated mid-section. An empty query is a usage error and a
+  rather than truncated mid-section, and `truncation.truncated` covers section,
+  byte, and hop exhaustion alike. An empty query is a usage error and a
   no-match query is a successful empty report. Text and the versioned
   `effigy.docs.context.v1` JSON payload carry the same evidence, and the command
   works in baseline mode without `[docs_policy.graph]`.

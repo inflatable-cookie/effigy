@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::docs_profile::{CompiledDocsProfile, DocsProfileState};
 use crate::error::CodeGraphError;
+use crate::language::markdown::{typed_edge_dest, typed_reference_dest};
 use crate::model::{Provenance, SourceSpan, SymbolRecord};
 use crate::storage::GraphStore;
 
@@ -51,6 +52,10 @@ pub(super) struct ScopedDocument {
 }
 
 /// One outgoing typed relation edge, already resolved against this generation.
+///
+/// `target` is the destination exactly as the source document declared it, so
+/// relation provenance stays source-exact. The normalized graph identity lives
+/// in `target_id` and in the resolved result's own record identity.
 #[derive(Debug, Clone)]
 pub(super) struct ScopedRelation {
     pub(super) relation: String,
@@ -207,16 +212,9 @@ fn collect_relations(store: &GraphStore, scope: &mut DocsScope) -> Result<(), Co
         let Some(relation) = reference.provenance.detail.clone() else {
             continue;
         };
-        let target = reference
-            .unresolved_target
-            .clone()
-            .or_else(|| {
-                reference
-                    .target_id
-                    .as_ref()
-                    .map(|id| id.as_str().to_owned())
-            })
-            .unwrap_or_default();
+        let Some(target) = typed_reference_dest(&reference) else {
+            continue;
+        };
         spans
             .entry((reference.provenance.source_path.clone(), relation, target))
             .or_insert(reference.span);
@@ -234,11 +232,9 @@ fn collect_relations(store: &GraphStore, scope: &mut DocsScope) -> Result<(), Co
             continue;
         }
         let target_id = edge.to_id.as_ref().map(|id| id.as_str().to_owned());
-        let target = edge
-            .unresolved_target
-            .clone()
-            .or_else(|| target_id.clone())
-            .unwrap_or_default();
+        let Some(target) = typed_edge_dest(&edge) else {
+            continue;
+        };
         let span = spans
             .get(&(from_path.clone(), relation.clone(), target.clone()))
             .cloned();

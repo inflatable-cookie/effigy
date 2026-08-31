@@ -369,13 +369,18 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   task side effects
 - `docs context` returns source evidence, never a generated summary. Relevance
   gates inclusion, so an unrelated high-authority document cannot enter the
-  report; currentness and authority only order results that already match. It
-  refreshes the shared graph through the existing lazy path and adds no second
-  index. Budgets must be positive and inside the maxima above; a section that
-  does not fit is omitted whole and named in `truncation.reasons` rather than
-  truncated mid-section. An empty query is a usage error; no match is a
-  successful empty report. Repository vocabulary comes only from committed
-  `[docs_policy.graph]` configuration
+  report; currentness and authority only order results that already match, and
+  they outrank heading specificity across documents. It refreshes the shared
+  graph through the existing lazy path and adds no second index. Budgets must be
+  positive and inside the maxima above; a section that does not fit is omitted
+  whole and named in `truncation.reasons` rather than truncated mid-section.
+  `truncation.truncated` covers section, byte, and hop exhaustion alike. Typed
+  relation steps report the destination exactly as the source document declared
+  it in `target`, with the resolved path in `to_path`. An empty query is a usage
+  error; no match is a successful empty report, and corpus term weighting is a
+  ranking optimization that never suppresses the query's only lexical evidence.
+  Repository vocabulary comes only from committed `[docs_policy.graph]`
+  configuration
 - `deps` and `deps status` are the same read-only inspection path; manager
   filtering is optional; `deps link cargo` applies the verified full closure
   and `deps unlink cargo` proves committed-source and lock recovery; `deps

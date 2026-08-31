@@ -74,6 +74,16 @@ fn write_handbook(root: &Path) {
     )
     .expect("write bulletin");
     fs::write(
+        root.join("handbook/playbooks/shared-live.md"),
+        "# Live shared\n\nState: live\n\n## Shared match\n\nThe shared match paragraph.\n",
+    )
+    .expect("write shared live");
+    fs::write(
+        root.join("handbook/bulletins/shared-old.md"),
+        "# Retired shared\n\nState: retired\n\n## Wrapper\n\n### Shared match\n\nThe shared match paragraph.\n",
+    )
+    .expect("write shared retired");
+    fs::write(
         root.join("handbook/reference/charter.md"),
         "# Charter\n\nState: live\n\n## Governance\n\nThe steering group meets each quarter to approve budgets.\n",
     )
@@ -231,6 +241,52 @@ fn current_authority_breaks_an_otherwise_equal_relevance_tie() {
 }
 
 #[test]
+fn current_authority_outranks_a_deeper_heading_across_documents() {
+    let temp = profiled_repo();
+    let payload = query(temp.path(), "shared match paragraph");
+    let ranked = payload
+        .results
+        .iter()
+        .filter(|result| result.heading.as_deref() == Some("Shared match"))
+        .map(|result| {
+            (
+                result.path.as_str(),
+                result.section_kind.as_str(),
+                result.relevance,
+                result.currentness.as_str(),
+                result.authority,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ranked.len(), 2, "expected both shared sections: {ranked:?}");
+    assert_eq!(
+        ranked[0].2, ranked[1].2,
+        "the tie must be a real relevance tie: {ranked:?}"
+    );
+    assert_eq!(
+        ranked[0],
+        (
+            "handbook/playbooks/shared-live.md",
+            "heading-h2",
+            ranked[0].2,
+            "current",
+            80
+        ),
+        "current authoritative evidence must win despite the deeper rival heading"
+    );
+    assert_eq!(
+        ranked[1],
+        (
+            "handbook/bulletins/shared-old.md",
+            "heading-h3",
+            ranked[1].2,
+            "historical",
+            20
+        )
+    );
+}
+
+#[test]
 fn results_carry_exact_source_spans_and_no_generated_prose() {
     let temp = profiled_repo();
     let payload = query(temp.path(), "widget calibrator recall");
@@ -256,7 +312,7 @@ fn no_match_is_a_successful_empty_report() {
     assert_eq!(payload.truncation.omitted_sections, 0);
     assert_eq!(payload.truncation.used_bytes, 0);
     assert_eq!(payload.profile.state, "configured");
-    assert_eq!(payload.profile.scoped_documents, 6);
+    assert_eq!(payload.profile.scoped_documents, 8);
     assert!(payload
         .next
         .iter()
@@ -362,7 +418,32 @@ fn typed_relations_expand_under_the_hop_budget_only() {
         hop_one[0].relation_path[0].from_path,
         "handbook/playbooks/setup.md"
     );
+    assert_eq!(
+        hop_one[0].relation_path[0].target, "ops.md",
+        "relation provenance must keep the destination the source declared"
+    );
+    assert_eq!(
+        hop_one[0].relation_path[0].to_path, "handbook/playbooks/ops.md",
+        "the resolved identity belongs in to_path"
+    );
+    assert!(
+        hop_one[0].relation_path[0].span.is_some(),
+        "a resolved relation keeps its exact source span"
+    );
     assert!(one_hop.truncation.hop_budget_reached);
+    assert!(
+        one_hop.truncation.truncated,
+        "hop exhaustion must reach the aggregate truncation state"
+    );
+    assert!(one_hop
+        .truncation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("hop budget reached at 1 hop(s)")));
+    assert!(one_hop
+        .next
+        .iter()
+        .any(|step| step.contains("`--max-hops`")));
 
     let two_hops = bounded_query(
         temp.path(),
@@ -380,6 +461,68 @@ fn typed_relations_expand_under_the_hop_budget_only() {
         .collect::<Vec<_>>();
     assert_eq!(reached, vec!["handbook/playbooks/rotation.md"]);
     assert!(!two_hops.truncation.hop_budget_reached);
+    assert!(!two_hops
+        .truncation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("hop budget")));
+    let second = two_hops
+        .results
+        .iter()
+        .find(|result| result.hops == 2)
+        .expect("two-hop result");
+    assert_eq!(
+        second
+            .relation_path
+            .iter()
+            .map(|step| step.target.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ops.md", "rotation.md"],
+        "every step keeps the declared link target"
+    );
+}
+
+#[test]
+fn a_high_frequency_match_survives_a_zero_hit_term() {
+    let temp = profiled_repo();
+    let shared = query(temp.path(), "state");
+    assert!(
+        !shared.results.is_empty(),
+        "the corpus-wide term alone must still retrieve evidence"
+    );
+
+    let payload = query(temp.path(), "state zzzqxjkvnonexistent");
+    assert!(
+        !payload.results.is_empty(),
+        "corpus weighting must not turn a real lexical match into a no-match: {:?}",
+        identity(&payload)
+    );
+    assert!(
+        payload.terms.iter().all(|term| term.weighted),
+        "the fallback must report every term as weighted: {:?}",
+        payload.terms
+    );
+    assert!(!payload
+        .next
+        .iter()
+        .any(|step| step.contains("no in-scope Markdown section matched")));
+}
+
+#[test]
+fn corpus_weighting_still_drops_a_term_when_other_terms_carry_evidence() {
+    let temp = profiled_repo();
+    let payload = query(temp.path(), "state widget calibrator recall");
+    let state = payload
+        .terms
+        .iter()
+        .find(|term| term.term == "state")
+        .expect("state term");
+    assert_eq!(state.document_frequency, 8);
+    assert!(
+        !state.weighted,
+        "a term reaching every scoped document carries no selection signal here"
+    );
+    assert_eq!(payload.results[0].path, "handbook/bulletins/old.md");
 }
 
 #[test]
@@ -390,7 +533,7 @@ fn baseline_repository_returns_the_same_report_shape() {
     assert_eq!(payload.profile.state, "baseline");
     assert!(payload.profile.kinds.is_empty());
     assert!(payload.profile.relations.is_empty());
-    assert_eq!(payload.profile.scoped_documents, 6);
+    assert_eq!(payload.profile.scoped_documents, 8);
     let first = &payload.results[0];
     assert_eq!(first.path, "handbook/bulletins/old.md");
     assert_eq!(first.heading.as_deref(), Some("Widget calibrator recall"));

@@ -83,7 +83,12 @@ pub(crate) fn resolve_typed_relations(store: &GraphStore) -> Result<bool, CodeGr
     Ok(changed)
 }
 
-fn typed_edge_dest(edge: &EdgeRecord) -> Option<String> {
+/// Recover the destination exactly as the source document declared it.
+///
+/// A resolved edge stores the graph identity in `to_id`, so the declared link
+/// text survives only in the record id. Retrieval reports source provenance, so
+/// it needs the declared text, not the normalized identity.
+pub(crate) fn typed_edge_dest(edge: &EdgeRecord) -> Option<String> {
     if let Some(dest) = &edge.unresolved_target {
         return Some(dest.clone());
     }
@@ -92,7 +97,8 @@ fn typed_edge_dest(edge: &EdgeRecord) -> Option<String> {
     edge.id.as_str().strip_prefix(&prefix).map(str::to_owned)
 }
 
-fn typed_reference_dest(reference: &ReferenceRecord) -> Option<String> {
+/// Reference-side counterpart of [`typed_edge_dest`].
+pub(crate) fn typed_reference_dest(reference: &ReferenceRecord) -> Option<String> {
     if let Some(dest) = &reference.unresolved_target {
         return Some(dest.clone());
     }

@@ -78,7 +78,7 @@ fn render_context_text(payload: &DocsContextPayload) -> String {
         lines.extend(render_result(result));
     }
 
-    if payload.truncation.truncated || payload.truncation.hop_budget_reached {
+    if payload.truncation.truncated {
         lines.push(String::new());
         lines.push(format!(
             "truncation: {} omitted section(s){}",

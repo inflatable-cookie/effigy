@@ -230,13 +230,21 @@ What it guarantees:
 
 - relevance gates inclusion; an unrelated high-authority document never appears
 - currentness and authority only order results that already match, so a query
-  that names historical material still retrieves it
+  that names historical material still retrieves it; they also outrank heading
+  specificity across documents, while heading depth still selects the most
+  specific section within one document
 - every result carries path, heading, exact span, source text, extracted fields,
   relation path, and machine-readable match reasons
+- a typed relation step reports the destination exactly as the source declared
+  it in `target`, alongside the resolved `to_path` and the exact link span
 - budgets are explicit: `--max-sections` (default 8, maximum 32), `--max-bytes`
   (default 24000, maximum 100000), and `--max-hops` (default 1, maximum 3)
 - a section that does not fit the byte budget is omitted whole and named in
   `truncation.reasons`; partial sections are never emitted
+- `truncation.truncated` is authoritative: it covers section, byte, and hop
+  exhaustion, and each carries its own reason
+- corpus term weighting only reorders; it never turns a real lexical match into
+  a no-match
 - repeating an unchanged query returns identical ordering
 
 What it does not do: it never summarizes, never crawls outside the selected

@@ -107,19 +107,16 @@ pub(super) fn rank(
             }
         })
         .collect::<Vec<_>>();
-    // Dropping every term would answer nothing; a broad query is better served
-    // by broad evidence than by an empty report.
-    if weighted_terms.iter().all(|term| !term.weighted) {
+
+    let mut seeds = collect_seeds(&weighted_terms, &hits);
+    // Corpus frequency is a ranking optimization, never a truth filter. If the
+    // weighted terms reach nothing, the unweighted ones still carry the query's
+    // only lexical evidence, and reporting no match would be a lie.
+    if seeds.is_empty() {
         for term in &mut weighted_terms {
             term.weighted = true;
         }
-    }
-
-    let mut seeds = BTreeSet::new();
-    for term in weighted_terms.iter().filter(|term| term.weighted) {
-        if let Some(paths) = hits.get(&term.term) {
-            seeds.extend(paths.iter().cloned());
-        }
+        seeds = collect_seeds(&weighted_terms, &hits);
     }
     let effective = weighted_terms
         .iter()
@@ -158,6 +155,19 @@ pub(super) fn rank(
 /// ordinary vocabulary, not noise, and dropping it would answer nothing.
 fn is_low_signal(document_frequency: usize, scoped: usize) -> bool {
     scoped >= LOW_SIGNAL_CORPUS_FLOOR && document_frequency * 2 > scoped
+}
+
+fn collect_seeds(
+    terms: &[QueryTerm],
+    hits: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let mut seeds = BTreeSet::new();
+    for term in terms.iter().filter(|term| term.weighted) {
+        if let Some(paths) = hits.get(&term.term) {
+            seeds.extend(paths.iter().cloned());
+        }
+    }
+    seeds
 }
 
 fn normalized_phrase(query: &str) -> Option<String> {
@@ -435,25 +445,32 @@ fn resolve_target(scope: &DocsScope, target_id: &str) -> Option<(String, Option<
 }
 
 /// Stable order: nearer hops, then relevance, then currentness, then authority,
-/// then repository position. Filesystem iteration never reaches this point.
+/// then heading depth, then repository position. Filesystem iteration never
+/// reaches this point.
+///
+/// Repository currentness and authority policy outranks heading specificity:
+/// depth is a within-document preference and must not override which document
+/// the repository considers current or authoritative. Sections of one document
+/// share its currentness and authority, so depth still decides there.
 fn sort_candidates(scope: &DocsScope, candidates: &mut [Candidate]) {
     candidates.sort_by(|left, right| {
         left.hops
             .cmp(&right.hops)
             .then(right.relevance.cmp(&left.relevance))
-            .then(depth_of(scope, right).cmp(&depth_of(scope, left)))
             .then(currentness_of(scope, right).cmp(&currentness_of(scope, left)))
             .then(authority_of(scope, right).cmp(&authority_of(scope, left)))
+            .then(depth_of(scope, right).cmp(&depth_of(scope, left)))
             .then(left.path.cmp(&right.path))
             .then(span_start(scope, left).cmp(&span_start(scope, right)))
             .then(left.record_id.cmp(&right.record_id))
     });
 }
 
-/// Heading depth breaks equal-relevance ties toward the most specific section.
+/// Heading depth breaks remaining ties toward the most specific section.
 ///
 /// A parent section's span contains its children, so without this an enclosing
-/// heading would swallow the precise section that actually matched.
+/// heading would swallow the precise section that actually matched. It ranks
+/// below currentness and authority so it cannot reorder documents.
 fn depth_of(scope: &DocsScope, candidate: &Candidate) -> u8 {
     let Some(document) = scope.documents.get(&candidate.path) else {
         return 0;

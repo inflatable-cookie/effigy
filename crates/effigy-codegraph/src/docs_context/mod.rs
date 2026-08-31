@@ -76,7 +76,24 @@ pub fn docs_context(
     }
 
     let profile = profile_payload(&profile_state, &scope);
-    let next = next_steps(&profile, &freshness, &selection, &diagnostics);
+    let mut truncation = DocsContextTruncationPayload {
+        truncated: selection.section_budget_reached
+            || selection.byte_budget_reached
+            || ranked.hop_budget_reached,
+        section_budget_reached: selection.section_budget_reached,
+        byte_budget_reached: selection.byte_budget_reached,
+        hop_budget_reached: ranked.hop_budget_reached,
+        omitted_sections: selection.omitted_sections,
+        used_bytes: selection.used_bytes,
+        reasons: selection.reasons.clone(),
+    };
+    if truncation.hop_budget_reached {
+        truncation.reasons.push(format!(
+            "hop budget reached at {} hop(s): further typed relations were not traversed",
+            applied.max_hops
+        ));
+    }
+    let next = next_steps(&profile, &freshness, &selection, &truncation, &diagnostics);
 
     Ok(DocsContextPayload {
         schema: DOCS_CONTEXT_SCHEMA.to_owned(),
@@ -105,15 +122,7 @@ pub fn docs_context(
             })
             .collect(),
         results: selection.results,
-        truncation: DocsContextTruncationPayload {
-            truncated: selection.section_budget_reached || selection.byte_budget_reached,
-            section_budget_reached: selection.section_budget_reached,
-            byte_budget_reached: selection.byte_budget_reached,
-            hop_budget_reached: ranked.hop_budget_reached,
-            omitted_sections: selection.omitted_sections,
-            used_bytes: selection.used_bytes,
-            reasons: selection.reasons,
-        },
+        truncation,
         diagnostics,
         next,
     })
@@ -436,6 +445,7 @@ fn next_steps(
     profile: &DocsContextProfilePayload,
     freshness: &GraphFreshnessPayload,
     selection: &Selection,
+    truncation: &DocsContextTruncationPayload,
     diagnostics: &[DocsContextDiagnosticPayload],
 ) -> Vec<String> {
     let mut next = Vec::new();
@@ -453,6 +463,9 @@ fn next_steps(
     }
     if selection.byte_budget_reached {
         next.push("raise `--max-bytes` to include the next section whole".to_owned());
+    }
+    if truncation.hop_budget_reached {
+        next.push("raise `--max-hops` to traverse further typed relations".to_owned());
     }
     if profile.state == PROFILE_STATE_BASELINE {
         next.push(

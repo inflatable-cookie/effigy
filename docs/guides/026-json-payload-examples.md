@@ -3434,6 +3434,12 @@ generated summary. Relevance gates inclusion; currentness and authority only
 order results that already match. Here the historical authority-20 bulletin
 outranks the current authority-80 playbook because the query names it directly.
 
+This is one real run of
+`effigy --json docs context "widget recall" --max-sections 2 --max-bytes 4000`
+against a three-document fixture, so the byte and section accounting is
+reproducible: the two results are 47 and 39 bytes, `used_bytes` is 86, and the
+section budget of 2 is what stopped the report.
+
 ```json
 {
   "schema": "effigy.docs.context.v1",
@@ -3502,13 +3508,54 @@ outranks the current authority-80 playbook because the query names it directly.
         "heading contains phrase `widget recall`",
         "section text contains phrase `widget recall`",
         "heading contains `widget`",
-        "heading contains `recall`"
+        "section text contains `widget`",
+        "heading contains `recall`",
+        "section text contains `recall`"
       ],
       "relevance": 90,
       "provenance": {
         "extractor_id": "markdown-anchors",
         "extractor_version": "0.2.0",
         "source_path": "handbook/bulletins/old.md",
+        "confidence": "exact",
+        "detail": "heading"
+      }
+    },
+    {
+      "rank": 2,
+      "record_id": "symbol:doc:handbook/playbooks/ops.md:#runbook",
+      "path": "handbook/playbooks/ops.md",
+      "heading": "Runbook",
+      "anchor": "runbook",
+      "section_kind": "heading-h2",
+      "document_kind": "playbook",
+      "authority": 80,
+      "currentness": "current",
+      "span": {
+        "start": { "line": 5, "column": 0, "byte": 20 },
+        "end": { "line": 8, "column": 0, "byte": 59 }
+      },
+      "bytes": 39,
+      "source": "## Runbook\n\nRestart the widget daemon.\n",
+      "fields": [
+        {
+          "field": "state",
+          "value": "live",
+          "span": {
+            "start": { "line": 3, "column": 0, "byte": 7 },
+            "end": { "line": 3, "column": 11, "byte": 18 }
+          }
+        }
+      ],
+      "hops": 0,
+      "relation_path": [],
+      "match_kind": "lexical",
+      "match_reasons": ["section text contains `widget`"],
+      "relevance": 3,
+      "provenance": {
+        "extractor_id": "markdown-anchors",
+        "extractor_version": "0.2.0",
+        "source_path": "handbook/playbooks/ops.md",
         "confidence": "exact",
         "detail": "heading"
       }
@@ -3529,14 +3576,27 @@ outranks the current authority-80 playbook because the query names it directly.
 ```
 
 A result reached by typed-relation traversal instead of a direct lexical match
-reports the edge it arrived on:
+reports the edge it arrived on. `target` is the destination exactly as the
+source document declared it; the resolved graph identity is `to_path` and the
+result's own `record_id`. This block is the traversed result from
+`effigy --json docs context "calibrate"` against the same fixture.
 
 ```json
 {
-  "rank": 3,
+  "rank": 2,
+  "record_id": "symbol:doc:file:handbook/playbooks/ops.md",
   "path": "handbook/playbooks/ops.md",
   "heading": null,
+  "anchor": null,
   "section_kind": "document",
+  "document_kind": "playbook",
+  "authority": 80,
+  "currentness": "current",
+  "span": {
+    "start": { "line": 1, "column": 0, "byte": 0 },
+    "end": { "line": 8, "column": 0, "byte": 59 }
+  },
+  "bytes": 59,
   "hops": 1,
   "match_kind": "relation",
   "relation_path": [
@@ -3546,16 +3606,40 @@ reports the edge it arrived on:
       "to_path": "handbook/playbooks/ops.md",
       "target": "ops.md",
       "span": {
-        "start": { "line": 5, "column": 0, "byte": 41 },
-        "end": { "line": 5, "column": 22, "byte": 63 }
+        "start": { "line": 6, "column": 10, "byte": 54 },
+        "end": { "line": 6, "column": 23, "byte": 67 }
       }
     }
   ],
   "match_reasons": [
-    "reached over relation `see-also` from `handbook/playbooks/setup.md`"
+    "reached over relation `see-also` from `handbook/playbooks/setup.md`",
+    "section text contains `calibrate`"
+  ],
+  "relevance": 3
+}
+```
+
+When traversal stops because the hop budget is spent, that reaches the aggregate
+truncation state and carries its own reason. This block is from the same fixture
+with an onward `See also` link added to `handbook/playbooks/ops.md`, queried as
+`effigy --json docs context "calibrate" --max-hops 1`:
+
+```json
+{
+  "truncated": true,
+  "section_budget_reached": false,
+  "byte_budget_reached": false,
+  "hop_budget_reached": true,
+  "omitted_sections": 0,
+  "used_bytes": 135,
+  "reasons": [
+    "hop budget reached at 1 hop(s): further typed relations were not traversed"
   ]
 }
 ```
+
+The matching `next` entry is
+`raise \`--max-hops\` to traverse further typed relations`.
 
 ## Notes
 
