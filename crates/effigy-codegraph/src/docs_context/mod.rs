@@ -327,6 +327,7 @@ fn result_payload(
         fields: document.facts.clone(),
         hops: candidate.hops,
         relation_path: candidate.relation_path.clone(),
+        seed_path: candidate.seed_path.clone(),
         match_kind: candidate.match_kind.to_owned(),
         match_reasons: candidate.reasons.clone(),
         relevance: candidate.relevance,

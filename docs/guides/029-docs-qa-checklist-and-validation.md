@@ -237,6 +237,9 @@ What it guarantees:
   relation path, and machine-readable match reasons
 - a typed relation step reports the destination exactly as the source declared
   it in `target`, alongside the resolved `to_path` and the exact link span
+- a traversed result names its lexical origin in `seed_path` and prefixes every
+  inherited reason with that path, so it never claims its own section contains a
+  seed-only term; multi-hop results keep the original seed and are prefixed once
 - budgets are explicit: `--max-sections` (default 8, maximum 32), `--max-bytes`
   (default 24000, maximum 100000), and `--max-hops` (default 1, maximum 3)
 - a section that does not fit the byte budget is omitted whole and named in

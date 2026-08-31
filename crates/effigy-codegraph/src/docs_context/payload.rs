@@ -120,8 +120,16 @@ pub struct DocsContextResultPayload {
     pub fields: Vec<DocsContextFactPayload>,
     pub hops: usize,
     pub relation_path: Vec<DocsContextRelationStepPayload>,
+    /// Document whose text the lexical evidence came from.
+    ///
+    /// Equal to [`Self::path`] for a direct match. For a traversed result this
+    /// stays the original seed across every hop, so an inherited lexical claim
+    /// is never read as a claim about this result's own section.
+    pub seed_path: String,
     /// `lexical` for a direct query match, `relation` for a traversed result.
     pub match_kind: String,
+    /// Reasons describing this result's own text, plus any inherited seed
+    /// evidence prefixed with the seed path it belongs to.
     pub match_reasons: Vec<String>,
     pub relevance: i64,
     pub provenance: Provenance,

@@ -10,7 +10,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
   retrieves bounded documentation evidence from the shared graph. Results are
   exact deduplicated Markdown sections with path, heading, span, source text,
-  extracted fields, typed relation path, and machine-readable match reasons.
+  extracted fields, typed relation path, and machine-readable match reasons. A
+  traversed result names its lexical origin in `seed_path` and prefixes every
+  inherited reason with that path, so it never claims its own section contains a
+  seed-only term.
   Relevance gates inclusion, so currentness and authority only order results
   that already match, and they outrank heading specificity across documents; a
   query naming historical material still retrieves it. Corpus term weighting

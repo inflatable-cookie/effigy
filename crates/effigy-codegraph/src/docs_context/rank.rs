@@ -26,6 +26,9 @@ const WEIGHT_BODY_TERM: i64 = 3;
 /// a signal filter beyond "appears in literally every document".
 const LOW_SIGNAL_CORPUS_FLOOR: usize = 8;
 
+/// Marks a reason that describes the seed document rather than the result.
+pub(super) const SEED_REASON_PREFIX: &str = "inherited from seed ";
+
 pub(super) const MATCH_KIND_LEXICAL: &str = "lexical";
 pub(super) const MATCH_KIND_RELATION: &str = "relation";
 
@@ -33,6 +36,12 @@ pub(super) const MATCH_KIND_RELATION: &str = "relation";
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
     pub(super) path: String,
+    /// Document the lexical evidence actually came from.
+    ///
+    /// Equal to [`Self::path`] for a lexical candidate. A traversed candidate
+    /// keeps the original seed across every hop, so inherited evidence is never
+    /// reassigned to an intermediate document.
+    pub(super) seed_path: String,
     /// Index into the document's sections; `None` selects the whole document.
     pub(super) section: Option<usize>,
     pub(super) record_id: String,
@@ -286,6 +295,7 @@ fn score_lexical(
             let (record_id, section) = leading_section(document);
             candidates.push(Candidate {
                 path: path.clone(),
+                seed_path: path.clone(),
                 section,
                 record_id,
                 relevance: document_score,
@@ -306,6 +316,7 @@ fn score_lexical(
             reasons.extend(document_reasons.iter().cloned());
             candidates.push(Candidate {
                 path: path.clone(),
+                seed_path: path.clone(),
                 section,
                 record_id,
                 relevance: scored.score + document_score,
@@ -403,9 +414,22 @@ fn traverse(scope: &DocsScope, candidates: &mut Vec<Candidate>, max_hops: usize)
                     "reached over relation `{}` from `{}`",
                     relation.relation, relation.from_path
                 )];
-                reasons.extend(candidate.reasons.iter().cloned());
+                // Lexical evidence describes the seed's text, not this
+                // document's. Qualify it exactly once, on the hop that leaves
+                // the seed; later hops copy the already-qualified reason.
+                if candidate.hops == 0 {
+                    reasons.extend(
+                        candidate
+                            .reasons
+                            .iter()
+                            .map(|reason| seed_reason(&candidate.seed_path, reason)),
+                    );
+                } else {
+                    reasons.extend(candidate.reasons.iter().cloned());
+                }
                 next.push(Candidate {
                     path,
+                    seed_path: candidate.seed_path.clone(),
                     section,
                     record_id,
                     relevance: candidate.relevance,
@@ -433,6 +457,11 @@ fn traverse(scope: &DocsScope, candidates: &mut Vec<Candidate>, max_hops: usize)
                 .and_then(|target| resolve_target(scope, target))
                 .is_some_and(|(_, _, record_id)| !seen.contains(&record_id))
         })
+}
+
+/// Attribute one inherited lexical reason to the document it came from.
+pub(super) fn seed_reason(seed_path: &str, reason: &str) -> String {
+    format!("{SEED_REASON_PREFIX}`{seed_path}`: {reason}")
 }
 
 fn resolve_target(scope: &DocsScope, target_id: &str) -> Option<(String, Option<usize>, String)> {

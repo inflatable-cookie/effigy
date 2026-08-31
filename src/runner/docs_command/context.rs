@@ -141,6 +141,9 @@ fn render_result(result: &DocsContextResultPayload) -> Vec<String> {
             result.match_kind
         ),
     ];
+    if result.seed_path != result.path {
+        lines.push(format!("   seed: {}", result.seed_path));
+    }
     if !result.match_reasons.is_empty() {
         lines.push(format!("   match: {}", result.match_reasons.join("; ")));
     }

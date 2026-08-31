@@ -199,6 +199,119 @@ fn docs_context_hop_exhaustion_reaches_aggregate_truncation_state() {
 }
 
 #[test]
+fn docs_context_attributes_inherited_lexical_evidence_to_the_seed() {
+    let repo = unique_repo("seed-provenance", Some(GENERIC_PROFILE));
+    std::fs::write(
+        repo.join("handbook/playbooks/ops.md"),
+        "# Ops\n\nState: live\n\nSee also: [rotation](rotation.md)\n\n## Runbook\n\nRestart the daemon.\n",
+    )
+    .expect("chain ops onward");
+    std::fs::write(
+        repo.join("handbook/playbooks/rotation.md"),
+        "# Rotation\n\nState: live\n\n## Rota\n\nWho is paged.\n",
+    )
+    .expect("write rotation");
+
+    let output = run_docs(
+        &repo,
+        &[
+            "--json",
+            "docs",
+            "context",
+            "flux capacitor",
+            "--max-hops",
+            "2",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let result = json(&output)["result"].clone();
+    let results = result["results"].as_array().expect("results array");
+
+    // Several documents match lexically; only `setup.md` owns typed relations,
+    // so it is the seed every traversed result must keep naming.
+    for entry in results.iter().filter(|entry| entry["hops"] == 0) {
+        assert_eq!(
+            entry["seed_path"], entry["path"],
+            "a direct match is its own lexical source"
+        );
+        assert!(
+            entry["match_reasons"]
+                .as_array()
+                .expect("match reasons")
+                .iter()
+                .all(|reason| !reason
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("inherited from seed")),
+            "a direct match owns its reasons"
+        );
+    }
+    let seed = results
+        .iter()
+        .find(|entry| entry["path"] == "handbook/playbooks/setup.md")
+        .expect("lexical seed");
+    assert_eq!(seed["hops"], 0);
+
+    let traversed = results
+        .iter()
+        .filter(|entry| entry["hops"].as_u64().unwrap_or(0) > 0)
+        .collect::<Vec<_>>();
+    assert!(!traversed.is_empty(), "expected traversed results");
+
+    for entry in &traversed {
+        let path = entry["path"].as_str().expect("path");
+        let source = entry["source"]
+            .as_str()
+            .expect("source")
+            .to_ascii_lowercase();
+        assert!(
+            !source.contains("flux capacitor"),
+            "`{path}` must not actually contain the seed term for this proof"
+        );
+        assert_eq!(
+            entry["seed_path"], "handbook/playbooks/setup.md",
+            "every hop keeps the original seed"
+        );
+        for reason in entry["match_reasons"].as_array().expect("match reasons") {
+            let reason = reason.as_str().expect("reason text");
+            if reason.starts_with("reached over relation") {
+                continue;
+            }
+            assert!(
+                reason.starts_with("inherited from seed `handbook/playbooks/setup.md`: "),
+                "`{path}` makes an unqualified target-local claim: {reason}"
+            );
+            assert_eq!(
+                reason.matches("inherited from seed").count(),
+                1,
+                "inherited evidence must not be prefixed twice: {reason}"
+            );
+            assert!(
+                !reason.contains("handbook/playbooks/ops.md`: "),
+                "an intermediate document must never be recorded as the seed: {reason}"
+            );
+        }
+    }
+
+    let two_hop = traversed
+        .iter()
+        .find(|entry| entry["hops"] == 2)
+        .expect("two-hop result");
+    assert_eq!(two_hop["path"], "handbook/playbooks/rotation.md");
+    assert_eq!(two_hop["seed_path"], "handbook/playbooks/setup.md");
+
+    let text = run_docs(
+        &repo,
+        &["docs", "context", "flux capacitor", "--max-hops", "2"],
+    );
+    assert!(text.status.success(), "{text:?}");
+    let rendered = stdout(&text);
+    assert!(rendered.contains("inherited from seed `handbook/playbooks/setup.md`"));
+    assert!(rendered.contains("seed: handbook/playbooks/setup.md"));
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+#[test]
 fn docs_context_keeps_a_real_match_when_another_term_has_no_hits() {
     let repo = unique_repo("fallback", Some(GENERIC_PROFILE));
     let baseline = json(&run_docs(&repo, &["--json", "docs", "context", "state"]));

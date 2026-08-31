@@ -376,7 +376,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   whole and named in `truncation.reasons` rather than truncated mid-section.
   `truncation.truncated` covers section, byte, and hop exhaustion alike. Typed
   relation steps report the destination exactly as the source document declared
-  it in `target`, with the resolved path in `to_path`. An empty query is a usage
+  it in `target`, with the resolved path in `to_path`. A traversed result names
+  its lexical origin in `seed_path` and prefixes every inherited reason with
+  that path, so it never claims its own section contains a seed-only term. An empty query is a usage
   error; no match is a successful empty report, and corpus term weighting is a
   ranking optimization that never suppresses the query's only lexical evidence.
   Repository vocabulary comes only from committed `[docs_policy.graph]`

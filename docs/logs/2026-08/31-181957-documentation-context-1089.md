@@ -76,6 +76,7 @@ Generic vocabulary: roots `handbook`; fields `state` / `steward`; currentness
 | Query `shared match paragraph` over current/authority-80 `## Shared match` and historical/authority-20 `### Shared match` | current h2 ranks 1 at equal relevance `59`; the deeper historical h3 ranks 2 |
 | Query `state zzzqxjkvnonexistent` where `state` reaches all 8 documents | non-empty results; every term reported `weighted: true` by the seeding fallback |
 | Query `state widget calibrator recall` | `state` stays `weighted: false` (`document_frequency: 8`) because other terms carry evidence; rank 1 is `bulletins/old.md` |
+| Query `flux capacitor` at `--max-hops 2` | seed `playbooks/setup.md` owns its reasons; `playbooks/ops.md` and `playbooks/rotation.md` both report `seed_path: handbook/playbooks/setup.md`, each inherited reason prefixed once, and neither claims its own section contains `flux capacitor` |
 | Baseline repository (no `[docs_policy.graph]`) | same schema; kind `document`, authority `0`, currentness `unknown`, no traversal |
 | Profile-only authority edit `20` -> `45` | fingerprint changes, result authority becomes `45`, one `.effigy/graph` directory |
 
@@ -94,6 +95,13 @@ fixture, query `widget recall`:
 
 `record_id` is `symbol:doc:handbook/bulletins/old.md:#widget-recall`;
 provenance is `markdown-anchors` `0.2.0`, confidence `exact`, detail `heading`.
+
+Lexical evidence stays attributed to its source. A traversed result reports
+`seed_path` and renders inherited evidence as
+`inherited from seed \`handbook/playbooks/setup.md\`: section text contains \`calibrate\``,
+because `handbook/playbooks/ops.md` does not contain `calibrate`. The two-hop
+result adds a second `reached over relation` line and keeps the same single
+seed-qualified reason.
 
 Typed relation steps keep source-exact provenance. A source link `[ops](ops.md)`
 reports `target: "ops.md"` with the exact link span, and carries the resolved
@@ -125,7 +133,8 @@ for section, byte, or hop exhaustion, and each carries its own reason.
 
 - text: header line, profile/freshness/budget/result counts, then per result the
   path/anchor, kind, authority, currentness, line and byte span, hop count and
-  match kind, match reasons, fields, relation path, and the exact section text;
+  match kind, the seed path when it differs from the result path, match reasons,
+  fields, relation path, and the exact section text;
   then truncation, diagnostics, and next steps.
 - JSON: `effigy.docs.context.v1` inside the standard `effigy.command.v1`
   envelope, carrying query, repo root, profile state/fingerprint/roots/fields/
@@ -166,13 +175,32 @@ fixed on this branch:
    with `target: "ops.md"`, and a real hop-exhaustion truncation block from the
    stated fixture variant.
 
+The exact-head re-review of `2e0f9035` accepted those five and requested one
+more repair, also fixed on this branch:
+
+6. Traversed results no longer misattribute inherited lexical evidence. A
+   candidate carries `seed_path`, the document its lexical evidence came from.
+   A direct match is its own seed. A traversed result keeps the original seed
+   across every hop, and inherited reasons are qualified exactly once, on the
+   hop that leaves the seed, as
+   `inherited from seed \`<path>\`: <reason>`. Later hops copy the already
+   qualified reason, so an intermediate document is never recorded as the seed
+   and no reason is prefixed twice. `seed_path` is also a typed payload field,
+   and the text renderer prints a `seed:` line when it differs from the result
+   path. Proved by
+   `traversed_results_attribute_inherited_lexical_evidence_to_the_seed` and
+   `docs_context_attributes_inherited_lexical_evidence_to_the_seed`, both of
+   which fail against the previous unqualified inheritance with
+   `section text contains phrase \`flux capacitor\`` claimed on a document that
+   does not contain it.
+
 ## Validation
 
 | Check | Result |
 | --- | --- |
-| `cargo test -p effigy-codegraph -p effigy-cli -p effigy-contracts` | passed (104 + 10 + 5 tests; 19 `docs_context` tests) |
+| `cargo test -p effigy-codegraph -p effigy-cli -p effigy-contracts` | passed (105 + 10 + 5 tests; 20 `docs_context` tests) |
 | `cargo test --lib` | passed (1416 tests; 4 `docs context` parse tests) |
-| `cargo test --test cli_output_tests` | passed (270 tests, 1 ignored; 10 `docs_context_tests`) |
+| `cargo test --test cli_output_tests` | passed (271 tests, 1 ignored; 11 `docs_context_tests`) |
 | `cargo test --test documentation_coverage_tests` | passed (4 tests) |
 | `effigy contracts check-json --print-selected=text` | passed; `effigy.docs.context.v1` selected and validated |
 | `effigy docs check links` | passed |

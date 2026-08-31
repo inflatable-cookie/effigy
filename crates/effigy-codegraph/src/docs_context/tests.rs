@@ -526,6 +526,115 @@ fn corpus_weighting_still_drops_a_term_when_other_terms_carry_evidence() {
 }
 
 #[test]
+fn traversed_results_attribute_inherited_lexical_evidence_to_the_seed() {
+    let temp = profiled_repo();
+    let payload = bounded_query(
+        temp.path(),
+        "flux capacitor",
+        DocsContextRequest {
+            max_hops: Some(2),
+            ..Default::default()
+        },
+    );
+
+    let seed = payload
+        .results
+        .iter()
+        .find(|result| result.hops == 0)
+        .expect("lexical seed");
+    assert_eq!(seed.path, "handbook/playbooks/setup.md");
+    assert_eq!(
+        seed.seed_path, seed.path,
+        "a direct match is its own lexical source"
+    );
+    assert!(
+        seed.match_reasons
+            .iter()
+            .all(|reason| !reason.contains("inherited from seed")),
+        "a direct match owns its reasons: {:?}",
+        seed.match_reasons
+    );
+
+    for result in payload.results.iter().filter(|result| result.hops > 0) {
+        let content = fs::read_to_string(temp.path().join(&result.path)).expect("read document");
+        let lowered = content.to_ascii_lowercase();
+        assert_eq!(
+            result.seed_path, "handbook/playbooks/setup.md",
+            "every hop keeps the original seed, not an intermediate document"
+        );
+        assert_ne!(
+            result.seed_path, result.path,
+            "a traversed result is not its own lexical source"
+        );
+        for reason in &result.match_reasons {
+            if reason.starts_with("reached over relation") {
+                continue;
+            }
+            assert!(
+                reason.starts_with("inherited from seed `handbook/playbooks/setup.md`: "),
+                "inherited evidence must name the seed source: {reason}"
+            );
+            assert_eq!(
+                reason.matches("inherited from seed").count(),
+                1,
+                "inherited evidence must not be prefixed twice: {reason}"
+            );
+            assert!(
+                !lowered.contains("flux capacitor"),
+                "guard assumes `{}` does not contain the seed term",
+                result.path
+            );
+        }
+    }
+
+    let two_hop = payload
+        .results
+        .iter()
+        .find(|result| result.hops == 2)
+        .expect("two-hop result");
+    assert_eq!(two_hop.path, "handbook/playbooks/rotation.md");
+    assert_eq!(two_hop.seed_path, "handbook/playbooks/setup.md");
+    let inherited = two_hop
+        .match_reasons
+        .iter()
+        .filter(|reason| reason.contains("inherited from seed"))
+        .collect::<Vec<_>>();
+    assert!(
+        !inherited.is_empty(),
+        "seed evidence must survive the second hop: {:?}",
+        two_hop.match_reasons
+    );
+    assert_eq!(
+        inherited,
+        seed.match_reasons
+            .iter()
+            .map(|reason| format!("inherited from seed `handbook/playbooks/setup.md`: {reason}"))
+            .collect::<Vec<_>>()
+            .iter()
+            .collect::<Vec<_>>(),
+        "two-hop inherited evidence must be the seed's own reasons, qualified once"
+    );
+    assert!(
+        two_hop
+            .match_reasons
+            .iter()
+            .all(|reason| !reason.contains("inherited from seed `handbook/playbooks/ops.md`")),
+        "an intermediate document must never be recorded as the seed: {:?}",
+        two_hop.match_reasons
+    );
+    assert_eq!(
+        two_hop
+            .match_reasons
+            .iter()
+            .filter(|reason| reason.starts_with("reached over relation"))
+            .count(),
+        2,
+        "both traversal steps stay visible: {:?}",
+        two_hop.match_reasons
+    );
+}
+
+#[test]
 fn baseline_repository_returns_the_same_report_shape() {
     let temp = baseline_repo();
     let payload = query(temp.path(), "widget calibrator recall");

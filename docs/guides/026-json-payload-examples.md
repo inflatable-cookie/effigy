@@ -3503,6 +3503,7 @@ section budget of 2 is what stopped the report.
       ],
       "hops": 0,
       "relation_path": [],
+      "seed_path": "handbook/bulletins/old.md",
       "match_kind": "lexical",
       "match_reasons": [
         "heading contains phrase `widget recall`",
@@ -3549,6 +3550,7 @@ section budget of 2 is what stopped the report.
       ],
       "hops": 0,
       "relation_path": [],
+      "seed_path": "handbook/playbooks/ops.md",
       "match_kind": "lexical",
       "match_reasons": ["section text contains `widget`"],
       "relevance": 3,
@@ -3578,7 +3580,13 @@ section budget of 2 is what stopped the report.
 A result reached by typed-relation traversal instead of a direct lexical match
 reports the edge it arrived on. `target` is the destination exactly as the
 source document declared it; the resolved graph identity is `to_path` and the
-result's own `record_id`. This block is the traversed result from
+result's own `record_id`.
+
+Lexical evidence belongs to the seed, not to the traversed result. `seed_path`
+names the document the evidence came from, and every inherited reason is
+prefixed with that path, so no reason can be read as a claim about this result's
+own section. `handbook/playbooks/ops.md` does not contain `calibrate`;
+`handbook/playbooks/setup.md` does. This block is the traversed result from
 `effigy --json docs context "calibrate"` against the same fixture.
 
 ```json
@@ -3598,6 +3606,7 @@ result's own `record_id`. This block is the traversed result from
   },
   "bytes": 59,
   "hops": 1,
+  "seed_path": "handbook/playbooks/setup.md",
   "match_kind": "relation",
   "relation_path": [
     {
@@ -3613,15 +3622,33 @@ result's own `record_id`. This block is the traversed result from
   ],
   "match_reasons": [
     "reached over relation `see-also` from `handbook/playbooks/setup.md`",
-    "section text contains `calibrate`"
+    "inherited from seed `handbook/playbooks/setup.md`: section text contains `calibrate`"
   ],
   "relevance": 3
 }
 ```
 
+A second hop keeps the original seed rather than reassigning it to the
+intermediate document, and the inherited reason is qualified exactly once. With
+`ops.md` linking onward to `rotation.md`, the two-hop result reports:
+
+```json
+{
+  "path": "handbook/playbooks/rotation.md",
+  "hops": 2,
+  "seed_path": "handbook/playbooks/setup.md",
+  "match_kind": "relation",
+  "match_reasons": [
+    "reached over relation `see-also` from `handbook/playbooks/ops.md`",
+    "reached over relation `see-also` from `handbook/playbooks/setup.md`",
+    "inherited from seed `handbook/playbooks/setup.md`: section text contains `calibrate`"
+  ]
+}
+```
+
 When traversal stops because the hop budget is spent, that reaches the aggregate
-truncation state and carries its own reason. This block is from the same fixture
-with an onward `See also` link added to `handbook/playbooks/ops.md`, queried as
+truncation state and carries its own reason. This block comes from the same
+`ops.md` -> `rotation.md` variant used above, queried as
 `effigy --json docs context "calibrate" --max-hops 1`:
 
 ```json
@@ -3631,7 +3658,7 @@ with an onward `See also` link added to `handbook/playbooks/ops.md`, queried as
   "byte_budget_reached": false,
   "hop_budget_reached": true,
   "omitted_sections": 0,
-  "used_bytes": 135,
+  "used_bytes": 141,
   "reasons": [
     "hop budget reached at 1 hop(s): further typed relations were not traversed"
   ]
