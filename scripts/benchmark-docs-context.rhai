@@ -19,10 +19,24 @@
 //              lexical evidence rather than competing with it; the typed-relation
 //              proof lives in the `generic-handbook` target, where the corpus is
 //              small enough for traversal to be observable.
-//   this file  second freeze. Three Effigy cases were re-anchored on surfaces
+//   b6a60e1b6  second freeze. Three Effigy cases were re-anchored on surfaces
 //              that survive their own lane closing, and the no-match query was
-//              replaced with terms that are genuinely absent. No ranking rule,
-//              weight, or budget default was changed at any point.
+//              replaced with terms that are genuinely absent. 10 of 11 held.
+//              `effigy-current-roadmap` missed: `docs/roadmaps/g08/README.md`
+//              ranked 6, not top three. Diagnosis: `roadmap` reaches 1540 of
+//              2319 scoped documents, so corpus weighting drops it, and the
+//              remaining terms (`generation`, `theme`, `purpose`) are section
+//              boilerplate. Relevance ranks before currentness by contract, so a
+//              lexically undiscriminating query is ordered by relevance noise.
+//              The declared historical rival did not outrank the expected source;
+//              only the top-three bound failed.
+//   this file  third freeze. `effigy-current-roadmap` is replaced by
+//              `effigy-current-over-archived`, because this repository has one
+//              active milestone and this lane closes it, so no durable
+//              current-roadmap anchor exists. The dated current-roadmap result
+//              from the first freeze is preserved in the card `1090` evidence
+//              log. No ranking rule, weight, or budget default was changed at
+//              any point.
 //
 // Two targets, both required:
 //
@@ -144,18 +158,21 @@ let targets = [
                 rival_path: "docs/roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md",
                 max_rank: 3,
             },
-            // Re-anchored in the second freeze. Both sides of this pair are
-            // generation front doors with the same kind and the same authority
-            // weight; only `Status:` differs, and neither is touched by the lane
-            // that ships this benchmark.
+            // Re-anchored in the third freeze; see the freeze history above.
+            // This repository has exactly one active milestone and this lane
+            // closes it, so no durable "current roadmap" anchor exists here.
+            // The contract claim is unchanged - a relevant current authority
+            // beats a relevant historical counterpart from the same family -
+            // and this guide pair carries it without expiring: guide `039`
+            // supersedes archived guide `032`, and both stay where they are.
             #{
-                id: "effigy-current-roadmap",
-                dimension: "current-roadmap",
+                id: "effigy-current-over-archived",
+                dimension: "current-vs-historical",
                 expect: "live-authority",
-                query: "roadmap generation theme purpose",
+                query: "docs drift monitoring consistency sweep",
                 extra_args: [],
-                expected_path: "docs/roadmaps/g08/README.md",
-                rival_path: "docs/roadmaps/g07/README.md",
+                expected_path: "docs/guides/039-docs-drift-monitoring.md",
+                rival_path: "docs/guides/archive/032-docs-consistency-sweep-and-changelog.md",
                 max_rank: 3,
             },
             // Re-anchored in the second freeze. The strict-lane front door is the
