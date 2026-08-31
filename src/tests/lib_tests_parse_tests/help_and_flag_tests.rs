@@ -1,7 +1,18 @@
 use crate::tests::prelude::{
-    parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpTopic,
-    PathBuf, TaskInvocation, TasksArgs,
+    parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpGroup,
+    HelpTopic, PathBuf, TaskInvocation, TasksArgs,
 };
+use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
+
+fn parse(args: &[&str]) -> Command {
+    parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed")
+}
+
+fn parse_error(args: &[&str]) -> String {
+    parse_command(args.iter().map(|arg| (*arg).to_owned()))
+        .expect_err("parse should fail")
+        .to_string()
+}
 
 #[test]
 fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
@@ -422,6 +433,101 @@ fn parse_migrate_help_is_scoped() {
         Command::Task(TaskInvocation {
             name: "migrate".to_owned(),
             args: vec!["--help".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn parse_bare_help_renders_general_help() {
+    assert_eq!(parse(&["help"]), Command::Help(HelpTopic::General));
+    assert_eq!(
+        parse(&["help", "--help"]),
+        Command::Help(HelpTopic::General)
+    );
+    assert_eq!(parse(&["--help"]), Command::Help(HelpTopic::General));
+}
+
+#[test]
+fn parse_help_group_topics_resolve_to_discovery_panels() {
+    for group in HelpGroup::ALL {
+        assert_eq!(parse(&["help", group.slug()]), Command::HelpGroup(*group));
+    }
+}
+
+#[test]
+fn parse_help_command_matches_direct_command_help() {
+    for (name, topic) in HELP_COMMAND_TOPICS {
+        assert_eq!(
+            parse(&["help", name]),
+            Command::Help(*topic),
+            "`effigy help {name}` should render the typed panel"
+        );
+        assert_eq!(
+            parse(&[name, "--help"]),
+            Command::Help(*topic),
+            "`effigy {name} --help` should render the same typed panel"
+        );
+    }
+}
+
+#[test]
+fn parse_unknown_help_topic_fails_with_group_and_command_guidance() {
+    let message = parse_error(&["help", "not-a-topic"]);
+    assert!(
+        message.contains("unknown help topic `not-a-topic`"),
+        "{message}"
+    );
+    for group in HelpGroup::ALL {
+        assert!(message.contains(group.slug()), "{message}");
+    }
+    assert!(message.contains("effigy help <group>"), "{message}");
+    assert!(message.contains("effigy help <command>"), "{message}");
+    for name in ["docs", "config", "scan"] {
+        assert!(message.contains(name), "guidance omits `{name}`: {message}");
+    }
+}
+
+#[test]
+fn parse_help_topic_for_builtin_owned_help_mirrors_the_direct_command() {
+    for name in ["config", "scan"] {
+        let expected = Command::Task(TaskInvocation {
+            name: name.to_owned(),
+            args: vec!["--help".to_owned()],
+        });
+        assert_eq!(parse(&[name, "--help"]), expected);
+        assert_eq!(
+            parse(&["help", name]),
+            expected,
+            "`effigy help {name}` must reuse the built-in's own help owner"
+        );
+    }
+}
+
+#[test]
+fn parse_help_rejects_more_than_one_topic() {
+    let message = parse_error(&["help", "repo", "docs"]);
+    assert!(message.contains("accepts one topic"), "{message}");
+}
+
+#[test]
+fn parse_help_group_words_stay_available_to_task_selectors() {
+    for group in HelpGroup::ALL {
+        assert_eq!(
+            parse(&[group.slug()]),
+            Command::Task(TaskInvocation {
+                name: group.slug().to_owned(),
+                args: Vec::new(),
+            }),
+            "`effigy {}` must keep task routing",
+            group.slug()
+        );
+    }
+
+    assert_eq!(
+        parse(&["repo", "docs"]),
+        Command::Task(TaskInvocation {
+            name: "repo".to_owned(),
+            args: vec!["docs".to_owned()],
         })
     );
 }

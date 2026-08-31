@@ -63,7 +63,8 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready help-first discovery card
+Return to planning for the catalog-pack acquisition prototype under
+architecture `026` and contract `043`; help-first discovery card
 [`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
-under architecture `026` and contract `043`.
+is complete.
 The second governance review remains due by 2026-09-17.

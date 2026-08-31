@@ -166,11 +166,6 @@ pub(crate) fn render_help_topic(
     (descriptor.render)(renderer, deferred_builtins)
 }
 
-pub(crate) fn general_help_command_rows(
-) -> impl Iterator<Item = (&'static str, &'static str, Option<&'static str>)> {
-    command_surface::general_help_command_rows()
-}
-
 fn render_general(
     renderer: &mut dyn HelpRenderer,
     deferred_builtins: &BTreeSet<String>,

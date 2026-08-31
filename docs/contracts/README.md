@@ -281,6 +281,7 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Execute ready card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
-No release action is implied.
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](./043-feature-placement-and-surface-migration-contract.md); card `1093`
+closed help-first discovery. Keep S3 extraction deferred until its consumer
+gate is proved. No release action is implied.

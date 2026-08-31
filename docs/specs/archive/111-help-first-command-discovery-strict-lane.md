@@ -1,11 +1,13 @@
 # 111 Help-First Command Discovery Strict Lane
 
-Status: Active
+Status: Complete
 Created: 2026-08-31
-Roadmap: [`g08.038`](../roadmaps/g08/038-help-first-command-discovery.md)
-Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
-Current ready card: [`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
+Closed: 2026-08-31
+Roadmap: [`g08.038`](../../roadmaps/g08/038-help-first-command-discovery.md)
+Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
+Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
+Completed card: [`1093`](../../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
+Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
 
 ## Outcome
 
@@ -76,5 +78,6 @@ Stop and return to the orchestrator if implementation:
 
 ## Next Task
 
-Execute ready card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
+This lane is complete and archived. Return to planning for the catalog-pack
+acquisition prototype; keep S3 extraction deferred until its consumer gate is
+proved.

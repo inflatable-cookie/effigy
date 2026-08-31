@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/31-233000-help-first-command-discovery-1093.md`](./2026-08/31-233000-help-first-command-discovery-1093.md)
 - [`2026-08/31-213000-northstar-profile-proof-1090.md`](./2026-08/31-213000-northstar-profile-proof-1090.md)
 - [`2026-08/31-181957-documentation-context-1089.md`](./2026-08/31-181957-documentation-context-1089.md)
 - [`2026-08/31-162015-external-skill-task-runner-closeout.md`](./2026-08/31-162015-external-skill-task-runner-closeout.md)
@@ -186,5 +187,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1093` under strict spec `111`. The second governance review
-remains due by 2026-09-17. No release action or generation rollover is implied.
+Card `1093` closed under archived strict spec `111`; return to planning for the
+catalog-pack acquisition prototype under contract `043`. The second governance
+review remains due by 2026-09-17. No release action or generation rollover is
+implied.

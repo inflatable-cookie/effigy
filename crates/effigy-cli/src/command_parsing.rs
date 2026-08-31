@@ -27,13 +27,14 @@ mod secrets;
 #[path = "command_parsing_state.rs"]
 mod state;
 
+use crate::command_surface;
 use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
-    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs,
-    PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, SkillArgs, SkillSubcommand,
-    TaskInvocation, TasksArgs, UninstallArgs,
+    DepsSubcommand, DoctorArgs, HelpGroup, HelpTopic, InternalContainerLeaseReaperArgs,
+    InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
+    InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, SkillArgs,
+    SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -65,7 +66,8 @@ where
 
     match cmd.as_str() {
         "--version" | "version" => parse_version_command(args),
-        "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::General)),
+        "help" => parse_help_command(args),
         "bundle" => parse_bundle_command(args),
         "catalog" => Err(CliParseError::InvalidArguments(
             "`effigy catalog` was removed with ambient catalog discovery; declare members in root `effigy.toml` and use `effigy tasks` to inspect effective membership".to_owned(),
@@ -863,6 +865,77 @@ where
 
 fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
     crate::help::builtin_help_topic(cmd)
+}
+
+/// Parse `effigy help [<group>|<command>]`.
+///
+/// Grouping is discovery only: this never produces an execution route, and an
+/// unknown topic fails instead of falling back to general help.
+fn parse_help_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut topic: Option<String> = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::General)),
+            // Trailing global flags stay accepted and inert, as they were before
+            // help gained topics.
+            "--json" => {}
+            "--repo" => {
+                parse_repo_path(&mut args)?;
+            }
+            _ if topic.is_none() => topic = Some(arg),
+            _ => {
+                return Err(CliParseError::InvalidArguments(format!(
+                    "`effigy help` accepts one topic; drop `{arg}` and {}",
+                    help_topic_guidance()
+                )))
+            }
+        }
+    }
+
+    let Some(topic) = topic else {
+        return Ok(Command::Help(HelpTopic::General));
+    };
+
+    if let Some(group) = HelpGroup::from_slug(&topic) {
+        return Ok(Command::HelpGroup(group));
+    }
+
+    if let Some(help_topic) = command_surface::help_topic_for_help_argument(&topic) {
+        return Ok(Command::Help(help_topic));
+    }
+
+    // `config` and `scan` own their detailed help inside the built-in itself.
+    // Resolve to the exact command value `effigy <name> --help` produces so the
+    // two spellings cannot drift in facts, output, or exit status.
+    if let Some(name) = command_surface::help_builtin_route(&topic) {
+        return Ok(Command::Task(TaskInvocation {
+            name: name.to_owned(),
+            args: vec!["--help".to_owned()],
+        }));
+    }
+
+    Err(CliParseError::InvalidArguments(format!(
+        "unknown help topic `{topic}`; {}",
+        help_topic_guidance()
+    )))
+}
+
+fn help_topic_guidance() -> String {
+    let groups = HelpGroup::ALL
+        .iter()
+        .map(|group| group.slug())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut command_names = command_surface::help_command_names().collect::<Vec<_>>();
+    command_names.sort_unstable();
+    let commands = command_names.join(", ");
+    format!(
+        "use `effigy help` for the grouped command list, `effigy help <group>` with one of {groups}, or `effigy help <command>` with one of {commands}"
+    )
 }
 
 fn parse_bundle_command<I>(args: I) -> Result<Command, CliParseError>

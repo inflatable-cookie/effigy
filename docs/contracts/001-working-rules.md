@@ -96,8 +96,8 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
-Cards `1089`, `1090`, and `1092` are complete.
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](./043-feature-placement-and-surface-migration-contract.md).
+Cards `1089`, `1090`, `1092`, and `1093` are complete.
 The scheduled second governance review remains due by 2026-09-17. No release
 work or generation rollover is implied.

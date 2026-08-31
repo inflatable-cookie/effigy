@@ -1,71 +1,22 @@
 use std::collections::BTreeSet;
 
+use crate::command_surface::{general_help_entries_for_group, GeneralHelpEntry, HelpGroup};
+
 use super::super::{HelpRenderer, HelpResult, KeyValue, NoticeLevel, TableSpec};
 
 pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
-    let commands = crate::help::general_help_command_rows()
-        .chain([
-            (
-                "effigy version",
-                "Print the current Effigy version (same as --version)",
-                None,
-            ),
-            (
-                "effigy tasks migrate",
-                "Import package scripts into `[tasks]` with preview/apply flow",
-                None,
-            ),
-            (
-                "effigy tasks unlock",
-                "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
-                None,
-            ),
-            (
-                "effigy tasks cache",
-                "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-                None,
-            ),
-            (
-                "effigy config",
-                "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
-                None,
-            ),
-            (
-                "effigy config completion",
-                "Generate shell completion scripts and selector candidates",
-                None,
-            ),
-            (
-                "effigy scan",
-                "Run built-in repository scanners such as `god-files` and `attention-markers`",
-                None,
-            ),
-            ("effigy <task>", "Resolve task across effective catalogs", None),
-            (
-                "effigy <catalog>/<task>",
-                "Run task from explicit catalog alias",
-                None,
-            ),
-            (
-                "effigy <managed-task> --headless",
-                "Run a managed concurrent task without the terminal UI; inspect it with task-local status, logs, and stop companions",
-                None,
-            ),
-        ])
-        .collect::<Vec<_>>();
     renderer.section("Commands")?;
-    renderer.table(&TableSpec::new(
-        Vec::new(),
-        commands
-            .into_iter()
-            .filter(|(_, _, builtin)| builtin.is_none_or(|name| !deferred_builtins.contains(name)))
-            .map(|(command, description, _)| vec![command.to_owned(), description.to_owned()])
-            .collect::<Vec<Vec<String>>>(),
-    ))?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Commands are grouped by job. Use `effigy help <group>` for one group and `effigy help <command>` for command detail.",
+    )?;
     renderer.text("")?;
+    for group in HelpGroup::ALL {
+        render_group_section(renderer, *group, deferred_builtins)?;
+    }
     renderer.notice(
         NoticeLevel::Info,
         "Use `effigy <built-in-task> --help`, `effigy tasks <helper> --help`, or `effigy config completion --help` for task-specific flags and examples.",
@@ -84,4 +35,51 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
     ])?;
     Ok(())
+}
+
+/// Render one `effigy help <group>` panel.
+pub(crate) fn render_help_group<R: HelpRenderer + ?Sized>(
+    renderer: &mut R,
+    group: HelpGroup,
+    deferred_builtins: &BTreeSet<String>,
+) -> HelpResult<()> {
+    render_group_section(renderer, group, deferred_builtins)?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Run these commands directly: help grouping adds discovery only, never an `effigy <group> <command>` route.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy help <command>` for command detail, or `effigy help` for every group.",
+    )?;
+    Ok(())
+}
+
+fn render_group_section<R: HelpRenderer + ?Sized>(
+    renderer: &mut R,
+    group: HelpGroup,
+    deferred_builtins: &BTreeSet<String>,
+) -> HelpResult<()> {
+    renderer.section(group.title())?;
+    renderer.text(group.summary())?;
+    renderer.text("")?;
+    renderer.table(&TableSpec::new(
+        Vec::new(),
+        visible_group_rows(group, deferred_builtins)
+            .map(|entry| vec![entry.command.to_owned(), entry.description.to_owned()])
+            .collect::<Vec<Vec<String>>>(),
+    ))?;
+    renderer.text("")?;
+    Ok(())
+}
+
+fn visible_group_rows<'a>(
+    group: HelpGroup,
+    deferred_builtins: &'a BTreeSet<String>,
+) -> impl Iterator<Item = &'static GeneralHelpEntry> + 'a {
+    general_help_entries_for_group(group).filter(|entry| {
+        entry
+            .deferred_builtin
+            .is_none_or(|name| !deferred_builtins.contains(name))
+    })
 }

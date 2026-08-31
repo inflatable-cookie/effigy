@@ -17,6 +17,12 @@ effigy init
 effigy tasks
 ```
 
+`effigy --help` and `effigy help` group the built-in surface by job: `work`,
+`local`, `repo`, `deliver`, `extend`, and `admin`. Narrow to one group with
+`effigy help repo`, or ask for one command with `effigy help docs` (the same
+panel as `effigy docs --help`). Grouping is discovery only — every command still
+runs exactly as it does today, and there is no `effigy <group> <command>` route.
+
 The default **`minimal`** `init` also drops a root **`README.md`** when that path
 is empty; if you already have a project README there, Effigy **skips** it unless
 you pass **`--force`**.
@@ -121,9 +127,17 @@ effigy --repo /path/to/other-project test
 
 # Ask for help on any command
 effigy --help
+effigy help repo
+effigy help release
+effigy help config
 effigy test --help
 effigy release --help
 ```
+
+`effigy help <command>` works for every command in the inventory, including the
+ones whose detailed help lives in the built-in itself (`config`, `scan`). It
+resolves to the same thing `effigy <command> --help` runs, so the two always
+agree.
 
 Use `--json` when another tool needs to parse the output.  
 Use `--repo` when you want to run Effigy against a repo that is not your current directory.  

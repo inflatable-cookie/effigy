@@ -40,7 +40,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::InternalHostProcessSupervise(_) => None,
         Command::InternalHostProcessStop(_) => None,
         Command::Task(_) => super::task_repo_override(cmd),
-        Command::Help(_) => None,
+        Command::Help(_) | Command::HelpGroup(_) => None,
     }
 }
 
@@ -94,7 +94,8 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         | Command::InternalHostProcessSupervise(_)
         | Command::InternalHostProcessStop(_)
         | Command::Task(_)
-        | Command::Help(_) => {}
+        | Command::Help(_)
+        | Command::HelpGroup(_) => {}
     }
     command
 }

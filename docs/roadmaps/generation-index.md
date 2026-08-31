@@ -206,9 +206,9 @@ and contract `042`. Card `1092` added explicit isolated skill-task execution
 with a separate consumer target and returned the queue to card `1089`, which
 has since closed.
 
-`g08.038` is active under strict spec `111`, architecture `026`, and contract
-`043`. Ready card `1093` adds help-first command discovery without executable
-group aliases or selector-routing changes.
+`g08.038` is complete under archived strict spec `111`, architecture `026`, and
+contract `043`. Card `1093` added help-first command discovery without
+executable group aliases or selector-routing changes.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -233,8 +233,8 @@ Horizon summary:
    research Phase 3 only after B–C discipline.
 
 The documentation-context lane closed on 2026-08-31; strict specs `108`, `109`,
-and `110` are archived. Strict spec `111` now governs the bounded help-first
-follow-through. Do not open `g09` or start release work from this selection.
+`110`, and `111` are archived. The bounded help-first follow-through closed with
+card `1093`. Do not open `g09` or start release work from this selection.
 
 ## Research Roadmaps
 
@@ -267,7 +267,8 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card
-[`1093`](./g08/batch-cards/1093-add-help-first-command-discovery.md).
-The second governance review remains due by 2026-09-17. No release action or
-`g09` rollover is implied.
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md);
+card [`1093`](./g08/batch-cards/1093-add-help-first-command-discovery.md) is
+complete. The second governance review remains due by 2026-09-17. No release
+action or `g09` rollover is implied.

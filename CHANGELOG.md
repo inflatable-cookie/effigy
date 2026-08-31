@@ -7,6 +7,13 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy --help` and `effigy help` now group the built-in command surface by
+  operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
+  and `admin`. `effigy help <group>` renders one group's inventory, and
+  `effigy help <command>` renders the same panel as `effigy <command> --help`.
+  Grouping is discovery only: no `effigy <group> <command>` route exists, no new
+  top-level built-in name is reserved, and a manifest task named after a group
+  keeps its current routing.
 - The `northstar` starter now emits the full Northstar documentation ontology as
   a `[docs_policy.graph]` block: 14 document kinds with authority weights,
   `Status:`-driven currentness, and typed `contract`, `architecture`, `spec`,
@@ -80,6 +87,11 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Changed
+- `effigy help <topic>` no longer silently falls back to general help. An
+  unknown topic now fails with exit code `2` and names the valid groups and
+  commands. When a manifest selector or `[defer] builtins` entry owns a built-in
+  name, `effigy help <command>` defers with `effigy <command> --help` instead of
+  showing the built-in panel, and never executes the repository's task.
 - Markdown graph documents no longer infer kinds from path prefixes such as
   `docs/contracts/` or `docs/guides/`. Baseline kind is `document`; a
   repository profile assigns kinds.

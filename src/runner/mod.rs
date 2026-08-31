@@ -60,7 +60,9 @@ pub use command_context::command_repo_override_for_context;
 pub(in crate::runner) use container_command::run_container;
 pub(in crate::runner) use contracts_command::run_contracts;
 pub(in crate::runner) use defer_command::run_defer;
-pub(crate) use deferral::{deferred_builtins_for_root, deferred_builtins_from_catalogs};
+pub(crate) use deferral::{
+    deferred_builtins_for_root, deferred_builtins_from_catalogs, root_manifest_declares_task,
+};
 pub(in crate::runner) use demo_command::run_demo;
 pub(in crate::runner) use deploy_command::run_deploy;
 pub(in crate::runner) use deps_command::run_deps;

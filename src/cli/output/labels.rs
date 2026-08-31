@@ -41,6 +41,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Version => ("version", "version".to_owned()),
         Command::Bundle(_) => ("bundle", "bundle".to_owned()),
         Command::Help(topic) => ("help", help_topic_label(*topic).to_owned()),
+        Command::HelpGroup(group) => ("help", group.slug().to_owned()),
         Command::Changelog(_) => ("changelog", "changelog".to_owned()),
         Command::Deploy(_) => ("deploy", "deploy".to_owned()),
         Command::Deps(_) => ("deps", "deps".to_owned()),

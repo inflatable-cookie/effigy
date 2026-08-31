@@ -1,7 +1,13 @@
 # Built-In Surfaces
 
 Lookup for Effigy **built-ins** (not manifest task names). Run `effigy --help`
-for the live list. Use `effigy <topic> --help` for flags.
+for the live list, grouped by job. Use `effigy <topic> --help` for flags.
+
+`effigy help <group>` narrows the live list to one job: `work`, `local`, `repo`,
+`deliver`, `extend`, or `admin`. `effigy help <command>` renders the same panel
+as `effigy <command> --help`. Grouping is discovery only — there is no
+`effigy <group> <command>` route, and group words stay available as manifest
+selectors.
 
 ## Default agent loop
 

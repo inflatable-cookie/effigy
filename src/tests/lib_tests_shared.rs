@@ -1,5 +1,5 @@
 pub(super) use crate::render_cli_header;
-pub(super) use effigy_cli::help::ui::render_help;
+pub(super) use effigy_cli::help::ui::{render_help, render_help_group_with_deferred_builtins};
 pub(super) use effigy_cli::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
     strip_global_json_flags, ArtifactArgs, ArtifactSubcommand, BootstrapArgs,
@@ -8,10 +8,10 @@ pub(super) use effigy_cli::{
     ContractsSubcommand, DeferArgs, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode,
     DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs,
     DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs,
-    ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
-    ServiceSubcommand, SkillArgs, SkillSubcommand, StateArgs, StateSubcommand, SystemArgs,
-    SystemSubcommand, TaskInvocation, TasksArgs, UninstallArgs, WorkspaceArgs,
+    ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpGroup, HelpTopic,
+    ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand,
+    ServiceArgs, ServiceSubcommand, SkillArgs, SkillSubcommand, StateArgs, StateSubcommand,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, UninstallArgs, WorkspaceArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;
@@ -19,6 +19,17 @@ pub(super) use std::path::PathBuf;
 pub(crate) fn render_help_text(topic: HelpTopic) -> String {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_help(&mut renderer, topic).expect("help render");
+    String::from_utf8(renderer.into_inner()).expect("utf8")
+}
+
+pub(crate) fn render_help_group_text(group: HelpGroup) -> String {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help_group_with_deferred_builtins(
+        &mut renderer,
+        group,
+        &std::collections::BTreeSet::new(),
+    )
+    .expect("group help render");
     String::from_utf8(renderer.into_inner()).expect("utf8")
 }
 
