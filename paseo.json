@@ -1,0 +1,24 @@
+{
+  "worktree": {
+    "setup": "effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- prepare && effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- link",
+    "teardown": "effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- unlink"
+  },
+  "scripts": {
+    "qa": { "command": "effigy qa" },
+    "docs": { "command": "effigy qa:docs" }
+  },
+  "metadataGeneration": {
+    "title": {
+      "instructions": "Name the bounded Effigy outcome in a few words using repo language; no leading verb."
+    },
+    "branchName": {
+      "instructions": "Use worker/<short-kebab-case-outcome> for implementation lanes. For other work, use a short kebab-case name. Do not invent type prefixes this repository does not use."
+    },
+    "commitMessage": {
+      "instructions": "Use a short imperative subject, optionally with a Conventional Commit type and scope such as docs:, docs(handoff):, fix:, fix(init):, or deps:. Do not put the GitHub PR number in the subject."
+    },
+    "pullRequest": {
+      "instructions": "Lead with the shipped outcome. Name governing docs or the worker handoff when one exists. List validation actually run and any unresolved items. Do not claim merge authority."
+    }
+  }
+}
