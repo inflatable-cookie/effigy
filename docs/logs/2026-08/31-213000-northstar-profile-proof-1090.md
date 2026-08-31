@@ -150,16 +150,23 @@ is red.
 
 ### Freeze discipline
 
-The corpus was committed before every run. Five freezes, all replayable:
+The corpus was committed before every run. Five freezes changed the matrix; a
+sixth state replayed the unchanged matrix after review repair. All six are
+replayable:
 
-| Freeze | Commit | Result |
-| --- | --- | --- |
-| 1 | `398a698f2` | 9/11 |
-| 2 | `b6a60e1b6` | 10/11 |
-| 3 | `b05a7928a` | 10/11 |
-| 4 | `8c72bed4f` | 11/11 |
-| 5 | `892691f31` | 12/12 |
-| 6 | this branch, after review repair | 12/12 on the integrated corpus |
+| State | Commit | Change to the matrix | Result |
+| --- | --- | --- | --- |
+| freeze 1 | `398a698f2` | initial corpus | 9/11 |
+| freeze 2 | `b6a60e1b6` | no-match query and two Effigy anchors respecified | 10/11 |
+| freeze 3 | `b05a7928a` | current-roadmap case replaced | 10/11 |
+| freeze 4 | `8c72bed4f` | mis-specified currentness slot removed | 11/11 |
+| freeze 5 | `892691f31` | `generic-no-match` added; no-match literal confined to the script | 12/12 |
+| replay | `1c722c5a8` | none; script expression shape only | 12/12 on the corpus integrated with `main` |
+
+Only the five freezes are subject to the freeze discipline, because only they
+changed what the benchmark asserts. The sixth state is a replay: it reshaped the
+script so it parses under Rhai's debug-build nesting cap and re-ran the identical
+matrix against a larger corpus.
 
 Every miss and its diagnosis:
 
@@ -306,8 +313,12 @@ repaired on this branch.
    fails both `documentation_graph_runtime_inventory_is_current` and
    `documentation_graph_runtime_logic_carries_no_northstar_vocabulary`.
 5. **Freeze count was internally inconsistent (validation-gap).** The narrative
-   said four freezes above a five-row table. Corrected, and the table now carries
-   the sixth entry for the post-repair replay.
+   said four freezes above a five-row table. The first correction said five above
+   a six-row table, which was the same defect one row along: the sixth row is not
+   a freeze. The table now distinguishes the five matrix-changing freezes from
+   the one post-repair replay, names what each freeze changed, and says plainly
+   that only the freezes carry the freeze discipline. The script history uses the
+   same split.
 
 ## Validation
 

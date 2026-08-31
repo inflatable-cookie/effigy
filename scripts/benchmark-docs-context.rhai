@@ -6,7 +6,9 @@
 // tuning a query after seeing a result. A miss is recorded and diagnosed, not
 // edited away.
 //
-// Freeze history, so a reviewer can replay any state:
+// History, so a reviewer can replay any state. Five freezes changed the matrix
+// and carry the freeze discipline; the sixth state is a replay that changed no
+// case at all.
 //
 //   398a698f2  first freeze. 9 of 11 cases held, including every live-authority
 //              and historical-retrieval case. Two cases missed for reasons in
@@ -52,7 +54,7 @@
 //              result from the first freeze is preserved in the card `1090`
 //              evidence log. No ranking rule, authority weight, or budget default
 //              was changed at any point in this history.
-//   this file  fifth freeze. `generic-no-match` added, and the `effigy-no-match`
+//   892691f31  fifth freeze. `generic-no-match` added, and the `effigy-no-match`
 //              literal confined to this file. That case asserts an empty report
 //              against this repository's own corpus, whose profile roots include
 //              docs/, README.md, AGENTS.md, CHANGELOG.md, and PAPERCUTS.md, so
@@ -60,12 +62,12 @@
 //              non-zero document frequency and turns the case red. It broke
 //              exactly that way twice while the card `1090` evidence log was
 //              being written. 12/12 hold.
-//   this file  sixth entry, after orchestrator review. No case, query, expected
-//              source, rival, or pass criterion changed; only the script's
-//              expression shape, which had to shrink to parse under Rhai's
-//              debug-build nesting cap. Replayed against the corpus integrated
-//              with `main` at `db98139a9`: 12/12 hold, every rank unchanged, two
-//              context-byte figures moved with the corpus.
+//   this file  replay, after orchestrator review. Not a freeze: no case, query,
+//              expected source, rival, or pass criterion changed; only the
+//              script's expression shape, which had to shrink to parse under
+//              Rhai's debug-build nesting cap. Replayed against the corpus
+//              integrated with `main` at `db98139a9`: 12/12 hold, every rank
+//              unchanged, two context-byte figures moved with the corpus.
 //
 // Two targets, both required:
 //
