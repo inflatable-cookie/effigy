@@ -17,7 +17,7 @@ Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
 `030`, `031`, `032`, `033`, `034`, `035`, `036`, `037`, `038`, `039`, and
 `040`, plus documentation-graph contract `041` and active external skill-task
-contract `042`.
+contract `042`, plus feature-placement and surface-migration contract `043`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -162,6 +162,12 @@ new reusable-core work.
 - [`041-documentation-graph-profile-contract.md`](./041-documentation-graph-profile-contract.md):
   repository-owned documentation graph profiles, exact Markdown semantics,
   bounded context retrieval, and the Northstar runtime-independence boundary.
+- [`042-external-skill-task-runner-contract.md`](./042-external-skill-task-runner-contract.md):
+  installed task-source and consumer-target separation, isolation, rejection,
+  execution, and evidence rules.
+- [`043-feature-placement-and-surface-migration-contract.md`](./043-feature-placement-and-surface-migration-contract.md):
+  semantic core placement, group-first alias-stable commands, catalog-pack
+  simplicity, release/distribution separation, and the S3 consumer gate.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -205,6 +211,7 @@ new reusable-core work.
 | `040-bun-committed-dependency-pinning-contract.md` | Platform maintainers | Pin/unpin grammar, closure selection, override conflict policy, manifest write safety, path portability, link interaction, or JSON payload shape | Focused deps, CLI, runner, JSON, and Soundcheck/Poodle consumer proofs |
 | `041-documentation-graph-profile-contract.md` | Platform maintainers | Profile grammar, section boundaries, currentness, authority ranking, context budgets, JSON shape, freshness identity, or Northstar runtime independence | Planning review against `g08.035`; focused manifest, codegraph, CLI, docs, JSON, generic-fixture, and Northstar-starter proofs during implementation |
 | `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
+| `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX, release/distribution ownership, or S3 consumer migration state | Decision-prototype review before roadmap compilation; focused parity, consumer, offline, release-safety, docs, JSON, and full Effigy QA during implementation |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -268,7 +275,9 @@ implemented committed Bun override boundary distinct from machine-local
 linking, and `041-documentation-graph-profile-contract.md` as the active
 repository-defined documentation graph and bounded retrieval boundary, and
 `042-external-skill-task-runner-contract.md` as the explicit external task
-source and consumer runtime target boundary.
+source and consumer runtime target boundary, and
+`043-feature-placement-and-surface-migration-contract.md` as the semantic core,
+alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 

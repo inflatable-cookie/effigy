@@ -39,6 +39,7 @@ Policy:
 | Semantic versions | `semver::parse`, `semver::valid`, `semver::compare`, `semver::satisfies`, `semver::bump_major`, `semver::bump_minor`, `semver::bump_patch` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
 | Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
+| Object storage | `storage::provider`, `storage::status`, `storage::ls`, `storage::head`, `storage::get`, `storage::put`, `storage::delete` | Exposed; temporarily retained under contract 043's consumer gate |
 | Interactive prompts | `prompt::confirm`, `prompt::input` | Exposed; requires TTY stdin and stdout |
 | Git repository operations | `git::status`, `git::working_tree_clean`, `git::assert_clean`, `git::current_branch`, `git::rev_parse`, `git::changed_files`, `git::diff_name_only`, `git::branch_exists`, `git::commit_exists`, `git::merge_base`, `git::is_ancestor`, `git::remote_url`, `git::upstream_branch`, `git::switch`, `git::create_branch`, `git::checkout`, `git::fetch`, `git::pull`, `git::push`, `git::add`, `git::commit` | Exposed |
 | Source forge operations | `forge::provider`, `forge::status`, `forge::pr_view`, `forge::pr_list`, `forge::pr_create`, `forge::pr_checkout` | Exposed for GitHub via `gh`; adapter-shaped for future providers |
@@ -92,6 +93,14 @@ None currently tracked.
 | Init | Interactive scaffolding with TTY prompts |
 | Watch | Long-running file-watching loops |
 | Tasks migrate | One-shot import utility |
+
+## Temporary S3 Consumer Boundary
+
+`bovine-accelerator` currently relies on the object-storage helpers for media
+uploads. Keep that surface available until `bovine-accelerator-desktop` owns the
+replacement path and the consumer migration satisfies
+[contract 043](../contracts/043-feature-placement-and-surface-migration-contract.md).
+Extraction remains a placement direction, not current removal authority.
 
 ## Return Shapes
 
