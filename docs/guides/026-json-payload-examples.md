@@ -3427,6 +3427,136 @@ secret values in JSON or text output. Export metadata adds `action = "export"`,
 }
 ```
 
+### Bounded Documentation Context (`effigy.docs.context.v1`)
+
+`effigy docs context <QUERY>` returns exact repository sections, never a
+generated summary. Relevance gates inclusion; currentness and authority only
+order results that already match. Here the historical authority-20 bulletin
+outranks the current authority-80 playbook because the query names it directly.
+
+```json
+{
+  "schema": "effigy.docs.context.v1",
+  "schema_version": 1,
+  "query": "widget recall",
+  "repo_root": "/workspace/handbook-repo",
+  "profile": {
+    "state": "configured",
+    "fingerprint": "444de88aa08619d6371dafa168ea41f743300ac90d2f0d4ff31e843e83553c80",
+    "roots": ["handbook"],
+    "fields": ["state", "steward"],
+    "kinds": ["bulletin", "playbook"],
+    "relations": ["see-also"],
+    "scoped_documents": 3
+  },
+  "freshness": {
+    "state": "ready",
+    "summary": "graph index is current",
+    "usable": true,
+    "stale": false,
+    "stale_path_count": 0,
+    "failed_path_count": 0,
+    "stale_paths": []
+  },
+  "budgets": {
+    "requested": { "max_sections": 2, "max_bytes": 4000, "max_hops": null },
+    "applied": { "max_sections": 2, "max_bytes": 4000, "max_hops": 1 },
+    "defaults": { "max_sections": 8, "max_bytes": 24000, "max_hops": 1 },
+    "maximum": { "max_sections": 32, "max_bytes": 100000, "max_hops": 3 }
+  },
+  "terms": [
+    { "term": "widget", "document_frequency": 3, "weighted": true },
+    { "term": "recall", "document_frequency": 1, "weighted": true }
+  ],
+  "results": [
+    {
+      "rank": 1,
+      "record_id": "symbol:doc:handbook/bulletins/old.md:#widget-recall",
+      "path": "handbook/bulletins/old.md",
+      "heading": "Widget recall",
+      "anchor": "widget-recall",
+      "section_kind": "heading-h2",
+      "document_kind": "bulletin",
+      "authority": 20,
+      "currentness": "historical",
+      "span": {
+        "start": { "line": 5, "column": 0, "byte": 36 },
+        "end": { "line": 8, "column": 0, "byte": 83 }
+      },
+      "bytes": 47,
+      "source": "## Widget recall\n\nThe widget recall is closed.\n",
+      "fields": [
+        {
+          "field": "state",
+          "value": "retired",
+          "span": {
+            "start": { "line": 3, "column": 0, "byte": 20 },
+            "end": { "line": 3, "column": 14, "byte": 34 }
+          }
+        }
+      ],
+      "hops": 0,
+      "relation_path": [],
+      "match_kind": "lexical",
+      "match_reasons": [
+        "heading contains phrase `widget recall`",
+        "section text contains phrase `widget recall`",
+        "heading contains `widget`",
+        "heading contains `recall`"
+      ],
+      "relevance": 90,
+      "provenance": {
+        "extractor_id": "markdown-anchors",
+        "extractor_version": "0.2.0",
+        "source_path": "handbook/bulletins/old.md",
+        "confidence": "exact",
+        "detail": "heading"
+      }
+    }
+  ],
+  "truncation": {
+    "truncated": true,
+    "section_budget_reached": true,
+    "byte_budget_reached": false,
+    "hop_budget_reached": false,
+    "omitted_sections": 1,
+    "used_bytes": 86,
+    "reasons": ["section budget reached after 2 sections"]
+  },
+  "diagnostics": [],
+  "next": ["raise `--max-sections` to include more sections"]
+}
+```
+
+A result reached by typed-relation traversal instead of a direct lexical match
+reports the edge it arrived on:
+
+```json
+{
+  "rank": 3,
+  "path": "handbook/playbooks/ops.md",
+  "heading": null,
+  "section_kind": "document",
+  "hops": 1,
+  "match_kind": "relation",
+  "relation_path": [
+    {
+      "relation": "see-also",
+      "from_path": "handbook/playbooks/setup.md",
+      "to_path": "handbook/playbooks/ops.md",
+      "target": "ops.md",
+      "span": {
+        "start": { "line": 5, "column": 0, "byte": 41 },
+        "end": { "line": 5, "column": 22, "byte": 63 }
+      }
+    }
+  ],
+  "match_reasons": [
+    "reached over relation `see-also` from `handbook/playbooks/setup.md`"
+  ]
+}
+```
+
 ## Notes
 
 - Field sets can grow with new optional keys while retaining schema compatibility.

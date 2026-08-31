@@ -25,14 +25,14 @@ Northstar files or skills.
 
 - [x] card `1088`: build typed repository profiles, exact sections, fields,
       relations, and profile-aware freshness
-- [ ] card `1089`: add bounded `effigy docs context` retrieval, CLI/help, and
-      versioned JSON now that card `1091` has closed the overlapping maintenance
-      lane
+- [x] card `1089`: add bounded `effigy docs context` retrieval, CLI/help, and
+      versioned JSON
 - [ ] card `1090`: prove generic and Northstar profiles, publish adoption
       guidance, benchmark retrieval, validate, and close the lane
 
-Card `1089` resumed on 2026-08-31 after external skill-task card `1092` closed
-with full runtime, JSON, docs, and Northstar-smoke evidence.
+Card `1089` closed on 2026-08-31 with evidence
+[`31-181957-documentation-context-1089.md`](../../logs/2026-08/31-181957-documentation-context-1089.md),
+making card `1090` ready.
 
 ## Owner And Seam
 
@@ -52,12 +52,12 @@ profile into a repository but are never consulted at runtime.
 
 ## Acceptance
 
-- [ ] repositories with and without profiles both get useful docs context
-- [ ] arbitrary repository vocabularies work without code changes
-- [ ] exact section evidence includes path, span, facts, currentness, authority,
+- [x] repositories with and without profiles both get useful docs context
+- [x] arbitrary repository vocabularies work without code changes
+- [x] exact section evidence includes path, span, facts, currentness, authority,
       relation path, and match reason
-- [ ] output budgets and deterministic ordering hold in text and JSON
-- [ ] profile changes participate in graph freshness
+- [x] output budgets and deterministic ordering hold in text and JSON
+- [x] profile changes participate in graph freshness
 - [ ] the Northstar starter is committed configuration, not runtime inheritance
 - [ ] a benchmark corpus returns the expected live authority within the top
       three results and does not rank a historical-only counterpart above it
@@ -66,4 +66,4 @@ profile into a repository but are never consulted at runtime.
 ## Next Task
 
 Execute ready card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](./batch-cards/1090-prove-generic-and-northstar-profiles.md).

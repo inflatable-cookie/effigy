@@ -31,6 +31,13 @@
       "status": "active"
     },
     {
+      "schema": "effigy.docs.context.v1",
+      "schema_version": 1,
+      "command": "effigy --json docs context \"widget calibration\" --repo <fixture_docs_context>",
+      "surface": "bounded documentation context retrieval",
+      "status": "active"
+    },
+    {
       "schema": "effigy.command.v1",
       "schema_version": 1,
       "command": "effigy --json deps --repo <fixture_task_success>",

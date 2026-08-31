@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/31-181957-documentation-context-1089.md`](./2026-08/31-181957-documentation-context-1089.md)
 - [`2026-08/31-162015-external-skill-task-runner-closeout.md`](./2026-08/31-162015-external-skill-task-runner-closeout.md)
 - [`2026-08/31-151155-external-skill-task-runner-planning.md`](./2026-08/31-151155-external-skill-task-runner-planning.md)
 - [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](./2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
@@ -184,6 +185,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1092`, then resume card `1089`. The second governance
-review remains due by 2026-09-17. No release action or generation rollover is
-implied.
+Execute ready card `1090`. Cards `1088`, `1089`, and `1092` are complete. The
+second governance review remains due by 2026-09-17. No release action or
+generation rollover is implied.

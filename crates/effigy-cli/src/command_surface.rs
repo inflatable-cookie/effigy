@@ -139,7 +139,7 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         topic: HelpTopic::Docs,
         command_name: Some("docs"),
         general_help_command: Some("effigy docs"),
-        general_help_description: Some("Run reusable docs QA checks such as markdown link, JSON example, and index validation"),
+        general_help_description: Some("Run reusable docs QA checks and bounded `docs context` documentation retrieval"),
         deferred_builtin: Some("docs"),
     },
     CommandDescriptor {

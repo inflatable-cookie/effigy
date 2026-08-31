@@ -7,10 +7,12 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1089`](./1089-add-bounded-documentation-context-query.md)
 
-Status: Pending
+Status: Ready
 Owner: cross-repo proof, starter adoption, and lane closeout
 Created: 2026-08-29
 Ready after: card `1089` closeout proves the public query contract
+Ready since: 2026-08-31, on card `1089` evidence
+[`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md)
 
 ## Purpose
 

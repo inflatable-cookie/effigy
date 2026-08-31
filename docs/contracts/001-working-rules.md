@@ -97,8 +97,7 @@ one vague “polish” lane.
 ## Next Task
 
 Execute ready card
-[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md),
-then resume
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+Cards `1089` and `1092` are complete.
 The scheduled second governance review remains due by 2026-09-17. No release
 work or generation rollover is implied.

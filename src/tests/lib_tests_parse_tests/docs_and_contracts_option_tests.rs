@@ -389,6 +389,101 @@ fn parse_docs_removed_flat_check_spelling_reports_unknown_argument() {
 }
 
 #[test]
+fn parse_docs_context_with_budgets_and_repo_override() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "context".to_owned(),
+        "graph freshness".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--max-sections".to_owned(),
+        "4".to_owned(),
+        "--max-bytes".to_owned(),
+        "8000".to_owned(),
+        "--max-hops".to_owned(),
+        "2".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::Context {
+                query: "graph freshness".to_owned(),
+                max_sections: Some(4),
+                max_bytes: Some(8000),
+                max_hops: Some(2),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_docs_context_defaults_budgets_to_none() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "context".to_owned(),
+        "release gates".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::Context {
+                query: "release gates".to_owned(),
+                max_sections: None,
+                max_bytes: None,
+                max_hops: None,
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_docs_context_requires_one_query() {
+    let missing = parse_command(vec!["docs".to_owned(), "context".to_owned()])
+        .expect_err("missing query should fail");
+    assert_eq!(missing.to_string(), "<QUERY> requires a value");
+
+    let extra = parse_command(vec![
+        "docs".to_owned(),
+        "context".to_owned(),
+        "one".to_owned(),
+        "two".to_owned(),
+    ])
+    .expect_err("second positional should fail");
+    assert_eq!(extra.to_string(), "unknown argument: two");
+}
+
+#[test]
+fn parse_docs_context_rejects_non_positive_budgets() {
+    for (flag, value) in [
+        ("--max-sections", "0"),
+        ("--max-bytes", "0"),
+        ("--max-hops", "nope"),
+    ] {
+        let error = parse_command(vec![
+            "docs".to_owned(),
+            "context".to_owned(),
+            "query".to_owned(),
+            flag.to_owned(),
+            value.to_owned(),
+        ])
+        .expect_err("invalid budget should fail");
+        assert_eq!(
+            error.to_string(),
+            format!("{flag} value `{value}` is invalid (expected a positive integer)")
+        );
+    }
+}
+
+#[test]
 fn parse_contracts_validate_selection_with_overrides() {
     let cmd = parse_command(vec![
         "contracts".to_owned(),

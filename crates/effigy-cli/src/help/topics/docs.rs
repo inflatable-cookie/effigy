@@ -9,6 +9,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "docs",
     notices: &[
         "Run reusable markdown/documentation validation checks without dropping into shell scripts.",
+        "`docs context` retrieves bounded exact documentation sections with provenance from the shared graph; it returns source evidence, never a generated summary.",
         "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
     ],
     usage: &[
@@ -22,6 +23,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]",
         "effigy docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]",
         "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
+        "effigy docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]",
         "effigy --json docs check links [--repo <PATH>] [<FILE>...]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -79,6 +81,22 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
             "<LOG_FILE>",
             "Log path to insert into `docs/logs/README.md` for `add-log-index`",
         ),
+        (
+            "<QUERY>",
+            "Free-text query for `docs context`; an empty query is a usage error",
+        ),
+        (
+            "--max-sections <N>",
+            "Cap returned `docs context` sections (default 8, maximum 32)",
+        ),
+        (
+            "--max-bytes <N>",
+            "Cap total `docs context` evidence bytes (default 24000, maximum 100000)",
+        ),
+        (
+            "--max-hops <N>",
+            "Cap `docs context` typed-relation traversal depth (default 1, maximum 3)",
+        ),
     ],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable validation payloads"),
@@ -97,6 +115,9 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy docs check next-action --policy vision",
         "effigy docs check workflow-paths",
         "effigy docs add-log-index docs/logs/2026-03/02-160000-my-log.md",
+        "effigy docs context \"graph freshness\"",
+        "effigy docs context \"release gates\" --max-sections 4 --max-bytes 8000 --max-hops 2",
+        "effigy --json docs context \"documentation graph profile\"",
         "effigy --json docs check links README.md",
     ],
 };

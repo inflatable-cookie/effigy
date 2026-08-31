@@ -56,5 +56,6 @@ to restore truthful discovery; runtime meaning may not change in this lane.
 
 ## Next Task
 
-Resume the active documentation graph lane at ready card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+Continue the active documentation graph lane at ready card
+[`1090`](./batch-cards/1090-prove-generic-and-northstar-profiles.md).
+Card `1089` closed on 2026-08-31.

@@ -4,6 +4,8 @@ mod command_behavior_tests;
 mod core_output_tests;
 #[path = "shared/deploy_fixture_support.rs"]
 mod deploy_fixture_support;
+#[path = "cli_output_tests/docs_context_tests.rs"]
+mod docs_context_tests;
 #[path = "cli_output_tests/graph_watch_tests.rs"]
 mod graph_watch_tests;
 #[path = "cli_output_tests/help_and_flags_tests.rs"]

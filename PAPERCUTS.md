@@ -7,6 +7,19 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `docs context` has no wall-clock bound on a cold graph
+- Friction: `effigy docs context` refreshes the shared graph on demand, but only
+  `effigy graph <subcommand>` runs under `EFFIGY_GRAPH_TIMEOUT_MS`. On a fresh
+  worktree the first `docs context` sat for ~204s building 3784 files with no
+  bound and no progress signal, which is indistinguishable from a hang.
+- Impact: the first documentation query in a new checkout or CI job looks
+  wedged; there is no bounded failure carrying the graph health snapshot.
+- Plausible fix: move the graph time budget out of the graph command shell so
+  any command that triggers a lazy refresh shares the same bound and timeout
+  payload.
+- Surface: `src/runner/graph_command.rs` time budget;
+  `src/runner/docs_command/context.rs`.
+
 ### [ ] Vendored Effigy skills need portfolio-level status and sync
 - Friction: 15 consumer repos under one projects directory had stale copies of
   all 10 managed Effigy skill files. The supported updater works one repo at a

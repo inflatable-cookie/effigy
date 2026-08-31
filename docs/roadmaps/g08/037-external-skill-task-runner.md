@@ -59,7 +59,8 @@ hide the source/target distinction from agents and operators.
 ## Next Task
 
 Execute ready documentation-context card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](./batch-cards/1090-prove-generic-and-northstar-profiles.md).
+Card `1089` closed on 2026-08-31.
 
 ## Evidence
 

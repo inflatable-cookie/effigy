@@ -7,12 +7,14 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1088`](./1088-build-documentation-profile-and-structural-index.md)
 
-Status: Ready
+Status: Complete
 Owner: codegraph query and built-in docs command surfaces
 Created: 2026-08-29
 Ready after: card `1088` closeout proves stable structural records and card
 `1091` closes the overlapping documentation/help maintenance lane
 Resumed: external skill-runner card `1092` closed with evidence on 2026-08-31
+Completed: 2026-08-31
+Evidence: [`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md)
 
 ## Purpose
 
@@ -41,13 +43,13 @@ runner.
 
 ## Acceptance
 
-- [ ] baseline and profiled repositories use the same command and report shape
-- [ ] unrelated high-authority documents cannot outrank lexical candidates
-- [ ] directly named historical sections remain retrievable
-- [ ] hop, section, and byte limits are enforced and reported
-- [ ] repeated queries over unchanged input return identical ordering
-- [ ] text and JSON expose the same facts and evidence
-- [ ] no command result contains model-generated summaries
+- [x] baseline and profiled repositories use the same command and report shape
+- [x] unrelated high-authority documents cannot outrank lexical candidates
+- [x] directly named historical sections remain retrievable
+- [x] hop, section, and byte limits are enforced and reported
+- [x] repeated queries over unchanged input return identical ordering
+- [x] text and JSON expose the same facts and evidence
+- [x] no command result contains model-generated summaries
 
 ## Validation
 
@@ -69,7 +71,16 @@ Stop if ranking requires remote inference, output cannot remain bounded, the
 command needs a second refresh path, or authority can introduce unrelated
 results.
 
+## Closeout
+
+Shipped `effigy docs context <QUERY> [--max-sections N] [--max-bytes N]
+[--max-hops N]` with `effigy.docs.context.v1` JSON inside the standard command
+envelope. Relevance gates inclusion; currentness and authority only order
+already-relevant results. Evidence, fixture cases, exact provenance, and budget
+proofs are in
+[`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md).
+
 ## Next Task
 
-Execute this card. Its evidence-backed closeout makes
-[`1090`](./1090-prove-generic-and-northstar-profiles.md) ready.
+Execute ready card
+[`1090`](./1090-prove-generic-and-northstar-profiles.md).

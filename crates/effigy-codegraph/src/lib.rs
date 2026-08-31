@@ -12,6 +12,8 @@
 //!   [`context`] to read the graph
 //! - [`explore`] to assemble a one-call agent navigation packet with primary
 //!   owners, excerpts, related symbols, and fallback guidance
+//! - [`docs_context`] to retrieve bounded exact documentation sections with
+//!   provenance, budgets, and repository-owned kinds/relations
 //! - [`affected`] to narrow likely validation scope from changed-file input
 //! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
 //!
@@ -24,6 +26,7 @@
 //! 4. use [`affected`] when the question is which tests or tasks to run after edits
 //! 5. fall back to [`context`] or exact-search tools for lower-level confirmation
 
+pub mod docs_context;
 mod docs_profile;
 mod error;
 pub mod extractor;
@@ -43,6 +46,8 @@ mod support;
 mod walk;
 pub mod watch;
 
+/// Bounded documentation context retrieval over the shared graph.
+pub use docs_context::{docs_context, DocsContextPayload, DocsContextRequest};
 /// Shared error type for graph indexing, query, storage, and watch failures.
 pub use error::CodeGraphError;
 /// Cheap index/refresh health snapshot for bounded-failure reporting.

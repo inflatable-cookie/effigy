@@ -805,6 +805,10 @@ fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
         );
         expanded = expanded.replace("<fixture_deps_library>", library.to_string_lossy().as_ref());
     }
+    if expanded.contains("<fixture_docs_context>") {
+        let fixture = create_docs_context_fixture()?;
+        expanded = expanded.replace("<fixture_docs_context>", fixture.to_string_lossy().as_ref());
+    }
     if expanded.contains("<fixture_task_success>") {
         let fixture = create_contract_fixture("[tasks.build]\nrun = \"printf build-ok\"\n")
             .map_err(|error| error.to_string())?;
@@ -844,6 +848,43 @@ fn create_skill_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
     )
     .map_err(|error| error.to_string())?;
     Ok((source, consumer))
+}
+
+/// A small repository-owned documentation profile, so the retrieval contract is
+/// exercised against configured kinds, fields, and relations rather than only
+/// baseline Markdown.
+fn create_docs_context_fixture() -> Result<PathBuf, String> {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-docs-context-fixture-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("handbook/playbooks")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("handbook/playbooks/setup.md"),
+        "# Setup playbook\n\nState: live\n\nSee also: [ops](ops.md)\n\n## Steps\n\nCalibrate the widget before the run.\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("handbook/playbooks/ops.md"),
+        "# Ops\n\nState: live\n\n## Runbook\n\nRestart the daemon.\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("effigy.toml"),
+        concat!(
+            "[catalog]\nalias = \"docs-context-contract\"\n\n",
+            "[docs_policy.graph]\nroots = [\"handbook\"]\n\n",
+            "[docs_policy.graph.fields.state]\nlabels = [\"State\"]\ncardinality = \"one\"\n\n",
+            "[docs_policy.graph.currentness]\nfield = \"state\"\ncurrent = [\"live\"]\nhistorical = [\"retired\"]\n\n",
+            "[docs_policy.graph.kinds.playbook]\ninclude = [\"handbook/playbooks/*.md\"]\nauthority = 80\n\n",
+            "[docs_policy.graph.relations.see-also]\nlabels = [\"See also\"]\n",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
 }
 
 fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
