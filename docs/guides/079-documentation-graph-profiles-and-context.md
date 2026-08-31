@@ -114,27 +114,57 @@ the committed bytes are the only runtime authority.
 
 ## Example Queries
 
-These are the five shapes an agent actually needs. Each returns exact sections;
-read the evidence and answer from it.
+These are the shapes an agent actually needs. Each returns exact sections; read
+the evidence and answer from it.
 
 ```sh
-# which contract governs this behavior
+# 1. which contract governs this behavior
 effigy docs context "documentation graph profile contract"
 
-# what is the architecture decision behind it
+# 2. what is the architecture decision behind it
 effigy docs context "repository defined documentation graph architecture"
 
-# what is the active planning lane
+# 3. which milestone owns this work right now
+effigy docs context "repository defined documentation graph milestone execution plan"
+
+# 4. what is the active planning lane
 effigy docs context "active strict lane spec set"
 
-# what is the next task in that lane
+# 5. what is the next task in that lane
 effigy docs context "next task" --max-sections 4
 
-# what did we decide before, and why
+# 6. what did we decide before, and why
 effigy docs context "bounded documentation context query closeout evidence"
 ```
 
-The last shape matters as much as the first. Default ranking prefers a current
+Shapes 3, 4, and 5 are different questions and stay separate. **Current roadmap**
+names the milestone's own subject matter and returns the milestone file. **Active
+lane** asks the planning front door which lane is open. **Next task** targets the
+`Next Task` heading that lanes, roadmaps, and cards all carry.
+
+A current-roadmap query answers with whatever the repository's `Status:` values
+say is current — it does not manufacture one. Run against this repository today,
+shape 3 returns `docs/architecture/024-repository-defined-documentation-graph.md`
+at rank 1 and `docs/roadmaps/g08/035-repository-defined-documentation-graph.md`
+at rank 2, and the milestone reads `currentness historical` because `g08.035`
+closed and no milestone has been opened since. That is the honest answer, not a
+miss: the architecture document is the live authority on the subject and the
+milestone is finished. On a repository with live work the same shape returns the
+active milestone as `current`, and its completed predecessors rank below it.
+
+The same shape in the arbitrary vocabulary of
+`tests/fixtures/docs-context-benchmark/generic-handbook/`, where a live and a
+retired document hold identical section text and only `State:` separates them:
+
+```sh
+# which procedure is the one in force
+effigy docs context "escalation rota paging order" \
+  --repo tests/fixtures/docs-context-benchmark/generic-handbook
+```
+
+That returns the `live` playbook at rank 1 and the `retired` bulletin at rank 2.
+
+Shape 6 matters as much as shape 1. Default ranking prefers a current
 document over a *similarly relevant* historical one, but a query that names
 historical material directly still retrieves it — an archived guide asked for by
 its own title ranks first, above the live guide that superseded it, because

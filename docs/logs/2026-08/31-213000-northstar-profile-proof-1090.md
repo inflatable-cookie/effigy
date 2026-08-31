@@ -94,7 +94,8 @@ template.
 `docs/effigy.docs.toml` is the materialized profile, adapted to Effigy's real
 tree: 17 kinds (the starter's 14 plus `audit`, `research`, and `triage`), 8
 relations (`supersedes` dropped, `depends-on` added), `roots = ["README.md",
-"AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs"]`, 2321 scoped documents.
+"AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs"]`, 2323 scoped documents
+after integrating `main` at `db98139a9`.
 
 It sets `cardinality = "many"` for both `status` and `owner`; the starter ships
 `"one"`. Effigy's roadmap and architecture documents legitimately carry
@@ -149,7 +150,7 @@ is red.
 
 ### Freeze discipline
 
-The corpus was committed before every run. Four freezes, all replayable:
+The corpus was committed before every run. Five freezes, all replayable:
 
 | Freeze | Commit | Result |
 | --- | --- | --- |
@@ -158,6 +159,7 @@ The corpus was committed before every run. Four freezes, all replayable:
 | 3 | `b05a7928a` | 10/11 |
 | 4 | `8c72bed4f` | 11/11 |
 | 5 | `892691f31` | 12/12 |
+| 6 | this branch, after review repair | 12/12 on the integrated corpus |
 
 Every miss and its diagnosis:
 
@@ -228,15 +230,15 @@ not above it, on query
 | `generic-no-match` | no-match | `quokka marmalade trombone` | - | - | - | - | - | 0 | pass |
 | `generic-relation-follow-up` | next-task | `widget calibrator tolerance band` | `handbook/playbooks/rebalance.md` | 4 | current | 80 | - | 656 | pass |
 
-`effigy-live` (2321 scoped documents, profile fingerprint from
-`docs/effigy.docs.toml`):
+`effigy-live` (2323 scoped documents, profile fingerprint from
+`docs/effigy.docs.toml`, corpus integrated with `main` at `db98139a9`):
 
 | case | dimension | query | expected source | rank | currentness | authority | rival rank | context bytes | result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `effigy-contract-authority` | contract | `documentation graph profile contract` | `docs/contracts/041-documentation-graph-profile-contract.md` | 1 | current | 100 | - | 23983 | pass |
 | `effigy-architecture-authority` | architecture | `repository defined documentation graph architecture` | `docs/architecture/024-repository-defined-documentation-graph.md` | 1 | current | 90 | - | 23989 | pass |
-| `effigy-direct-historical-guide` | historical-decision | `docs consistency sweep and changelog` | `docs/guides/archive/032-docs-consistency-sweep-and-changelog.md` | 1 | historical | 10 | - | 23990 | pass |
-| `effigy-next-task` | next-task | `active strict lane spec set` | `docs/specs/README.md` | 1 | current | 85 | - | 12293 | pass |
+| `effigy-direct-historical-guide` | historical-decision | `docs consistency sweep and changelog` | `docs/guides/archive/032-docs-consistency-sweep-and-changelog.md` | 1 | historical | 10 | - | 23885 | pass |
+| `effigy-next-task` | next-task | `active strict lane spec set` | `docs/specs/README.md` | 1 | current | 85 | - | 14132 | pass |
 | `effigy-historical-decision` | historical-decision | `bounded documentation context query card 1089 closeout evidence` | `docs/logs/2026-08/31-181957-documentation-context-1089.md` | 3 | historical | 30 | - | 23986 | pass |
 | `effigy-no-match` | no-match | *(two nonsense terms; see the script)* | - | - | - | - | - | 0 | pass |
 
@@ -262,16 +264,62 @@ entirely; two no-match queries return 0 results and 0 context bytes.
 | 4 | a query naming a historical decision still retrieves it | `generic-historical-direct` (rank 1), `effigy-direct-historical-guide` (rank 1), `effigy-historical-decision` (rank 3) |
 | 5 | changing the installed template after copying does not reinterpret the consumer profile | `installed_skill_and_template_directories_never_reach_the_query`, step 2 |
 
+## Review Repair
+
+The orchestrator requested changes on head `d66f06b9a`. All five findings are
+repaired on this branch.
+
+1. **The benchmark task did not execute (validation-gap).** Rhai caps in-function
+   expression nesting at 16 in debug builds and 32 in release. The script's long
+   `a + b + c` chains and its six-branch `else if` ladder parsed under
+   `target/release/effigy` and failed under `cargo run --bin effigy` with
+   `Expression exceeds maximum complexity`, which is the fallback route
+   `AGENTS.md` documents. The earlier 12/12 claim was therefore reproducible on
+   only one build profile - a real gap, and the reviewer was right to reject it.
+   Repaired structurally rather than by nudging one line under the cap: a
+   `text([...])` helper concatenates in a loop, and each expectation now has its
+   own checker function so `evaluate_case` is a flat sequence of guards. The
+   normal selector now runs on both profiles; both are recorded below. The
+   underlying divergence is recorded in `PAPERCUTS.md`.
+2. **The current-roadmap query example was absent (execution-miss).** Guide `079`
+   had folded that shape into the strict-lane example. It now carries six
+   numbered shapes with current-roadmap, active-lane, and next-task kept
+   explicitly distinct, plus the observed answer on this repository and the
+   equivalent in the fixture's arbitrary vocabulary.
+3. **`main` at `db98139a9` integrated (integration-drift).** It added
+   architecture `026`, contract `043`, a guide note, and new triage state, and
+   removed the earlier triage file. All of them classify correctly under the
+   committed profile with no profile change: architecture `026` as `architecture`
+   (current, 90), contract `043` as `contract` (current, 100), and the triage
+   document as `triage` (current, 20). Scoped documents moved 2321 -> 2323. The
+   benchmark was replayed against the integrated corpus; every rank held and two
+   context-byte figures moved, both updated below.
+4. **The neutrality guard could miss a new module (oracle-gap).** The
+   hand-maintained file list is replaced by a walk of the governed directories
+   (`docs_context/`, `language/markdown/`) plus a named list for the governed
+   files that live in mixed-purpose modules, and a bounded inventory assertion
+   over both. A new module is now scanned automatically *and* fails the
+   inventory until it is classified. `src/runner/docs_command/` cannot be walked
+   because its `docs check` siblings legitimately name `docs/logs` and
+   `docs/guides` in help text, so its inventory is asserted instead. Negative
+   control: adding `docs_context/rerank_probe.rs` containing the word `roadmap`
+   fails both `documentation_graph_runtime_inventory_is_current` and
+   `documentation_graph_runtime_logic_carries_no_northstar_vocabulary`.
+5. **Freeze count was internally inconsistent (validation-gap).** The narrative
+   said four freezes above a five-row table. Corrected, and the table now carries
+   the sixth entry for the post-repair replay.
+
 ## Validation
 
 | Check | Result |
 | --- | --- |
-| `effigy qa` (built-in `test` + `qa:docs` + `qa:json`) | passed; 3480/3480 tests run, 3480 passed, 1 skipped, exit 0 |
+| `effigy qa` (built-in `test` + `qa:docs` + `qa:json`) | passed after review repair; 3481/3481 tests run, 3481 passed, 1 skipped, exit 0 |
 | `cargo fmt --all -- --check` | passed |
 | `cargo clippy --all-targets -- -D warnings` | passed |
 | `git diff --check` | passed |
-| `effigy perf:docs-context-benchmark` | 12/12 predeclared expectations held |
-| `cargo test --test cli_output_tests docs_context` | passed (14 tests, 3 new) |
+| `effigy perf:docs-context-benchmark` (branch release binary) | 12/12 predeclared expectations held on the integrated corpus |
+| `cargo run --bin effigy -- perf:docs-context-benchmark` | 12/12; proves the script parses under the debug expression-depth cap too |
+| `cargo test --test cli_output_tests docs_context` | passed (15 tests, 4 new) |
 | `cargo test -p effigy-catalog starter` | passed (6 tests) |
 | `cargo test --test documentation_coverage_tests` | passed (4 tests) |
 | `cargo test -p effigy-rhai script_policy` | passed (9 tests) |
@@ -345,6 +393,11 @@ as much itself: it is bounded evidence, not exhaustive test proof.
   `PAPERCUTS.md` by card `1089`; unchanged here.
 - Three non-error graph diagnostics remain in this repository after the profile
   landed; `failed_paths` is empty and graph state is `ready`.
+- **A Rhai script can parse in release and fail in debug.** Rhai's in-function
+  expression nesting cap is 16 in debug builds against 32 in release, so a script
+  can pass `effigy <task>` with an installed binary and fail the documented
+  `cargo run --bin effigy -- <task>` fallback. Nothing in the repository catches
+  that divergence before a reviewer does. Recorded in `PAPERCUTS.md`.
 - **A no-match benchmark case cannot name itself.** Documenting its query inside
   a scoped document gives the terms a non-zero document frequency and turns the
   case red. The literal lives in the benchmark script, outside the roots, and

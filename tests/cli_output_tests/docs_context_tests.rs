@@ -526,23 +526,86 @@ fn docs_help_documents_the_bounded_context_surface() {
 // installed-skill independence.
 // ---------------------------------------------------------------------------
 
-/// Every runtime file that participates in profile parsing, Markdown
-/// extraction, scoping, ranking, or rendering for `effigy docs context`.
-/// Fixtures and unit tests are excluded on purpose: they are allowed to name a
-/// vocabulary, the runtime is not.
-const DOCUMENTATION_GRAPH_RUNTIME_FILES: &[&str] = &[
+/// Directories where every non-test Rust file is documentation-graph runtime.
+/// These are walked, not listed, so a new module inside them is scanned the
+/// moment it is added.
+const GOVERNED_RUNTIME_DIRS: &[&str] = &[
+    "crates/effigy-codegraph/src/docs_context",
+    "crates/effigy-codegraph/src/language/markdown",
+];
+
+/// Documentation-graph runtime that lives inside a mixed-purpose module, so it
+/// has to be named file by file.
+const GOVERNED_RUNTIME_FILES: &[&str] = &[
     "crates/effigy-manifest/src/config_sections/docs_policy.rs",
     "crates/effigy-codegraph/src/docs_profile.rs",
+    "src/runner/docs_command/context.rs",
+];
+
+/// Mixed-purpose directories that host at least one governed file. Their
+/// siblings are legitimately allowed to name repository paths - the `docs check`
+/// families document `docs/logs` and `docs/guides` in their help - so the
+/// directory cannot simply be walked. Its inventory is asserted instead, which
+/// forces a new file here to be classified by hand.
+const MIXED_RUNTIME_DIRS: &[(&str, &[&str])] = &[(
+    "src/runner/docs_command",
+    &["checks.rs", "context.rs", "mod.rs", "report.rs", "tests.rs"],
+)];
+
+/// The governed-directory inventory as it stands. Walking catches a new module
+/// automatically; asserting the inventory makes adding one a deliberate act
+/// rather than a silent expansion of the runtime under a green oracle.
+const EXPECTED_GOVERNED_DIR_FILES: &[&str] = &[
     "crates/effigy-codegraph/src/docs_context/mod.rs",
     "crates/effigy-codegraph/src/docs_context/payload.rs",
     "crates/effigy-codegraph/src/docs_context/rank.rs",
     "crates/effigy-codegraph/src/docs_context/scope.rs",
-    "crates/effigy-codegraph/src/language/markdown/mod.rs",
     "crates/effigy-codegraph/src/language/markdown/extract.rs",
+    "crates/effigy-codegraph/src/language/markdown/mod.rs",
     "crates/effigy-codegraph/src/language/markdown/paths.rs",
     "crates/effigy-codegraph/src/language/markdown/resolve.rs",
-    "src/runner/docs_command/context.rs",
 ];
+
+/// A Rust file that only holds fixtures or unit tests. Those are allowed to
+/// name a vocabulary; the runtime is not.
+fn is_test_module(relative: &str) -> bool {
+    let file = relative.rsplit('/').next().unwrap_or(relative);
+    file == "tests.rs" || file.ends_with("_tests.rs") || relative.contains("/tests/")
+}
+
+/// Every `.rs` file under a governed directory, repo-relative and sorted, with
+/// test modules dropped.
+fn governed_directory_files(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for dir in GOVERNED_RUNTIME_DIRS {
+        let mut stack = vec![root.join(dir)];
+        while let Some(current) = stack.pop() {
+            let entries =
+                std::fs::read_dir(&current).unwrap_or_else(|e| panic!("read {current:?}: {e}"));
+            for entry in entries {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("repo-relative")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if is_test_module(&relative) {
+                    continue;
+                }
+                found.push(relative);
+            }
+        }
+    }
+    found.sort();
+    found
+}
 
 /// Northstar vocabulary. None of it may become a fallback rule, a reserved
 /// name, or a default path in generic runtime logic; it belongs in a committed
@@ -574,11 +637,65 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The neutrality oracle is only as wide as the surface it knows about, so the
+/// governed inventory is asserted before it is scanned. Adding a module to a
+/// governed directory, or a file to a mixed-purpose one, fails here until it is
+/// classified.
+#[test]
+fn documentation_graph_runtime_inventory_is_current() {
+    let root = repo_root();
+    assert_eq!(
+        governed_directory_files(&root),
+        EXPECTED_GOVERNED_DIR_FILES
+            .iter()
+            .map(|entry| (*entry).to_owned())
+            .collect::<Vec<_>>(),
+        "the documentation-graph runtime gained or lost a module; add it to \
+         EXPECTED_GOVERNED_DIR_FILES so the neutrality oracle grows with the runtime"
+    );
+
+    for (dir, expected) in MIXED_RUNTIME_DIRS {
+        let mut actual = std::fs::read_dir(root.join(dir))
+            .unwrap_or_else(|error| panic!("read {dir}: {error}"))
+            .map(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        actual.sort();
+        let mut expected = expected.iter().map(|e| (*e).to_owned()).collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(
+            actual, expected,
+            "`{dir}` hosts documentation-graph runtime; classify the new file as \
+             governed or not before it can ship"
+        );
+    }
+
+    for relative in GOVERNED_RUNTIME_FILES {
+        assert!(
+            root.join(relative).is_file(),
+            "governed runtime file `{relative}` moved or was deleted"
+        );
+    }
+}
+
 #[test]
 fn documentation_graph_runtime_logic_carries_no_northstar_vocabulary() {
     let root = repo_root();
-    for relative in DOCUMENTATION_GRAPH_RUNTIME_FILES {
-        let path = root.join(relative);
+    let governed = governed_directory_files(&root)
+        .into_iter()
+        .chain(GOVERNED_RUNTIME_FILES.iter().map(|e| (*e).to_owned()))
+        .collect::<Vec<_>>();
+    assert!(
+        governed.len() >= EXPECTED_GOVERNED_DIR_FILES.len() + GOVERNED_RUNTIME_FILES.len(),
+        "the neutrality scan lost files"
+    );
+    for relative in governed {
+        let path = root.join(&relative);
         let contents = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {relative}: {error}"))
             .to_ascii_lowercase();
