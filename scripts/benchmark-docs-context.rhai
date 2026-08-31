@@ -138,6 +138,18 @@ let targets = [
                 max_rank: 8,
             },
             #{
+                // Deliberately shares no token with the `effigy-live` no-match
+                // query. This case runs against the fixture corpus, so naming
+                // it in Effigy's own docs is safe - but a shared token would
+                // leak into the Effigy corpus and turn that case red.
+                id: "generic-no-match",
+                dimension: "no-match",
+                expect: "empty",
+                query: "quokka marmalade trombone",
+                extra_args: [],
+                max_rank: 8,
+            },
+            #{
                 id: "generic-relation-follow-up",
                 dimension: "next-task",
                 expect: "traversal",
@@ -213,6 +225,14 @@ let targets = [
             // no-match query for this corpus: `telemetry` reaches 33 documents
             // and `quokka` reaches 1, so a non-empty report was correct. Both
             // terms below have a corpus document frequency of 0.
+            //
+            // DO NOT write this query into README.md, AGENTS.md, CHANGELOG.md,
+            // PAPERCUTS.md, or anything under docs/. Those paths are this
+            // repository's profile roots, so naming the query inside them gives
+            // its terms a non-zero document frequency and turns the case red. A
+            // no-match case cannot name itself inside its own corpus. The same
+            // property is proved independently by `generic-no-match`, whose
+            // corpus is the fixture and is immune to this repository's docs.
             #{
                 id: "effigy-no-match",
                 dimension: "no-match",

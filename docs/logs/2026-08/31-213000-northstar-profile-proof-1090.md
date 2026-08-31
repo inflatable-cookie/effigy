@@ -22,7 +22,7 @@ Predecessor evidence: [`31-181957-documentation-context-1089.md`](./31-181957-do
   tree all leave the profile identity and results byte-identical; editing the
   committed consumer manifest changes them immediately.
 - `perf:docs-context-benchmark` replays a predeclared corpus over an
-  arbitrary-vocabulary fixture and this repository. All 11 expectations hold on
+  arbitrary-vocabulary fixture and this repository. All 12 expectations hold on
   the final frozen matrix.
 - No ranking rule, authority weight, budget default, or runtime code path was
   changed by this card. The work is configuration, fixtures, proof, and
@@ -156,14 +156,20 @@ The corpus was committed before every run. Four freezes, all replayable:
 | 2 | `b6a60e1b6` | 10/11 |
 | 3 | `b05a7928a` | 10/11 |
 | 4 | `d38abf669` onward | 11/11 |
+| 5 | this commit | 12/12 |
 
 Every miss and its diagnosis:
 
-1. **`effigy-no-match` (freeze 1).** Query `xylophone quokka telemetry
-   sublimation` returned 8 results. `telemetry` reaches 33 documents and
-   `quokka` reaches 1 in this corpus, so a non-empty report was the correct
-   answer. My case specification was wrong, not the runtime. Replaced with
-   `xylophone sublimation`; both terms have document frequency 0.
+1. **`effigy-no-match` (freeze 1).** The query mixed two nonsense terms with two
+   real ones. `telemetry` reaches 33 documents in this corpus and `quokka`
+   reaches 1, so the 8-result report was the correct answer. My case
+   specification was wrong, not the runtime. Replaced with the two nonsense
+   terms alone, both at document frequency 0.
+
+   The literal query is held only in `scripts/benchmark-docs-context.rhai`,
+   which sits outside the profile roots. Writing it into any scoped document -
+   including this log - would give both terms a non-zero document frequency and
+   turn the case red. A no-match case cannot name itself inside its own corpus.
 2. **`effigy-next-task` (freeze 1).** Asserted a typed-relation hop on the
    2319-document corpus. Card `1090` was present at rank 11 but at 0 hops,
    reached lexically, and no relation path appeared at all. Diagnosis:
@@ -217,6 +223,7 @@ not above it, on query
 | `generic-current-over-retired` | current-roadmap | `escalation rota paging order` | `handbook/playbooks/escalation-rota.md` | 1 | current | 80 | 2 | 528 | pass |
 | `generic-historical-direct` | historical-decision | `recall of 1998` | `handbook/bulletins/widget-calibrator-recall.md` | 1 | historical | 20 | - | 915 | pass |
 | `generic-authority-gate` | authority-gate | `widget calibrator tolerance band` | - | - | - | - | - | 656 | pass |
+| `generic-no-match` | no-match | `quokka marmalade trombone` | - | - | - | - | - | 0 | pass |
 | `generic-relation-follow-up` | next-task | `widget calibrator tolerance band` | `handbook/playbooks/rebalance.md` | 4 | current | 80 | - | 656 | pass |
 
 `effigy-live` (2319 scoped documents, profile fingerprint from
@@ -224,18 +231,24 @@ not above it, on query
 
 | case | dimension | query | expected source | rank | currentness | authority | rival rank | context bytes | result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `effigy-contract-authority` | contract | `documentation graph profile contract` | `docs/contracts/041-documentation-graph-profile-contract.md` | 1 | current | 100 | - | 23996 | pass |
-| `effigy-architecture-authority` | architecture | `repository defined documentation graph architecture` | `docs/architecture/024-repository-defined-documentation-graph.md` | 1 | current | 90 | - | 22142 | pass |
-| `effigy-direct-historical-guide` | historical-decision | `docs consistency sweep and changelog` | `docs/guides/archive/032-docs-consistency-sweep-and-changelog.md` | 1 | historical | 10 | - | 22308 | pass |
-| `effigy-next-task` | next-task | `active strict lane spec set` | `docs/specs/README.md` | 1 | current | 85 | - | 12796 | pass |
-| `effigy-historical-decision` | historical-decision | `bounded documentation context query card 1089 closeout evidence` | `docs/logs/2026-08/31-181957-documentation-context-1089.md` | 3 | historical | 30 | - | 23993 | pass |
-| `effigy-no-match` | no-match | `xylophone sublimation` | - | - | - | - | - | 0 | pass |
+| `effigy-contract-authority` | contract | `documentation graph profile contract` | `docs/contracts/041-documentation-graph-profile-contract.md` | 1 | current | 100 | - | 23983 | pass |
+| `effigy-architecture-authority` | architecture | `repository defined documentation graph architecture` | `docs/architecture/024-repository-defined-documentation-graph.md` | 1 | current | 90 | - | 23989 | pass |
+| `effigy-direct-historical-guide` | historical-decision | `docs consistency sweep and changelog` | `docs/guides/archive/032-docs-consistency-sweep-and-changelog.md` | 1 | historical | 10 | - | 23990 | pass |
+| `effigy-next-task` | next-task | `active strict lane spec set` | `docs/specs/README.md` | 1 | current | 85 | - | 12293 | pass |
+| `effigy-historical-decision` | historical-decision | `bounded documentation context query card 1089 closeout evidence` | `docs/logs/2026-08/31-181957-documentation-context-1089.md` | 3 | historical | 30 | - | 23986 | pass |
+| `effigy-no-match` | no-match | *(two nonsense terms; see the script)* | - | - | - | - | - | 0 | pass |
 
-Current-versus-historical behavior across both targets: three cases return a
+Both tables were regenerated after the closeout edits in this branch, so the
+ranks and context bytes above are the post-closeout state, not a mid-lane
+snapshot. Ranks are the assertion; context bytes are how much of the 24000-byte
+budget the selected sections filled, and they move whenever the corpus changes.
+Replay with `effigy perf:docs-context-benchmark` for the current numbers.
+
+Current-versus-historical behavior across both targets: four cases return a
 current authority at rank 1 with the declared historical rival at rank 2 or
 absent; three cases retrieve directly named historical material at ranks 1, 1,
 and 3; one case keeps an unrelated authority-100 document out of the report
-entirely; one no-match query returns 0 results and 0 context bytes.
+entirely; two no-match queries return 0 results and 0 context bytes.
 
 ## Review-Oracle Counterexamples
 
@@ -243,7 +256,7 @@ entirely; one no-match query returns 0 results and 0 context bytes.
 | --- | --- | --- |
 | 1 | a generic fixture renames every Northstar-looking token and still works without runtime edits | `generic-handbook` fixture and its 5 benchmark cases; `documentation_graph_runtime_logic_carries_no_northstar_vocabulary` |
 | 2 | the copied Northstar profile is byte-equivalent when skill directories are unavailable | `installed_skill_and_template_directories_never_reach_the_query`, step 3 |
-| 3 | expected live authority in the top three, no related historical-only source above it | benchmark `live-authority` cases: ranks 1, 1, 1, 1 with rivals at 2 or absent |
+| 3 | expected live authority in the top three, no related historical-only source above it | benchmark `live-authority` cases: ranks 1, 1, 1, 1 with declared rivals at rank 2 or absent |
 | 4 | a query naming a historical decision still retrieves it | `generic-historical-direct` (rank 1), `effigy-direct-historical-guide` (rank 1), `effigy-historical-decision` (rank 3) |
 | 5 | changing the installed template after copying does not reinterpret the consumer profile | `installed_skill_and_template_directories_never_reach_the_query`, step 2 |
 
@@ -255,7 +268,7 @@ entirely; one no-match query returns 0 results and 0 context bytes.
 | `cargo test -p effigy-catalog starter` | passed (6 tests) |
 | `cargo test --test documentation_coverage_tests` | passed (4 tests) |
 | `cargo test -p effigy-manifest -p effigy-codegraph -p effigy-contracts` | see closeout run below |
-| `effigy perf:docs-context-benchmark` | 11/11 predeclared expectations held |
+| `effigy perf:docs-context-benchmark` | 12/12 predeclared expectations held |
 | `effigy qa` | see closeout run below |
 | `cargo fmt --all -- --check` | see closeout run below |
 | `cargo clippy --all-targets -- -D warnings` | see closeout run below |
@@ -305,6 +318,13 @@ entirely; one no-match query returns 0 results and 0 context bytes.
   `PAPERCUTS.md` by card `1089`; unchanged here.
 - Three non-error graph diagnostics remain in this repository after the profile
   landed; `failed_paths` is empty and graph state is `ready`.
+- **A no-match benchmark case cannot name itself.** Documenting its query inside
+  a scoped document gives the terms a non-zero document frequency and turns the
+  case red. The literal lives in the benchmark script, outside the roots, and
+  the same property is proved independently on the fixture corpus, whose query
+  is safe to print here because it shares no token with the Effigy one. The
+  hazard bit twice while writing this log - once on the case itself, once via a
+  shared token in the fixture case - and is recorded in `PAPERCUTS.md`.
 
 ## Vision Target Delta
 

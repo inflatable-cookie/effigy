@@ -7,6 +7,19 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] A no-match benchmark case cannot name itself in its own corpus
+- Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
+  an empty report. Documenting its query inside `docs/`, `README.md`,
+  `AGENTS.md`, `CHANGELOG.md`, or `PAPERCUTS.md` - all profile roots - gives its
+  terms a non-zero document frequency and turns the case red. It broke once
+  exactly this way while writing the card `1090` evidence log.
+- Impact: a durable, self-hosted no-match assertion is one careless sentence
+  away from failing, and the failure looks like a retrieval regression.
+- Plausible fix: let a benchmark case declare an exclusion path so the harness
+  can prove absence against a corpus that excludes its own documentation, or
+  keep no-match assertions on fixture corpora only.
+- Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
+
 ### [ ] YAML frontmatter is indexed as one setext heading
 - Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
   frontmatter block as a single heading string, because the closing `---` reads
