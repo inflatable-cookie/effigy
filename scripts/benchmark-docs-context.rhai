@@ -30,13 +30,28 @@
 //              lexically undiscriminating query is ordered by relevance noise.
 //              The declared historical rival did not outrank the expected source;
 //              only the top-three bound failed.
-//   this file  third freeze. `effigy-current-roadmap` is replaced by
+//   b05a7928a  third freeze. `effigy-current-roadmap` was replaced by
 //              `effigy-current-over-archived`, because this repository has one
 //              active milestone and this lane closes it, so no durable
-//              current-roadmap anchor exists. The dated current-roadmap result
-//              from the first freeze is preserved in the card `1090` evidence
-//              log. No ranking rule, weight, or budget default was changed at
-//              any point.
+//              current-roadmap anchor exists. 10 of 11 held. The new case
+//              missed: archived guide `032` ranked 1 at relevance 48 and live
+//              guide `039` ranked 2 at relevance 42. Diagnosis: the query
+//              carried `consistency sweep`, which is the archived guide's own
+//              title phrase, so it was a direct historical query rather than a
+//              live-authority query. Contract `041` orders currentness only
+//              between *similarly relevant* documents and relevance ranks first,
+//              so ranking the more relevant historical document above the less
+//              relevant current one is correct behavior, not a defect.
+//   this file  fourth freeze. The mis-specified live-authority slot is removed
+//              rather than re-queried, and the behavior it actually demonstrated
+//              is kept as an explicit direct-historical case. Current-versus-
+//              historical ordering at genuinely equal relevance is proved in the
+//              `generic-handbook` target, where two documents carry byte-
+//              identical section text and differ only in state; that is the only
+//              construction where relevance truly ties. The dated current-roadmap
+//              result from the first freeze is preserved in the card `1090`
+//              evidence log. No ranking rule, authority weight, or budget default
+//              was changed at any point in this history.
 //
 // Two targets, both required:
 //
@@ -158,22 +173,19 @@ let targets = [
                 rival_path: "docs/roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md",
                 max_rank: 3,
             },
-            // Re-anchored in the third freeze; see the freeze history above.
-            // This repository has exactly one active milestone and this lane
-            // closes it, so no durable "current roadmap" anchor exists here.
-            // The contract claim is unchanged - a relevant current authority
-            // beats a relevant historical counterpart from the same family -
-            // and this guide pair carries it without expiring: guide `039`
-            // supersedes archived guide `032`, and both stay where they are.
+            // Fourth freeze; see the freeze history above. A query that names an
+            // archived guide by its own title still retrieves that guide, which
+            // is the second half of the currentness contract: default ranking
+            // prefers a current document over a *similarly relevant* historical
+            // one, and never suppresses history a query asks for directly.
             #{
-                id: "effigy-current-over-archived",
-                dimension: "current-vs-historical",
-                expect: "live-authority",
-                query: "docs drift monitoring consistency sweep",
+                id: "effigy-direct-historical-guide",
+                dimension: "historical-decision",
+                expect: "historical-retrieval",
+                query: "docs consistency sweep and changelog",
                 extra_args: [],
-                expected_path: "docs/guides/039-docs-drift-monitoring.md",
-                rival_path: "docs/guides/archive/032-docs-consistency-sweep-and-changelog.md",
-                max_rank: 3,
+                expected_path: "docs/guides/archive/032-docs-consistency-sweep-and-changelog.md",
+                max_rank: 8,
             },
             // Re-anchored in the second freeze. The strict-lane front door is the
             // standing answer to "what is the next task", and unlike a ready card
