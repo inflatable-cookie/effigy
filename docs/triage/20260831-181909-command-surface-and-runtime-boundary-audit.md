@@ -1,9 +1,9 @@
 # Command Surface And Runtime Boundary Audit
 
-Status: ready for orchestrator review
+Status: operator promotion discovery
 Created: 2026-08-31
 Updated: 2026-08-31
-Owner: planning delegate; promotion remains orchestrator-owned
+Owner: orchestrator; promotion remains operator-gated
 
 ## Observation
 
@@ -61,6 +61,37 @@ Apply these tests in order:
 
 Binary size is excluded. Dependency ownership, security response, release
 coupling, and duplicated policy remain relevant.
+
+## Operator Promotion Checkpoint
+
+Confirmed 2026-08-31 after planning intake:
+
+- direct S3 CRUD currently supports media upload in `bovine-accelerator`; that
+  functionality must remain available until a replacement is live and proved;
+- `bovine-accelerator-desktop` is expected to assume media-upload ownership,
+  but that handoff is not complete, so S3 extraction or base-Rhai removal is
+  not implementation-ready;
+- externalizing bundled catalog definitions is acceptable only if ordinary
+  usage remains at least as simple as the embedded catalog is today;
+- separating generic release orchestration from Effigy-specific distribution
+  proof is accepted for canonical promotion.
+
+Still operator-gated:
+
+- command namespace changes require a concrete transition prototype before
+  approval;
+- repository-intelligence grouping requires a concrete command/help prototype
+  before approval.
+
+Current recommendation disposition:
+
+1. S3 extraction: directionally valid, but blocked on live replacement and
+   consumer migration proof. Preserve current behavior meanwhile.
+2. Job-oriented namespaces: pending prototype and operator decision.
+3. Optional catalog pack: accepted with a no-regression simplicity constraint;
+   acquisition and update ergonomics must be designed before implementation.
+4. Release/distribution split: accepted for promotion.
+5. Repository-intelligence grouping: pending prototype and operator decision.
 
 ## Evidence Inventory
 
@@ -302,6 +333,8 @@ must turn accepted items into separate, bounded migration lanes.
   different test?
 - What is the minimum base Rhai host surface after provider-specific helpers
   move?
+- What exact evidence proves `bovine-accelerator-desktop` has replaced the
+  media-upload path and makes removal safe for `bovine-accelerator`?
 - Should the optional service catalog pack ship beside the default installer,
   or require an explicit acquisition step?
 
