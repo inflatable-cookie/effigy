@@ -43,7 +43,8 @@ consumer target.
 Source-relative:
 
 - manifest includes and bundle materialization
-- typed Rhai/script step paths, after canonical source-containment validation
+- typed Rhai/script step paths, after source/bundle token rendering and
+  canonical source-containment validation
 - the `{skill}` task placeholder
 
 Target-relative:

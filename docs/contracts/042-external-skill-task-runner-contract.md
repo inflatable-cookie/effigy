@@ -36,9 +36,10 @@ The first version accepts one composed root skill catalog.
 
 - manifest includes, bundle defaults, and Rhai/script assets resolve from the
   source manifest/root
-- every Rhai/script asset reachable from the selected task graph is
-  canonicalized before execution and must remain inside the source root;
-  relative, absolute, and symlink escapes are rejected
+- every Rhai/script asset reachable from the selected task graph resolves
+  source and bundle path tokens with execution semantics, then is canonicalized
+  before execution and must remain inside the source root; relative, absolute,
+  and symlink escapes are rejected
 - `[catalog.members]` is rejected on this surface
 - ambient discovery outside the source root is forbidden
 - consumer catalogs never join the skill selector set

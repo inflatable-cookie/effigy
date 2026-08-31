@@ -229,6 +229,65 @@ fn skill_nested_task_and_rhai_preserve_both_identities() {
 }
 
 #[test]
+fn skill_bundle_owned_rhai_asset_inside_source_runs() {
+    let root = unique_temp_root("bundle-rhai");
+    let source = root.join("source");
+    let consumer = root.join("consumer");
+    let bundle = source.join("bundle");
+    std::fs::create_dir_all(bundle.join("scripts")).expect("create skill bundle scripts");
+    std::fs::create_dir_all(&consumer).expect("create consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        "[catalog]\nalias = \"bundle-consumer\"\n",
+    )
+    .expect("write consumer manifest");
+    std::fs::write(
+        bundle.join("bundle.toml"),
+        "[bundle]\nname = \"skill-bundle\"\ndefaults = \"defaults.toml\"\n",
+    )
+    .expect("write bundle descriptor");
+    std::fs::write(bundle.join("defaults.toml"), "[tasks]\n").expect("write bundle defaults");
+    std::fs::write(
+        bundle.join("scripts/probe.rhai"),
+        "log(\"bundle-rhai-ok\");\n",
+    )
+    .expect("write bundle Rhai script");
+    std::fs::write(
+        source.join("effigy.toml"),
+        r#"[catalog]
+alias = "bundle-skill"
+
+[bundle]
+base = { type = "path", dir = "bundle" }
+
+[tasks.bundle-rhai]
+run = [{ rhai = "{{ bundle.root }}/scripts/probe.rhai" }]
+run_in = "host"
+"#,
+    )
+    .expect("write bundled skill manifest");
+
+    let output = run_skill(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "bundle-rhai",
+            "--json",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        json(&output)["result"]["task_output"]["stdout"],
+        "bundle-rhai-ok\n\n"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove bundle Rhai fixture");
+}
+
+#[test]
 fn skill_env_files_and_cache_paths_are_target_relative() {
     let fixtures = fixture_root();
     let source = fixtures.join("source");

@@ -646,7 +646,7 @@ fn resolve_task_step(
     Ok(StepAction::Task { invocation, cwd })
 }
 
-fn render_script_path(
+pub(in crate::runner) fn render_script_path(
     path: &str,
     repo_root: &Path,
     bundle_root: Option<&Path>,

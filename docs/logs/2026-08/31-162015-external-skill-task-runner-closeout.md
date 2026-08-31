@@ -39,7 +39,7 @@ shapes, and manifest-backed secrets before side effects.
 | --- | --- | --- |
 | source root / manifest | canonical explicit `--path` only | task inventory and run JSON fixtures |
 | manifest includes / bundle roots | source-relative and bounded by canonical source | isolated routing rejection fixtures |
-| Rhai/script assets | source-relative and canonically contained | nested/absolute/symlink escape fixtures and installed Northstar smoke |
+| Rhai/script assets | source/bundle-rendered and canonically contained | bundle-token success plus nested/absolute/symlink escape fixtures and installed Northstar smoke |
 | `{skill}` | canonical source-root placeholder | identity fixture |
 | target root | nearest consumer from invocation CWD or explicit `--repo` | two-consumer override fixture |
 | invocation CWD | retained as evidence | explicit second-consumer fixture |
@@ -68,7 +68,8 @@ selectors, escaping includes, direct and nested container-bound tasks, and an
 unresolved consumer target. Review repair added relative, absolute, and symlink
 Rhai escape rejection plus managed/TUI/concurrent rejection without source or
 target runtime-state leakage. Recursive validation runs across reachable source
-task references before execution.
+task references before execution. Re-review added positive proof that the same
+renderer admits a source-contained `{{ bundle.root }}` Rhai asset.
 
 ## Public And Agent Surfaces
 
@@ -100,16 +101,17 @@ the Effigy worker checkout:
 - focused `effigy-cli`, `effigy-context`, `effigy-manifest`, `effigy-routing`,
   `effigy-execution`, `effigy-managed`, `effigy-rhai`, and `effigy-contracts`
   test runs: passed
-- skill CLI-output fixtures: 15 passed
-- complete CLI-output integration binary: 259 passed, 1 ignored
+- skill CLI-output fixtures: 16 passed
+- complete CLI-output integration binary: 260 passed, 1 ignored
 - indexed JSON fast checks: both skill schemas and all selected contracts passed
 - first full QA attempt: exposed three ordinary container/handoff Rhai/context
   regressions; the explicit source split was narrowed and all three focused
   reruns passed
 - initial implementation `effigy qa`: 3433 passed, 1 skipped; docs links, JSON examples,
   indexes, workflow paths, vision indexes/next actions, and JSON contracts passed
-- review-repair `effigy qa`: passed after the three new no-side-effect CLI
-  regressions; the installed Northstar read-only smoke also remained green
+- review-iteration `effigy qa`: passed after the three no-side-effect rejection
+  regressions and again after the bundle-token success case; the installed
+  Northstar read-only smoke also remained green
 - `cargo fmt --all -- --check`: passed
 - `cargo clippy --all-targets -- -D warnings`: passed
 - `git diff --check`: passed

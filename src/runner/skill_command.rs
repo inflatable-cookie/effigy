@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use super::command_context::{active_invocation_cwd, active_runtime_context};
 use super::error::RunnerError;
+use super::execute::render_script_path;
 
 pub(in crate::runner) fn run_skill(args: SkillArgs) -> Result<String, RunnerError> {
     let source = resolve_skill_source(skill_path(&args))?;
@@ -137,7 +138,12 @@ fn validate_host_only_source(catalog: &LoadedCatalog, root_task: &str) -> Result
                 "skill task `{task_name}` uses a managed/TUI/concurrent task shape; v1 skill execution accepts standard host tasks only; move this task to the consumer or use a non-managed run sequence"
             )));
         }
-        validate_rhai_assets(task, task_name.as_str(), &catalog.catalog_root)?;
+        validate_rhai_assets(
+            task,
+            task_name.as_str(),
+            &catalog.catalog_root,
+            catalog.bundle_root.as_deref(),
+        )?;
         for task_ref in referenced_tasks(task) {
             let (selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)
                 .map_err(RunnerError::task_invocation)?;
@@ -171,6 +177,7 @@ fn validate_rhai_assets(
     task: &ManifestTask,
     task_name: &str,
     source_root: &Path,
+    bundle_root: Option<&Path>,
 ) -> Result<(), RunnerError> {
     let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() else {
         return Ok(());
@@ -182,12 +189,8 @@ fn validate_rhai_assets(
         let Some(raw_path) = step.rhai.as_deref() else {
             continue;
         };
-        let path = Path::new(raw_path);
-        let requested = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            source_root.join(path)
-        };
+        let rendered = render_script_path(raw_path, source_root, bundle_root, true);
+        let requested = Path::new(&rendered).to_path_buf();
         let canonical = std::fs::canonicalize(&requested).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "skill task `{task_name}` Rhai asset `{}` cannot be resolved inside canonical skill source root `{}`: {error}; use a readable script below the selected skill source",
