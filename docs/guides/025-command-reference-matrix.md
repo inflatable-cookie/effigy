@@ -85,6 +85,8 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy papercuts`.
 - Need to run tasks shipped by an installed skill against the current or an
   explicit consumer repo: use `effigy skill tasks` then `effigy skill run`.
+- Need bounded, current, authoritative documentation evidence with exact
+  provenance instead of a manual file hunt: use `effigy docs context`.
 
 ## Primary Commands
 
@@ -103,7 +105,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, import declared keys from a `.env`-style file, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `import`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks, report workspace ownership conflicts as `container.workspace-ownership`, and provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md` |
-| `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
+| `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion, plus bounded `docs context` documentation retrieval | `check <KIND>`, `context <QUERY>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--max-sections`, `--max-bytes`, `--max-hops`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1`, `effigy.docs.context.v1` | `029-docs-qa-checklist-and-validation.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md) |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy release` | Inspect release readiness, run gates, prepare/execute releases, verify installs, run release preflight, check binary floors, capture proof evidence, validate artifacts, and generate closeout evidence | `status`, `gates`, `resume`, `verify-install`, `preflight`, `validate`, `check-binary`, `proof`, `evidence validate`, `evidence closeout`, `evidence summary`, `simulate`, `prepare`, `execute`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.verify-install.v1`, `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `051-release-orchestration.md`, `062-distribution-system-guide.md` |
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `volume`, `cache`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
@@ -198,6 +200,7 @@ effigy docs check index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [
 effigy docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]
 effigy docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]
 effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]
+effigy docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]
 effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]
 effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]
 effigy scan <subcommand> [options]
@@ -208,6 +211,8 @@ Common values:
 
 - docs check kinds: `links`, `json-examples`, `headings`, `paths`,
   `contains`, `forbidden`, `index`, `next-action`, `workflow-paths`
+- docs context budgets: `--max-sections` default 8, maximum 32; `--max-bytes`
+  default 24000, maximum 100000; `--max-hops` default 1, maximum 3
 - scanners: `god-files`, `boundary-violations`, `dead-code`,
   `validation-gaps`, `duplicate-blocks`, `comment-ratio`,
   `generated-assets`, `generated-in-src`, `attention-markers`,
@@ -362,6 +367,22 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   container/runtime inheritance, managed/TUI/concurrent shapes, manifest
   secrets, escaping composition, and canonically escaping Rhai assets before
   task side effects
+- `docs context` returns source evidence, never a generated summary. Relevance
+  gates inclusion, so an unrelated high-authority document cannot enter the
+  report; currentness and authority only order results that already match, and
+  they outrank heading specificity across documents. It refreshes the shared
+  graph through the existing lazy path and adds no second index. Budgets must be
+  positive and inside the maxima above; a section that does not fit is omitted
+  whole and named in `truncation.reasons` rather than truncated mid-section.
+  `truncation.truncated` covers section, byte, and hop exhaustion alike. Typed
+  relation steps report the destination exactly as the source document declared
+  it in `target`, with the resolved path in `to_path`. A traversed result names
+  its lexical origin in `seed_path` and prefixes every inherited reason with
+  that path, so it never claims its own section contains a seed-only term. An empty query is a usage
+  error; no match is a successful empty report, and corpus term weighting is a
+  ranking optimization that never suppresses the query's only lexical evidence.
+  Repository vocabulary comes only from committed `[docs_policy.graph]`
+  configuration
 - `deps` and `deps status` are the same read-only inspection path; manager
   filtering is optional; `deps link cargo` applies the verified full closure
   and `deps unlink cargo` proves committed-source and lock recovery; `deps
@@ -574,6 +595,14 @@ Installed skill task source with an independent consumer target:
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
 effigy --json skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
+```
+
+Bounded documentation evidence for an agent context window:
+
+```sh
+effigy docs context "release gates"
+effigy docs context "documentation graph profile" --max-sections 4 --max-bytes 8000
+effigy --json docs context "graph freshness" --max-hops 2
 ```
 
 Agent repo map:

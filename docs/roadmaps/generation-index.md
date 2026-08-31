@@ -193,17 +193,18 @@ recurrence guards, and closed with full evidence.
 
 `g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
 through `1090` cover the generic profile/structural foundation, bounded docs
-context query, and generic plus Northstar adoption proof. Card `1088` is
-complete; card `1089` is ready.
+context query, and generic plus Northstar adoption proof. Cards `1088` and
+`1089` are complete; card `1090` is ready.
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` audited the full scan
 family, the root agent instruction surface, current public feature coverage,
 active documentation, generated reference output, and shipped CLI help. Its
-closeout returned the active queue to card `1089`.
+closeout returned the active queue to card `1089`, which has since closed.
 
 `g08.037` is complete under archived strict spec `110`, architecture `025`,
 and contract `042`. Card `1092` added explicit isolated skill-task execution
-with a separate consumer target and returned the queue to card `1089`.
+with a separate consumer target and returned the queue to card `1089`, which
+has since closed.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -227,7 +228,7 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Strict spec `108` and ready card `1089` own the active documentation-context
+Strict spec `108` and ready card `1090` own the active documentation-context
 lane. Strict specs `109` and `110` are archived.
 Do not open `g09` or start release work from this selection.
 
@@ -263,6 +264,6 @@ closeout there first.
 ## Next Task
 
 Execute ready card
-[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](./g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

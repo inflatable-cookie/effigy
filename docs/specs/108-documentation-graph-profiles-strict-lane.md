@@ -5,7 +5,7 @@ Owner: documentation graph and agent retrieval surfaces
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Current ready card: [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
+Current ready card: [`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md)
 
 ## Problem
 
@@ -36,9 +36,10 @@ runtime behavior to an agent framework.
    proves generic and Northstar configurations, publishes adoption guidance,
    runs proportional validation, and closes the lane.
 
-Cards `1088`, `1091`, and the temporary external skill-task lane card `1092`
-are complete. Card `1089` resumed on 2026-08-31; `1090` remains pending behind
-its evidence-backed closeout.
+Cards `1088`, `1089`, `1091`, and the temporary external skill-task lane card
+`1092` are complete. Card `1089` closed on 2026-08-31 with evidence
+[`31-181957-documentation-context-1089.md`](../logs/2026-08/31-181957-documentation-context-1089.md),
+which makes card `1090` ready.
 
 ## Owner And Seam
 
@@ -53,14 +54,14 @@ Do not create a second documentation database or a second manifest parser.
 
 ## Acceptance
 
-- [ ] baseline mode works in a repository with no profile
-- [ ] custom repositories can name their own kinds, fields, relations, paths,
+- [x] baseline mode works in a repository with no profile
+- [x] custom repositories can name their own kinds, fields, relations, paths,
       statuses, and authority weights
-- [ ] exact section spans and profile facts are deterministic and provenance-rich
-- [ ] query relevance leads ranking; currentness and authority improve relevant
+- [x] exact section spans and profile facts are deterministic and provenance-rich
+- [x] query relevance leads ranking; currentness and authority improve relevant
       ties without injecting unrelated documents
-- [ ] traversal and output remain inside explicit count, byte, and hop budgets
-- [ ] text and `effigy.docs.context.v1` JSON agree
+- [x] traversal and output remain inside explicit count, byte, and hop budgets
+- [x] text and `effigy.docs.context.v1` JSON agree
 - [ ] Northstar is expressed by committed starter configuration only
 - [ ] generic and Northstar fixtures plus an Effigy benchmark prove retrieval
 - [ ] focused checks, docs QA, formatting, Clippy, and full Effigy QA pass at
@@ -81,4 +82,4 @@ Stop and return to planning if:
 ## Next Task
 
 Execute ready card
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).

@@ -180,7 +180,8 @@ This generation should help agents and maintainers answer questions like:
   `1091` cover the scan evidence, Northstar AGENTS review, active docs,
   generated reference, and shipped CLI help.
 - Documentation graph active: strict spec `108` and contract `041` govern cards
-  `1088` through `1090`; card `1088` is complete and card `1089` is ready.
+  `1088` through `1090`; cards `1088` and `1089` are complete and card `1090`
+  is ready.
 - External skill runner complete: archived strict spec `110`, architecture
   `025`, and contract `042` govern completed card `1092`.
 
@@ -197,7 +198,7 @@ Strict spec `104` and `g08.031` are complete through card `1081`.
 Strict spec `105` and `g08.032` are complete through card `1084`.
 Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
 Strict spec `110` and `g08.037` are complete through card `1092`. Strict spec
-`108` governs active `g08.035`; card `1089` is ready. Strict spec `109` and
+`108` governs active `g08.035`; card `1090` is ready. Strict spec `109` and
 `g08.036` are complete.
 
 ## Batch Cards
@@ -299,20 +300,21 @@ corrected installed CLI against Bovine.
 verified gap repairs, proportional recurrence guards, validation, and
 closeout.
 
-`g08.035` is active under contract `041` and strict spec `108`. Card `1088` is
-complete; card `1089` is ready; card `1090` remains pending behind
-evidence-backed closeout of card `1089`.
+`g08.035` is active under contract `041` and strict spec `108`. Cards `1088`
+and `1089` are complete; card `1089` shipped bounded `effigy docs context`
+retrieval with `effigy.docs.context.v1` JSON on 2026-08-31; card `1090` is
+ready.
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` delivered
 the serial documentation, instruction, help, scan-evidence, and closeout batch.
 
 `g08.037` is complete under architecture `025`, contract `042`, and archived
 strict spec `110`. Card `1092` delivered the external skill-task runner and
-returned the queue to card `1089`.
+returned the queue to card `1089`, which has since closed.
 
 ## Next Task
 
 Execute ready card
-[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1090`](./batch-cards/1090-prove-generic-and-northstar-profiles.md).
 The second governance review remains due by 2026-09-17. Do not infer release
 work or a generation rollover.

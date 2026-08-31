@@ -119,5 +119,5 @@ they remain in the active tree.
 
 ## Next Task
 
-Execute ready card `1089` in the selected Theme 2 extension. Themes 3–5 remain
+Execute ready card `1090` in the selected Theme 2 extension. Themes 3–5 remain
 unscheduled.

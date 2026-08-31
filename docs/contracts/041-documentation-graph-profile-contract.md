@@ -209,6 +209,7 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Remain paused at
-[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
-until external skill-runner card `1092` closes.
+Execute ready card
+[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+Cards `1088` and `1089` are complete; the command, budgets, and
+`effigy.docs.context.v1` payload described above are shipped.

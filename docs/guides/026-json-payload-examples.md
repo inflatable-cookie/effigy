@@ -3427,6 +3427,247 @@ secret values in JSON or text output. Export metadata adds `action = "export"`,
 }
 ```
 
+### Bounded Documentation Context (`effigy.docs.context.v1`)
+
+`effigy docs context <QUERY>` returns exact repository sections, never a
+generated summary. Relevance gates inclusion; currentness and authority only
+order results that already match. Here the historical authority-20 bulletin
+outranks the current authority-80 playbook because the query names it directly.
+
+This is one real run of
+`effigy --json docs context "widget recall" --max-sections 2 --max-bytes 4000`
+against a three-document fixture, so the byte and section accounting is
+reproducible: the two results are 47 and 39 bytes, `used_bytes` is 86, and the
+section budget of 2 is what stopped the report.
+
+```json
+{
+  "schema": "effigy.docs.context.v1",
+  "schema_version": 1,
+  "query": "widget recall",
+  "repo_root": "/workspace/handbook-repo",
+  "profile": {
+    "state": "configured",
+    "fingerprint": "444de88aa08619d6371dafa168ea41f743300ac90d2f0d4ff31e843e83553c80",
+    "roots": ["handbook"],
+    "fields": ["state", "steward"],
+    "kinds": ["bulletin", "playbook"],
+    "relations": ["see-also"],
+    "scoped_documents": 3
+  },
+  "freshness": {
+    "state": "ready",
+    "summary": "graph index is current",
+    "usable": true,
+    "stale": false,
+    "stale_path_count": 0,
+    "failed_path_count": 0,
+    "stale_paths": []
+  },
+  "budgets": {
+    "requested": { "max_sections": 2, "max_bytes": 4000, "max_hops": null },
+    "applied": { "max_sections": 2, "max_bytes": 4000, "max_hops": 1 },
+    "defaults": { "max_sections": 8, "max_bytes": 24000, "max_hops": 1 },
+    "maximum": { "max_sections": 32, "max_bytes": 100000, "max_hops": 3 }
+  },
+  "terms": [
+    { "term": "widget", "document_frequency": 3, "weighted": true },
+    { "term": "recall", "document_frequency": 1, "weighted": true }
+  ],
+  "results": [
+    {
+      "rank": 1,
+      "record_id": "symbol:doc:handbook/bulletins/old.md:#widget-recall",
+      "path": "handbook/bulletins/old.md",
+      "heading": "Widget recall",
+      "anchor": "widget-recall",
+      "section_kind": "heading-h2",
+      "document_kind": "bulletin",
+      "authority": 20,
+      "currentness": "historical",
+      "span": {
+        "start": { "line": 5, "column": 0, "byte": 36 },
+        "end": { "line": 8, "column": 0, "byte": 83 }
+      },
+      "bytes": 47,
+      "source": "## Widget recall\n\nThe widget recall is closed.\n",
+      "fields": [
+        {
+          "field": "state",
+          "value": "retired",
+          "span": {
+            "start": { "line": 3, "column": 0, "byte": 20 },
+            "end": { "line": 3, "column": 14, "byte": 34 }
+          }
+        }
+      ],
+      "hops": 0,
+      "relation_path": [],
+      "seed_path": "handbook/bulletins/old.md",
+      "match_kind": "lexical",
+      "match_reasons": [
+        "heading contains phrase `widget recall`",
+        "section text contains phrase `widget recall`",
+        "heading contains `widget`",
+        "section text contains `widget`",
+        "heading contains `recall`",
+        "section text contains `recall`"
+      ],
+      "relevance": 90,
+      "provenance": {
+        "extractor_id": "markdown-anchors",
+        "extractor_version": "0.2.0",
+        "source_path": "handbook/bulletins/old.md",
+        "confidence": "exact",
+        "detail": "heading"
+      }
+    },
+    {
+      "rank": 2,
+      "record_id": "symbol:doc:handbook/playbooks/ops.md:#runbook",
+      "path": "handbook/playbooks/ops.md",
+      "heading": "Runbook",
+      "anchor": "runbook",
+      "section_kind": "heading-h2",
+      "document_kind": "playbook",
+      "authority": 80,
+      "currentness": "current",
+      "span": {
+        "start": { "line": 5, "column": 0, "byte": 20 },
+        "end": { "line": 8, "column": 0, "byte": 59 }
+      },
+      "bytes": 39,
+      "source": "## Runbook\n\nRestart the widget daemon.\n",
+      "fields": [
+        {
+          "field": "state",
+          "value": "live",
+          "span": {
+            "start": { "line": 3, "column": 0, "byte": 7 },
+            "end": { "line": 3, "column": 11, "byte": 18 }
+          }
+        }
+      ],
+      "hops": 0,
+      "relation_path": [],
+      "seed_path": "handbook/playbooks/ops.md",
+      "match_kind": "lexical",
+      "match_reasons": ["section text contains `widget`"],
+      "relevance": 3,
+      "provenance": {
+        "extractor_id": "markdown-anchors",
+        "extractor_version": "0.2.0",
+        "source_path": "handbook/playbooks/ops.md",
+        "confidence": "exact",
+        "detail": "heading"
+      }
+    }
+  ],
+  "truncation": {
+    "truncated": true,
+    "section_budget_reached": true,
+    "byte_budget_reached": false,
+    "hop_budget_reached": false,
+    "omitted_sections": 1,
+    "used_bytes": 86,
+    "reasons": ["section budget reached after 2 sections"]
+  },
+  "diagnostics": [],
+  "next": ["raise `--max-sections` to include more sections"]
+}
+```
+
+A result reached by typed-relation traversal instead of a direct lexical match
+reports the edge it arrived on. `target` is the destination exactly as the
+source document declared it; the resolved graph identity is `to_path` and the
+result's own `record_id`.
+
+Lexical evidence belongs to the seed, not to the traversed result. `seed_path`
+names the document the evidence came from, and every inherited reason is
+prefixed with that path, so no reason can be read as a claim about this result's
+own section. `handbook/playbooks/ops.md` does not contain `calibrate`;
+`handbook/playbooks/setup.md` does. This block is the traversed result from
+`effigy --json docs context "calibrate"` against the same fixture.
+
+```json
+{
+  "rank": 2,
+  "record_id": "symbol:doc:file:handbook/playbooks/ops.md",
+  "path": "handbook/playbooks/ops.md",
+  "heading": null,
+  "anchor": null,
+  "section_kind": "document",
+  "document_kind": "playbook",
+  "authority": 80,
+  "currentness": "current",
+  "span": {
+    "start": { "line": 1, "column": 0, "byte": 0 },
+    "end": { "line": 8, "column": 0, "byte": 59 }
+  },
+  "bytes": 59,
+  "hops": 1,
+  "seed_path": "handbook/playbooks/setup.md",
+  "match_kind": "relation",
+  "relation_path": [
+    {
+      "relation": "see-also",
+      "from_path": "handbook/playbooks/setup.md",
+      "to_path": "handbook/playbooks/ops.md",
+      "target": "ops.md",
+      "span": {
+        "start": { "line": 6, "column": 10, "byte": 54 },
+        "end": { "line": 6, "column": 23, "byte": 67 }
+      }
+    }
+  ],
+  "match_reasons": [
+    "reached over relation `see-also` from `handbook/playbooks/setup.md`",
+    "inherited from seed `handbook/playbooks/setup.md`: section text contains `calibrate`"
+  ],
+  "relevance": 3
+}
+```
+
+A second hop keeps the original seed rather than reassigning it to the
+intermediate document, and the inherited reason is qualified exactly once. With
+`ops.md` linking onward to `rotation.md`, the two-hop result reports:
+
+```json
+{
+  "path": "handbook/playbooks/rotation.md",
+  "hops": 2,
+  "seed_path": "handbook/playbooks/setup.md",
+  "match_kind": "relation",
+  "match_reasons": [
+    "reached over relation `see-also` from `handbook/playbooks/ops.md`",
+    "reached over relation `see-also` from `handbook/playbooks/setup.md`",
+    "inherited from seed `handbook/playbooks/setup.md`: section text contains `calibrate`"
+  ]
+}
+```
+
+When traversal stops because the hop budget is spent, that reaches the aggregate
+truncation state and carries its own reason. This block comes from the same
+`ops.md` -> `rotation.md` variant used above, queried as
+`effigy --json docs context "calibrate" --max-hops 1`:
+
+```json
+{
+  "truncated": true,
+  "section_budget_reached": false,
+  "byte_budget_reached": false,
+  "hop_budget_reached": true,
+  "omitted_sections": 0,
+  "used_bytes": 141,
+  "reasons": [
+    "hop budget reached at 1 hop(s): further typed relations were not traversed"
+  ]
+}
+```
+
+The matching `next` entry is
+`raise \`--max-hops\` to traverse further typed relations`.
+
 ## Notes
 
 - Field sets can grow with new optional keys while retaining schema compatibility.

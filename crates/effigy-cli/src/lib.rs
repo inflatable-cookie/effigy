@@ -626,6 +626,13 @@ pub enum DocsSubcommand {
     AddLogIndex {
         log_path: PathBuf,
     },
+    /// Bounded documentation evidence retrieval over the shared graph.
+    Context {
+        query: String,
+        max_sections: Option<usize>,
+        max_bytes: Option<usize>,
+        max_hops: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

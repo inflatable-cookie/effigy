@@ -17,6 +17,7 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Docs)),
         "check" => parse_docs_check(args),
+        "context" => parse_docs_context(args),
         "add-log-index" => parse_docs_add_log_index(args),
         other => Err(unknown_argument(other)),
     }
@@ -220,6 +221,81 @@ where
         repo_override,
         output_json,
     }))
+}
+
+fn parse_docs_context<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut query: Option<String> = None;
+    let mut max_sections: Option<usize> = None;
+    let mut max_bytes: Option<usize> = None;
+    let mut max_hops: Option<usize> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--max-sections" => max_sections = Some(parse_budget(&mut args, "--max-sections")?),
+            "--max-bytes" => max_bytes = Some(parse_budget(&mut args, "--max-bytes")?),
+            "--max-hops" => max_hops = Some(parse_budget(&mut args, "--max-hops")?),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => {
+                if query.is_some() {
+                    return Err(unknown_argument(arg));
+                }
+                query = Some(arg);
+            }
+        }
+    }
+
+    let query = query.ok_or_else(|| CliParseError::MissingFlagValue {
+        flag: "<QUERY>".to_owned(),
+    })?;
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::Context {
+            query,
+            max_sections,
+            max_bytes,
+            max_hops,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+/// Budgets are positive counts; the upper bounds live with the retrieval
+/// contract so text and JSON report the same limits.
+fn parse_budget<I>(args: &mut I, flag: &str) -> Result<usize, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let value = next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: flag.to_owned(),
+        },
+    )?;
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value: value.clone(),
+            expected: "a positive integer".to_owned(),
+        })?;
+    if parsed == 0 {
+        return Err(CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value,
+            expected: "a positive integer".to_owned(),
+        });
+    }
+    Ok(parsed)
 }
 
 fn parse_docs_add_log_index<I>(args: I) -> Result<Command, CliParseError>

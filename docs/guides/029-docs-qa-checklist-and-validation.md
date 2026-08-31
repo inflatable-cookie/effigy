@@ -215,6 +215,48 @@ Behavior:
 - requires the first non-empty line in that section to start with an allowlisted actionable verb
 - keeps the heading name and allowlist path repo-configurable instead of hardcoded
 
+## 5d) What `docs context` Retrieves
+
+`effigy docs context <QUERY>` is retrieval, not validation. It reads the shared
+code graph and returns exact Markdown sections with provenance so an agent can
+answer from source instead of guessing at file layout.
+
+```sh
+effigy docs context "release gates"
+effigy --json docs context "documentation graph profile" --max-sections 4
+```
+
+What it guarantees:
+
+- relevance gates inclusion; an unrelated high-authority document never appears
+- currentness and authority only order results that already match, so a query
+  that names historical material still retrieves it; they also outrank heading
+  specificity across documents, while heading depth still selects the most
+  specific section within one document
+- every result carries path, heading, exact span, source text, extracted fields,
+  relation path, and machine-readable match reasons
+- a typed relation step reports the destination exactly as the source declared
+  it in `target`, alongside the resolved `to_path` and the exact link span
+- a traversed result names its lexical origin in `seed_path` and prefixes every
+  inherited reason with that path, so it never claims its own section contains a
+  seed-only term; multi-hop results keep the original seed and are prefixed once
+- budgets are explicit: `--max-sections` (default 8, maximum 32), `--max-bytes`
+  (default 24000, maximum 100000), and `--max-hops` (default 1, maximum 3)
+- a section that does not fit the byte budget is omitted whole and named in
+  `truncation.reasons`; partial sections are never emitted
+- `truncation.truncated` is authoritative: it covers section, byte, and hop
+  exhaustion, and each carries its own reason
+- corpus term weighting only reorders; it never turns a real lexical match into
+  a no-match
+- repeating an unchanged query returns identical ordering
+
+What it does not do: it never summarizes, never crawls outside the selected
+repository, and never adds a second index. Without `[docs_policy.graph]` it runs
+in baseline mode over every indexed Markdown file, reporting kind `document`,
+authority `0`, and currentness `unknown`. See
+[`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
+for the profile grammar and retrieval rules.
+
 ## 6) Common Failure Modes
 
 ### Broken relative path after file move
@@ -294,6 +336,9 @@ effigy docs check next-action --policy vision
 
 # index a newly added log artifact
 effigy docs add-log-index docs/logs/YYYY-MM/DD-HHMMSS-topic.md
+
+# bounded documentation evidence for a question
+effigy docs context "release gates"
 
 # json contracts only
 effigy qa:json:ci
