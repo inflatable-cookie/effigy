@@ -118,16 +118,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.037`](./g08/037-external-skill-task-runner.md) adds explicit
   installed-skill task execution with the consuming repository retained as the
   runtime target; card `1092` is complete and strict spec `110` is archived.
+  Active [`g08.038`](./g08/038-help-first-command-discovery.md) groups command
+  discovery without adding execution aliases; ready card `1093` runs under
+  strict spec `111` and contract `043`.
 
 ## Active Strict Lane
 
-None. Strict spec
-[`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md) is
-archived and `g08.035` is complete: card `1090` closed the repository-defined
-documentation graph on 2026-08-31 with evidence
-[`31-213000-northstar-profile-proof-1090.md`](../logs/2026-08/31-213000-northstar-profile-proof-1090.md).
-Strict spec `110` and `g08.037` are complete. Open the next lane from planning;
-do not infer one.
+Strict spec
+[`111`](../specs/111-help-first-command-discovery-strict-lane.md) governs
+active roadmap `g08.038` and ready card `1093`. The lane changes help discovery
+only; it adds no executable command groups or release work.
 
 ## Research Program
 
@@ -182,8 +182,8 @@ Before rollover:
 
 ## Next Task
 
-None ready. `g08.035` closed on 2026-08-31 and strict spec `108` is archived, so
-there is no active strict lane. Return to planning to open the next one.
+Execute ready card
+[`1093`](./g08/batch-cards/1093-add-help-first-command-discovery.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.
 

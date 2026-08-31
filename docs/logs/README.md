@@ -186,7 +186,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-None ready. Cards `1088`, `1089`, `1090`, and `1092` are complete and strict
-spec `108` is archived, so there is no active strict lane. The second governance
-review remains due by 2026-09-17. No release action or generation rollover is
-implied.
+Execute ready card `1093` under strict spec `111`. The second governance review
+remains due by 2026-09-17. No release action or generation rollover is implied.

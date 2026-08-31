@@ -29,23 +29,41 @@ Binary size alone cannot justify extraction or retention.
 
 ## Command Grouping Contract
 
-The approved model is group-first and aliases-stable.
+The approved first migration is help-first and execution-stable.
 
-- General help groups commands by operator job before adding new grammar.
-- A grouped route may be added only through the existing typed command and
-  runner owners. It must not create a parallel implementation.
-- Grouped and direct routes must agree on root selection, arguments, side
-  effects, text facts, JSON payload/schema, diagnostics, and exit status.
-- Existing direct commands remain valid when the grouped route first ships.
-- Documentation, completions, agent guidance, generated references, and help
-  must expose both forms and identify the preferred discovery path.
-- Adding a grouped route does not mark a shortcut deprecated.
-- Warning, hidden-help, or removal behavior requires a separate approved
-  migration card with consumer inventory and exact compatibility evidence.
-- High-frequency direct commands may remain permanent shortcuts.
+- `effigy --help` and `effigy help` group the general inventory by operator job.
+- `effigy help <group>` accepts exactly `work`, `local`, `repo`, `deliver`,
+  `extend`, or `admin` and renders that primary inventory.
+- `effigy help <command>` renders the same help facts as
+  `effigy <command> --help` through the existing typed help owner.
+- An unknown help topic fails deterministically and points at valid groups and
+  commands. It must not silently fall back to general help.
+- Deferred built-ins stay omitted from general, group, and direct help wherever
+  current repository routing gives the manifest selector precedence.
+- Every general-help entry has exactly one primary group. Cross-links in detail
+  help do not create a second primary entry or execution route.
+- The lane adds no `effigy <group> <command>` grammar, no new top-level built-in
+  names, and no execution-routing changes. A manifest task named `repo`,
+  `local`, `deliver`, `extend`, `admin`, or `work` keeps current precedence.
+- Existing direct commands, arguments, side effects, text/JSON contracts,
+  diagnostics, and exits remain unchanged.
+- Documentation, completions where applicable, agent guidance, generated
+  references, and shipped help must describe the help-first discovery path
+  without advertising executable grouped aliases.
+- Warning, hidden-help, deprecation, alias, or removal behavior requires a
+  separate approved migration card with consumer inventory and compatibility
+  evidence.
 
-Exact namespace names and command grammar are not set by this contract. A
-decision prototype must prove discoverability and collision behavior first.
+Primary ownership is fixed as follows:
+
+| Topic | Primary commands and shapes |
+| --- | --- |
+| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
+| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
+| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
+| `extend` | `skill`, `rhai` |
+| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion, help |
 
 ## Repository-Intelligence Contract
 
@@ -140,6 +158,7 @@ Stop and return to planning when:
 
 - a façade route is used as the only proof of core ownership;
 - a grouped command needs a second implementation;
+- help grouping changes execution routing or reserves a new top-level name;
 - an alias removal lacks explicit operator approval;
 - catalog externalization adds mandatory operator ceremony or weakens offline
   behavior;
@@ -151,14 +170,14 @@ Stop and return to planning when:
 
 - immediate command removals;
 - immediate S3 extraction;
-- exact namespace spellings;
+- executable group namespaces;
 - a general plugin marketplace;
 - binary-size optimization;
 - release execution.
 
 ## Next Task
 
-After card `1090` closes, compile separate planning/prototype lanes for command
-grouping, release/distribution separation, catalog-pack acquisition, and
-repository-intelligence discovery. Keep S3 deferred until its consumer gate is
-proved.
+Execute ready card
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
+After its closeout, return to planning for the catalog-pack acquisition
+prototype. Keep S3 deferred until its consumer gate is proved.

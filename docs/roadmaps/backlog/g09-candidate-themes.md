@@ -34,7 +34,7 @@ governance review cycle run on live Effigy data within two planning iterations.
 
 ## Theme 2 — Agent-native maintainer experience
 
-**Status:** active (`g08.035`, cards `1088`–`1090`, strict spec `108`)
+**Status:** completed (`g08.035`, cards `1088`–`1090`, archived strict spec `108`)
 
 **Primary tags:** `OPERATE`, `MAINT`, `ROUTE`
 
@@ -119,5 +119,5 @@ they remain in the active tree.
 
 ## Next Task
 
-Execute ready card `1090` in the selected Theme 2 extension. Themes 3–5 remain
-unscheduled.
+Execute ready card `1093` in the separate feature-boundary follow-through.
+Themes 3–5 remain unscheduled.

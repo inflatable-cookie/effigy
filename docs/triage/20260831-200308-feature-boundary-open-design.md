@@ -14,9 +14,6 @@ placement audit. Settled ownership and migration rules live in architecture
 
 ## Open Questions
 
-- What exact namespace names and grammar best express daily work, local
-  runtime, repository intelligence, delivery/state, and extensions?
-- Which direct aliases should remain permanent? No alias removal is approved.
 - What extension transport should optional runtime/provider code use?
 - What is the minimum base Rhai surface after provider-specific helpers move?
 - How should the default catalog pack be installed and updated while remaining
@@ -37,66 +34,17 @@ placement audit. Settled ownership and migration rules live in architecture
   recipes move outward;
 - S3 remains until the named consumer migration is proved.
 
-## Decision Prototype: Help-First Grouping
-
-Current general help is one flat table of roughly thirty command families.
-Adding executable groups such as `effigy repo docs` would make the grammar
-larger, reserve new top-level selector names, and produce longer forms than the
-existing commands.
-
-Recommended first migration:
-
-- keep every executable route unchanged;
-- split `effigy --help` into job-based sections;
-- make the existing `help` command the discovery namespace;
-- add `effigy help <group>` for one grouped inventory;
-- add `effigy help <command>` as the conventional route to existing detailed
-  help topics;
-- do not add `effigy <group> <command>` execution aliases unless later usage
-  evidence shows they solve a separate problem.
-
-Proposed primary taxonomy:
-
-| Help topic | Commands and shapes |
-| --- | --- |
-| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
-| `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
-| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
-| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
-| `extend` | `skill`, `rhai` |
-| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion and help |
-
-Example general-help shape:
-
-```text
-Common
-  effigy <task>       Run a repository task
-  effigy tasks        Find tasks and inspect routing
-  effigy test         Run the test orchestrator
-  effigy doctor       Diagnose health and routing
-  effigy init         Initialize repository configuration
-
-Local environments
-  effigy container    Operate declared containers
-  effigy system       Operate the default system
-  ...
-
-Repository intelligence
-  effigy graph        Navigate code structure
-  effigy docs         Retrieve and validate documentation
-  ...
-```
-
-Collision result: help topics live below the existing `help` command, so they
-do not steal manifest selectors named `repo`, `local`, `deliver`, or similar.
-Direct built-ins keep their current deferral and routing behavior.
-
-Open naming edge: `bootstrap`, `demo`, and `secrets` cross group boundaries.
-The table gives each one a primary discovery home; detailed help may cross-link
-without duplicating execution routes.
+- Help-first discovery uses exact topics `work`, `local`, `repo`, `deliver`,
+  `extend`, and `admin` under `effigy help`.
+- The taxonomy and primary ownership live in architecture `026` and contract
+  `043`; card `1093` implements them without executable group aliases.
+- Existing direct commands and selector precedence remain unchanged. No alias
+  removal is approved.
 
 ## Next Task
 
-Confirm or revise the help-first grouping and six topic names. Then prototype
-catalog-pack acquisition before compiling separate migration lanes. Keep S3 out
-of the implementation queue until its consumer gate is met.
+Execute ready help-first discovery card
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
+After that lane settles, prototype catalog-pack acquisition before compiling
+more migration lanes. Keep S3 out of the implementation queue until its
+consumer gate is met.

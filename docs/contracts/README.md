@@ -282,5 +282,5 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 ## Next Task
 
 Execute ready card
-[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
 No release action is implied.

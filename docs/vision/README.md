@@ -63,7 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready documentation-context card
-[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md)
-under decision [`D-2026-04`](./decisions/D-2026-04-repository-defined-documentation-graph.md).
+Execute ready help-first discovery card
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
+under architecture `026` and contract `043`.
 The second governance review remains due by 2026-09-17.

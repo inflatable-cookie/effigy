@@ -40,26 +40,33 @@ response, release coupling, command coherence, and real consumer evidence are.
 
 ## Operator Surface
 
-The approved direction is group-first and aliases-stable.
+The approved first migration is help-first and execution-stable.
 
-1. `effigy --help` presents commands by operator job instead of one flat list.
-2. Grouped routes may provide a coherent discovery path.
-3. Existing direct commands remain valid shortcuts when grouped routes arrive.
-4. A grouped and direct route must resolve to the same typed request, behavior,
-   output contract, and exit semantics.
-5. Adding a group does not approve deprecation. Each alias removal needs its own
-   explicit pre-`1.0` migration decision and evidence.
+1. `effigy --help` and `effigy help` present commands by operator job instead
+   of one flat list.
+2. `effigy help <group>` presents one grouped inventory.
+3. `effigy help <command>` presents the existing detailed command help and is
+   equivalent in facts to `effigy <command> --help`.
+4. The first lane adds no `effigy <group> <command>` execution aliases and
+   reserves no new top-level built-in names.
+5. Existing direct commands and manifest-selector routing remain unchanged.
+6. Adding help groups does not approve deprecation. Any later executable alias,
+   warning, hiding, or removal needs a separate migration decision and evidence.
 
-The initial conceptual groups are:
+The exact primary help taxonomy is:
 
-- daily work: selectors, tasks, tests, doctor, and init;
-- local runtime: container, system, workspace, gateway, service, and exec;
-- repository intelligence: graph, scan, docs, contracts, and papercuts;
-- delivery and state: artifact, state, deploy, release, bundle, and bootstrap;
-- extension administration: skill, Rhai, and future optional providers.
+| Topic | Primary commands and shapes |
+| --- | --- |
+| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
+| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
+| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
+| `extend` | `skill`, `rhai` |
+| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion, help |
 
-Exact namespace names and grammar remain a decision-prototype question. The
-architecture approves the grouping model, not a wholesale rename.
+Each general-help entry has one primary home. Detailed help may cross-link
+borderline capabilities such as `bootstrap`, `demo`, or `secrets` without
+duplicating execution routes.
 
 ## Repository Intelligence
 
@@ -68,8 +75,9 @@ provider-neutral, deterministic repository navigation and policy evidence for
 operators, agents, and CI.
 
 Grouping improves discovery; it does not justify a second implementation or an
-optional binary. Existing direct forms such as `effigy graph` and `effigy docs`
-remain stable unless a later migration explicitly decides otherwise.
+optional binary. `effigy help repo` discovers the family while direct forms
+such as `effigy graph` and `effigy docs` remain the only built-in execution
+routes unless a later migration explicitly decides otherwise.
 
 ## Local Runtime And Providers
 
@@ -142,10 +150,9 @@ follows proven replacement.
 
 ## Sequencing
 
-The next planning batch may compile separate migration lanes only after the
-active documentation-profile card `1090` settles:
+The feature-boundary follow-through is sequenced as separate lanes:
 
-1. command/help grouping prototype with alias parity and no removals;
+1. help-first command discovery with no execution aliases or removals;
 2. release versus self-distribution separation;
 3. catalog-pack acquisition prototype satisfying the simplicity invariant;
 4. repository-intelligence grouped discovery surface;
@@ -157,7 +164,7 @@ These lanes should remain separate. None implies release work.
 
 - optimize binary size;
 - remove commands merely to reduce a count;
-- select exact namespace spellings in architecture;
+- add executable group namespaces in the help-first lane;
 - require a plugin marketplace;
 - remove S3 before consumer replacement;
 - make catalog use more manual;

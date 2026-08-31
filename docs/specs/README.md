@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`111`](./111-help-first-command-discovery-strict-lane.md) — help-first
+  grouping with unchanged execution grammar; ready card `1093`
 
 Queued strict lanes:
 
@@ -73,6 +74,6 @@ Other planning specs:
 ## Next Task
 
 Execute ready card
-[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.
