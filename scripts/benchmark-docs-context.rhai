@@ -6,7 +6,7 @@
 // tuning a query after seeing a result. A miss is recorded and diagnosed, not
 // edited away.
 //
-// Freeze history, so a reviewer can replay both states:
+// Freeze history, so a reviewer can replay any state:
 //
 //   398a698f2  first freeze. 9 of 11 cases held, including every live-authority
 //              and historical-retrieval case. Two cases missed for reasons in
@@ -42,7 +42,7 @@
 //              between *similarly relevant* documents and relevance ranks first,
 //              so ranking the more relevant historical document above the less
 //              relevant current one is correct behavior, not a defect.
-//   this file  fourth freeze. The mis-specified live-authority slot is removed
+//   8c72bed4f  fourth freeze. The mis-specified live-authority slot is removed
 //              rather than re-queried, and the behavior it actually demonstrated
 //              is kept as an explicit direct-historical case. Current-versus-
 //              historical ordering at genuinely equal relevance is proved in the
@@ -52,6 +52,14 @@
 //              result from the first freeze is preserved in the card `1090`
 //              evidence log. No ranking rule, authority weight, or budget default
 //              was changed at any point in this history.
+//   this file  fifth freeze. `generic-no-match` added, and the `effigy-no-match`
+//              literal confined to this file. That case asserts an empty report
+//              against this repository's own corpus, whose profile roots include
+//              docs/, README.md, AGENTS.md, CHANGELOG.md, and PAPERCUTS.md, so
+//              documenting its query inside any of them gives the terms a
+//              non-zero document frequency and turns the case red. It broke
+//              exactly that way twice while the card `1090` evidence log was
+//              being written. 12/12 hold.
 //
 // Two targets, both required:
 //

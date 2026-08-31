@@ -149,8 +149,10 @@ consequences are worth knowing before you tune a query:
 - **Relevance leads.** A vague query built from words that appear everywhere is
   ordered by relevance noise. A term reaching more than half of a corpus of at
   least eight scoped documents is dropped from scoring as ordinary vocabulary,
-  so `roadmap` in a repository of roadmaps carries no signal. Name the thing you
-  want, not the category it belongs to.
+  so `roadmap` in a repository of roadmaps carries no signal. That weighting is
+  a ranking optimization only: if the weighted terms seed nothing, every term is
+  re-enabled and seeding runs again, so it can never erase a query's only
+  evidence. Name the thing you want, not the category it belongs to.
 - **Traversal supplements thin evidence.** Traversed results rank after every
   direct lexical result, so on a large corpus the section budget is usually
   spent before a one-hop result can be selected. Raise `--max-sections`, or

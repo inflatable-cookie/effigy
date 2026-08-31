@@ -8,7 +8,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 - The `northstar` starter now emits the full Northstar documentation ontology as
-  a `[docs_policy.graph]` block: 13 document kinds with authority weights,
+  a `[docs_policy.graph]` block: 14 document kinds with authority weights,
   `Status:`-driven currentness, and typed `contract`, `architecture`, `spec`,
   `roadmap`, `card`, `evidence`, `supersedes`, and `next-task` relations. The
   emitted block states in its own text that it is copied configuration, not an

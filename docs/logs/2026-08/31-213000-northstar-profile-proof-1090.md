@@ -70,7 +70,7 @@ uses the same vocabulary family and is unchanged by this card.
 
 ## Northstar As Copied Configuration
 
-`crates/effigy-catalog/starters/northstar/effigy.toml` now emits 13 kinds
+`crates/effigy-catalog/starters/northstar/effigy.toml` now emits 14 kinds
 (`contract`, `architecture`, `spec`, `archived-spec`, `vision`,
 `archived-vision`, `roadmap`, `ready-card`, `guide`, `archived-guide`,
 `front-door`, `log`, `archived-log`, `handoff`) and 8 relations (`contract`,
@@ -92,8 +92,9 @@ template.
 ### Effigy's own consumer copy deliberately deviates
 
 `docs/effigy.docs.toml` is the materialized profile, adapted to Effigy's real
-tree: 16 kinds, 8 relations, `roots = ["README.md", "AGENTS.md", "CHANGELOG.md",
-"PAPERCUTS.md", "docs"]`, 2319 scoped documents.
+tree: 17 kinds (the starter's 14 plus `audit`, `research`, and `triage`), 8
+relations (`supersedes` dropped, `depends-on` added), `roots = ["README.md",
+"AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs"]`, 2321 scoped documents.
 
 It sets `cardinality = "many"` for both `status` and `owner`; the starter ships
 `"one"`. Effigy's roadmap and architecture documents legitimately carry
@@ -155,8 +156,8 @@ The corpus was committed before every run. Four freezes, all replayable:
 | 1 | `398a698f2` | 9/11 |
 | 2 | `b6a60e1b6` | 10/11 |
 | 3 | `b05a7928a` | 10/11 |
-| 4 | `d38abf669` onward | 11/11 |
-| 5 | this commit | 12/12 |
+| 4 | `8c72bed4f` | 11/11 |
+| 5 | `892691f31` | 12/12 |
 
 Every miss and its diagnosis:
 
@@ -171,8 +172,9 @@ Every miss and its diagnosis:
    including this log - would give both terms a non-zero document frequency and
    turn the case red. A no-match case cannot name itself inside its own corpus.
 2. **`effigy-next-task` (freeze 1).** Asserted a typed-relation hop on the
-   2319-document corpus. Card `1090` was present at rank 11 but at 0 hops,
-   reached lexically, and no relation path appeared at all. Diagnosis:
+   2319-document corpus scoped at that freeze. Card `1090` was present at rank
+   11 but at 0 hops, reached lexically, and no relation path appeared at all.
+   Diagnosis:
    traversed results rank after every 0-hop result by contract, so on a corpus
    this size the section budget is exhausted by lexical seeds before a one-hop
    result can be selected. Confirmed at `--max-sections 32 --max-bytes 100000`:
@@ -184,10 +186,10 @@ Every miss and its diagnosis:
    6, outside the top three. The declared historical rival
    `docs/roadmaps/g07/README.md` did **not** outrank it, so the currentness
    criterion held; only the top-three bound failed. Diagnosis: `roadmap` reaches
-   1540 of 2319 scoped documents and is dropped by corpus weighting, leaving
-   `generation`, `theme`, and `purpose` - all section boilerplate. Relevance
-   ranks before currentness by contract, so an undiscriminating query is ordered
-   by relevance noise.
+   1540 of the 2319 documents scoped at freeze 2 and is dropped by corpus
+   weighting, leaving `generation`, `theme`, and `purpose` - all section
+   boilerplate. Relevance ranks before currentness by contract, so an
+   undiscriminating query is ordered by relevance noise.
 4. **`effigy-current-over-archived` (freeze 3).** Archived guide `032` ranked 1
    at relevance 48; live guide `039` ranked 2 at relevance 42. The query carried
    `consistency sweep`, which is the archived guide's own title phrase, so it
@@ -226,7 +228,7 @@ not above it, on query
 | `generic-no-match` | no-match | `quokka marmalade trombone` | - | - | - | - | - | 0 | pass |
 | `generic-relation-follow-up` | next-task | `widget calibrator tolerance band` | `handbook/playbooks/rebalance.md` | 4 | current | 80 | - | 656 | pass |
 
-`effigy-live` (2319 scoped documents, profile fingerprint from
+`effigy-live` (2321 scoped documents, profile fingerprint from
 `docs/effigy.docs.toml`):
 
 | case | dimension | query | expected source | rank | currentness | authority | rival rank | context bytes | result |
@@ -264,15 +266,39 @@ entirely; two no-match queries return 0 results and 0 context bytes.
 
 | Check | Result |
 | --- | --- |
+| `effigy qa` (built-in `test` + `qa:docs` + `qa:json`) | passed; 3480/3480 tests run, 3480 passed, 1 skipped, exit 0 |
+| `cargo fmt --all -- --check` | passed |
+| `cargo clippy --all-targets -- -D warnings` | passed |
+| `git diff --check` | passed |
+| `effigy perf:docs-context-benchmark` | 12/12 predeclared expectations held |
 | `cargo test --test cli_output_tests docs_context` | passed (14 tests, 3 new) |
 | `cargo test -p effigy-catalog starter` | passed (6 tests) |
 | `cargo test --test documentation_coverage_tests` | passed (4 tests) |
-| `cargo test -p effigy-manifest -p effigy-codegraph -p effigy-contracts` | see closeout run below |
-| `effigy perf:docs-context-benchmark` | 12/12 predeclared expectations held |
-| `effigy qa` | see closeout run below |
-| `cargo fmt --all -- --check` | see closeout run below |
-| `cargo clippy --all-targets -- -D warnings` | see closeout run below |
-| `git diff --check` | see closeout run below |
+| `cargo test -p effigy-rhai script_policy` | passed (9 tests) |
+| `effigy docs check links` | passed |
+| `effigy docs check index` | passed |
+| `effigy docs check json-examples` | passed |
+| `effigy docs check next-action --policy vision` | passed |
+| `effigy docs check forbidden` (agent defaults) | passed |
+
+The first `effigy qa` run failed on
+`effigy-rhai tests::script_policy::first_party_rhai_process_calls_are_allowlisted`:
+a new first-party Rhai script that calls `process::run` must be named in the
+allowlist in `crates/effigy-rhai/src/tests/mod.rs`. Fixed by adding
+`scripts/benchmark-docs-context.rhai` with the same wrapper-shape assertion the
+graph benchmark uses. Worth noting for a reviewer: `effigy qa` exits 0 even when
+a task inside it fails, so the run was confirmed by reading its output rather
+than by the shell status.
+
+## Affected Analysis
+
+`EFFIGY_GRAPH_TIMEOUT_MS=0 effigy graph affected --stdin` over the changed paths
+returned only heuristic neighbors: `effigy-bootstrap` and `effigy-builtin` test
+files reached through `contains` traversal, plus the `qa` task family reached
+through manifest references. As in cards `1088` and `1089`, those are not the
+real validation surface for a configuration, fixture, and documentation change,
+so validation ran the direct suites listed above instead. The graph output says
+as much itself: it is bounded evidence, not exhaustive test proof.
 
 ## Changed Surfaces
 
@@ -286,6 +312,7 @@ entirely; two no-match queries return 0 results and 0 context bytes.
 - `docs/guides/{README,025,047,056}.md`, `docs/README.md`, `AGENTS.md`
 - `.agents/skills/effigy/` and `skills/effigy/` (SKILL.md, `references/config-shapes.md`, `references/built-in-surfaces.md`)
 - `docs/architecture/024`, `docs/contracts/041`
+- `crates/effigy-rhai/src/tests/mod.rs` (first-party Rhai process allowlist)
 - closeout: card `1090`, roadmap `g08.035`, `docs/specs/archive/108-...` (moved),
   `docs/specs/README.md`, `docs/roadmaps/README.md`,
   `docs/roadmaps/generation-index.md`, `docs/roadmaps/g08/README.md`,
