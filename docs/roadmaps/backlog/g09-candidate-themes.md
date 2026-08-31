@@ -119,5 +119,6 @@ they remain in the active tree.
 
 ## Next Task
 
-Execute ready card `1093` in the separate feature-boundary follow-through.
+Card `1093` closed the help-first slice of the feature-boundary
+follow-through; the catalog-pack acquisition prototype is next in planning.
 Themes 3–5 remain unscheduled.

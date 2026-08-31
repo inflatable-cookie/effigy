@@ -375,3 +375,188 @@ fn cli_repo_pulse_prints_migration_guidance() {
     assert!(stderr.contains("no longer a built-in command"));
     assert!(stderr.contains("effigy doctor"));
 }
+
+fn run_help_cli(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    for arg in args {
+        command.arg(arg);
+    }
+    command
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy")
+}
+
+#[test]
+fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
+    let root = temp_workspace("help-group-repo");
+    let output = run_help_cli(&root, &["help", "repo"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("Repo Commands"), "got: {stdout}");
+    for command in [
+        "effigy graph",
+        "effigy scan",
+        "effigy docs",
+        "effigy contracts",
+        "effigy papercuts",
+    ] {
+        assert!(stdout.contains(command), "missing {command}: {stdout}");
+    }
+    for foreign in [
+        "effigy container",
+        "effigy exec",
+        "effigy system",
+        "effigy release",
+        "effigy deploy",
+        "effigy artifact",
+        "effigy bundle",
+        "effigy skill",
+    ] {
+        assert!(!stdout.contains(foreign), "leaked {foreign}: {stdout}");
+    }
+}
+
+#[test]
+fn cli_help_command_and_direct_command_help_render_the_same_facts() {
+    let root = temp_workspace("help-command-parity");
+    for command in ["docs", "graph", "release", "tasks", "state"] {
+        let via_help = run_help_cli(&root, &["help", command]);
+        let via_flag = run_help_cli(&root, &[command, "--help"]);
+        assert!(via_help.status.success(), "`effigy help {command}` failed");
+        assert!(
+            via_flag.status.success(),
+            "`effigy {command} --help` failed"
+        );
+        assert_eq!(
+            String::from_utf8(via_help.stdout).expect("utf8 stdout"),
+            String::from_utf8(via_flag.stdout).expect("utf8 stdout"),
+            "`effigy help {command}` drifted from `effigy {command} --help`"
+        );
+    }
+}
+
+#[test]
+fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
+    let root = temp_workspace("help-group-selector-collision");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.repo]\nrun = \"printf repo-task\"\n",
+    )
+    .expect("write manifest");
+
+    let task = run_help_cli(&root, &["repo"]);
+    assert!(task.status.success());
+    let task_stdout = String::from_utf8(task.stdout).expect("utf8 stdout");
+    assert!(task_stdout.contains("repo-task"), "got: {task_stdout}");
+    assert!(!task_stdout.contains("Repo Commands"), "got: {task_stdout}");
+
+    let grouped = run_help_cli(&root, &["repo", "docs"]);
+    let grouped_stdout = String::from_utf8(grouped.stdout).expect("utf8 stdout");
+    assert!(
+        !grouped_stdout.contains("Repo Commands"),
+        "`effigy repo docs` must not become a grouped built-in route: {grouped_stdout}"
+    );
+    assert!(
+        !grouped_stdout.contains("docs Help"),
+        "`effigy repo docs` must not become a grouped built-in route: {grouped_stdout}"
+    );
+
+    let help = run_help_cli(&root, &["help", "repo"]);
+    assert!(help.status.success());
+    let help_stdout = String::from_utf8(help.stdout).expect("utf8 stdout");
+    assert!(help_stdout.contains("Repo Commands"), "got: {help_stdout}");
+    assert!(help_stdout.contains("effigy graph"), "got: {help_stdout}");
+}
+
+#[test]
+fn cli_unknown_help_topic_fails_with_valid_group_and_command_guidance() {
+    let root = temp_workspace("help-unknown-topic");
+    let output = run_help_cli(&root, &["help", "not-a-topic"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(
+        stderr.contains("unknown help topic `not-a-topic`"),
+        "got: {stderr}"
+    );
+    assert!(stderr.contains("effigy help <group>"), "got: {stderr}");
+    assert!(stderr.contains("effigy help <command>"), "got: {stderr}");
+    for group in ["work", "local", "repo", "deliver", "extend", "admin"] {
+        assert!(stderr.contains(group), "missing group {group}: {stderr}");
+    }
+}
+
+#[test]
+fn cli_help_group_json_mode_emits_machine_readable_payload() {
+    let root = temp_workspace("help-group-json");
+    let output = run_help_cli(&root, &["--json", "help", "extend"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "help");
+    assert_eq!(parsed["command"]["name"], "extend");
+    assert_eq!(parsed["result"]["schema"], "effigy.help.v1");
+    assert_eq!(parsed["result"]["topic"], "extend");
+    assert!(parsed["result"]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Extend Commands")));
+}
+
+#[test]
+fn cli_general_help_renders_the_six_operator_groups() {
+    let root = temp_workspace("help-general-groups");
+    let output = run_help_cli(&root, &["--help"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    for title in [
+        "Work Commands",
+        "Local Commands",
+        "Repo Commands",
+        "Deliver Commands",
+        "Extend Commands",
+        "Admin Commands",
+    ] {
+        assert!(stdout.contains(title), "missing {title}: {stdout}");
+    }
+    assert!(stdout.contains("effigy help <group>"), "got: {stdout}");
+}
+
+#[test]
+fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows_it() {
+    let root = temp_workspace("help-command-deferral");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.docs]\nrun = \"printf docs-task\"\n",
+    )
+    .expect("write manifest");
+
+    let direct = run_help_cli(&root, &["docs", "--help"]);
+    assert!(direct.status.success());
+    let direct_stdout = String::from_utf8(direct.stdout).expect("utf8 stdout");
+    assert!(direct_stdout.contains("docs-task"), "got: {direct_stdout}");
+    assert!(!direct_stdout.contains("docs Help"), "got: {direct_stdout}");
+
+    let via_help = run_help_cli(&root, &["help", "docs"]);
+    assert_eq!(via_help.status.code(), Some(2));
+    let via_help_stdout = String::from_utf8(via_help.stdout).expect("utf8 stdout");
+    assert!(
+        !via_help_stdout.contains("docs Help"),
+        "`effigy help docs` must not resurface the deferred built-in panel: {via_help_stdout}"
+    );
+    let stderr = String::from_utf8(via_help.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("`docs` is deferred"), "got: {stderr}");
+    assert!(stderr.contains("run `effigy docs --help`"), "got: {stderr}");
+
+    let group = run_help_cli(&root, &["help", "repo"]);
+    assert!(group.status.success());
+    let group_stdout = String::from_utf8(group.stdout).expect("utf8 stdout");
+    assert!(!group_stdout.contains("effigy docs"), "got: {group_stdout}");
+    assert!(group_stdout.contains("effigy graph"), "got: {group_stdout}");
+}

@@ -14,7 +14,7 @@ use effigy_core::widgets::{KeyValue, NoticeLevel, TableSpec};
 use effigy_ui::{Renderer, UiError, UiResult};
 
 use super::{HelpRenderer, HelpResult};
-use crate::HelpTopic;
+use crate::{HelpGroup, HelpTopic};
 
 /// Local wrapper type used to adapt an [`effigy_ui::Renderer`] to the
 /// narrower [`HelpRenderer`] trait.
@@ -76,4 +76,19 @@ pub fn render_help_with_deferred_builtins<R: Renderer>(
 ) -> UiResult<()> {
     super::render_help_with_deferred_builtins(&mut HelpView(renderer), topic, deferred_builtins)
         .map_err(io_error_to_ui)
+}
+
+/// Render the discovery panel for one help `group`, hiding rows whose built-in
+/// name is in `deferred_builtins`. Bridged to [`effigy_ui::Renderer`].
+pub fn render_help_group_with_deferred_builtins<R: Renderer>(
+    renderer: &mut R,
+    group: HelpGroup,
+    deferred_builtins: &BTreeSet<String>,
+) -> UiResult<()> {
+    super::render_help_group_with_deferred_builtins(
+        &mut HelpView(renderer),
+        group,
+        deferred_builtins,
+    )
+    .map_err(io_error_to_ui)
 }

@@ -452,7 +452,7 @@ effigy --json tasks              # Every task, catalog, and description
 effigy --json test --plan        # Resolved test plan without execution
 effigy --json graph explore "<task>"   # Bounded code-understanding packet
 effigy <task>                    # Execute supported repo work
-effigy --help                    # Every command and flag
+effigy --help                    # Every command and flag, grouped by job
 effigy --json release simulate   # Machine-readable dry-runs
 ```
 

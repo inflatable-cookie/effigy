@@ -177,7 +177,8 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
-After its closeout, return to planning for the catalog-pack acquisition
-prototype. Keep S3 deferred until its consumer gate is proved.
+Card
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
+is complete: help-first grouping shipped with execution grammar unchanged.
+Return to planning for the catalog-pack acquisition prototype. Keep S3 deferred
+until its consumer gate is proved.

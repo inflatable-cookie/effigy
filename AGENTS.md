@@ -3,7 +3,8 @@
 Effigy is a Rust-based unified task runner for monorepos. Behavior is
 **manifest-driven** (`effigy.toml`, often split across included files): most
 `effigy <name>` invocations are **repo tasks**; built-ins include `test`, `init`,
-`doctor`, and a short list from `effigy --help`.
+`doctor`, and a short list from `effigy --help`, which groups them by job
+(`effigy help <group>` for one group, `effigy help <command>` for detail).
 
 ## Always-loaded boundaries
 

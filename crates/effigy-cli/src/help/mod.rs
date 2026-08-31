@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::HelpTopic;
+use crate::{HelpGroup, HelpTopic};
 
 pub use effigy_core::widgets::{KeyValue, NoticeLevel, TableSpec};
 
@@ -55,13 +55,18 @@ pub fn render_help_with_deferred_builtins<R: HelpRenderer>(
     registry::render_help_topic(renderer, topic, deferred_builtins)
 }
 
-pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
-    registry::builtin_help_topic(command)
+/// Render the discovery panel for one help `group`, hiding rows whose built-in
+/// name is in `deferred_builtins`.
+pub fn render_help_group_with_deferred_builtins<R: HelpRenderer>(
+    renderer: &mut R,
+    group: HelpGroup,
+    deferred_builtins: &BTreeSet<String>,
+) -> HelpResult<()> {
+    topics::render_help_group(renderer, group, deferred_builtins)
 }
 
-pub(crate) fn general_help_command_rows(
-) -> impl Iterator<Item = (&'static str, &'static str, Option<&'static str>)> {
-    registry::general_help_command_rows()
+pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
+    registry::builtin_help_topic(command)
 }
 
 #[cfg(test)]

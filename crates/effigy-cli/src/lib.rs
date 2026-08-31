@@ -16,6 +16,7 @@ pub mod header;
 pub mod help;
 mod value_parsing;
 
+pub use command_surface::HelpGroup;
 pub use global_json::{runtime_flag_present_before_passthrough, GlobalCliOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,9 @@ pub enum Command {
     #[doc(hidden)]
     InternalHostProcessStop(InternalHostProcessStopArgs),
     Help(HelpTopic),
+    /// Discovery-only help for one operator-job group. Grouping never adds an
+    /// execution route: see contract `043`.
+    HelpGroup(HelpGroup),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +106,9 @@ pub struct InternalHostProcessStopArgs {
 }
 
 /// Which `effigy <topic> --help` panel to render.
+///
+/// `effigy help <command>` reuses these same panels, so both spellings render
+/// identical facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTopic {
     General,

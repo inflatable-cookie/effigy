@@ -118,16 +118,18 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.037`](./g08/037-external-skill-task-runner.md) adds explicit
   installed-skill task execution with the consuming repository retained as the
   runtime target; card `1092` is complete and strict spec `110` is archived.
-  Active [`g08.038`](./g08/038-help-first-command-discovery.md) groups command
-  discovery without adding execution aliases; ready card `1093` runs under
-  strict spec `111` and contract `043`.
+  Completed [`g08.038`](./g08/038-help-first-command-discovery.md) groups
+  command discovery under the six operator-job topics without adding execution
+  aliases; card `1093` is complete and strict spec `111` is archived.
 
 ## Active Strict Lane
 
-Strict spec
-[`111`](../specs/111-help-first-command-discovery-strict-lane.md) governs
-active roadmap `g08.038` and ready card `1093`. The lane changes help discovery
-only; it adds no executable command groups or release work.
+None. Strict spec
+[`111`](../specs/archive/111-help-first-command-discovery-strict-lane.md) closed
+with roadmap `g08.038` and card `1093`; help-first discovery shipped without
+executable command groups or release work. The feature-placement queue is back
+in planning for the catalog-pack acquisition prototype under contract
+[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
 
 ## Research Program
 
@@ -182,10 +184,11 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card
-[`1093`](./g08/batch-cards/1093-add-help-first-command-discovery.md).
-The second governance review remains due by 2026-09-17. No release action or
-`g09` rollover is implied.
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
+Keep S3 extraction deferred until its consumer gate is proved. The second
+governance review remains due by 2026-09-17. No release action or `g09`
+rollover is implied.
 
 ## Historical language boundary
 

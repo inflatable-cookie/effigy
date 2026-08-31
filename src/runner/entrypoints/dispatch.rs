@@ -58,7 +58,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Version => Ok(String::new()),
         Command::Bundle(args) => run_bundle(args),
         Command::Artifact(args) => run_artifact(args),
-        Command::Help(_) => Ok(String::new()),
+        Command::Help(_) | Command::HelpGroup(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Deploy(args) => run_deploy(args),
         Command::Deps(args) => run_deps(args),

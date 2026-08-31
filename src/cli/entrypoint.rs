@@ -1,7 +1,7 @@
 use crate::{
     command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
     parse_error_json_details, parse_json_or_string, render_cli_header, render_parse_error,
-    run_graph_watch_command, run_help_command, CliExecutionContext,
+    run_graph_watch_command, run_help_command, run_help_group_command, CliExecutionContext,
 };
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command,
@@ -124,6 +124,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     match cmd {
         Command::Version => crate::run_version_command(&context),
         Command::Help(topic) => run_help_command(&context, topic),
+        Command::HelpGroup(group) => run_help_group_command(&context, group),
         Command::Graph(
             args @ effigy_cli::GraphArgs {
                 subcommand: GraphSubcommand::Watch { .. },
@@ -281,6 +282,9 @@ fn parse_command_with_builtin_deferral(
         return parse_command(args);
     };
     let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
+    if first == "help" {
+        return reject_help_for_deferred_builtin(parse_command(args)?, &deferred_builtins);
+    }
     if !deferred_builtins.contains(first) {
         return parse_command(args);
     }
@@ -289,6 +293,28 @@ fn parse_command_with_builtin_deferral(
         name: first.clone(),
         args: args[1..].to_vec(),
     }))
+}
+
+/// Keep `effigy help <command>` in step with `effigy <command> --help`.
+///
+/// When repository routing owns the built-in name, the direct flag already
+/// runs the repository's own path, so the built-in panel must not resurface
+/// through the help topic either.
+fn reject_help_for_deferred_builtin(
+    command: Command,
+    deferred_builtins: &std::collections::BTreeSet<String>,
+) -> Result<Command, effigy_cli::CliParseError> {
+    let Command::Help(topic) = command else {
+        return Ok(command);
+    };
+    let deferred = effigy_cli::command_surface::deferred_builtin_for_help_topic(topic)
+        .filter(|name| deferred_builtins.contains(*name));
+    match deferred {
+        Some(name) => Err(effigy_cli::CliParseError::InvalidArguments(format!(
+            "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; run `effigy {name} --help` for what `effigy {name}` actually does"
+        ))),
+        None => Ok(Command::Help(topic)),
+    }
 }
 
 fn deferred_builtin_root(
@@ -425,6 +451,109 @@ mod tests {
                 "/tmp/other".to_owned(),
             ]),
             Some(std::path::PathBuf::from("/tmp/repo"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod help_deferral_tests {
+    use super::parse_command_with_builtin_deferral;
+    use effigy_cli::{Command, GlobalCliOptions, HelpTopic};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("effigy-help-deferral-{name}-{ts}"));
+        fs::create_dir_all(&root).expect("mkdir root");
+        root
+    }
+
+    fn parse(root: &std::path::Path, args: &[&str]) -> Result<Command, effigy_cli::CliParseError> {
+        parse_command_with_builtin_deferral(
+            args.iter().map(|arg| (*arg).to_owned()).collect(),
+            root,
+            &GlobalCliOptions::default(),
+        )
+    }
+
+    #[test]
+    fn help_command_topic_resolves_when_the_builtin_owns_its_name() {
+        let root = temp_root("not-deferred");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.dev]\nrun = \"printf dev\"\n",
+        )
+        .expect("write manifest");
+
+        assert_eq!(
+            parse(&root, &["help", "docs"]).expect("parse"),
+            Command::Help(HelpTopic::Docs)
+        );
+    }
+
+    #[test]
+    fn help_command_topic_defers_with_the_direct_command_when_a_selector_shadows_it() {
+        let root = temp_root("selector-shadow");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.docs]\nrun = \"printf docs-task\"\n",
+        )
+        .expect("write manifest");
+
+        let direct = parse(&root, &["docs", "--help"]).expect("parse");
+        assert!(
+            matches!(&direct, Command::Task(task) if task.name == "docs"),
+            "`effigy docs --help` should route to the repository task: {direct:?}"
+        );
+
+        let message = parse(&root, &["help", "docs"])
+            .expect_err("`effigy help docs` should not resurface the built-in panel")
+            .to_string();
+        assert!(message.contains("`docs` is deferred"), "{message}");
+        assert!(message.contains("run `effigy docs --help`"), "{message}");
+
+        assert_eq!(
+            parse(&root, &["help", "graph"]).expect("parse"),
+            Command::Help(HelpTopic::Graph),
+            "unrelated built-in help topics stay available"
+        );
+    }
+
+    #[test]
+    fn help_command_topic_defers_for_explicitly_deferred_builtins() {
+        let root = temp_root("explicit-defer");
+        fs::write(
+            root.join("effigy.toml"),
+            "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"graph\"]\n",
+        )
+        .expect("write manifest");
+
+        let message = parse(&root, &["help", "graph"])
+            .expect_err("explicitly deferred built-ins have no help panel")
+            .to_string();
+        assert!(message.contains("`graph` is deferred"), "{message}");
+    }
+
+    #[test]
+    fn general_and_group_help_topics_stay_reachable_under_deferral() {
+        let root = temp_root("group-still-reachable");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.docs]\nrun = \"printf docs-task\"\n",
+        )
+        .expect("write manifest");
+
+        assert_eq!(
+            parse(&root, &["help"]).expect("parse"),
+            Command::Help(HelpTopic::General)
+        );
+        assert_eq!(
+            parse(&root, &["help", "repo"]).expect("parse"),
+            Command::HelpGroup(effigy_cli::HelpGroup::Repo)
         );
     }
 }

@@ -1,4 +1,6 @@
-use super::prelude::{render_cli_header_text, render_help_text, HelpTopic};
+use super::prelude::{
+    render_cli_header_text, render_help_group_text, render_help_text, HelpGroup, HelpTopic,
+};
 
 #[test]
 fn render_help_writes_structured_sections() {
@@ -39,6 +41,67 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("--version"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_general_help_groups_commands_by_operator_job() {
+    let rendered = render_help_text(HelpTopic::General);
+    for group in HelpGroup::ALL {
+        assert!(
+            rendered.contains(group.title()),
+            "missing {}",
+            group.title()
+        );
+        assert!(
+            rendered.contains(group.summary()),
+            "missing {}",
+            group.slug()
+        );
+    }
+    assert!(rendered.contains("Use `effigy help <group>` for one group"));
+
+    let work = rendered.find("Work Commands").expect("work section");
+    let local = rendered.find("Local Commands").expect("local section");
+    let repo = rendered.find("Repo Commands").expect("repo section");
+    let deliver = rendered.find("Deliver Commands").expect("deliver section");
+    let extend = rendered.find("Extend Commands").expect("extend section");
+    let admin = rendered.find("Admin Commands").expect("admin section");
+    assert!(work < local && local < repo && repo < deliver && deliver < extend && extend < admin);
+}
+
+#[test]
+fn render_repo_group_help_lists_only_repository_intelligence_commands() {
+    let rendered = render_help_group_text(HelpGroup::Repo);
+    for command in [
+        "effigy graph",
+        "effigy scan",
+        "effigy docs",
+        "effigy contracts",
+        "effigy papercuts",
+    ] {
+        assert!(rendered.contains(command), "missing {command}: {rendered}");
+    }
+    for foreign in [
+        "effigy container",
+        "effigy exec",
+        "effigy release",
+        "effigy deploy",
+        "effigy artifact",
+        "effigy skill",
+    ] {
+        assert!(!rendered.contains(foreign), "leaked {foreign}: {rendered}");
+    }
+    assert!(rendered.contains("never an `effigy <group> <command>` route"));
+}
+
+#[test]
+fn render_group_help_covers_every_group_without_execution_grammar() {
+    for group in HelpGroup::ALL {
+        let rendered = render_help_group_text(*group);
+        assert!(rendered.contains(group.title()));
+        assert!(rendered.contains(group.summary()));
+        assert!(!rendered.contains(&format!("effigy {} ", group.slug())));
+    }
 }
 
 #[test]

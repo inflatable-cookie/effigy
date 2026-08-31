@@ -45,7 +45,7 @@ pub(crate) use docs::render_docs_help;
 pub(crate) use doctor::render_doctor_help;
 pub(crate) use exec::render_exec_help;
 pub(crate) use gateway::render_gateway_help;
-pub(crate) use general::render_general_help;
+pub(crate) use general::{render_general_help, render_help_group};
 pub(crate) use graph::render_graph_help;
 pub(crate) use init::render_init_help;
 pub(crate) use migrate::render_migrate_help;

@@ -220,3 +220,40 @@ fn managed_runtime_seed_behavior_has_active_discovery_routes() {
         &["012-dev-process-manager-tui.md"],
     );
 }
+
+#[test]
+fn help_first_discovery_paths_are_documented() {
+    let matrix = read("docs/guides/025-command-reference-matrix.md");
+    assert_contains_all(
+        "command reference",
+        &matrix,
+        &[
+            "## Help-First Discovery",
+            "effigy help work",
+            "effigy help local",
+            "effigy help repo",
+            "effigy help deliver",
+            "effigy help extend",
+            "effigy help admin",
+            "effigy help <command>",
+            "`effigy <group> <command>`",
+        ],
+    );
+
+    assert_contains_all(
+        "quick start cookbook",
+        &read("docs/guides/021-quick-start-and-command-cookbook.md"),
+        &["effigy help repo", "effigy help docs"],
+    );
+
+    for relative in [
+        "skills/effigy/references/built-in-surfaces.md",
+        ".agents/skills/effigy/references/built-in-surfaces.md",
+    ] {
+        assert_contains_all(
+            relative,
+            &read(relative),
+            &["effigy help <group>", "effigy help <command>"],
+        );
+    }
+}

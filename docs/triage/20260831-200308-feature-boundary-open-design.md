@@ -35,7 +35,7 @@ placement audit. Settled ownership and migration rules live in architecture
 - S3 remains until the named consumer migration is proved.
 
 - Help-first discovery uses exact topics `work`, `local`, `repo`, `deliver`,
-  `extend`, and `admin` under `effigy help`.
+  `extend`, and `admin` under `effigy help`. Card `1093` shipped it.
 - The taxonomy and primary ownership live in architecture `026` and contract
   `043`; card `1093` implements them without executable group aliases.
 - Existing direct commands and selector precedence remain unchanged. No alias
@@ -43,8 +43,8 @@ placement audit. Settled ownership and migration rules live in architecture
 
 ## Next Task
 
-Execute ready help-first discovery card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
-After that lane settles, prototype catalog-pack acquisition before compiling
-more migration lanes. Keep S3 out of the implementation queue until its
-consumer gate is met.
+Help-first discovery card
+[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
+is complete and its lane is closed. Prototype catalog-pack acquisition before
+compiling more migration lanes. Keep S3 out of the implementation queue until
+its consumer gate is met.

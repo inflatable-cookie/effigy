@@ -1,8 +1,10 @@
 # g08.038 Help-First Command Discovery
 
-Status: Active
+Status: Complete
 Created: 2026-08-31
-Spec: [`111`](../../specs/111-help-first-command-discovery-strict-lane.md)
+Completed: 2026-08-31
+Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
+Spec: [`111`](../../specs/archive/111-help-first-command-discovery-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
@@ -41,7 +43,7 @@ execution grammar larger or disturbing manifest-selector routing.
 
 ## Cards
 
-- [ ] [`1093`](./batch-cards/1093-add-help-first-command-discovery.md) — ready
+- [x] [`1093`](./batch-cards/1093-add-help-first-command-discovery.md) — complete
 
 ## Acceptance
 
@@ -55,5 +57,7 @@ execution grammar larger or disturbing manifest-selector routing.
 
 ## Next Task
 
-Execute ready card
-[`1093`](./batch-cards/1093-add-help-first-command-discovery.md).
+This milestone is complete. Return to planning for the catalog-pack acquisition
+prototype under contract
+[`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md);
+do not open that implementation lane from here.

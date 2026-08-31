@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`111`](./111-help-first-command-discovery-strict-lane.md) — help-first
-  grouping with unchanged execution grammar; ready card `1093`
+- none
 
 Queued strict lanes:
 
@@ -65,6 +64,8 @@ Archived strict lanes:
   shipped-help parity refresh
 - [`110`](./archive/110-external-skill-task-runner-strict-lane.md) archived
   after explicit installed-skill task execution and Northstar smoke proof
+- [`111`](./archive/111-help-first-command-discovery-strict-lane.md) archived
+  after help-first command discovery shipped with unchanged execution grammar
 
 Other planning specs:
 
@@ -73,7 +74,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md).
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.

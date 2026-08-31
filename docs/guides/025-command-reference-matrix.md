@@ -88,11 +88,39 @@ For narrative workflow guidance instead of lookup, start with:
 - Need bounded, current, authoritative documentation evidence with exact
   provenance instead of a manual file hunt: use `effigy docs context`.
 
+## Help-First Discovery
+
+`effigy --help` and `effigy help` group the built-in surface by operator job.
+Grouping is discovery only: it adds no `effigy <group> <command>` route, reserves
+no new top-level built-in name, and leaves manifest selectors named `work`,
+`local`, `repo`, `deliver`, `extend`, or `admin` on their current routing.
+
+| Topic | Primary commands |
+| --- | --- |
+| `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
+| `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
+| `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts`, `effigy papercuts` |
+| `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
+| `effigy help extend` | `effigy skill`, `effigy rhai surface` |
+| `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
+
+`effigy help <command>` renders the same panel as `effigy <command> --help`, so
+`effigy help docs` and `effigy docs --help` agree. Commands without a typed help
+panel (`effigy config`, `effigy scan`) say so and point at `effigy <command>
+--help`. An unknown topic fails with exit code `2` and names the valid groups and
+commands; it never falls back silently to general help.
+
+Built-ins deferred to a repository selector stay hidden from general help and
+group help. Their detail help defers too: when a manifest task or
+`[defer] builtins` entry owns the name, `effigy <command> --help` already routes
+to the repository, so `effigy help <command>` refuses the built-in panel and
+points back at `effigy <command> --help`.
+
 ## Primary Commands
 
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |
 | --- | --- | --- | --- | --- |
-| `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
+| `effigy help` / `effigy --help` | Show job-grouped CLI help; `effigy help <group>` renders one group and `effigy help <command>` renders command detail | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
 | `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |

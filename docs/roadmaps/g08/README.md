@@ -13,8 +13,8 @@ governance operationalization in `g08.032`, doctor secret-schema parity in
 `g08.033`, documentation coverage parity in `g08.034`, the completed
 documentation, instruction, and help parity refresh in `g08.036`, the completed
 repository-defined documentation graph in `g08.035`, the completed external
-skill-task runner in `g08.037`, and active help-first command discovery in
-`g08.038`.
+skill-task runner in `g08.037`, and the completed help-first command discovery
+in `g08.038`.
 
 ## Purpose
 
@@ -38,8 +38,8 @@ mode for cross-repository graphs. It remains separate from machine-local links
 and never mutates intermediate repositories. Card `1081` handles consumers
 where Bun cannot enumerate its own text lockfile.
 
-The active help-first lane groups the public command inventory by operator job
-without changing executable routes or reserving new top-level names.
+The completed help-first lane groups the public command inventory by operator
+job without changing executable routes or reserving new top-level names.
 
 This generation should help agents and maintainers answer questions like:
 
@@ -183,8 +183,8 @@ This generation should help agents and maintainers answer questions like:
   govern cards `1088` through `1090`; all three are complete.
 - External skill runner complete: archived strict spec `110`, architecture
   `025`, and contract `042` govern completed card `1092`.
-- Help-first command discovery active: strict spec `111`, architecture `026`,
-  and contract `043` govern ready card `1093`.
+- Help-first command discovery complete: archived strict spec `111`,
+  architecture `026`, and contract `043` govern completed card `1093`.
 
 ## Execution Rule
 
@@ -200,8 +200,8 @@ Strict spec `105` and `g08.032` are complete through card `1084`.
 Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
 Strict spec `110` and `g08.037` are complete through card `1092`. Strict spec
 `108` and `g08.035` are complete through cards `1088` to `1090`. Strict spec
-`109` and `g08.036` are complete. Strict spec `111` and `g08.038` are active
-through ready card `1093`.
+`109` and `g08.036` are complete. Strict spec `111` and `g08.038` are complete
+through card `1093`.
 
 ## Batch Cards
 
@@ -319,13 +319,14 @@ the serial documentation, instruction, help, scan-evidence, and closeout batch.
 strict spec `110`. Card `1092` delivered the external skill-task runner and
 returned the queue to card `1089`, which has since closed.
 
-`g08.038` is active under architecture `026`, contract `043`, and strict spec
-`111`. Card `1093` is ready to add help-first grouping without executable
-group aliases or selector-routing changes.
+`g08.038` is complete under architecture `026`, contract `043`, and archived
+strict spec `111`. Card `1093` added help-first grouping with no executable
+group aliases and no selector-routing changes, and returned the
+feature-placement queue to planning.
 
 ## Next Task
 
-Execute ready card
-[`1093`](./batch-cards/1093-add-help-first-command-discovery.md).
+Return to planning for the catalog-pack acquisition prototype under contract
+[`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md).
 The second governance review remains due by 2026-09-17. Do not infer release
 work or a generation rollover.

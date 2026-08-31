@@ -4,12 +4,14 @@ Roadmap: [`../038-help-first-command-discovery.md`](../038-help-first-command-di
 Architecture: [`../../../architecture/026-feature-placement-and-command-surface.md`](../../../architecture/026-feature-placement-and-command-surface.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md),
 [`../../../contracts/043-feature-placement-and-surface-migration-contract.md`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
-Spec: [`../../../specs/111-help-first-command-discovery-strict-lane.md`](../../../specs/111-help-first-command-discovery-strict-lane.md)
+Spec: [`../../../specs/archive/111-help-first-command-discovery-strict-lane.md`](../../../specs/archive/111-help-first-command-discovery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: CLI command inventory, help parser/rendering, and public documentation
 Created: 2026-08-31
 Ready since: 2026-08-31 operator approval of help-first scope and exact topics
+Completed: 2026-08-31
+Evidence: [`2026-08-31 closeout`](../../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
 
 ## Purpose
 
@@ -33,18 +35,18 @@ changing existing task and built-in routing.
 
 ## Acceptance
 
-- [ ] general help has `work`, `local`, `repo`, `deliver`, `extend`, and `admin`
-- [ ] every general-help entry has one and only one primary group
-- [ ] each group inventory exactly matches contract `043`
-- [ ] `help <command>` and `<command> --help` have fact parity
-- [ ] unknown help topics fail deterministically with useful guidance
-- [ ] deferred built-ins remain absent from general, group, and direct help
-- [ ] manifest selectors named after groups retain current routing
-- [ ] no grouped execution route or new top-level built-in exists
-- [ ] current direct-command behavior and output contracts are unchanged
-- [ ] public, generated, and agent-facing guidance is consistent
-- [ ] focused and full validation pass
-- [ ] closeout leaves no stale ready card and returns the queue to planning
+- [x] general help has `work`, `local`, `repo`, `deliver`, `extend`, and `admin`
+- [x] every general-help entry has one and only one primary group
+- [x] each group inventory exactly matches contract `043`
+- [x] `help <command>` and `<command> --help` have fact parity
+- [x] unknown help topics fail deterministically with useful guidance
+- [x] deferred built-ins remain absent from general, group, and direct help
+- [x] manifest selectors named after groups retain current routing
+- [x] no grouped execution route or new top-level built-in exists
+- [x] current direct-command behavior and output contracts are unchanged
+- [x] public, generated, and agent-facing guidance is consistent
+- [x] focused and full validation pass
+- [x] closeout leaves no stale ready card and returns the queue to planning
 
 ## Review Oracle
 
@@ -88,5 +90,5 @@ catalog packs, S3, or provider extraction.
 
 ## Next Task
 
-Implement this card. On closeout, return to planning for the catalog-pack
-acquisition prototype; do not infer an implementation lane or release work.
+This card is complete. Return to planning for the catalog-pack acquisition
+prototype; do not infer an implementation lane or release work.

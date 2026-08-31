@@ -152,7 +152,8 @@ follows proven replacement.
 
 The feature-boundary follow-through is sequenced as separate lanes:
 
-1. help-first command discovery with no execution aliases or removals;
+1. help-first command discovery with no execution aliases or removals
+   (shipped by card `1093`);
 2. release versus self-distribution separation;
 3. catalog-pack acquisition prototype satisfying the simplicity invariant;
 4. repository-intelligence grouped discovery surface;
