@@ -7,6 +7,31 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] YAML frontmatter is indexed as one setext heading
+- Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
+  frontmatter block as a single heading string, because the closing `---` reads
+  as a setext underline for the preceding line. The result is a heading value
+  hundreds of characters long that is useless in an agent context window.
+- Impact: any repository whose Markdown carries frontmatter gets one unusable
+  section per such document, and it competes for the section budget.
+- Plausible fix: skip a leading frontmatter fence in the Markdown extractor
+  before heading detection, and keep frontmatter keys out of section headings.
+- Surface: `crates/effigy-codegraph/src/language/markdown/extract.rs`.
+
+### [ ] `docs context` traversal is unreachable on a large corpus
+- Friction: traversed results rank after every 0-hop result, so a repository
+  with more lexical seeds than `--max-sections` never surfaces a typed relation.
+  Effigy has 2319 scoped documents; even at `--max-sections 32 --max-bytes
+  100000` every returned result was 0 hops.
+- Impact: the typed-relation half of the documentation graph is invisible on
+  exactly the repositories large enough to need it. Discovered while running the
+  card `1090` benchmark; documented in guide `079` as a usage note.
+- Plausible fix: reserve a small slice of the section budget for traversed
+  results, or add an explicit relation-first query mode. Both are ranking
+  changes and need a contract update first.
+- Surface: `crates/effigy-codegraph/src/docs_context/rank.rs` ordering;
+  `docs/contracts/041-documentation-graph-profile-contract.md`.
+
 ### [ ] `docs context` has no wall-clock bound on a cold graph
 - Friction: `effigy docs context` refreshes the shared graph on demand, but only
   `effigy graph <subcommand>` runs under `EFFIGY_GRAPH_TIMEOUT_MS`. On a fresh

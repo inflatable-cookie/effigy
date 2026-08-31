@@ -4,7 +4,7 @@ Status: active
 Owner: Platform maintainers
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
-Spec: [`108`](../specs/108-documentation-graph-profiles-strict-lane.md)
+Spec: [`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
 ## Purpose
 
@@ -209,7 +209,10 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Execute ready card
-[`1090`](../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
-Cards `1088` and `1089` are complete; the command, budgets, and
-`effigy.docs.context.v1` payload described above are shipped.
+None. Roadmap [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
+closed on 2026-08-31 with cards `1088`, `1089`, and `1090` complete. Every
+clause above is shipped and evidenced in
+[`../logs/2026-08/31-213000-northstar-profile-proof-1090.md`](../logs/2026-08/31-213000-northstar-profile-proof-1090.md).
+Adoption guidance lives in
+[`../guides/079-documentation-graph-profiles-and-context.md`](../guides/079-documentation-graph-profiles-and-context.md).
+This contract stays active; change it only through its drift triggers.

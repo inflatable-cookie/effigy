@@ -53,6 +53,18 @@ Trust states on `graph status --json`: `ready`, `refresh-recommended`,
 
 Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 
+## Documentation context
+
+`effigy docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
+returns exact Markdown sections with path, span, kind, authority, currentness,
+fields, typed relation path, and match reason, as `effigy.docs.context.v1`.
+Defaults are 8 sections, 24000 bytes, 1 hop; maxima are 32, 100000, 3. It shares
+the graph database and lazy refresh - no second index. Semantics come from the
+selected repository's committed `[docs_policy.graph]` block, never from an
+installed skill; baseline mode works with no profile.
+
+Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
+
 ## Local runtime
 
 | Built-in | Purpose |
@@ -82,7 +94,7 @@ Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 |----------|---------|
 | `release` | Gates, prepare/execute, verify-install, distribution evidence |
 | `changelog` | Validate/format/analyze/extract changelog |
-| `docs` | Link/JSON/index/workflow-path QA checks |
+| `docs` | Link/JSON/index/workflow-path QA checks, plus bounded `docs context` documentation retrieval |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
 | `tasks migrate` | Import `package.json` scripts |

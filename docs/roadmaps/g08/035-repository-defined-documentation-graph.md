@@ -1,8 +1,8 @@
 # g08.035 - Repository-Defined Documentation Graph
 
-Status: Active
+Status: Complete
 Depends on: completed native code graph and graph agent-adoption lanes
-Spec: [`108`](../../specs/108-documentation-graph-profiles-strict-lane.md)
+Spec: [`108`](../../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 
@@ -27,12 +27,14 @@ Northstar files or skills.
       relations, and profile-aware freshness
 - [x] card `1089`: add bounded `effigy docs context` retrieval, CLI/help, and
       versioned JSON
-- [ ] card `1090`: prove generic and Northstar profiles, publish adoption
+- [x] card `1090`: prove generic and Northstar profiles, publish adoption
       guidance, benchmark retrieval, validate, and close the lane
 
 Card `1089` closed on 2026-08-31 with evidence
-[`31-181957-documentation-context-1089.md`](../../logs/2026-08/31-181957-documentation-context-1089.md),
-making card `1090` ready.
+[`31-181957-documentation-context-1089.md`](../../logs/2026-08/31-181957-documentation-context-1089.md).
+Card `1090` closed on 2026-08-31 with evidence
+[`31-213000-northstar-profile-proof-1090.md`](../../logs/2026-08/31-213000-northstar-profile-proof-1090.md),
+which closed this milestone.
 
 ## Owner And Seam
 
@@ -58,12 +60,17 @@ profile into a repository but are never consulted at runtime.
       relation path, and match reason
 - [x] output budgets and deterministic ordering hold in text and JSON
 - [x] profile changes participate in graph freshness
-- [ ] the Northstar starter is committed configuration, not runtime inheritance
-- [ ] a benchmark corpus returns the expected live authority within the top
+- [x] the Northstar starter is committed configuration, not runtime inheritance
+- [x] a benchmark corpus returns the expected live authority within the top
       three results and does not rank a historical-only counterpart above it
-- [ ] lane closeout records focused and full validation evidence
+- [x] lane closeout records focused and full validation evidence
 
 ## Next Task
 
-Execute ready card
-[`1090`](./batch-cards/1090-prove-generic-and-northstar-profiles.md).
+None. This milestone is complete and its strict lane is archived. Durable rules
+live in contract
+[`041`](../../contracts/041-documentation-graph-profile-contract.md) and
+architecture
+[`024`](../../architecture/024-repository-defined-documentation-graph.md);
+adoption guidance lives in
+[`079`](../../guides/079-documentation-graph-profiles-and-context.md).

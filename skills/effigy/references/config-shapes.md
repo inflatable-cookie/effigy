@@ -18,8 +18,8 @@ itself; see `effigy --help` for the list.
 
 This optional repository-owned profile teaches the local Markdown graph how to
 classify documentation, resolve currentness, and name typed relations. It is
-configuration consumed by `effigy graph index` and graph queries; it does not
-ship a separate docs-context command.
+consumed by `effigy graph index` and by `effigy docs context <QUERY>`, the
+bounded documentation retrieval surface.
 
 ```toml
 [docs_policy.graph]
@@ -57,8 +57,18 @@ headings = ["Related"]
 
 Northstar consumers should keep their profile in the committed manifest emitted
 by the Northstar starter; this generic example does not assume Northstar names.
+Effigy reserves none of these tokens.
 
-The profile grammar and ranking rules live in
+The profile is copied configuration, not inherited runtime behavior.
+`effigy init northstar` materializes it into the consumer `effigy.toml`, and
+from then on the committed bytes are the only runtime authority: no starter, no
+installed skill directory, and no template cache is read while answering a
+query. Adopting a newer template is an explicit merge
+(`effigy init northstar --dry-run`), never an automatic reinterpretation.
+
+Adoption guide and example queries:
+`docs/guides/079-documentation-graph-profiles-and-context.md`. The profile
+grammar and ranking rules live in
 `docs/contracts/041-documentation-graph-profile-contract.md`; the architecture
 decision is `docs/architecture/024-repository-defined-documentation-graph.md`.
 

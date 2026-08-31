@@ -107,10 +107,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.034`](./g08/034-documentation-coverage-parity.md) audits
   current public behavior against active user, agent, built-in, and generated
   docs under archived strict spec `107`; cards `1086` and `1087` are complete.
-  Active [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
+  Completed [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
   implements repository-owned documentation graph profiles and bounded context
-  retrieval under strict spec `108`; cards `1088` and `1089` are complete and
-  card `1090` is ready.
+  retrieval under archived strict spec `108`; cards `1088`, `1089`, and `1090`
+  are complete.
   Completed [`g08.036`](./g08/036-documentation-instruction-and-help-parity-refresh.md)
   refreshed scan, agent-instruction, feature-documentation, generated-reference,
   and shipped-help parity under archived strict spec `109`; card `1091` is
@@ -121,10 +121,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Strict spec [`108`](../specs/108-documentation-graph-profiles-strict-lane.md)
-governs active `g08.035`. Current ready card:
-[`1090`](./g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
-Strict spec `110` and `g08.037` are complete.
+None. Strict spec
+[`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md) is
+archived and `g08.035` is complete: card `1090` closed the repository-defined
+documentation graph on 2026-08-31 with evidence
+[`31-213000-northstar-profile-proof-1090.md`](../logs/2026-08/31-213000-northstar-profile-proof-1090.md).
+Strict spec `110` and `g08.037` are complete. Open the next lane from planning;
+do not infer one.
 
 ## Research Program
 
@@ -179,8 +182,8 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card
-[`1090`](./g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+None ready. `g08.035` closed on 2026-08-31 and strict spec `108` is archived, so
+there is no active strict lane. Return to planning to open the next one.
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.
 

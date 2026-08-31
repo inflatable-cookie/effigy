@@ -4,7 +4,7 @@ Roadmap: [`../035-repository-defined-documentation-graph.md`](../035-repository-
 Architecture: [`../../../architecture/024-repository-defined-documentation-graph.md`](../../../architecture/024-repository-defined-documentation-graph.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md),
 [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
-Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
+Spec: [`../../../specs/archive/108-documentation-graph-profiles-strict-lane.md`](../../../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1088`](./1088-build-documentation-profile-and-structural-index.md)
 
 Status: Complete

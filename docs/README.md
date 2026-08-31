@@ -61,6 +61,7 @@ installing them directly on your machine.
 **For CI and scripts:**
 - [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md) — JSON output for automation
 - [`guides/076-code-graph-and-agent-workflows.md`](./guides/076-code-graph-and-agent-workflows.md) — bounded repo context for agent code-understanding work
+- [`guides/079-documentation-graph-profiles-and-context.md`](./guides/079-documentation-graph-profiles-and-context.md) — repository-owned documentation semantics and bounded `docs context` evidence
 - [`architecture/024-repository-defined-documentation-graph.md`](./architecture/024-repository-defined-documentation-graph.md) — repository-owned Markdown graph architecture
 - [`contracts/041-documentation-graph-profile-contract.md`](./contracts/041-documentation-graph-profile-contract.md) — `[docs_policy.graph]` profile grammar and semantics
 - [`guides/078-papercuts-discovery-and-capture.md`](./guides/078-papercuts-discovery-and-capture.md) — project and sibling-project friction inventory for humans and agents

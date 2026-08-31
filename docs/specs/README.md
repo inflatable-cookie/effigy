@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
-  documentation graph profiles; current ready card `1090`
+- none
 
 Queued strict lanes:
 
@@ -39,6 +38,8 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
+- [`108`](./archive/108-documentation-graph-profiles-strict-lane.md) archived
+  after the repository-defined documentation graph closed on 2026-08-31
 - `076` through `096` are archived
 - [`097`](./archive/097-graph-aware-scan-intelligence-strict-lane.md) archived
   after graph-aware scan intelligence closeout
