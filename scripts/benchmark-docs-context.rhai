@@ -253,20 +253,35 @@ let targets = [
     },
 ];
 
+// Build a string from an array of parts. Rhai caps expression nesting depth,
+// and the cap is lower in debug builds than in release, so a long `a + b + c`
+// chain parses under `target/release/effigy` and fails under
+// `cargo run --bin effigy`. Concatenating in a loop keeps every expression
+// shallow and makes the script parse identically in both profiles.
+fn text(parts) {
+    let out = "";
+    for part in parts {
+        out += part.to_string();
+    }
+    out
+}
+
 fn run_check(label, program, process_args) {
     let result = process::run(program, process_args);
     if result["success"] {
         return result;
     }
-    throw "[error] " + label + " failed with status " + result["status"].to_string()
-        + "\nstdout:\n" + result["stdout"].to_string()
-        + "\nstderr:\n" + result["stderr"].to_string();
+    throw text([
+        "[error] ", label, " failed with status ", result["status"],
+        "\nstdout:\n", result["stdout"],
+        "\nstderr:\n", result["stderr"],
+    ]);
 }
 
 fn run_graph_index(bin_path, repo_path) {
-    log("[info] indexing " + repo_path);
+    log(text(["[info] indexing ", repo_path]));
     run_check(
-        "graph index " + repo_path,
+        text(["graph index ", repo_path]),
         bin_path,
         ["graph", "index", "--repo", repo_path, "--json"],
     );
@@ -280,7 +295,7 @@ fn run_docs_context(bin_path, repo_path, benchmark_case) {
     process_args.push("--repo");
     process_args.push(repo_path.to_string());
     let result = run_check(
-        "docs context " + repo_path + " :: " + benchmark_case["query"].to_string(),
+        text(["docs context ", repo_path, " :: ", benchmark_case["query"]]),
         bin_path,
         process_args,
     );
@@ -326,72 +341,173 @@ fn authority_of(record) {
     record["authority"]
 }
 
+fn optional_text(benchmark_case, key) {
+    if key in benchmark_case {
+        return benchmark_case[key].to_string();
+    }
+    ()
+}
+
+fn kind_of(record) {
+    if record == () { return () }
+    record["document_kind"].to_string()
+}
+
+fn rank_in(record) {
+    if record == () { return () }
+    record["rank"]
+}
+
+fn hops_in(record) {
+    if record == () { return () }
+    record["hops"]
+}
+
+// One checker per expectation. Each returns its own failure list, which keeps
+// `evaluate_case` a flat sequence of guards instead of a deep `else if` chain -
+// the shape that pushed the script past Rhai's in-function expression depth
+// limit under a debug build.
+fn live_authority_failures(expected_path, expected_rank, max_rank, rival_path, rival_rank) {
+    let failures = [];
+    if expected_rank == () {
+        failures.push(text([
+            "expected live authority `", expected_path,
+            "` is absent from the report",
+        ]));
+        return failures;
+    }
+    if expected_rank > max_rank {
+        failures.push(text([
+            "expected live authority `", expected_path,
+            "` ranked ", expected_rank,
+            ", outside the top ", max_rank,
+        ]));
+    }
+    if rival_rank == () {
+        return failures;
+    }
+    if rival_rank < expected_rank {
+        failures.push(text([
+            "historical rival `", rival_path,
+            "` ranked ", rival_rank,
+            ", above the live authority at ", expected_rank,
+        ]));
+    }
+    failures
+}
+
+fn historical_retrieval_failures(expected_path, expected_rank) {
+    let failures = [];
+    if expected_rank == () {
+        failures.push(text([
+            "directly named historical source `", expected_path,
+            "` was not retrieved",
+        ]));
+    }
+    failures
+}
+
+fn traversal_failures(expected_path, expected_rank, hops, relation_ok, relation) {
+    let failures = [];
+    if expected_rank == () {
+        failures.push(text([
+            "traversed target `", expected_path,
+            "` is absent from the report",
+        ]));
+    }
+    if expected_rank != () && hops != () && hops < 1 {
+        failures.push(text([
+            "traversed target `", expected_path,
+            "` was reached lexically at 0 hops, not over a typed relation",
+        ]));
+    }
+    if !relation_ok {
+        failures.push(text([
+            "relation `", relation,
+            "` never appears in a relation path",
+        ]));
+    }
+    failures
+}
+
+fn absent_failures(results, forbidden_path) {
+    let failures = [];
+    if rank_of(results, forbidden_path) != () {
+        failures.push(text([
+            "unrelated high-authority document `", forbidden_path,
+            "` entered the report",
+        ]));
+    }
+    failures
+}
+
+fn empty_failures(results) {
+    let failures = [];
+    if !results.is_empty() {
+        failures.push(text([
+            "no-match query returned ", results.len(), " result(s)",
+        ]));
+    }
+    failures
+}
+
 fn evaluate_case(bin_path, repo_path, benchmark_case) {
     let payload = run_docs_context(bin_path, repo_path, benchmark_case);
     let results = payload["results"];
     let expect = benchmark_case["expect"].to_string();
 
-    let expected_path = if "expected_path" in benchmark_case {
-        benchmark_case["expected_path"].to_string()
-    } else { () };
-    let rival_path = if "rival_path" in benchmark_case {
-        benchmark_case["rival_path"].to_string()
-    } else { () };
-    let forbidden_path = if "forbidden_path" in benchmark_case {
-        benchmark_case["forbidden_path"].to_string()
-    } else { () };
+    let expected_path = optional_text(benchmark_case, "expected_path");
+    let rival_path = optional_text(benchmark_case, "rival_path");
+    let forbidden_path = optional_text(benchmark_case, "forbidden_path");
+    let relation = optional_text(benchmark_case, "expected_relation");
 
-    let expected_record = if expected_path == () { () } else { record_for(results, expected_path) };
-    let rival_record = if rival_path == () { () } else { record_for(results, rival_path) };
-    let expected_rank = if expected_record == () { () } else { expected_record["rank"] };
-    let rival_rank = if rival_record == () { () } else { rival_record["rank"] };
+    let expected_record = ();
+    if expected_path != () {
+        expected_record = record_for(results, expected_path);
+    }
+    let rival_record = ();
+    if rival_path != () {
+        rival_record = record_for(results, rival_path);
+    }
+    let expected_rank = rank_in(expected_record);
+    let rival_rank = rank_in(rival_record);
+    let hops = hops_in(expected_record);
     let max_rank = benchmark_case["max_rank"];
 
-    let relation_ok = if "expected_relation" in benchmark_case {
-        relation_present(results, benchmark_case["expected_relation"].to_string())
-    } else { true };
-    let hops = if expected_record == () { () } else { expected_record["hops"] };
+    let relation_ok = true;
+    if relation != () {
+        relation_ok = relation_present(results, relation);
+    }
 
+    let known = [
+        "live-authority",
+        "historical-retrieval",
+        "traversal",
+        "absent",
+        "empty",
+    ];
     let failures = [];
     if expect == "live-authority" {
-        if expected_rank == () {
-            failures.push("expected live authority `" + expected_path + "` is absent from the report");
-        } else if expected_rank > max_rank {
-            failures.push("expected live authority `" + expected_path + "` ranked "
-                + expected_rank.to_string() + ", outside the top " + max_rank.to_string());
-        }
-        if rival_rank != () && expected_rank != () && rival_rank < expected_rank {
-            failures.push("historical rival `" + rival_path + "` ranked "
-                + rival_rank.to_string() + ", above the live authority at "
-                + expected_rank.to_string());
-        }
-    } else if expect == "historical-retrieval" {
-        if expected_rank == () {
-            failures.push("directly named historical source `" + expected_path
-                + "` was not retrieved");
-        }
-    } else if expect == "traversal" {
-        if expected_rank == () {
-            failures.push("traversed target `" + expected_path + "` is absent from the report");
-        } else if hops != () && hops < 1 {
-            failures.push("traversed target `" + expected_path
-                + "` was reached lexically at 0 hops, not over a typed relation");
-        }
-        if !relation_ok {
-            failures.push("relation `" + benchmark_case["expected_relation"].to_string()
-                + "` never appears in a relation path");
-        }
-    } else if expect == "absent" {
-        if rank_of(results, forbidden_path) != () {
-            failures.push("unrelated high-authority document `" + forbidden_path
-                + "` entered the report");
-        }
-    } else if expect == "empty" {
-        if !results.is_empty() {
-            failures.push("no-match query returned " + results.len().to_string() + " result(s)");
-        }
-    } else {
-        failures.push("unknown expectation `" + expect + "`");
+        failures = live_authority_failures(
+            expected_path, expected_rank, max_rank, rival_path, rival_rank,
+        );
+    }
+    if expect == "historical-retrieval" {
+        failures = historical_retrieval_failures(expected_path, expected_rank);
+    }
+    if expect == "traversal" {
+        failures = traversal_failures(
+            expected_path, expected_rank, hops, relation_ok, relation,
+        );
+    }
+    if expect == "absent" {
+        failures = absent_failures(results, forbidden_path);
+    }
+    if expect == "empty" {
+        failures = empty_failures(results);
+    }
+    if !known.contains(expect) {
+        failures.push(text(["unknown expectation `", expect, "`"]));
     }
 
     #{
@@ -401,7 +517,7 @@ fn evaluate_case(bin_path, repo_path, benchmark_case) {
         query: benchmark_case["query"].to_string(),
         expected_path: expected_path,
         expected_rank: expected_rank,
-        expected_kind: if expected_record == () { () } else { expected_record["document_kind"].to_string() },
+        expected_kind: kind_of(expected_record),
         expected_currentness: currentness_of(expected_record),
         expected_authority: authority_of(expected_record),
         expected_hops: hops,
@@ -422,24 +538,42 @@ fn evaluate_case(bin_path, repo_path, benchmark_case) {
     }
 }
 
+fn cell(value) {
+    if value == () {
+        return "-";
+    }
+    value.to_string()
+}
+
+fn quoted_cell(value) {
+    if value == () {
+        return "-";
+    }
+    text(["`", value, "`"]);
+}
+
 fn render_case_line(case_result) {
-    let line = "| `" + case_result["id"] + "` | " + case_result["dimension"];
-    line += " | `" + case_result["query"] + "` | ";
-    line += if case_result["expected_path"] == () { "-" } else { "`" + case_result["expected_path"] + "`" };
-    line += " | " + if case_result["expected_rank"] == () { "-" } else { case_result["expected_rank"].to_string() };
-    line += " | " + if case_result["expected_currentness"] == () { "-" } else { case_result["expected_currentness"] };
-    line += " | " + if case_result["expected_authority"] == () { "-" } else { case_result["expected_authority"].to_string() };
-    line += " | " + if case_result["rival_rank"] == () { "-" } else { case_result["rival_rank"].to_string() };
-    line += " | " + case_result["context_bytes"].to_string();
-    line += " | " + if case_result["passed"] { "pass" } else { "FAIL" } + " |";
-    line
+    let outcome = if case_result["passed"] { "pass" } else { "FAIL" };
+    text([
+        "| `", case_result["id"],
+        "` | ", case_result["dimension"],
+        " | `", case_result["query"],
+        "` | ", quoted_cell(case_result["expected_path"]),
+        " | ", cell(case_result["expected_rank"]),
+        " | ", cell(case_result["expected_currentness"]),
+        " | ", cell(case_result["expected_authority"]),
+        " | ", cell(case_result["rival_rank"]),
+        " | ", case_result["context_bytes"],
+        " | ", outcome,
+        " |",
+    ])
 }
 
 let index_lines = [
     "# Documentation context benchmark",
     "",
-    "binary: " + bin_path,
-    "generated_at: " + time::now_utc(),
+    text(["binary: ", bin_path]),
+    text(["generated_at: ", time::now_utc()]),
     "",
 ];
 let summary_targets = [];
@@ -448,28 +582,32 @@ let failed_cases = [];
 for target in targets {
     let repo_path = target["repo"].to_string();
     if !fs::exists(path::join(repo_path, "effigy.toml")) {
-        throw "[error] required benchmark target missing: " + repo_path;
+        throw text(["[error] required benchmark target missing: ", repo_path]);
     }
 
     run_graph_index(bin_path, repo_path);
 
     let case_results = [];
     for benchmark_case in target["cases"] {
-        log("[info] docs-context benchmark " + target["label"].to_string()
-            + " :: " + benchmark_case["id"].to_string());
+        log(text([
+            "[info] docs-context benchmark ", target["label"],
+            " :: ", benchmark_case["id"],
+        ]));
         let case_result = evaluate_case(bin_path, repo_path, benchmark_case);
         if !case_result["passed"] {
             for failure in case_result["failures"] {
-                failed_cases.push(target["label"].to_string() + "/" + case_result["id"] + ": " + failure);
+                failed_cases.push(text([
+                    target["label"], "/", case_result["id"], ": ", failure,
+                ]));
             }
         }
         case_results.push(case_result);
     }
 
     let lines = [
-        "# " + target["label"].to_string(),
+        text(["# ", target["label"]]),
         "",
-        "repo: " + repo_path,
+        text(["repo: ", repo_path]),
         "",
         "| case | dimension | query | expected source | rank | currentness | authority | rival rank | context bytes | result |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -477,10 +615,10 @@ for target in targets {
     for case_result in case_results {
         lines.push(render_case_line(case_result));
     }
-    let report_path = path::join(report_dir, target["label"].to_string() + ".md");
+    let report_path = path::join(report_dir, text([target["label"], ".md"]));
     fs::write_lines(report_path, lines);
 
-    index_lines.push("- " + target["label"].to_string() + ": " + report_path);
+    index_lines.push(text(["- ", target["label"], ": ", report_path]));
     summary_targets.push(#{
         label: target["label"].to_string(),
         repo: repo_path,
@@ -501,15 +639,17 @@ fs::write_file(
         failures: failed_cases,
     }),
 );
-log("[ok] wrote docs-context benchmark index " + index_path);
-log("[ok] wrote docs-context benchmark summary " + json_path);
+log(text(["[ok] wrote docs-context benchmark index ", index_path]));
+log(text(["[ok] wrote docs-context benchmark summary ", json_path]));
 
 if !failed_cases.is_empty() {
     let detail = "";
     for failure in failed_cases {
-        detail += "\n  - " + failure;
+        detail += text(["\n  - ", failure]);
     }
-    throw "[error] docs-context benchmark missed " + failed_cases.len().to_string()
-        + " predeclared expectation(s):" + detail;
+    throw text([
+        "[error] docs-context benchmark missed ", failed_cases.len(),
+        " predeclared expectation(s):", detail,
+    ]);
 }
 log("[ok] all predeclared docs-context expectations held");
