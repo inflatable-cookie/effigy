@@ -73,6 +73,14 @@ It does not:
 Nested task references stay inside the selected skill catalog while preserving
 the consumer target.
 
+`run_skill_task` marks the process with
+`EFFIGY_INTERNAL_EXTERNAL_TASK_SOURCE_ISOLATION` for the duration of the run.
+Rhai steps execute in child `effigy script run` processes, so the marker
+travels through the inherited environment rather than the in-process runtime
+context. Under the marker, `resolve_rhai_secret_store` returns an isolated
+store instead of reading the consumer manifest, and `resolve_task_secret_env`
+injects nothing.
+
 ## Implementation Map
 
 - `crates/effigy-cli` owns grammar, scoped help, and JSON-mode recognition.

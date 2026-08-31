@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+use effigy_context::external_task_source_isolation_active;
 use effigy_manifest::{
     ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TASK_MANIFEST_FILE,
 };
@@ -25,6 +26,9 @@ pub(crate) fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<RhaiSecretStore, RhaiHostError> {
+    if external_task_source_isolation_active() {
+        return Ok(isolated_rhai_secret_store());
+    }
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     if !manifest_path.exists() {
         return Ok(RhaiSecretStore::default());
@@ -116,6 +120,29 @@ pub(crate) fn resolve_rhai_secret_store(
     }
 
     Ok(store)
+}
+
+/// An empty store that refuses every consumer secret operation.
+///
+/// `vault_loaded` is pre-set so the lazy loader never reaches the consumer
+/// manifest or vault for an isolated external task source.
+fn isolated_rhai_secret_store() -> RhaiSecretStore {
+    RhaiSecretStore {
+        isolated: true,
+        vault_loaded: true,
+        ..RhaiSecretStore::default()
+    }
+}
+
+fn isolated_secret_access_message(name: &str) -> String {
+    format!(
+        "secret `{name}` is unavailable: external skill tasks do not inherit consumer secrets; move the secret into the consumer task that owns it"
+    )
+}
+
+fn active_rhai_secret_store_is_isolated() -> bool {
+    super::ACTIVE_RHAI_SECRETS
+        .with(|active| active.borrow().as_ref().is_some_and(|store| store.isolated))
 }
 
 fn resolve_rhai_secret_vault_path(
@@ -287,6 +314,11 @@ fn active_rhai_validate_secret_name(name: &str) -> Result<(), Box<EvalAltResult>
         let store = store
             .as_ref()
             .ok_or_else(|| crate::rhai_runtime_error("Rhai secret store is not active"))?;
+        if store.isolated {
+            return Err(crate::rhai_runtime_error(isolated_secret_access_message(
+                name,
+            )));
+        }
         if !store.declared_rhai.contains(name) {
             if store.declared_other_target.contains(name) {
                 return Err(crate::rhai_runtime_error(format!(
@@ -310,6 +342,11 @@ fn active_rhai_load_vault_if_needed(
         let store = store
             .as_ref()
             .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
+        if store.isolated {
+            return Err(RhaiHostError::new(
+                "external skill tasks do not inherit consumer secrets",
+            ));
+        }
         Ok(!store.vault_loaded)
     })?;
     if !should_load {
@@ -407,6 +444,12 @@ fn active_rhai_set_secret_records(
     let records = records.into_iter().collect::<Vec<_>>();
     if records.is_empty() {
         return Ok(());
+    }
+    if active_rhai_secret_store_is_isolated() {
+        let (name, _) = &records[0];
+        return Err(crate::rhai_runtime_error(isolated_secret_access_message(
+            name,
+        )));
     }
 
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);

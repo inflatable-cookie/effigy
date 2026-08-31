@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use effigy_cli::{SkillArgs, SkillSubcommand};
-use effigy_context::TaskSourceContext;
+use effigy_context::{activate_external_task_source_isolation, TaskSourceContext};
 use effigy_execution::{
     ExecutionEnvironmentPlan, ExecutionOutputMode, ExecutionRuntimePolicy, ExecutionSurface,
     TaskExecutionRequestBuilder,
@@ -324,6 +324,10 @@ fn run_skill_task(
         task.args.insert(0, "--json".to_owned());
     }
     let source_context = runtime_context.clone().with_task_source(source.clone());
+    // v1 external skill tasks never inherit consumer secrets, so the isolated
+    // source runs with consumer vault resolution switched off for this process
+    // and every child `effigy` process it spawns.
+    let _secret_isolation = activate_external_task_source_isolation();
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(source_context)
         .task(task.name.clone(), task.args)

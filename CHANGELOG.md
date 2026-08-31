@@ -46,6 +46,14 @@ During v0.x, MINOR bumps may include breaking changes.
   repository profile assigns kinds.
 
 ### Fixed
+- `effigy skill run` no longer resolves the consumer secret vault. A consumer
+  that declares required Rhai-target secrets could not run an unrelated
+  external skill task non-interactively, because Rhai secret-store construction
+  eagerly unlocked the vault before the isolated script started. The isolated
+  task source now runs with an empty secret store: `secrets::get`, `has`, `set`
+  and `set_many` are refused with an explicit boundary error, and consumer
+  `tasks`-target secrets are no longer injected into an external skill task's
+  environment. Ordinary consumer task and Rhai secret behavior is unchanged.
 - Project-local skill sync now manages every file in the public Effigy skill,
   including the built-in surface reference, with a parity test guarding future
   additions.
