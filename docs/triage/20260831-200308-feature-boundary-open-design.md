@@ -37,8 +37,66 @@ placement audit. Settled ownership and migration rules live in architecture
   recipes move outward;
 - S3 remains until the named consumer migration is proved.
 
+## Decision Prototype: Help-First Grouping
+
+Current general help is one flat table of roughly thirty command families.
+Adding executable groups such as `effigy repo docs` would make the grammar
+larger, reserve new top-level selector names, and produce longer forms than the
+existing commands.
+
+Recommended first migration:
+
+- keep every executable route unchanged;
+- split `effigy --help` into job-based sections;
+- make the existing `help` command the discovery namespace;
+- add `effigy help <group>` for one grouped inventory;
+- add `effigy help <command>` as the conventional route to existing detailed
+  help topics;
+- do not add `effigy <group> <command>` execution aliases unless later usage
+  evidence shows they solve a separate problem.
+
+Proposed primary taxonomy:
+
+| Help topic | Commands and shapes |
+| --- | --- |
+| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
+| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
+| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
+| `extend` | `skill`, `rhai` |
+| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion and help |
+
+Example general-help shape:
+
+```text
+Common
+  effigy <task>       Run a repository task
+  effigy tasks        Find tasks and inspect routing
+  effigy test         Run the test orchestrator
+  effigy doctor       Diagnose health and routing
+  effigy init         Initialize repository configuration
+
+Local environments
+  effigy container    Operate declared containers
+  effigy system       Operate the default system
+  ...
+
+Repository intelligence
+  effigy graph        Navigate code structure
+  effigy docs         Retrieve and validate documentation
+  ...
+```
+
+Collision result: help topics live below the existing `help` command, so they
+do not steal manifest selectors named `repo`, `local`, `deliver`, or similar.
+Direct built-ins keep their current deferral and routing behavior.
+
+Open naming edge: `bootstrap`, `demo`, and `secrets` cross group boundaries.
+The table gives each one a primary discovery home; detailed help may cross-link
+without duplicating execution routes.
+
 ## Next Task
 
-After card `1090` settles, use decision prototypes to resolve namespace grammar
-and catalog-pack acquisition, then compile separate migration lanes. Keep S3
-out of the implementation queue until its consumer gate is met.
+Confirm or revise the help-first grouping and six topic names. Then prototype
+catalog-pack acquisition before compiling separate migration lanes. Keep S3 out
+of the implementation queue until its consumer gate is met.
