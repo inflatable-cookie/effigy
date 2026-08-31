@@ -677,3 +677,328 @@ fn skill_run_requires_a_resolved_consumer_target() {
         )
     );
 }
+
+const SECRET_CONSUMER_PASSPHRASE: &str = "skill-isolation-passphrase";
+
+/// Build a consumer with declared `rhai`- and `tasks`-target secrets stored in
+/// a real encrypted vault, then remove the local-dev unlock key so the vault
+/// only opens with the passphrase.
+fn secret_consumer(label: &str) -> PathBuf {
+    let root = unique_temp_root(label);
+    let consumer = root.join("consumer");
+    std::fs::create_dir_all(&consumer).expect("create secret consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        r#"[catalog]
+alias = "secret-consumer"
+
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/vault.json"
+
+[secrets.keys.PRODUCT_TOKEN]
+targets = ["rhai"]
+required = true
+
+[secrets.keys.TASK_TOKEN]
+targets = ["tasks"]
+required = true
+
+[tasks.consumer-task-secret]
+run = "printf 'consumer-task=%s\\n' \"$TASK_TOKEN\""
+run_in = "host"
+
+[tasks.consumer-rhai-secret]
+run = [{ rhai = "scripts/read.rhai" }]
+run_in = "host"
+"#,
+    )
+    .expect("write secret consumer manifest");
+    std::fs::create_dir_all(consumer.join("scripts")).expect("create consumer scripts");
+    std::fs::write(
+        consumer.join("scripts/read.rhai"),
+        "log(`consumer-rhai=${secrets::has(\"PRODUCT_TOKEN\")}`);\n",
+    )
+    .expect("write consumer script");
+
+    let init = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "init"])
+        .current_dir(&consumer)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_TEST_SECRETS_PASSPHRASE", SECRET_CONSUMER_PASSPHRASE)
+        .output()
+        .expect("init consumer vault");
+    assert!(init.status.success(), "{init:?}");
+    for (name, value) in [
+        ("PRODUCT_TOKEN", "rhai-secret-value"),
+        ("TASK_TOKEN", "task-secret-value"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(["secrets", "set", name])
+            .current_dir(&consumer)
+            .env("NO_COLOR", "1")
+            .env("EFFIGY_TEST_SECRETS_PASSPHRASE", SECRET_CONSUMER_PASSPHRASE)
+            .env("EFFIGY_TEST_SECRETS_VALUE", value)
+            .output()
+            .expect("store consumer secret");
+        assert!(output.status.success(), "{output:?}");
+    }
+    // A local-dev unlock key would open the vault without a passphrase and hide
+    // the non-interactive failure this fixture exists to reproduce.
+    let _ = std::fs::remove_file(consumer.join(".effigy/vault.json.local-dev-key"));
+    root
+}
+
+fn write_skill_source(root: &Path, manifest: &str, scripts: &[(&str, &str)]) -> PathBuf {
+    let source = root.join("source");
+    std::fs::create_dir_all(source.join("scripts")).expect("create skill source");
+    std::fs::write(source.join("effigy.toml"), manifest).expect("write skill manifest");
+    for (name, body) in scripts {
+        std::fs::write(source.join("scripts").join(name), body).expect("write skill script");
+    }
+    source
+}
+
+#[test]
+fn skill_run_rhai_task_ignores_required_consumer_secrets() {
+    let root = secret_consumer("rhai-isolation");
+    let consumer = root.join("consumer");
+    let source = write_skill_source(
+        &root,
+        r#"[catalog]
+alias = "isolated-skill"
+
+[tasks.lifecycle]
+run = [{ rhai = "scripts/lifecycle.rhai" }]
+run_in = "host"
+"#,
+        &[(
+            "lifecycle.rhai",
+            "let context = runtime::context();\n\
+             if context[\"command_root\"] != repo_root {\n\
+             throw(\"command root did not stay on the consumer\");\n\
+             }\n\
+             log(`lifecycle-cwd=${cwd}`);\n",
+        )],
+    );
+
+    let output = run_skill(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "lifecycle",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("secret input requires an interactive TTY"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "lifecycle-cwd={}",
+            consumer
+                .canonicalize()
+                .expect("canonical consumer")
+                .display()
+        )),
+        "{stdout}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove rhai isolation fixture");
+}
+
+#[test]
+fn skill_run_refuses_consumer_secret_access_from_the_external_source() {
+    let root = secret_consumer("secret-access");
+    let consumer = root.join("consumer");
+    let vault = consumer.join(".effigy/vault.json");
+    let vault_before = std::fs::read(&vault).expect("read vault before");
+    let source = write_skill_source(
+        &root,
+        r#"[catalog]
+alias = "probe-skill"
+
+[tasks.get]
+run = [{ rhai = "scripts/get.rhai" }]
+run_in = "host"
+
+[tasks.has]
+run = [{ rhai = "scripts/has.rhai" }]
+run_in = "host"
+
+[tasks.set]
+run = [{ rhai = "scripts/set.rhai" }]
+run_in = "host"
+"#,
+        &[
+            ("get.rhai", "log(secrets::get(\"PRODUCT_TOKEN\"));\n"),
+            ("has.rhai", "log(secrets::has(\"PRODUCT_TOKEN\"));\n"),
+            (
+                "set.rhai",
+                "secrets::set(\"PRODUCT_TOKEN\", \"overwritten\");\n",
+            ),
+        ],
+    );
+
+    for task in ["get", "has", "set"] {
+        let output = run_skill_with_env(
+            &consumer,
+            &[
+                "skill",
+                "run",
+                "--path",
+                source.to_str().expect("utf8 source"),
+                task,
+                "--json",
+            ],
+            "EFFIGY_TEST_SECRETS_PASSPHRASE",
+            SECRET_CONSUMER_PASSPHRASE,
+        );
+        assert!(!output.status.success(), "{task}: {output:?}");
+        let payload = json(&output).to_string();
+        assert!(
+            payload.contains("external skill tasks do not inherit consumer secrets"),
+            "{task}: {payload}"
+        );
+        assert!(
+            !payload.contains("rhai-secret-value"),
+            "{task}: leaked consumer secret"
+        );
+    }
+
+    assert_eq!(
+        vault_before,
+        std::fs::read(&vault).expect("read vault after"),
+        "external skill run mutated the consumer vault"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove secret access fixture");
+}
+
+#[test]
+fn skill_run_does_not_inject_consumer_task_secrets_into_the_external_source() {
+    let root = secret_consumer("task-secret-env");
+    let consumer = root.join("consumer");
+    let source = write_skill_source(
+        &root,
+        r#"[catalog]
+alias = "env-probe-skill"
+
+[tasks.probe]
+run = "printf 'skill-task=%s\\n' \"$TASK_TOKEN\""
+run_in = "host"
+"#,
+        &[],
+    );
+
+    let skill = run_skill_with_env(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "probe",
+        ],
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        SECRET_CONSUMER_PASSPHRASE,
+    );
+    assert!(skill.status.success(), "{skill:?}");
+    let skill_stdout = String::from_utf8_lossy(&skill.stdout);
+    assert!(skill_stdout.contains("skill-task="), "{skill_stdout}");
+    assert!(
+        !skill_stdout.contains("task-secret-value"),
+        "{skill_stdout}"
+    );
+
+    let consumer_run = run_skill_with_env(
+        &consumer,
+        &["consumer-task-secret"],
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        SECRET_CONSUMER_PASSPHRASE,
+    );
+    assert!(consumer_run.status.success(), "{consumer_run:?}");
+    assert!(
+        String::from_utf8_lossy(&consumer_run.stdout).contains("consumer-task=task-secret-value"),
+        "{consumer_run:?}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove task secret env fixture");
+}
+
+#[test]
+fn consumer_rhai_tasks_keep_requiring_an_unlocked_vault() {
+    let root = secret_consumer("consumer-unlock");
+    let consumer = root.join("consumer");
+
+    let locked = run_skill(&consumer, &["consumer-rhai-secret"]);
+    assert!(!locked.status.success(), "{locked:?}");
+    assert!(
+        String::from_utf8_lossy(&locked.stderr)
+            .contains("Rhai secrets require an unlocked vault passphrase"),
+        "{locked:?}"
+    );
+
+    let unlocked = run_skill_with_env(
+        &consumer,
+        &["consumer-rhai-secret"],
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        SECRET_CONSUMER_PASSPHRASE,
+    );
+    assert!(unlocked.status.success(), "{unlocked:?}");
+    assert!(
+        String::from_utf8_lossy(&unlocked.stdout).contains("consumer-rhai=true"),
+        "{unlocked:?}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove consumer unlock fixture");
+}
+
+#[test]
+fn skill_run_rejects_a_source_task_requesting_manifest_secrets() {
+    let root = secret_consumer("source-secret-request");
+    let consumer = root.join("consumer");
+    let source = write_skill_source(
+        &root,
+        r#"[catalog]
+alias = "inheriting-skill"
+
+[tasks.inherit]
+run = "printf 'inherited=%s\\n' \"$TASK_TOKEN\""
+run_in = "host"
+secrets = "required"
+"#,
+        &[],
+    );
+
+    let output = run_skill_with_env(
+        &consumer,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "inherit",
+            "--json",
+        ],
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        SECRET_CONSUMER_PASSPHRASE,
+    );
+    assert!(!output.status.success(), "{output:?}");
+    let payload = json(&output);
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("does not inherit consumer secrets")),
+        "{payload}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove source secret request fixture");
+}

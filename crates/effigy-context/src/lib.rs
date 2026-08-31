@@ -5,6 +5,52 @@ use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
 pub const CONTAINER_HANDOFF_ENV_NAME: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 
+/// Process-local marker set while an isolated external task source executes.
+///
+/// `effigy skill run` installs an external [`TaskSourceContext`] into the
+/// consumer runtime, and v1 external skill tasks never inherit consumer
+/// secrets. Nested Rhai steps run in child `effigy` processes, so the boundary
+/// travels through the inherited environment rather than the in-process
+/// runtime context.
+pub const EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME: &str =
+    "EFFIGY_INTERNAL_EXTERNAL_TASK_SOURCE_ISOLATION";
+
+/// Whether the current process runs under an isolated external task source.
+pub fn external_task_source_isolation_active() -> bool {
+    std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME).is_some()
+}
+
+/// Mark this process, and every child it spawns, as running an isolated
+/// external task source until the returned guard drops.
+pub fn activate_external_task_source_isolation() -> ExternalTaskSourceIsolationGuard {
+    let previous = std::env::var_os(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME);
+    // SAFETY: the guard restores this process-local marker when the isolated
+    // task source finishes.
+    unsafe {
+        std::env::set_var(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME, "1");
+    }
+    ExternalTaskSourceIsolationGuard { previous }
+}
+
+/// Restores the external task source marker captured at activation.
+#[derive(Debug)]
+pub struct ExternalTaskSourceIsolationGuard {
+    previous: Option<OsString>,
+}
+
+impl Drop for ExternalTaskSourceIsolationGuard {
+    fn drop(&mut self) {
+        // SAFETY: this restores the value captured by
+        // `activate_external_task_source_isolation`.
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME, value),
+                None => std::env::remove_var(EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME),
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffigyRuntimeContext {
     invocation_cwd: PathBuf,

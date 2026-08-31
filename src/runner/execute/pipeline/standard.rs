@@ -484,6 +484,12 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
     eager_load: bool,
     local_dev: bool,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
+    if effigy_context::external_task_source_isolation_active() {
+        // v1 external skill tasks run against the consumer root but never
+        // inherit its declared secrets, so an isolated task command naming a
+        // consumer secret resolves to nothing instead of the vault value.
+        return Ok(Vec::new());
+    }
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(Vec::new());

@@ -164,6 +164,10 @@ pub(crate) struct RhaiSecretStore {
     values: BTreeMap<String, String>,
     unlocked_passphrase: Option<SecretValue>,
     vault_loaded: bool,
+    /// Set when an isolated external task source owns this script. The store
+    /// stays empty and every `secrets::*` helper is refused instead of
+    /// resolving against the consumer vault.
+    isolated: bool,
 }
 
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
