@@ -53,11 +53,16 @@ Use these docs intentionally:
   is the active generic documentation-graph and repository-profile boundary
 - [025-external-skill-task-execution.md](./025-external-skill-task-execution.md)
   owns explicit installed-skill source versus consumer-target execution
+- [026-feature-placement-and-command-surface.md](./026-feature-placement-and-command-surface.md)
+  defines semantic core ownership, group-first command organization, provider
+  placement, catalog-pack constraints, and release/distribution separation
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
 - [`contract/042`](../contracts/042-external-skill-task-runner-contract.md)
   defines isolated skill loading and source/target path semantics
+- [`contract/043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
+  defines feature-placement gates and alias-stable migration rules
 
 For runtime/container behavior rules, prefer the active contracts:
 

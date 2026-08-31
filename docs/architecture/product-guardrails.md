@@ -9,6 +9,11 @@ These guardrails define what must stay true while the product expands.
 - Keep one stable operator entry surface. New capability should strengthen
   `effigy` as the obvious place to ask for work instead of reopening wrapper
   sprawl or repo-local folklore.
+- Keep capabilities in core when Effigy owns deterministic routing, planning,
+  lifecycle, safety, or transaction semantics. Façade reachability alone does
+  not transfer provider or consumer implementation ownership into core.
+- Organize the operator surface by job while preserving direct ergonomic
+  shortcuts. Grouping does not imply deprecation or removal.
 - Prefer built-ins and manifest contracts over ad hoc shell orchestration when
   the workflow is broadly reusable.
 - Do not hide meaningful state behind machine-global config when repo-local or
@@ -34,6 +39,10 @@ These guardrails define what must stay true while the product expands.
   management by accident
 - solving downstream friction with custom scripts when the issue belongs in the
   manifest, built-ins, or docs contract
+- treating a callable provider implementation as core merely because Effigy
+  exposes it
+- externalizing assets in a way that adds mandatory setup ceremony or weakens
+  offline use
 
 ## Next Task
 

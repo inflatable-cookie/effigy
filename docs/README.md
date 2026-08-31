@@ -64,6 +64,8 @@ installing them directly on your machine.
 - [`guides/079-documentation-graph-profiles-and-context.md`](./guides/079-documentation-graph-profiles-and-context.md) — repository-owned documentation semantics and bounded `docs context` evidence
 - [`architecture/024-repository-defined-documentation-graph.md`](./architecture/024-repository-defined-documentation-graph.md) — repository-owned Markdown graph architecture
 - [`contracts/041-documentation-graph-profile-contract.md`](./contracts/041-documentation-graph-profile-contract.md) — `[docs_policy.graph]` profile grammar and semantics
+- [`architecture/026-feature-placement-and-command-surface.md`](./architecture/026-feature-placement-and-command-surface.md) — core ownership, command grouping, and provider/extension placement
+- [`contracts/043-feature-placement-and-surface-migration-contract.md`](./contracts/043-feature-placement-and-surface-migration-contract.md) — alias-stable command and feature migration gates
 - [`guides/078-papercuts-discovery-and-capture.md`](./guides/078-papercuts-discovery-and-capture.md) — project and sibling-project friction inventory for humans and agents
 - [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md) — copy-paste CI workflows
 - [`guides/050-env-schema-integration.md`](./guides/050-env-schema-integration.md) — `--env-schema` overrides and validation when tasks need typed env
