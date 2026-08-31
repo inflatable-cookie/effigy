@@ -7,6 +7,27 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- The `northstar` starter now emits the full Northstar documentation ontology as
+  a `[docs_policy.graph]` block: 14 document kinds with authority weights,
+  `Status:`-driven currentness, and typed `contract`, `architecture`, `spec`,
+  `roadmap`, `card`, `evidence`, `supersedes`, and `next-task` relations. The
+  emitted block states in its own text that it is copied configuration, not an
+  inherited runtime dependency: `effigy init northstar` materializes it into the
+  consumer `effigy.toml`, and from then on those committed bytes are the only
+  runtime authority. Effigy reads no starter, installed skill directory, or
+  template cache while answering a query, so upgrading Effigy or a skill cannot
+  reinterpret an existing repository; adopting a newer template is an explicit
+  merge.
+- `effigy perf:docs-context-benchmark` replays a predeclared documentation
+  retrieval corpus over an arbitrary-vocabulary fixture and the current
+  repository, and fails when a declared live authority falls outside the top
+  three, a declared historical rival outranks it, a directly named historical
+  source is not retrieved, an unrelated high-authority document enters a report,
+  or a no-match query returns anything. Reports land under
+  `.effigy/perf/docs-context-benchmark/`.
+- `docs/guides/079-documentation-graph-profiles-and-context.md` documents the
+  repository-owned profile, the copied-not-inherited adoption boundary, the five
+  query shapes worth memorizing, and how ranking actually behaves.
 - `effigy docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
   retrieves bounded documentation evidence from the shared graph. Results are
   exact deduplicated Markdown sections with path, heading, span, source text,
@@ -62,6 +83,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - Markdown graph documents no longer infer kinds from path prefixes such as
   `docs/contracts/` or `docs/guides/`. Baseline kind is `document`; a
   repository profile assigns kinds.
+- This repository now ships its own `[docs_policy.graph]` profile in
+  `docs/effigy.docs.toml`, so `effigy docs context` runs here with Northstar
+  semantics instead of baseline mode. It is the starter block adapted to
+  Effigy's real docs tree, and it deliberately differs from the template:
+  `status` and `owner` are multi-valued because Effigy's roadmap and
+  architecture documents carry per-section metadata lines.
+- The `effigy` agent skill now routes documentation-authority questions to
+  `effigy docs context` and no longer claims the graph profile ships without a
+  docs-context command.
 
 ### Fixed
 - `effigy skill run` no longer resolves the consumer secret vault. A consumer

@@ -191,10 +191,10 @@ consumer.
 agent, built-in, and generated docs, repaired verified gaps, added proportional
 recurrence guards, and closed with full evidence.
 
-`g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
-through `1090` cover the generic profile/structural foundation, bounded docs
-context query, and generic plus Northstar adoption proof. Cards `1088` and
-`1089` are complete; card `1090` is ready.
+`g08.035` is complete under archived strict spec `108` and contract `041`.
+Cards `1088` through `1090` covered the generic profile/structural foundation,
+the bounded docs context query, and the generic plus Northstar adoption proof.
+All three are complete; card `1090` closed the lane on 2026-08-31.
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` audited the full scan
 family, the root agent instruction surface, current public feature coverage,
@@ -228,8 +228,8 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Strict spec `108` and ready card `1090` own the active documentation-context
-lane. Strict specs `109` and `110` are archived.
+The documentation-context lane closed on 2026-08-31; strict specs `108`, `109`,
+and `110` are all archived and no strict lane is open.
 Do not open `g09` or start release work from this selection.
 
 ## Research Roadmaps
@@ -263,7 +263,7 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card
-[`1090`](./g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+None ready. `g08.035` closed on 2026-08-31 and strict spec `108` is archived, so
+`g08` has no active strict lane. Return to planning to open the next one.
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

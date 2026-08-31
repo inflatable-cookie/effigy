@@ -100,6 +100,34 @@ Rules:
 Full workflow and limits:
 [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 
+## 2b) Documentation Context Assist
+
+When the job is documentation authority rather than code ownership - which
+contract, architecture decision, planning lane, or prior decision governs the
+work - use the documentation graph instead of guessing at file layout:
+
+```sh
+effigy docs context "<authority-shaped question>" --max-sections 4 --max-bytes 8000
+effigy --json docs context "<authority-shaped question>"
+```
+
+Rules:
+
+- ask which document governs, not which file contains a string; `rg` is still
+  the right tool for exact token verification
+- results are exact repository sections with path, span, kind, authority,
+  currentness, fields, relation path, and match reason. They are evidence to
+  read, never a generated answer
+- historical material is not suppressed: a query that names an archived decision
+  directly still retrieves it
+- the semantics come from the selected repository's committed
+  `[docs_policy.graph]` block. Nothing is read from an installed skill, so a
+  skill upgrade never changes what a repository means
+- baseline mode works with no profile at all; a profile adds local meaning
+
+Full profile grammar, adoption boundary, and example queries:
+[`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md)
+
 ## 3) Reusable `AGENTS.md` Snippet
 
 Copy and adapt this into a consumer repo `AGENTS.md` when Effigy is intended to
@@ -238,6 +266,12 @@ boundary explicit:
 - let Effigy own the generic validation and execution surfaces, for example:
   `check-paths`, `check-index`, `check-next-action`, `check-headings`,
   `check-forbidden`, JSON mode, and release orchestration
+- treat the Northstar documentation graph profile as one committed
+  `[docs_policy.graph]` block in the consumer manifest. The skill or starter may
+  originate those bytes, but installation is a materialization step and later
+  template updates are an explicit merge. Effigy resolves documentation
+  semantics from the consumer manifest only, never from an installed skill
+  directory
 
 Do not collapse bootstrap logic into Effigy unless repeated adoption pain shows
 that the skill/template layer cannot cover the gap cleanly.

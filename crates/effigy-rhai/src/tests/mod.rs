@@ -228,6 +228,9 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::run(program, process_args)")
                 && contents.contains("process::run(")
         }
+        "scripts/benchmark-docs-context.rhai" => {
+            contents.contains("process::run(program, process_args)")
+        }
         "scripts/profile-container-shell-matrix.rhai" => {
             contents.contains("process::run(program, process_args)")
                 && contents.contains("process::run(\"/bin/sh\",")

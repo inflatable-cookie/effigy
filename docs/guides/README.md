@@ -118,6 +118,7 @@ Use when:
 Read:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md)
 - [`077-local-dependency-linking.md`](./077-local-dependency-linking.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
@@ -235,6 +236,7 @@ This section is inventory, not a recommended reading order.
 - [`074-deployment-guide.md`](./074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)

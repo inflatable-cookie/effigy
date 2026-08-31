@@ -333,13 +333,30 @@ mod tests {
         for expected in [
             "[docs_policy.graph]",
             "[docs_policy.graph.fields.status]",
-            "current = [\"active\", \"ready\", \"strict-ready\", \"draft\"]",
+            "[docs_policy.graph.fields.owner]",
+            "[docs_policy.graph.currentness]",
             "[docs_policy.graph.kinds.contract]",
             "include = [\"docs/contracts/*.md\"]",
+            "[docs_policy.graph.kinds.architecture]",
+            "[docs_policy.graph.kinds.spec]",
             "[docs_policy.graph.kinds.archived-spec]",
             "include = [\"docs/specs/archive/*.md\"]",
+            "[docs_policy.graph.kinds.vision]",
+            "[docs_policy.graph.kinds.roadmap]",
+            "[docs_policy.graph.kinds.ready-card]",
+            "[docs_policy.graph.kinds.guide]",
+            "[docs_policy.graph.kinds.log]",
+            "[docs_policy.graph.kinds.handoff]",
+            "[docs_policy.graph.relations.contract]",
+            "[docs_policy.graph.relations.roadmap]",
+            "[docs_policy.graph.relations.evidence]",
+            "[docs_policy.graph.relations.supersedes]",
             "[docs_policy.graph.relations.next-task]",
             "headings = [\"Next Task\"]",
+            // The template must say, in the emitted bytes, that it is copied
+            // configuration rather than an inherited runtime dependency.
+            "COPIED configuration",
+            "only runtime authority",
         ] {
             assert!(
                 northstar_manifest.contains(expected),

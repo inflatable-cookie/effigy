@@ -37,9 +37,10 @@ Bootstrap from outside:
 Rust QA when needed: `cargo test`, `cargo fmt --all -- --check`,
 `cargo clippy --all-targets -- -D warnings` (plain `cargo clippy` matches CI).
 
-Route by job: `effigy graph` for code understanding; `effigy tasks` for
-selectors; `effigy doctor` for routing/health; `effigy test --plan` for test
-shape.
+Route by job: `effigy graph` for code understanding; `effigy docs context` for
+documentation authority (which contract, decision, or lane governs the work);
+`effigy tasks` for selectors; `effigy doctor` for routing/health;
+`effigy test --plan` for test shape.
 
 ## Docs authority
 
@@ -99,6 +100,12 @@ Use `effigy graph` when the job is code understanding: ownership, flow,
 implementation, or changed-file impact. Do not insert graph into unrelated
 deployment, state, docs, release, or direct task-execution work.
 
+Use `effigy docs context "<question>"` when the job is documentation authority
+rather than code ownership. It returns exact repository sections with
+provenance, ranked by this repo's committed `[docs_policy.graph]` profile in
+`docs/effigy.docs.toml`. That profile is the only runtime authority; no
+installed skill or starter is read at query time.
+
 Prefer `effigy <task>`, `effigy test`, and the matching built-in surface over
 raw package-manager or shell commands when Effigy covers the path. Use
 `effigy --json <command>` whenever another agent or tool will consume output.
@@ -114,6 +121,7 @@ repo. Do not edit
 Reference docs:
 - Effigy agent adoption: `docs/guides/047-agent-and-cross-repo-adoption.md`
 - Graph workflows: `docs/guides/076-code-graph-and-agent-workflows.md`
+- Documentation graph profiles: `docs/guides/079-documentation-graph-profiles-and-context.md`
 - JSON contracts: `docs/guides/017-json-output-contracts.md`
 <!-- END EFFIGY AGENT CONTRACT -->
 

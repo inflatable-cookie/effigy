@@ -333,6 +333,31 @@ document
 validate
 ```
 
+### Starter documentation graph profile
+
+The starter also emits a `[docs_policy.graph]` block that declares the Northstar
+documentation ontology - contract, architecture, spec, archived spec, vision,
+roadmap, ready card, guide, front door, log, and handoff kinds, with `Status:`
+driving currentness and typed relations for contract, roadmap, spec, card,
+evidence, supersedes, and next task. That block is what makes
+`effigy docs context "<question>"` answer with the governing document rather
+than the first lexical hit.
+
+The block is **copied configuration, not inherited runtime behavior**:
+
+- `effigy init northstar` materializes it into the consumer `effigy.toml`, and
+  from that moment the committed bytes are the only runtime authority.
+- Effigy never reads a starter, an installed agent skill, or a template cache
+  while answering a query. Upgrading Effigy or a skill cannot silently
+  reinterpret an existing repository.
+- Adopting a newer template is an explicit merge: run
+  `effigy init northstar --dry-run` and take the parts you want.
+- Renaming the kinds, fields, statuses, and relations to fit the project is
+  expected, not a deviation. Effigy reserves none of those names.
+
+Full profile grammar, ranking behavior, and example queries are in
+[`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md).
+
 Use this as the default starter shape unless the repo already has a richer
 equivalent:
 
@@ -404,7 +429,9 @@ this order:
 8. first roadmap generation README and first active milestone
 9. `docs/logs/README.md`
 10. `CHANGELOG.md`
-11. `[release]` config when the repo is actually being prepared for releases
+11. `[docs_policy.graph]` profile, copied from the starter and renamed to the
+    repo's own vocabulary
+12. `[release]` config when the repo is actually being prepared for releases
 
 ## 8) Adoption Levels
 
@@ -473,6 +500,7 @@ Use this checklist when assessing a candidate consumer repo:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md)
 
 ## Next Step
 

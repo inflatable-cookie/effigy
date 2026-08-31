@@ -42,7 +42,7 @@ Batch: planning compile
 - [`D-2026-04`](../../vision/decisions/D-2026-04-repository-defined-documentation-graph.md)
 - [`architecture 024`](../../architecture/024-repository-defined-documentation-graph.md)
 - [`contract 041`](../../contracts/041-documentation-graph-profile-contract.md)
-- [`strict spec 108`](../../specs/108-documentation-graph-profiles-strict-lane.md)
+- [`strict spec 108`](../../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
 ## Vision Target Delta
 

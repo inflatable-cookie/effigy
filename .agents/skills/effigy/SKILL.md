@@ -56,6 +56,7 @@ Pick the first Effigy command that matches the job.
 | Job | Use when | First command |
 |-----|----------|---------------|
 | Understand code | Ownership, behavior, implementation, impact | `effigy graph explore "<question>" --json` |
+| Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `effigy docs context "<question>" --json` |
 | Review graph-backed risk | Boundaries, likely isolation, or validation risk | `effigy scan <graph-aware-subcommand> --json` |
 | Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
@@ -110,6 +111,7 @@ for generic repo orientation.
 | Goal | Command |
 |------|---------|
 | Orient in unfamiliar code | `effigy graph explore "<question>" --json` |
+| Find the governing document | `effigy docs context "<question>" --max-sections 4` |
 | Run tests | `effigy test` |
 | Inspect test plan | `effigy test --plan` |
 | Bring local dev up | `effigy container up` then `effigy dev` |
@@ -202,6 +204,14 @@ shapes before side effects. Add `--json` when the agent needs to verify
 canonical source, target, invocation, and execution paths. Contract:
 `docs/contracts/042-external-skill-task-runner-contract.md`.
 
+**Documentation context** — `effigy docs context "<question>"` returns bounded
+exact Markdown sections with path, span, kind, authority, currentness, fields,
+relation path, and match reason. It is evidence, never a generated answer.
+Semantics come from the selected repository's committed `[docs_policy.graph]`
+block; no installed skill or starter is read at query time, so a skill upgrade
+never changes what a repository means. Works in baseline mode with no profile.
+Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`.
+
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
 `[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
 `[docs_policy.graph]` repository-defined Markdown graph profile.
@@ -228,7 +238,7 @@ Sequence: `references/release-protocol.md`.
 | Topic | Guide |
 |-------|-------|
 | Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
-| Documentation graph profile | `docs/architecture/024-repository-defined-documentation-graph.md`, `docs/contracts/041-documentation-graph-profile-contract.md` |
+| Documentation graph profile | `docs/guides/079-documentation-graph-profiles-and-context.md`, `docs/architecture/024-repository-defined-documentation-graph.md`, `docs/contracts/041-documentation-graph-profile-contract.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | Installed skill task execution | `docs/contracts/042-external-skill-task-runner-contract.md`, `docs/architecture/025-external-skill-task-execution.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |

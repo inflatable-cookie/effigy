@@ -1,10 +1,10 @@
 # Repository-Defined Documentation Graph Architecture
 
 Status: active
-Updated: 2026-08-29
+Updated: 2026-08-31
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Spec: [`108`](../specs/108-documentation-graph-profiles-strict-lane.md)
+Spec: [`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
 ## Purpose
 
@@ -171,6 +171,31 @@ The profile can originate in the Northstar skill or Effigy's Northstar starter,
 but installation or init must materialize it into the consumer `effigy.toml`.
 After that point the consumer copy is runtime authority. Updating a skill must
 not silently reinterpret an existing repository.
+
+## Shipped Shape
+
+The lane closed on 2026-08-31. What exists now:
+
+- `[docs_policy.graph]` grammar, validation, and composition in
+  `effigy-manifest`; profile compilation, exact section extraction, semantic
+  facts and typed relations, freshness identity, and retrieval in
+  `effigy-codegraph`; grammar and help in `effigy-cli`; routing, rendering, and
+  the JSON envelope in the built-in docs command shell.
+- `effigy docs context <QUERY>` with count, byte, and hop budgets and the
+  versioned `effigy.docs.context.v1` payload.
+- The Northstar ontology as a committed profile in the `northstar` starter, and
+  materialized into this repository's own `docs/effigy.docs.toml`. The two are
+  deliberately not byte-identical: Effigy's copy sets `cardinality = "many"` for
+  `status` and `owner` because its documents carry per-section metadata lines.
+  A consumer that deviates from the template is behaving correctly.
+- A repository-neutrality guard over the eleven runtime files, an
+  arbitrary-vocabulary fixture, and end-to-end proof that installed skill and
+  template directories never reach a query.
+- `perf:docs-context-benchmark`, a predeclared retrieval corpus replayed over
+  the generic fixture and this repository.
+
+Adoption guidance and example queries:
+[`../guides/079-documentation-graph-profiles-and-context.md`](../guides/079-documentation-graph-profiles-and-context.md).
 
 ## Ownership
 

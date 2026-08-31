@@ -4,15 +4,17 @@ Roadmap: [`../035-repository-defined-documentation-graph.md`](../035-repository-
 Architecture: [`../../../architecture/024-repository-defined-documentation-graph.md`](../../../architecture/024-repository-defined-documentation-graph.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md),
 [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
-Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
+Spec: [`../../../specs/archive/108-documentation-graph-profiles-strict-lane.md`](../../../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1089`](./1089-add-bounded-documentation-context-query.md)
 
-Status: Ready
+Status: Complete
 Owner: cross-repo proof, starter adoption, and lane closeout
 Created: 2026-08-29
 Ready after: card `1089` closeout proves the public query contract
 Ready since: 2026-08-31, on card `1089` evidence
 [`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md)
+Completed: 2026-08-31
+Evidence: [`../../../logs/2026-08/31-213000-northstar-profile-proof-1090.md`](../../../logs/2026-08/31-213000-northstar-profile-proof-1090.md)
 
 ## Purpose
 
@@ -44,13 +46,13 @@ available.
 
 ## Acceptance
 
-- [ ] the generic fixture passes with no Northstar tokens in runtime logic
-- [ ] the Northstar starter profile is valid and queryable after copying alone
-- [ ] removing access to installed skills does not change runtime results
-- [ ] benchmark evidence meets the top-three and currentness target
-- [ ] adoption docs distinguish repository authority from template origin
-- [ ] focused and full validation pass
-- [ ] closeout leaves no stale ready card
+- [x] the generic fixture passes with no Northstar tokens in runtime logic
+- [x] the Northstar starter profile is valid and queryable after copying alone
+- [x] removing access to installed skills does not change runtime results
+- [x] benchmark evidence meets the top-three and currentness target
+- [x] adoption docs distinguish repository authority from template origin
+- [x] focused and full validation pass
+- [x] closeout leaves no stale ready card
 
 ## Validation
 
@@ -76,4 +78,5 @@ exposes an unresolved behavior defect.
 
 ## Next Task
 
-Close the lane and return evidence to the operator. Do not infer release work.
+None. The lane is closed, spec `108` is archived, and roadmap `g08.035` is
+complete. No release work is implied.
