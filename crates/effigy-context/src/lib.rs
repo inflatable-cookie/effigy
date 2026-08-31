@@ -16,6 +16,7 @@ pub struct EffigyRuntimeContext {
     host: HostRuntimeInfo,
     container: ContainerRuntimeInfo,
     invocation_mode: RuntimeInvocationMode,
+    task_source: Option<TaskSourceContext>,
 }
 
 impl EffigyRuntimeContext {
@@ -79,6 +80,15 @@ impl EffigyRuntimeContext {
         self.invocation_mode
     }
 
+    pub fn task_source(&self) -> Option<&TaskSourceContext> {
+        self.task_source.as_ref()
+    }
+
+    pub fn with_task_source(mut self, task_source: TaskSourceContext) -> Self {
+        self.task_source = Some(task_source);
+        self
+    }
+
     #[cfg(test)]
     pub fn fake(invocation_cwd: PathBuf, command_root: PathBuf) -> Self {
         Self {
@@ -112,6 +122,28 @@ impl EffigyRuntimeContext {
                 inside_container_handoff: false,
             },
             invocation_mode: RuntimeInvocationMode::Host,
+            task_source: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSourceContext {
+    pub source_root: PathBuf,
+    pub manifest_path: PathBuf,
+    pub resolution_evidence: Vec<String>,
+}
+
+impl TaskSourceContext {
+    pub fn new(
+        source_root: PathBuf,
+        manifest_path: PathBuf,
+        resolution_evidence: Vec<String>,
+    ) -> Self {
+        Self {
+            source_root,
+            manifest_path,
+            resolution_evidence,
         }
     }
 }
@@ -224,6 +256,7 @@ impl EffigyRuntimeContextBuilder {
             } else {
                 RuntimeInvocationMode::Host
             },
+            task_source: None,
         })
     }
 
@@ -280,6 +313,7 @@ impl EffigyRuntimeContextBuilder {
                     } else {
                         RuntimeInvocationMode::Host
                     },
+                    task_source: None,
                 })
             }
             Err(error) => Err(error),
@@ -329,7 +363,7 @@ impl std::error::Error for RuntimeContextError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{CapturedEnv, EffigyRuntimeContext, RuntimeInvocationMode};
+    use super::{CapturedEnv, EffigyRuntimeContext, RuntimeInvocationMode, TaskSourceContext};
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
@@ -417,5 +451,28 @@ mod tests {
         assert_eq!(context.target().resolved_root, root);
         assert_eq!(context.target().resolution_mode, "LossyCwdFallback");
         assert_eq!(context.target().warnings.len(), 1);
+    }
+
+    #[test]
+    fn task_source_identity_is_additive_to_the_resolved_target() {
+        let target = temp_repo();
+        let source = temp_repo();
+        let context = EffigyRuntimeContext::builder()
+            .cwd_override(Some(target.clone()))
+            .captured_env(CapturedEnv::default())
+            .capture()
+            .expect("capture context")
+            .with_task_source(TaskSourceContext::new(
+                source.clone(),
+                source.join("effigy.toml"),
+                vec!["explicit source".to_owned()],
+            ));
+
+        assert_eq!(context.command_root(), target.canonicalize().unwrap());
+        assert_eq!(context.task_source().unwrap().source_root, source);
+        assert_eq!(
+            context.task_source().unwrap().manifest_path,
+            source.join("effigy.toml")
+        );
     }
 }

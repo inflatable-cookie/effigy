@@ -70,7 +70,7 @@ fn run_task_process_text(
 fn update_cache(context: &ExecutionTaskContext<'_>) -> Result<(), RunnerError> {
     update_task_cache_entry(
         context.resolved_root,
-        &context.selection.catalog.catalog_root,
+        context.repo_for_task(),
         &context.selection.catalog.manifest_path,
         &context.selector.task_name,
         context.selection.task,

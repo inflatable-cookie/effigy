@@ -97,6 +97,41 @@ Fix:
 
 ## 3) Catalog Discovery and Manifest Issues
 
+### Symptom: `skill` source is rejected before execution
+
+Diagnosis:
+
+```sh
+effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> --json
+effigy skill --help
+```
+
+Fix:
+
+- pass the directory that directly owns `effigy.toml`, or the manifest itself
+- keep all composed includes and bundle roots inside the canonical skill root
+- keep every reachable Rhai path inside the canonical skill root; absolute and
+  symlink paths are accepted only when their canonical target stays inside it
+- remove `[catalog.members]`; the v1 skill surface accepts one isolated catalog
+- make the selected task and every nested source task explicitly host-compatible
+  (`run_in = "host"`) and remove system/workspace or manifest-secrets binding
+- replace managed/TUI/concurrent task shapes with standard host run sequences,
+  or keep those tasks in the consumer repository
+
+Do not replace `--path` with `--repo`. `--path` selects task code; `--repo`
+selects the consumer where runtime effects belong.
+
+### Symptom: `skill run` cannot resolve a consumer target
+
+Run from inside the consumer repository or pass it explicitly:
+
+```sh
+effigy skill run --path <SKILL_DIR> <SELECTOR> --repo /path/to/consumer --json
+```
+
+The JSON result should show distinct `source.root` and `target.root` values,
+plus the original `invocation_cwd` and target-owned `execution_cwd`.
+
 ### Symptom: `no task catalogs found under ...`
 
 Diagnosis:

@@ -37,6 +37,7 @@ pub enum Command {
     Demo(DemoArgs),
     Graph(GraphArgs),
     Rhai(RhaiArgs),
+    Skill(SkillArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
     Artifact(ArtifactArgs),
@@ -120,6 +121,7 @@ pub enum HelpTopic {
     Demo,
     Graph,
     Rhai,
+    Skill,
     Docs,
     Contracts,
     Artifact,
@@ -1131,6 +1133,24 @@ pub struct TasksArgs {
     pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillArgs {
+    pub subcommand: SkillSubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillSubcommand {
+    Tasks {
+        path: PathBuf,
+    },
+    Run {
+        path: PathBuf,
+        task: TaskInvocation,
+        repo_override: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

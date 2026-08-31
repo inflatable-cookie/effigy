@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use effigy_context::EffigyRuntimeContext;
+use effigy_context::{EffigyRuntimeContext, TaskSourceContext};
 use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
 use serde::{Deserialize, Serialize};
 pub use task_status::{
@@ -174,6 +174,7 @@ pub struct ExecutionPreflightInput {
     pub cwd: PathBuf,
     pub surface: ExecutionSurface,
     pub secret_targets: Vec<String>,
+    pub task_source: Option<TaskSourceContext>,
 }
 
 impl ExecutionPreflightInput {
@@ -189,11 +190,17 @@ impl ExecutionPreflightInput {
             cwd,
             surface,
             secret_targets: Vec::new(),
+            task_source: None,
         }
     }
 
     pub fn with_secret_targets(mut self, targets: Vec<String>) -> Self {
         self.secret_targets = targets;
+        self
+    }
+
+    pub fn with_task_source(mut self, task_source: Option<TaskSourceContext>) -> Self {
+        self.task_source = task_source;
         self
     }
 }
@@ -473,6 +480,7 @@ impl ExecutionDispatchPlan {
             self.surface.clone(),
         )
         .with_secret_targets(self.request.environment.secret_targets.clone())
+        .with_task_source(self.request.runtime_context.task_source().cloned())
     }
 }
 
@@ -659,7 +667,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use effigy_context::{CapturedEnv, EffigyRuntimeContext};
+    use effigy_context::{CapturedEnv, EffigyRuntimeContext, TaskSourceContext};
 
     use super::{
         CatalogSelectionMode, ExecutionBindingInput, ExecutionBindingKind, ExecutionBindingPlan,
@@ -708,6 +716,25 @@ mod tests {
             }
         );
         assert_eq!(plan.request.runtime_policy.run_in, ExecutionRunTarget::Host);
+    }
+
+    #[test]
+    fn dispatch_preflight_preserves_explicit_task_source_identity() {
+        let target_context = context("task-source-target");
+        let source = temp_repo("task-source");
+        let source_context = TaskSourceContext::new(
+            source.clone(),
+            source.join("effigy.toml"),
+            vec!["operator selected source".to_owned()],
+        );
+        let request = TaskExecutionRequestBuilder::new()
+            .runtime_context(target_context.with_task_source(source_context.clone()))
+            .task("skill/check", Vec::new())
+            .build()
+            .expect("request");
+
+        let plan = ExecutionDispatchPlan::from_request(request).expect("dispatch plan");
+        assert_eq!(plan.preflight_input().task_source, Some(source_context));
     }
 
     #[test]

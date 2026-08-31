@@ -94,6 +94,124 @@ pub fn load_effective_catalogs_allow_missing(
     }
 }
 
+/// Load exactly one explicitly selected composed catalog.
+///
+/// This bypasses effective repository membership by design. It is the source
+/// boundary used by `effigy skill`: includes may compose files inside the
+/// canonical source root, but member declarations and escaping composition
+/// paths are rejected before a selector can run.
+pub fn load_isolated_catalog(
+    source_root: &Path,
+    manifest_path: &Path,
+) -> Result<LoadedCatalog, RoutingError> {
+    let loaded = load_task_manifest_with_inspection(manifest_path)?;
+    if let Some(catalog) = loaded.manifest.catalog.as_ref() {
+        if !catalog.members.is_empty() {
+            return Err(member_error(
+                "skill source catalog.members",
+                None,
+                &manifest_path.display().to_string(),
+                Some(manifest_path.to_path_buf()),
+                "external skill execution accepts one isolated catalog; remove `[catalog.members]`",
+            ));
+        }
+    }
+    if loaded.manifest.systems.as_ref().is_some_and(|systems| {
+        systems.systems.values().any(|system| {
+            system.mounts.iter().any(ManifestSystemMount::is_catalog)
+                || system
+                    .workspaces
+                    .values()
+                    .any(|workspace| workspace.mounts.iter().any(ManifestSystemMount::is_catalog))
+        })
+    }) {
+        return Err(member_error(
+            "skill source systems mounts",
+            None,
+            &manifest_path.display().to_string(),
+            Some(manifest_path.to_path_buf()),
+            "external skill execution does not accept catalog-backed system or workspace mounts",
+        ));
+    }
+
+    let canonical_root = fs::canonicalize(source_root).map_err(|error| {
+        member_error(
+            "skill source root",
+            None,
+            &source_root.display().to_string(),
+            Some(source_root.to_path_buf()),
+            error.to_string(),
+        )
+    })?;
+    for composed_path in &loaded.evaluation_order {
+        let canonical_path = fs::canonicalize(composed_path).map_err(|error| {
+            member_error(
+                "skill source composition",
+                None,
+                &composed_path.display().to_string(),
+                Some(composed_path.clone()),
+                error.to_string(),
+            )
+        })?;
+        if !canonical_path.starts_with(&canonical_root) {
+            return Err(member_error(
+                "skill source composition",
+                None,
+                &composed_path.display().to_string(),
+                Some(canonical_path),
+                format!(
+                    "composed manifest escapes canonical skill source root `{}`",
+                    canonical_root.display()
+                ),
+            ));
+        }
+    }
+    if let Some(bundle_root) = loaded.bundle_root.as_ref() {
+        let canonical_bundle = fs::canonicalize(bundle_root).map_err(|error| {
+            member_error(
+                "skill source bundle",
+                None,
+                &bundle_root.display().to_string(),
+                Some(bundle_root.clone()),
+                error.to_string(),
+            )
+        })?;
+        if !canonical_bundle.starts_with(&canonical_root) {
+            return Err(member_error(
+                "skill source bundle",
+                None,
+                &bundle_root.display().to_string(),
+                Some(canonical_bundle),
+                format!(
+                    "bundle root escapes canonical skill source root `{}`",
+                    canonical_root.display()
+                ),
+            ));
+        }
+    }
+
+    let alias = loaded
+        .manifest_defined_catalog_alias()
+        .map(str::to_owned)
+        .unwrap_or_else(|| default_alias(&canonical_root, &canonical_root));
+    let bundle_root = loaded.bundle_root;
+    let manifest = loaded.manifest;
+    Ok(LoadedCatalog {
+        alias,
+        depth: 0,
+        catalog_root: canonical_root,
+        manifest_path: manifest_path.to_path_buf(),
+        bundle_root,
+        defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
+        deferred_builtins: manifest
+            .defer
+            .as_ref()
+            .map(|defer| defer.explicitly_deferred_builtins())
+            .unwrap_or_default(),
+        manifest,
+    })
+}
+
 pub fn effective_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RoutingError> {
     normalized_catalog_members(workspace_root).map(|(_, members)| {
         members
@@ -325,7 +443,7 @@ fn has_root_manifest(workspace_root: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_alias, load_effective_catalogs};
+    use super::{default_alias, load_effective_catalogs, load_isolated_catalog};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -523,6 +641,65 @@ mounts = [{ source = "../inline", catalog = true }]
             "{error}"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn isolated_catalog_loads_one_explicit_source_without_membership_discovery() {
+        let root = temp_root("effigy-routing-isolated-source");
+        fs::create_dir_all(root.join("ambient")).expect("ambient dir");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = \"skill\"\n\n[tasks.check]\nrun = \"printf check\"\n",
+        )
+        .expect("source manifest");
+        fs::write(
+            root.join("ambient/effigy.toml"),
+            "[catalog]\nalias = \"ambient\"\n\n[tasks.leak]\nrun = \"printf leak\"\n",
+        )
+        .expect("ambient manifest");
+
+        let catalog =
+            load_isolated_catalog(&root, &root.join("effigy.toml")).expect("isolated source");
+        assert_eq!(catalog.alias, "skill");
+        assert!(catalog.manifest.tasks.contains_key("check"));
+        assert!(!catalog.manifest.tasks.contains_key("leak"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn isolated_catalog_rejects_members_and_escaping_includes() {
+        let fixture = temp_root("effigy-routing-isolated-rejections");
+        let member_source = fixture.join("member-source");
+        let include_source = fixture.join("include-source");
+        fs::create_dir_all(&member_source).expect("member source");
+        fs::create_dir_all(&include_source).expect("include source");
+        fs::write(
+            member_source.join("effigy.toml"),
+            "[catalog.members]\nexternal = \"../external\"\n",
+        )
+        .expect("member manifest");
+        fs::write(
+            include_source.join("effigy.toml"),
+            "[manifest]\ninclude = [\"../fragment.toml\"]\n",
+        )
+        .expect("include manifest");
+        fs::write(
+            fixture.join("fragment.toml"),
+            "[tasks.check]\nrun = \"printf check\"\n",
+        )
+        .expect("include fragment");
+
+        let member_error =
+            load_isolated_catalog(&member_source, &member_source.join("effigy.toml"))
+                .expect_err("members must fail")
+                .to_string();
+        assert!(member_error.contains("accepts one isolated catalog"));
+        let include_error =
+            load_isolated_catalog(&include_source, &include_source.join("effigy.toml"))
+                .expect_err("escaping include must fail")
+                .to_string();
+        assert!(include_error.contains("escapes canonical skill source root"));
+        let _ = fs::remove_dir_all(fixture);
     }
 
     fn temp_root(prefix: &str) -> PathBuf {

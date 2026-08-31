@@ -144,6 +144,15 @@ pub fn apply_global_cli_options(
                     .get_or_insert_with(|| repo_override.clone());
             }
             Command::Rhai(_) => return Err(unknown_argument("--repo")),
+            Command::Skill(args) => match &mut args.subcommand {
+                crate::SkillSubcommand::Run {
+                    repo_override: slot,
+                    ..
+                } => {
+                    slot.get_or_insert_with(|| repo_override.clone());
+                }
+                crate::SkillSubcommand::Tasks { .. } => return Err(unknown_argument("--repo")),
+            },
             Command::Docs(args) => {
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
@@ -257,6 +266,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Demo(args) => args.output_json = true,
         Command::Graph(args) => args.output_json = true,
         Command::Rhai(args) => args.output_json = true,
+        Command::Skill(args) => args.output_json = true,
         Command::Docs(args) => args.output_json = true,
         Command::Contracts(args) => args.output_json = true,
         Command::Artifact(args) => args.output_json = true,
@@ -298,6 +308,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Demo(args) => args.output_json,
         Command::Graph(args) => args.output_json,
         Command::Rhai(args) => args.output_json,
+        Command::Skill(args) => args.output_json,
         Command::Docs(args) => args.output_json,
         Command::Contracts(args) => args.output_json,
         Command::Artifact(args) => args.output_json,

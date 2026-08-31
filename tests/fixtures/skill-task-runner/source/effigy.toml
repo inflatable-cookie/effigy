@@ -1,0 +1,51 @@
+[catalog]
+alias = "skill-fixture"
+
+[tasks.identity]
+run = "printf 'repo=%s\\nskill=%s\\ncwd=%s\\n' {repo} {skill} \"$PWD\""
+run_in = "host"
+
+[tasks.collision]
+run = "printf 'source-selector\\n'"
+run_in = "host"
+
+[tasks.args]
+run = "printf 'arg=%s\\n' {args}"
+run_in = "host"
+
+[tasks.child]
+run = "printf 'nested-repo=%s\\nnested-skill=%s\\nnested-cwd=%s\\n' {repo} {skill} \"$PWD\""
+run_in = "host"
+
+[tasks.nested]
+run = [{ task = "child" }]
+run_in = "host"
+
+[tasks.rhai]
+run = [{ rhai = "scripts/context.rhai" }]
+run_in = "host"
+
+[tasks.env-probe]
+run = [
+  { env_file = ".env.skill" },
+  { env = "SKILL_ENV_VALUE" },
+  { run = "printf 'env=%s\\n' \"$SKILL_ENV_VALUE\"" },
+]
+run_in = "host"
+
+[tasks.cache-probe]
+run = "mkdir -p out && cp input.txt out/result.txt"
+run_in = "host"
+
+[tasks.cache-probe.cache]
+enabled = true
+inputs = ["input.txt"]
+outputs = ["out/result.txt"]
+
+[tasks.container-bound]
+run = "touch should-not-exist"
+run_in = "container"
+
+[tasks.nested-container]
+run = [{ task = "container-bound" }]
+run_in = "host"

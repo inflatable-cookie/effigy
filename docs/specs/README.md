@@ -28,13 +28,12 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`110`](./110-external-skill-task-runner-strict-lane.md) — explicit installed
-  skill task source with consumer runtime target; current ready card `1092`
+- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
+  documentation graph profiles; current ready card `1089`
 
 Queued strict lanes:
 
-- [`108`](./108-documentation-graph-profiles-strict-lane.md) — repository-owned
-  documentation graph profiles; paused at card `1089` until card `1092` closes
+- none
 
 Archived strict lanes:
 
@@ -62,6 +61,8 @@ Archived strict lanes:
 - [`109`](./archive/109-documentation-instruction-and-help-parity-refresh.md)
   archived after the documentation, instruction, generated-reference, and
   shipped-help parity refresh
+- [`110`](./archive/110-external-skill-task-runner-strict-lane.md) archived
+  after explicit installed-skill task execution and Northstar smoke proof
 
 Other planning specs:
 
@@ -71,8 +72,6 @@ Other planning specs:
 ## Next Task
 
 Execute ready card
-[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md),
-then resume
 [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 Keep draft `098` paused; the second governance review remains due by
 2026-09-17. Do not infer release work or generation rollover.

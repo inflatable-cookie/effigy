@@ -43,7 +43,8 @@ consumer target.
 Source-relative:
 
 - manifest includes and bundle materialization
-- typed Rhai/script step paths
+- typed Rhai/script step paths, after source/bundle token rendering and
+  canonical source-containment validation
 - the `{skill}` task placeholder
 
 Target-relative:
@@ -58,7 +59,8 @@ resolved target root.
 
 ## Isolation Boundary
 
-The first surface loads one composed skill catalog and runs host/Rhai tasks.
+The first surface loads one composed skill catalog and runs standard host/Rhai
+tasks. Managed, TUI, and concurrent shapes remain outside v1.
 It does not:
 
 - merge skill tasks into the consumer's normal selector surface
@@ -70,6 +72,20 @@ It does not:
 
 Nested task references stay inside the selected skill catalog while preserving
 the consumer target.
+
+## Implementation Map
+
+- `crates/effigy-cli` owns grammar, scoped help, and JSON-mode recognition.
+- `crates/effigy-routing::load_isolated_catalog` loads exactly the composed
+  source and rejects members, runtime-backed mounts, and escaping paths.
+- `effigy-context::TaskSourceContext` carries canonical source identity beside
+  the unchanged target runtime context.
+- `effigy-execution` propagates that source through dispatch and preflight.
+- `src/runner/skill_command.rs` resolves source/target evidence and recursively
+  validates the selected skill task graph before execution.
+- `src/runner/execute` and `effigy-rhai` preserve the split through commands,
+  env/cache paths, nested task references, and script steps; recursive preflight
+  rejects managed shapes and canonically escaping scripts before execution.
 
 ## Public Surface
 

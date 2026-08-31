@@ -107,25 +107,24 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.034`](./g08/034-documentation-coverage-parity.md) audits
   current public behavior against active user, agent, built-in, and generated
   docs under archived strict spec `107`; cards `1086` and `1087` are complete.
-  Paused [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
+  Active [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
   implements repository-owned documentation graph profiles and bounded context
-  retrieval under strict spec `108`; card `1088` is complete and card `1089`
-  resumes after the skill-runner lane.
+  retrieval under strict spec `108`; card `1088` is complete and card `1089` is
+  ready.
   Completed [`g08.036`](./g08/036-documentation-instruction-and-help-parity-refresh.md)
   refreshed scan, agent-instruction, feature-documentation, generated-reference,
   and shipped-help parity under archived strict spec `109`; card `1091` is
   complete.
-  Active [`g08.037`](./g08/037-external-skill-task-runner.md) adds explicit
+  Completed [`g08.037`](./g08/037-external-skill-task-runner.md) adds explicit
   installed-skill task execution with the consuming repository retained as the
-  runtime target under strict spec `110`; card `1092` is ready.
+  runtime target; card `1092` is complete and strict spec `110` is archived.
 
 ## Active Strict Lane
 
-Strict spec
-[`110`](../specs/110-external-skill-task-runner-strict-lane.md)
-governs `g08.037`. Current ready card:
-[`1092`](./g08/batch-cards/1092-add-external-skill-task-runner.md).
-Strict spec `108` is paused at card `1089` and resumes after this lane.
+Strict spec [`108`](../specs/108-documentation-graph-profiles-strict-lane.md)
+governs active `g08.035`. Current ready card:
+[`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+Strict spec `110` and `g08.037` are complete.
 
 ## Research Program
 
@@ -181,7 +180,6 @@ Before rollover:
 ## Next Task
 
 Execute ready card
-[`1092`](./g08/batch-cards/1092-add-external-skill-task-runner.md), then resume
 [`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

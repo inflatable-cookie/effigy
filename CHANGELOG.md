@@ -7,6 +7,13 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy skill tasks --path <SKILL>` and `effigy skill run --path <SKILL>
+  <SELECTOR>` execute one explicit installed-skill catalog against an
+  independently resolved consumer repository. Versioned JSON exposes source,
+  target, invocation, and execution evidence; v1 rejects members, escaping
+  composition or Rhai assets, manifest runtime/secrets inheritance,
+  container-bound task graphs, and managed/TUI/concurrent shapes before side
+  effects.
 - Optional `[docs_policy.graph]` lets a repository name documentation roots,
   field labels, currentness sets, kinds, authority weights, and typed link
   relations. Invalid roots, currentness references, overlaps, and unknown keys

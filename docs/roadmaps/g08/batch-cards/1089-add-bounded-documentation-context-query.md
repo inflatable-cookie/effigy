@@ -7,13 +7,12 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 Spec: [`../../../specs/108-documentation-graph-profiles-strict-lane.md`](../../../specs/108-documentation-graph-profiles-strict-lane.md)
 Predecessor: [`1088`](./1088-build-documentation-profile-and-structural-index.md)
 
-Status: Paused
+Status: Ready
 Owner: codegraph query and built-in docs command surfaces
 Created: 2026-08-29
 Ready after: card `1088` closeout proves stable structural records and card
 `1091` closes the overlapping documentation/help maintenance lane
-Paused: operator-directed sequencing on 2026-08-31; resume after external
-skill-runner card `1092` closes
+Resumed: external skill-runner card `1092` closed with evidence on 2026-08-31
 
 ## Purpose
 
@@ -72,6 +71,5 @@ results.
 
 ## Next Task
 
-Resume this card after
-[`1092`](./1092-add-external-skill-task-runner.md) closes. Its evidence-backed closeout makes
+Execute this card. Its evidence-backed closeout makes
 [`1090`](./1090-prove-generic-and-northstar-profiles.md) ready.

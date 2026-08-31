@@ -1,8 +1,8 @@
 # g08.037 External Skill Task Runner
 
-Status: Active
+Status: Complete
 Created: 2026-08-31
-Spec: [`110`](../../specs/110-external-skill-task-runner-strict-lane.md)
+Spec: [`110`](../../specs/archive/110-external-skill-task-runner-strict-lane.md)
 Architecture: [`025`](../../architecture/025-external-skill-task-execution.md)
 Contract: [`042`](../../contracts/042-external-skill-task-runner-contract.md)
 
@@ -42,7 +42,7 @@ hide the source/target distinction from agents and operators.
 
 ## Cards
 
-- [`1092`](./batch-cards/1092-add-external-skill-task-runner.md) — complete
+- [x] [`1092`](./batch-cards/1092-add-external-skill-task-runner.md) — complete
   command, runtime, proof, docs, and closeout
 
 ## Acceptance
@@ -58,5 +58,9 @@ hide the source/target distinction from agents and operators.
 
 ## Next Task
 
-Execute ready card
-[`1092`](./batch-cards/1092-add-external-skill-task-runner.md).
+Execute ready documentation-context card
+[`1089`](./batch-cards/1089-add-bounded-documentation-context-query.md).
+
+## Evidence
+
+[`2026-08-31 external skill task runner closeout`](../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)

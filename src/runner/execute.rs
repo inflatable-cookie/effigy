@@ -34,3 +34,5 @@ mod sequence_run;
 mod task_status;
 #[path = "execute/workspace_seeded.rs"]
 mod workspace_seeded;
+
+pub(in crate::runner) use sequence_run::render_script_path;

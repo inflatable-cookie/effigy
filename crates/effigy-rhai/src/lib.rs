@@ -255,7 +255,15 @@ fn execute_rhai_script_inner(
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = Engine::new();
-    let catalog_root = resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd);
+    let task_source_root = ACTIVE_RUNTIME_CONTEXT.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .and_then(EffigyRuntimeContext::task_source)
+            .map(|source| source.source_root.clone())
+    });
+    let catalog_root = task_source_root
+        .unwrap_or_else(|| resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd));
     let invocation_cwd = resolve_invocation_cwd(&context);
     engine.set_module_resolver(FileModuleResolver::new_with_path(&catalog_root));
     register_host_api(&mut engine, context.clone(), callbacks);
@@ -272,6 +280,7 @@ fn execute_rhai_script_inner(
     scope.push_constant("cwd", context.cwd.display().to_string());
     scope.push_constant("repo_root", context.repo_root.display().to_string());
     scope.push_constant("catalog_root", catalog_root.display().to_string());
+    scope.push_constant("skill_root", catalog_root.display().to_string());
     scope.push_constant("invocation_cwd", invocation_cwd.display().to_string());
     scope.push("task_name", context.task_name.clone());
 

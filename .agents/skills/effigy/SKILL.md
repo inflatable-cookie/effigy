@@ -61,6 +61,7 @@ Pick the first Effigy command that matches the job.
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
 | Inspect local dependency links | Cargo/Bun desired state, drift, or lock/peer hygiene is the task | `effigy --json deps status` |
+| Run installed skill tasks | A skill owns task code but the current repo owns runtime effects | `effigy skill tasks --path <SKILL>` |
 | Execute work | A task or built-in already covers the operation | `effigy <selector>` |
 | Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
@@ -117,6 +118,7 @@ for generic repo orientation.
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
 | Inventory project papercuts | `effigy --json papercuts` or `effigy --json papercuts --scope <PROJECTS_DIR>` |
+| Run an installed skill task | `effigy skill run --path <SKILL> <SELECTOR>` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
@@ -188,6 +190,18 @@ volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 **Bundles** — `[bundle].base` with `path` / `git` / `oci`; `effigy bundle inspect`,
 `effigy bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.
 
+**Installed skill tasks** — use
+`effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML>` to inventory one explicit
+skill catalog, then
+`effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>]`.
+The skill path supplies task code; invocation CWD or `--repo` supplies the
+consumer target. Do not use `--repo <SKILL>` as a substitute. V1 is host-only,
+does not merge consumer selectors/defaults/config, and rejects members or
+escaping composition/assets, container inheritance, and managed/TUI/concurrent
+shapes before side effects. Add `--json` when the agent needs to verify
+canonical source, target, invocation, and execution paths. Contract:
+`docs/contracts/042-external-skill-task-runner-contract.md`.
+
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
 `[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
 `[docs_policy.graph]` repository-defined Markdown graph profile.
@@ -216,6 +230,7 @@ Sequence: `references/release-protocol.md`.
 | Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
 | Documentation graph profile | `docs/architecture/024-repository-defined-documentation-graph.md`, `docs/contracts/041-documentation-graph-profile-contract.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
+| Installed skill task execution | `docs/contracts/042-external-skill-task-runner-contract.md`, `docs/architecture/025-external-skill-task-execution.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |
 | Rhai host surface audit | `docs/guides/068-rhai-host-surface-audit.md` |
 | Task routing | `docs/guides/016-task-routing-precedence.md` |

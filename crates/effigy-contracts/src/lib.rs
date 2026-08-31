@@ -788,6 +788,15 @@ fn is_heavy_json_contract_schema(schema: &str) -> bool {
 
 fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
     let mut expanded = command.replace("<name>", "test");
+    if expanded.contains("<fixture_skill_source>") || expanded.contains("<fixture_skill_consumer>")
+    {
+        let (source, consumer) = create_skill_contract_fixtures()?;
+        expanded = expanded.replace("<fixture_skill_source>", source.to_string_lossy().as_ref());
+        expanded = expanded.replace(
+            "<fixture_skill_consumer>",
+            consumer.to_string_lossy().as_ref(),
+        );
+    }
     if expanded.contains("<fixture_deps_consumer>") || expanded.contains("<fixture_deps_library>") {
         let (consumer, library) = create_deps_contract_fixtures()?;
         expanded = expanded.replace(
@@ -809,6 +818,32 @@ fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
         expanded = expanded.replace("<fixture_task_failure>", fixture.to_string_lossy().as_ref());
     }
     Ok(expanded)
+}
+
+fn create_skill_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
+    let fixture_root = std::env::temp_dir().join(format!(
+        "effigy-skill-contract-fixture-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    let source = fixture_root.join("source");
+    let consumer = fixture_root.join("consumer");
+    std::fs::create_dir_all(&source).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&consumer).map_err(|error| error.to_string())?;
+    std::fs::write(
+        source.join("effigy.toml"),
+        "[catalog]\nalias = \"skill-contract\"\n\n[tasks.probe]\nrun = \"printf skill-contract-ok\"\nrun_in = \"host\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(consumer.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        "[catalog]\nalias = \"consumer-contract\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((source, consumer))
 }
 
 fn create_deps_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {

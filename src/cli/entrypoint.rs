@@ -146,6 +146,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Demo(_)
         | Command::Graph(_)
         | Command::Rhai(_)
+        | Command::Skill(_)
         | Command::Docs(_)
         | Command::Contracts(_)
         | Command::Artifact(_)

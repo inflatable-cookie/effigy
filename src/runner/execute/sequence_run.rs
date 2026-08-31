@@ -72,7 +72,7 @@ pub(super) fn maybe_run_in_process_sequence(
 
     update_task_cache_entry(
         context.resolved_root,
-        &selection.catalog.catalog_root,
+        context.repo_for_task(),
         &selection.catalog.manifest_path,
         &preflight.selector.task_name,
         selection.task,
@@ -145,6 +145,7 @@ fn run_in_process_sequence_steps_inner(
     task_name: &str,
     passthrough: &[String],
 ) -> Result<bool, RunnerError> {
+    let execution_root = preflight.task_execution_root(&selection.catalog.catalog_root);
     let mut task_env = env_schema_resolved
         .as_ref()
         .map(|resolved| resolved.plain_env())
@@ -169,14 +170,18 @@ fn run_in_process_sequence_steps_inner(
                 task_name,
                 step,
                 &selection.catalog.manifest.env,
-                &selection.catalog.catalog_root,
+                execution_root,
                 &preflight.catalogs,
             )
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let step_env = merged_step_env(
             &task_env,
             env_state.chained_env(),
-            &selection.catalog.catalog_root,
+            execution_root,
+            preflight
+                .task_source
+                .as_ref()
+                .map(|source| source.source_root.as_path()),
         );
         planned_steps.push(StepPlan {
             action: resolve_step_action(step, preflight, selection, passthrough)?,
@@ -192,6 +197,7 @@ fn run_in_process_sequence_steps_inner(
             &planned_steps,
             &levels,
             selection,
+            execution_root,
             secret_env,
             task_name,
             passthrough,
@@ -201,6 +207,7 @@ fn run_in_process_sequence_steps_inner(
             planned_steps.iter().enumerate().map(|(index, _)| index),
             &planned_steps,
             selection,
+            execution_root,
             secret_env,
             task_name,
             passthrough,
@@ -212,13 +219,14 @@ fn merged_step_env(
     task_env: &BTreeMap<String, String>,
     chained_env: &BTreeMap<String, String>,
     repo_root: &Path,
+    skill_root: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut merged = BTreeMap::new();
     for (key, value) in task_env {
-        merged.insert(key.clone(), render_env_value(value, repo_root));
+        merged.insert(key.clone(), render_env_value(value, repo_root, skill_root));
     }
     for (key, value) in chained_env {
-        merged.insert(key.clone(), render_env_value(value, repo_root));
+        merged.insert(key.clone(), render_env_value(value, repo_root, skill_root));
     }
     merged
 }
@@ -253,9 +261,12 @@ pub(super) fn step_is_fully_in_process_capable(step: &ManifestManagedRunStep) ->
     }
 }
 
-fn render_env_value(value: &str, repo_root: &Path) -> String {
+fn render_env_value(value: &str, repo_root: &Path, skill_root: Option<&Path>) -> String {
     let repo = repo_root.display().to_string();
-    value.replace("{project}", &repo).replace("{repo}", &repo)
+    let rendered = value.replace("{project}", &repo).replace("{repo}", &repo);
+    skill_root.map_or(rendered.clone(), |root| {
+        rendered.replace("{skill}", &root.display().to_string())
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -293,6 +304,7 @@ fn run_scheduled_steps(
     planned_steps: &[StepPlan],
     levels: &[Vec<usize>],
     selection: &TaskSelection<'_>,
+    execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
@@ -306,13 +318,14 @@ fn run_scheduled_steps(
                 .all(|index| planned_steps[*index].action.is_shell())
             {
                 let batch_failed =
-                    run_parallel_shell_batch(batch, planned_steps, selection, secret_env)?;
+                    run_parallel_shell_batch(batch, planned_steps, execution_root, secret_env)?;
                 overall_failed |= batch_failed;
             } else {
                 let batch_failed = run_step_indexes_in_order(
                     batch.iter().copied(),
                     planned_steps,
                     selection,
+                    execution_root,
                     secret_env,
                     task_name,
                     passthrough,
@@ -335,6 +348,7 @@ fn run_step_indexes_in_order<I>(
     indexes: I,
     planned_steps: &[StepPlan],
     selection: &TaskSelection<'_>,
+    execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
@@ -345,7 +359,14 @@ where
     let mut overall_failed = false;
     for index in indexes {
         let step = &planned_steps[index];
-        match run_step_with_retry(step, selection, secret_env, task_name, passthrough) {
+        match run_step_with_retry(
+            step,
+            selection,
+            execution_root,
+            secret_env,
+            task_name,
+            passthrough,
+        ) {
             Ok(()) => {}
             Err(error) if step.policy.fail_fast => return Err(error),
             Err(_) => overall_failed = true,
@@ -357,7 +378,7 @@ where
 fn run_parallel_shell_batch(
     batch: &[usize],
     planned_steps: &[StepPlan],
-    selection: &TaskSelection<'_>,
+    execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<bool, RunnerError> {
     let mut handles = Vec::with_capacity(batch.len());
@@ -367,7 +388,7 @@ fn run_parallel_shell_batch(
             unreachable!("parallel shell batch only supports command steps");
         };
         let command = command.clone();
-        let cwd = selection.catalog.catalog_root.clone();
+        let cwd = execution_root.to_path_buf();
         let env = step.env.clone();
         let policy = step.policy;
         let secrets = secret_env.map(|entries| {
@@ -408,13 +429,21 @@ fn run_parallel_shell_batch(
 fn run_step_with_retry(
     step: &StepPlan,
     selection: &TaskSelection<'_>,
+    execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
 ) -> Result<(), RunnerError> {
     let mut attempt = 0;
     loop {
-        match run_single_step(step, selection, secret_env, task_name, passthrough) {
+        match run_single_step(
+            step,
+            selection,
+            execution_root,
+            secret_env,
+            task_name,
+            passthrough,
+        ) {
             Ok(()) => return Ok(()),
             Err(error) if attempt >= step.policy.retry => return Err(error),
             Err(_) => {
@@ -429,7 +458,8 @@ fn run_step_with_retry(
 
 fn run_single_step(
     step: &StepPlan,
-    selection: &TaskSelection<'_>,
+    _selection: &TaskSelection<'_>,
+    execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
@@ -437,7 +467,7 @@ fn run_single_step(
     match &step.action {
         StepAction::Command(command) => run_shell_step_with_retry(
             command,
-            &selection.catalog.catalog_root,
+            execution_root,
             &step.env,
             secret_env,
             StepPolicy {
@@ -457,7 +487,7 @@ fn run_single_step(
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
             let output = run_embedded_command(
-                &selection.catalog.catalog_root,
+                execution_root,
                 *command.clone(),
                 cwd,
                 EmbeddedRepoOverrideMode::Force,
@@ -467,12 +497,7 @@ fn run_single_step(
         StepAction::Rhai { path } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            execute_repo_rhai_script(
-                &selection.catalog.catalog_root,
-                task_name,
-                path,
-                passthrough,
-            )
+            execute_repo_rhai_script(execution_root, task_name, path, passthrough)
         }
         StepAction::Noop => Ok(()),
     }
@@ -525,12 +550,13 @@ fn resolve_step_action(
             {
                 return resolve_task_step(task_ref, preflight, selection);
             }
-            Ok(StepAction::Command(render_step_command_template(
+            let rendered = render_step_command_template(
                 command,
-                &selection.catalog.catalog_root,
+                preflight.task_execution_root(&selection.catalog.catalog_root),
                 selection.catalog.bundle_root.as_deref(),
                 &effigy_tasks::render_template_args(passthrough),
-            )))
+            );
+            Ok(StepAction::Command(render_skill_token(rendered, preflight)))
         }
         ManifestManagedRunStep::Step(table) => {
             let table = table.as_ref();
@@ -539,18 +565,22 @@ fn resolve_step_action(
                 table.task.as_deref(),
                 table.rhai.as_deref(),
             ) {
-                (Some(run), None, None) => Ok(StepAction::Command(render_step_command_template(
-                    run,
-                    &selection.catalog.catalog_root,
-                    selection.catalog.bundle_root.as_deref(),
-                    &effigy_tasks::render_template_args(passthrough),
-                ))),
+                (Some(run), None, None) => {
+                    let rendered = render_step_command_template(
+                        run,
+                        preflight.task_execution_root(&selection.catalog.catalog_root),
+                        selection.catalog.bundle_root.as_deref(),
+                        &effigy_tasks::render_template_args(passthrough),
+                    );
+                    Ok(StepAction::Command(render_skill_token(rendered, preflight)))
+                }
                 (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
                 (None, None, Some(path)) => Ok(StepAction::Rhai {
                     path: PathBuf::from(render_script_path(
                         path,
                         &selection.catalog.catalog_root,
                         selection.catalog.bundle_root.as_deref(),
+                        preflight.task_source.is_some(),
                     )),
                 }),
                 (None, None, None) if table.env.is_some() || table.env_file.is_some() => {
@@ -577,7 +607,7 @@ fn resolve_task_step(
         .iter()
         .any(|(name, _)| *name == selector.task_name)
     {
-        let cwd = if let Some(prefix) = selector.prefix.as_deref() {
+        let catalog_root = if let Some(prefix) = selector.prefix.as_deref() {
             resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
                 .ok_or_else(|| {
                     RunnerError::task_invocation(format!(
@@ -590,6 +620,7 @@ fn resolve_task_step(
         } else {
             selection.catalog.catalog_root.clone()
         };
+        let cwd = preflight.task_execution_root(&catalog_root).to_path_buf();
         let command = parse_builtin_step_command(&selector.task_name, &args, &cwd)?;
         return Ok(StepAction::Builtin {
             command: Box::new(command),
@@ -615,7 +646,12 @@ fn resolve_task_step(
     Ok(StepAction::Task { invocation, cwd })
 }
 
-fn render_script_path(path: &str, repo_root: &Path, bundle_root: Option<&Path>) -> String {
+pub(in crate::runner) fn render_script_path(
+    path: &str,
+    repo_root: &Path,
+    bundle_root: Option<&Path>,
+    absolute_source_path: bool,
+) -> String {
     let repo = repo_root.display().to_string();
     let mut rendered = path.replace("{project}", &repo).replace("{repo}", &repo);
     if let Some(bundle_root) = bundle_root {
@@ -624,7 +660,22 @@ fn render_script_path(path: &str, repo_root: &Path, bundle_root: Option<&Path>) 
             .replace("{{ bundle.root }}", &bundle)
             .replace("{{bundle}}", &bundle);
     }
-    rendered
+    let rendered = PathBuf::from(rendered);
+    if rendered.is_absolute() || !absolute_source_path {
+        rendered.display().to_string()
+    } else {
+        repo_root.join(rendered).display().to_string()
+    }
+}
+
+fn render_skill_token(rendered: String, preflight: &ExecutionPreflight) -> String {
+    let Some(source) = preflight.task_source.as_ref() else {
+        return rendered;
+    };
+    rendered.replace(
+        "{skill}",
+        &effigy_core::shell::shell_quote(&source.source_root.display().to_string()),
+    )
 }
 
 fn parse_builtin_step_command(
@@ -990,6 +1041,7 @@ run = [{ task = "db:migrate" }]
             },
             catalogs: vec![root, child],
             secret_targets: Vec::new(),
+            task_source: None,
         };
         let selection = TaskSelection {
             catalog: &preflight.catalogs[1],

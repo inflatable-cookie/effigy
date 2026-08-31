@@ -74,7 +74,7 @@ Current authority surfaces:
 
 | Crate | Responsibility |
 | --- | --- |
-| `effigy-context` | boot-time runtime context, cwd/repo target authority, host facts, and container handoff capture |
+| `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
 | `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
@@ -135,6 +135,7 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption, and `effigy-execution` request/dispatch-plan consumption |
+| [`src/runner/skill_command.rs`](../../src/runner/skill_command.rs) | explicit external task-source resolution, isolated inventory/run preflight, host-only rejection, and source/target evidence rendering |
 | [`src/runner/exec_command/mod.rs`](../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and container exec dispatch over runtime activation and transport adapters |
 | [`src/runner/exec_command/surface.rs`](../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
 | [`src/runner/deferral/*`](../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |

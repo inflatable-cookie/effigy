@@ -121,7 +121,7 @@ fn run_standard_task_inner(
 
     let cache_check = check_task_cache(
         &preflight.resolved.resolved_root,
-        &selection.catalog.catalog_root,
+        context.repo_for_task(),
         &selection.catalog.manifest_path,
         &preflight.selector.task_name,
         selection.task,

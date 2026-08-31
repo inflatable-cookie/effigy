@@ -1,11 +1,13 @@
 # 110 External Skill Task Runner Strict Lane
 
-Status: Active
+Status: Complete
 Created: 2026-08-31
-Roadmap: [`g08.037`](../roadmaps/g08/037-external-skill-task-runner.md)
-Architecture: [`025`](../architecture/025-external-skill-task-execution.md)
-Contract: [`042`](../contracts/042-external-skill-task-runner-contract.md)
-Current ready card: [`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md)
+Closed: 2026-08-31
+Roadmap: [`g08.037`](../../roadmaps/g08/037-external-skill-task-runner.md)
+Architecture: [`025`](../../architecture/025-external-skill-task-execution.md)
+Contract: [`042`](../../contracts/042-external-skill-task-runner-contract.md)
+Completed card: [`1092`](../../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md)
+Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)
 
 ## Outcome
 
@@ -32,7 +34,7 @@ copying task definitions.
 - nested task/Rhai target preservation
 - text/JSON diagnostics and schemas
 - focused fixtures, docs, changelog, and Northstar skill smoke
-- lane closeout and restoration of paused documentation-context card `1089`
+- lane closeout and restoration of documentation-context card `1089`
 
 ## Non-Goals
 
@@ -43,20 +45,13 @@ copying task definitions.
 - skill catalog members or multi-skill orchestration
 - editing the Northstar repository in this lane
 
-## Runway
-
-1. [`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md)
-   implements, proves, documents, and closes the surface.
-
-Card `1092` is ready.
-
 ## Completion State
 
-Close only when the command, contract proofs, JSON/docs coverage, read-only
-Northstar skill smoke, full QA, changelog, evidence log, and front-door
-restoration are complete. Resume card `1089` as the single next task.
+Card `1092` delivered the command, contract proofs, JSON/docs coverage,
+read-only Northstar skill smoke, full QA, changelog, and evidence log. Strict
+spec `108` resumed with card `1089` as the single ready task.
 
 ## Next Task
 
 Execute ready card
-[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md).
+[`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).

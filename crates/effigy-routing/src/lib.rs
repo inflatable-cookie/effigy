@@ -23,7 +23,7 @@ pub use error::RoutingError;
 pub use manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};
 pub use membership::{
     default_alias, effective_manifest_paths, load_effective_catalogs,
-    load_effective_catalogs_allow_missing,
+    load_effective_catalogs_allow_missing, load_isolated_catalog,
 };
 pub use selection::{resolve_catalog_by_prefix, select_catalog_and_task};
 

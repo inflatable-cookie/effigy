@@ -3,7 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-05-07
+Last Updated: 2026-08-31
 
 ## Purpose
 
@@ -57,6 +57,8 @@ Every task execution request must carry:
 - environment plan
 
 The runtime context is mandatory. A request without captured context is invalid.
+Its optional explicit task-source identity must survive dispatch and preflight;
+it never replaces the target root in the same context.
 
 The invocation is mandatory. A request without task selector or command argv is
 invalid.
@@ -94,6 +96,9 @@ Rules:
 - container and service intent must be preserved on container routes.
 - cwd, env overrides, and `stdin_file` belong to `ExecutionEnvironmentPlan` and
   must travel with the plan.
+- when runtime context carries an explicit task source, task discovery uses
+  that isolated source while the environment CWD and repo target remain the
+  independently resolved consumer
 
 No caller may decide host-versus-container execution by directly probing cwd,
 env vars, or process state after a request has been built.
@@ -202,6 +207,7 @@ Update this contract when Effigy changes:
 - route selection rules
 - Rhai execution helper behavior
 - embedded task dispatch behavior
+- task-source propagation through preflight and nested dispatch
 - public exposure of resolved execution plans
 - runtime operation pipeline boundaries that change what execution requests
   must carry
@@ -215,6 +221,8 @@ Minimum proof:
 - Rhai container-targeted mysql seed execution with `stdin_file`
 - inside-container handoff routes container intent locally
 - repo override propagation is identical across embedded callers
+- explicit skill source identity survives nested task and Rhai dispatch while
+  ordinary task routing remains unchanged
 - env overrides merge through one path
 - drift checks reject embedded task dispatch that bypasses
   `TaskExecutionRequestBuilder`
