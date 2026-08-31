@@ -1,0 +1,60 @@
+# Non-Northstar documentation-graph fixture.
+#
+# Every token below is deliberately arbitrary: no root, kind, field, status, or
+# relation name used here appears anywhere in Effigy's runtime logic. The
+# fixture exists to prove the documentation graph is repository-neutral - a
+# consumer can rename the entire vocabulary and still index, rank, and retrieve
+# without a single code change.
+
+[catalog]
+alias = "generic-handbook"
+
+[manifest]
+minimum_effigy_version = "0.7.0"
+
+[tasks]
+ping = "printf ok"
+
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.fields.state]
+labels = ["State"]
+cardinality = "one"
+
+[docs_policy.graph.fields.steward]
+labels = ["Steward"]
+cardinality = "one"
+
+[docs_policy.graph.currentness]
+field = "state"
+current = ["live", "proposed"]
+historical = ["retired", "superseded"]
+
+[docs_policy.graph.kinds.charter]
+include = ["handbook/charters/*.md"]
+authority = 100
+default-currentness = "current"
+
+[docs_policy.graph.kinds.playbook]
+include = ["handbook/playbooks/*.md"]
+authority = 80
+
+[docs_policy.graph.kinds.bulletin]
+include = ["handbook/bulletins/*.md"]
+authority = 20
+default-currentness = "historical"
+
+[docs_policy.graph.kinds.almanac]
+include = ["handbook/almanac/*/*.md"]
+authority = 5
+default-currentness = "historical"
+
+[docs_policy.graph.relations.see-also]
+labels = ["See also"]
+
+[docs_policy.graph.relations.charter]
+labels = ["Charter"]
+
+[docs_policy.graph.relations.follow-up]
+headings = ["Follow up"]

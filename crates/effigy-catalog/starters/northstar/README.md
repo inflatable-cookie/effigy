@@ -19,6 +19,7 @@ Choose the entrypoint that matches the job:
 
 ```sh
 effigy graph            # code understanding
+effigy docs context     # documentation evidence (contracts, roadmaps, decisions)
 effigy tasks            # selector inventory / QA surfaces
 effigy doctor           # routing or repo health is unclear
 effigy test --plan      # test execution shape matters
@@ -31,6 +32,17 @@ effigy qa               # full validation bundle (repo-defined aggregator)
 - [`docs/vision/README.md`](docs/vision/README.md) — current product vision
 - [`docs/roadmaps/README.md`](docs/roadmaps/README.md) — active milestone queue
 - [`docs/logs/README.md`](docs/logs/README.md) — evidence and decisions
+
+## Documentation graph
+
+`effigy docs context "<question>"` returns bounded, exact sections from this
+repo's docs with provenance, ranked by relevance and then by the currentness and
+authority this repo declares in `[docs_policy.graph]` in `effigy.toml`.
+
+That block is **copied configuration owned by this repo**. Effigy reads it and
+nothing else at query time — never this starter, never an installed agent skill.
+Rename its kinds, fields, statuses, and relations to fit the project. To adopt a
+newer template, run `effigy init northstar --dry-run` and merge deliberately.
 
 ## Agent contract
 

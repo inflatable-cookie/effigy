@@ -14,15 +14,18 @@ Effigy is **manifest-driven** (`effigy.toml`, often split across includes): most
 Route by job, not by startup ritual:
 
 1. Use `effigy graph` when the job is code understanding.
-2. Use `effigy tasks` when you need selector inventory or QA surfaces.
-3. Use `effigy doctor` (or `effigy health`) when routing is unclear or repo
+2. Use `effigy docs context "<question>"` when the job is documentation
+   authority: which contract, roadmap, or decision governs the work. It returns
+   exact sections with provenance, not a summary.
+3. Use `effigy tasks` when you need selector inventory or QA surfaces.
+4. Use `effigy doctor` (or `effigy health`) when routing is unclear or repo
    health is the task.
-4. Inspect tests with `effigy test --plan` when test execution shape matters.
-5. Prefer `effigy <task>` over raw tooling whenever a task covers the path.
-6. Use `effigy --json <command>` when a machine consumer needs the output.
-7. Only use `--repo <PATH>` when intentionally targeting a different repo.
+5. Inspect tests with `effigy test --plan` when test execution shape matters.
+6. Prefer `effigy <task>` over raw tooling whenever a task covers the path.
+7. Use `effigy --json <command>` when a machine consumer needs the output.
+8. Only use `--repo <PATH>` when intentionally targeting a different repo.
    Never teach `--repo .` as a default.
-8. Fall back to raw tools only when Effigy does not cover the path.
+9. Fall back to raw tools only when Effigy does not cover the path.
 
 ## Default test policy
 
@@ -38,6 +41,13 @@ explicit polyglot and lifecycle-aware routing. Never define `tasks.test`.
 - `docs/logs/README.md` is the evidence and decision log.
 
 Do not collapse these three into a single generic planning note.
+
+`[docs_policy.graph]` in `effigy.toml` declares this repo's documentation
+semantics: roots, kinds, authority weights, metadata fields, currentness values,
+and typed relations. It is copied configuration owned by this repo. Effigy reads
+that committed block and nothing else when answering `effigy docs context`; no
+starter and no installed skill is consulted at runtime. Updating a template is
+an explicit merge, never an automatic reinterpretation.
 
 ## Validation
 

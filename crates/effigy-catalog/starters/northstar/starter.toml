@@ -73,4 +73,13 @@ Next steps:
 The `[docs_policy]` block in `effigy.toml` already points at the
 emitted vision index and verb list. `effigy qa:northstar` layers on top
 of that — no extra wiring is needed to start validating drift.
+
+6. The `[docs_policy.graph]` block is now COPIED configuration owned by
+   this repo, not an inherited runtime dependency. `effigy docs context
+   "<question>"` reads only your committed `effigy.toml`; it never reads
+   this starter or an installed agent skill. Rename the kinds, fields,
+   statuses, and relations to your project's vocabulary, and drop the
+   kinds you do not have. To adopt a newer template later, run
+   `effigy init northstar --dry-run` and merge the parts you want — an
+   Effigy or skill upgrade will never rewrite your profile for you.
 """

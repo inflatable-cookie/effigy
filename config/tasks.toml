@@ -21,6 +21,7 @@
 # Container/runtime profiling
 "perf:container-shell-matrix" = { rhai = "scripts/profile-container-shell-matrix.rhai" }
 "perf:graph-agent-benchmark" = { rhai = "scripts/benchmark-graph-agent-usage.rhai" }
+"perf:docs-context-benchmark" = { rhai = "scripts/benchmark-docs-context.rhai" }
 
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"

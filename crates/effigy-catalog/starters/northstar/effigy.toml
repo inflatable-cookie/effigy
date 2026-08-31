@@ -80,9 +80,25 @@ index = "vision"
 heading = "## Next Task"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
-# Northstar's repository-owned graph ontology is emitted by this starter.
+# ---- Documentation graph profile ---------------------------------------------
+# Northstar's repository-owned documentation ontology for `effigy docs context`.
+#
+# This block is COPIED configuration, not an inherited runtime dependency.
+# `effigy init northstar` materializes these bytes into your `effigy.toml`; from
+# that moment your committed manifest is the only runtime authority. Effigy never
+# reads a starter, an installed agent skill, or any template directory while
+# answering a query, so upgrading Effigy or your skills cannot silently
+# reinterpret this repository. Picking up a newer template is an explicit edit:
+# re-run `effigy init northstar --dry-run` and merge the parts you want.
+#
+# Every token below is repository-owned. Rename kinds, fields, statuses, and
+# relations to match your project; the runtime has no built-in Northstar
+# vocabulary. Kind globs must not overlap - one document matches at most one
+# kind - and a single `*` never crosses a path separator, which is what keeps
+# each nested family disjoint from its parent directory.
+
 [docs_policy.graph]
-roots = ["README.md", "docs"]
+roots = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs"]
 
 [docs_policy.graph.fields.status]
 labels = ["Status"]
@@ -94,14 +110,30 @@ cardinality = "one"
 
 [docs_policy.graph.currentness]
 field = "status"
-current = ["active", "ready", "strict-ready", "draft"]
-historical = ["complete", "archived", "superseded"]
+current = ["active", "ready", "strict-ready", "draft", "planned", "accepted"]
+historical = ["complete", "archived", "closed", "superseded", "deprecated"]
+
+# ---- Kinds -------------------------------------------------------------------
+# Authority is repository policy, not relevance. It orders results that already
+# match; it can never pull an unrelated document into a report.
 
 [docs_policy.graph.kinds.contract]
 include = ["docs/contracts/*.md"]
 exclude = []
 authority = 100
-default-currentness = "unknown"
+default-currentness = "current"
+
+[docs_policy.graph.kinds.architecture]
+include = ["docs/architecture/*.md"]
+exclude = []
+authority = 90
+default-currentness = "current"
+
+[docs_policy.graph.kinds.spec]
+include = ["docs/specs/*.md"]
+exclude = []
+authority = 85
+default-currentness = "current"
 
 [docs_policy.graph.kinds.archived-spec]
 include = ["docs/specs/archive/*.md"]
@@ -109,8 +141,96 @@ exclude = []
 authority = 10
 default-currentness = "historical"
 
+[docs_policy.graph.kinds.vision]
+include = ["docs/vision/*.md"]
+exclude = []
+authority = 80
+default-currentness = "current"
+
+[docs_policy.graph.kinds.archived-vision]
+include = ["docs/vision/history/*.md"]
+exclude = []
+authority = 10
+default-currentness = "historical"
+
+[docs_policy.graph.kinds.roadmap]
+include = ["docs/roadmaps/*.md", "docs/roadmaps/*/*.md"]
+exclude = []
+authority = 70
+default-currentness = "unknown"
+
+[docs_policy.graph.kinds.ready-card]
+include = ["docs/roadmaps/*/batch-cards/*.md"]
+exclude = []
+authority = 60
+default-currentness = "unknown"
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/guides/*.md"]
+exclude = []
+authority = 50
+default-currentness = "current"
+
+[docs_policy.graph.kinds.archived-guide]
+include = ["docs/guides/archive/*.md"]
+exclude = []
+authority = 10
+default-currentness = "historical"
+
+[docs_policy.graph.kinds.front-door]
+include = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs/README.md"]
+exclude = []
+authority = 40
+default-currentness = "current"
+
+[docs_policy.graph.kinds.log]
+include = ["docs/logs/*.md", "docs/logs/*/*.md"]
+exclude = []
+authority = 30
+default-currentness = "historical"
+
+[docs_policy.graph.kinds.archived-log]
+include = ["docs/logs/archive/*/*.md"]
+exclude = []
+authority = 5
+default-currentness = "historical"
+
+[docs_policy.graph.kinds.handoff]
+include = ["docs/handoffs/*.md"]
+exclude = []
+authority = 15
+default-currentness = "unknown"
+
+# ---- Relations ---------------------------------------------------------------
+# `labels` match `Label: [link](target)` metadata lines. `headings` match links
+# found under the named heading. Both are traversed by `--max-hops`.
+
 [docs_policy.graph.relations.contract]
 labels = ["Contract", "Contracts"]
+headings = []
+
+[docs_policy.graph.relations.architecture]
+labels = ["Architecture"]
+headings = []
+
+[docs_policy.graph.relations.spec]
+labels = ["Spec", "Lane", "Strict lane"]
+headings = []
+
+[docs_policy.graph.relations.roadmap]
+labels = ["Roadmap", "Roadmaps"]
+headings = []
+
+[docs_policy.graph.relations.card]
+labels = ["Card", "Batch card", "Ready card", "Current ready card"]
+headings = []
+
+[docs_policy.graph.relations.evidence]
+labels = ["Evidence", "Prior evidence", "Predecessor evidence", "Closeout log"]
+headings = []
+
+[docs_policy.graph.relations.supersedes]
+labels = ["Supersedes", "Superseded by"]
 headings = []
 
 [docs_policy.graph.relations.next-task]
