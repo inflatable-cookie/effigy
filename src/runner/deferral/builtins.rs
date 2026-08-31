@@ -25,6 +25,17 @@ pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// Whether the root manifest declares a task named `name`.
+///
+/// Used only by the `effigy help <command>` guard: when a repository owns the
+/// selector, help must not reach the repository's own execution path.
+pub(crate) fn root_manifest_declares_task(root: &Path, name: &str) -> bool {
+    let manifest_path = root.join(effigy_manifest::TASK_MANIFEST_FILE);
+    crate::runner::manifest::load_task_manifest(&manifest_path)
+        .ok()
+        .is_some_and(|manifest| manifest.tasks.contains_key(name))
+}
+
 pub(crate) fn deferred_builtins_from_catalogs(
     catalogs: &[LoadedCatalog],
     resolved_root: &Path,

@@ -13,9 +13,11 @@ Predecessor evidence: [`31-213000-northstar-profile-proof-1090.md`](./31-213000-
 
 - `effigy --help` and `effigy help` now render the built-in inventory in six
   operator-job groups: `work`, `local`, `repo`, `deliver`, `extend`, `admin`.
-- `effigy help <group>` renders one group. `effigy help <command>` renders the
-  existing typed panel, byte-identical to `effigy <command> --help`, and defers
-  with it when repository routing owns the built-in name.
+- `effigy help <group>` renders one group. `effigy help <command>` reaches the
+  command's existing detailed-help owner — the typed panel where one exists, the
+  built-in's own help for `config` and `scan` — byte-identical to
+  `effigy <command> --help`, and defers with it when repository routing owns the
+  name.
 - An unknown help topic fails with exit code `2` and names every valid group and
   command. The old silent fallback to general help is gone.
 - Execution grammar is unchanged. No `effigy <group> <command>` route exists, no
@@ -36,16 +38,17 @@ task-style routing lookup and was not touched.
 
 `Command::HelpGroup(HelpGroup)` is a new discovery-only command variant.
 `parse_help_command` in `crates/effigy-cli/src/command_parsing.rs` resolves the
-single topic argument as group, then typed command, then diagnostic. Rendering
-lives in `crates/effigy-cli/src/help/topics/general.rs`, where general help and
-group help share one `render_group_section` so the two views cannot drift.
+single topic argument as group, then typed command, then built-in-owned help,
+then diagnostic. Rendering lives in
+`crates/effigy-cli/src/help/topics/general.rs`, where general help and group
+help share one `render_group_section` so the two views cannot drift.
 
 ## Review Oracle
 
 | # | Counterexample | Proof |
 | --- | --- | --- |
 | 1 | `effigy help repo` lists exactly `graph`, `scan`, `docs`, `contracts`, `papercuts` and no local/delivery command | `command_surface::tests::group_inventories_match_the_contract_taxonomy` (ordered, all six groups); `tests::help_render_tests::render_repo_group_help_lists_only_repository_intelligence_commands`; `help_and_flags_tests::cli_help_repo_group_lists_only_repository_intelligence_commands` |
-| 2 | `effigy help docs` and `effigy docs --help` carry the same facts | `help_and_flags_tests::cli_help_command_and_direct_command_help_render_the_same_facts` compares full stdout for `docs`, `graph`, `release`, `tasks`, `state`; `help_and_flag_tests::parse_help_command_matches_direct_command_help` proves both spellings resolve to the same `HelpTopic` for all 31 accepted names |
+| 2 | `effigy help docs` and `effigy docs --help` carry the same facts | `help_and_flags_tests::cli_help_command_and_direct_command_help_render_the_same_facts` compares full stdout for `docs`, `graph`, `release`, `tasks`, `state`, `config`, `scan`; `help_and_flags_tests::cli_help_for_builtin_owned_help_matches_the_direct_command_exactly` and `..._emits_the_same_json_envelope` add stdout, JSON, and exit parity for the built-in-owned pair; `help_and_flag_tests::parse_help_command_matches_direct_command_help` proves both spellings resolve to the same `HelpTopic` for all 31 typed names |
 | 3 | With `[tasks.repo]`, `effigy repo` runs the task while `effigy help repo` renders discovery | `help_and_flags_tests::cli_manifest_selector_named_after_a_help_group_keeps_task_routing` |
 | 4 | A manifest selector shadowing a deferred built-in keeps it out of general and primary-group help | `cli::help_dispatch::tests::manifest_selector_shadowing_a_builtin_hides_it_from_general_and_group_help` (`[tasks.docs]`); `cli::help_dispatch::tests::build_help_group_payload_hides_explicitly_deferred_builtins` (`[defer] builtins = ["graph"]`); `cli::entrypoint::help_deferral_tests` and `help_and_flags_tests::cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows_it` for the detail surface |
 | 5 | Inventory has no missing or duplicate primary-group owner | `command_surface::tests::general_help_entries_have_exactly_one_primary_group_owner`; `command_surface::tests::every_help_command_has_one_primary_group_row`; `command_surface::tests::general_help_entries_are_backed_by_inventory_metadata` |
@@ -84,6 +87,57 @@ before this card — `effigy exec` is the standing example, and `changelog` has 
 general-help row at all — keep behaving as they did.
 `deferred_builtin_for_help_topic_matches_the_inventory_row` pins that
 correspondence for every row.
+
+## Built-In-Owned Help: `config` And `scan`
+
+Added in review repair for the `execution-miss` recorded at head
+`d34f264012014f65a9f48e84aa396b82841e5716`.
+
+`config` and `scan` are the two general-help rows whose detailed help is owned
+by the built-in itself rather than a typed `HelpTopic` panel:
+`effigy config --help` and `effigy scan --help` are not `Command::Help` at all —
+they parse to `Command::Task { name, args: ["--help"] }` and reach the renderers
+in `crates/effigy-builtin/src/config.rs` and `scan.rs`.
+
+The first cut of this card treated that as an exception and made
+`effigy help config` / `effigy help scan` fail with a pointer. That silently
+narrowed the contract-`043` parity rule and the guide's "ask for help on any
+command" promise, so the review rejected it. It is repaired by resolving those
+two names to the *same command value* the direct form produces:
+
+```rust
+if let Some(name) = command_surface::help_builtin_route(&topic) {
+    return Ok(Command::Task(TaskInvocation {
+        name: name.to_owned(),
+        args: vec!["--help".to_owned()],
+    }));
+}
+```
+
+Because both spellings become one identical command value, parity is structural
+rather than asserted: there is no second renderer, no copied text, and no way
+for the two to drift. Measured on the repaired binary, `effigy help config` and
+`effigy config --help` produce byte-identical stdout at 14983 bytes, and
+`effigy help scan` / `effigy scan --help` at 3374 bytes, both exiting `0`.
+
+`HELP_COMMAND_BUILTIN_ROUTES` names the pair, and `help_command_names()` joins
+it with `HELP_COMMAND_TOPICS` so the unknown-topic diagnostic advertises all 33
+accepted command names.
+
+### Help still never executes repository work
+
+`config` and `scan` are absent from `is_top_level_builtin_command`, so a
+manifest task of either name shadows the built-in and `effigy <name> --help`
+runs the repository's task. Following that through the help route would have
+turned `effigy help` into an execution surface — a contract-`043` stop
+condition. `reject_help_for_deferred_builtin` therefore also inspects the
+resolved `Command::Task`, and `root_manifest_declares_task` refuses the help
+route when the repository owns the selector. The refusal reuses the same message
+the deferred-built-in guard emits.
+
+`cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector` proves
+both halves: the direct form still prints the task's own marker, while the help
+route exits `2` and never emits that marker.
 
 ## Inventory Content Is Byte-Identical
 
@@ -128,38 +182,44 @@ without advertising executable grouped aliases.
 
 ## Validation
 
-All checks below were run on the final tree.
+All checks below were run on the final tree, after the review repair described
+in `Built-In-Owned Help`.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace` | green; `0 failed` on every target |
+| `cargo test --workspace` | exit `0`; 95 targets, all `ok`, `0 failed` |
 | — `cargo test --lib` leg | 1433 passed |
-| — `cargo test --test cli_output_tests` leg | 287 passed, 1 ignored |
+| — `cargo test --test cli_output_tests` leg | 290 passed, 1 ignored |
 | — `cargo test --test documentation_coverage_tests` leg | 5 passed |
-| `cargo test -p effigy-cli` | 17 passed |
+| `cargo test -p effigy-cli` | 18 passed |
 | `effigy qa` | exit `0` |
-| — `effigy test` leg (nextest) | 3513 passed, 1 skipped |
-| — docs QA leg | link, json-examples, index, forbidden, headings, contains, workflow-paths, vision index, next-action all passed |
+| — `effigy test` leg (nextest) | 3517 passed, 1 skipped |
+| — docs QA leg | links, json-examples, index, forbidden, headings, contains, workflow-paths, vision index, next-action all passed |
 | — JSON contract leg | passed |
 | `cargo fmt --all -- --check` | clean |
 | `cargo clippy --workspace --all-targets -- -D warnings` | clean |
 | `git diff --check` | clean |
 
-### One flaky test, classified
+### Flakes under machine load, classified
+
+Two failures appeared during development, both only while the machine was
+running concurrent builds, and neither reproducible on an uncontended run.
 
 `command_behavior_tests::cli_container_attached_session_handles_sigint_during_startup`
-failed twice mid-run on this machine with `startup colima invocation marker was
-not created in time`. It is load-sensitive, not card-sensitive:
+failed twice with `startup colima invocation marker was not created in time`. It
+is load-sensitive, not card-sensitive: it failed identically at the base commit
+`8a2ccd991` in a clean detached worktree with no part of this diff applied, it
+passed in every uncontended `cargo test --workspace` run, and it passed in all
+`effigy qa` nextest runs. The test spawns `container up` against a fake `colima`
+shim with a three-second start delay and waits on a marker file, so a loaded
+machine can miss the window.
 
-- it failed identically at the base commit `8a2ccd991`, in a clean detached
-  worktree with no part of this diff applied;
-- it passed in the final uncontended `cargo test --workspace` run;
-- it passed in both `effigy qa` runs under nextest, as part of the full
-  3513-test suite.
-
-The test spawns `container up` against a fake `colima` shim with a three-second
-start delay and waits on a marker file, so a loaded machine can miss the window.
-No container, runtime, or backend code is touched by this diff.
+A second, unnamed failure (`36 passed; 1 failed`) appeared once while two full
+`cargo test --workspace` invocations were running concurrently against the same
+target directory. The test name was not captured. The immediately following
+uncontended run was green across all 95 targets, as was `effigy qa`. Recorded
+here rather than omitted, but not attributed: no evidence links it to this diff,
+and no container, runtime, or backend code is touched here.
 
 ## Vision Target Delta
 

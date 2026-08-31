@@ -129,9 +129,15 @@ effigy --repo /path/to/other-project test
 effigy --help
 effigy help repo
 effigy help release
+effigy help config
 effigy test --help
 effigy release --help
 ```
+
+`effigy help <command>` works for every command in the inventory, including the
+ones whose detailed help lives in the built-in itself (`config`, `scan`). It
+resolves to the same thing `effigy <command> --help` runs, so the two always
+agree.
 
 Use `--json` when another tool needs to parse the output.  
 Use `--repo` when you want to run Effigy against a repo that is not your current directory.  

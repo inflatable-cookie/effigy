@@ -243,7 +243,14 @@ fn help_first_discovery_paths_are_documented() {
     assert_contains_all(
         "quick start cookbook",
         &read("docs/guides/021-quick-start-and-command-cookbook.md"),
-        &["effigy help repo", "effigy help docs"],
+        &["effigy help repo", "effigy help docs", "effigy help config"],
+    );
+
+    // The matrix must not reintroduce a "no help panel" exception for the
+    // built-ins that own their own detailed help.
+    assert!(
+        !matrix.contains("has no `effigy help` panel"),
+        "command reference reintroduced a help-parity exception"
     );
 
     for relative in [

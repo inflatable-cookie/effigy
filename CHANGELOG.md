@@ -89,10 +89,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 - `effigy help <topic>` no longer silently falls back to general help. An
   unknown topic now fails with exit code `2` and names the valid groups and
-  commands; a general-help command without a typed help panel (`config`, `scan`)
-  points at `effigy <command> --help`. When a manifest selector or
-  `[defer] builtins` entry owns a built-in name, `effigy help <command>` defers
-  with `effigy <command> --help` instead of showing the built-in panel.
+  commands. When a manifest selector or `[defer] builtins` entry owns a built-in
+  name, `effigy help <command>` defers with `effigy <command> --help` instead of
+  showing the built-in panel, and never executes the repository's task.
 - Markdown graph documents no longer infer kinds from path prefixes such as
   `docs/contracts/` or `docs/guides/`. Baseline kind is `document`; a
   repository profile assigns kinds.

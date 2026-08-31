@@ -283,7 +283,7 @@ fn parse_command_with_builtin_deferral(
     };
     let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
     if first == "help" {
-        return reject_help_for_deferred_builtin(parse_command(args)?, &deferred_builtins);
+        return reject_help_for_deferred_builtin(parse_command(args)?, &deferred_builtins, &root);
     }
     if !deferred_builtins.contains(first) {
         return parse_command(args);
@@ -303,17 +303,27 @@ fn parse_command_with_builtin_deferral(
 fn reject_help_for_deferred_builtin(
     command: Command,
     deferred_builtins: &std::collections::BTreeSet<String>,
+    root: &Path,
 ) -> Result<Command, effigy_cli::CliParseError> {
-    let Command::Help(topic) = command else {
-        return Ok(command);
+    let owned_name = match &command {
+        Command::Help(topic) => {
+            effigy_cli::command_surface::deferred_builtin_for_help_topic(*topic)
+                .filter(|name| deferred_builtins.contains(*name))
+                .map(str::to_owned)
+        }
+        // `effigy help config` and `effigy help scan` resolve to the built-in's
+        // own `--help` invocation. A repository selector of the same name owns
+        // that word, and help must never run repository work, so refuse instead.
+        Command::Task(task) => (deferred_builtins.contains(&task.name)
+            || crate::runner::root_manifest_declares_task(root, &task.name))
+        .then(|| task.name.clone()),
+        _ => None,
     };
-    let deferred = effigy_cli::command_surface::deferred_builtin_for_help_topic(topic)
-        .filter(|name| deferred_builtins.contains(*name));
-    match deferred {
+    match owned_name {
         Some(name) => Err(effigy_cli::CliParseError::InvalidArguments(format!(
             "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; run `effigy {name} --help` for what `effigy {name}` actually does"
         ))),
-        None => Ok(Command::Help(topic)),
+        None => Ok(command),
     }
 }
 

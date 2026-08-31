@@ -908,10 +908,14 @@ where
         return Ok(Command::Help(help_topic));
     }
 
-    if command_surface::general_help_command_without_topic(&topic) {
-        return Err(CliParseError::InvalidArguments(format!(
-            "`{topic}` has no `effigy help` panel; run `effigy {topic} --help` for its command detail"
-        )));
+    // `config` and `scan` own their detailed help inside the built-in itself.
+    // Resolve to the exact command value `effigy <name> --help` produces so the
+    // two spellings cannot drift in facts, output, or exit status.
+    if let Some(name) = command_surface::help_builtin_route(&topic) {
+        return Ok(Command::Task(TaskInvocation {
+            name: name.to_owned(),
+            args: vec!["--help".to_owned()],
+        }));
     }
 
     Err(CliParseError::InvalidArguments(format!(
@@ -926,11 +930,9 @@ fn help_topic_guidance() -> String {
         .map(|group| group.slug())
         .collect::<Vec<_>>()
         .join(", ");
-    let commands = command_surface::HELP_COMMAND_TOPICS
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let mut command_names = command_surface::help_command_names().collect::<Vec<_>>();
+    command_names.sort_unstable();
+    let commands = command_names.join(", ");
     format!(
         "use `effigy help` for the grouped command list, `effigy help <group>` with one of {groups}, or `effigy help <command>` with one of {commands}"
     )

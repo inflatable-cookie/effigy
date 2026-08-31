@@ -1,9 +1,10 @@
 use super::{
     command_descriptors, deferred_builtin_for_help_topic, descriptor_for_topic,
-    general_help_command_without_topic, general_help_entries, general_help_entries_for_group,
-    help_topic_for_command, help_topic_for_help_argument, HelpGroup, HELP_COMMAND_TOPICS,
+    general_help_entries, general_help_entries_for_group, help_builtin_route, help_command_names,
+    help_topic_for_command, help_topic_for_help_argument, HelpGroup, HELP_COMMAND_BUILTIN_ROUTES,
+    HELP_COMMAND_TOPICS,
 };
-use crate::{parse_command, Command, HelpTopic};
+use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 
 const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::General,
@@ -257,13 +258,13 @@ fn general_help_entries_have_exactly_one_primary_group_owner() {
 
 #[test]
 fn every_help_command_has_one_primary_group_row() {
-    for (name, _) in HELP_COMMAND_TOPICS {
-        if HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW.contains(name) {
+    for name in help_command_names() {
+        if HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW.contains(&name) {
             continue;
         }
         let owners = general_help_entries()
             .iter()
-            .filter(|entry| entry.help_argument == Some(*name))
+            .filter(|entry| entry.help_argument == Some(name))
             .collect::<Vec<_>>();
         assert_eq!(
             owners.len(),
@@ -303,8 +304,8 @@ fn help_command_topics_reuse_the_existing_typed_help_owner() {
         );
         assert_eq!(help_topic_for_help_argument(name), Some(*topic));
         assert!(
-            !general_help_command_without_topic(name),
-            "`{name}` has a typed panel and must not be reported as panel-less"
+            help_builtin_route(name).is_none(),
+            "`{name}` has a typed panel and must not also claim a built-in route"
         );
     }
 }
@@ -331,10 +332,50 @@ fn help_group_slugs_are_not_command_names() {
 }
 
 #[test]
-fn general_help_rows_without_typed_panels_are_reported_for_diagnostics() {
-    assert!(general_help_command_without_topic("config"));
-    assert!(general_help_command_without_topic("scan"));
-    assert!(!general_help_command_without_topic("not-a-topic"));
+fn builtin_owned_help_routes_mirror_the_direct_command_invocation() {
+    for name in HELP_COMMAND_BUILTIN_ROUTES {
+        let expected = Command::Task(TaskInvocation {
+            name: (*name).to_owned(),
+            args: vec!["--help".to_owned()],
+        });
+
+        let direct = parse_command([(*name).to_owned(), "--help".to_owned()])
+            .unwrap_or_else(|error| panic!("parse {name} --help: {error}"));
+        assert_eq!(
+            direct, expected,
+            "`effigy {name} --help` should reach the built-in's own help owner"
+        );
+
+        let via_help = parse_command(["help".to_owned(), (*name).to_owned()])
+            .unwrap_or_else(|error| panic!("parse help {name}: {error}"));
+        assert_eq!(
+            via_help, expected,
+            "`effigy help {name}` must resolve to the same command value as `effigy {name} --help`"
+        );
+
+        assert!(
+            help_topic_for_help_argument(name).is_none(),
+            "`{name}` owns its help inside the built-in and must not claim a typed panel"
+        );
+    }
+
+    assert_eq!(help_builtin_route("not-a-topic"), None);
+}
+
+#[test]
+fn help_command_names_cover_typed_panels_and_builtin_owned_help() {
+    let names = help_command_names().collect::<Vec<_>>();
+    for (typed, _) in HELP_COMMAND_TOPICS {
+        assert!(names.contains(typed), "missing typed help name {typed}");
+    }
+    for owned in HELP_COMMAND_BUILTIN_ROUTES {
+        assert!(names.contains(owned), "missing built-in help name {owned}");
+    }
+    assert_eq!(
+        names.len(),
+        HELP_COMMAND_TOPICS.len() + HELP_COMMAND_BUILTIN_ROUTES.len(),
+        "help command names should not duplicate an owner"
+    );
 }
 
 #[test]
@@ -355,6 +396,11 @@ fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
         let Some(argument) = entry.help_argument else {
             continue;
         };
+        if help_builtin_route(argument).is_some() {
+            // Built-in-owned help resolves to the command's own `--help`
+            // invocation, so the repository-selector guard covers it instead.
+            continue;
+        }
         let topic = help_topic_for_help_argument(argument).expect("listed help argument");
         if entry.deferred_builtin.is_some() {
             assert_eq!(

@@ -482,16 +482,23 @@ fn parse_unknown_help_topic_fails_with_group_and_command_guidance() {
     }
     assert!(message.contains("effigy help <group>"), "{message}");
     assert!(message.contains("effigy help <command>"), "{message}");
-    assert!(message.contains("docs"), "{message}");
+    for name in ["docs", "config", "scan"] {
+        assert!(message.contains(name), "guidance omits `{name}`: {message}");
+    }
 }
 
 #[test]
-fn parse_help_topic_without_typed_panel_points_at_direct_command_help() {
+fn parse_help_topic_for_builtin_owned_help_mirrors_the_direct_command() {
     for name in ["config", "scan"] {
-        let message = parse_error(&["help", name]);
-        assert!(
-            message.contains(&format!("run `effigy {name} --help`")),
-            "{message}"
+        let expected = Command::Task(TaskInvocation {
+            name: name.to_owned(),
+            args: vec!["--help".to_owned()],
+        });
+        assert_eq!(parse(&[name, "--help"]), expected);
+        assert_eq!(
+            parse(&["help", name]),
+            expected,
+            "`effigy help {name}` must reuse the built-in's own help owner"
         );
     }
 }

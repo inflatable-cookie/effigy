@@ -363,7 +363,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         command: "effigy scan",
         description: "Run built-in repository scanners such as `god-files` and `attention-markers`",
         deferred_builtin: None,
-        help_argument: None,
+        help_argument: Some("scan"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Repo,
@@ -457,7 +457,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         command: "effigy config",
         description: "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
         deferred_builtin: None,
-        help_argument: None,
+        help_argument: Some("config"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
@@ -573,19 +573,29 @@ pub fn help_topic_for_help_argument(name: &str) -> Option<HelpTopic> {
         .map(|(_, topic)| *topic)
 }
 
-/// Whether `name` heads a general-help row that has no typed help panel.
+/// Names accepted by `effigy help <command>` whose detailed help is owned by
+/// the built-in itself instead of a typed [`HelpTopic`] panel.
 ///
-/// These commands still document themselves through `effigy <name> --help`,
-/// so unknown-topic diagnostics can point at that exact route.
-pub fn general_help_command_without_topic(name: &str) -> bool {
-    if help_topic_for_help_argument(name).is_some() {
-        return false;
-    }
-    let exact = format!("effigy {name}");
-    let prefix = format!("effigy {name} ");
-    GENERAL_HELP_ENTRIES
+/// `effigy config --help` and `effigy scan --help` already reach those owners
+/// through the built-in registry, so `effigy help <name>` resolves to the very
+/// same command value rather than re-rendering the panel here.
+pub const HELP_COMMAND_BUILTIN_ROUTES: &[&str] = &["config", "scan"];
+
+/// Resolve `effigy help <command>` for a built-in that owns its own help.
+pub fn help_builtin_route(name: &str) -> Option<&'static str> {
+    HELP_COMMAND_BUILTIN_ROUTES
         .iter()
-        .any(|entry| entry.command == exact || entry.command.starts_with(&prefix))
+        .copied()
+        .find(|candidate| *candidate == name)
+}
+
+/// Every name `effigy help <command>` accepts, typed panels and built-in-owned
+/// help alike.
+pub fn help_command_names() -> impl Iterator<Item = &'static str> {
+    HELP_COMMAND_TOPICS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
 }
 
 /// The built-in name whose repository deferral hides `effigy help <command>`

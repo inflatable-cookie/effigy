@@ -105,16 +105,20 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
 
 `effigy help <command>` renders the same panel as `effigy <command> --help`, so
-`effigy help docs` and `effigy docs --help` agree. Commands without a typed help
-panel (`effigy config`, `effigy scan`) say so and point at `effigy <command>
---help`. An unknown topic fails with exit code `2` and names the valid groups and
-commands; it never falls back silently to general help.
+`effigy help docs` and `effigy docs --help` agree. That holds for every command
+in the inventory: `config` and `scan` keep their detailed help inside the
+built-in rather than a typed panel, and `effigy help config` / `effigy help scan`
+resolve to the same command the direct form runs, so stdout, JSON, and exit
+status match exactly. An unknown topic fails with exit code `2` and names the
+valid groups and commands; it never falls back silently to general help.
 
 Built-ins deferred to a repository selector stay hidden from general help and
 group help. Their detail help defers too: when a manifest task or
 `[defer] builtins` entry owns the name, `effigy <command> --help` already routes
 to the repository, so `effigy help <command>` refuses the built-in panel and
-points back at `effigy <command> --help`.
+points back at `effigy <command> --help`. Help never executes repository work,
+so a selector named `config` or `scan` gets the same refusal instead of running
+through the help route.
 
 ## Primary Commands
 

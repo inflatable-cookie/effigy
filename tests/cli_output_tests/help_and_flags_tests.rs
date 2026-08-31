@@ -422,7 +422,9 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
 #[test]
 fn cli_help_command_and_direct_command_help_render_the_same_facts() {
     let root = temp_workspace("help-command-parity");
-    for command in ["docs", "graph", "release", "tasks", "state"] {
+    for command in [
+        "docs", "graph", "release", "tasks", "state", "config", "scan",
+    ] {
         let via_help = run_help_cli(&root, &["help", command]);
         let via_flag = run_help_cli(&root, &[command, "--help"]);
         assert!(via_help.status.success(), "`effigy help {command}` failed");
@@ -559,4 +561,136 @@ fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows
     let group_stdout = String::from_utf8(group.stdout).expect("utf8 stdout");
     assert!(!group_stdout.contains("effigy docs"), "got: {group_stdout}");
     assert!(group_stdout.contains("effigy graph"), "got: {group_stdout}");
+}
+
+/// `config` and `scan` own their detailed help inside the built-in rather than
+/// a typed help panel. Prove the `effigy help <name>` route reaches that owner
+/// with the same facts, the same stdout, and the same exit status — and that
+/// the compared output is real help, not two empty strings.
+#[test]
+fn cli_help_for_builtin_owned_help_matches_the_direct_command_exactly() {
+    let root = temp_workspace("help-builtin-owned-parity");
+
+    let cases: [(&str, &[&str]); 2] = [
+        ("config", &["effigy.toml Reference", "[tasks]"]),
+        ("scan", &["god-files", "attention-markers"]),
+    ];
+
+    for (command, required) in cases {
+        let via_help = run_help_cli(&root, &["help", command]);
+        let via_flag = run_help_cli(&root, &[command, "--help"]);
+
+        assert_eq!(
+            via_help.status.code(),
+            Some(0),
+            "`effigy help {command}` should exit 0"
+        );
+        assert_eq!(
+            via_flag.status.code(),
+            Some(0),
+            "`effigy {command} --help` should exit 0"
+        );
+        assert_eq!(
+            via_help.status.code(),
+            via_flag.status.code(),
+            "`effigy help {command}` and `effigy {command} --help` should share an exit status"
+        );
+
+        let help_stdout = String::from_utf8(via_help.stdout).expect("utf8 stdout");
+        let flag_stdout = String::from_utf8(via_flag.stdout).expect("utf8 stdout");
+
+        // Non-vacuous: the shared output must be substantive command help.
+        assert!(
+            help_stdout.len() > 200,
+            "`effigy help {command}` produced suspiciously little output: {help_stdout}"
+        );
+        for token in required {
+            assert!(
+                help_stdout.contains(token),
+                "`effigy help {command}` is missing `{token}`: {help_stdout}"
+            );
+        }
+        assert!(
+            !help_stdout.contains("Invalid command arguments"),
+            "`effigy help {command}` still errors: {help_stdout}"
+        );
+        assert!(
+            !help_stdout.contains("Work Commands"),
+            "`effigy help {command}` fell back to general help: {help_stdout}"
+        );
+
+        assert_eq!(
+            help_stdout, flag_stdout,
+            "`effigy help {command}` drifted from `effigy {command} --help`"
+        );
+    }
+}
+
+#[test]
+fn cli_help_for_builtin_owned_help_emits_the_same_json_envelope() {
+    let root = temp_workspace("help-builtin-owned-json-parity");
+
+    for command in ["config", "scan"] {
+        let via_help = run_help_cli(&root, &["--json", "help", command]);
+        let via_flag = run_help_cli(&root, &["--json", command, "--help"]);
+
+        assert!(via_help.status.success());
+        assert!(via_flag.status.success());
+
+        let help_json: Value =
+            serde_json::from_str(&String::from_utf8(via_help.stdout).expect("utf8 stdout"))
+                .expect("json parse");
+        let flag_json: Value =
+            serde_json::from_str(&String::from_utf8(via_flag.stdout).expect("utf8 stdout"))
+                .expect("json parse");
+
+        assert_eq!(help_json["ok"], true);
+        assert_eq!(help_json["command"]["kind"], "task");
+        assert_eq!(help_json["command"]["name"], command);
+        assert!(
+            help_json["result"]["text"]
+                .as_str()
+                .is_some_and(|text| text.len() > 200),
+            "`effigy --json help {command}` carried no substantive help text"
+        );
+        assert_eq!(
+            help_json, flag_json,
+            "`effigy --json help {command}` drifted from `effigy --json {command} --help`"
+        );
+    }
+}
+
+/// Help must never execute repository work. When a selector owns `config` or
+/// `scan`, the direct form runs the repo task, so the help route refuses rather
+/// than following it.
+#[test]
+fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
+    let root = temp_workspace("help-builtin-owned-shadowed");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.config]\nrun = \"printf CONFIG-TASK-RAN\"\n[tasks.scan]\nrun = \"printf SCAN-TASK-RAN\"\n",
+    )
+    .expect("write manifest");
+
+    for (command, marker) in [("config", "CONFIG-TASK-RAN"), ("scan", "SCAN-TASK-RAN")] {
+        let direct = run_help_cli(&root, &[command, "--help"]);
+        let direct_stdout = String::from_utf8(direct.stdout).expect("utf8 stdout");
+        assert!(
+            direct_stdout.contains(marker),
+            "`effigy {command} --help` should run the repository task here: {direct_stdout}"
+        );
+
+        let via_help = run_help_cli(&root, &["help", command]);
+        assert_eq!(via_help.status.code(), Some(2));
+        let help_stdout = String::from_utf8(via_help.stdout).expect("utf8 stdout");
+        assert!(
+            !help_stdout.contains(marker),
+            "`effigy help {command}` must not execute repository work: {help_stdout}"
+        );
+        let stderr = String::from_utf8(via_help.stderr).expect("utf8 stderr");
+        assert!(
+            stderr.contains(&format!("`{command}` is deferred")),
+            "got: {stderr}"
+        );
+    }
 }
