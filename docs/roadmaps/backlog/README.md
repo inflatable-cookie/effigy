@@ -5,6 +5,9 @@ Use this folder for planning threads that are important but not yet scheduled in
 
 ## Current Backlog Items
 
+- [Vendored Effigy Skill Portfolio Status and Sync](./vendored-effigy-skill-portfolio-status-and-sync.md)
+  — queued follow-up to the completed external skill runner; command ownership
+  and an execution window remain unsettled (2026-08-31)
 - [g09 Candidate Themes](./g09-candidate-themes.md) — Atlas-shaped strategic
   options awaiting operator selection (2026-08-17)
 - [Breaking Command Surface and Container Compaction](./breaking-command-surface-and-container-compaction.md)
