@@ -3,6 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
+Last Updated: 2026-08-31
 
 ## Purpose
 
@@ -30,6 +31,8 @@ It owns:
 - selected process env facts used as context, including `HOME`, `PATH`,
   `SHELL`, `NO_COLOR`, and `CI`
 - whether the process is already inside Effigy's container handoff marker
+- optional explicit task-source identity (`source_root`, `manifest_path`, and
+  resolution evidence) for external skill execution
 
 The runner may still keep surface-specific request state, but it must not
 invent a second boot-time context model.
@@ -42,6 +45,8 @@ invent a second boot-time context model.
 - command modules should consume the context or wrappers backed by it
 - embedded callers must preserve their explicit repo target instead of falling
   back to process cwd
+- an explicit task source is additive: it must not replace invocation cwd,
+  command root, repo override, or resolved target evidence
 
 ## Handoff Rules
 
@@ -80,6 +85,8 @@ Minimum Rhai context fields:
 - invocation mode: host or container handoff
 - inside-container handoff flag
 - host OS and architecture
+- optional task source root and manifest when the command explicitly selected
+  an external source
 
 Rhai scripts must not decide host-versus-container execution by probing cwd,
 `env(...)`, or container marker variables directly. When a script needs a
@@ -97,6 +104,7 @@ Update this contract when Effigy changes:
 - container handoff marker semantics
 - boot-time host/context facts
 - public context inspectability, if added later
+- explicit task-source identity or evidence rules
 
 ## Validation Direction
 
@@ -108,4 +116,6 @@ Minimum proof:
 - container handoff state is captured once and is visible through the context
 - Rhai can read the captured context and run container-targeted execution
   without host/container path guessing
+- external skill tasks and nested Rhai preserve distinct source and target
+  identities while ordinary contexts keep task source absent
 - runner code has a drift guard against new direct cwd discovery

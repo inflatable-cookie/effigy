@@ -83,6 +83,8 @@ For narrative workflow guidance instead of lookup, start with:
   machine-local links, or through a committed Bun pin: use `effigy deps`.
 - Need to inventory execution friction in one project or sibling projects: use
   `effigy papercuts`.
+- Need to run tasks shipped by an installed skill against the current or an
+  explicit consumer repo: use `effigy skill tasks` then `effigy skill run`.
 
 ## Primary Commands
 
@@ -92,6 +94,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
 | `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
+| `effigy skill` | List or execute one explicitly selected, isolated skill task catalog while a separate consumer repo owns runtime effects | `tasks`, `run`, `--path`, `--repo`, `--json`, `-- <ARGS>` | `effigy.skill.tasks.v1`, `effigy.skill.run.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/042-external-skill-task-runner-contract.md`](../contracts/042-external-skill-task-runner-contract.md) |
 | `effigy deps` | Inspect dependency state, manage machine-local Cargo and Bun links, and author committed Bun pins | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `pin bun <PATH> [--dry-run]`; `unpin bun <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1`, `effigy.deps.pin.v1` | [`077-local-dependency-linking.md`](./077-local-dependency-linking.md) |
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
@@ -155,6 +158,8 @@ effigy version [--json]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]
 effigy tasks status <SELECTOR> [--repo <PATH>] [--json]
 effigy tasks status --all [--repo <PATH>] [--json]
+effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]
+effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]
 effigy deps [--repo <PATH>] [--json]
 effigy deps status [cargo|bun] [--repo <PATH>] [--json]
 effigy papercuts [--all] [--scope <PATH>] [--json]
@@ -351,6 +356,11 @@ effigy state history [<STACK>] [--kind plan|apply|capture] [--limit <N>] [--line
 Use the deeper guides for full surface detail. The main sharp edges here are:
 
 - `tasks --pretty false` is valid only with `--json`
+- `skill --path` selects one isolated task source; it never selects the
+  consumer. `skill run` resolves the consumer from invocation CWD or `--repo`,
+  executes host-only tasks from the consumer root, and rejects members,
+  container/runtime inheritance, manifest secrets, and escaping composition
+  before task side effects
 - `deps` and `deps status` are the same read-only inspection path; manager
   filtering is optional; `deps link cargo` applies the verified full closure
   and `deps unlink cargo` proves committed-source and lock recovery; `deps
@@ -555,6 +565,14 @@ effigy release simulate
 effigy release prepare --plan
 effigy release execute --plan
 effigy --json release status --check-gates
+```
+
+Installed skill task source with an independent consumer target:
+
+```sh
+effigy skill tasks --path ~/.agents/skills/northstar
+effigy skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
+effigy --json skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
 ```
 
 Agent repo map:

@@ -154,7 +154,30 @@ Built-ins that use Effigy's shared **passthrough** parser reject
 (today: `effigy doctor`, `effigy watch`, `effigy scan`). Use
 `effigy <builtin> --help` for the exact flag set.
 
-## 4) Optional: Local Dev Stacks With Containers
+## 4) Run tasks shipped by an installed skill
+
+Use `skill tasks` when a skill owns an `effigy.toml` but the current repository
+must own runtime effects:
+
+```sh
+effigy skill tasks --path ~/.agents/skills/northstar
+effigy skill run --path ~/.agents/skills/northstar northstar/check
+effigy skill run --path ~/.agents/skills/northstar northstar/check \
+  --repo /path/to/consumer -- --task-argument
+```
+
+`--path` selects one explicit task source. The current repository, or
+`--repo`, selects the independent consumer target. Skill assets and `{skill}`
+stay source-relative; process CWD, `{repo}`, env files, cache paths, and nested
+built-ins use the consumer. V1 is host-only and rejects catalog members,
+container-bound tasks, secrets inheritance, and source composition that escapes
+the selected skill root before task side effects.
+
+Use `--json` to audit canonical source, target, invocation, and execution paths.
+This surface executes code from the path you supply, so inspect unfamiliar
+skills before running them.
+
+## 5) Optional: Local Dev Stacks With Containers
 
 If the repo includes databases, caches, or language workspaces, use containers
 to keep them off your host machine:
@@ -197,7 +220,7 @@ effigy container volume list --dormant
 
 Read more: [`063-container-system-guide.md`](./063-container-system-guide.md)
 
-## 5) Commands You Will Reach For First
+## 6) Commands You Will Reach For First
 
 ### Discover what the repo can do
 
@@ -282,7 +305,7 @@ If the repo is changing while you work:
 effigy graph watch --json
 ```
 
-## 6) Manage Secrets
+## 7) Manage Secrets
 
 If the repo declares secrets under `[secrets.keys]`:
 
@@ -297,7 +320,7 @@ Secrets are injected into tasks, containers, Rhai scripts, and deploy hooks
 without writing plaintext to repo files. See
 [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
 
-## 7) Choose the Next Detail Page
+## 8) Choose the Next Detail Page
 
 - Day-to-day workflows:
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)

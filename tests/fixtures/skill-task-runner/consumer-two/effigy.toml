@@ -1,0 +1,5 @@
+[catalog]
+alias = "consumer-two"
+
+[tasks.collision]
+run = "printf 'second-consumer-selector\\n'"

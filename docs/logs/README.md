@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-08/31-162015-external-skill-task-runner-closeout.md`](./2026-08/31-162015-external-skill-task-runner-closeout.md)
 - [`2026-08/31-151155-external-skill-task-runner-planning.md`](./2026-08/31-151155-external-skill-task-runner-planning.md)
 - [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](./2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
 - [`2026-08/30-174452-documentation-instruction-help-parity-closeout.md`](./2026-08/30-174452-documentation-instruction-help-parity-closeout.md)

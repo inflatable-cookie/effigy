@@ -273,5 +273,5 @@ source and consumer runtime target boundary.
 ## Next Task
 
 Execute ready card
-[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md).
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 No release action is implied.

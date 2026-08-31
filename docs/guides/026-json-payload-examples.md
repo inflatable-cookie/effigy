@@ -3368,6 +3368,65 @@ secret values in JSON or text output. Export metadata adds `action = "export"`,
 }
 ```
 
+### External Skill Task Inventory (`effigy.skill.tasks.v1`)
+
+```json
+{
+  "schema": "effigy.skill.tasks.v1",
+  "schema_version": 1,
+  "source": {
+    "root": "/opt/skills/northstar",
+    "manifest": "/opt/skills/northstar/effigy.toml",
+    "evidence": [
+      "operator selected `/opt/skills/northstar`",
+      "canonical source root `/opt/skills/northstar`",
+      "direct manifest `/opt/skills/northstar/effigy.toml`"
+    ]
+  },
+  "catalog": {
+    "alias": "northstar",
+    "selectors": ["northstar/check", "northstar/refresh"]
+  }
+}
+```
+
+### External Skill Task Run (`effigy.skill.run.v1`)
+
+```json
+{
+  "schema": "effigy.skill.run.v1",
+  "schema_version": 1,
+  "source": {
+    "root": "/opt/skills/northstar",
+    "manifest": "/opt/skills/northstar/effigy.toml",
+    "evidence": ["canonical source root `/opt/skills/northstar`"]
+  },
+  "target": {
+    "root": "/workspace/app",
+    "resolution_mode": "Explicit",
+    "evidence": ["resolved via explicit --repo override"],
+    "repo_override": "/workspace/app"
+  },
+  "invocation_cwd": "/workspace/tools",
+  "execution_cwd": "/workspace/app",
+  "catalog_alias": "northstar",
+  "selector": "northstar/check",
+  "exit_status": 0,
+  "task_output": {
+    "schema": "effigy.task.run.v1",
+    "schema_version": 1,
+    "selector": "northstar/check",
+    "task": "check",
+    "command": "cargo check",
+    "cwd": "/workspace/app",
+    "ok": true,
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+}
+```
+
 ## Notes
 
 - Field sets can grow with new optional keys while retaining schema compatibility.

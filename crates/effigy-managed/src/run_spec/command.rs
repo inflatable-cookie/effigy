@@ -58,7 +58,17 @@ pub fn render_rhai_step_invocation(
     ];
 
     let rendered_script_path = render_bundle_template_tokens(script_path, context.bundle_root);
-    let command = format!("script run --file {}", shell_quote(&rendered_script_path));
+    let rendered_script_path = Path::new(&rendered_script_path);
+    let rendered_script_path =
+        if rendered_script_path.is_absolute() || context.repo_root == context.task_scope_cwd {
+            rendered_script_path.to_path_buf()
+        } else {
+            context.task_scope_cwd.join(rendered_script_path)
+        };
+    let command = format!(
+        "script run --file {}",
+        shell_quote(&rendered_script_path.display().to_string())
+    );
 
     let env_rendered = env_pairs
         .into_iter()

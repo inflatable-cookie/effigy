@@ -1,0 +1,8 @@
+[catalog]
+alias = "member-source"
+
+[catalog.members]
+escape = "../consumer-one"
+
+[tasks.mutate]
+run = "touch should-not-exist"

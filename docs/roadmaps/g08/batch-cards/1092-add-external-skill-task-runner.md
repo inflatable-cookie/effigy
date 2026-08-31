@@ -7,9 +7,9 @@ Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-wo
 [`../../../contracts/013-task-execution-request-contract.md`](../../../contracts/013-task-execution-request-contract.md),
 [`../../../contracts/037-explicit-catalog-membership-contract.md`](../../../contracts/037-explicit-catalog-membership-contract.md),
 [`../../../contracts/042-external-skill-task-runner-contract.md`](../../../contracts/042-external-skill-task-runner-contract.md)
-Spec: [`../../../specs/110-external-skill-task-runner-strict-lane.md`](../../../specs/110-external-skill-task-runner-strict-lane.md)
+Spec: [`../../../specs/archive/110-external-skill-task-runner-strict-lane.md`](../../../specs/archive/110-external-skill-task-runner-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: CLI, task routing, runtime context, and execution pipeline
 Created: 2026-08-31
 
@@ -43,18 +43,22 @@ the consuming repository remains the runtime target.
 
 ## Acceptance
 
-- [ ] `skill tasks` lists only the explicit source catalog
-- [ ] `skill run` targets the CWD-resolved or `--repo` consumer
-- [ ] source/target/invocation/execution paths match contract `042`
-- [ ] no consumer selector, defaults, container, member, or ambient path leaks
+- [x] `skill tasks` lists only the explicit source catalog
+- [x] `skill run` targets the CWD-resolved or `--repo` consumer
+- [x] source/target/invocation/execution paths match contract `042`
+- [x] no consumer selector, defaults, container, member, or ambient path leaks
       into skill execution
-- [ ] nested task and Rhai execution preserve both identities
-- [ ] all contract-042 rejection cases stop before side effects
-- [ ] text and JSON expose matching resolution evidence
-- [ ] ordinary task and `--repo` regression tests stay green
-- [ ] public/agent docs can replace Northstar's CWD gymnastics with one command
-- [ ] focused and full QA pass
-- [ ] closeout leaves card `1089` ready and no stale skill-runner card
+- [x] nested task and Rhai execution preserve both identities
+- [x] all contract-042 rejection cases stop before side effects
+- [x] text and JSON expose matching resolution evidence
+- [x] ordinary task and `--repo` regression tests stay green
+- [x] public/agent docs can replace Northstar's CWD gymnastics with one command
+- [x] focused and full QA pass
+- [x] closeout leaves card `1089` ready and no stale skill-runner card
+
+## Evidence
+
+[`2026-08-31 external skill task runner closeout`](../../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)
 
 ## Review Oracle
 
@@ -88,5 +92,5 @@ change to ordinary task routing, or a product/API choice not settled by contract
 
 ## Next Task
 
-Execute this card. On evidence-backed closeout, resume
+Execute ready documentation-context card
 [`1089`](./1089-add-bounded-documentation-context-query.md).

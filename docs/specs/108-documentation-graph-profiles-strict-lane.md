@@ -1,11 +1,11 @@
 # 108 - Documentation Graph Profiles Strict Lane
 
-Status: Paused
+Status: Active
 Owner: documentation graph and agent retrieval surfaces
 Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Paused card: [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
+Current ready card: [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
 
 ## Problem
 
@@ -36,9 +36,9 @@ runtime behavior to an agent framework.
    proves generic and Northstar configurations, publishes adoption guidance,
    runs proportional validation, and closes the lane.
 
-Card `1088` and the overlapping maintenance card `1091` are complete. The
-operator paused card `1089` on 2026-08-31 while external skill-task execution
-runs under strict spec `110`; `1090` remains pending behind card `1089`.
+Cards `1088`, `1091`, and the temporary external skill-task lane card `1092`
+are complete. Card `1089` resumed on 2026-08-31; `1090` remains pending behind
+its evidence-backed closeout.
 
 ## Owner And Seam
 
@@ -80,7 +80,5 @@ Stop and return to planning if:
 
 ## Next Task
 
-Execute external skill-runner card
-[`1092`](../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md).
-Resume [`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
-after that lane closes.
+Execute ready card
+[`1089`](../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).

@@ -119,6 +119,22 @@ fn build_runtime_module(context: Arc<ScriptContext>) -> rhai::Module {
                 .into(),
         );
         value.insert(
+            "task_source_root".into(),
+            runtime_context
+                .task_source()
+                .map(|source| source.source_root.display().to_string())
+                .unwrap_or_default()
+                .into(),
+        );
+        value.insert(
+            "task_source_manifest".into(),
+            runtime_context
+                .task_source()
+                .map(|source| source.manifest_path.display().to_string())
+                .unwrap_or_default()
+                .into(),
+        );
+        value.insert(
             "invocation_mode".into(),
             match runtime_context.invocation_mode() {
                 effigy_context::RuntimeInvocationMode::Host => "host",

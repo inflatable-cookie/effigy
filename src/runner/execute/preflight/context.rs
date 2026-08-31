@@ -4,6 +4,7 @@ mod discovery;
 use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
+use effigy_context::TaskSourceContext;
 use effigy_execution::{ExecutionDiscoveryPlan, ExecutionPreflightInput, ExecutionSurface};
 
 use super::runtime::prepare_execution_runtime_args;
@@ -23,6 +24,20 @@ pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) selector: TaskSelector,
     pub(in crate::runner) catalogs: Vec<LoadedCatalog>,
     pub(in crate::runner) secret_targets: Vec<String>,
+    pub(in crate::runner) task_source: Option<TaskSourceContext>,
+}
+
+impl ExecutionPreflight {
+    pub(in crate::runner) fn task_execution_root<'a>(
+        &'a self,
+        catalog_root: &'a std::path::Path,
+    ) -> &'a std::path::Path {
+        if self.task_source.is_some() {
+            &self.resolved.resolved_root
+        } else {
+            catalog_root
+        }
+    }
 }
 
 pub(in crate::runner) fn build_execution_preflight(
@@ -46,6 +61,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         &input.selector,
         input.cwd,
         runtime_args_raw.repo_override.clone(),
+        input.task_source.as_ref(),
     )?;
     let discovery_plan = discovery.plan;
     Ok(ExecutionPreflight {
@@ -59,5 +75,6 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         discovery_plan,
         catalogs: discovery.catalogs,
         secret_targets: input.secret_targets,
+        task_source: input.task_source,
     })
 }

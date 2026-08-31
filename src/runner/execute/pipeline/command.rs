@@ -18,6 +18,7 @@ pub(in crate::runner) fn build_task_command(
     // Task-level `env = { KEY = "value" }` from effigy.toml takes priority.
     let merged_env = merge_env_schema_plain(&selection.task.env, env_schema_resolved.as_ref());
     let runtime_env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
+    let task_execution_root = preflight.task_execution_root(&selection.catalog.catalog_root);
 
     let run_spec =
         selection
@@ -28,7 +29,7 @@ pub(in crate::runner) fn build_task_command(
                 task: preflight.selector.task_name.clone(),
                 path: selection.catalog.manifest_path.clone(),
             })?;
-    render_task_run_spec(
+    let command = render_task_run_spec(
         run_spec,
         RunSpecContext {
             task_name: &preflight.selector.task_name,
@@ -37,7 +38,7 @@ pub(in crate::runner) fn build_task_command(
             env_profiles: &selection.catalog.manifest.env,
             args_rendered: &args_rendered,
             args_raw: &preflight.runtime_args_exec.passthrough,
-            repo_root: &selection.catalog.catalog_root,
+            repo_root: task_execution_root,
             bundle_root: selection.catalog.bundle_root.as_deref(),
             catalogs: &preflight.catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
@@ -47,7 +48,24 @@ pub(in crate::runner) fn build_task_command(
             resolver: &effigy_routing::resolve_task_selection,
         },
     )
-    .map_err(Into::into)
+    .map_err(RunnerError::from)?;
+    Ok(render_skill_placeholder(
+        command,
+        preflight
+            .task_source
+            .as_ref()
+            .map(|source| source.source_root.as_path()),
+    ))
+}
+
+fn render_skill_placeholder(command: String, source_root: Option<&std::path::Path>) -> String {
+    let Some(source_root) = source_root else {
+        return command;
+    };
+    command.replace(
+        "{skill}",
+        &effigy_core::shell::shell_quote(&source_root.display().to_string()),
+    )
 }
 
 /// Merge env-schema plain values into the task env map.

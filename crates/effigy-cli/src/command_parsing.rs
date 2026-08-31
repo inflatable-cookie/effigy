@@ -32,8 +32,8 @@ use crate::{
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
     DepsSubcommand, DoctorArgs, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
     InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs,
-    PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, TaskInvocation, TasksArgs,
-    UninstallArgs,
+    PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, SkillArgs, SkillSubcommand,
+    TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -85,6 +85,7 @@ where
         "demo" => parse_demo_command(args),
         "graph" => parse_graph_command(args),
         "rhai" => parse_rhai_command(args),
+        "skill" => parse_skill_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
         "artifact" | "artefact" => parse_artifact_command(args),
@@ -102,6 +103,91 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_skill_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcommand) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy skill` requires a subcommand: tasks or run".to_owned(),
+        ));
+    };
+    if matches!(subcommand.as_str(), "--help" | "-h") {
+        return Ok(Command::Help(HelpTopic::Skill));
+    }
+    if !matches!(subcommand.as_str(), "tasks" | "run") {
+        return Err(CliParseError::InvalidArguments(format!(
+            "unknown skill subcommand `{subcommand}` (expected tasks or run)"
+        )));
+    }
+
+    let is_run = subcommand == "run";
+    let mut path = None;
+    let mut repo_override = None;
+    let mut selector = None;
+    let mut output_json = false;
+    let mut passthrough = Vec::new();
+    let mut passthrough_mode = false;
+    while let Some(arg) = args.next() {
+        if passthrough_mode {
+            passthrough.push(arg);
+            continue;
+        }
+        match arg.as_str() {
+            "--" if is_run => {
+                passthrough_mode = true;
+                passthrough.push("--".to_owned());
+            }
+            "--path" => {
+                let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--path".to_owned(),
+                })?;
+                path = Some(PathBuf::from(value));
+            }
+            "--repo" if is_run => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Skill)),
+            other if is_run && !other.starts_with('-') && selector.is_none() => {
+                selector = Some(other.to_owned());
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let path = path.ok_or_else(|| {
+        CliParseError::InvalidArguments(format!(
+            "`effigy skill {subcommand}` requires --path <SKILL_DIR|EFFIGY_TOML>"
+        ))
+    })?;
+    let subcommand = if is_run {
+        let selector = selector.ok_or_else(|| {
+            CliParseError::InvalidArguments(
+                "`effigy skill run` requires a task selector".to_owned(),
+            )
+        })?;
+        SkillSubcommand::Run {
+            path,
+            task: TaskInvocation {
+                name: selector,
+                args: passthrough,
+            },
+            repo_override,
+        }
+    } else {
+        if !passthrough.is_empty() {
+            return Err(CliParseError::InvalidArguments(
+                "`effigy skill tasks` does not accept task arguments".to_owned(),
+            ));
+        }
+        SkillSubcommand::Tasks { path }
+    };
+    Ok(Command::Skill(SkillArgs {
+        subcommand,
+        output_json,
+    }))
 }
 
 fn parse_papercuts_command<I>(args: I) -> Result<Command, CliParseError>

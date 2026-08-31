@@ -28,7 +28,9 @@ impl<'a> ExecutionTaskContext<'a> {
             selector: &preflight.selector,
             selection,
             resolved_root: &preflight.resolved.resolved_root,
-            repo_for_task: selection.catalog.catalog_root.clone(),
+            repo_for_task: preflight
+                .task_execution_root(&selection.catalog.catalog_root)
+                .to_path_buf(),
             command,
         }
     }

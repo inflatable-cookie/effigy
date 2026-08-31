@@ -1,0 +1,8 @@
+[catalog]
+alias = "consumer-one"
+
+[task_defaults]
+run_in = "container"
+
+[tasks.collision]
+run = "printf 'consumer-selector\\n'"

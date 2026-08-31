@@ -34,27 +34,44 @@ where
         catalogs,
         task_scope_cwd,
         resolver,
+        execution_root,
         ..
     } = resolution;
+    let split_source_target = execution_root != task_scope_cwd;
     match resolve_reference_target(parsed, catalogs, task_scope_cwd, resolver) {
         Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
             command: render_builtin_reference_invocation(
                 &parsed.selector_rendered,
                 args_rendered,
-                task_scope_cwd,
+                if split_source_target {
+                    execution_root
+                } else {
+                    task_scope_cwd
+                },
             )?,
-            cwd: task_scope_cwd.to_path_buf(),
+            cwd: if split_source_target {
+                execution_root.to_path_buf()
+            } else {
+                task_scope_cwd.to_path_buf()
+            },
         }),
-        Ok(ReferenceTarget::Catalog(selection)) => Ok(ResolvedReferenceRun {
-            command: render_selected_task_invocation(
-                &selection,
-                &parsed.selector_rendered,
-                &parsed.selector.task_name,
-                resolution,
-                || missing_run_error(&selection),
-            )?,
-            cwd: selection.catalog.catalog_root.clone(),
-        }),
+        Ok(ReferenceTarget::Catalog(selection)) => {
+            let cwd = if split_source_target {
+                execution_root.to_path_buf()
+            } else {
+                selection.catalog.catalog_root.clone()
+            };
+            Ok(ResolvedReferenceRun {
+                command: render_selected_task_invocation(
+                    &selection,
+                    &parsed.selector_rendered,
+                    &parsed.selector.task_name,
+                    resolution,
+                    || missing_run_error(&selection),
+                )?,
+                cwd,
+            })
+        }
         Err(error) => Err(error),
     }
 }
@@ -131,11 +148,25 @@ fn render_selected_task_run<'request, 'a>(
     let ReferenceResolution {
         args_rendered,
         catalogs,
+        task_scope_cwd,
         runtime_env_schema_override,
         depth,
         resolver,
+        execution_root,
+        invocation_cwd,
         ..
     } = resolution;
+    let split_source_target = execution_root != task_scope_cwd;
+    let repo_root = if split_source_target {
+        execution_root
+    } else {
+        &selection.catalog.catalog_root
+    };
+    let nested_invocation_cwd = if split_source_target {
+        invocation_cwd
+    } else {
+        &selection.catalog.catalog_root
+    };
     let env_schema_resolved = resolve_catalog_env_schema_with_ancestors(
         catalogs,
         &selection.catalog.catalog_root,
@@ -158,11 +189,11 @@ fn render_selected_task_run<'request, 'a>(
             env_profiles: &selection.catalog.manifest.env,
             args_rendered,
             args_raw: &[],
-            repo_root: &selection.catalog.catalog_root,
+            repo_root,
             bundle_root: selection.catalog.bundle_root.as_deref(),
             catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
-            invocation_cwd: &selection.catalog.catalog_root,
+            invocation_cwd: nested_invocation_cwd,
             runtime_env_schema_override,
             depth,
             resolver,

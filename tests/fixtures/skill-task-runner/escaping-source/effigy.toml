@@ -1,0 +1,5 @@
+[catalog]
+alias = "escaping-source"
+
+[manifest]
+include = ["../escaping-fragment.toml"]

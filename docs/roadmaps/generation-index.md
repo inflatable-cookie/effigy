@@ -191,19 +191,19 @@ consumer.
 agent, built-in, and generated docs, repaired verified gaps, added proportional
 recurrence guards, and closed with full evidence.
 
-`g08.035` is paused under strict spec `108` and contract `041`. Cards `1088`
+`g08.035` is active under strict spec `108` and contract `041`. Cards `1088`
 through `1090` cover the generic profile/structural foundation, bounded docs
 context query, and generic plus Northstar adoption proof. Card `1088` is
-complete; card `1089` resumes after the skill-runner lane.
+complete; card `1089` is ready.
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` audited the full scan
 family, the root agent instruction surface, current public feature coverage,
 active documentation, generated reference output, and shipped CLI help. Its
 closeout returned the active queue to card `1089`.
 
-`g08.037` is active under strict spec `110`, architecture `025`, and contract
-`042`. Ready card `1092` adds explicit isolated skill-task execution with a
-separate consumer target. Its closeout returns the queue to card `1089`.
+`g08.037` is complete under archived strict spec `110`, architecture `025`,
+and contract `042`. Card `1092` added explicit isolated skill-task execution
+with a separate consumer target and returned the queue to card `1089`.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -227,8 +227,8 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-Strict spec `110` and ready card `1092` own the active external skill-runner
-lane. Strict spec `108` is paused at card `1089`; strict spec `109` is archived.
+Strict spec `108` and ready card `1089` own the active documentation-context
+lane. Strict specs `109` and `110` are archived.
 Do not open `g09` or start release work from this selection.
 
 ## Research Roadmaps
@@ -263,7 +263,6 @@ closeout there first.
 ## Next Task
 
 Execute ready card
-[`1092`](./g08/batch-cards/1092-add-external-skill-task-runner.md), then resume
 [`1089`](./g08/batch-cards/1089-add-bounded-documentation-context-query.md).
 The second governance review remains due by 2026-09-17. No release action or
 `g09` rollover is implied.

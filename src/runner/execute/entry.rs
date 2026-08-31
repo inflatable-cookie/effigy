@@ -60,6 +60,17 @@ fn run_manifest_task_with_preflight_input_and_env(
 pub(in crate::runner) fn run_manifest_task_request(
     request: TaskExecutionRequest,
 ) -> Result<String, RunnerError> {
+    let runtime_context = request.runtime_context.clone();
+    if runtime_context.task_source().is_some() {
+        crate::runner::command_context::with_runtime_context(&runtime_context, || {
+            run_manifest_task_request_inner(request)
+        })
+    } else {
+        run_manifest_task_request_inner(request)
+    }
+}
+
+fn run_manifest_task_request_inner(request: TaskExecutionRequest) -> Result<String, RunnerError> {
     let plan = ExecutionDispatchPlan::from_request(request)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let invocation = TaskInvocation {

@@ -77,6 +77,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_rhai,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Skill),
+        render: render_skill,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Docs),
         render: render_docs,
     },
@@ -236,6 +240,10 @@ fn render_graph(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRe
 
 fn render_rhai(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_rhai_help(renderer)
+}
+
+fn render_skill(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_skill_help(renderer)
 }
 
 fn render_docs(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

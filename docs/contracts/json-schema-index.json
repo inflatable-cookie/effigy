@@ -17,6 +17,20 @@
       "status": "active"
     },
     {
+      "schema": "effigy.skill.tasks.v1",
+      "schema_version": 1,
+      "command": "effigy --json skill tasks --path <fixture_skill_source>",
+      "surface": "external skill task inventory",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.skill.run.v1",
+      "schema_version": 1,
+      "command": "effigy --json skill run --path <fixture_skill_source> skill-contract/probe --repo <fixture_skill_consumer>",
+      "surface": "external skill task execution",
+      "status": "active"
+    },
+    {
       "schema": "effigy.command.v1",
       "schema_version": 1,
       "command": "effigy --json deps --repo <fixture_task_success>",

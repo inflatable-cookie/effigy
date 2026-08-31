@@ -71,6 +71,8 @@ fn resolve_selected_run_or_task(
                 args_rendered: context.args_rendered,
                 catalogs: context.catalogs,
                 task_scope_cwd: context.task_scope_cwd,
+                execution_root: context.repo_root,
+                invocation_cwd: context.invocation_cwd,
                 runtime_env_schema_override: context.runtime_env_schema_override,
                 depth: context.depth,
                 resolver: context.resolver,

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::{collections::BTreeMap, ffi::OsString};
 
 use effigy_containers::ContainerCapturedExecOperation;
+use effigy_context::TaskSourceContext;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
     execute_rhai_script_with_runtime_context_and_secret_targets, install_stop_requested_flag,
@@ -66,7 +67,7 @@ pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
         stop_requested: install_stop_requested_flag().map_err(map_rhai_error)?,
     };
     let script = load_script(file, &context.cwd).map_err(map_rhai_error)?;
-    let runtime_context = active_runtime_context();
+    let runtime_context = active_runtime_context().map(attach_internal_task_source);
     execute_rhai_script_with_runtime_context_and_secret_targets(
         &context,
         runtime_context.as_ref(),
@@ -76,6 +77,26 @@ pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
         secret_targets,
     )
     .map_err(map_rhai_error)
+}
+
+fn attach_internal_task_source(
+    context: effigy_context::EffigyRuntimeContext,
+) -> effigy_context::EffigyRuntimeContext {
+    if context.task_source().is_some() {
+        return context;
+    }
+    let Some(source_root) = std::env::var_os(effigy_rhai::EFFIGY_RHAI_CATALOG_ROOT)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return context;
+    };
+    let manifest_path = source_root.join(effigy_manifest::TASK_MANIFEST_FILE);
+    context.with_task_source(TaskSourceContext::new(
+        source_root,
+        manifest_path,
+        vec!["preserved from nested Rhai task source".to_owned()],
+    ))
 }
 
 fn required_repo_root(args: &InternalScriptRunArgs) -> Result<PathBuf, RunnerError> {
