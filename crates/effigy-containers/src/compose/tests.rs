@@ -33,6 +33,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 #[test]
 fn resolve_compose_backend_returns_something() {
+    let _lock = env_lock();
     // Can't assert which backend without knowing the host, but it
     // should not panic.
     let _ = resolve_compose_backend();

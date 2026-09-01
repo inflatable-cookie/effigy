@@ -136,7 +136,10 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
     .expect("write manifest");
     fs::create_dir(root.join(".git")).expect("git dir");
 
-    let policy = load_container_policy(&root, Some("stack")).expect("policy");
+    let policy = {
+        let _lock = crate::test_env_lock();
+        load_container_policy(&root, Some("stack")).expect("policy")
+    };
 
     let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("rewritten compose");
     assert!(
@@ -293,7 +296,10 @@ primary_service = "app"
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = {
+        let _lock = crate::test_env_lock();
+        load_container_policy(&root, None).expect("policy")
+    };
     let expected = format!(
         "{}-dev",
         root.file_name().and_then(|name| name.to_str()).unwrap()
@@ -414,6 +420,7 @@ primary_service = "app"
 
 #[test]
 fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-inferred-ports");
     fs::write(
         root.join("effigy.toml"),
@@ -465,6 +472,7 @@ services:
 
 #[test]
 fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("inline-workspace-policy");
     fs::create_dir(root.join(".git")).expect("git dir");
     let inline = ManifestInlineWorkspaceContainerConfig {

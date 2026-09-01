@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-123424-papercuts-env-lock-audit.md`](./2026-09/01-123424-papercuts-env-lock-audit.md)
 - [`2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md`](./2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 - [`2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md`](./2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md)
 - [`2026-09/01-080923-rhai-profile-independent-limits-1094.md`](./2026-09/01-080923-rhai-profile-independent-limits-1094.md)
