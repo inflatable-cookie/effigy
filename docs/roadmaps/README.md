@@ -128,6 +128,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   explicit installed catalog-pack acquisition and recovery while retaining the
   permanent compiled baseline; card `1095` is complete and strict spec `113` is
   archived.
+  Ready [`g08.041`](./g08/041-catalog-fragment-listing-papercut.md) is a bounded
+  papercut interruption; card `1096` corrects bundled fragment inventory before
+  the queue returns to catalog-pack publication planning.
 
 ## Active Strict Lane
 
@@ -187,10 +190,11 @@ Before rollover:
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. That lane is not ready: it needs a real OCI
-coordinate and explicit workflow-edit authority. Keep release/install wiring,
-public no-argument update, S3, and `g09` rollover out of scope.
+Execute ready papercut card
+[`1096`](./g08/batch-cards/1096-fix-catalog-fragment-listing.md), then return to
+official catalog-pack publication planning under contract `043`. Keep
+publication, release/workflow work, public no-argument update, S3, and `g09`
+rollover out of card `1096`.
 
 ## Historical language boundary
 

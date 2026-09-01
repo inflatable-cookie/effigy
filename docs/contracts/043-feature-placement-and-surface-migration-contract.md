@@ -217,9 +217,8 @@ Stop and return to planning when:
 
 ## Next Task
 
-The acquisition prototype landed under completed card
-[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
-and archived strict spec `113`. Return to planning for official pack publication
-and concrete-asset cutover; that lane is not ready and needs a real OCI
-coordinate plus explicit workflow-edit authority. Keep release/install wiring,
-public no-argument update, and S3 out of it.
+Run bounded bundled-inventory papercut card
+[`1096`](../roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md)
+without changing this contract, then return to official pack publication and
+concrete-asset cutover planning. That later lane still needs a real OCI
+coordinate plus explicit workflow-edit authority.

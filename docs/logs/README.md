@@ -192,6 +192,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover. No official publication, release/workflow work, public no-argument
-update, or generation rollover has happened.
+Execute ready papercut card `1096` at
+`docs/roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md`, then return
+to official catalog-pack publication planning. No publication, release/workflow
+work, public no-argument update, or rollover is in card scope.

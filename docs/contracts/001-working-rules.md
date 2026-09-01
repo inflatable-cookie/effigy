@@ -96,6 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. That lane is not ready. No official publication,
-release/workflow work, or generation rollover has happened.
+Execute ready papercut card
+[`1096`](../roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md), then
+return to official catalog-pack publication planning under contract `043`.

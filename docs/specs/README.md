@@ -79,7 +79,8 @@ Other planning specs:
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`; that lane is not ready and needs a real OCI
-coordinate plus explicit workflow-edit authority. Keep draft `098` paused; no
-public no-argument update or generation rollover.
+Execute ready papercut card `1096` at
+`docs/roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md`. No strict
+spec is needed for its settled membership rule. Then return to official
+catalog-pack publication planning under contract `043`; keep draft `098`
+paused.
