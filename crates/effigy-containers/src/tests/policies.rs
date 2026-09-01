@@ -420,6 +420,7 @@ primary_service = "app"
 
 #[test]
 fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-inferred-ports");
     fs::write(
         root.join("effigy.toml"),
@@ -471,6 +472,7 @@ services:
 
 #[test]
 fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("inline-workspace-policy");
     fs::create_dir(root.join(".git")).expect("git dir");
     let inline = ManifestInlineWorkspaceContainerConfig {

@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn load_workspace_ownership_targets_collects_named_volume_targets() {
+    let _lock = crate::test_env_lock();
     let parent = std::env::temp_dir().join(format!(
         "effigy-workspace-ownership-targets-{}",
         std::time::SystemTime::now()
@@ -65,6 +66,7 @@ services:
 
 #[test]
 fn eject_generated_compose_promotes_generated_output_to_direct_ownership() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("eject-generated");
     fs::write(
         root.join("effigy.toml"),
@@ -283,6 +285,7 @@ primary_service = "app"
 
 #[test]
 fn generated_compose_policy_includes_managed_volumes() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("managed-volumes");
     fs::write(
         root.join("effigy.toml"),
@@ -311,6 +314,7 @@ working_subdir = "managed-volumes"
 
 #[test]
 fn generated_compose_policy_includes_declared_media_mounts_and_prepares_source_dirs() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("managed-media");
     fs::write(
         root.join("effigy.toml"),
@@ -356,6 +360,7 @@ catalog = "mariadb"
 
 #[test]
 fn generated_compose_policy_includes_declared_host_mounts_on_repo_root_services() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("generated-host-mounts");
     let sibling = tempfile::tempdir().expect("sibling tempdir");
     fs::create_dir_all(sibling.path().join("public")).expect("mkdir sibling");
@@ -406,6 +411,7 @@ catalog = "mariadb"
 
 #[test]
 fn generated_compose_policy_includes_pull_production_hook() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("pull-production-policy");
     fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
     fs::write(

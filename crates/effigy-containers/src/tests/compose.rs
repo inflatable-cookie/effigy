@@ -18,6 +18,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
 #[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-services");
         fs::write(
             root.join("effigy.toml"),
@@ -105,6 +106,7 @@ variant = "default"
 #[test]
 fn load_container_policy_preserves_secret_runtime_file_delivery() {
     with_temp_effigy_home("catalog-secret-runtime-files", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-secret-runtime-files");
         fs::write(
             root.join("effigy.toml"),
@@ -234,6 +236,7 @@ variant = "default"
 #[test]
 fn generated_compose_uses_explicit_host_ports_when_declared() {
     with_temp_effigy_home("catalog-explicit-host-ports", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-explicit-host-ports");
         fs::write(
             root.join("effigy.toml"),
@@ -283,6 +286,7 @@ variant = "default"
 #[test]
 fn generated_compose_publish_address_can_opt_back_into_public_binding() {
     with_temp_effigy_home("catalog-public-publish-address", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-public-publish-address");
         fs::write(
             root.join("effigy.toml"),
@@ -358,6 +362,7 @@ version = "8.3"
 
 #[test]
 fn direct_compose_prefers_manifest_host_ports_over_inferred_ports() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-explicit-ports");
     fs::write(
         root.join("effigy.toml"),
@@ -396,6 +401,7 @@ services:
 #[test]
 fn generated_compose_auto_allocates_stable_project_ports() {
     with_temp_effigy_home("catalog-auto-ports", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-auto-ports");
         fs::write(
             root.join("effigy.toml"),
@@ -445,6 +451,7 @@ variant = "default"
 #[test]
 fn generated_compose_auto_allocates_distinct_ports_for_multiple_http_services() {
     with_temp_effigy_home("catalog-auto-ports-multi-http", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-auto-ports-multi-http");
         fs::write(
             root.join("effigy.toml"),
@@ -502,6 +509,7 @@ catalog = "phpmyadmin"
 #[test]
 fn generated_compose_keeps_runtime_ports_for_tcp_alias_services() {
     with_temp_effigy_home("catalog-loopback-tcp-aliases", |home| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-loopback-tcp-aliases");
         fs::write(
             root.join("effigy.toml"),
@@ -572,6 +580,7 @@ catalog = "minio"
 #[test]
 fn generated_php_workspace_defaults_to_non_root_identity() {
     with_temp_effigy_home("catalog-php-workspace-user", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-workspace-user");
         fs::write(
             root.join("effigy.toml"),
@@ -605,6 +614,7 @@ working_dir = "/var/www/html"
 #[test]
 fn generated_services_infer_working_dir_from_container_config() {
     with_temp_effigy_home("catalog-container-working-dir", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-container-working-dir");
         fs::write(
             root.join("effigy.toml"),
@@ -655,6 +665,7 @@ container = "web"
 #[test]
 fn generated_php_workspace_mounts_host_composer_home_when_enabled() {
     with_temp_effigy_home("catalog-php-composer-home", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-composer-home");
         let host_composer_home = root.join("host-composer-home");
         fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
@@ -710,6 +721,7 @@ working_dir = "/var/www/html"
 #[test]
 fn generated_php_workspace_does_not_mount_host_composer_home_by_default() {
     with_temp_effigy_home("catalog-php-composer-home-default-off", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-composer-home-default-off");
         let host_composer_home = root.join("host-composer-home");
         fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
@@ -762,6 +774,7 @@ working_dir = "/var/www/html"
 #[test]
 fn generated_php_workspace_can_disable_shared_composer_state_mounts() {
     with_temp_effigy_home("catalog-php-composer-shared-state-opt-out", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-composer-shared-state-opt-out");
         fs::write(
             root.join("effigy.toml"),
@@ -805,6 +818,7 @@ working_dir = "/var/www/html"
 #[test]
 fn generated_php_workspace_host_integration_and_shared_service_stack_proof_stays_stable() {
     with_temp_effigy_home("catalog-php-host-integration-proof", |_| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-php-host-integration-proof");
         let host_composer_home = root.join("host-composer-home");
         let ssh_dir = root.join("ssh-home");
@@ -907,6 +921,7 @@ working_dir = "/var/www/html"
 #[test]
 fn generated_compose_rewrites_shared_backing_services() {
     with_temp_effigy_home("catalog-shared-db", |home| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-shared-db");
         fs::write(
             root.join("effigy.toml"),
@@ -992,6 +1007,7 @@ shared = true
 #[test]
 fn shared_service_compose_keeps_runtime_host_port_and_adds_loopback_binding() {
     with_temp_effigy_home("catalog-shared-loopback-binding", |home| {
+        let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-shared-loopback-binding");
         fs::write(
             root.join("effigy.toml"),
@@ -1063,6 +1079,7 @@ catalog = "php-fpm"
 
 #[test]
 fn direct_compose_policy_writes_runtime_dns_override_for_declared_services() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("direct-compose-runtime-dns");
     fs::write(
         root.join("effigy.toml"),
@@ -1117,6 +1134,7 @@ services:
 
 #[test]
 fn generated_compose_runtime_dns_override_includes_project_and_alias_domains() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("generated-compose-route-parity");
     fs::write(
         root.join("effigy.toml"),
@@ -1179,6 +1197,7 @@ catalog = "mailpit"
 
 #[test]
 fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
+    let _lock = crate::test_env_lock();
     let parent = std::env::temp_dir().join(format!(
         "effigy-direct-compose-workspace-mounts-{}",
         std::time::SystemTime::now()
@@ -1305,6 +1324,7 @@ volumes:
 
 #[test]
 fn generated_php_nginx_stack_compacts_mirrored_named_volumes_across_services() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("catalog-php-nginx-shared-volume-compact");
     fs::write(
         root.join("effigy.toml"),

@@ -87,16 +87,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Friction: `crate::test_env_lock()` guarded process-global env mutations, but
   direct and helper-hidden reads of `HOME`, `PATH`, and
   `EFFIGY_COMPOSE_BACKEND` in the same test binary could still overlap them.
-- Cause: the audit covered mutation sites but not backend/Colima construction,
-  bundle user-config resolution, or direct `HOME` assertions.
+- Cause: the first audit covered direct reads, backend/Colima construction,
+  bundle user-config resolution, and direct `HOME` assertions, but missed the
+  helper-hidden runtime-DNS read reached by policy loads with services.
 - Fix (2026-09-01): added the existing lock as the precondition for every
-  audited direct read and helper path. Production env semantics are unchanged;
-  unrelated tests keep their parallel execution.
-- Recurrence proof: five repeated `cargo nextest run -p effigy-containers`
-  runs completed under nextest's parallel test scheduling, with 230/230 tests
-  passing each time.
-- Surface: `crates/effigy-containers/src/{colima/tests.rs,compose/tests.rs,mount_spec.rs,policy_support/generated_compose.rs}`;
-  `crates/effigy-containers/src/tests/{compose,policies}.rs`;
+  confirmed affected policy caller, including the two direct/generated runtime
+  DNS tests named in PR 69. Production env semantics are unchanged; empty and
+  error-before-read tests keep their parallel execution.
+- Recurrence proof: the corrected inventory and repeated focused validation are
+  recorded in `docs/logs/2026-09/01-123424-papercuts-env-lock-audit.md`.
+- Surface: `crates/effigy-containers/src/{colima/tests.rs,compose/tests.rs,mount_spec.rs,policy_support/generated_compose.rs,runtime/dns.rs}`;
+  `crates/effigy-containers/src/tests/{compose,policies,volumes_reports}.rs`;
   shared lock in `crates/effigy-containers/src/lib.rs`.
 
 ### [x] Rhai scripts can parse in release and fail in debug — 2026-08-31
