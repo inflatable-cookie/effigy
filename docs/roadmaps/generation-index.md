@@ -292,6 +292,6 @@ closeout there first.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
-Keep ranking, timeout, official catalog-pack publication, release/workflow,
-public no-argument update, and `g09` rollover out of this closed card's scope.
+Run cards `1100` through `1102` in parallel from their partitioned handoffs.
+Keep card `1099` ready, publication planning delegated, and same-repository
+review and merge serial. Do not open `g09`.

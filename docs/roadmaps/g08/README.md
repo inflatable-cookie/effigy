@@ -90,6 +90,14 @@ This generation should help agents and maintainers answer questions like:
 - [`037-external-skill-task-runner.md`](./037-external-skill-task-runner.md)
 - [`038-help-first-command-discovery.md`](./038-help-first-command-discovery.md)
 - [`039-rhai-profile-independent-limits-papercut.md`](./039-rhai-profile-independent-limits-papercut.md)
+- [`040-catalog-pack-acquisition-prototype.md`](./040-catalog-pack-acquisition-prototype.md)
+- [`041-catalog-fragment-listing-papercut.md`](./041-catalog-fragment-listing-papercut.md)
+- [`042-markdown-frontmatter-extraction-papercut.md`](./042-markdown-frontmatter-extraction-papercut.md)
+- [`043-docs-context-no-match-benchmark-isolation-papercut.md`](./043-docs-context-no-match-benchmark-isolation-papercut.md)
+- [`044-rhai-storage-create-only.md`](./044-rhai-storage-create-only.md)
+- [`045-child-catalog-suite-registry-papercut.md`](./045-child-catalog-suite-registry-papercut.md)
+- [`046-docs-context-time-budget-papercut.md`](./046-docs-context-time-budget-papercut.md)
+- [`047-docs-context-traversal-budget-papercut.md`](./047-docs-context-traversal-budget-papercut.md)
 
 ## Design Posture
 
@@ -279,6 +287,9 @@ through card `1093`. Strict spec `112` and `g08.039` are complete through card
 - [`1094-fix-rhai-profile-dependent-expression-limits.md`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
 - [`1095-prototype-catalog-pack-acquisition.md`](./batch-cards/1095-prototype-catalog-pack-acquisition.md)
 - [`1099-add-rhai-storage-create-only.md`](./batch-cards/1099-add-rhai-storage-create-only.md)
+- [`1100-preserve-ancestor-container-registry.md`](./batch-cards/1100-preserve-ancestor-container-registry.md)
+- [`1101-bound-docs-context-cold-refresh.md`](./batch-cards/1101-bound-docs-context-cold-refresh.md)
+- [`1102-reserve-docs-context-traversal-slot.md`](./batch-cards/1102-reserve-docs-context-traversal-slot.md)
 
 ## Current State
 
@@ -366,7 +377,13 @@ that vocabulary dependency. Evidence:
 adds atomic create-if-absent behavior to the retained Rhai storage PUT surface
 after Bovine PR 32 proved HEAD then PUT cannot close the collision race.
 
+`g08.045` through `g08.047` are ready as three independent papercut lanes.
+Cards `1100` through `1102` own child-catalog registry preservation, cold
+docs-context time bounds/progress, and traversal-budget reachability. Their
+runtime write sets are partitioned; shared front doors remain orchestrator-owned.
+
 ## Next Task
 
-Run card `1099`, resume Bovine PR 32 after the Effigy dependency merges, then
-return to official catalog-pack publication planning under contract `043`.
+Dispatch cards `1100`, `1101`, and `1102` in parallel. Keep card `1099` ready
+as its existing strict lane and keep publication planning in its existing
+delegate workspace. Merge Effigy PRs one at a time.

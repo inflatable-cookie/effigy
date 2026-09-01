@@ -7,6 +7,20 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Child-catalog suite task refs lose ancestor `[containers]` registry — 2026-09-01
+- Friction: a configured suite `{ task = "cream/test:unit" }` expands by
+  changing cwd to the child catalog. Repository discovery then treats the child
+  as root and loses the already loaded ancestor `[containers]` registry, so
+  `run_in = "container"` has no target.
+- Impact: child-catalog suites using task refs cannot inherit the workspace
+  container default. Acowtancy card `162` keeps its workspace-root re-entry
+  workaround until the Effigy repair is merged and downstream revalidated.
+- Possible fix: preserve the originating catalog graph and ancestor execution
+  registry while applying the selected child catalog's cwd and explicit
+  overrides.
+- Surface: Effigy test suite task-ref expansion and container registry lookup;
+  reclassified from Acowtancy for Effigy-owned repair.
+
 ### [ ] `docs context` traversal is unreachable on a large corpus — 2026-08-31
 - Friction: traversed results rank after every 0-hop result, so a repository
   with more lexical seeds than `--max-sections` never surfaces a typed relation.

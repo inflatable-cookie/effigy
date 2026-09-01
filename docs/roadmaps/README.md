@@ -141,11 +141,20 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Ready [`g08.044`](./g08/044-rhai-storage-create-only.md) adds atomic
   create-if-absent behavior to the retained Rhai storage surface; card `1099`
   is ready under contract `044`.
+  Ready [`g08.045`](./g08/045-child-catalog-suite-registry-papercut.md)
+  preserves an ancestor container registry during child-catalog suite task-ref
+  expansion; card `1100` is ready under contract `038`.
+  Ready [`g08.046`](./g08/046-docs-context-time-budget-papercut.md) shares the
+  graph time budget and progress boundary with cold docs-context refresh; card
+  `1101` is ready under contract `041`.
+  Ready [`g08.047`](./g08/047-docs-context-traversal-budget-papercut.md)
+  reserves bounded result capacity for typed-relation traversal; card `1102`
+  is ready under contract `041`.
 
 ## Active Strict Lane
 
-No active strict lane. Spec `113` is archived after the catalog-pack
-acquisition prototype closed under architecture `026` and contract `043`.
+Strict spec `114` remains ready for card `1099`. Cards `1100` through `1102`
+are bounded papercut lanes with contract anchors and no strict specs.
 
 ## Research Program
 
@@ -200,10 +209,10 @@ Before rollover:
 
 ## Next Task
 
-Run card `1099` to unblock Bovine PR 32, then return to official catalog-pack
-publication planning under contract `043`. Keep ranking, timeout,
-release/workflow, public no-argument update, S3 extraction, and `g09` rollover
-out of that publication lane until it is ready.
+Dispatch cards `1100`, `1101`, and `1102` in parallel from their committed
+handoffs. Card `1099` remains ready and separate; catalog-pack publication
+planning continues in its existing delegate workspace. Merge same-repository
+PRs serially after exact-head review.
 
 ## Historical language boundary
 

@@ -80,5 +80,7 @@ Other planning specs:
 
 ## Next Task
 
-Run card `1099` under strict spec `114`, then resume Bovine PR 32 and return to
-official catalog-pack publication planning. Keep draft `098` paused.
+Keep card `1099` ready under strict spec `114`. Cards `1100` through `1102`
+run as bounded contract-backed papercut lanes without new strict specs;
+catalog-pack publication planning remains separately delegated. Keep draft
+`098` paused.

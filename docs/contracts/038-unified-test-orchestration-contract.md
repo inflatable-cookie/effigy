@@ -54,6 +54,15 @@ Suite planning renders the resolved target, source, suite, command or step
 chain, cwd, lifecycle stages, and forwarded arguments. Opaque runtime behavior
 must be labelled; planning must not execute it to discover more detail.
 
+Task-reference expansion preserves two distinct contexts. The selected catalog
+owns the task working directory. The originating repository owns the already
+loaded catalog graph and execution registries, including an ancestor
+`[containers]` default. A child catalog's explicit execution registry wins;
+the ancestor registry is the fallback. Expansion must not rerun repository
+discovery from the child working directory and silently discard that fallback.
+Direct invocation from the child remains governed by normal root selection and
+does not gain ambient configuration from an undeclared ancestor.
+
 ## Workspace Ownership
 
 Root fanout includes declared catalogs by default. When a parent suite already
@@ -116,8 +125,11 @@ must name this migration directly.
 - a second test configuration authority appears
 - mixed-root detection stops returning every supported ecosystem
 - migration or starter guidance emits `tasks.test`
+- a suite task reference changes cwd by rebuilding repository context and loses
+  an already loaded ancestor execution registry
 
 ## Next Task
 
-Maintain this contract through v0.11 release preparation. The implementation
-lane is complete; no release action is implied.
+Run card `1100` to preserve the ancestor container registry during child-catalog
+suite task-reference expansion. No Acowtancy change or release action is
+implied.

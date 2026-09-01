@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-175827-parallel-papercuts-frontier-planning.md`](./2026-09/01-175827-parallel-papercuts-frontier-planning.md)
 - [`2026-09/01-150452-no-match-benchmark-isolation-1098.md`](./2026-09/01-150452-no-match-benchmark-isolation-1098.md)
 - [`2026-09/01-135932-markdown-frontmatter-1097.md`](./2026-09/01-135932-markdown-frontmatter-1097.md)
 - [`2026-09/01-133154-catalog-fragment-listing-1096.md`](./2026-09/01-133154-catalog-fragment-listing-1096.md)
@@ -195,6 +196,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
-Ranking, timeout, release/workflow, S3, and rollover work stay out of this
-closed card's scope.
+Run cards `1100` through `1102` in parallel. Each worker writes one unique
+closeout log; the orchestrator retains shared front-door integration and serial
+merge authority.

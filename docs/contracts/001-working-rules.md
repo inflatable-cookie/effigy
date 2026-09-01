@@ -96,4 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
+Run cards `1100` through `1102` from committed worker handoffs in parallel.
+Shared front doors and same-repository merge order remain with the Effigy
+orchestrator; card `1099` and publication planning keep their existing owners.

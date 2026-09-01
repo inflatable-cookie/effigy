@@ -127,6 +127,10 @@ Standard leading `--repo <PATH>` and `--json` behavior applies.
 - hard limits: `max-sections <= 32`, `max-bytes <= 100000`, `max-hops <= 3`
 - all budgets must be positive
 - a query refreshes the shared graph through the existing freshness path
+- lazy refresh uses the shared graph wall-clock policy,
+  `EFFIGY_GRAPH_TIMEOUT_MS`; `0` disables the bound
+- a cold or stale refresh emits one progress notice on stderr before the
+  repository walk; text and JSON stdout remain contract-pure
 - an empty or whitespace-only query is a usage error
 - no-match is a successful empty report, not a fallback to arbitrary files
 
@@ -153,7 +157,11 @@ The payload contains source evidence, not an answer or generated summary.
 3. Rank textual relevance before currentness and authority.
 4. Traverse only configured relation edges up to `max-hops`.
 5. Deduplicate overlapping sections from the same document.
-6. Apply section count and byte budgets deterministically.
+6. Apply section count and byte budgets deterministically. When
+   `max-sections >= 2`, preserve the highest-ranked lexical result and reserve
+   one slot for the highest-ranked traversed candidate that fits whole. Fill
+   remaining slots with the existing rank order. With `max-sections = 1`, keep
+   the single best lexical result.
 7. Preserve at least the matched source span or omit the result with an explicit
    budget diagnostic; never emit a misleading partial line.
 
@@ -166,6 +174,10 @@ The documentation graph shares the code graph database, lock, health, and lazy
 refresh behavior. A normalized profile fingerprint joins the freshness identity.
 A profile edit must refresh semantic documentation records even when Markdown
 files did not change.
+
+The graph command and every lazy-refresh consumer share one time-budget parser,
+bounded execution path, typed timeout detail, health snapshot, and recovery
+guidance. A docs query must not introduce a second refresh or timeout model.
 
 No second index directory or background service is allowed.
 
@@ -212,5 +224,6 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Return this contract to maintenance state and the project queue to official
-catalog-pack publication planning.
+Run cards `1101` and `1102` in parallel for the shared cold-refresh bound and
+bounded traversal allocation. Keep one refresh path and one ranking
+implementation.

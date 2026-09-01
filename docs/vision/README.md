@@ -63,6 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Return to official catalog-pack publication planning under architecture
-`026` and contract `043`. The second governance review remains due by
-2026-09-17.
+Execute the three bounded ready papercut lanes under contracts `038` and `041`
+while catalog-pack publication planning continues under architecture `026` and
+contract `043`. The second governance review remains due by 2026-09-17.

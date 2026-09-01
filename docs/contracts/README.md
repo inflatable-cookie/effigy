@@ -284,5 +284,6 @@ exclusive-create boundary.
 
 ## Next Task
 
-Run card `1099` under contract `044`, then resume Bovine PR 32 and return to
-official catalog-pack publication planning under contract `043`.
+Run cards `1100` through `1102` in parallel under contracts `038` and `041`.
+Keep card `1099` ready under contract `044`; catalog-pack publication planning
+continues independently under contract `043`.
