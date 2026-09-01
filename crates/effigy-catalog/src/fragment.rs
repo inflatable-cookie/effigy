@@ -439,16 +439,21 @@ impl CatalogResolver {
     }
 
     /// List fragments from the bundled catalog.
+    ///
+    /// Bundled membership is first-level directories that carry `service.toml`.
+    /// Root docs/examples and directories without a service manifest are ignored.
+    /// Filesystem override and installed-pack listing remain directory-based
+    /// and are unchanged by this filter.
     fn list_bundled_fragments(seen: &mut HashMap<String, FragmentInfo>) {
         for path in BundledCatalog::iter() {
-            // Extract the fragment name from the first path component.
-            if let Some(name) = path.split('/').next() {
-                seen.entry(name.to_string())
-                    .or_insert_with(|| FragmentInfo {
-                        name: name.to_string(),
-                        source: FragmentSource::Bundled,
-                    });
-            }
+            let Some(name) = bundled_fragment_name_from_asset_path(&path) else {
+                continue;
+            };
+            seen.entry(name.to_string())
+                .or_insert_with(|| FragmentInfo {
+                    name: name.to_string(),
+                    source: FragmentSource::Bundled,
+                });
         }
     }
 
@@ -517,4 +522,87 @@ pub struct FragmentInfo {
     pub name: String,
     /// Which layer it was resolved from.
     pub source: FragmentSource,
+}
+
+/// Return the fragment name when `path` is a first-level bundled service
+/// manifest (`<name>/service.toml`).
+fn bundled_fragment_name_from_asset_path(path: &str) -> Option<&str> {
+    let name = path.strip_suffix("/service.toml")?;
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_fragment_name_from_asset_path;
+
+    #[test]
+    fn root_assets_are_not_fragment_names() {
+        assert_eq!(bundled_fragment_name_from_asset_path("README.md"), None);
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("compose.override.example.yml"),
+            None
+        );
+    }
+
+    #[test]
+    fn manifest_less_directory_assets_are_not_fragments() {
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("scratch/compose.fragment.yml"),
+            None
+        );
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("scratch/Dockerfile"),
+            None
+        );
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("scratch/configs/default.conf"),
+            None
+        );
+    }
+
+    #[test]
+    fn first_level_service_toml_is_the_fragment_name() {
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("postgres/service.toml"),
+            Some("postgres")
+        );
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("php-fpm/service.toml"),
+            Some("php-fpm")
+        );
+    }
+
+    #[test]
+    fn nested_service_toml_paths_are_rejected() {
+        assert_eq!(
+            bundled_fragment_name_from_asset_path("group/postgres/service.toml"),
+            None
+        );
+        assert_eq!(bundled_fragment_name_from_asset_path("service.toml"), None);
+    }
+
+    #[test]
+    fn inventory_from_mixed_paths_is_sorted_and_deduplicated() {
+        let paths = [
+            "README.md",
+            "compose.override.example.yml",
+            "scratch/compose.fragment.yml",
+            "redis/service.toml",
+            "redis/compose.fragment.yml",
+            "nginx/service.toml",
+            "nginx/configs/default.conf",
+            "postgres/service.toml",
+            "postgres/service.toml",
+        ];
+        let mut names: Vec<&str> = paths
+            .iter()
+            .filter_map(|path| bundled_fragment_name_from_asset_path(path))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names, vec!["nginx", "postgres", "redis"]);
+    }
 }

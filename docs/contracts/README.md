@@ -281,7 +281,6 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Execute ready card
-[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
-under contract `043`. Keep official publication, release/install wiring,
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. Keep official publication, release/install wiring,
 public no-argument update, and S3 deferred.

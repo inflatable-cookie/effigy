@@ -218,9 +218,9 @@ contract `043`. Card `1095` landed explicit catalog-pack acquisition, selection,
 recovery, and diagnostics while retaining the permanent compiled baseline. No
 official pack is published.
 
-`g08.041` is ready as a bounded papercut interruption. Card `1096` makes the
-bundled fragment inventory follow the existing `service.toml` membership rule,
-then returns the queue to publication planning.
+`g08.041` is complete. Card `1096` made bundled fragment inventory require a
+first-level `service.toml` without changing filesystem/pack directory listing,
+then returned the queue to publication planning.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -279,7 +279,7 @@ closeout there first.
 
 ## Next Task
 
-Execute ready papercut card
-[`1096`](./g08/batch-cards/1096-fix-catalog-fragment-listing.md). Keep official
-catalog-pack publication, release action, workflow edits, and `g09` rollover
-out of this card.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. Keep official catalog-pack publication, release
+action, workflow edits, and `g09` rollover out of ordinary day-to-day work
+until that lane is ready.

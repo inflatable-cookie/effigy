@@ -346,14 +346,13 @@ rollback/reset. Official publication and concrete-asset cutover remain planning.
 Evidence:
 [`01-095641-catalog-pack-acquisition-prototype-1095.md`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
-`g08.041` is ready as a bounded papercut interruption. Card `1096` corrects
-the bundled catalog fragment inventory without changing catalog packs, layers,
-schemas, or command contracts.
+`g08.041` is complete. Card `1096` made bundled fragment inventory require a
+first-level `service.toml` without changing filesystem/pack directory listing,
+catalog packs, layers, schemas, or command contracts. Evidence:
+[`01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md).
 
 ## Next Task
 
-Execute ready card
-[`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md), then return to
-official catalog-pack publication planning under contract `043`. No official
-publication, release/workflow work, public no-argument update, or generation
-rollover has happened.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. No official publication, release/workflow work,
+public no-argument update, or generation rollover has happened.

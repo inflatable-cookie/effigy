@@ -11,28 +11,33 @@ fn list_bundled_fragments() {
     let fragments = resolver.list();
 
     let names: Vec<&str> = fragments.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"php-fpm"), "missing php-fpm: {names:?}");
-    assert!(names.contains(&"nginx"), "missing nginx: {names:?}");
-    assert!(names.contains(&"mariadb"), "missing mariadb: {names:?}");
-    assert!(names.contains(&"postgres"), "missing postgres: {names:?}");
-    assert!(names.contains(&"redis"), "missing redis: {names:?}");
-    assert!(names.contains(&"memcached"), "missing memcached: {names:?}");
-    assert!(names.contains(&"mailpit"), "missing mailpit: {names:?}");
-    assert!(
-        names.contains(&"phpmyadmin"),
-        "missing phpmyadmin: {names:?}"
+    assert_eq!(
+        names,
+        vec![
+            "dbgate",
+            "elasticsearch",
+            "mailpit",
+            "mariadb",
+            "memcached",
+            "minio",
+            "nginx",
+            "node",
+            "pgweb",
+            "php-fpm",
+            "phpmyadmin",
+            "postgres",
+            "redis",
+            "workspace-rust-bun",
+        ],
+        "bundled inventory must be exactly the service.toml parents, sorted once"
     );
-    assert!(names.contains(&"pgweb"), "missing pgweb: {names:?}");
-    assert!(names.contains(&"dbgate"), "missing dbgate: {names:?}");
-    assert!(names.contains(&"minio"), "missing minio: {names:?}");
     assert!(
-        names.contains(&"elasticsearch"),
-        "missing elasticsearch: {names:?}"
+        !names.iter().any(|name| name.contains('.')),
+        "root docs/examples must not appear as fragment names: {names:?}"
     );
-    assert!(names.contains(&"node"), "missing node: {names:?}");
     assert!(
-        names.contains(&"workspace-rust-bun"),
-        "missing workspace-rust-bun: {names:?}"
+        !names.contains(&"README.md") && !names.contains(&"compose.override.example.yml"),
+        "root catalog assets leaked into the inventory: {names:?}"
     );
 
     // All should be bundled source.

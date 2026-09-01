@@ -4,10 +4,12 @@ Roadmap: [`../041-catalog-fragment-listing-papercut.md`](../041-catalog-fragment
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/043-feature-placement-and-surface-migration-contract.md`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: `effigy-catalog` bundled fragment inventory
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md)
 
 ## Purpose
 
@@ -32,14 +34,15 @@ reports 16 fragments when the bundled catalog contains 14 service manifests.
 
 ## Acceptance
 
-- [ ] root documentation and example files are not fragment names
-- [ ] a first-level directory without `service.toml` is not a fragment
-- [ ] every bundled `service.toml` parent is listed exactly once and sorted
-- [ ] current `service list` text and JSON expose the corrected inventory
-- [ ] no catalog layer, pack, schema, selection, extraction, or CLI contract
+- [x] root documentation and example files are not bundled fragment names
+- [x] a first-level bundled directory without `service.toml` is not listed
+- [x] every bundled `service.toml` parent is listed exactly once and sorted
+- [x] current `service list` text and JSON expose the corrected bundled inventory
+- [x] filesystem/pack listing remains directory-based and unchanged
+- [x] no catalog layer, pack, schema, selection, extraction, or CLI contract
       changes
-- [ ] focused catalog/CLI tests, `effigy qa`, fmt, clippy, and diff checks pass
-- [ ] papercut, roadmap, card, evidence, and active next-task pointers close
+- [x] focused catalog/CLI tests, `effigy qa`, fmt, clippy, and diff checks pass
+- [x] papercut, roadmap, card, evidence, and active next-task pointers close
       honestly and return to publication planning
 
 ## Review Oracle
@@ -77,5 +80,5 @@ release/workflow authority, or an unrelated cleanup.
 
 ## Next Task
 
-Execute this card, then return to official catalog-pack publication planning
-under contract `043`.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`.
