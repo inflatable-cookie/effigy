@@ -4,10 +4,12 @@ Roadmap: [`../047-docs-context-traversal-budget-papercut.md`](../047-docs-contex
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: documentation-context result selection
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-approved papercut routing
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md`](../../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md)
 
 ## Purpose
 
@@ -25,14 +27,14 @@ candidates outnumber the section budget.
 
 ## Acceptance
 
-- [ ] with more lexical seeds than `max-sections`, `max-sections >= 2` returns
+- [x] with more lexical seeds than `max-sections`, `max-sections >= 2` returns
       the best lexical result first and at least one `hops > 0` result
-- [ ] `max-sections = 1` returns only the best lexical result
-- [ ] without a traversed candidate all slots retain existing direct rank order
-- [ ] an oversized traversed section is omitted whole with a budget reason
-- [ ] relevance gates, authority/currentness ordering, provenance, hop limits,
+- [x] `max-sections = 1` returns only the best lexical result
+- [x] without a traversed candidate all slots retain existing direct rank order
+- [x] an oversized traversed section is omitted whole with a budget reason
+- [x] relevance gates, authority/currentness ordering, provenance, hop limits,
       and unrelated benchmark cases do not drift
-- [ ] focused codegraph tests, docs-context benchmark, full QA, Rust checks, and
+- [x] focused codegraph tests, docs-context benchmark, full QA, Rust checks, and
       diff checks pass
 
 ## Review Oracle

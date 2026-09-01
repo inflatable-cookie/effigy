@@ -711,3 +711,271 @@ fn nested_sections_deduplicate_toward_the_most_specific_match() {
     assert_eq!(bulletin.len(), 1, "overlapping spans must deduplicate");
     assert_eq!(bulletin[0].section_kind, "heading-h2");
 }
+
+/// More 0-hop lexical hits than a small section budget, plus one typed relation
+/// whose target does not itself match the query. Rank-order fill would spend
+/// every slot on lexical seeds; this corpus is the recurrence proof that the
+/// reserved traversal slot stays reachable.
+fn saturated_repo() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    for dir in [
+        "handbook/playbooks",
+        "handbook/bulletins",
+        "handbook/reference",
+    ] {
+        fs::create_dir_all(root.join(dir)).expect("mkdir");
+    }
+    fs::write(
+        root.join("handbook/playbooks/alpha.md"),
+        "# Recurrence seed\n\nState: live\n\nSee also: [follow-up](follow-up.md)\n\n## Steps\n\nThe recurrence procedure starts here.\n\n## See also\n\n- [follow-up](follow-up.md)\n",
+    )
+    .expect("write alpha");
+    for (name, title) in [
+        ("bravo", "Bravo note"),
+        ("charlie", "Charlie note"),
+        ("delta", "Delta note"),
+        ("echo", "Echo note"),
+    ] {
+        fs::write(
+            root.join(format!("handbook/playbooks/{name}.md")),
+            format!("# {title}\n\nState: live\n\n## Notes\n\nThe recurrence note for {name}.\n"),
+        )
+        .expect("write lexical sibling");
+    }
+    fs::write(
+        root.join("handbook/playbooks/follow-up.md"),
+        format!(
+            "# Follow-up\n\nState: live\n\nSee also: [next](next.md)\n\n## Rotation schedule\n\nThe follow-up rotation schedule.\n{}\n## See also\n\n- [next](next.md)\n",
+            "schedule note\n".repeat(200)
+        ),
+    )
+    .expect("write follow-up");
+    fs::write(
+        root.join("handbook/playbooks/next.md"),
+        "# Downstream\n\nState: live\n\n## Rota\n\nThe downstream rota.\n",
+    )
+    .expect("write next");
+    fs::write(
+        root.join("handbook/reference/charter.md"),
+        "# Charter\n\nState: live\n\n## Governance\n\nThe steering group meets each quarter to approve budgets.\n",
+    )
+    .expect("write charter");
+    fs::write(
+        root.join("handbook/playbooks/grommet-one.md"),
+        "# Grommet one\n\nState: live\n\n## Notes\n\nThe grommet note for one.\n",
+    )
+    .expect("write grommet one");
+    fs::write(
+        root.join("handbook/playbooks/grommet-two.md"),
+        "# Grommet two\n\nState: live\n\n## Notes\n\nThe grommet note for two.\n",
+    )
+    .expect("write grommet two");
+    fs::write(
+        root.join("handbook/playbooks/grommet-three.md"),
+        "# Grommet three\n\nState: live\n\n## Notes\n\nThe grommet note for three.\n",
+    )
+    .expect("write grommet three");
+    fs::write(root.join("effigy.toml"), GENERIC_PROFILE).expect("write manifest");
+    temp
+}
+
+fn saturated_recurrence(root: &Path, request: DocsContextRequest) -> DocsContextPayload {
+    bounded_query(root, "recurrence", request)
+}
+
+#[test]
+fn lexical_saturation_reserves_one_whole_traversal_slot() {
+    let temp = saturated_repo();
+    let unbounded = saturated_recurrence(temp.path(), DocsContextRequest::default());
+    let lexical = unbounded
+        .results
+        .iter()
+        .filter(|result| result.hops == 0)
+        .collect::<Vec<_>>();
+    assert!(
+        lexical.len() > 3,
+        "fixture must outnumber a 3-slot budget: {:?}",
+        identity(&unbounded)
+    );
+    assert_eq!(lexical[0].path, "handbook/playbooks/alpha.md");
+    assert!(
+        unbounded.results.iter().any(|result| result.hops > 0),
+        "unbounded report must include the relation target: {:?}",
+        identity(&unbounded)
+    );
+
+    let payload = saturated_recurrence(
+        temp.path(),
+        DocsContextRequest {
+            max_sections: Some(3),
+            max_hops: Some(1),
+            ..Default::default()
+        },
+    );
+    assert_eq!(payload.results.len(), 3);
+    assert_eq!(payload.results[0].path, lexical[0].path);
+    assert_eq!(payload.results[0].hops, 0);
+    assert_eq!(payload.results[0].rank, 1);
+    assert_eq!(payload.results[1].path, lexical[1].path);
+    assert_eq!(payload.results[1].hops, 0);
+    let traversed = payload
+        .results
+        .iter()
+        .find(|result| result.hops > 0)
+        .expect("reserved traversal slot");
+    assert_eq!(traversed.path, "handbook/playbooks/follow-up.md");
+    assert_eq!(traversed.rank, 3);
+    assert_eq!(traversed.hops, 1);
+    assert_eq!(traversed.match_kind, "relation");
+    assert_eq!(traversed.seed_path, "handbook/playbooks/alpha.md");
+    assert_eq!(traversed.relation_path.len(), 1);
+    assert_eq!(traversed.relation_path[0].relation, "see-also");
+    assert_eq!(
+        traversed.relation_path[0].from_path,
+        "handbook/playbooks/alpha.md"
+    );
+    assert_eq!(
+        traversed.relation_path[0].to_path,
+        "handbook/playbooks/follow-up.md"
+    );
+    let content = fs::read_to_string(temp.path().join(&traversed.path)).expect("read follow-up");
+    let start = traversed.span.start.byte as usize;
+    let end = traversed.span.end.byte as usize;
+    assert_eq!(traversed.source, &content[start..end]);
+    assert_eq!(traversed.bytes, traversed.source.len());
+    assert!(!content.to_ascii_lowercase().contains("recurrence"));
+    assert!(payload.truncation.section_budget_reached);
+    assert!(payload.truncation.hop_budget_reached);
+    assert!(payload
+        .truncation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("hop budget reached at 1 hop(s)")));
+    assert!(
+        payload
+            .results
+            .iter()
+            .all(|result| result.path != "handbook/playbooks/next.md"),
+        "hop-2 target must stay unselected at max-hops 1: {:?}",
+        identity(&payload)
+    );
+    assert!(
+        payload
+            .results
+            .iter()
+            .all(|result| result.path != "handbook/reference/charter.md"),
+        "unrelated authority must stay out: {:?}",
+        identity(&payload)
+    );
+}
+
+#[test]
+fn one_section_budget_keeps_the_best_lexical_result() {
+    let temp = saturated_repo();
+    let unbounded = saturated_recurrence(temp.path(), DocsContextRequest::default());
+    let payload = saturated_recurrence(
+        temp.path(),
+        DocsContextRequest {
+            max_sections: Some(1),
+            max_hops: Some(1),
+            ..Default::default()
+        },
+    );
+    assert_eq!(payload.results.len(), 1);
+    assert_eq!(payload.results[0].path, unbounded.results[0].path);
+    assert_eq!(payload.results[0].hops, 0);
+    assert_eq!(payload.results[0].match_kind, "lexical");
+    assert_eq!(payload.results[0], unbounded.results[0]);
+    assert!(payload.truncation.section_budget_reached);
+}
+
+#[test]
+fn without_traversal_every_slot_keeps_direct_rank_order() {
+    let temp = saturated_repo();
+    let unbounded = bounded_query(temp.path(), "grommet", DocsContextRequest::default());
+    assert!(
+        unbounded.results.iter().all(|result| result.hops == 0),
+        "grommet docs have no relations: {:?}",
+        identity(&unbounded)
+    );
+    assert!(unbounded.results.len() >= 3, "{:?}", identity(&unbounded));
+    let payload = bounded_query(
+        temp.path(),
+        "grommet",
+        DocsContextRequest {
+            max_sections: Some(2),
+            ..Default::default()
+        },
+    );
+    assert_eq!(payload.results.len(), 2, "reserved hole must not appear");
+    assert_eq!(payload.results[0], unbounded.results[0]);
+    assert_eq!(payload.results[1].path, unbounded.results[1].path);
+    assert_eq!(payload.results[1].hops, 0);
+    assert!(payload.truncation.section_budget_reached);
+    assert_eq!(
+        payload.truncation.omitted_sections,
+        unbounded.results.len() - 2
+    );
+}
+
+#[test]
+fn oversized_traversed_section_is_omitted_whole() {
+    let temp = saturated_repo();
+    let unbounded = saturated_recurrence(temp.path(), DocsContextRequest::default());
+    let first_bytes = unbounded.results[0].bytes;
+    let second_lexical = unbounded
+        .results
+        .iter()
+        .filter(|result| result.hops == 0)
+        .nth(1)
+        .expect("second lexical");
+    let follow_up = unbounded
+        .results
+        .iter()
+        .find(|result| result.path == "handbook/playbooks/follow-up.md")
+        .expect("unbounded follow-up");
+    assert!(
+        follow_up.bytes > second_lexical.bytes,
+        "follow-up must be too large for the leftover lexical slot"
+    );
+    let max_bytes = first_bytes + second_lexical.bytes;
+    let payload = saturated_recurrence(
+        temp.path(),
+        DocsContextRequest {
+            max_sections: Some(2),
+            max_bytes: Some(max_bytes),
+            max_hops: Some(1),
+            ..Default::default()
+        },
+    );
+    assert_eq!(payload.results.len(), 2);
+    assert_eq!(payload.results[0].path, unbounded.results[0].path);
+    assert_eq!(payload.results[0].hops, 0);
+    assert_eq!(payload.results[1].hops, 0);
+    assert_eq!(payload.results[1].path, second_lexical.path);
+    assert!(
+        payload
+            .results
+            .iter()
+            .all(|result| result.path != "handbook/playbooks/follow-up.md"),
+        "oversized traversal must not enter: {:?}",
+        identity(&payload)
+    );
+    assert!(payload
+        .results
+        .iter()
+        .all(|result| result.bytes == result.source.len()));
+    assert!(payload.truncation.used_bytes <= max_bytes);
+    assert!(payload.truncation.byte_budget_reached);
+    assert!(payload
+        .truncation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("byte budget omitted `handbook/playbooks/follow-up.md`")));
+    assert!(!payload
+        .truncation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("partial")));
+}

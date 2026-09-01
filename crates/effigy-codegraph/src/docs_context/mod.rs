@@ -225,6 +225,11 @@ struct Selection {
 /// reasons; a partial section would read as complete evidence and mislead the
 /// caller. Skipping one oversized section never reorders the sections that are
 /// returned, so ordering stays relevance-first and reproducible.
+///
+/// When `max-sections >= 2` and a traversed candidate exists, the last slot is
+/// held for the highest-ranked whole traversed section that fits. That keeps
+/// 0-hop lexical saturation from consuming every slot without introducing a
+/// second ranker or leaving an empty hole when nothing traversed fits.
 fn select(
     repo_root: &Path,
     scope: &DocsScope,
@@ -232,43 +237,104 @@ fn select(
     candidates: &[Candidate],
     budgets: DocsContextBudgetSetPayload,
 ) -> Selection {
-    let mut cache: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let mut results = Vec::new();
-    let mut used_bytes = 0usize;
-    let mut section_budget_reached = false;
-    let mut byte_budget_reached = false;
-    let mut reasons = Vec::new();
+    let mut buf = SelectBuf {
+        repo_root,
+        scope,
+        contents,
+        budgets,
+        cache: BTreeMap::new(),
+        results: Vec::new(),
+        used_bytes: 0,
+        section_budget_reached: false,
+        byte_budget_reached: false,
+        reasons: Vec::new(),
+    };
+    let mut pending_traversal =
+        budgets.max_sections >= 2 && candidates.iter().any(|candidate| candidate.hops > 0);
 
     for candidate in candidates {
-        if results.len() >= budgets.max_sections {
-            section_budget_reached = true;
-            reasons.push(format!(
-                "section budget reached after {} sections",
-                budgets.max_sections
-            ));
+        if buf.results.len() >= budgets.max_sections {
+            buf.mark_section_budget();
             break;
         }
-        let Some(document) = scope.documents.get(&candidate.path) else {
-            continue;
-        };
-        let content = cache.entry(candidate.path.clone()).or_insert_with(|| {
-            match contents.get(&candidate.path) {
-                Some(content) => Some(content.clone()),
-                None => std::fs::read_to_string(repo_root.join(&candidate.path)).ok(),
+        if pending_traversal && candidate.hops == 0 && buf.results.len() + 1 == budgets.max_sections
+        {
+            pending_traversal = false;
+            if buf.add_best_fitting_traversal(candidates) {
+                buf.mark_section_budget();
+                break;
             }
-        });
-        let Some(content) = content.as_deref() else {
-            continue;
+        }
+        buf.try_add(candidate);
+    }
+
+    Selection {
+        omitted_sections: candidates.len().saturating_sub(buf.results.len()),
+        results: buf.results,
+        used_bytes: buf.used_bytes,
+        section_budget_reached: buf.section_budget_reached,
+        byte_budget_reached: buf.byte_budget_reached,
+        reasons: buf.reasons,
+    }
+}
+
+struct SelectBuf<'a> {
+    repo_root: &'a Path,
+    scope: &'a DocsScope,
+    contents: &'a BTreeMap<String, String>,
+    budgets: DocsContextBudgetSetPayload,
+    cache: BTreeMap<String, Option<String>>,
+    results: Vec<DocsContextResultPayload>,
+    used_bytes: usize,
+    section_budget_reached: bool,
+    byte_budget_reached: bool,
+    reasons: Vec<String>,
+}
+
+impl SelectBuf<'_> {
+    fn mark_section_budget(&mut self) {
+        if self.section_budget_reached {
+            return;
+        }
+        self.section_budget_reached = true;
+        self.reasons.push(format!(
+            "section budget reached after {} sections",
+            self.budgets.max_sections
+        ));
+    }
+
+    fn add_best_fitting_traversal(&mut self, candidates: &[Candidate]) -> bool {
+        for candidate in candidates.iter().filter(|candidate| candidate.hops > 0) {
+            if self.try_add(candidate) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn try_add(&mut self, candidate: &Candidate) -> bool {
+        let indexed = self.contents.get(&candidate.path).cloned();
+        let disk_path = self.repo_root.join(&candidate.path);
+        let content = self
+            .cache
+            .entry(candidate.path.clone())
+            .or_insert_with(|| indexed.or_else(|| std::fs::read_to_string(&disk_path).ok()))
+            .clone();
+        let Some(content) = content else {
+            return false;
         };
-        let Some(span) = candidate_span(scope, candidate) else {
-            continue;
+        let Some(span) = candidate_span(self.scope, candidate) else {
+            return false;
         };
-        let source = slice(content, span.start.byte, span.end.byte).to_owned();
+        let Some(document) = self.scope.documents.get(&candidate.path) else {
+            return false;
+        };
+        let source = slice(&content, span.start.byte, span.end.byte).to_owned();
         let bytes = source.len();
-        if used_bytes + bytes > budgets.max_bytes {
-            byte_budget_reached = true;
-            if reasons.len() < MAX_TRUNCATION_REASONS {
-                reasons.push(format!(
+        if self.used_bytes + bytes > self.budgets.max_bytes {
+            self.byte_budget_reached = true;
+            if self.reasons.len() < MAX_TRUNCATION_REASONS {
+                self.reasons.push(format!(
                     "byte budget omitted `{}`{}: {bytes} bytes exceed the remaining {}",
                     candidate.path,
                     candidate
@@ -276,25 +342,17 @@ fn select(
                         .and_then(|index| document.sections.get(index))
                         .map(|section| format!("#{}", section.anchor))
                         .unwrap_or_default(),
-                    budgets.max_bytes.saturating_sub(used_bytes)
+                    self.budgets.max_bytes.saturating_sub(self.used_bytes)
                 ));
             }
-            continue;
+            return false;
         }
-        used_bytes += bytes;
-        let rank = results.len() + 1;
-        results.push(result_payload(
+        self.used_bytes += bytes;
+        let rank = self.results.len() + 1;
+        self.results.push(result_payload(
             document, candidate, span, source, bytes, rank,
         ));
-    }
-
-    Selection {
-        omitted_sections: candidates.len().saturating_sub(results.len()),
-        results,
-        used_bytes,
-        section_budget_reached,
-        byte_budget_reached,
-        reasons,
+        true
     }
 }
 
