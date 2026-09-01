@@ -4,7 +4,7 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Blocked on card `1104` and explicit operator mutation authority
+Status: Blocked on explicit operator mutation authority
 Owner: protected pack publication and operator-controlled package visibility
 Created: 2026-09-01
 
@@ -38,5 +38,6 @@ non-deterministic retry, support-input drift, tag collision, or permission drift
 
 ## Next Task
 
-Blocked. Accepted publication evidence unblocks card `1106`; it does not
-authorize an Effigy binary release.
+Request a fresh operator instruction naming first publication. Accepted
+publication evidence unblocks card `1106`; it does not authorize an Effigy
+binary release.

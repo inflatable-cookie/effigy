@@ -96,5 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Update card `1104` to Ready after the card `1103` support floor is on pushed
-`main`. Do not create the pack repository before then.
+Request explicit operator authority for card `1105`. First catalog-pack
+publication remains blocked until that instruction names the external
+mutations.

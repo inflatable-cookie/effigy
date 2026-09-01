@@ -16,11 +16,11 @@ ceremony, surprise network access, or a second release authority.
 1. [`1103`](./batch-cards/1103-establish-catalog-pack-support-floor.md) —
    Complete: commit Effigy's compatibility authority.
 2. [`1104`](./batch-cards/1104-build-catalog-pack-repository-foundation.md) —
-   Ready: create/import/validate the dedicated public pack repository and prove
-   publication without pushing.
+   Complete: dedicated public pack repository, exact import, validation, and
+   no-push publication rehearsal.
 3. [`1105`](./batch-cards/1105-publish-first-official-catalog-pack.md) — blocked
-   on `1104` plus explicit operator mutation authority: publish and prove
-   `v1.0.0` and `stable` at one verified digest.
+   on explicit operator mutation authority: publish and prove `v1.0.0` and
+   `stable` at one verified digest.
 4. [`1106`](./batch-cards/1106-cut-over-generated-catalog-baseline.md) — blocked
    on accepted publication evidence: generate Effigy's baseline and lock, then
    prove offline and public-artifact drift.
@@ -54,6 +54,6 @@ serial.
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. Cards `1105`
-through `1108` remain blocked exactly as named above; no package or source tag
-may be published from card `1104`.
+Request explicit operator authority for card `1105`. Cards `1106` through
+`1108` remain blocked exactly as named above; no package, source tag,
+attestation, or `stable` state exists yet.

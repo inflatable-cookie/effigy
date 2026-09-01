@@ -156,9 +156,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Spec `115` is active for `g08.048`. Card `1103` is complete and card `1104` is
-ready for the dedicated public repository foundation. Later cards remain behind
-named publication, artifact, and operator gates.
+Spec `115` is active for `g08.048`. Cards `1103` and `1104` are complete. Card
+`1105` is blocked on explicit first-publication authority; later cards remain
+behind named artifact and cutover gates.
 
 ## Research Program
 
@@ -213,9 +213,8 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. Keep first
-publication, Effigy release execution, S3 extraction, and `g09` rollover behind
-their named gates.
+Request explicit operator authority for card `1105`. Keep Effigy release
+execution, S3 extraction, and `g09` rollover behind their named gates.
 
 ## Historical language boundary
 

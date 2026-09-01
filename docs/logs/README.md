@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-234606-catalog-pack-repository-foundation-1104.md`](./2026-09/01-234606-catalog-pack-repository-foundation-1104.md)
 - [`2026-09/01-202830-catalog-pack-support-floor-1103.md`](./2026-09/01-202830-catalog-pack-support-floor-1103.md)
 - [`2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md`](./2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md)
 - [`2026-09/01-184159-docs-context-time-budget-1101.md`](./2026-09/01-184159-docs-context-time-budget-1101.md)
@@ -202,5 +203,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. First
-publication remains a separate operator-gated mutation.
+Request explicit operator authority for card `1105`. First publication remains
+a separate operator-gated mutation.

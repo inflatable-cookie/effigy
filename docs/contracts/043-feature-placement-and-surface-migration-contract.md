@@ -342,7 +342,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
-[`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
-in the dedicated public pack repository. First publication remains
-operator-gated.
+Request explicit operator authority for
+[`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md).
+First publication remains blocked until the instruction names the annotated
+tag, GHCR package/public visibility, attestation, and `stable` mutations.

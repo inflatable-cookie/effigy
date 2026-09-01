@@ -63,6 +63,5 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. First
-publication remains gated. The second governance review remains due by
-2026-09-17.
+Request explicit operator authority for card `1105`. First publication remains
+gated. The second governance review remains due by 2026-09-17.

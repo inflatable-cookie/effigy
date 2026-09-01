@@ -390,11 +390,11 @@ child-catalog registry preservation, cold docs-context time bounds/progress,
 and traversal-budget reachability.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Card `1103` is complete and card `1104` is ready in the dedicated public
-repository. Cards `1105` through `1108` remain blocked by the named publication,
-artifact, and operator gates.
+`115`. Cards `1103` and `1104` are complete. Card `1105` is blocked on explicit
+first-publication authority; cards `1106` through `1108` remain behind their
+artifact and cutover gates.
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. Downstream
-Bovine and Acowtancy revalidation remain separately owned.
+Request explicit operator authority for card `1105`. Downstream Bovine and
+Acowtancy revalidation remain separately owned.

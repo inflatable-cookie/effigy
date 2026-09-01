@@ -4,7 +4,7 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: public `inflatable-cookie/effigy-catalog-pack` source and validation
 Created: 2026-09-01
 
@@ -54,5 +54,8 @@ any need to publish while proving the foundation.
 
 ## Next Task
 
-Execute this card from its committed worker handoff. After accepted merge and
-no-push proof, request explicit operator authority for card `1105`.
+Card `1104` merged in external PR
+[`inflatable-cookie/effigy-catalog-pack#1`](https://github.com/inflatable-cookie/effigy-catalog-pack/pull/1)
+at `168b9f530d51f666007663215207a4d9dcfc9c8b`. Request explicit operator
+authority for card `1105`; do not create the source tag, package, attestation,
+or `stable` state before that gate.

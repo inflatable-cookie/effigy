@@ -29,8 +29,8 @@ Historical command-reference rule:
 Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
-  catalog-pack publication and generated-baseline cutover; card `1103` complete,
-  card `1104` ready in the dedicated public repository
+  catalog-pack publication and generated-baseline cutover; cards `1103` and
+  `1104` complete, card `1105` operator-gated
 
 Queued strict lanes:
 
@@ -83,5 +83,4 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card `1104` in the dedicated public pack repository. Keep first
-publication and draft `098` paused.
+Request explicit operator authority for card `1105`. Keep draft `098` paused.
