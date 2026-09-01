@@ -102,6 +102,15 @@ replacement path and the consumer migration satisfies
 [contract 043](../contracts/043-feature-placement-and-surface-migration-contract.md).
 Extraction remains a placement direction, not current removal authority.
 
+The retained `storage::put` surface accepts an optional boolean `create_only`.
+When `create_only` is `true`, Effigy sends `If-None-Match: *` on the same
+PutObject request, so one of two writers racing for an absent key wins and the
+other fails with one stable diagnostic; a key occupied before or during the
+request is never overwritten. Omitting the option or passing `false` keeps the
+existing unconditional write. The collision diagnostic names only the
+create-only collision and never carries signed URLs, credentials, or response
+bodies.
+
 ## Return Shapes
 
 Process-like helpers return:

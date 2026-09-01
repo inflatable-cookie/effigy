@@ -138,9 +138,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.043`](./g08/043-docs-context-no-match-benchmark-isolation-papercut.md)
   isolates empty-result benchmark proof from Effigy's live documentation
   corpus; card `1098` is complete.
-  Ready [`g08.044`](./g08/044-rhai-storage-create-only.md) adds atomic
+  Completed [`g08.044`](./g08/044-rhai-storage-create-only.md) adds atomic
   create-if-absent behavior to the retained Rhai storage surface; card `1099`
-  is ready under contract `044`.
+  is complete and strict spec `114` is archived.
   Ready [`g08.045`](./g08/045-child-catalog-suite-registry-papercut.md)
   preserves an ancestor container registry during child-catalog suite task-ref
   expansion; card `1100` is ready under contract `038`.
@@ -153,7 +153,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Strict spec `114` remains ready for card `1099`. Cards `1100` through `1102`
+No active strict lane. Spec `114` is archived after the bounded Rhai storage
+create-only repair closed under contract `044`. Cards `1100` through `1102`
 are bounded papercut lanes with contract anchors and no strict specs.
 
 ## Research Program
@@ -209,10 +210,12 @@ Before rollover:
 
 ## Next Task
 
-Dispatch cards `1100`, `1101`, and `1102` in parallel from their committed
-handoffs. Card `1099` remains ready and separate; catalog-pack publication
-planning continues in its existing delegate workspace. Merge same-repository
-PRs serially after exact-head review.
+Pass card `1099`'s PR through exact-head orchestrator review to unblock Bovine
+PR 32. Dispatch cards `1100`, `1101`, and `1102` in parallel from their
+committed handoffs; catalog-pack publication planning continues in its existing
+delegate workspace. Merge same-repository PRs serially after exact-head review,
+and keep ranking, timeout, release/workflow, public no-argument update, S3
+extraction, and `g09` rollover out of that publication lane until it is ready.
 
 ## Historical language boundary
 

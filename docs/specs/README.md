@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`114`](./114-rhai-storage-create-only-strict-lane.md) — additive atomic
-  create-if-absent support for the retained Rhai storage consumer
+- none
 
 Queued strict lanes:
 
@@ -42,6 +41,8 @@ Archived strict lanes:
 - [`113`](./archive/113-catalog-pack-acquisition-prototype-strict-lane.md)
   archived after the in-repository catalog-pack acquisition prototype closed on
   2026-09-01
+- [`114`](./archive/114-rhai-storage-create-only-strict-lane.md) archived after
+  the bounded Rhai storage create-only repair closed on 2026-09-01
 - [`112`](./archive/112-rhai-profile-independent-limits-strict-lane.md) archived
   after profile-independent Rhai expression limits closed on 2026-09-01
 - [`108`](./archive/108-documentation-graph-profiles-strict-lane.md) archived
@@ -80,7 +81,7 @@ Other planning specs:
 
 ## Next Task
 
-Keep card `1099` ready under strict spec `114`. Cards `1100` through `1102`
-run as bounded contract-backed papercut lanes without new strict specs;
-catalog-pack publication planning remains separately delegated. Keep draft
-`098` paused.
+Pass card `1099`'s PR through exact-head orchestrator review, resume Bovine PR
+32 after merge. Cards `1100` through `1102` run as bounded contract-backed
+papercut lanes without new strict specs; catalog-pack publication planning
+remains separately delegated. Keep draft `098` paused.

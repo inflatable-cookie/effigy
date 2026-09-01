@@ -1,7 +1,9 @@
 # g08.044 Rhai Storage Create-Only
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Completed: 2026-09-01
+Evidence: [`../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md`](../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md)
 Spec: [`114`](../../specs/114-rhai-storage-create-only-strict-lane.md)
 Contract: [`044`](../../contracts/044-rhai-storage-create-only-contract.md)
 Consumer blocker: [Bovine PR 32](https://github.com/acowtancy/bovine-accelerator/pull/32#issuecomment-5497389670)
@@ -26,8 +28,7 @@ surface, unblocking Bovine's fail-closed upload collision repair.
 - Bovine remains a separate downstream PR and merge
 
 ## Card
-
-- [ ] [`1099`](./batch-cards/1099-add-rhai-storage-create-only.md) — ready
+- [x] [`1099`](./batch-cards/1099-add-rhai-storage-create-only.md) — complete
 
 ## Acceptance
 
@@ -39,5 +40,6 @@ surface, unblocking Bovine's fail-closed upload collision repair.
 
 ## Next Task
 
-Run card `1099`, merge after exact-head review, then resume the preserved
-Bovine PR 32 worker.
+Pass card `1099`'s PR through exact-head orchestrator review. After merge, the
+orchestrator resumes the preserved Bovine PR 32 worker and returns the queue to
+official catalog-pack publication planning under contract `043`.

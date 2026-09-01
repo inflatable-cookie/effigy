@@ -3,10 +3,12 @@
 Roadmap: [`../044-rhai-storage-create-only.md`](../044-rhai-storage-create-only.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/044-rhai-storage-create-only-contract.md`](../../../contracts/044-rhai-storage-create-only-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: `crates/effigy-rhai` storage host surface
 Created: 2026-09-01
 Ready since: 2026-09-01 Bovine consumer collision proof
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md`](../../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md)
 
 ## Purpose
 
@@ -31,14 +33,14 @@ writers can therefore pass the check and one overwrites the other.
 
 ## Acceptance
 
-- [ ] two same-key create-only requests yield exactly one successful write
-- [ ] winner bytes and checksum metadata remain after the loser returns
-- [ ] an already occupied key refuses without mutation
-- [ ] no HEAD, retry, lock, or unconditional fallback is introduced
-- [ ] omitted and false retain existing behavior
-- [ ] errors contain no signed URL, credential material, or response body
-- [ ] catalog, docs, changelog, and runtime use the same option spelling
-- [ ] focused storage tests, `effigy test --plan`, `effigy qa`,
+- [x] two same-key create-only requests yield exactly one successful write
+- [x] winner bytes and checksum metadata remain after the loser returns
+- [x] an already occupied key refuses without mutation
+- [x] no HEAD, retry, lock, or unconditional fallback is introduced
+- [x] omitted and false retain existing behavior
+- [x] errors contain no signed URL, credential material, or response body
+- [x] catalog, docs, changelog, and runtime use the same option spelling
+- [x] focused storage tests, `effigy test --plan`, `effigy qa`,
       `effigy doctor`, and `git diff --check` pass
 
 ## Review Oracle

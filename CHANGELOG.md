@@ -6,6 +6,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `storage::put` accepts an optional boolean `create_only`. When true, Effigy
+  attaches S3 `If-None-Match: *` to the same PutObject request that carries the
+  bytes, so exactly one of two writers racing for an absent key succeeds and an
+  occupied key is never overwritten. The loser receives one stable diagnostic
+  that names the create-only collision and never carries signed URLs,
+  credentials, or response bodies. Omitting the option or passing `false`
+  preserves the existing unconditional write byte-for-byte.
+
 ### Fixed
 - `perf:docs-context-benchmark` empty-result proof is fixture-owned. The live
   Effigy target keeps its authority and historical cases and no longer carries a
