@@ -851,6 +851,33 @@ pub enum ServiceSubcommand {
         service: String,
         dir: Option<PathBuf>,
     },
+    Pack(ServicePackSubcommand),
+}
+
+/// Management surface for independently versioned catalog packs, nested under
+/// the existing `service` owner.
+///
+/// There is deliberately no no-argument `update`: the official channel has no
+/// published artifact yet, so a public update command could not succeed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServicePackSubcommand {
+    /// Report the active selection, lineage, and health.
+    Status,
+    /// Install an explicit candidate and activate it after validation.
+    Install { source: ServicePackInstallSource },
+    /// Select the previous validated installed pack.
+    Rollback,
+    /// Select the compiled baseline, retaining installed content.
+    Reset,
+}
+
+/// Where an explicit install candidate comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServicePackInstallSource {
+    /// Digest-addressed `oci://` reference.
+    Oci { reference: String },
+    /// Explicitly operator-selected local directory.
+    Path { path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,9 +19,10 @@ pub mod check_id {
     pub const HEALTH_TASK_POSTURE: &str = "health.task.posture";
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
     pub const CONTAINER_WORKSPACE_OWNERSHIP: &str = "container.workspace-ownership";
+    pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 20] = [
+pub const ALL_CHECK_IDS: [&str; 21] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -42,6 +43,7 @@ pub const ALL_CHECK_IDS: [&str; 20] = [
     check_id::HEALTH_TASK_POSTURE,
     check_id::HEALTH_TASK_EXECUTE,
     check_id::CONTAINER_WORKSPACE_OWNERSHIP,
+    check_id::CATALOG_PACK_HEALTH,
 ];
 
 pub mod remediation {

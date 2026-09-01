@@ -2,8 +2,8 @@
 //!
 //! This crate provides:
 //!
-//! - Loading and parsing of service catalog fragments (bundled, user-global,
-//!   project-local).
+//! - Loading and parsing of service catalog fragments (bundled, installed
+//!   pack, user-global, project-local).
 //! - Parameter schema validation against `service.toml` declarations.
 //! - Template rendering via Jinja2-style syntax (minijinja).
 //! - Compose assembly from rendered fragments into a complete
@@ -16,6 +16,7 @@ pub mod assembly;
 pub mod error;
 pub mod fragment;
 pub mod output;
+pub mod pack;
 pub mod schema;
 pub mod starter;
 pub mod template;
@@ -23,8 +24,13 @@ pub mod volumes;
 
 pub use assembly::ComposeAssembler;
 pub use error::CatalogError;
-pub use fragment::{CatalogFragment, CatalogResolver};
+pub use fragment::{CatalogFragment, CatalogResolver, FragmentSource, InstalledPackLayer};
 pub use output::ComposeOutput;
+pub use pack::{
+    install_pack, resolve_catalog_layers, select_pack, CatalogLayers, InstalledPackRecord,
+    OfficialPackChannel, PackCandidateAcquirer, PackCandidateSource, PackError, PackManifest,
+    PackSelection, PackSelectionReason, PackSourceRecord, PackStore, PackStoreState,
+};
 pub use schema::{ParamSchema, ParamType, ServiceSchema};
 pub use starter::{Starter, StarterError, StarterFile, StarterInfo, StarterResolver};
 pub use template::TemplateRenderer;

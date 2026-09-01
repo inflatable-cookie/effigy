@@ -36,6 +36,6 @@ acquisition decisions moved into architecture `026`, contract `043`, and the
 
 ## Next Task
 
-Do not promote these residual questions into the active catalog-pack prototype.
-Revisit them only after card `1095` closes or when new consumer/provider
-evidence changes contract `043`.
+Card `1095` closed on 2026-09-01, so these questions are revisitable in
+planning. They are still open and still unscheduled: do not promote any of them
+without new consumer/provider evidence that changes contract `043`.

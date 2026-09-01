@@ -1,10 +1,16 @@
 //! Catalog fragment loading and resolution.
 //!
-//! Fragments are loaded from three layers (highest priority first):
+//! Fragments are loaded from four layers (highest priority first):
 //!
 //! 1. Project-local: `infra/dev/catalog/` in the repo
 //! 2. User-global: `~/.effigy/catalog/`
-//! 3. Bundled: embedded in the binary via `rust-embed`
+//! 3. Active installed catalog pack (see [`crate::pack`])
+//! 4. Bundled: embedded in the binary via `rust-embed`
+//!
+//! The bundled layer is the permanent compiled baseline. It is always present,
+//! needs no store, no `oras`, and no network, so a machine that has never
+//! installed a pack resolves exactly the bytes it resolved before packs
+//! existed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,8 +46,17 @@ pub struct CatalogFragment {
 /// Where a fragment was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FragmentSource {
-    /// Embedded in the binary.
+    /// Embedded in the binary — the permanent compiled baseline.
     Bundled,
+    /// Active installed catalog pack.
+    InstalledPack {
+        /// Pack identity from the installed manifest.
+        pack_id: String,
+        /// Pack version from the installed manifest.
+        pack_version: String,
+        /// Fragment directory inside the installed pack.
+        path: PathBuf,
+    },
     /// User-global override directory.
     UserGlobal(PathBuf),
     /// Project-local override directory.
@@ -52,10 +67,26 @@ impl std::fmt::Display for FragmentSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bundled => write!(f, "bundled"),
+            Self::InstalledPack {
+                pack_id,
+                pack_version,
+                ..
+            } => write!(f, "installed-pack ({pack_id} {pack_version})"),
             Self::UserGlobal(p) => write!(f, "user-global ({})", p.display()),
             Self::ProjectLocal(p) => write!(f, "project-local ({})", p.display()),
         }
     }
+}
+
+/// The active installed pack, as a resolvable catalog layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledPackLayer {
+    /// Directory holding the pack's fragment directories.
+    pub root: PathBuf,
+    /// Pack identity from the installed manifest.
+    pub pack_id: String,
+    /// Pack version from the installed manifest.
+    pub pack_version: String,
 }
 
 /// Embedded catalog assets — bundled into the binary at compile time.
@@ -70,6 +101,9 @@ pub struct CatalogResolver {
 
     /// User-global catalog path (e.g., `~/.effigy/catalog/`).
     user_global: Option<PathBuf>,
+
+    /// Active installed catalog pack, below both override layers.
+    installed_pack: Option<InstalledPackLayer>,
 }
 
 impl CatalogResolver {
@@ -80,7 +114,19 @@ impl CatalogResolver {
         Self {
             project_local,
             user_global,
+            installed_pack: None,
         }
+    }
+
+    /// Attach the active installed pack layer.
+    ///
+    /// Callers normally get this from
+    /// [`crate::pack::resolve_catalog_layers`] rather than building it by
+    /// hand, so layer order is decided in exactly one place.
+    #[must_use]
+    pub fn with_installed_pack(mut self, installed_pack: Option<InstalledPackLayer>) -> Self {
+        self.installed_pack = installed_pack;
+        self
     }
 
     /// Resolve a fragment by name, checking layers in priority order.
@@ -109,7 +155,23 @@ impl CatalogResolver {
             }
         }
 
-        // 3. Bundled
+        // 3. Active installed pack
+        if let Some(ref pack) = self.installed_pack {
+            let fragment_dir = pack.root.join(name);
+            if fragment_dir.is_dir() {
+                return Self::load_from_dir(
+                    name,
+                    &fragment_dir,
+                    FragmentSource::InstalledPack {
+                        pack_id: pack.pack_id.clone(),
+                        pack_version: pack.pack_version.clone(),
+                        path: fragment_dir.clone(),
+                    },
+                );
+            }
+        }
+
+        // 4. Compiled baseline
         Self::load_from_embedded(name)
     }
 
@@ -127,7 +189,12 @@ impl CatalogResolver {
             Self::list_dir_fragments(dir, FragmentSource::UserGlobal(dir.clone()), &mut seen);
         }
 
-        // Bundled (lowest priority)
+        // Active installed pack
+        if let Some(ref pack) = self.installed_pack {
+            Self::list_pack_fragments(pack, &mut seen);
+        }
+
+        // Compiled baseline (lowest priority)
         Self::list_bundled_fragments(&mut seen);
 
         let mut infos: Vec<_> = seen.into_values().collect();
@@ -343,6 +410,30 @@ impl CatalogResolver {
                             });
                     }
                 }
+            }
+        }
+    }
+
+    /// List fragments from the active installed pack.
+    fn list_pack_fragments(pack: &InstalledPackLayer, seen: &mut HashMap<String, FragmentInfo>) {
+        if let Ok(entries) = std::fs::read_dir(&pack.root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                seen.entry(name.to_string())
+                    .or_insert_with(|| FragmentInfo {
+                        name: name.to_string(),
+                        source: FragmentSource::InstalledPack {
+                            pack_id: pack.pack_id.clone(),
+                            pack_version: pack.pack_version.clone(),
+                            path: path.clone(),
+                        },
+                    });
             }
         }
     }

@@ -15,6 +15,25 @@ During v0.x, MINOR bumps may include breaking changes.
   because of build-profile drift.
 
 ### Added
+- `effigy service pack` manages independently versioned catalog packs:
+  `status`, `install oci://<REPO>@sha256:<DIGEST>`, `install --path <DIR>`,
+  `rollback`, and `reset`, each with text output, a standard JSON payload, and
+  standard leading `--repo` / `--json`. Catalog fragments now resolve through
+  four layers — project override, user override, active installed pack, then
+  the compiled baseline. The compiled baseline is permanent: a machine with no
+  pack store, no `oras`, and no network resolves exactly the fragments it
+  resolved before, and no ordinary catalog-backed command performs a network
+  probe. Installation is explicit and transactional — acquire, validate, store,
+  then activate — so a malformed, incompatible, or failed candidate leaves the
+  previous selection and previously installed content untouched. An active pack
+  that later becomes unreadable or incompatible falls back to the compiled
+  baseline with a visible warning, a structured `selection.reason` in JSON, and
+  a `catalog.pack-health` doctor finding naming one repair command. `rollback`
+  selects the previous validated install and `reset` selects the baseline
+  without deleting installed content or touching project/user overrides. There
+  is deliberately no `effigy service pack update`: the official channel is
+  fixed and baseline-owned so installed content cannot redirect it, but no
+  official artifact is published yet.
 - `effigy --help` and `effigy help` now group the built-in command surface by
   operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
   and `admin`. `effigy help <group>` renders one group's inventory, and

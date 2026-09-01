@@ -214,7 +214,9 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
+The acquisition prototype landed under completed card
 [`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
-under strict spec `113`. Keep official publication, release/install wiring,
-concrete-asset movement, public no-argument update, and S3 out of this lane.
+and archived strict spec `113`. Return to planning for official pack publication
+and concrete-asset cutover; that lane is not ready and needs a real OCI
+coordinate plus explicit workflow-edit authority. Keep release/install wiring,
+public no-argument update, and S3 out of it.

@@ -7,6 +7,36 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `effigy-containers` tests read process-global env without the env lock — 2026-09-01
+- Friction: `crate::test_env_lock()` exists and `colima/tests.rs` and
+  `compose/tests.rs` take it while swapping `HOME`, `PATH`, and
+  `EFFIGY_COMPOSE_BACKEND`. Other tests in the same binary read those variables
+  without taking it, so they fail intermittently under
+  `cargo test --workspace`. Hit during card `1095`: two
+  `validate_compose_backend_runtime_*` tests in `tests/policies.rs` failed once
+  in a full run and passed five times in isolation. Guarded in that batch; the
+  general pattern is unaudited.
+- Impact: the workspace suite goes red for reasons unrelated to the diff under
+  test, which trains people to re-run rather than read the failure.
+- Possible fix: audit every reader of `HOME`, `PATH`, and
+  `EFFIGY_COMPOSE_BACKEND` in `effigy-containers` tests and make the lock a
+  precondition, or move the overrides to thread-locals like
+  `effigy_manifest::with_test_user_config_home`.
+- Surface: `crates/effigy-containers/src/tests/policies.rs`;
+  `crates/effigy-containers/src/lib.rs` `test_env_lock`.
+
+### [ ] `service list` reports non-fragment bundled files as fragments — 2026-09-01
+- Friction: `CatalogResolver::list_bundled_fragments` takes the first path
+  component of every embedded asset, so `README.md` and
+  `compose.override.example.yml` at the root of `crates/effigy-catalog/catalog/`
+  appear as catalog fragments. `effigy service list` currently claims 16
+  fragments when 14 are real. Hit while smoke-testing card `1095`.
+- Impact: the listing overstates the catalog, and `README.md` is offered as
+  something you could reference from a manifest or extract.
+- Possible fix: only count an embedded path whose first component also has a
+  `service.toml`, matching how the filesystem layers decide what is a fragment.
+- Surface: `crates/effigy-catalog/src/fragment.rs` `list_bundled_fragments`.
+
 ### [ ] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
 - Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
   an empty report. Documenting its query inside `docs/`, `README.md`,

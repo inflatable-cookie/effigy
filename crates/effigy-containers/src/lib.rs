@@ -69,6 +69,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+use effigy_catalog::pack::{layered_resolver, CatalogLayers, PackStore};
 use effigy_catalog::CatalogResolver;
 use effigy_manifest::user_config::UserContainerBackendPreference;
 use effigy_manifest::ManifestContainerDriver;
@@ -95,11 +96,7 @@ pub(crate) fn resolve_catalog_network_contract(
     repo_root: Option<&Path>,
     catalog: &str,
 ) -> Result<Option<CatalogNetworkContract>, ContainerPolicyError> {
-    let resolver = CatalogResolver::new(
-        project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
-    );
-    let fragment = resolver.resolve(catalog)?;
+    let fragment = layered_catalog_resolver(repo_root).resolve(catalog)?;
     let capabilities = fragment.schema.capabilities;
     let (Some(domain_label), Some(container_port)) = (
         capabilities.loopback_alias_label,
@@ -122,10 +119,29 @@ fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-fn user_global_catalog_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let path = PathBuf::from(home).join(".effigy").join("catalog");
-    path.is_dir().then_some(path)
+/// Layered resolver for container work: project override, user override,
+/// active installed pack, compiled baseline.
+///
+/// Goes through `effigy_catalog::pack` so layer order and pack health live in
+/// one implementation, while `~/.effigy` discovery stays with this crate's
+/// existing `effigy_home_dir` (and its test override).
+pub(crate) fn layered_catalog_resolver(repo_root: Option<&Path>) -> CatalogResolver {
+    catalog_layers(project_local_catalog_dir(repo_root)).resolver
+}
+
+pub(crate) fn catalog_layers(project_local: Option<PathBuf>) -> CatalogLayers {
+    let home = crate::policy_support::effigy_home_dir();
+    let user_global = home
+        .as_ref()
+        .map(|home| home.join("catalog"))
+        .filter(|path| path.is_dir());
+    let store = home.as_deref().map(PackStore::under_home);
+    layered_resolver(
+        project_local,
+        user_global,
+        store.as_ref(),
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
 pub fn user_global_backend_preference() -> Option<BackendId> {

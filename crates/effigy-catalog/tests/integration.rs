@@ -11,6 +11,8 @@ use effigy_catalog::fragment::CatalogResolver;
 
 #[path = "integration/fragments.rs"]
 mod fragments;
+#[path = "integration/pack_layer.rs"]
+mod pack_layer;
 #[path = "integration/services.rs"]
 mod services;
 #[path = "integration/structure.rs"]

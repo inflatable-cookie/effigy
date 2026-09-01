@@ -2,8 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{
-    assembly::ServiceDeclaration, volumes::ManagedVolume, CatalogResolver, ComposeAssembler,
-    ComposeOutput,
+    assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler, ComposeOutput,
 };
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_gateway::loopback::LoopbackRegistry;
@@ -13,9 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
-    mount_spec::resolve_host_mounts, resolve_catalog_network_contract, ContainerPolicyError,
-    SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR,
-    SHARED_SERVICE_HOST,
+    layered_catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
+    ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
 };
 
 /// Host address used for generated compose port bindings when the manifest
@@ -281,11 +279,7 @@ pub(crate) fn resolve_compose_source(
     }
 
     let services = build_service_declarations(repo_root, bundle_root, config, &local_services)?;
-    let resolver = CatalogResolver::new(
-        project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
-    );
-    let assembler = ComposeAssembler::new(resolver);
+    let assembler = ComposeAssembler::new(layered_catalog_resolver(Some(repo_root)));
     let generated_catalog_root = format!("{GENERATED_RUNTIME_COMPOSE_DIR}/.effigy-catalog");
     let (host_uid, host_gid) = host_workspace_identity();
     let mut assembly = assembler.assemble(
@@ -397,10 +391,7 @@ fn build_service_declarations(
     container_config: &ManifestContainerConfig,
     services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
 ) -> Result<Vec<ServiceDeclaration>, ContainerPolicyError> {
-    let resolver = CatalogResolver::new(
-        project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
-    );
+    let resolver = layered_catalog_resolver(Some(repo_root));
 
     services
         .iter()
@@ -505,8 +496,7 @@ fn resolve_shared_service_bindings(
             variant: None,
             config: None,
         };
-        let resolver = CatalogResolver::new(None, user_global_catalog_dir());
-        let assembler = ComposeAssembler::new(resolver);
+        let assembler = ComposeAssembler::new(layered_catalog_resolver(None));
         let (host_uid, host_gid) = host_workspace_identity();
         let mut assembly = assembler.assemble(
             &[declaration],
@@ -795,8 +785,7 @@ fn shared_service_loopback_port_rules(
     service_name: &str,
     service: &ManifestContainerServiceConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let resolver = CatalogResolver::new(None, user_global_catalog_dir());
-    let fragment = resolver.resolve(&service.catalog)?;
+    let fragment = layered_catalog_resolver(None).resolve(&service.catalog)?;
     let capabilities = fragment.schema.capabilities;
     let Some(container_port) = capabilities.loopback_alias_port else {
         return Ok(Vec::new());
@@ -880,16 +869,6 @@ fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyErro
     registry
         .save(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
-}
-
-fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
-    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
-    path.is_dir().then_some(path)
-}
-
-fn user_global_catalog_dir() -> Option<PathBuf> {
-    let path = effigy_home_dir()?.join("catalog");
-    path.is_dir().then_some(path)
 }
 
 pub(crate) fn effigy_home_dir() -> Option<PathBuf> {

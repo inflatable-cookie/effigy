@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use effigy_catalog::pack::{resolve_catalog_layers, CatalogLayers, PackSelection};
 use effigy_catalog::CatalogResolver;
 use effigy_cli::{ServiceArgs, ServiceSubcommand};
 use serde_json::json;
@@ -7,24 +8,41 @@ use serde_json::json;
 use super::command_context::resolve_active_repo_root;
 use super::error::RunnerError;
 
+#[path = "service_command/pack.rs"]
+mod pack;
+
+pub(in crate::runner) use pack::{effigy_version, pack_health_finding};
+
 pub(super) fn run_service(args: ServiceArgs) -> Result<String, RunnerError> {
+    // Pack state is machine-global: `service pack` works outside a repo, so it
+    // dispatches before root resolution.
+    if let ServiceSubcommand::Pack(subcommand) = args.subcommand {
+        return pack::run_service_pack(subcommand, args.output_json);
+    }
+
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
-    let resolver = catalog_resolver(&repo_root);
-
+    let layers = catalog_layers(&repo_root);
     match args.subcommand {
-        ServiceSubcommand::List => run_service_list(&resolver, args.output_json),
+        ServiceSubcommand::List => {
+            run_service_list(&layers.resolver, &layers.selection, args.output_json)
+        }
         ServiceSubcommand::Extract { service, dir } => run_service_extract(
             &repo_root,
-            &resolver,
+            &layers.resolver,
             &service,
             dir.as_deref(),
             args.output_json,
         ),
+        ServiceSubcommand::Pack(_) => unreachable!("handled above"),
     }
 }
 
-fn run_service_list(resolver: &CatalogResolver, output_json: bool) -> Result<String, RunnerError> {
+fn run_service_list(
+    resolver: &CatalogResolver,
+    selection: &PackSelection,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     let fragments = resolver.list();
     if output_json {
         return Ok(json!({
@@ -35,6 +53,7 @@ fn run_service_list(resolver: &CatalogResolver, output_json: bool) -> Result<Str
                 "name": fragment.name,
                 "source": fragment.source.to_string(),
             })).collect::<Vec<_>>(),
+            "selection": pack::selection_payload(selection),
         })
         .to_string());
     }
@@ -43,7 +62,13 @@ fn run_service_list(resolver: &CatalogResolver, output_json: bool) -> Result<Str
         return Ok("[info] no service fragments available".to_owned());
     }
 
-    let mut lines = vec![format!("[service] {} fragments", fragments.len())];
+    let mut lines = Vec::new();
+    // A silent fallback would look identical to a healthy baseline machine, so
+    // the warning leads the listing rather than trailing it.
+    if let Some(warning) = selection.fallback_warning() {
+        lines.push(warning);
+    }
+    lines.push(format!("[service] {} fragments", fragments.len()));
     lines.extend(
         fragments
             .into_iter()
@@ -81,11 +106,8 @@ fn run_service_extract(
     ))
 }
 
-fn catalog_resolver(repo_root: &Path) -> CatalogResolver {
-    CatalogResolver::new(
-        project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
-    )
+fn catalog_layers(repo_root: &Path) -> CatalogLayers {
+    resolve_catalog_layers(Some(repo_root), effigy_version())
 }
 
 fn resolve_extract_dir(repo_root: &Path, dir: Option<&Path>) -> PathBuf {
@@ -96,17 +118,6 @@ fn resolve_extract_dir(repo_root: &Path, dir: Option<&Path>) -> PathBuf {
     }
 }
 
-fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
-    let path = repo_root.join("infra/dev/catalog");
-    path.is_dir().then_some(path)
-}
-
-fn user_global_catalog_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let path = PathBuf::from(home).join(".effigy").join("catalog");
-    path.is_dir().then_some(path)
-}
-
 fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
     path.strip_prefix(repo_root)
         .unwrap_or(path)
@@ -115,40 +126,5 @@ fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-catalog-command-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("mkdir");
-        root
-    }
-
-    #[test]
-    fn catalog_list_reports_bundled_fragments() {
-        let root = temp_repo("list");
-        let rendered = run_service_list(&catalog_resolver(&root), false).expect("list");
-        assert!(rendered.contains("[service]"));
-        assert!(rendered.contains("php-fpm [bundled]"));
-    }
-
-    #[test]
-    fn catalog_extract_defaults_to_project_override_dir() {
-        let root = temp_repo("extract");
-        let rendered = run_service_extract(&root, &catalog_resolver(&root), "nginx", None, false)
-            .expect("extract");
-
-        assert!(rendered.contains("infra/dev/catalog/nginx"));
-        assert!(root.join("infra/dev/catalog/nginx/service.toml").exists());
-        assert!(root
-            .join("infra/dev/catalog/nginx/compose.fragment.yml")
-            .exists());
-    }
-}
+#[path = "service_command/tests.rs"]
+mod tests;

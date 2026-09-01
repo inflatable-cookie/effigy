@@ -157,6 +157,12 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
+- `effigy.service.list.v1`
+- `effigy.service.extract.v1`
+- `effigy.service.pack.status.v1`
+- `effigy.service.pack.install.v1`
+- `effigy.service.pack.rollback.v1`
+- `effigy.service.pack.reset.v1`
 - `effigy.artifact.inspect.v1`
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
@@ -180,6 +186,8 @@ effigy --json scan generated-assets
 effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
+effigy --json service list
+effigy --json service pack status
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test

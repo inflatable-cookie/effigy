@@ -188,8 +188,8 @@ This generation should help agents and maintainers answer questions like:
   architecture `026`, and contract `043` govern completed card `1093`.
 - Rhai profile-independent limits complete: archived strict spec `112` and
   completed card `1094` govern the expression-depth papercut repair.
-- Catalog-pack acquisition prototype ready: active strict spec `113`,
-  architecture `026`, and contract `043` govern ready card `1095`.
+- Catalog-pack acquisition prototype complete: archived strict spec `113`,
+  architecture `026`, and contract `043` govern completed card `1095`.
 
 ## Execution Rule
 
@@ -207,7 +207,7 @@ Strict spec `110` and `g08.037` are complete through card `1092`. Strict spec
 `108` and `g08.035` are complete through cards `1088` to `1090`. Strict spec
 `109` and `g08.036` are complete. Strict spec `111` and `g08.038` are complete
 through card `1093`. Strict spec `112` and `g08.039` are complete through card
-`1094`. Strict spec `113` and `g08.040` are active through ready card `1095`.
+`1094`. Strict spec `113` and `g08.040` are complete through card `1095`.
 
 ## Batch Cards
 
@@ -337,13 +337,19 @@ expression-depth parsing profile-independent while preserving release limits
 and every unrelated runtime boundary. Evidence:
 [`01-080923-rhai-profile-independent-limits-1094.md`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md).
 
-`g08.040` is ready under architecture `026`, contract `043`, and active strict
-spec `113`. Card `1095` owns the in-repository catalog-pack acquisition
-prototype; official publication and concrete-asset cutover remain planning.
+`g08.040` is complete under architecture `026`, contract `043`, and archived
+strict spec `113`. Card `1095` landed the in-repository catalog-pack acquisition
+prototype: four-layer resolution with a permanent compiled baseline, explicit
+digest-addressed OCI and local installs through one validated transaction,
+visible fallback with a `catalog.pack-health` doctor repair, and deterministic
+rollback/reset. Official publication and concrete-asset cutover remain planning.
+Evidence:
+[`01-095641-catalog-pack-acquisition-prototype-1095.md`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
 ## Next Task
 
-Execute ready card
-[`1095`](./batch-cards/1095-prototype-catalog-pack-acquisition.md). No official
-publication, release/workflow work, public no-argument update, or generation
-rollover.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. That lane is not ready: it needs a real OCI
+coordinate and explicit workflow-edit authority. No official publication,
+release/workflow work, public no-argument update, or generation rollover has
+happened.

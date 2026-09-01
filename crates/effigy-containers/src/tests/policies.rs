@@ -544,6 +544,9 @@ mounts = ["../outside:/workspace/outside"]
 
 #[test]
 fn validate_compose_backend_runtime_rejects_temp_root_repo_for_colima_nerdctl() {
+    // Backend resolution reads `HOME` and `EFFIGY_COMPOSE_BACKEND`, which
+    // sibling tests swap process-globally. Take the same lock they hold.
+    let _lock = crate::test_env_lock();
     let root = temp_repo("temp-root-colima-compose");
     fs::write(
         root.join("effigy.toml"),
@@ -574,6 +577,7 @@ primary_service = "app"
 
 #[test]
 fn validate_compose_backend_runtime_rejects_colima_mount_payload_over_budget() {
+    let _lock = crate::test_env_lock();
     let root = temp_repo("colima-mount-budget");
     let volumes = (0..72)
         .map(|index| {

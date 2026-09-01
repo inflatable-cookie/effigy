@@ -47,6 +47,90 @@ Catalog-driven services land in generated compose under
 [`063-container-system-guide.md`](./063-container-system-guide.md) for the
 runtime layout.
 
+## Catalog Layers
+
+Fragments resolve in one fixed order, highest priority first:
+
+1. project override — `<repo>/infra/dev/catalog/<name>/`
+2. user override — `~/.effigy/catalog/<name>/`
+3. active installed catalog pack — see [Catalog Packs](#catalog-packs)
+4. compiled baseline — the fragments listed below, embedded in the binary
+
+The compiled baseline ships with every Effigy install and is permanent. A
+machine with no pack store, no `oras`, and no network resolves exactly the
+fragments documented here. `effigy service list` names the layer each fragment
+came from.
+
+## Catalog Packs
+
+A catalog pack is an independently versioned set of the same fragment
+directories, installed into Effigy user state and selected below your
+overrides. Packs are optional: nothing needs one, and installing one never
+changes override precedence.
+
+```sh
+effigy service pack status
+effigy service pack install oci://<REPO>@sha256:<DIGEST>
+effigy service pack install --path ./catalog-pack
+effigy service pack rollback
+effigy service pack reset
+```
+
+Every shape takes standard leading `--repo` and `--json`.
+
+### Pack shape
+
+A pack root holds `pack.toml` plus fragment directories in the usual layout:
+
+```toml
+schema_version = 1
+
+[pack]
+id = "effigy-default-catalog"
+version = "1.4.0"
+description = "Default Effigy service catalog"
+
+[compatibility]
+effigy = ">=0.12, <0.13"
+```
+
+Fragment files (`service.toml`, `compose.fragment.yml`, `Dockerfile`,
+`configs/`, `variants/`) follow
+[`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
+unchanged. A pack cannot widen the fragment schema.
+
+### Acquisition rules
+
+- Installation is always explicit. Ordinary catalog use never fetches, checks
+  for updates, or touches the network.
+- An `oci://` source must be digest-addressed (`@sha256:...`). A tag-only
+  reference is rejected before any transport call.
+- `--path <DIR>` installs from a local directory, for development and recovery.
+- Acquire, validate, store, and activate are one transaction. Activation
+  happens last and only after the manifest, compatibility, and fragments
+  validate. A failed candidate leaves the previous selection and previously
+  installed content untouched.
+- The store records pack identity, pack version, manifest schema version, the
+  compatibility requirement, the source, the resolved OCI digest, and a
+  deterministic content identity.
+
+### Recovery
+
+`rollback` selects the previous validated install and is a swap, so it returns.
+`reset` selects the compiled baseline; it retains installed content and never
+touches project or user overrides, so `rollback` still works afterwards.
+
+If an active pack later becomes unreadable or incompatible, Effigy falls back
+to the compiled baseline, warns in text, reports the reason in JSON
+(`selection.reason`), and `effigy doctor` raises `catalog.pack-health` with one
+direct repair command.
+
+### Not in this surface
+
+There is no `effigy service pack update`. The official channel is fixed and
+baseline-owned — installed pack content cannot redirect it — but no official
+artifact is published yet, so no public update command exists.
+
 ## Catalog Services
 
 Each section below covers one shipped fragment. Parameters shown with

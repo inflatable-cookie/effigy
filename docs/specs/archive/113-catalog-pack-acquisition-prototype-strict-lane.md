@@ -1,11 +1,14 @@
 # 113 Catalog-Pack Acquisition Prototype Strict Lane
 
-Status: Active
+Status: Complete
 Created: 2026-09-01
-Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
-Roadmap: [`g08.040`](../roadmaps/g08/040-catalog-pack-acquisition-prototype.md)
-Card: [`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+Closed: 2026-09-01
+Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
+Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
+Roadmap: [`g08.040`](../../roadmaps/g08/040-catalog-pack-acquisition-prototype.md)
+Card: [`1095`](../../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+Guide: [`067`](../../guides/067-catalog-services-reference.md)
+Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 
 ## Outcome
 
@@ -110,6 +113,6 @@ network check, or movement of concrete catalog assets.
 
 ## Next Task
 
-Execute card `1095` only. After its accepted merge, return to planning for
-official pack publication and asset cutover; do not infer that follow-up as
-ready.
+Complete. Return to planning for official pack publication and asset cutover;
+that follow-up is not ready and requires a real OCI coordinate plus explicit
+workflow-edit authority.

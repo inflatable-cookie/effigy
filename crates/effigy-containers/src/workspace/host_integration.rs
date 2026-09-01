@@ -3,12 +3,11 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use effigy_catalog::CatalogResolver;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 
 use crate::{
-    mount_spec::expand_host_path, policy_support::effigy_home_dir, ContainerPolicyError,
-    PROJECT_LOCAL_CATALOG_DIR,
+    layered_catalog_resolver, mount_spec::expand_host_path, policy_support::effigy_home_dir,
+    ContainerPolicyError,
 };
 
 use super::RenderedWorkspaceMount;
@@ -65,11 +64,7 @@ pub(crate) fn load_workspace_catalog_capabilities(
     let Some(service) = config.services.get(primary_service) else {
         return Ok(WorkspaceCatalogCapabilities::default());
     };
-    let resolver = CatalogResolver::new(
-        project_local_catalog_dir(repo_root),
-        user_global_catalog_dir(),
-    );
-    let fragment = resolver.resolve(&service.catalog)?;
+    let fragment = layered_catalog_resolver(Some(repo_root)).resolve(&service.catalog)?;
     Ok(WorkspaceCatalogCapabilities {
         workspace_host_integration: fragment.schema.capabilities.workspace_host_integration,
         installs_mkcert_ca: fragment.schema.capabilities.installs_mkcert_ca,
@@ -367,16 +362,6 @@ fn host_mkcert_root_ca_pem() -> Option<PathBuf> {
         return value;
     }
     effigy_gateway::tls::mkcert_root_ca_pem()
-}
-
-fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
-    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
-    path.is_dir().then_some(path)
-}
-
-fn user_global_catalog_dir() -> Option<PathBuf> {
-    let path = effigy_home_dir()?.join("catalog");
-    path.is_dir().then_some(path)
 }
 
 /// Resolve the host's home directory. Tests can override via

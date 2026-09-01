@@ -89,6 +89,10 @@ fn collect_runtime_diagnostics(
     // policies, so surface it before any container-policy early return.
     append_route_table_trust_diagnostics(&mut diagnostics);
 
+    // Catalog-pack health is machine-global too, and matters on repos with no
+    // container policy at all, so it also precedes the early returns below.
+    append_catalog_pack_diagnostics(&mut diagnostics);
+
     let policies = match load_all_container_policies(resolved_root) {
         Ok(value) => value,
         Err(_) => return Ok(diagnostics),
@@ -285,6 +289,25 @@ fn workspace_ownership_finding(
             "Repair these paths to user `{workspace_user}`, then rerun `effigy doctor`. Host-routed tasks and `effigy exec` targeting the primary service must use the declared workspace user."
         ),
         fixable: false,
+    }
+}
+
+/// Surface installed catalog-pack health. A pack that has become unreadable or
+/// incompatible resolves to the compiled baseline silently as far as compose
+/// output is concerned, so doctor is where an operator finds out — with one
+/// direct repair command.
+fn append_catalog_pack_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
+    let selection =
+        effigy_catalog::pack::select_pack(crate::runner::service_command::effigy_version());
+    if let Some(finding) = crate::runner::service_command::pack_health_finding(&selection) {
+        diagnostics.findings.push(finding);
+        return;
+    }
+    if let Some(record) = selection.active.as_ref() {
+        diagnostics.evidence.push(format!(
+            "catalog-pack: active {} {} ({})",
+            record.pack_id, record.pack_version, record.install_id
+        ));
     }
 }
 
