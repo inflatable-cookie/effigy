@@ -109,11 +109,13 @@ is the post-merge step in the roadmap `Next Task`.
 ## Validation
 
 All commands run from the clean worker worktree
-`worker/rhai-storage-create-only` at the exact head of the batch:
+`worker/rhai-storage-create-only`, rebased onto current `main`
+(`580c4ba1c`), at the exact head of the review-repair push:
 
-- focused `cargo test -p effigy-rhai storage` — 9 passed, 0 failed
-- full board `effigy test` (cargo nextest, full workspace) — 3649 passed,
-  1 skipped, re-run green after the final source edit
+- focused `cargo test -p effigy-rhai storage` — 10 passed, 0 failed
+  (includes the hostile 409 collision proof added at review)
+- full board `effigy test` (cargo nextest, full workspace) — 3660 passed,
+  1 skipped
 - `effigy qa` — test suite, docs checks, and JSON contract checks all ok
 - `effigy doctor` — summary ok:18 warn:2 err:0 (warnings: pre-existing
   god-file scan findings and an on-demand graph index refresh notice; both
