@@ -130,8 +130,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   archived.
   Completed [`g08.041`](./g08/041-catalog-fragment-listing-papercut.md) corrected
   bundled fragment inventory so `service list` reports only `service.toml`
-  parents; card `1096` is complete and the queue returns to catalog-pack
-  publication planning.
+  parents while filesystem/pack directory listing stays unchanged; card `1096`
+  is complete and the queue returns to catalog-pack publication planning.
 
 ## Active Strict Lane
 

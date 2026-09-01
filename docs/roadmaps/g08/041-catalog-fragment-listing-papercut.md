@@ -11,14 +11,17 @@ Evidence: [`../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md`](../.
 ## Purpose
 
 Make `effigy service list` report only bundled catalog fragments that carry a
-`service.toml`, matching the filesystem-layer definition of a fragment.
+`service.toml`. Filesystem override and installed-pack listing stay
+directory-based and out of scope.
 
 ## Decision
 
 - A bundled fragment is a first-level catalog directory containing
   `<name>/service.toml`.
 - Root documentation, examples, and directories without a service manifest are
-  not fragments.
+  not bundled fragments.
+- Filesystem override and installed-pack listing remain directory-based; this
+  lane does not unify membership across layers.
 - Preserve sorting, deduplication, override layering, pack selection, service
   resolution, extraction, and output schemas.
 
@@ -43,10 +46,11 @@ Make `effigy service list` report only bundled catalog fragments that carry a
 
 - root-level `README.md` and `compose.override.example.yml` are absent from the
   bundled fragment inventory
-- a directory without `service.toml` is absent
-- every directory with `service.toml` remains present exactly once in sorted
-  order
-- `effigy service list` text and JSON derive from the corrected inventory
+- a bundled directory without `service.toml` is absent from that inventory
+- every bundled directory with `service.toml` remains present exactly once in
+  sorted order
+- `effigy service list` text and JSON derive from the corrected bundled inventory
+- filesystem/pack listing behavior is unchanged
 - focused and full repository validation pass
 
 ## Next Task

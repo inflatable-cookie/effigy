@@ -346,9 +346,9 @@ rollback/reset. Official publication and concrete-asset cutover remain planning.
 Evidence:
 [`01-095641-catalog-pack-acquisition-prototype-1095.md`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
-`g08.041` is complete. Card `1096` made bundled fragment inventory follow the
-existing `service.toml` membership rule without changing catalog packs, layers,
-schemas, or command contracts. Evidence:
+`g08.041` is complete. Card `1096` made bundled fragment inventory require a
+first-level `service.toml` without changing filesystem/pack directory listing,
+catalog packs, layers, schemas, or command contracts. Evidence:
 [`01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md).
 
 ## Next Task

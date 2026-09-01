@@ -78,7 +78,8 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   services).
 - Fix (2026-09-01): bundled membership requires a first-level
   `<name>/service.toml`. Root docs/examples and directories without a service
-  manifest are ignored; sorting and layering are unchanged.
+  manifest are ignored. Filesystem override and installed-pack listing remain
+  directory-based; sorting and layering are unchanged.
 - Recurrence proof: unit, integration, and CLI text/JSON proofs in
   `docs/logs/2026-09/01-133154-catalog-fragment-listing-1096.md`.
 - Surface: `crates/effigy-catalog/src/fragment.rs` `list_bundled_fragments`.

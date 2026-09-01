@@ -218,9 +218,9 @@ contract `043`. Card `1095` landed explicit catalog-pack acquisition, selection,
 recovery, and diagnostics while retaining the permanent compiled baseline. No
 official pack is published.
 
-`g08.041` is complete. Card `1096` made the bundled fragment inventory follow
-the existing `service.toml` membership rule, then returned the queue to
-publication planning.
+`g08.041` is complete. Card `1096` made bundled fragment inventory require a
+first-level `service.toml` without changing filesystem/pack directory listing,
+then returned the queue to publication planning.
 
 ## Strategic runway (Atlas 2026-08-17)
 

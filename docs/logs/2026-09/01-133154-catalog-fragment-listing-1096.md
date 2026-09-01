@@ -13,8 +13,9 @@ Papercut: `service list` reports non-fragment bundled files as fragments
   of an embedded catalog asset as a fragment name, so root `README.md` and
   `compose.override.example.yml` appeared in `effigy service list` (16 names
   for 14 real services).
-- Membership now requires a first-level `<name>/service.toml`, matching the
-  card rule. Sorting and deduplication stay with the existing `list()` path.
+- Bundled membership now requires a first-level `<name>/service.toml`. Sorting
+  and deduplication stay with the existing `list()` path. Filesystem override
+  and installed-pack listing remain directory-based and unchanged.
 - No pack, override-layer, schema, extraction, selection, CLI grammar, or
   output-schema changes.
 
@@ -53,14 +54,18 @@ Exact bundled names, sorted once:
   inventory and absence of root assets.
 - `tests/service_list_cli_tests.rs`: text and JSON command-output proofs.
 - Closed papercut, roadmap `g08.041`, card `1096`, and Next Task pointers.
+- Review follow-up on PR 70: removed live claims that bundled `service.toml`
+  membership matches filesystem/pack directory listing; behavior unchanged.
 
 ## Vision Target Delta
 
 - Primary tags: `OPERATE`, `MAINT`
 - Movement: bundled inventory advertised root docs/examples as fragments →
-  inventory is exactly the `service.toml` parents
+  bundled inventory is exactly the `service.toml` parents; filesystem/pack
+  listing stays directory-based
 - Remaining gap: None for this papercut; official catalog-pack publication
-  planning under contract `043` remains the Next Task
+  planning under contract `043` remains the Next Task. Cross-layer membership
+  unification remains a later explicit lane if wanted.
 
 ## Validation Performed
 
@@ -77,10 +82,10 @@ Exact bundled names, sorted once:
 
 ## Risks
 
-- Filesystem override and pack listing still enumerate directories without
-  requiring `service.toml` at list time; that boundary was deliberately
-  preserved. A later lane that wants one membership rule across all layers
-  needs its own card.
+- Filesystem override and pack listing still enumerate first-level directories
+  without requiring `service.toml` at list time. That difference from bundled
+  inventory is deliberate and out of scope for card `1096`. A later lane that
+  wants one membership rule across all layers needs its own card.
 
 ## Next Task
 

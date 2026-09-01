@@ -34,10 +34,11 @@ reports 16 fragments when the bundled catalog contains 14 service manifests.
 
 ## Acceptance
 
-- [x] root documentation and example files are not fragment names
-- [x] a first-level directory without `service.toml` is not a fragment
+- [x] root documentation and example files are not bundled fragment names
+- [x] a first-level bundled directory without `service.toml` is not listed
 - [x] every bundled `service.toml` parent is listed exactly once and sorted
-- [x] current `service list` text and JSON expose the corrected inventory
+- [x] current `service list` text and JSON expose the corrected bundled inventory
+- [x] filesystem/pack listing remains directory-based and unchanged
 - [x] no catalog layer, pack, schema, selection, extraction, or CLI contract
       changes
 - [x] focused catalog/CLI tests, `effigy qa`, fmt, clippy, and diff checks pass

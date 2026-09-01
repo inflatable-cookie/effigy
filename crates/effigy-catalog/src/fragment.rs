@@ -440,9 +440,10 @@ impl CatalogResolver {
 
     /// List fragments from the bundled catalog.
     ///
-    /// Membership matches filesystem layers: only a first-level directory that
-    /// carries `service.toml` is a fragment. Root docs/examples and directories
-    /// without a service manifest are ignored.
+    /// Bundled membership is first-level directories that carry `service.toml`.
+    /// Root docs/examples and directories without a service manifest are ignored.
+    /// Filesystem override and installed-pack listing remain directory-based
+    /// and are unchanged by this filter.
     fn list_bundled_fragments(seen: &mut HashMap<String, FragmentInfo>) {
         for path in BundledCatalog::iter() {
             let Some(name) = bundled_fragment_name_from_asset_path(&path) else {
