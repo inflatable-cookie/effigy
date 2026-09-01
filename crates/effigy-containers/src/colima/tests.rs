@@ -38,6 +38,7 @@ fn colima_status_command_uses_profile() {
 
 #[test]
 fn colima_start_command_uses_profile() {
+    let _lock = env_lock();
     let policy = test_policy("myprofile");
     let cmd = colima_start_command(&policy);
     assert_eq!(cmd.program, "colima");
@@ -124,6 +125,7 @@ fn colima_start_command_honors_user_global_docker_preference() {
 
 #[test]
 fn colima_start_command_forwards_host_ssh_agent() {
+    let _lock = env_lock();
     let cmd = colima_start_command(&test_policy("anyprofile"));
     assert!(
         cmd.args.contains(&"--ssh-agent".to_string()),

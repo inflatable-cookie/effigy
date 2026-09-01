@@ -415,6 +415,7 @@ mod tests {
 
     #[test]
     fn expand_host_path_expands_tilde_against_home() {
+        let _lock = crate::test_env_lock();
         // Use the existing process HOME — mutating it races with other
         // tests that read it. We assert structural equivalence rather
         // than a specific path.

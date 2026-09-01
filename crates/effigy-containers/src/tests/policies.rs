@@ -136,7 +136,10 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
     .expect("write manifest");
     fs::create_dir(root.join(".git")).expect("git dir");
 
-    let policy = load_container_policy(&root, Some("stack")).expect("policy");
+    let policy = {
+        let _lock = crate::test_env_lock();
+        load_container_policy(&root, Some("stack")).expect("policy")
+    };
 
     let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("rewritten compose");
     assert!(
@@ -293,7 +296,10 @@ primary_service = "app"
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let policy = {
+        let _lock = crate::test_env_lock();
+        load_container_policy(&root, None).expect("policy")
+    };
     let expected = format!(
         "{}-dev",
         root.file_name().and_then(|name| name.to_str()).unwrap()

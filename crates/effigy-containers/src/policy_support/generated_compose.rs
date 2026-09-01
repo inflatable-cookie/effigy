@@ -1232,6 +1232,7 @@ mod tests {
 
     #[test]
     fn crate_tests_default_to_an_isolated_effigy_home() {
+        let _lock = crate::test_env_lock();
         let actual = effigy_home_dir().expect("test Effigy home");
         let real_home = std::env::var_os("HOME")
             .map(PathBuf::from)

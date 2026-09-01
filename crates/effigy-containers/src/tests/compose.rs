@@ -191,7 +191,10 @@ variant = "default"
         )
         .expect("write manifest");
 
-        let policy = load_container_policy(&root, None).expect("policy");
+        let policy = {
+            let _lock = crate::test_env_lock();
+            load_container_policy(&root, None).expect("policy")
+        };
         let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
         let canonical_root = root.canonicalize().expect("canonical root");
         let canonical_platform = platform.canonicalize().expect("canonical platform");

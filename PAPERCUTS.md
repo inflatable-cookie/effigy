@@ -7,24 +7,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] `effigy-containers` tests read process-global env without the env lock — 2026-09-01
-- Friction: `crate::test_env_lock()` exists and `colima/tests.rs` and
-  `compose/tests.rs` take it while swapping `HOME`, `PATH`, and
-  `EFFIGY_COMPOSE_BACKEND`. Other tests in the same binary read those variables
-  without taking it, so they fail intermittently under
-  `cargo test --workspace`. Hit during card `1095`: two
-  `validate_compose_backend_runtime_*` tests in `tests/policies.rs` failed once
-  in a full run and passed five times in isolation. Guarded in that batch; the
-  general pattern is unaudited.
-- Impact: the workspace suite goes red for reasons unrelated to the diff under
-  test, which trains people to re-run rather than read the failure.
-- Possible fix: audit every reader of `HOME`, `PATH`, and
-  `EFFIGY_COMPOSE_BACKEND` in `effigy-containers` tests and make the lock a
-  precondition, or move the overrides to thread-locals like
-  `effigy_manifest::with_test_user_config_home`.
-- Surface: `crates/effigy-containers/src/tests/policies.rs`;
-  `crates/effigy-containers/src/lib.rs` `test_env_lock`.
-
 ### [ ] `service list` reports non-fragment bundled files as fragments — 2026-09-01
 - Friction: `CatalogResolver::list_bundled_fragments` takes the first path
   component of every embedded asset, so `README.md` and
@@ -100,6 +82,22 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] `effigy-containers` tests read process-global env without the env lock — 2026-09-01
+- Friction: `crate::test_env_lock()` guarded process-global env mutations, but
+  direct and helper-hidden reads of `HOME`, `PATH`, and
+  `EFFIGY_COMPOSE_BACKEND` in the same test binary could still overlap them.
+- Cause: the audit covered mutation sites but not backend/Colima construction,
+  bundle user-config resolution, or direct `HOME` assertions.
+- Fix (2026-09-01): added the existing lock as the precondition for every
+  audited direct read and helper path. Production env semantics are unchanged;
+  unrelated tests keep their parallel execution.
+- Recurrence proof: five repeated `cargo nextest run -p effigy-containers`
+  runs completed under nextest's parallel test scheduling, with 230/230 tests
+  passing each time.
+- Surface: `crates/effigy-containers/src/{colima/tests.rs,compose/tests.rs,mount_spec.rs,policy_support/generated_compose.rs}`;
+  `crates/effigy-containers/src/tests/{compose,policies}.rs`;
+  shared lock in `crates/effigy-containers/src/lib.rs`.
 
 ### [x] Rhai scripts can parse in release and fail in debug — 2026-08-31
 - Friction: Rhai caps in-function expression nesting at 16 in debug builds and 32
