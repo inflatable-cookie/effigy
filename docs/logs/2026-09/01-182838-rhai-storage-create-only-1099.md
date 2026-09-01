@@ -15,14 +15,16 @@ Handoff: `20260901-165314-rhai-storage-create-only-worker.md`
   the bytes. No preliminary HEAD, retry, lock, or unconditional fallback is
   added. Omitted or false preserves the previous unconditional request and
   response behavior byte-for-byte.
-- A create-only PUT that fails with HTTP 412 surfaces one stable diagnostic,
-  `storage::put create_only failed: key "<key>" already exists in bucket
-  "<bucket>"`, interpolated only with caller-supplied bucket and key. The
-  diagnostic is fixed text; it never renders provider error fields.
-- Non-412 failures on a create-only request keep the existing error rendering.
-  The vendored client's `Error::Display` may include provider-supplied code,
-  message, request id, and host id for those paths; that behavior is unchanged
-  by this batch and out of card `1099` scope.
+- A create-only PUT that fails with HTTP 409 `ConditionalRequestConflict` or
+  412 `PreconditionFailed` — the two statuses S3 PutObject documents for a
+  failed or conflicted `If-None-Match` condition — surfaces one stable
+  diagnostic, `storage::put create_only failed: key "<key>" already exists in
+  bucket "<bucket>"`, interpolated only with caller-supplied bucket and key.
+  The diagnostic is fixed text; it never renders provider error fields.
+- Failures with other statuses on a create-only request keep the existing
+  error rendering. The vendored client's `Error::Display` may include
+  provider-supplied code, message, request id, and host id for those paths;
+  that behavior is unchanged by this batch and out of card `1099` scope.
 - Contract `044` surfaces touched: `crates/effigy-rhai` storage host
   (`src/host_api/storage.rs`), storage tests (`src/tests/storage.rs`), surface
   catalog description (`src/surface.rs`), focused guide section
@@ -60,9 +62,9 @@ Card `1099` oracle rows, falsified by committed tests in
    create-only PUT, and the recorded object still holds the seeded body and
    `x-amz-meta-writer: seed` metadata after the loser returns.
 3. A precondition failure is retried as an unconditional PutObject — falsified
-   by the request-log length assertions in rows 1 and 2 (exactly one PUT per
-   create-only call; no second request exists) and by the single `send()` in
-   `storage_put` with no retry path.
+   by the request-log length assertions in rows 1, 2, and the 409 row below
+   (exactly one PUT per create-only call; no second request exists) and by the
+   single `send()` in `storage_put` with no retry path.
 4. Omitting `create_only` changes existing request or response behavior —
    falsified by the reproduction test (unconditional head-then-put still
    last-write-wins with no precondition header), by
@@ -72,11 +74,18 @@ Card `1099` oracle rows, falsified by committed tests in
    `execute_rhai_script_routes_storage_operations_through_s3_adapter` full
    contract test.
 5. The error leaks a signed URL, authorization material, or response body —
-   falsified by `fixture_precondition_failed_response`, a hostile 412 whose
-   body and headers carry `X-Amz-Signature=...`, `AKIAIOSFODNN7EXAMPLE`,
-   a secret-key-shaped string, and hostile request/host ids.
-   `assert_no_hostile_material` proves none of them appear in the Rhai
-   diagnostic, and the diagnostic matches the fixed text.
+   falsified for both provider status spellings: a hostile 412
+   (`fixture_precondition_failed_response`) and a hostile 409
+   `ConditionalRequestConflict` (`fixture_condition_conflict_response`,
+   exercised by
+   `execute_rhai_script_create_only_treats_409_conflict_as_redacted_collision`),
+   whose bodies and headers carry `X-Amz-Signature=...`,
+   `AKIAIOSFODNN7EXAMPLE`, a secret-key-shaped string, and hostile
+   request/host ids. `assert_no_hostile_material` proves none of them appear
+   in the Rhai diagnostic, and the diagnostic matches the fixed text. The 409
+   fixture also proves the request count stays at one (no retry, no
+   unconditional fallback) and the winner's bytes and metadata remain — no
+   mutation is claimed for the refused write.
 6. The surface catalog or user guide describes a shape the runtime does not
    accept — falsified by agreement checks: the surface catalog description in
    `crates/effigy-rhai/src/surface.rs`, the guide section in

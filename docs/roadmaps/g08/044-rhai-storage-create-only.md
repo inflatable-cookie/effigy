@@ -4,7 +4,7 @@ Status: Complete
 Created: 2026-09-01
 Completed: 2026-09-01
 Evidence: [`../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md`](../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md)
-Spec: [`114`](../../specs/114-rhai-storage-create-only-strict-lane.md)
+Spec: [`114`](../../specs/archive/114-rhai-storage-create-only-strict-lane.md)
 Contract: [`044`](../../contracts/044-rhai-storage-create-only-contract.md)
 Consumer blocker: [Bovine PR 32](https://github.com/acowtancy/bovine-accelerator/pull/32#issuecomment-5497389670)
 

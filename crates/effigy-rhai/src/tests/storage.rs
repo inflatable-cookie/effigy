@@ -341,23 +341,37 @@ fn fixture_put_accepted(etag: &str) -> String {
     format!("HTTP/1.1 200 OK\r\nETag: {etag}\r\nContent-Length: 0\r\n\r\n")
 }
 
-/// 412 response carrying a signed URL, credential-shaped strings, and a
-/// hostile request id in the body and headers.
-fn fixture_precondition_failed_response() -> String {
-    let body = concat!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-        "<Error><Code>PreconditionFailed</Code>",
-        "<Message>precondition failed; see https://assets.s3.amazonaws.com/media/clip.mp4",
-        "?X-Amz-Signature=deadbeefsignedpayload&amp;X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260901",
-        "%2Fus-east-1%2Fs3%2Faws4_request wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY</Message>",
-        "<RequestId>HOSTILE-REQUEST-ID</RequestId><HostId>HOSTILE-HOST-ID</HostId></Error>"
+/// Collision response carrying a signed URL, credential-shaped strings, and a
+/// hostile request id in the body and headers. `status` selects the provider
+/// spelling: `412 Precondition Failed` with code `PreconditionFailed`, or the
+/// S3 PutObject-documented `409 Conflict` with code
+/// `ConditionalRequestConflict`.
+fn fixture_hostile_collision_response(status: &str, code: &str) -> String {
+    let body = format!(
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<Error><Code>{}</Code>",
+            "<Message>precondition failed; see https://assets.s3.amazonaws.com/media/clip.mp4",
+            "?X-Amz-Signature=deadbeefsignedpayload&amp;X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260901",
+            "%2Fus-east-1%2Fs3%2Faws4_request wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY</Message>",
+            "<RequestId>HOSTILE-REQUEST-ID</RequestId><HostId>HOSTILE-HOST-ID</HostId></Error>"
+        ),
+        code
     );
     format!(
-        "HTTP/1.1 412 Precondition Failed\r\nContent-Type: application/xml\r\n\
+        "HTTP/1.1 {status}\r\nContent-Type: application/xml\r\n\
          x-amz-request-id: HOSTILE-REQUEST-ID\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     )
+}
+
+fn fixture_precondition_failed_response() -> String {
+    fixture_hostile_collision_response("412 Precondition Failed", "PreconditionFailed")
+}
+
+fn fixture_condition_conflict_response() -> String {
+    fixture_hostile_collision_response("409 Conflict", "ConditionalRequestConflict")
 }
 
 const STABLE_COLLISION_MESSAGE: &str =
@@ -372,6 +386,7 @@ fn assert_no_hostile_material(message: &str) {
         "HOSTILE-REQUEST-ID",
         "HOSTILE-HOST-ID",
         "PreconditionFailed",
+        "ConditionalRequestConflict",
         "precondition failed; see",
     ] {
         assert!(
@@ -541,6 +556,89 @@ fn execute_rhai_script_create_only_over_occupied_key_refuses_without_mutation() 
     let (body, writer) = stored.as_ref().expect("seeded object");
     assert_eq!(body.as_slice(), b"seeded-bytes", "seeded bytes remain");
     assert_eq!(writer, "seed", "seeded metadata remains");
+}
+
+#[test]
+fn execute_rhai_script_create_only_treats_409_conflict_as_redacted_collision() {
+    let root = temp_root("storage-create-only-409");
+    let stored: StoredObject = Arc::new(Mutex::new(None));
+    let request_log = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("local addr");
+    let server_stored = Arc::clone(&stored);
+    let server_log = Arc::clone(&request_log);
+    let server = thread::spawn(move || {
+        // S3 PutObject also reports a conflicting operation during an
+        // If-None-Match upload as HTTP 409 ConditionalRequestConflict. The
+        // fixture occupies the key, then refuses the create-only writer with
+        // a hostile 409: one request, no retry, no fallback, no mutation.
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let request = read_fixture_request(&mut stream);
+            let request_line = request.request_line.clone();
+            server_log.lock().expect("log").push(request_line.clone());
+            if !request_line.starts_with("PUT /assets/media/clip.mp4 ") {
+                panic!("unexpected request: {request_line}");
+            }
+            let was_occupied = server_stored.lock().expect("store").is_some();
+            if !was_occupied {
+                *server_stored.lock().expect("store") = Some((
+                    request.body,
+                    fixture_header_value(&request.head, "x-amz-meta-writer")
+                        .unwrap_or_default(),
+                ));
+                stream
+                    .write_all(fixture_put_accepted("\"etag-winner\"").as_bytes())
+                    .expect("write 200");
+            } else {
+                stream
+                    .write_all(fixture_condition_conflict_response().as_bytes())
+                    .expect("write 409");
+            }
+        }
+    });
+
+    let context = storage_script_context(&root);
+    let base = storage_base_options(address);
+    let winner_script = format!(
+        r#"
+        let base = {base};
+
+        let uploaded = storage::put(base + #{{ key: "media/clip.mp4", body: "winner-bytes", metadata: #{{ writer: "one" }}, create_only: true }});
+        if !uploaded["success"] {{ throw("winner put failed"); }}
+    "#,
+        base = base
+    );
+    execute_rhai_script(&context, &winner_script, &[], &callbacks()).expect("winner execute");
+
+    let loser_script = format!(
+        r#"
+        let base = {base};
+
+        storage::put(base + #{{ key: "media/clip.mp4", body: "loser-bytes", metadata: #{{ writer: "two" }}, create_only: true }});
+    "#,
+        base = base
+    );
+    let error = execute_rhai_script(&context, &loser_script, &[], &callbacks())
+        .expect_err("409 create-only loser must fail");
+    let message = error.to_string();
+    assert!(
+        message.contains(STABLE_COLLISION_MESSAGE),
+        "409 collision diagnostic was not the stable message: {message}"
+    );
+    assert_no_hostile_material(&message);
+
+    server.join().expect("server join");
+    assert_eq!(
+        request_log.lock().expect("log").len(),
+        2,
+        "a hostile 409 must not be retried or fall back unconditionally: {request_log:?}"
+    );
+    let stored = stored.lock().expect("store");
+    let (body, writer) = stored.as_ref().expect("stored winner");
+    assert_eq!(body.as_slice(), b"winner-bytes", "winner bytes remain");
+    assert_eq!(writer, "one", "winner metadata remains");
 }
 
 #[test]

@@ -311,7 +311,11 @@ fn storage_put(
             .map_err(|error| rhai_runtime_error(error.to_string()))?;
     }
     let output = request.send().map_err(|error| {
-        if create_only && error.status().is_some_and(|status| status.as_u16() == 412) {
+        if create_only
+            && error
+                .status()
+                .is_some_and(|status| matches!(status.as_u16(), 409 | 412))
+        {
             rhai_runtime_error(format!(
                 "storage::put create_only failed: key \"{key}\" already exists in bucket \"{bucket}\""
             ))
