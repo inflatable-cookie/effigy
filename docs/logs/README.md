@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-173500-child-catalog-suite-registry-1100.md`](./2026-09/01-173500-child-catalog-suite-registry-1100.md)
 - [`2026-09/01-172541-docs-context-traversal-budget-1102.md`](./2026-09/01-172541-docs-context-traversal-budget-1102.md)
 - [`2026-09/01-175827-parallel-papercuts-frontier-planning.md`](./2026-09/01-175827-parallel-papercuts-frontier-planning.md)
 - [`2026-09/01-150452-no-match-benchmark-isolation-1098.md`](./2026-09/01-150452-no-match-benchmark-isolation-1098.md)
