@@ -6,9 +6,9 @@
 // tuning a query after seeing a result. A miss is recorded and diagnosed, not
 // edited away.
 //
-// History, so a reviewer can replay any state. Five freezes changed the matrix
-// and carry the freeze discipline; the sixth state is a replay that changed no
-// case at all.
+// History, so a reviewer can replay any state. Six freezes changed the matrix
+// and carry the freeze discipline; one replay between freezes five and six
+// changed no case at all.
 //
 //   398a698f2  first freeze. 9 of 11 cases held, including every live-authority
 //              and historical-retrieval case. Two cases missed for reasons in
@@ -68,6 +68,12 @@
 //              Rhai's debug-build nesting cap. Replayed against the corpus
 //              integrated with `main` at `db98139a9`: 12/12 hold, every rank
 //              unchanged, two context-byte figures moved with the corpus.
+//   this file  sixth freeze. Live `effigy-no-match` removed. Empty-result proof
+//              is fixture-owned (`generic-no-match` only). The matrix rejects a
+//              live-target empty case before any query runs, so documenting the
+//              fixture query in Effigy profile roots cannot turn the proof red.
+//              Current matrix: 11 cases. Historical freeze logs keep the older
+//              12-case counts as historical evidence.
 //
 // Two targets, both required:
 //
@@ -154,10 +160,8 @@ let targets = [
                 max_rank: 8,
             },
             #{
-                // Deliberately shares no token with the `effigy-live` no-match
-                // query. This case runs against the fixture corpus, so naming
-                // it in Effigy's own docs is safe - but a shared token would
-                // leak into the Effigy corpus and turn that case red.
+                // Fixture-owned empty proof. Naming this query in Effigy's
+                // live profile roots is safe: the case does not target them.
                 id: "generic-no-match",
                 dimension: "no-match",
                 expect: "empty",
@@ -235,26 +239,6 @@ let targets = [
                 query: "bounded documentation context query card 1089 closeout evidence",
                 extra_args: [],
                 expected_path: "docs/logs/2026-08/31-181957-documentation-context-1089.md",
-                max_rank: 8,
-            },
-            // Re-anchored in the second freeze. The first query was not a
-            // no-match query for this corpus: `telemetry` reaches 33 documents
-            // and `quokka` reaches 1, so a non-empty report was correct. Both
-            // terms below have a corpus document frequency of 0.
-            //
-            // DO NOT write this query into README.md, AGENTS.md, CHANGELOG.md,
-            // PAPERCUTS.md, or anything under docs/. Those paths are this
-            // repository's profile roots, so naming the query inside them gives
-            // its terms a non-zero document frequency and turns the case red. A
-            // no-match case cannot name itself inside its own corpus. The same
-            // property is proved independently by `generic-no-match`, whose
-            // corpus is the fixture and is immune to this repository's docs.
-            #{
-                id: "effigy-no-match",
-                dimension: "no-match",
-                expect: "empty",
-                query: "xylophone sublimation",
-                extra_args: [],
                 max_rank: 8,
             },
         ],
@@ -459,6 +443,21 @@ fn empty_failures(results) {
     failures
 }
 
+fn reject_live_empty_cases(live_root, targets) {
+    for target in targets {
+        if target["repo"].to_string() != live_root.to_string() {
+            continue;
+        }
+        for benchmark_case in target["cases"] {
+            if benchmark_case["expect"].to_string() == "empty" {
+                throw "[error] empty-result case `"
+                    + benchmark_case["id"].to_string()
+                    + "` targets the live repository; empty proof must use a fixture corpus";
+            }
+        }
+    }
+}
+
 fn evaluate_case(bin_path, repo_path, benchmark_case) {
     let payload = run_docs_context(bin_path, repo_path, benchmark_case);
     let results = payload["results"];
@@ -586,6 +585,8 @@ let index_lines = [
 ];
 let summary_targets = [];
 let failed_cases = [];
+
+reject_live_empty_cases(repo_root, targets);
 
 for target in targets {
     let repo_path = target["repo"].to_string();

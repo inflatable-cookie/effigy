@@ -4,10 +4,12 @@ Roadmap: [`../043-docs-context-no-match-benchmark-isolation-papercut.md`](../043
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: documentation-context benchmark matrix
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md`](../../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md)
 
 ## Purpose
 
@@ -33,16 +35,16 @@ and turns the benchmark red without a retrieval regression.
 
 ## Acceptance
 
-- [ ] no current empty-result case targets the live Effigy repository
-- [ ] a future live-target empty-result case fails at matrix validation rather
+- [x] no current empty-result case targets the live Effigy repository
+- [x] a future live-target empty-result case fails at matrix validation rather
       than depending on corpus vocabulary
-- [ ] the fixture no-match proof remains non-vacuous and green
-- [ ] remaining live case queries, expected paths, rivals, rank bounds, and
+- [x] the fixture no-match proof remains non-vacuous and green
+- [x] remaining live case queries, expected paths, rivals, rank bounds, and
       dimensions are unchanged
-- [ ] no runtime, profile, graph, ranking, traversal, budget, CLI, or JSON
+- [x] no runtime, profile, graph, ranking, traversal, budget, CLI, or JSON
       behavior changes
-- [ ] `perf:docs-context-benchmark`, `effigy qa`, docs QA, and diff checks pass
-- [ ] papercut, roadmap, card, evidence, and active next-task pointers close
+- [x] `perf:docs-context-benchmark`, `effigy qa`, docs QA, and diff checks pass
+- [x] papercut, roadmap, card, evidence, and active next-task pointers close
       honestly and return to publication planning
 
 ## Review Oracle
@@ -82,5 +84,4 @@ or expands into ranking, timeout, publication, workflow, S3, or rollover work.
 
 ## Next Task
 
-Execute this card, then return to official catalog-pack publication planning
-under contract `043`.
+Return to official catalog-pack publication planning under contract `043`.

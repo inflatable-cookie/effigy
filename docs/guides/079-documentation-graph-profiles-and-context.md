@@ -210,7 +210,9 @@ unbounded; see `PAPERCUTS.md`.
 generic fixture and this repository, and fails if a declared live authority
 falls outside the top three, a declared historical rival outranks it, a directly
 named historical source is not retrieved, an unrelated high-authority document
-enters a report, or a no-match query returns anything.
+enters a report, or a fixture no-match query returns anything. Empty-result
+cases run only against fixture corpora; a live-target empty case is rejected
+before the matrix executes.
 
 The corpus, expected sources, and pass criteria are frozen in
 `scripts/benchmark-docs-context.rhai` and committed before each run, with the

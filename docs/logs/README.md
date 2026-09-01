@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-150452-no-match-benchmark-isolation-1098.md`](./2026-09/01-150452-no-match-benchmark-isolation-1098.md)
 - [`2026-09/01-135932-markdown-frontmatter-1097.md`](./2026-09/01-135932-markdown-frontmatter-1097.md)
 - [`2026-09/01-133154-catalog-fragment-listing-1096.md`](./2026-09/01-133154-catalog-fragment-listing-1096.md)
 - [`2026-09/01-123424-papercuts-env-lock-audit.md`](./2026-09/01-123424-papercuts-env-lock-audit.md)
@@ -194,7 +195,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready papercut card `1098` at
-`docs/roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md`,
-then return to official catalog-pack publication planning. Ranking, timeout,
-release/workflow, S3, and rollover work stay out of card scope.
+Return to official catalog-pack publication planning under contract `043`.
+Ranking, timeout, release/workflow, S3, and rollover work stay out of this
+closed card's scope.
