@@ -23,7 +23,8 @@ without changing existing catalog-backed usage.
 - define a typed, versioned pack manifest and compatibility model without
   duplicating catalog fragment schema or assembly
 - add a versioned Effigy user-state store with atomic active-selection metadata
-  and enough retained lineage for one deterministic rollback
+  and enough selection lineage for one deterministic rollback; retain every
+  successfully installed content entry with no automatic pruning
 - resolve layers in the approved order: project, user, active installed pack,
   compiled baseline
 - implement explicit digest-addressed OCI and local-path installation through a
@@ -54,7 +55,8 @@ without changing existing catalog-backed usage.
 - [x] later-unreadable or incompatible active state falls back visibly to the
       baseline with equivalent text/JSON facts and one-step doctor repair
 - [x] rollback selects the previous validated installed pack; reset selects the
-      compiled baseline without deleting project/user overrides
+      compiled baseline without deleting project/user overrides or installed
+      pack content
 - [x] installed content cannot redirect the fixed official channel model
 - [x] no normal catalog-backed command invokes the OCI adapter or performs a
       network probe
@@ -84,7 +86,8 @@ Falsified. Each row maps to exact tests in the
 5. An installed pack declares a hostile alternate update source; the modeled
    official update request follows it instead of the compiled fixed channel.
 6. Rollback after two successful installs selects baseline or the wrong digest;
-   reset deletes project/user overrides or prevents later rollback.
+   reset deletes project/user overrides or installed pack content, or prevents
+   later rollback.
 7. A normal `service list`, container plan, system/workspace resolution, or task
    run invokes the OCI adapter merely to check freshness.
 8. Help or JSON advertises `service pack update`, or the diff moves catalog
@@ -114,8 +117,9 @@ validation, unresolved publication work, and the next planning checkpoint.
 
 Stop if the prototype needs a live official artifact, workflow/release edits,
 implicit networking, silent fallback, destructive reset, a different override
-order, a general extension store, new signing policy, concrete-asset movement,
-or S3/Rhai-provider changes. Return any such choice to the orchestrator.
+order, automatic pack pruning or a new retention policy, a general extension
+store, new signing policy, concrete-asset movement, or S3/Rhai-provider changes.
+Return any such choice to the orchestrator.
 
 ## Next Task
 

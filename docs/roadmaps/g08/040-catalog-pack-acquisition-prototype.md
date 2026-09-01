@@ -23,6 +23,8 @@ existing catalog-backed workflow harder or network-dependent.
   default pack, compiled baseline.
 - Install explicit immutable OCI or local-path candidates into a versioned
   user-state store and activate only after validation succeeds.
+- Retain all successfully installed pack content in the prototype. Automatic
+  pruning and garbage collection remain a later explicit operator decision.
 - Reuse the existing OCI artifact adapter; add no bespoke network client.
 - Fall back visibly to the compiled baseline when an active installed pack later
   becomes unreadable or incompatible.
@@ -33,7 +35,8 @@ existing catalog-backed workflow harder or network-dependent.
 ## Scope
 
 - versioned catalog-pack manifest, identity, compatibility, and source reports
-- installed-pack store, atomic activation, previous-version rollback, and reset
+- installed-pack store, atomic activation, retained content,
+  previous-version rollback, and non-destructive reset
 - explicit digest-addressed OCI and local-path installation
 - baseline/installed selection integrated with existing catalog resolution
 - `status`, `install`, `rollback`, and `reset` text and JSON behavior
@@ -50,6 +53,7 @@ existing catalog-backed workflow harder or network-dependent.
   mutation
 - no implicit network access during ordinary command execution
 - no change to project/user override precedence
+- no automatic pruning or inferred pack-retention policy
 - no S3, Rhai-provider, extension-transport, or command-removal work
 
 ## Cards
@@ -64,7 +68,8 @@ existing catalog-backed workflow harder or network-dependent.
   compatibility, source, and immutable content identity
 - failed candidates never replace the active installed pack
 - later unhealthy active state selects the baseline visibly and diagnostically
-- rollback and reset are deterministic and preserve override precedence
+- rollback and reset are deterministic, preserve override precedence, and do
+  not delete installed pack content
 - no-argument official-channel planning is testable without exposing a dead
   public command
 - focused and full repository validation pass

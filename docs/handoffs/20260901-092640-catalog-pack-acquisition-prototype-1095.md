@@ -103,11 +103,14 @@ release-distribution cutover.
   compiled baseline; normal commands never query OCI
 - **Failure invariant:** validate before atomic activation; candidate failure
   preserves prior active state; later unhealthy state falls back visibly
+- **Retention invariant:** retain every successfully installed content entry;
+  install, rollback, and reset perform no automatic pruning or deletion
 - **Publication boundary:** fixed-channel update is modeled and adapter-tested,
   but no public `update` command exists until the official artifact exists
 - **Open tensions:** exact internal module/store layout is worker judgment so
   long as one selection implementation and one transport seam remain; return a
-  new public compatibility, authenticity, or retention decision to planning
+  new public compatibility or authenticity decision to planning. Pack retention
+  is settled for this lane: keep all installed content and do not prune.
 - **Report after:** domain/store transaction and selection/CLI integration are
   meaningful chunks; report again at pushed PR closeout
 - **Report to:** the orchestrator through Paseo notification

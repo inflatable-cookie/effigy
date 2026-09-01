@@ -119,6 +119,12 @@ an active installed pack later becomes unreadable or incompatible, the resolver
 uses the compiled baseline with a visible text warning and structured JSON
 selection reason; `doctor` provides rollback or reset guidance.
 
+The acquisition prototype does not prune installed pack content automatically.
+It retains every successfully installed content entry while activation metadata
+tracks the active and previous selections needed for deterministic rollback.
+Garbage collection or a bounded retention policy requires a later explicit
+operator decision; install, rollback, and reset never infer deletion authority.
+
 The first implementation lane is an in-repository acquisition prototype. It
 ships explicit digest-addressed OCI and local-path installation, status,
 rollback, and reset while keeping today's embedded assets as the baseline. It
