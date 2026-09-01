@@ -72,7 +72,7 @@ parser limit under `debug_assertions`.
 - **Review state:** awaiting orchestrator review after worker completion
 - **Merge path:** orchestrator after accepted review of the current head and
   passing required checks
-- **Exact head:** `d3ef7a1e66fa0505ce87466b9e8edb958253c3da`
+- **Exact head:** `ce037e698012b0196426e0bda2ad094b262b82b7`
 ## Boundaries
 
 - **In scope:** reproduce, diagnose, and fix card `1094`; exact `64` / `32`
