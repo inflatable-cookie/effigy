@@ -830,6 +830,133 @@ fn incomplete_and_nonleading_yaml_delimiters_keep_document_content() {
     assert_eq!(after.display_name, "After");
 }
 
+#[test]
+fn empty_and_blank_led_complete_frontmatter_blocks_stay_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let empty = "---\n---\n# Real Empty\n";
+    let blank_led = "---\n\ntitle: Example\n---\n# Real Blank\n";
+    fs::write(temp.path().join("notes/empty.md"), empty).expect("write empty");
+    fs::write(temp.path().join("notes/blank-led.md"), blank_led).expect("write blank-led");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("title: Example")
+                    || symbol.display_name.contains("---"))
+        }),
+        "empty or blank-led frontmatter must not become a heading: {symbols:?}"
+    );
+
+    let empty_real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/empty.md#real-empty")
+        .expect("empty-block file keeps ATX heading");
+    assert_eq!(empty_real.display_name, "Real Empty");
+    assert_eq!(empty_real.span.start.line, 3);
+    assert_eq!(
+        empty_real.span.start.byte,
+        empty.find("# Real Empty").expect("empty offset") as u32
+    );
+
+    let blank_real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/blank-led.md#real-blank")
+        .expect("blank-led file keeps ATX heading");
+    assert_eq!(blank_real.display_name, "Real Blank");
+    assert_eq!(blank_real.span.start.line, 5);
+    assert_eq!(
+        blank_real.span.start.byte,
+        blank_led.find("# Real Blank").expect("blank offset") as u32
+    );
+}
+
+#[test]
+fn markdown_extractor_version_bump_reindexes_unchanged_frontmatter_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let markdown = "---\ntitle: Example\n---\n# Real\n";
+    fs::write(temp.path().join("notes/intro.md"), markdown).expect("write markdown");
+
+    run_index(temp.path()).expect("first index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let file = store
+        .list_files()
+        .expect("files")
+        .into_iter()
+        .find(|file| file.path == "notes/intro.md")
+        .expect("markdown file");
+    let real = store
+        .list_symbols()
+        .expect("symbols")
+        .into_iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#real")
+        .expect("real heading");
+
+    // Simulate a prior 0.2.0 index that retained the synthetic frontmatter heading
+    // while the file bytes and scan metadata stay unchanged.
+    store
+        .save_symbol(&SymbolRecord {
+            id: GraphId::new("symbol:doc:notes/intro.md:#title-example").expect("id"),
+            kind: "heading-h2".to_owned(),
+            display_name: "title: Example".to_owned(),
+            canonical_name: "notes/intro.md#title-example".to_owned(),
+            file_id: file.id.clone(),
+            span: real.span.clone(),
+            provenance: Provenance {
+                extractor_id: ExtractorId::new("markdown-anchors").expect("extractor"),
+                extractor_version: "0.2.0".to_owned(),
+                source_path: "notes/intro.md".to_owned(),
+                confidence: Confidence::Exact,
+                detail: Some("heading".to_owned()),
+            },
+        })
+        .expect("inject stale heading");
+    let mut prior = store
+        .list_extractors()
+        .expect("extractors")
+        .into_iter()
+        .find(|extractor| extractor.id.as_str() == "markdown-anchors")
+        .expect("markdown extractor");
+    assert_eq!(prior.version, "0.2.1");
+    prior.version = "0.2.0".to_owned();
+    store.save_extractor(&prior).expect("downgrade extractor");
+
+    let status_payload = status(temp.path()).expect("status");
+    assert!(
+        status_payload
+            .stale_paths
+            .iter()
+            .any(|path| path == "notes/intro.md"),
+        "extractor version bump must stale unchanged markdown: {:?}",
+        status_payload.stale_paths
+    );
+
+    run_index(temp.path()).expect("upgrade reindex");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h") && symbol.display_name.contains("title: Example")
+        }),
+        "upgrade reindex must drop the stale frontmatter heading: {symbols:?}"
+    );
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.canonical_name == "notes/intro.md#real"));
+    let upgraded = store
+        .list_extractors()
+        .expect("extractors")
+        .into_iter()
+        .find(|extractor| extractor.id.as_str() == "markdown-anchors")
+        .expect("markdown extractor");
+    assert_eq!(upgraded.version, "0.2.1");
+}
+
 fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
     store
         .list_edges()

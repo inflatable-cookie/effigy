@@ -665,9 +665,9 @@ fn split_label_line(line: &str) -> Option<(&str, &str)> {
 /// Byte range of a complete leading YAML frontmatter block, when present.
 ///
 /// A complete block starts with a standalone `---` on the first line and ends
-/// at the next standalone `---` line, with at least one non-blank body line
-/// between them. Incomplete opening fences and later delimiter shapes return
-/// `None` so ordinary Markdown heading behavior is unchanged.
+/// at the next standalone `---` line. The body between the fences may be empty
+/// or begin with blank lines. Incomplete opening fences and later delimiter
+/// shapes return `None` so ordinary Markdown heading behavior is unchanged.
 fn leading_yaml_frontmatter_range(content: &str) -> Option<Range<usize>> {
     let lines = iter_lines(content);
     let (_, _, first_line) = *lines.first()?;
@@ -675,22 +675,11 @@ fn leading_yaml_frontmatter_range(content: &str) -> Option<Range<usize>> {
         return None;
     }
 
-    let mut saw_body_line = false;
     for &(_start, end, line) in lines.iter().skip(1) {
         if is_yaml_frontmatter_fence(line) {
-            if !saw_body_line {
-                return None;
-            }
             let range_end = if end < content.len() { end + 1 } else { end };
             return Some(0..range_end);
         }
-        if line.trim().is_empty() {
-            if !saw_body_line {
-                return None;
-            }
-            continue;
-        }
-        saw_body_line = true;
     }
     None
 }

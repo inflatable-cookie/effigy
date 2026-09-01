@@ -22,7 +22,7 @@ impl MarkdownIndexer {
     pub fn with_profile(profile: Option<CompiledDocsProfile>) -> Self {
         Self {
             extractor_id: extractor_id("markdown-anchors").expect("static extractor id"),
-            version: "0.2.0".to_owned(),
+            version: "0.2.1".to_owned(),
             profile,
         }
     }

@@ -43,10 +43,10 @@ reports kind `document`, authority `0`, and currentness `unknown`. A profile
 adds local meaning; it is not an enablement switch.
 
 A complete leading YAML frontmatter block (`---` on the first line through the
-next standalone `---`) is metadata, not a section. Profile-configured field
-facts and labelled relations inside that block stay extractable with their
-original spans. Incomplete or later `---` delimiters keep ordinary Markdown
-heading behavior.
+next standalone `---`) is metadata, not a section, including an empty body or a
+body that begins with blank lines. Profile-configured field facts and labelled
+relations inside that block stay extractable with their original spans.
+Incomplete or later `---` delimiters keep ordinary Markdown heading behavior.
 
 ## The Repository-Owned Profile
 
