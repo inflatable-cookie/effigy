@@ -1,10 +1,12 @@
 # g08.043 Docs Context No-Match Benchmark Isolation Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Completed: 2026-09-01
 Card: [`1098`](./batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
+Evidence: [`../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md`](../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md)
 
 ## Purpose
 
@@ -37,7 +39,7 @@ Effigy's live documentation corpus.
 
 ## Cards
 
-- [ ] [`1098`](./batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md) — ready
+- [x] [`1098`](./batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md) — complete
 
 ## Acceptance
 
@@ -51,6 +53,4 @@ Effigy's live documentation corpus.
 
 ## Next Task
 
-Execute ready card
-[`1098`](./batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md), then
-return to official catalog-pack publication planning under contract `043`.
+Return to official catalog-pack publication planning under contract `043`.

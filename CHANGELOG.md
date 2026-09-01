@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `perf:docs-context-benchmark` empty-result proof is fixture-owned. The live
+  Effigy target keeps its authority and historical cases and no longer carries a
+  query that fails when its terms appear in documentation. A live-target empty
+  case is rejected before the matrix runs. Current matrix is 11 cases;
+  historical freeze logs keep the older 12-case counts.
 - Leading YAML frontmatter in Markdown documents is no longer indexed as one
   synthetic setext heading. A complete leading `---` … `---` block — including
   an empty body or a body that begins with blank lines — stays metadata: real
@@ -89,8 +94,9 @@ During v0.x, MINOR bumps may include breaking changes.
   repository, and fails when a declared live authority falls outside the top
   three, a declared historical rival outranks it, a directly named historical
   source is not retrieved, an unrelated high-authority document enters a report,
-  or a no-match query returns anything. Reports land under
-  `.effigy/perf/docs-context-benchmark/`.
+  or a fixture no-match query returns anything. Empty-result cases run only
+  against fixture corpora; a live-target empty case is rejected before the
+  matrix executes. Reports land under `.effigy/perf/docs-context-benchmark/`.
 - `docs/guides/079-documentation-graph-profiles-and-context.md` documents the
   repository-owned profile, the copied-not-inherited adoption boundary, the five
   query shapes worth memorizing, and how ranking actually behaves.

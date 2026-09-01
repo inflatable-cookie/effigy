@@ -212,7 +212,5 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Execute ready benchmark papercut card
-[`1098`](../roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md),
-then return this contract to maintenance state and the project queue to
-official catalog-pack publication planning.
+Return this contract to maintenance state and the project queue to official
+catalog-pack publication planning.

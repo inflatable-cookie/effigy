@@ -96,6 +96,4 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready papercut card
-[`1098`](../roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md),
-then return to official catalog-pack publication planning under contract `043`.
+Return to official catalog-pack publication planning under contract `043`.

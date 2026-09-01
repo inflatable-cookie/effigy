@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+mod docs_context_benchmark;
 mod engine_limits;
 mod forge;
 mod git;

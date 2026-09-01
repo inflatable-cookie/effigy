@@ -226,9 +226,9 @@ then returned the queue to publication planning.
 for Markdown section extraction while preserving profiled facts, relations, and
 exact source spans, then returned the queue to publication planning.
 
-`g08.043` is ready as a bounded papercut interruption. Card `1098` moves the
-no-match proof to fixture-only ownership and guards against future live-corpus
-empty-result cases.
+`g08.043` is complete. Card `1098` moved empty-result benchmark proof onto
+fixture-only ownership and rejected live-target empty cases before matrix
+execution, then returned the queue to publication planning.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -252,9 +252,10 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context, help-first, Rhai papercut, and catalog-pack
-acquisition prototype lanes are all closed. No strict lane is active. Do not
-open `g09`, publish a pack, or start release work.
+The documentation-context, help-first, Rhai papercut, catalog-pack
+acquisition prototype, and no-match benchmark isolation lanes are all closed.
+No strict lane is active. Do not open `g09`, publish a pack, or start release
+work.
 
 ## Research Roadmaps
 
@@ -287,7 +288,6 @@ closeout there first.
 
 ## Next Task
 
-Execute ready papercut card
-[`1098`](./g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md).
+Return to official catalog-pack publication planning under contract `043`.
 Keep ranking, timeout, official catalog-pack publication, release/workflow,
-public no-argument update, and `g09` rollover out of this card.
+public no-argument update, and `g09` rollover out of this closed card's scope.

@@ -7,19 +7,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
-- Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
-  an empty report. Documenting its query inside `docs/`, `README.md`,
-  `AGENTS.md`, `CHANGELOG.md`, or `PAPERCUTS.md` - all profile roots - gives its
-  terms a non-zero document frequency and turns the case red. It broke once
-  exactly this way while writing the card `1090` evidence log.
-- Impact: a durable, self-hosted no-match assertion is one careless sentence
-  away from failing, and the failure looks like a retrieval regression.
-- Possible fix: let a benchmark case declare an exclusion path so the harness
-  can prove absence against a corpus that excludes its own documentation, or
-  keep no-match assertions on fixture corpora only.
-- Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
-
 ### [ ] `docs context` traversal is unreachable on a large corpus — 2026-08-31
 - Friction: traversed results rank after every 0-hop result, so a repository
   with more lexical seeds than `--max-sections` never surfaces a typed relation.
@@ -59,6 +46,20 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
+- Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
+  an empty report. Documenting its query inside `docs/`, `README.md`,
+  `AGENTS.md`, `CHANGELOG.md`, or `PAPERCUTS.md` - all profile roots - gives its
+  terms a non-zero document frequency and turns the case red. It broke once
+  exactly this way while writing the card `1090` evidence log.
+- Impact: a durable, self-hosted no-match assertion is one careless sentence
+  away from failing, and the failure looks like a retrieval regression.
+- Fix (2026-09-01): card `1098` / roadmap `g08.043` keep empty-result proof on
+  the fixture corpus and reject a live-target empty case before the matrix
+  runs. Evidence:
+  `docs/logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md`.
+- Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
 
 ### [x] YAML frontmatter is indexed as one setext heading — 2026-08-31
 - Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
