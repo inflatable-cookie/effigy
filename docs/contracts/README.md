@@ -281,6 +281,7 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. Keep official publication, release/install wiring,
-public no-argument update, and S3 deferred.
+Execute ready papercut card `1097` at
+`docs/roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md`
+under contract `041`, then return to official catalog-pack publication planning
+under contract `043`.

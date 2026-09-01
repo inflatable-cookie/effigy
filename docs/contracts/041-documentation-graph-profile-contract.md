@@ -80,6 +80,9 @@ one canonical spelling.
 ## Markdown Extraction
 
 - A document node spans the complete file.
+- A complete leading YAML frontmatter block is metadata, not a heading or
+  section. Its configured field facts and labelled relations remain
+  extractable with original source spans.
 - A section starts at its heading and ends before the next heading of the same
   or higher level, or at end of file.
 - Nested headings belong to the enclosing section while retaining their own
@@ -209,10 +212,7 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-None. Roadmap [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
-closed on 2026-08-31 with cards `1088`, `1089`, and `1090` complete. Every
-clause above is shipped and evidenced in
-[`../logs/2026-08/31-213000-northstar-profile-proof-1090.md`](../logs/2026-08/31-213000-northstar-profile-proof-1090.md).
-Adoption guidance lives in
-[`../guides/079-documentation-graph-profiles-and-context.md`](../guides/079-documentation-graph-profiles-and-context.md).
-This contract stays active; change it only through its drift triggers.
+Execute ready papercut card
+[`1097`](../roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md),
+then return this contract to maintenance state and the project queue to
+official catalog-pack publication planning.

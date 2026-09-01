@@ -132,6 +132,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   bundled fragment inventory so `service list` reports only `service.toml`
   parents while filesystem/pack directory listing stays unchanged; card `1096`
   is complete and the queue returns to catalog-pack publication planning.
+  Ready [`g08.042`](./g08/042-markdown-frontmatter-extraction-papercut.md) is a
+  bounded papercut interruption; card `1097` keeps leading YAML frontmatter out
+  of Markdown section inventory while preserving metadata and exact spans.
 
 ## Active Strict Lane
 
@@ -191,10 +194,11 @@ Before rollover:
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. Keep publication, release/workflow work, public
-no-argument update, S3, and `g09` rollover out of ordinary day-to-day work
-until that lane is ready.
+Execute ready papercut card
+[`1097`](./g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md),
+then return to official catalog-pack publication planning under contract `043`.
+Keep ranking, timeout, publication, release/workflow, public no-argument update,
+S3, and `g09` rollover out of card `1097`.
 
 ## Historical language boundary
 

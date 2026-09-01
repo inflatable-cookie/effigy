@@ -193,6 +193,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. No publication, release/workflow work, public
-no-argument update, or rollover is authorized from this closeout.
+Execute ready papercut card `1097` at
+`docs/roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md`,
+then return to official catalog-pack publication planning. Ranking, timeout,
+publication, release/workflow, S3, and rollover work stay out of card scope.

@@ -351,8 +351,14 @@ first-level `service.toml` without changing filesystem/pack directory listing,
 catalog packs, layers, schemas, or command contracts. Evidence:
 [`01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md).
 
+`g08.042` is ready as a bounded papercut interruption. Card `1097` removes a
+synthetic heading caused by leading YAML frontmatter while preserving profiled
+metadata, relations, and exact source spans.
+
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. No official publication, release/workflow work,
-public no-argument update, or generation rollover has happened.
+Execute ready card
+[`1097`](./batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md),
+then return to official catalog-pack publication planning under contract `043`.
+No ranking, timeout, publication, release/workflow, public no-argument update,
+or generation rollover work is in card scope.

@@ -222,6 +222,10 @@ official pack is published.
 first-level `service.toml` without changing filesystem/pack directory listing,
 then returned the queue to publication planning.
 
+`g08.042` is ready as a bounded papercut interruption. Card `1097` makes
+leading YAML frontmatter metadata-only for Markdown section extraction while
+preserving profiled facts, relations, and exact source spans.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -279,7 +283,7 @@ closeout there first.
 
 ## Next Task
 
-Return to planning for official catalog-pack publication and concrete-asset
-cutover under contract `043`. Keep official catalog-pack publication, release
-action, workflow edits, and `g09` rollover out of ordinary day-to-day work
-until that lane is ready.
+Execute ready papercut card
+[`1097`](./g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md).
+Keep ranking, timeout, official catalog-pack publication, release/workflow,
+public no-argument update, and `g09` rollover out of this card.
