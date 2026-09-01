@@ -585,8 +585,7 @@ fn execute_rhai_script_create_only_treats_409_conflict_as_redacted_collision() {
             if !was_occupied {
                 *server_stored.lock().expect("store") = Some((
                     request.body,
-                    fixture_header_value(&request.head, "x-amz-meta-writer")
-                        .unwrap_or_default(),
+                    fixture_header_value(&request.head, "x-amz-meta-writer").unwrap_or_default(),
                 ));
                 stream
                     .write_all(fixture_put_accepted("\"etag-winner\"").as_bytes())
