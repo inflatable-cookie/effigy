@@ -237,9 +237,10 @@ Bovine PR 32 without reopening S3 placement or removal.
 `g08.045` through `g08.047` are complete through cards `1100` through `1102`.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Card `1103` is complete. Cards `1104` through `1108` preserve the serial
-repository, publication, and generated-baseline gates; `1107` and `1108` become
-parallel-safe only after `1106`.
+`115`. Card `1103` is complete and card `1104` is ready in the dedicated public
+repository. Cards `1105` through `1108` preserve the serial publication and
+generated-baseline gates; `1107` and `1108` become parallel-safe only after
+`1106`.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -298,5 +299,5 @@ closeout there first.
 
 ## Next Task
 
-Update card `1104` to Ready after the card `1103` support floor is on pushed
-`main`. Do not create the pack repository before then. Do not open `g09`.
+Execute ready card `1104` in the dedicated public pack repository. Do not
+publish a pack or open `g09`.

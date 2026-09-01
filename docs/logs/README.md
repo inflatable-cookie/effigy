@@ -202,5 +202,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Update card `1104` to Ready after the card `1103` support floor is on pushed
-`main`. Do not create the pack repository before then.
+Execute ready card `1104` in the dedicated public pack repository. First
+publication remains a separate operator-gated mutation.

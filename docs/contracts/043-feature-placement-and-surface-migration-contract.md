@@ -342,6 +342,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Update card [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
-to Ready after the card `1103` support floor is on pushed `main`. Do not create
-the pack repository before then. First publication remains operator-gated.
+Execute ready card
+[`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
+in the dedicated public pack repository. First publication remains
+operator-gated.

@@ -30,7 +30,7 @@ Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
   catalog-pack publication and generated-baseline cutover; card `1103` complete,
-  card `1104` blocked until merge
+  card `1104` ready in the dedicated public repository
 
 Queued strict lanes:
 
@@ -83,5 +83,5 @@ Other planning specs:
 
 ## Next Task
 
-Update card `1104` to Ready after the card `1103` support floor is on pushed
-`main`. Do not create the pack repository before then. Keep draft `098` paused.
+Execute ready card `1104` in the dedicated public pack repository. Keep first
+publication and draft `098` paused.
