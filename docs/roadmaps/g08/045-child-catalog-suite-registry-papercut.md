@@ -1,6 +1,6 @@
 # g08.045 Child-Catalog Suite Registry Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
 Card: [`1100`](./batch-cards/1100-preserve-ancestor-container-registry.md)
 Contract: [`038`](../../contracts/038-unified-test-orchestration-contract.md)
@@ -28,7 +28,7 @@ test suite expands a task reference in a child catalog.
 
 ## Cards
 
-- [ ] [`1100`](./batch-cards/1100-preserve-ancestor-container-registry.md) — ready
+- [x] [`1100`](./batch-cards/1100-preserve-ancestor-container-registry.md) — complete
 
 ## Acceptance
 
@@ -39,4 +39,5 @@ test suite expands a task reference in a child catalog.
 
 ## Next Task
 
-Run card `1100`; downstream Acowtancy revalidation remains separately owned.
+Return the exact-head PR for card `1100` to the Effigy orchestrator. Downstream
+Acowtancy revalidation remains separately owned.

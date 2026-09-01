@@ -4,10 +4,11 @@ Roadmap: [`../045-child-catalog-suite-registry-papercut.md`](../045-child-catalo
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/038-unified-test-orchestration-contract.md`](../../../contracts/038-unified-test-orchestration-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: test suite task-reference resolver
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-approved papercut routing
+Completed: 2026-09-01
 
 ## Purpose
 
@@ -25,15 +26,15 @@ cwd without losing the originating repository's ancestor container registry.
 
 ## Acceptance
 
-- [ ] a child-catalog suite task ref with inherited `run_in = "container"`
+- [x] a child-catalog suite task ref with inherited `run_in = "container"`
       resolves the ancestor container default
-- [ ] the expanded task retains the child catalog cwd and selector identity
-- [ ] an explicit child registry/default wins over the ancestor fallback
-- [ ] direct invocation from the child does not gain an undeclared ancestor
-- [ ] command, Rhai, lifecycle, and same-catalog suite forms do not drift
-- [ ] focused tests, changed-impact validation, `effigy qa`, Rust checks, and
+- [x] the expanded task retains the child catalog cwd and selector identity
+- [x] an explicit child registry/default wins over the ancestor fallback
+- [x] direct invocation from the child does not gain an undeclared ancestor
+- [x] command, Rhai, lifecycle, and same-catalog suite forms do not drift
+- [x] focused tests, changed-impact validation, `effigy qa`, Rust checks, and
       diff checks pass
-- [ ] no Acowtancy file changes and no downstream workaround removal
+- [x] no Acowtancy file changes and no downstream workaround removal
 
 ## Review Oracle
 
@@ -56,6 +57,10 @@ Falsify these counterexamples before PR creation:
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets -- -D warnings`
 - `git diff --check`
+
+## Evidence
+
+[`../../../logs/2026-09/01-173500-child-catalog-suite-registry-1100.md`](../../../logs/2026-09/01-173500-child-catalog-suite-registry-1100.md)
 
 ## Evidence Requirement
 
