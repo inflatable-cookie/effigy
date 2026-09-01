@@ -7,7 +7,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] Rhai scripts can parse in release and fail in debug
+### [ ] Rhai scripts can parse in release and fail in debug — 2026-08-31
 - Friction: Rhai caps in-function expression nesting at 16 in debug builds and 32
   in release. `scripts/benchmark-docs-context.rhai` ran fine under
   `target/release/effigy` and failed under the `AGENTS.md`-documented
@@ -16,12 +16,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Impact: a first-party script can ship green from one build profile and be
   unrunnable from the other, including for any contributor without an installed
   binary. The error names a line and column but not the cap or the profile.
-- Plausible fix: set explicit, profile-independent Rhai depth limits in the host
+- Possible fix: set explicit, profile-independent Rhai depth limits in the host
   engine so both builds parse identically, or add a script-policy test that
   parses every first-party `.rhai` under the debug limits.
 - Surface: `crates/effigy-rhai` engine construction; `scripts/*.rhai`.
 
-### [ ] A no-match benchmark case cannot name itself in its own corpus
+### [ ] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
 - Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
   an empty report. Documenting its query inside `docs/`, `README.md`,
   `AGENTS.md`, `CHANGELOG.md`, or `PAPERCUTS.md` - all profile roots - gives its
@@ -29,23 +29,23 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   exactly this way while writing the card `1090` evidence log.
 - Impact: a durable, self-hosted no-match assertion is one careless sentence
   away from failing, and the failure looks like a retrieval regression.
-- Plausible fix: let a benchmark case declare an exclusion path so the harness
+- Possible fix: let a benchmark case declare an exclusion path so the harness
   can prove absence against a corpus that excludes its own documentation, or
   keep no-match assertions on fixture corpora only.
 - Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
 
-### [ ] YAML frontmatter is indexed as one setext heading
+### [ ] YAML frontmatter is indexed as one setext heading — 2026-08-31
 - Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
   frontmatter block as a single heading string, because the closing `---` reads
   as a setext underline for the preceding line. The result is a heading value
   hundreds of characters long that is useless in an agent context window.
 - Impact: any repository whose Markdown carries frontmatter gets one unusable
   section per such document, and it competes for the section budget.
-- Plausible fix: skip a leading frontmatter fence in the Markdown extractor
+- Possible fix: skip a leading frontmatter fence in the Markdown extractor
   before heading detection, and keep frontmatter keys out of section headings.
 - Surface: `crates/effigy-codegraph/src/language/markdown/extract.rs`.
 
-### [ ] `docs context` traversal is unreachable on a large corpus
+### [ ] `docs context` traversal is unreachable on a large corpus — 2026-08-31
 - Friction: traversed results rank after every 0-hop result, so a repository
   with more lexical seeds than `--max-sections` never surfaces a typed relation.
   Effigy has 2319 scoped documents; even at `--max-sections 32 --max-bytes
@@ -53,32 +53,32 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Impact: the typed-relation half of the documentation graph is invisible on
   exactly the repositories large enough to need it. Discovered while running the
   card `1090` benchmark; documented in guide `079` as a usage note.
-- Plausible fix: reserve a small slice of the section budget for traversed
+- Possible fix: reserve a small slice of the section budget for traversed
   results, or add an explicit relation-first query mode. Both are ranking
   changes and need a contract update first.
 - Surface: `crates/effigy-codegraph/src/docs_context/rank.rs` ordering;
   `docs/contracts/041-documentation-graph-profile-contract.md`.
 
-### [ ] `docs context` has no wall-clock bound on a cold graph
+### [ ] `docs context` has no wall-clock bound on a cold graph — 2026-08-31
 - Friction: `effigy docs context` refreshes the shared graph on demand, but only
   `effigy graph <subcommand>` runs under `EFFIGY_GRAPH_TIMEOUT_MS`. On a fresh
   worktree the first `docs context` sat for ~204s building 3784 files with no
   bound and no progress signal, which is indistinguishable from a hang.
 - Impact: the first documentation query in a new checkout or CI job looks
   wedged; there is no bounded failure carrying the graph health snapshot.
-- Plausible fix: move the graph time budget out of the graph command shell so
+- Possible fix: move the graph time budget out of the graph command shell so
   any command that triggers a lazy refresh shares the same bound and timeout
   payload.
 - Surface: `src/runner/graph_command.rs` time budget;
   `src/runner/docs_command/context.rs`.
 
-### [ ] Vendored Effigy skills need portfolio-level status and sync
+### [ ] Vendored Effigy skills need portfolio-level status and sync — 2026-08-30
 - Friction: 15 consumer repos under one projects directory had stale copies of
   all 10 managed Effigy skill files. The supported updater works one repo at a
   time, and ignored skill trees are easy to miss with ordinary file discovery.
 - Impact: agent routing and safety guidance drift across repos; maintaining the
   portfolio requires an ad hoc shell loop and manual dirty-tree checks.
-- Plausible fix: add a JSON-first scoped status/sync surface that inventories
+- Possible fix: add a JSON-first scoped status/sync surface that inventories
   repo-local installs, fingerprints the bundled skill version, refuses dirty
   skill trees, and updates only the managed files.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.

@@ -281,7 +281,7 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](./043-feature-placement-and-surface-migration-contract.md); card `1093`
-closed help-first discovery. Keep S3 extraction deferred until its consumer
-gate is proved. No release action is implied.
+Execute ready papercut card
+[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
+under strict spec `112`. After closeout, return to catalog-pack acquisition
+planning under contract `043`. Keep S3 deferred; no release action.

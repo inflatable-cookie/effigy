@@ -96,8 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](./043-feature-placement-and-surface-migration-contract.md).
-Cards `1089`, `1090`, `1092`, and `1093` are complete.
-The scheduled second governance review remains due by 2026-09-17. No release
-work or generation rollover is implied.
+Execute ready card
+[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
+under strict spec `112`. After closeout, return to catalog-pack acquisition
+planning under contract `043`. No release work or generation rollover.

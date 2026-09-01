@@ -28,7 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`112`](./112-rhai-profile-independent-limits-strict-lane.md) — ready;
+  profile-independent Rhai expression limits under roadmap `g08.039` and card
+  `1094`
 
 Queued strict lanes:
 
@@ -74,7 +76,7 @@ Other planning specs:
 
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
-Keep draft `098` paused; the second governance review remains due by
-2026-09-17. Do not infer release work or generation rollover.
+Execute ready card
+[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+After closeout, return to the catalog-pack acquisition prototype under contract
+`043`. Keep draft `098` paused; no release work or generation rollover.

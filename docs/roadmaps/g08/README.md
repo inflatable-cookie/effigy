@@ -89,6 +89,7 @@ This generation should help agents and maintainers answer questions like:
 - [`036-documentation-instruction-and-help-parity-refresh.md`](./036-documentation-instruction-and-help-parity-refresh.md)
 - [`037-external-skill-task-runner.md`](./037-external-skill-task-runner.md)
 - [`038-help-first-command-discovery.md`](./038-help-first-command-discovery.md)
+- [`039-rhai-profile-independent-limits-papercut.md`](./039-rhai-profile-independent-limits-papercut.md)
 
 ## Design Posture
 
@@ -270,6 +271,7 @@ through card `1093`.
 - [`1091-audit-and-refresh-documentation-instructions-and-help.md`](./batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md)
 - [`1092-add-external-skill-task-runner.md`](./batch-cards/1092-add-external-skill-task-runner.md)
 - [`1093-add-help-first-command-discovery.md`](./batch-cards/1093-add-help-first-command-discovery.md)
+- [`1094-fix-rhai-profile-dependent-expression-limits.md`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
 
 ## Current State
 
@@ -324,9 +326,13 @@ strict spec `111`. Card `1093` added help-first grouping with no executable
 group aliases and no selector-routing changes, and returned the
 feature-placement queue to planning.
 
+`g08.039` is ready under strict spec `112`. Card `1094` owns one bounded
+papercut: make Rhai expression-depth parsing profile-independent while
+preserving release limits and every unrelated runtime boundary.
+
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md).
-The second governance review remains due by 2026-09-17. Do not infer release
-work or a generation rollover.
+Execute ready card
+[`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+After closeout, return to catalog-pack acquisition planning under contract
+`043`. No release work or generation rollover.

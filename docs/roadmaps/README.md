@@ -121,15 +121,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.038`](./g08/038-help-first-command-discovery.md) groups
   command discovery under the six operator-job topics without adding execution
   aliases; card `1093` is complete and strict spec `111` is archived.
+  Ready [`g08.039`](./g08/039-rhai-profile-independent-limits-papercut.md)
+  removes build-profile drift from Rhai expression limits; card `1094` is the
+  only ready implementation card.
 
 ## Active Strict Lane
 
-None. Strict spec
-[`111`](../specs/archive/111-help-first-command-discovery-strict-lane.md) closed
-with roadmap `g08.038` and card `1093`; help-first discovery shipped without
-executable command groups or release work. The feature-placement queue is back
-in planning for the catalog-pack acquisition prototype under contract
-[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
+Strict spec
+[`112`](../specs/112-rhai-profile-independent-limits-strict-lane.md) is ready
+with roadmap `g08.039` and card `1094`. It is one bounded papercut interruption;
+catalog-pack acquisition remains the next planning checkpoint after closeout.
 
 ## Research Program
 
@@ -184,11 +185,10 @@ Before rollover:
 
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md).
-Keep S3 extraction deferred until its consumer gate is proved. The second
-governance review remains due by 2026-09-17. No release action or `g09`
-rollover is implied.
+Execute ready card
+[`1094`](./g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+After closeout, return to catalog-pack acquisition planning under contract
+`043`. Keep S3 deferred; no release action or `g09` rollover.
 
 ## Historical language boundary
 

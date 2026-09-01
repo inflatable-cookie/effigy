@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-08-31
+Updated: 2026-09-01
 
 ## Generation history
 
@@ -210,6 +210,9 @@ has since closed.
 contract `043`. Card `1093` added help-first command discovery without
 executable group aliases or selector-routing changes.
 
+`g08.039` is ready under strict spec `112`. Card `1094` is a single bounded
+papercut lane for explicit, profile-independent Rhai expression limits.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -232,9 +235,9 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context lane closed on 2026-08-31; strict specs `108`, `109`,
-`110`, and `111` are archived. The bounded help-first follow-through closed with
-card `1093`. Do not open `g09` or start release work from this selection.
+The documentation-context and help-first lanes are closed. Strict spec `112`
+temporarily owns one bounded Rhai papercut before the queue returns to catalog-
+pack acquisition planning. Do not open `g09` or start release work.
 
 ## Research Roadmaps
 
@@ -267,8 +270,7 @@ closeout there first.
 
 ## Next Task
 
-Return to planning for the catalog-pack acquisition prototype under contract
-[`043`](../contracts/043-feature-placement-and-surface-migration-contract.md);
-card [`1093`](./g08/batch-cards/1093-add-help-first-command-discovery.md) is
-complete. The second governance review remains due by 2026-09-17. No release
-action or `g09` rollover is implied.
+Execute ready card
+[`1094`](./g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+After closeout, return to catalog-pack acquisition planning under contract
+`043`. No release action or `g09` rollover.
