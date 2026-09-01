@@ -11,10 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::content::{content_id, validate_pack};
-use super::error::PackError;
 use super::home::effigy_home_dir;
 use super::store::{InstalledPackRecord, PackStore};
+use super::verify::{verify_installed_pack, PackDefect};
 use crate::fragment::{CatalogResolver, InstalledPackLayer};
 
 /// Project-local override directory, relative to the repo root.
@@ -226,18 +225,6 @@ pub fn select_pack_in(store: Option<&PackStore>, effigy_version: &str) -> PackSe
     };
 
     let root = store.install_dir(&record.install_id);
-    if !root.is_dir() {
-        return baseline(
-            PackSelectionReason::FallbackMissingContent,
-            Some(format!(
-                "installed pack `{}` content is missing from {}",
-                record.install_id,
-                root.display()
-            )),
-            store_root,
-        );
-    }
-
     match verify_active_install(&root, &record, effigy_version) {
         Ok(()) => PackSelection {
             reason: PackSelectionReason::ActivePack,
@@ -266,79 +253,20 @@ fn verify_active_install(
     record: &InstalledPackRecord,
     effigy_version: &str,
 ) -> Result<(), (PackSelectionReason, String)> {
-    let manifest = match validate_pack(root, effigy_version) {
-        Ok(manifest) => manifest,
-        Err(error) => return Err((reason_for_validation_error(&error), detail(record, &error))),
-    };
-
-    let recorded_fields: [(&'static str, String, String); 4] = [
-        ("pack id", record.pack_id.clone(), manifest.id.clone()),
-        (
-            "pack version",
-            record.pack_version.clone(),
-            manifest.version.clone(),
-        ),
-        (
-            "compatibility requirement",
-            record.requires_effigy.clone(),
-            manifest.requires_effigy.clone(),
-        ),
-        (
-            "manifest schema version",
-            record.manifest_schema_version.to_string(),
-            manifest.schema_version.to_string(),
-        ),
-    ];
-    for (field, recorded, found) in recorded_fields {
-        if recorded != found {
-            return Err((
-                PackSelectionReason::FallbackRecordMismatch,
-                PackError::RecordManifestMismatch {
-                    install_id: record.install_id.clone(),
-                    field,
-                    recorded,
-                    found,
-                }
-                .to_string(),
-            ));
-        }
-    }
-
-    let found = match content_id(root) {
-        Ok(found) => found,
-        Err(error) => return Err((reason_for_validation_error(&error), detail(record, &error))),
-    };
-    if found != record.content_id {
-        return Err((
-            PackSelectionReason::FallbackContentChanged,
-            PackError::ContentIdentityMismatch {
-                install_id: record.install_id.clone(),
-                recorded: record.content_id.clone(),
-                found,
-            }
-            .to_string(),
-        ));
-    }
-    Ok(())
+    verify_installed_pack(root, record, effigy_version)
+        .map_err(|failure| (reason_for(failure.defect), failure.detail))
 }
 
-fn reason_for_validation_error(error: &PackError) -> PackSelectionReason {
-    match error {
-        PackError::ManifestNotFound { .. }
-        | PackError::InvalidManifest { .. }
-        | PackError::UnsupportedManifestSchema { .. } => {
-            PackSelectionReason::FallbackInvalidManifest
-        }
-        PackError::Incompatible { .. } => PackSelectionReason::FallbackIncompatible,
-        _ => PackSelectionReason::FallbackInvalidPack,
+/// Map a verification defect onto the selection reason operators see.
+pub(super) fn reason_for(defect: PackDefect) -> PackSelectionReason {
+    match defect {
+        PackDefect::MissingContent => PackSelectionReason::FallbackMissingContent,
+        PackDefect::InvalidManifest => PackSelectionReason::FallbackInvalidManifest,
+        PackDefect::Incompatible => PackSelectionReason::FallbackIncompatible,
+        PackDefect::InvalidPack => PackSelectionReason::FallbackInvalidPack,
+        PackDefect::RecordMismatch => PackSelectionReason::FallbackRecordMismatch,
+        PackDefect::ContentChanged => PackSelectionReason::FallbackContentChanged,
     }
-}
-
-fn detail(record: &InstalledPackRecord, error: &PackError) -> String {
-    format!(
-        "installed pack `{}` failed validation: {error}",
-        record.install_id
-    )
 }
 
 fn install_root(selection: &PackSelection, record: &InstalledPackRecord) -> PathBuf {

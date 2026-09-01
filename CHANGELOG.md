@@ -35,9 +35,12 @@ During v0.x, MINOR bumps may include breaking changes.
   the active pack on every use: manifest and fragments revalidate, the stored
   manifest is cross-checked against the install record, and the whole tree is
   re-hashed against its recorded content identity, so edited or deleted bytes
-  cannot stay selected. Pack content may contain only regular files and
-  directories; symlinks are rejected before anything is hashed, copied, or
-  validated. Durable store mutation is serialized across processes by an
+  cannot stay selected. `rollback` re-proves its target with that same check
+  before mutating state and refuses rather than activating another unhealthy
+  pack, and `doctor` recommends `rollback` only when that proof passes,
+  otherwise `reset`. Pack content may contain only regular files and
+  directories with valid UTF-8 names; symlinks — including the pack root and
+  `pack.toml` — are rejected before anything is read, hashed, or copied. Durable store mutation is serialized across processes by an
   advisory lock. Every successfully installed pack is retained — `install`,
   `rollback`, and `reset` never delete installed content — and reinstalling
   content the store already holds re-verifies it, repairing rather than

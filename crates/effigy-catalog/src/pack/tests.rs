@@ -21,6 +21,7 @@ use super::selection::{
     resolve_catalog_layers, select_pack, select_pack_in, PackSelection, PackSelectionReason,
 };
 use super::store::{PackSourceRecord, PackStore};
+use super::verify::{verify_installed_pack, PackDefect};
 
 const EFFIGY_VERSION: &str = "0.12.1";
 
@@ -315,7 +316,7 @@ fn rollback_after_two_installs_selects_the_previous_validated_pack() {
     );
 
     let store = store_in(home.path());
-    let rolled = store.rollback().expect("rollback");
+    let rolled = store.rollback(EFFIGY_VERSION).expect("rollback");
     assert_eq!(
         rolled.active.as_deref(),
         Some(first.installed.install_id.as_str())
@@ -330,7 +331,7 @@ fn rollback_after_two_installs_selects_the_previous_validated_pack() {
     );
 
     // Rollback is a swap, so it returns rather than dead-ending.
-    let again = store.rollback().expect("rollback again");
+    let again = store.rollback(EFFIGY_VERSION).expect("rollback again");
     assert_eq!(
         again.active.as_deref(),
         Some(second.installed.install_id.as_str())
@@ -356,7 +357,9 @@ fn reset_selects_baseline_and_still_allows_rollback() {
     );
     assert!(store.install_dir(&installed.installed.install_id).is_dir());
 
-    let rolled = store.rollback().expect("rollback after reset");
+    let rolled = store
+        .rollback(EFFIGY_VERSION)
+        .expect("rollback after reset");
     assert_eq!(
         rolled.active.as_deref(),
         Some(installed.installed.install_id.as_str())
@@ -367,7 +370,7 @@ fn reset_selects_baseline_and_still_allows_rollback() {
 fn rollback_without_lineage_fails_deterministically() {
     let home = TempDir::new().expect("home");
     let store = store_in(home.path());
-    let error = store.rollback().expect_err("no target");
+    let error = store.rollback(EFFIGY_VERSION).expect_err("no target");
     assert!(matches!(error, PackError::NoRollbackTarget), "{error}");
 }
 
@@ -667,7 +670,7 @@ fn rollback_and_reset_delete_no_installed_content() {
     .install_id;
 
     let store = store_in(home.path());
-    store.rollback().expect("rollback");
+    store.rollback(EFFIGY_VERSION).expect("rollback");
     store.reset().expect("reset");
 
     let state = store.load().expect("state");
@@ -1026,7 +1029,7 @@ fn concurrent_rollback_and_reset_keep_state_self_consistent() {
             let store = store.clone();
             scope.spawn(move || {
                 if index % 2 == 0 {
-                    let _ = store.rollback();
+                    let _ = store.rollback(EFFIGY_VERSION);
                 } else {
                     let _ = store.reset();
                 }
@@ -1124,4 +1127,364 @@ fn selection_without_a_store_reports_nothing() {
     reset_for_test();
     assert!(!report_once(&selection));
     reset_for_test();
+}
+
+// --- root and manifest no-follow -----------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_stored_root_with_identical_bytes_is_never_reported_reused() {
+    // The nastiest shape: the link points at a byte-identical tree, so a hash
+    // taken through it matches the record exactly. `is_dir` and `read_dir`
+    // both follow, so only a no-follow classification catches this.
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    let first = install_local(home.path(), &candidate).expect("install");
+    let store = store_in(home.path());
+    let install_dir = store.install_dir(&first.installed.install_id);
+
+    // Replace the stored directory with a link to an identical copy.
+    let decoy = src.path().join("identical-copy");
+    super::content::copy_tree(&install_dir, &decoy).expect("copy");
+    assert_eq!(
+        content_id(&decoy).expect("decoy id"),
+        first.installed.content_id,
+        "the decoy must be byte-identical for this test to mean anything"
+    );
+    std::fs::remove_dir_all(&install_dir).expect("remove stored dir");
+    std::os::unix::fs::symlink(&decoy, &install_dir).expect("symlink");
+
+    // Selection refuses it rather than adopting the link.
+    let selection = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+    assert_eq!(
+        selection.reason,
+        PackSelectionReason::FallbackMissingContent,
+        "a symlinked stored root passed as genuine content"
+    );
+
+    // Reinstall repairs the path instead of reporting it reused.
+    let repaired = install_local(home.path(), &candidate).expect("reinstall");
+    assert_eq!(
+        repaired.stored_content,
+        StoredContentOutcome::RepairedCorrupt,
+        "a symlinked install path was adopted as reusable content"
+    );
+    let metadata = std::fs::symlink_metadata(&install_dir).expect("stored metadata");
+    assert!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "the install path is still a symlink after repair"
+    );
+    let selection = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+    assert_eq!(selection.reason, PackSelectionReason::ActivePack);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_post_install_symlinked_manifest_is_rejected_before_its_target_is_read() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("install");
+
+    // A manifest that would parse cleanly, reached through a link.
+    let elsewhere = src.path().join("elsewhere-pack.toml");
+    write(
+        &elsewhere,
+        "schema_version = 1\n\n[pack]\nid = \"p\"\nversion = \"1.0.0\"\n\n\
+         [compatibility]\neffigy = \">=0.12\"\n",
+    );
+    let selection = select_after(home.path(), |root, _| {
+        std::fs::remove_file(root.join("pack.toml")).expect("remove manifest");
+        std::os::unix::fs::symlink(&elsewhere, root.join("pack.toml")).expect("symlink");
+    });
+
+    // The impostor manifest would have parsed cleanly and matched the record,
+    // so reading through the link would have produced `fallback-content-changed`
+    // from the later tree hash. Getting `fallback-invalid-pack` instead is the
+    // proof that the link was refused before its target was ever opened.
+    assert_eq!(
+        selection.reason,
+        PackSelectionReason::FallbackInvalidPack,
+        "validation read through a symlinked manifest"
+    );
+    assert!(selection.uses_baseline());
+    let detail = selection.detail.clone().expect("detail");
+    assert!(detail.contains("pack.toml"), "{detail}");
+    assert!(detail.contains("symlink"), "{detail}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_pack_root_is_refused_by_direct_validation() {
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    let link = src.path().join("linked-root");
+    std::os::unix::fs::symlink(&candidate, &link).expect("symlink");
+
+    let error = content_id(&link).expect_err("content_id must classify its root");
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { .. }),
+        "{error}"
+    );
+
+    let error = super::content::validate_pack(&link, EFFIGY_VERSION)
+        .expect_err("validate_pack must classify its root");
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { .. }),
+        "{error}"
+    );
+}
+
+// --- content identity is injective ---------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn distinct_non_utf8_entry_names_are_rejected_rather_than_lossily_merged() {
+    // Both names are invalid UTF-8 and both lossily convert to the same
+    // replacement text. A lossy encoding would give two different trees the
+    // same content id — and therefore the same install id — so the portable
+    // pack contract rejects the names outright.
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let first = OsStr::from_bytes(b"\xff.conf");
+    let second = OsStr::from_bytes(b"\xfe.conf");
+    assert_eq!(
+        first.to_string_lossy(),
+        second.to_string_lossy(),
+        "the fixture must exercise a lossy collision"
+    );
+    assert_ne!(first, second);
+
+    for name in [first, second] {
+        let error = super::content::ensure_utf8_name(&PathBuf::from("pack").join(name))
+            .expect_err("non-UTF-8 entry names are unsupported");
+        assert!(
+            matches!(error, PackError::NonUtf8EntryName { .. }),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pack_carrying_a_non_utf8_entry_name_is_refused_on_disk() {
+    // Some filesystems (APFS) refuse to create such a name at all, which is a
+    // stronger guarantee than ours. Where one can be created, installing it
+    // must fail rather than hash a lossy name.
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let pack = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    let configs = pack.join("postgres/configs");
+    std::fs::create_dir_all(&configs).expect("mkdir configs");
+    let name = OsStr::from_bytes(b"\xff.conf");
+    if std::fs::write(configs.join(name), b"same bytes").is_err() {
+        // The filesystem itself rejects the name; nothing left to prove here.
+        return;
+    }
+
+    let error = content_id(&pack).expect_err("non-UTF-8 entry names are unsupported");
+    assert!(
+        matches!(error, PackError::NonUtf8EntryName { .. }),
+        "{error}"
+    );
+    let error = install_local(home.path(), &pack).expect_err("install must refuse");
+    assert!(
+        matches!(error, PackError::NonUtf8EntryName { .. }),
+        "{error}"
+    );
+}
+
+#[test]
+fn distinct_accepted_trees_never_share_a_content_identity() {
+    // Same bytes, different placement: a separator-joined encoding could make
+    // `a/b` and `a-b` (or nested vs flat) collide. The length-prefixed
+    // encoding cannot.
+    let src = TempDir::new().expect("src");
+    let mut seen = std::collections::HashSet::new();
+    for (dir, file) in [
+        ("configs", "a.conf"),
+        ("configs/a", "conf"),
+        ("configs", "a-conf"),
+    ] {
+        let pack = candidate_pack(
+            &src.path().join(dir.replace('/', "-") + file),
+            "p",
+            "1.0.0",
+            ">=0.12",
+            5432,
+        );
+        let target = pack.join("postgres").join(dir).join(file);
+        write(&target, "same bytes");
+        assert!(
+            seen.insert(content_id(&pack).expect("content id")),
+            "two distinct trees shared one content identity"
+        );
+    }
+    assert_eq!(seen.len(), 3);
+}
+
+// --- rollback re-proves its target ---------------------------------------
+
+/// Install two packs, leaving `2.0.0` active and `1.0.0` as the rollback
+/// target, then damage the target with `mutate`.
+fn store_with_damaged_rollback_target(
+    home: &Path,
+    src: &Path,
+    mutate: impl FnOnce(&Path),
+) -> (PackStore, String, String) {
+    let first = install_local(home, &candidate_pack(src, "p", "1.0.0", ">=0.12", 5432))
+        .expect("first")
+        .installed
+        .install_id;
+    let second = install_local(home, &candidate_pack(src, "p", "2.0.0", ">=0.12", 6543))
+        .expect("second")
+        .installed
+        .install_id;
+    let store = store_in(home);
+    mutate(&store.install_dir(&first));
+    (store, first, second)
+}
+
+/// Assert rollback refuses and changes nothing.
+fn assert_rollback_refused(store: &PackStore, active: &str, previous: &str) {
+    let before = store.load().expect("state");
+    let error = store
+        .rollback(EFFIGY_VERSION)
+        .expect_err("rollback must refuse an unhealthy target");
+    assert!(
+        matches!(error, PackError::RollbackTargetUnhealthy { .. }),
+        "{error}"
+    );
+    let after = store.load().expect("state");
+    assert_eq!(after.active.as_deref(), Some(active), "active changed");
+    assert_eq!(
+        after.previous.as_deref(),
+        Some(previous),
+        "previous changed"
+    );
+    assert_eq!(after.installs.len(), before.installs.len());
+}
+
+#[test]
+fn rollback_refuses_a_tampered_previous_target_and_preserves_state() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |root| {
+            write(
+                &root.join("postgres/compose.fragment.yml"),
+                "image: postgres:tampered\n",
+            );
+        });
+
+    assert_rollback_refused(&store, &second, &first);
+}
+
+#[test]
+fn rollback_refuses_a_partially_deleted_previous_target() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |root| {
+            std::fs::remove_file(root.join("postgres/compose.fragment.yml")).expect("remove");
+        });
+
+    assert_rollback_refused(&store, &second, &first);
+}
+
+#[test]
+fn rollback_refuses_a_previous_target_that_is_no_longer_compatible() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |root| {
+            write(
+                &root.join("pack.toml"),
+                "schema_version = 1\n\n[pack]\nid = \"p\"\nversion = \"1.0.0\"\n\n\
+                 [compatibility]\neffigy = \">=99.0\"\n",
+            );
+        });
+
+    assert_rollback_refused(&store, &second, &first);
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_refuses_a_symlinked_previous_target() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |root| {
+            let decoy = root
+                .parent()
+                .expect("installs dir")
+                .join("decoy-previous-content");
+            super::content::copy_tree(root, &decoy).expect("copy");
+            std::fs::remove_dir_all(root).expect("remove");
+            std::os::unix::fs::symlink(&decoy, root).expect("symlink");
+        });
+
+    assert_rollback_refused(&store, &second, &first);
+}
+
+#[test]
+fn rollback_still_succeeds_when_the_previous_target_verifies() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |_| {});
+
+    let state = store.rollback(EFFIGY_VERSION).expect("rollback");
+    assert_eq!(state.active.as_deref(), Some(first.as_str()));
+    assert_eq!(state.previous.as_deref(), Some(second.as_str()));
+}
+
+#[test]
+fn rollback_target_health_reports_the_defect_it_refuses_on() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, _second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |root| {
+            write(
+                &root.join("postgres/compose.fragment.yml"),
+                "image: postgres:tampered\n",
+            );
+        });
+
+    let (record, verdict) = store
+        .rollback_target_health(EFFIGY_VERSION)
+        .expect("a rollback target exists");
+    assert_eq!(record.install_id, first);
+    let failure = verdict.expect_err("the damaged target must not verify");
+    assert_eq!(failure.defect, PackDefect::ContentChanged);
+    assert!(
+        failure.detail.contains("content changed on disk"),
+        "{}",
+        failure.detail
+    );
+}
+
+#[test]
+fn a_healthy_rollback_target_verifies_through_the_shared_proof() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (store, first, _second) =
+        store_with_damaged_rollback_target(home.path(), src.path(), |_| {});
+
+    let record = store
+        .load()
+        .expect("state")
+        .record(&first)
+        .cloned()
+        .expect("record");
+    verify_installed_pack(&store.install_dir(&first), &record, EFFIGY_VERSION)
+        .expect("a healthy target must verify");
 }

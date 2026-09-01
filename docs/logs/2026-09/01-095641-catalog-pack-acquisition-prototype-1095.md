@@ -9,8 +9,9 @@ Batch: catalog-pack-acquisition-1095
 
 - Card `1095` landed the complete in-repository catalog-pack acquisition
   prototype under strict spec `113`, architecture `026`, and contract `043`.
-- Orchestrator review of head `19cf30fb1` requested changes on six findings.
-  All six are repaired in the same PR; the repair round is recorded in
+- Orchestrator review of head `19cf30fb1` requested changes on six findings, and
+  re-review of head `3906ea85e` requested changes on three more. All nine are
+  repaired in the same PR; both rounds are recorded in
   [Review Repair Round](#review-repair-round) and folded into the oracle
   mapping below.
 - Catalog fragments now resolve through four layers — project override, user
@@ -28,8 +29,9 @@ Batch: catalog-pack-acquisition-1095
   manifest with identity, version, manifest schema version, and a semver Effigy
   requirement; deterministic sha256 content identity over the whole tree;
   symlink-hostile traversal that rejects anything but regular files and
-  directories; candidate validation that reuses `ServiceSchema` rather than
-  restating fragment rules; versioned user-state store with atomic `state.json`
+  directories with valid UTF-8 names — including the root and `pack.toml`,
+  classified before either is read; candidate validation that reuses
+  `ServiceSchema` rather than restating fragment rules; versioned user-state store with atomic `state.json`
   activation, an advisory cross-process lock over durable mutation, full
   install lineage with no pruning, swap rollback, and non-destructive reset;
   the acquire → validate → store → activate transaction behind the injectable
@@ -40,6 +42,10 @@ Batch: catalog-pack-acquisition-1095
   fallback reaches the operator, wired into `layered_resolver` so every
   catalog-backed consumer announces a source change exactly once per process,
   on stderr, in text or `effigy.catalog-pack.fallback.v1` form.
+- `crates/effigy-catalog/src/pack/verify.rs` — one proof that stored content is
+  still what the record says it is. Selection, `rollback`, and the `doctor`
+  repair recommendation all run it, so none of them can trust a stale record
+  while another re-proves the bytes.
 - `crates/effigy-catalog/src/fragment.rs` — `FragmentSource::InstalledPack` and
   `CatalogResolver::with_installed_pack`, placing the pack layer below both
   overrides and above the compiled baseline in both `resolve` and `list`.
@@ -99,6 +105,14 @@ Each row names the exact test that would fail if the counterexample were true.
      `..::a_directory_symlink_inside_a_pack_is_rejected`,
      `..::a_symlink_cycle_is_rejected_rather_than_traversed`,
      `..::a_symlinked_required_file_cannot_smuggle_content_in`
+   - Root and manifest no-follow:
+     `..::a_symlinked_stored_root_with_identical_bytes_is_never_reported_reused`,
+     `..::a_post_install_symlinked_manifest_is_rejected_before_its_target_is_read`,
+     `..::a_symlinked_pack_root_is_refused_by_direct_validation`
+   - Identity is injective over accepted paths:
+     `..::distinct_non_utf8_entry_names_are_rejected_rather_than_lossily_merged`,
+     `..::a_pack_carrying_a_non_utf8_entry_name_is_refused_on_disk`,
+     `..::distinct_accepted_trees_never_share_a_content_identity`
    - `effigy` `runner::service_command::pack::tests::a_pulled_but_incompatible_candidate_leaves_the_active_selection_alone`
      (the fake adapter confirms the pull happened first)
 4. **Unhealthy active state falls back silently or without repair.**
@@ -126,6 +140,9 @@ Each row names the exact test that would fail if the counterexample were true.
    - `effigy` `runner::service_command::tests::unhealthy_active_pack_warns_in_text_and_reports_a_reason_in_json`
    - `effigy` `runner::service_command::pack::tests::deleted_active_content_yields_a_doctor_finding_with_one_repair_command`
      (asserts the remediation names exactly one command)
+   - The advertised repair is honest:
+     `..::doctor_recommends_reset_when_the_rollback_target_no_longer_verifies`,
+     `..::doctor_recommends_rollback_only_when_the_target_actually_verifies`
    - `effigy` `runner::service_command::pack::tests::unreadable_store_state_still_lets_status_report_instead_of_failing`
 5. **Installed content redirects the fixed official channel.**
    - `effigy-catalog` `pack::tests::official_update_ignores_update_sources_declared_by_pack_content`
@@ -144,6 +161,15 @@ Each row names the exact test that would fail if the counterexample were true.
    - `effigy` `runner::service_command::pack::tests::rollback_and_reset_are_deterministic_and_keep_content_recoverable`
    - `tests/catalog_pack_cli_tests.rs::concurrent_installs_from_separate_processes_keep_every_record`
      (also asserts `service pack status` reports every install)
+   - Rollback re-proves its target before mutating state:
+     `pack::tests::rollback_refuses_a_tampered_previous_target_and_preserves_state`,
+     `..::rollback_refuses_a_partially_deleted_previous_target`,
+     `..::rollback_refuses_a_previous_target_that_is_no_longer_compatible`,
+     `..::rollback_refuses_a_symlinked_previous_target`,
+     `..::rollback_still_succeeds_when_the_previous_target_verifies`,
+     `..::rollback_target_health_reports_the_defect_it_refuses_on`,
+     `..::a_healthy_rollback_target_verifies_through_the_shared_proof`
+   - `effigy` `runner::service_command::pack::tests::rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone`
 7. **A normal command invokes the OCI adapter or probes the network.**
    - `effigy` `runner::service_command::pack::tests::ordinary_catalog_work_never_invokes_the_oci_transport`
      — structural: `effigy-catalog` declares no artifact/transport dependency and
@@ -189,12 +215,12 @@ Each row names the exact test that would fail if the counterexample were true.
 ## Validation Performed
 
 - command: `cargo test -p effigy-catalog`
-  - result: pass — lib 103 tests (43 under `pack::tests`), integration 57 tests
+  - result: pass — lib 116 tests (56 under `pack::tests`), integration 57 tests
     (4 under `pack_layer`, 53 pre-existing unchanged)
 - command: `cargo test -p effigy-artifacts`
   - result: pass — the adapter seam is consumed, not modified
 - command: `cargo test -p effigy --lib runner::service_command`
-  - result: pass — 15 tests (11 new pack rows, 4 service rows)
+  - result: pass — 18 tests (14 pack rows, 4 service rows)
 - command: `cargo test -p effigy-containers`
   - result: pass — 230 tests, 3 new under `tests::catalog_pack_fallback`
 - command: `cargo test -p effigy-doctor`
@@ -215,8 +241,11 @@ Each row names the exact test that would fail if the counterexample were true.
 
 ## Review Repair Round
 
-Orchestrator review of head `19cf30fb1` requested changes on six findings. Each
-is repaired below, with the proof that would fail if the repair regressed.
+Two review rounds. Head `19cf30fb1` requested changes on six findings; head
+`3906ea85e` accepted those repairs and requested changes on three more. Each is
+recorded below with the proof that would fail if the repair regressed.
+
+### Round one — head `19cf30fb1`
 
 1. **Retention was invented in implementation.** `MAX_RETAINED_INSTALLS` and
    `PackStore::prune` are removed outright; nothing in the store deletes
@@ -263,6 +292,74 @@ is repaired below, with the proof that would fail if the repair regressed.
    activation. Proof: `install_identity_carries_the_full_content_digest` and the
    reinstall-repair test.
 
+### Round two — head `3906ea85e`
+
+The re-review accepted round one and the documented stderr diagnostic design,
+and found three remaining execution misses.
+
+7. **Symlink rejection was still incomplete at the two root reads.**
+   `content_id` began with `collect_files(root, root)` and never classified the
+   root, so `read_dir` followed a symlinked install root; `land_content` used
+   `install_dir.is_dir()`, which follows the same link, so a link to a
+   byte-identical tree was reported `reused-verified` and activated, only for
+   selection to reject it afterwards. Separately, `validate_pack` called
+   `PackManifest::load` before proving `pack.toml` was a regular file, so
+   post-install corruption could have it read through a manifest symlink.
+
+   `content_id` and `validate_pack` now classify the root before any read;
+   `validate_pack` proves the manifest is a regular file before opening it; and
+   `land_content` classifies the install path without following, moving a
+   symlink or non-directory occupant aside instead of adopting it. `rename`
+   moves the link itself, never its target. Proof:
+   `a_symlinked_stored_root_with_identical_bytes_is_never_reported_reused`
+   (the decoy is asserted byte-identical first, so the test would pass
+   vacuously if it were not),
+   `a_post_install_symlinked_manifest_is_rejected_before_its_target_is_read`
+   (the impostor manifest would have parsed and matched the record, so reading
+   through it would have surfaced as `fallback-content-changed`; getting
+   `fallback-invalid-pack` is the proof it was refused first), and
+   `a_symlinked_pack_root_is_refused_by_direct_validation`.
+
+8. **Content identity was not injective over accepted paths.**
+   `normalized_path_bytes` used `to_string_lossy`, so two distinct non-UTF-8
+   names could normalize to the same replacement text and, with identical file
+   bytes, produce the same content id and full install id.
+
+   Non-UTF-8 entry names are now rejected as unsupported portable pack content —
+   the clean contract, since fragment directory names become catalog service
+   names and packs travel through OCI layers and archives that assume text
+   paths. Path components are additionally length-prefixed rather than joined
+   with a separator, so no two component sequences can encode alike. Proof:
+   `distinct_non_utf8_entry_names_are_rejected_rather_than_lossily_merged`
+   (asserts the two names are distinct yet lossily equal, then that both are
+   refused), `a_pack_carrying_a_non_utf8_entry_name_is_refused_on_disk`, and
+   `distinct_accepted_trees_never_share_a_content_identity`.
+
+   The on-disk test returns early where the filesystem itself refuses such a
+   name — APFS does, which is a stronger guarantee than ours — so the
+   platform-independent assertion carries the proof on macOS and both run on
+   filesystems that permit the name.
+
+9. **Rollback and doctor trusted stale records rather than validated content.**
+   `PackStore::rollback` checked only that a record existed and its path
+   reported `is_dir`, and `pack_health_finding` recommended rollback whenever a
+   `previous_record` existed. A previous install that had since been partially
+   deleted, tampered with, symlinked, or become incompatible would be activated
+   by an advertised one-step repair that reported success.
+
+   The selection-time proof moved into `pack::verify::verify_installed_pack`,
+   and selection, `rollback`, and the doctor recommendation all run that same
+   function. `rollback` runs it before touching state and returns
+   `RollbackTargetUnhealthy` on failure, leaving `active`, `previous`, and
+   lineage exactly as they were. `doctor` names `rollback` only when the target
+   passes, and `reset` otherwise. Proof: the four refusal tests
+   (tampered, partially deleted, incompatible, symlinked), each asserting state
+   is unchanged; `rollback_still_succeeds_when_the_previous_target_verifies`;
+   `rollback_target_health_reports_the_defect_it_refuses_on`; and the runner-level
+   `doctor_recommends_reset_when_the_rollback_target_no_longer_verifies`,
+   `doctor_recommends_rollback_only_when_the_target_actually_verifies`, and
+   `rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone`.
+
 ### Where each proof lives, and why
 
 The container/system/workspace propagation proof is a unit test in
@@ -307,6 +404,10 @@ of this card's scope.
   files), so this is well under a millisecond and is paid rather than cached —
   a cache's invalidation would itself be a correctness surface. A materially
   larger pack format would need that revisited.
+- Pack entry names must be valid UTF-8. That is a real constraint on what a
+  pack may contain, taken deliberately so content identity stays injective; a
+  pack built from a tree with non-UTF-8 names will be refused rather than
+  silently given an ambiguous identity.
 - The fallback notice goes to stderr. A consumer that captures only stdout will
   still get correct baseline behaviour but will not see the warning; the
   `service` surfaces and `doctor` carry the same facts in stdout payloads.

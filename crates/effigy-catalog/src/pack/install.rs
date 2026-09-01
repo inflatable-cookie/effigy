@@ -226,7 +226,15 @@ fn land_content(
     install_dir: &Path,
     record: &InstalledPackRecord,
 ) -> Result<StoredContentOutcome, PackError> {
-    if install_dir.is_dir() {
+    // `is_dir` follows symlinks. Classify without following first, so a link
+    // pointing at a byte-identical tree is repaired rather than adopted and
+    // reported `reused-verified`.
+    let existing = std::fs::symlink_metadata(install_dir);
+    let existing_is_real_dir = matches!(
+        &existing,
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink()
+    );
+    if existing_is_real_dir {
         match content_id(install_dir) {
             Ok(found) if found == record.content_id => {
                 return Ok(StoredContentOutcome::ReusedVerified)
@@ -236,6 +244,12 @@ fn land_content(
                 return Ok(StoredContentOutcome::RepairedCorrupt);
             }
         }
+    }
+    if existing.is_ok() {
+        // A symlink or a non-directory occupies the install path. Move it aside
+        // and land validated content, rather than trusting or deleting it.
+        replace_install_dir(staging, pack_root, install_dir)?;
+        return Ok(StoredContentOutcome::RepairedCorrupt);
     }
 
     let parent = install_dir
@@ -264,6 +278,8 @@ fn replace_install_dir(
     let landing = staging.join("repair");
     copy_tree(pack_root, &landing)?;
     let displaced = quarantine_path(install_dir);
+    // `rename` moves a symlink itself rather than its target, which is exactly
+    // what is wanted: the link is set aside, never followed.
     std::fs::rename(install_dir, &displaced).map_err(|error| PackError::io(install_dir, &error))?;
     match std::fs::rename(&landing, install_dir) {
         Ok(()) => Ok(()),

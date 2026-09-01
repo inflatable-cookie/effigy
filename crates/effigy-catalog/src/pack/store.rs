@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::PackError;
 use super::home::effigy_home_dir;
+use super::verify::{verify_installed_pack, PackVerificationFailure};
 
 /// Store directory under the Effigy user-state home.
 const STORE_DIR: &str = "catalog-packs";
@@ -326,19 +327,51 @@ impl PackStore {
     /// Rollback is a swap, not a pop: the selection it replaces becomes the
     /// next rollback target, so `rollback` after `rollback` returns. Installed
     /// content is never deleted.
-    pub fn rollback(&self) -> Result<PackStoreState, PackError> {
+    ///
+    /// The target is re-proved against the running Effigy *before* any state
+    /// changes, using the same check selection runs. A record plus a path that
+    /// happens to exist is not evidence: the advertised one-step repair must
+    /// not report success while activating another unhealthy pack. A failed
+    /// proof leaves `active` and `previous` exactly as they were.
+    pub fn rollback(&self, effigy_version: &str) -> Result<PackStoreState, PackError> {
         let _lock = self.lock()?;
         let mut state = self.load()?;
         let Some(target) = state.previous.clone() else {
             return Err(PackError::NoRollbackTarget);
         };
-        if state.record(&target).is_none() || !self.install_dir(&target).is_dir() {
+        let Some(record) = state.record(&target).cloned() else {
             return Err(PackError::RollbackTargetMissing { install_id: target });
+        };
+        if let Err(failure) =
+            verify_installed_pack(&self.install_dir(&target), &record, effigy_version)
+        {
+            return Err(PackError::RollbackTargetUnhealthy {
+                install_id: target,
+                detail: failure.detail,
+            });
         }
         state.previous = state.active.take();
         state.active = Some(target);
         self.commit(&state)?;
         Ok(state)
+    }
+
+    /// Whether the recorded rollback target currently passes the same proof
+    /// selection and [`PackStore::rollback`] use.
+    ///
+    /// Used to decide whether advertising `rollback` as a repair is honest.
+    pub fn rollback_target_health(
+        &self,
+        effigy_version: &str,
+    ) -> Option<(InstalledPackRecord, Result<(), PackVerificationFailure>)> {
+        let state = self.load().ok()?;
+        let record = state.previous_record().cloned()?;
+        let verdict = verify_installed_pack(
+            &self.install_dir(&record.install_id),
+            &record,
+            effigy_version,
+        );
+        Some((record, verdict))
     }
 
     /// Select the compiled baseline.

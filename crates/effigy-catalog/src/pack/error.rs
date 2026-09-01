@@ -47,6 +47,16 @@ pub enum PackError {
     )]
     UnsupportedEntry { path: PathBuf, kind: String },
 
+    /// A pack entry name is not valid UTF-8.
+    ///
+    /// Rejected rather than lossily converted: a replacement-character name
+    /// would make two distinct trees share one content identity.
+    #[error(
+        "catalog pack content contains a non-UTF-8 entry name at {path}; \
+         pack entry names must be valid UTF-8"
+    )]
+    NonUtf8EntryName { path: PathBuf },
+
     /// Stored content no longer hashes to its recorded identity.
     #[error(
         "installed catalog pack `{install_id}` content changed on disk \
@@ -112,6 +122,13 @@ pub enum PackError {
     /// Rollback was requested with no recoverable previous selection.
     #[error("no previous catalog pack selection to roll back to")]
     NoRollbackTarget,
+
+    /// Rollback's target exists but no longer passes verification.
+    #[error(
+        "previous catalog pack `{install_id}` is not usable, so rollback was \
+         refused and the current selection is unchanged: {detail}"
+    )]
+    RollbackTargetUnhealthy { install_id: String, detail: String },
 
     /// Rollback named an install whose stored content is gone.
     #[error("previous catalog pack `{install_id}` is no longer present in the store")]

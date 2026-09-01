@@ -31,6 +31,8 @@ pub mod manifest;
 pub mod selection;
 #[path = "pack/store.rs"]
 pub mod store;
+#[path = "pack/verify.rs"]
+pub mod verify;
 
 pub use channel::{
     official_update_reference, plan_official_update, OfficialPackChannel, OfficialUpdatePlan,
@@ -53,6 +55,7 @@ pub use store::{
     InstalledPackRecord, PackSourceRecord, PackStore, PackStoreLock, PackStoreState,
     PACK_STORE_STATE_SCHEMA,
 };
+pub use verify::{verify_installed_pack, PackDefect, PackVerificationFailure};
 
 #[cfg(test)]
 #[path = "pack/tests.rs"]

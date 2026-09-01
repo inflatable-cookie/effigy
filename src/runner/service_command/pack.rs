@@ -232,7 +232,7 @@ fn run_install(
 
 fn run_rollback(output_json: bool) -> Result<String, RunnerError> {
     let store = require_store()?;
-    let state = store.rollback().map_err(pack_error)?;
+    let state = store.rollback(effigy_version()).map_err(pack_error)?;
     let active = state.active_record().cloned();
 
     if output_json {
@@ -298,12 +298,15 @@ pub(super) fn selection_payload(selection: &PackSelection) -> Value {
 /// Doctor finding for an installed pack that is no longer usable.
 ///
 /// Returns `None` on a healthy machine, including one that has never installed
-/// a pack. The remediation names exactly one command.
+/// a pack. The remediation names exactly one command, and it names `rollback`
+/// only when the rollback target currently passes the same proof `rollback`
+/// itself will run — otherwise the advertised one-step repair would fail, or
+/// worse, succeed into a second unhealthy pack.
 pub(in crate::runner) fn pack_health_finding(selection: &PackSelection) -> Option<DoctorFinding> {
     if !selection.reason.is_fallback() {
         return None;
     }
-    let repair = match rollback_target() {
+    let repair = match verified_rollback_target() {
         Some(record) => format!(
             "Run `effigy service pack rollback` to select the previous validated pack ({} {}).",
             record.pack_id, record.pack_version
@@ -327,8 +330,14 @@ pub(in crate::runner) fn pack_health_finding(selection: &PackSelection) -> Optio
     })
 }
 
-fn rollback_target() -> Option<InstalledPackRecord> {
-    PackStore::user()?.load().ok()?.previous_record().cloned()
+/// The rollback target, but only when it currently verifies.
+///
+/// A record and a directory that happens to exist prove nothing: the previous
+/// install may since have been partially deleted, tampered with, replaced by a
+/// symlink, or become incompatible with this Effigy.
+fn verified_rollback_target() -> Option<InstalledPackRecord> {
+    let (record, verdict) = PackStore::user()?.rollback_target_health(effigy_version())?;
+    verdict.ok().map(|()| record)
 }
 
 fn require_store() -> Result<PackStore, RunnerError> {

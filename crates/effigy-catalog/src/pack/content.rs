@@ -9,18 +9,25 @@
 //! the identity recorded when it was installed.
 //!
 //! Traversal is symlink-hostile on purpose. A pack is data, not a program, and
-//! it arrives from a registry or an operator-chosen directory. Every entry is
-//! inspected with `symlink_metadata` and anything that is not a regular file or
-//! a real directory is rejected before it is hashed, copied, or validated, so
-//! content cannot escape its root, absorb arbitrary reachable files, or send
-//! traversal around a cycle.
+//! it arrives from a registry or an operator-chosen directory. Every path is
+//! inspected with `symlink_metadata` — including the root itself and the
+//! manifest, before either is read — and anything that is not a regular file or
+//! a real directory is rejected, so content cannot escape its root, absorb
+//! arbitrary reachable files, or send traversal around a cycle.
+//!
+//! Entry names must also be valid UTF-8. That is the portable pack contract:
+//! fragment directory names become catalog service names, packs move through
+//! OCI layers and archives that assume text paths, and a lossy conversion would
+//! make content identity non-injective — two distinct byte names could collapse
+//! to the same replacement text and, with identical file bytes, produce the
+//! same content id.
 
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 use super::error::PackError;
-use super::manifest::{PackManifest, PACK_MANIFEST_FILE};
+use super::manifest::{manifest_path, PackManifest, PACK_MANIFEST_FILE};
 use crate::schema::ServiceSchema;
 
 /// Prefix used for pack content identities.
@@ -62,6 +69,26 @@ fn classify(path: &Path) -> Result<SafeEntry, PackError> {
     }
 }
 
+/// Reject an entry name that is not valid UTF-8.
+///
+/// Checked on every entry *inside* a pack, not on the pack root: the root is a
+/// store or operator path that Effigy does not own, while everything beneath it
+/// is pack content and must survive being named in text.
+pub(super) fn ensure_utf8_name(path: &Path) -> Result<(), PackError> {
+    let Some(name) = path.file_name() else {
+        return Err(PackError::UnsupportedEntry {
+            path: path.to_path_buf(),
+            kind: "unnamed entry".to_owned(),
+        });
+    };
+    if name.to_str().is_none() {
+        return Err(PackError::NonUtf8EntryName {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 /// Read a directory's entries, sorted, rejecting any unsupported entry type.
 fn safe_entries(dir: &Path) -> Result<Vec<SafeEntry>, PackError> {
     let mut paths = Vec::new();
@@ -71,7 +98,13 @@ fn safe_entries(dir: &Path) -> Result<Vec<SafeEntry>, PackError> {
         paths.push(entry.path());
     }
     paths.sort();
-    paths.iter().map(|path| classify(path)).collect()
+    paths
+        .iter()
+        .map(|path| {
+            ensure_utf8_name(path)?;
+            classify(path)
+        })
+        .collect()
 }
 
 /// Reject a path that is a symlink or an unsupported file type.
@@ -82,7 +115,12 @@ pub fn ensure_supported_entry(path: &Path) -> Result<(), PackError> {
 }
 
 /// Compute the deterministic content identity of a pack root.
+///
+/// The root is classified before anything is read: `read_dir` follows a
+/// symlinked directory, so a link pointing at a byte-identical tree would
+/// otherwise hash to a matching identity and pass as genuine stored content.
 pub fn content_id(root: &Path) -> Result<String, PackError> {
+    ensure_supported_entry(root)?;
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;
     files.sort();
@@ -112,6 +150,14 @@ pub fn content_id(root: &Path) -> Result<String, PackError> {
 /// install candidate and for re-verifying stored content at selection time.
 pub fn validate_pack(root: &Path, effigy_version: &str) -> Result<PackManifest, PackError> {
     ensure_supported_entry(root)?;
+    // Prove the manifest is a regular file before reading it. Post-install
+    // corruption could otherwise swap `pack.toml` for a link and have
+    // validation read straight through it.
+    if !is_regular_file(&manifest_path(root))? {
+        return Err(PackError::ManifestNotFound {
+            path: manifest_path(root),
+        });
+    }
     let manifest = PackManifest::load(root)?;
     manifest.ensure_compatible(effigy_version)?;
 
@@ -253,10 +299,18 @@ fn collect_files(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()
     Ok(())
 }
 
+/// Encode a relative path injectively for hashing.
+///
+/// Every component is already proven UTF-8 by [`ensure_utf8_name`], so this is
+/// lossless. Each component is length-prefixed rather than joined with a
+/// separator, so no two distinct component sequences can produce the same byte
+/// string.
 fn normalized_path_bytes(path: &Path) -> Vec<u8> {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-        .into_bytes()
+    let mut encoded = Vec::new();
+    for component in path.components() {
+        let bytes = component.as_os_str().as_encoded_bytes();
+        encoded.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        encoded.extend_from_slice(bytes);
+    }
+    encoded
 }

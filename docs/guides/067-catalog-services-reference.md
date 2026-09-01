@@ -110,9 +110,11 @@ unchanged. A pack cannot widen the fragment schema.
   happens last and only after the manifest, compatibility, and fragments
   validate. A failed candidate leaves the previous selection and previously
   installed content untouched.
-- Pack content may contain only regular files and directories. A symlink — file
-  or directory — is rejected before anything is hashed, copied, or validated, so
-  a pack cannot reach outside its own root.
+- Pack content may contain only regular files and directories with valid UTF-8
+  names. A symlink — file or directory, including the pack root and `pack.toml`
+  themselves — is rejected before anything is read, hashed, or copied, so a pack
+  cannot reach outside its own root. Non-UTF-8 entry names are rejected too:
+  lossy names would let two different trees share one content identity.
 - The store records pack identity, pack version, manifest schema version, the
   compatibility requirement, the source, the resolved OCI digest, and a
   deterministic content identity over the whole tree.
@@ -136,6 +138,12 @@ reactivated, and the displaced tree is set aside, not deleted.
 ### Recovery
 
 `rollback` selects the previous validated install and is a swap, so it returns.
+It re-proves that install against the running Effigy first, using exactly the
+check selection runs; if the previous content has since been deleted, tampered
+with, replaced by a symlink, or become incompatible, `rollback` refuses and
+leaves the current selection untouched. `effigy doctor` recommends `rollback`
+only when that same proof passes, and recommends `reset` otherwise.
+
 `reset` selects the compiled baseline; it retains installed content and never
 touches project or user overrides, so `rollback` still works afterwards.
 

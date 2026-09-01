@@ -468,3 +468,118 @@ fn ordinary_catalog_work_never_invokes_the_oci_transport() {
         "an ordinary catalog path invoked the OCI transport"
     );
 }
+
+/// Install `1.0.0` then `2.0.0`, leaving `2.0.0` active and `1.0.0` as the
+/// rollback target, and return both install ids.
+fn two_installs(home: &Path, src: &Path) -> (String, String) {
+    let store = with_test_effigy_home(home, || PackStore::user().expect("store"));
+    install_local_pack(home, &candidate_pack(src, "1.0.0", "16"), false).expect("first install");
+    let previous = store.load().expect("state").active.expect("active");
+    install_local_pack(home, &candidate_pack(src, "2.0.0", "17"), false).expect("second install");
+    let active = store.load().expect("state").active.expect("active");
+    (previous, active)
+}
+
+#[test]
+fn doctor_recommends_reset_when_the_rollback_target_no_longer_verifies() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (previous, active) = two_installs(home.path(), src.path());
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+
+    // The active pack is unhealthy, and so is the pack rollback would select.
+    std::fs::remove_dir_all(store.install_dir(&active)).expect("delete active content");
+    write(
+        &store
+            .install_dir(&previous)
+            .join("postgres/compose.fragment.yml"),
+        "image: postgres:tampered\n",
+    );
+
+    let finding = with_test_effigy_home(home.path(), || {
+        pack_health_finding(&select_pack(effigy_version()))
+    })
+    .expect("doctor finding");
+
+    assert_eq!(finding.check_id, check_id::CATALOG_PACK_HEALTH);
+    assert!(
+        finding.remediation.contains("effigy service pack reset"),
+        "doctor advertised a repair that would land on another unhealthy pack: {}",
+        finding.remediation
+    );
+    assert!(
+        !finding.remediation.contains("rollback"),
+        "{}",
+        finding.remediation
+    );
+    assert_eq!(
+        finding.remediation.matches("effigy service pack").count(),
+        1,
+        "repair must name exactly one command: {}",
+        finding.remediation
+    );
+}
+
+#[test]
+fn doctor_recommends_rollback_only_when_the_target_actually_verifies() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (previous, active) = two_installs(home.path(), src.path());
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    std::fs::remove_dir_all(store.install_dir(&active)).expect("delete active content");
+
+    let finding = with_test_effigy_home(home.path(), || {
+        pack_health_finding(&select_pack(effigy_version()))
+    })
+    .expect("doctor finding");
+
+    assert!(
+        finding.remediation.contains("effigy service pack rollback"),
+        "{}",
+        finding.remediation
+    );
+    // The advertised repair names the pack it would select.
+    let record = store
+        .load()
+        .expect("state")
+        .record(&previous)
+        .cloned()
+        .expect("record");
+    assert!(
+        finding.remediation.contains(&record.pack_version),
+        "{}",
+        finding.remediation
+    );
+}
+
+#[test]
+fn rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let (previous, active) = two_installs(home.path(), src.path());
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    write(
+        &store
+            .install_dir(&previous)
+            .join("postgres/compose.fragment.yml"),
+        "image: postgres:tampered\n",
+    );
+
+    let error = with_test_effigy_home(home.path(), || run_rollback(false))
+        .expect_err("rollback must refuse");
+    let message = error.to_string();
+    assert!(message.contains("rollback was refused"), "{message}");
+    assert!(
+        message.contains("current selection is unchanged"),
+        "{message}"
+    );
+
+    let state = store.load().expect("state");
+    assert_eq!(state.active.as_deref(), Some(active.as_str()));
+    assert_eq!(state.previous.as_deref(), Some(previous.as_str()));
+    assert_eq!(
+        state.installs.len(),
+        2,
+        "a refused rollback changed lineage"
+    );
+}
