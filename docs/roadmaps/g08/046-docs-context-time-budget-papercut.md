@@ -1,10 +1,12 @@
 # g08.046 Docs Context Time-Budget Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Completed: 2026-09-01
 Card: [`1101`](./batch-cards/1101-bound-docs-context-cold-refresh.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
+Evidence: [`../../logs/2026-09/01-184159-docs-context-time-budget-1101.md`](../../logs/2026-09/01-184159-docs-context-time-budget-1101.md)
 
 ## Purpose
 
@@ -27,7 +29,7 @@ and typed failure used by `effigy graph`.
 
 ## Cards
 
-- [ ] [`1101`](./batch-cards/1101-bound-docs-context-cold-refresh.md) — ready
+- [x] [`1101`](./batch-cards/1101-bound-docs-context-cold-refresh.md) — complete
 
 ## Acceptance
 
@@ -38,4 +40,5 @@ and typed failure used by `effigy graph`.
 
 ## Next Task
 
-Run card `1101` in parallel with cards `1100` and `1102`.
+Return the exact-head PR to the Effigy orchestrator. Shared PAPERCUTS,
+changelog, contract, and guide closeout stay with serial merge.

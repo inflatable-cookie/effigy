@@ -1,17 +1,23 @@
 //! `effigy docs context` shell: root selection, rendering, and exit behavior.
 //!
 //! Ranking, traversal, and budgeting belong to `effigy-codegraph`. This module
-//! only turns one typed report into text or the versioned JSON payload.
+//! only turns one typed report into text or the versioned JSON payload. The
+//! lazy graph refresh inside that retrieval shares the graph command's
+//! wall-clock budget, typed timeout detail, and cold/stale progress notice.
 
 use std::path::Path;
 
 use effigy_codegraph::docs_context::{
     DocsContextPayload, DocsContextRequest, DocsContextResultPayload,
 };
+use effigy_codegraph::RefreshPending;
 
 use crate::runner::render::render_command_result;
 
 use super::RunnerError;
+
+/// Command identity reused by the shared graph timeout detail.
+const DOCS_CONTEXT_COMMAND: &str = "docs context";
 
 pub(super) fn run_context(
     repo_root: &Path,
@@ -21,16 +27,65 @@ pub(super) fn run_context(
     max_hops: Option<usize>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let payload = effigy_codegraph::docs_context(
-        repo_root,
-        query,
-        DocsContextRequest {
-            max_sections,
-            max_bytes,
-            max_hops,
-        },
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let request = DocsContextRequest {
+        max_sections,
+        max_bytes,
+        max_hops,
+    };
+    // Usage errors — empty query, invalid budgets — must win over the
+    // wall-clock bound: they are validated here, on the caller thread, before
+    // any bounded graph work starts. The same validation runs again inside
+    // the retrieval because it is pure.
+    effigy_codegraph::docs_context::validate_docs_context_request(query, request)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+
+    let owned_root = repo_root.to_path_buf();
+    let owned_query = query.to_owned();
+    match super::super::graph_time_budget::graph_time_budget() {
+        Some(budget) => {
+            let worker_root = owned_root.clone();
+            super::super::graph_time_budget::run_bounded_graph_operation(
+                &owned_root,
+                DOCS_CONTEXT_COMMAND,
+                budget,
+                move || {
+                    retrieve_documentation_context(&worker_root, &owned_query, request, output_json)
+                },
+            )
+        }
+        None => retrieve_documentation_context(repo_root, query, request, output_json),
+    }
+}
+
+/// Map a refresh verdict to the stderr progress notice.
+///
+/// `Some` only when the refresh will actually do work — a cold build or a
+/// stale rebuild — so warm and current queries never claim one.
+pub(super) fn refresh_progress_message(pending: RefreshPending) -> Option<String> {
+    match pending {
+        RefreshPending::Cold => Some(format!(
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is missing; building the shared graph index before answering"
+        )),
+        RefreshPending::Stale => Some(format!(
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is stale; refreshing it before answering"
+        )),
+        RefreshPending::Current => None,
+    }
+}
+
+fn retrieve_documentation_context(
+    repo_root: &Path,
+    query: &str,
+    request: DocsContextRequest,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let payload =
+        effigy_codegraph::docs_context_with_progress(repo_root, query, request, |pending| {
+            if let Some(notice) = refresh_progress_message(pending) {
+                eprintln!("{notice}");
+            }
+        })
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
     let text = render_context_text(&payload);
     let json = serde_json::to_value(&payload)

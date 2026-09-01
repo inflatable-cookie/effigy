@@ -979,3 +979,94 @@ fn oversized_traversed_section_is_omitted_whole() {
         .iter()
         .any(|reason| reason.contains("partial")));
 }
+
+#[test]
+fn refresh_progress_reports_cold_before_the_build_walk() {
+    let temp = baseline_repo();
+    let mut verdicts = Vec::new();
+    let mut ready_during_callback = None;
+    let payload = docs_context_with_progress(
+        temp.path(),
+        "widget calibrator",
+        DocsContextRequest::default(),
+        |pending| {
+            verdicts.push(pending);
+            // Read-only status inside the callback proves the rebuild walk has
+            // not run yet: the graph is still missing at verdict time.
+            let status = crate::status(temp.path()).expect("status during callback");
+            ready_during_callback = Some(status.ready);
+        },
+    )
+    .expect("docs context");
+    assert_eq!(verdicts, vec![RefreshPending::Cold]);
+    assert_eq!(
+        ready_during_callback,
+        Some(false),
+        "cold verdict must precede the build walk"
+    );
+    assert!(payload.freshness.usable);
+}
+
+#[test]
+fn refresh_progress_reports_stale_before_the_rebuild_walk() {
+    let temp = profiled_repo();
+    docs_context(
+        temp.path(),
+        "widget calibrator",
+        DocsContextRequest::default(),
+    )
+    .expect("warm the graph");
+    fs::write(
+        temp.path().join("handbook/playbooks/setup.md"),
+        "# Setup playbook\n\nState: live\nSteward: ada\n\n## Steps\n\nDo the work with the widget calibrator, the flux capacitor, and the recalibrated governor.\n",
+    )
+    .expect("rewrite setup");
+
+    let mut verdicts = Vec::new();
+    let mut stale_during_callback = None;
+    docs_context_with_progress(
+        temp.path(),
+        "widget calibrator",
+        DocsContextRequest::default(),
+        |pending| {
+            verdicts.push(pending);
+            // The staleness scan already ran (its verdict is this callback),
+            // but the rebuild walk has not: the change is still unswept.
+            let status = crate::status(temp.path()).expect("status during callback");
+            stale_during_callback = Some(status.stale_paths.is_empty());
+        },
+    )
+    .expect("docs context");
+    assert_eq!(verdicts, vec![RefreshPending::Stale]);
+    assert_eq!(
+        stale_during_callback,
+        Some(false),
+        "stale verdict must precede the rebuild walk"
+    );
+
+    let after = crate::status(temp.path()).expect("status after refresh");
+    assert!(after.stale_paths.is_empty(), "refresh swept the change");
+}
+
+#[test]
+fn refresh_progress_stays_silent_when_current() {
+    let temp = profiled_repo();
+    docs_context(
+        temp.path(),
+        "widget calibrator",
+        DocsContextRequest::default(),
+    )
+    .expect("warm the graph");
+    let mut verdicts = Vec::new();
+    docs_context_with_progress(
+        temp.path(),
+        "widget calibrator",
+        DocsContextRequest::default(),
+        |pending| verdicts.push(pending),
+    )
+    .expect("docs context");
+    assert!(
+        verdicts.is_empty(),
+        "current graph must not claim a refresh"
+    );
+}

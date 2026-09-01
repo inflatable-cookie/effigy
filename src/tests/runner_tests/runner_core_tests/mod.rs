@@ -1,6 +1,7 @@
 mod builtin_contract_tests;
 mod deploy_tests;
 mod direct_task_dispatch_tests;
+mod docs_context_time_budget_tests;
 mod graph_tests;
 mod help_tests;
 mod init_migrate_tests;

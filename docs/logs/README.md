@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-184159-docs-context-time-budget-1101.md`](./2026-09/01-184159-docs-context-time-budget-1101.md)
 - [`2026-09/01-173500-child-catalog-suite-registry-1100.md`](./2026-09/01-173500-child-catalog-suite-registry-1100.md)
 - [`2026-09/01-182838-rhai-storage-create-only-1099.md`](./2026-09/01-182838-rhai-storage-create-only-1099.md)
 - [`2026-09/01-172541-docs-context-traversal-budget-1102.md`](./2026-09/01-172541-docs-context-traversal-budget-1102.md)

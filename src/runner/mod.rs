@@ -27,6 +27,7 @@ mod exec_command;
 mod execute;
 mod gateway_command;
 mod graph_command;
+mod graph_time_budget;
 mod host_container_lease;
 mod host_process;
 mod interactive_session;
