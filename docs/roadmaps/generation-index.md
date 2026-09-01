@@ -226,6 +226,10 @@ then returned the queue to publication planning.
 for Markdown section extraction while preserving profiled facts, relations, and
 exact source spans, then returned the queue to publication planning.
 
+`g08.043` is ready as a bounded papercut interruption. Card `1098` moves the
+no-match proof to fixture-only ownership and guards against future live-corpus
+empty-result cases.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -283,7 +287,7 @@ closeout there first.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready. Keep ranking, timeout, release/workflow, public no-argument update,
-and `g09` rollover out of opportunistic papercut scope.
+Execute ready papercut card
+[`1098`](./g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md).
+Keep ranking, timeout, official catalog-pack publication, release/workflow,
+public no-argument update, and `g09` rollover out of this card.

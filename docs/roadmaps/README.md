@@ -134,8 +134,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   is complete.
   Completed [`g08.042`](./g08/042-markdown-frontmatter-extraction-papercut.md)
   keeps leading YAML frontmatter out of Markdown section inventory while
-  preserving metadata and exact spans; card `1097` is complete and the queue
-  returns to catalog-pack publication planning.
+  preserving metadata and exact spans; card `1097` is complete.
+  Ready [`g08.043`](./g08/043-docs-context-no-match-benchmark-isolation-papercut.md)
+  isolates empty-result benchmark proof from Effigy's live documentation
+  corpus; card `1098` is ready.
 
 ## Active Strict Lane
 
@@ -195,10 +197,11 @@ Before rollover:
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready. Keep ranking, timeout, release/workflow, public no-argument update,
-S3, and `g09` rollover out of opportunistic papercut scope.
+Execute ready papercut card
+[`1098`](./g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md),
+then return to official catalog-pack publication planning under contract `043`.
+Keep ranking, timeout, release/workflow, public no-argument update, S3, and
+`g09` rollover out of card scope.
 
 ## Historical language boundary
 

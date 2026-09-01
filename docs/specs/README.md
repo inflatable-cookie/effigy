@@ -79,6 +79,8 @@ Other planning specs:
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready. Keep draft `098` paused.
+Execute ready papercut card `1098` at
+`docs/roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md`.
+No strict spec is needed for the settled fixture-isolation rule. Then return to
+official catalog-pack publication planning under contract `043`; keep draft
+`098` paused.

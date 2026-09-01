@@ -356,9 +356,14 @@ leading YAML frontmatter while preserving profiled metadata, relations, and
 exact source spans. Evidence:
 [`01-135932-markdown-frontmatter-1097.md`](../../logs/2026-09/01-135932-markdown-frontmatter-1097.md).
 
+`g08.043` is ready as a bounded papercut interruption. Card `1098` moves the
+no-match benchmark proof off Effigy's live documentation corpus and guards the
+matrix against reintroducing that vocabulary dependency.
+
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready. No ranking, timeout, release/workflow, public no-argument update, or
-generation rollover work is in opportunistic papercut scope.
+Execute ready card
+[`1098`](./batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md),
+then return to official catalog-pack publication planning under contract `043`.
+No ranking, timeout, release/workflow, public no-argument update, or generation
+rollover work is in card scope.

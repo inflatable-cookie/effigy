@@ -96,7 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready. Keep ranking, timeout, release/workflow, public no-argument update,
-S3, and `g09` rollover out of opportunistic papercut scope.
+Execute ready papercut card
+[`1098`](../roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md),
+then return to official catalog-pack publication planning under contract `043`.

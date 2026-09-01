@@ -281,6 +281,6 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`. That
-lane needs a real OCI coordinate and explicit workflow-edit authority; it is
-not ready.
+Execute ready papercut card `1098` at
+`docs/roadmaps/g08/batch-cards/1098-isolate-no-match-benchmark-from-live-corpus.md`,
+then return to official catalog-pack publication planning under contract `043`.
