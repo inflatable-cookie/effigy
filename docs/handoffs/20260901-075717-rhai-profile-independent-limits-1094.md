@@ -68,11 +68,11 @@ parser limit under `debug_assertions`.
   `effigy perf:docs-context-benchmark`, `effigy qa`, fmt, clippy, diff check
 - **PR base/head:** current pushed `main` /
   `worker/g08-039-rhai-profile-limits-1094`
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/67
 - **Review state:** awaiting orchestrator review after worker completion
 - **Merge path:** orchestrator after accepted review of the current head and
   passing required checks
-
+- **Exact head:** `d3ef7a1e66fa0505ce87466b9e8edb958253c3da`
 ## Boundaries
 
 - **In scope:** reproduce, diagnose, and fix card `1094`; exact `64` / `32`

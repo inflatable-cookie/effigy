@@ -8,6 +8,8 @@ Spec: 112 (archived)
 Guide: 061
 Papercut: Rhai scripts can parse in release and fail in debug
 Predecessor evidence: [`01-075717-rhai-profile-limits-papercut-planning.md`](./01-075717-rhai-profile-limits-papercut-planning.md)
+PR: https://github.com/inflatable-cookie/effigy/pull/67
+Exact head: `d3ef7a1e66fa0505ce87466b9e8edb958253c3da`
 
 ## Summary
 
