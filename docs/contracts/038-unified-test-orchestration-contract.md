@@ -130,6 +130,5 @@ must name this migration directly.
 
 ## Next Task
 
-Run card `1100` to preserve the ancestor container registry during child-catalog
-suite task-reference expansion. No Acowtancy change or release action is
-implied.
+Card `1100` is complete. Preserve this routing boundary while the downstream
+Acowtancy owner revalidates and removes its workaround separately.

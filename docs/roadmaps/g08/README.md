@@ -378,14 +378,13 @@ create-if-absent behavior to the retained Rhai storage PUT surface after Bovine
 PR 32 proved HEAD then PUT cannot close the collision race. Evidence:
 [`01-182838-rhai-storage-create-only-1099.md`](../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md).
 
-`g08.045` through `g08.047` are ready as three independent papercut lanes.
-Cards `1100` through `1102` own child-catalog registry preservation, cold
-docs-context time bounds/progress, and traversal-budget reachability. Their
-runtime write sets are partitioned; shared front doors remain orchestrator-owned.
+`g08.045` through `g08.047` are complete. Cards `1100` through `1102` shipped
+child-catalog registry preservation, cold docs-context time bounds/progress,
+and traversal-budget reachability.
 
 ## Next Task
 
-Pass card `1099`'s PR through exact-head orchestrator review, resume Bovine PR
-32 after merge. Dispatch cards `1100`, `1101`, and `1102` in parallel, and keep
-publication planning in its existing delegate workspace. Merge Effigy PRs one
-at a time.
+Cards `1099` through `1102` are merged. Resolve the eight unpromoted
+catalog-pack publication recommendations, then compile the strict publication
+and concrete-asset cutover runway. Downstream Bovine and Acowtancy revalidation
+remain separately owned.

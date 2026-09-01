@@ -40,6 +40,5 @@ surface, unblocking Bovine's fail-closed upload collision repair.
 
 ## Next Task
 
-Pass card `1099`'s PR through exact-head orchestrator review. After merge, the
-orchestrator resumes the preserved Bovine PR 32 worker and returns the queue to
-official catalog-pack publication planning under contract `043`.
+Card `1099` is merged. Bovine PR 32 continuation remains downstream-owned; the
+Effigy queue returns to catalog-pack publication planning under contract `043`.

@@ -76,5 +76,5 @@ downstream workaround before revalidation.
 
 ## Next Task
 
-Return the exact-head PR to the Effigy orchestrator. Acowtancy revalidation is
-not part of this card.
+Card `1100` is merged. Acowtancy revalidation and workaround removal remain
+downstream-owned and separate.

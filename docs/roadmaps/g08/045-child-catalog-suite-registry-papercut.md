@@ -39,5 +39,5 @@ test suite expands a task reference in a child catalog.
 
 ## Next Task
 
-Return the exact-head PR for card `1100` to the Effigy orchestrator. Downstream
-Acowtancy revalidation remains separately owned.
+Card `1100` is merged. Downstream Acowtancy revalidation and workaround removal
+remain separately owned.

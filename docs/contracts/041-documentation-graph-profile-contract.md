@@ -224,6 +224,6 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Run cards `1101` and `1102` in parallel for the shared cold-refresh bound and
-bounded traversal allocation. Keep one refresh path and one ranking
-implementation.
+Cards `1101` and `1102` are complete. Preserve one refresh path, one shared
+time-budget seam, and one ranking implementation; return the active planning
+frontier to catalog-pack publication under contract `043`.

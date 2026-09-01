@@ -189,10 +189,10 @@ consequences are worth knowing before you tune a query:
   a ranking optimization only: if the weighted terms seed nothing, every term is
   re-enabled and seeding runs again, so it can never erase a query's only
   evidence. Name the thing you want, not the category it belongs to.
-- **Traversal supplements thin evidence.** Traversed results rank after every
-  direct lexical result, so on a large corpus the section budget is usually
-  spent before a one-hop result can be selected. Raise `--max-sections`, or
-  narrow the query, when you specifically want relation evidence.
+- **Traversal remains reachable.** With at least two section slots, retrieval
+  keeps the best lexical result first and reserves one slot for the best whole
+  traversed result that fits the byte budget. Remaining slots follow the normal
+  deterministic rank order. A one-section query remains lexical-only.
 
 ## Freshness
 
@@ -201,8 +201,11 @@ refresh under `.effigy/graph/`. There is no second index and no daemon. A
 normalized profile fingerprint joins the freshness identity, so editing the
 profile refreshes semantic records even when no Markdown file changed.
 
-The first query in a fresh checkout pays a full cold index and is currently
-unbounded; see `PAPERCUTS.md`.
+Lazy refresh shares the graph command's wall-clock policy through
+`EFFIGY_GRAPH_TIMEOUT_MS` (default 120000 ms; `0` disables the bound). Cold and
+stale rebuilds announce progress on stderr. A timeout returns the shared
+`effigy.graph.timeout.v1` detail with graph health and recovery guidance; JSON
+stdout remains a valid standard command envelope.
 
 ## Measuring Retrieval Quality
 

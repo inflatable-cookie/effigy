@@ -19,47 +19,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: deferred built-in routing, repository-intelligence discovery, and
   the project-local Effigy skill.
 
-### [ ] Child-catalog suite task refs lose ancestor `[containers]` registry — 2026-09-01
-- Friction: a configured suite `{ task = "cream/test:unit" }` expands by
-  changing cwd to the child catalog. Repository discovery then treats the child
-  as root and loses the already loaded ancestor `[containers]` registry, so
-  `run_in = "container"` has no target.
-- Impact: child-catalog suites using task refs cannot inherit the workspace
-  container default. Acowtancy card `162` keeps its workspace-root re-entry
-  workaround until the Effigy repair is merged and downstream revalidated.
-- Possible fix: preserve the originating catalog graph and ancestor execution
-  registry while applying the selected child catalog's cwd and explicit
-  overrides.
-- Surface: Effigy test suite task-ref expansion and container registry lookup;
-  reclassified from Acowtancy for Effigy-owned repair.
-
-### [ ] `docs context` traversal is unreachable on a large corpus — 2026-08-31
-- Friction: traversed results rank after every 0-hop result, so a repository
-  with more lexical seeds than `--max-sections` never surfaces a typed relation.
-  Effigy has 2319 scoped documents; even at `--max-sections 32 --max-bytes
-  100000` every returned result was 0 hops.
-- Impact: the typed-relation half of the documentation graph is invisible on
-  exactly the repositories large enough to need it. Discovered while running the
-  card `1090` benchmark; documented in guide `079` as a usage note.
-- Possible fix: reserve a small slice of the section budget for traversed
-  results, or add an explicit relation-first query mode. Both are ranking
-  changes and need a contract update first.
-- Surface: `crates/effigy-codegraph/src/docs_context/rank.rs` ordering;
-  `docs/contracts/041-documentation-graph-profile-contract.md`.
-
-### [ ] `docs context` has no wall-clock bound on a cold graph — 2026-08-31
-- Friction: `effigy docs context` refreshes the shared graph on demand, but only
-  `effigy graph <subcommand>` runs under `EFFIGY_GRAPH_TIMEOUT_MS`. On a fresh
-  worktree the first `docs context` sat for ~204s building 3784 files with no
-  bound and no progress signal, which is indistinguishable from a hang.
-- Impact: the first documentation query in a new checkout or CI job looks
-  wedged; there is no bounded failure carrying the graph health snapshot.
-- Possible fix: move the graph time budget out of the graph command shell so
-  any command that triggers a lazy refresh shares the same bound and timeout
-  payload.
-- Surface: `src/runner/graph_command.rs` time budget;
-  `src/runner/docs_command/context.rs`.
-
 ### [ ] Vendored Effigy skills need portfolio-level status and sync — 2026-08-30
 - Friction: 15 consumer repos under one projects directory had stale copies of
   all 10 managed Effigy skill files. The supported updater works one repo at a
@@ -72,6 +31,35 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] Child-catalog suite task refs lose ancestor `[containers]` registry — 2026-09-01
+- Friction: suite task-ref expansion changed cwd to the child catalog and then
+  rediscovered the repository there, losing the loaded ancestor container
+  registry.
+- Impact: child suites could not inherit the workspace container default.
+- Fix (2026-09-01): card `1100` pins nested host-launched refs to the originating
+  repository while preserving the child cwd and child-explicit precedence.
+  Evidence: `docs/logs/2026-09/01-173500-child-catalog-suite-registry-1100.md`.
+- Surface: test suite task-ref expansion and container registry lookup.
+
+### [x] `docs context` traversal is unreachable on a large corpus — 2026-09-01
+- Friction: lexical results exhausted the section budget before any typed
+  relation result could be selected.
+- Impact: relation evidence disappeared on large repositories.
+- Fix (2026-09-01): card `1102` keeps the best lexical result and, when at
+  least two slots exist, reserves one for the best whole traversed result that
+  fits. Evidence:
+  `docs/logs/2026-09/01-172541-docs-context-traversal-budget-1102.md`.
+- Surface: documentation-context selection and contract `041`.
+
+### [x] `docs context` has no wall-clock bound on a cold graph — 2026-09-01
+- Friction: lazy graph refresh could look wedged on a fresh checkout.
+- Impact: callers had neither progress nor a bounded typed failure.
+- Fix (2026-09-01): card `1101` shares the graph time-budget seam, timeout
+  payload, health snapshot, and recovery guidance. Cold/stale rebuilds announce
+  on stderr; usage validation remains outside the timer. Evidence:
+  `docs/logs/2026-09/01-184159-docs-context-time-budget-1101.md`.
+- Surface: graph time budget, lazy refresh, and docs-context shell.
 
 ### [x] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
 - Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts

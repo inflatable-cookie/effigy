@@ -73,4 +73,5 @@ rewriting unrelated frozen benchmark cases.
 
 ## Next Task
 
-Return the exact-head PR to the Effigy orchestrator.
+Card `1102` is merged and integrated. Return to catalog-pack publication
+planning under contract `043`.

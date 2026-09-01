@@ -257,7 +257,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Run card `1099` under contract `044`, resume Bovine PR 32 after the dependency
-merges, then return to planning for official pack publication and concrete-
-asset cutover. That publication lane still needs a real OCI coordinate plus
-explicit workflow-edit authority; it is not ready.
+Card `1099` is merged. The official pack coordinate and scoped future workflow
+authority are settled; resolve the eight still-unpromoted recommendations in
+the publication triage packet, then compile the strict publication and
+concrete-asset cutover runway. Bovine continuation remains downstream-owned.

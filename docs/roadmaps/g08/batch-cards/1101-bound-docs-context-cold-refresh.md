@@ -70,4 +70,5 @@ existing graph timeout model, or documentation ranking changes.
 
 ## Next Task
 
-Return the exact-head PR to the Effigy orchestrator.
+Card `1101` is merged and integrated. Return to catalog-pack publication
+planning under contract `043`.

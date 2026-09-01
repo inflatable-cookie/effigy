@@ -81,7 +81,6 @@ Other planning specs:
 
 ## Next Task
 
-Pass card `1099`'s PR through exact-head orchestrator review, resume Bovine PR
-32 after merge. Cards `1100` through `1102` run as bounded contract-backed
-papercut lanes without new strict specs; catalog-pack publication planning
-remains separately delegated. Keep draft `098` paused.
+Spec `114` is archived and cards `1099` through `1102` are complete. Resolve
+the eight unpromoted catalog-pack publication recommendations before compiling
+the next strict spec. Keep draft `098` paused.

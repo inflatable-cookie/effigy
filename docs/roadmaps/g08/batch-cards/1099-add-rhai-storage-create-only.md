@@ -80,5 +80,5 @@ or if proof requires live storage.
 
 ## Next Task
 
-Return the PR for exact-head orchestrator review. After merge, the orchestrator
-resumes Bovine PR 32 on its preserved worker identity.
+Card `1099` is merged. Bovine PR 32 continuation remains downstream-owned; the
+Effigy queue returns to catalog-pack publication planning under contract `043`.

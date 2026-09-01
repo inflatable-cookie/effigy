@@ -200,6 +200,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Run cards `1100` through `1102` in parallel. Each worker writes one unique
-closeout log; the orchestrator retains shared front-door integration and serial
-merge authority.
+Cards `1099` through `1102` are merged with unique closeout logs. Resolve the
+eight unpromoted catalog-pack publication recommendations, then compile the
+next strict implementation runway.

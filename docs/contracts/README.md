@@ -284,6 +284,6 @@ exclusive-create boundary.
 
 ## Next Task
 
-Run cards `1100` through `1102` in parallel under contracts `038` and `041`.
-Keep card `1099` ready under contract `044`; catalog-pack publication planning
-continues independently under contract `043`.
+Cards `1099` through `1102` are complete under contracts `038`, `041`, and
+`044`. Resolve the eight unpromoted catalog-pack publication recommendations,
+then compile the next strict implementation runway under contract `043`.

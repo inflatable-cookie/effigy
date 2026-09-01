@@ -291,8 +291,6 @@ closeout there first.
 
 ## Next Task
 
-Run cards `1100` through `1102` in parallel from their partitioned handoffs.
-Pass card `1099`'s PR through exact-head orchestrator review to unblock Bovine
-PR 32; card `1099` is implementation-complete and spec `114` is archived. Keep
-publication planning delegated and same-repository review and merge serial. Do
-not open `g09`.
+Cards `1099` through `1102` are merged and spec `114` is archived. Resolve the
+eight unpromoted catalog-pack publication recommendations, then compile the
+strict publication and concrete-asset cutover runway. Do not open `g09`.

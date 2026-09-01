@@ -40,5 +40,5 @@ otherwise consume the complete section budget.
 
 ## Next Task
 
-Return the exact-head PR to the Effigy orchestrator. Shared PAPERCUTS,
-changelog, contract, and guide closeout stay with serial merge.
+Card `1102` is merged and integrated into PAPERCUTS, changelog, contract `041`,
+and guide `079`. Return to catalog-pack publication planning under `043`.

@@ -16,6 +16,18 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Fixed
+- Child-catalog test-suite task references now keep the originating repository's
+  loaded container registry while using the selected child task's cwd. An
+  explicit child registry still wins, and direct child invocation keeps normal
+  discovery semantics.
+- `effigy docs context` now shares `EFFIGY_GRAPH_TIMEOUT_MS`, typed timeout
+  detail, health snapshot, and recovery guidance with graph queries. Cold and
+  stale rebuilds announce progress on stderr; JSON stdout stays contract-pure,
+  `0` disables the bound, and usage errors are validated before the timer.
+- Documentation-context selection now reserves one fitting traversed result
+  when at least two section slots are available, while retaining the best
+  lexical result first. One-slot, no-traversal, and oversized-result behavior
+  stays unchanged.
 - `perf:docs-context-benchmark` empty-result proof is fixture-owned. The live
   Effigy target keeps its authority and historical cases and no longer carries a
   query that fails when its terms appear in documentation. A live-target empty
