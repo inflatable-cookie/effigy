@@ -1502,7 +1502,8 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         module: MODULE_STORAGE,
         name: "put",
         signature: "storage::put(options)",
-        description: "Upload a local file or provided body to the active object store.",
+        description:
+            "Upload a local file or provided body to the active object store; set create_only to true to fail when the key already exists.",
         safety: "remote-mutation",
     },
     RhaiSurfaceFunction {

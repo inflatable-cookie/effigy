@@ -1,10 +1,12 @@
 # 114 Rhai Storage Create-Only Strict Lane
 
-Status: ready
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-01
-Roadmap: [`g08.044`](../roadmaps/g08/044-rhai-storage-create-only.md)
-Contract: [`044`](../contracts/044-rhai-storage-create-only-contract.md)
+Closed: 2026-09-01
+Roadmap: [`g08.044`](../../roadmaps/g08/044-rhai-storage-create-only.md)
+Contract: [`044`](../../contracts/044-rhai-storage-create-only-contract.md)
+Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md)
 
 ## Outcome
 

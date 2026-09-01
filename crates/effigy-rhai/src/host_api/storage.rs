@@ -287,6 +287,7 @@ fn storage_put(
     let key = required_string_option(options, "key")?;
     let content_type = string_option(options, "content_type")?;
     let metadata = string_map_option(options, "metadata")?;
+    let create_only = bool_option(options, "create_only")?.unwrap_or(false);
     let body = resolve_put_body(context, options)?;
     let body_size = body.len();
     let client = build_client(&config)?;
@@ -304,9 +305,24 @@ fn storage_put(
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
         }
     }
-    let output = request
-        .send()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    if create_only {
+        request = request
+            .if_none_match("*")
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    }
+    let output = request.send().map_err(|error| {
+        if create_only
+            && error
+                .status()
+                .is_some_and(|status| matches!(status.as_u16(), 409 | 412))
+        {
+            rhai_runtime_error(format!(
+                "storage::put create_only failed: key \"{key}\" already exists in bucket \"{bucket}\""
+            ))
+        } else {
+            rhai_runtime_error(error.to_string())
+        }
+    })?;
 
     let mut map = Map::new();
     map.insert("provider".into(), config.provider.into());
