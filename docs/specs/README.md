@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`114`](./114-rhai-storage-create-only-strict-lane.md) — additive atomic
+  create-if-absent support for the retained Rhai storage consumer
 
 Queued strict lanes:
 
@@ -79,6 +80,5 @@ Other planning specs:
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`;
-keep draft `098` paused. No strict spec is needed for the closed
-fixture-isolation rule.
+Run card `1099` under strict spec `114`, then resume Bovine PR 32 and return to
+official catalog-pack publication planning. Keep draft `098` paused.

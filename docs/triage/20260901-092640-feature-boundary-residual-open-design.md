@@ -33,9 +33,13 @@ acquisition decisions moved into architecture `026`, contract `043`, and the
 - Release transaction safety remains core while Effigy-specific distribution
   recipes move outward.
 - S3 remains supported until the named consumer replacement gate is proved.
+- Bovine PR 32 supplied new safety evidence, not replacement evidence: the
+  retained Rhai PUT needs atomic create-if-absent support. Contract `044`,
+  strict spec `114`, and card `1099` own that bounded repair. The optional-
+  provider and retirement questions in this note remain open.
 
 ## Next Task
 
 Card `1095` closed on 2026-09-01, so these questions are revisitable in
-planning. They are still open and still unscheduled: do not promote any of them
-without new consumer/provider evidence that changes contract `043`.
+planning. They are still open and still unscheduled: card `1099` repairs the
+retained surface and does not promote or answer them.

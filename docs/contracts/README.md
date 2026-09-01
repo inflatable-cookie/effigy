@@ -212,6 +212,7 @@ new reusable-core work.
 | `041-documentation-graph-profile-contract.md` | Platform maintainers | Profile grammar, section boundaries, currentness, authority ranking, context budgets, JSON shape, freshness identity, or Northstar runtime independence | Planning review against `g08.035`; focused manifest, codegraph, CLI, docs, JSON, generic-fixture, and Northstar-starter proofs during implementation |
 | `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
 | `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX, release/distribution ownership, or S3 consumer migration state | Decision-prototype review before roadmap compilation; focused parity, consumer, offline, release-safety, docs, JSON, and full Effigy QA during implementation |
+| `044-rhai-storage-create-only-contract.md` | Platform maintainers | Atomic create-if-absent semantics for Rhai object storage, compatibility, collision diagnostics, and redaction | Focused `effigy-rhai` request/collision fixtures plus full Effigy QA |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -277,8 +278,11 @@ repository-defined documentation graph and bounded retrieval boundary, and
 `042-external-skill-task-runner-contract.md` as the explicit external task
 source and consumer runtime target boundary, and
 `043-feature-placement-and-surface-migration-contract.md` as the semantic core,
-alias-stable grouping, provider/asset placement, and migration-gate boundary.
+alias-stable grouping, provider/asset placement, and migration-gate boundary,
+and `044-rhai-storage-create-only-contract.md` as the retained Rhai storage
+exclusive-create boundary.
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
+Run card `1099` under contract `044`, then resume Bovine PR 32 and return to
+official catalog-pack publication planning under contract `043`.

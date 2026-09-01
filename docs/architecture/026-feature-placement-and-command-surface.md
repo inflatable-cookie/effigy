@@ -156,6 +156,11 @@ removal candidate. It is not ready to move.
 replacement is not live and proved. Preserve the existing S3 behavior until the
 consumer migration satisfies contract `043`.
 
+Preservation includes bounded safety repairs required by a current consumer.
+Contract `044` adds atomic create-if-absent behavior to the retained Rhai PUT
+surface after Bovine proved HEAD then PUT cannot prevent overwrite races. That
+repair neither promotes S3 to permanent core nor supplies removal evidence.
+
 No deprecation, dependency removal, or base-Rhai removal may begin merely to
 clean the Effigy dependency tree. The consumer path moves first; Effigy cleanup
 follows proven replacement.

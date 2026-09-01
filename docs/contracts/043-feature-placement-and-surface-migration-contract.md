@@ -165,6 +165,11 @@ Effigy repository's current release gates before removing any existing path.
 The current Rhai S3 surface remains supported while `bovine-accelerator`
 depends on it for media upload.
 
+Contract [`044`](./044-rhai-storage-create-only-contract.md) governs the
+bounded atomic create-if-absent repair required by that retained consumer. An
+additive safety correction is not S3-removal evidence and does not choose the
+future optional-provider transport.
+
 S3 extraction, deprecation, vendored-dependency removal, or base-Rhai removal
 cannot become implementation-ready until evidence proves:
 
@@ -217,6 +222,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Return to planning for official pack publication and concrete-asset cutover.
-That lane still needs a real OCI coordinate plus explicit workflow-edit
-authority; it is not ready.
+Run card `1099` under contract `044`, resume Bovine PR 32 after the dependency
+merges, then return to planning for official pack publication and concrete-
+asset cutover. That publication lane still needs a real OCI coordinate plus
+explicit workflow-edit authority; it is not ready.

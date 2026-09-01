@@ -278,6 +278,7 @@ through card `1093`. Strict spec `112` and `g08.039` are complete through card
 - [`1093-add-help-first-command-discovery.md`](./batch-cards/1093-add-help-first-command-discovery.md)
 - [`1094-fix-rhai-profile-dependent-expression-limits.md`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
 - [`1095-prototype-catalog-pack-acquisition.md`](./batch-cards/1095-prototype-catalog-pack-acquisition.md)
+- [`1099-add-rhai-storage-create-only.md`](./batch-cards/1099-add-rhai-storage-create-only.md)
 
 ## Current State
 
@@ -361,8 +362,11 @@ Effigy's live documentation corpus and guards the matrix against reintroducing
 that vocabulary dependency. Evidence:
 [`01-150452-no-match-benchmark-isolation-1098.md`](../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md).
 
+`g08.044` is ready under contract `044` and strict spec `114`. Card `1099`
+adds atomic create-if-absent behavior to the retained Rhai storage PUT surface
+after Bovine PR 32 proved HEAD then PUT cannot close the collision race.
+
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
-No ranking, timeout, release/workflow, public no-argument update, or generation
-rollover work is in this closed card's scope.
+Run card `1099`, resume Bovine PR 32 after the Effigy dependency merges, then
+return to official catalog-pack publication planning under contract `043`.

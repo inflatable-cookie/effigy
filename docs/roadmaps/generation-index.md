@@ -230,6 +230,10 @@ exact source spans, then returned the queue to publication planning.
 fixture-only ownership and rejected live-target empty cases before matrix
 execution, then returned the queue to publication planning.
 
+`g08.044` is ready under contract `044` and strict spec `114`. Card `1099`
+adds atomic create-if-absent behavior to the retained Rhai storage surface,
+unblocking Bovine PR 32 without reopening S3 placement or removal.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -252,10 +256,10 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context, help-first, Rhai papercut, catalog-pack
-acquisition prototype, and no-match benchmark isolation lanes are all closed.
-No strict lane is active. Do not open `g09`, publish a pack, or start release
-work.
+The documentation-context, help-first, Rhai papercut, catalog-pack acquisition
+prototype, and no-match benchmark isolation lanes are closed. Strict spec
+`114` is active for the bounded Rhai storage create-only repair. Do not open
+`g09`, publish a pack, or start release work.
 
 ## Research Roadmaps
 

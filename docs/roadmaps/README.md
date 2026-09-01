@@ -138,6 +138,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.043`](./g08/043-docs-context-no-match-benchmark-isolation-papercut.md)
   isolates empty-result benchmark proof from Effigy's live documentation
   corpus; card `1098` is complete.
+  Ready [`g08.044`](./g08/044-rhai-storage-create-only.md) adds atomic
+  create-if-absent behavior to the retained Rhai storage surface; card `1099`
+  is ready under contract `044`.
 
 ## Active Strict Lane
 
@@ -197,9 +200,10 @@ Before rollover:
 
 ## Next Task
 
-Return to official catalog-pack publication planning under contract `043`.
-Keep ranking, timeout, release/workflow, public no-argument update, S3, and
-`g09` rollover out of that publication lane until it is ready.
+Run card `1099` to unblock Bovine PR 32, then return to official catalog-pack
+publication planning under contract `043`. Keep ranking, timeout,
+release/workflow, public no-argument update, S3 extraction, and `g09` rollover
+out of that publication lane until it is ready.
 
 ## Historical language boundary
 
