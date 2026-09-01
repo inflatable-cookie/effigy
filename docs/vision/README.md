@@ -63,5 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Return to the catalog-pack acquisition prototype under architecture `026` and
-contract `043`. The second governance review remains due by 2026-09-17.
+Execute ready catalog-pack acquisition prototype card
+[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+under architecture `026` and contract `043`. The second governance review
+remains due by 2026-09-17.

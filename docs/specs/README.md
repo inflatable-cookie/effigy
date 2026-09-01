@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`113`](./113-catalog-pack-acquisition-prototype-strict-lane.md) governs the
+  ready in-repository catalog-pack acquisition prototype under card `1095`
 
 Queued strict lanes:
 
@@ -76,5 +77,7 @@ Other planning specs:
 
 ## Next Task
 
-Return to the catalog-pack acquisition prototype under contract `043`. Keep
-draft `098` paused; no release work or generation rollover.
+Execute ready card
+[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+under strict spec `113`. Keep draft `098` paused; no official pack publication,
+release/workflow work, public no-argument update, or generation rollover.

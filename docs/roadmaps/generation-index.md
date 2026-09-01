@@ -213,6 +213,10 @@ executable group aliases or selector-routing changes.
 `g08.039` is complete under archived strict spec `112`. Card `1094` made Rhai
 expression-depth parsing profile-independent while preserving release limits.
 
+`g08.040` is ready under active strict spec `113`, architecture `026`, and
+contract `043`. Card `1095` prototypes explicit catalog-pack acquisition,
+selection, recovery, and diagnostics while retaining the compiled baseline.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -235,9 +239,9 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context and help-first lanes are closed. Strict spec `112`
-temporarily owns one bounded Rhai papercut before the queue returns to catalog-
-pack acquisition planning. Do not open `g09` or start release work.
+The documentation-context, help-first, and Rhai papercut lanes are closed.
+Strict spec `113` now owns the bounded catalog-pack acquisition prototype. Do
+not open `g09`, publish a pack, or start release work.
 
 ## Research Roadmaps
 
@@ -270,5 +274,6 @@ closeout there first.
 
 ## Next Task
 
-Return to catalog-pack acquisition planning under contract `043`. No release
-action or `g09` rollover.
+Execute ready card
+[`1095`](./g08/batch-cards/1095-prototype-catalog-pack-acquisition.md). No
+official publication, release action, workflow edit, or `g09` rollover.

@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md`](./2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md)
 - [`2026-09/01-080923-rhai-profile-independent-limits-1094.md`](./2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 - [`2026-09/01-075717-rhai-profile-limits-papercut-planning.md`](./2026-09/01-075717-rhai-profile-limits-papercut-planning.md)
 - [`2026-08/31-233000-help-first-command-discovery-1093.md`](./2026-08/31-233000-help-first-command-discovery-1093.md)
@@ -189,5 +190,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Return to catalog-pack acquisition planning under contract `043`. No release
-action or generation rollover.
+Execute ready card `1095`. No official publication, release/workflow work,
+public no-argument update, or generation rollover.

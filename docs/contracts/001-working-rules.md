@@ -96,5 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-Return to catalog-pack acquisition planning under contract `043`. No release
-work or generation rollover.
+Execute ready card
+[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+under strict spec `113`. No official publication, release/workflow work, or
+generation rollover.

@@ -99,7 +99,44 @@ default pack only when all of these hold:
 - migration tests replay representative current catalog workflows unchanged.
 
 The pack transport and update policy require a decision prototype before an
-implementation card can be ready.
+implementation card can be ready. That prototype is now fixed as follows:
+
+- every supported installation permanently carries a compiled baseline pack;
+- selection order is project override, user override, active installed default
+  pack, then compiled baseline;
+- independently installed packs live in a versioned user-state store and use a
+  manifest with pack identity, pack version, schema version, and Effigy
+  compatibility;
+- explicit OCI installation requires an `oci://` reference and records the
+  immutable resolved digest; explicit local-path installation remains available
+  for development and recovery;
+- acquisition reuses the existing artifact adapter and must not add a bespoke
+  HTTP client or implicit network probe;
+- installation validates before atomic activation, and a failed candidate
+  leaves the prior active pack unchanged;
+- an active pack that later becomes unreadable or incompatible falls back to
+  the compiled baseline with a visible warning and structured selection reason;
+- `doctor` reports unhealthy installed state with one direct rollback or reset
+  repair;
+- an official fixed repository and compatible stable channel are baseline-owned
+  and cannot be redirected by installed pack content;
+- no-argument channel update is tested at the planner/adapter seam but is not a
+  public command until the official OCI artifact is published;
+- the acquisition prototype moves no concrete catalog assets and changes no
+  release workflow.
+
+The approved prototype surface is nested under the existing `service` owner:
+
+```text
+effigy service pack status
+effigy service pack install oci://...@sha256:...
+effigy service pack install --path <DIR>
+effigy service pack rollback
+effigy service pack reset
+```
+
+The later publication lane adds `effigy service pack update` only when the
+official channel exists and the command can succeed from its first release.
 
 ## Release And Distribution Contract
 
@@ -177,8 +214,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Card
-[`1093`](../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
-is complete: help-first grouping shipped with execution grammar unchanged.
-Return to planning for the catalog-pack acquisition prototype. Keep S3 deferred
-until its consumer gate is proved.
+Execute ready card
+[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+under strict spec `113`. Keep official publication, release/install wiring,
+concrete-asset movement, public no-argument update, and S3 out of this lane.

@@ -188,6 +188,8 @@ This generation should help agents and maintainers answer questions like:
   architecture `026`, and contract `043` govern completed card `1093`.
 - Rhai profile-independent limits complete: archived strict spec `112` and
   completed card `1094` govern the expression-depth papercut repair.
+- Catalog-pack acquisition prototype ready: active strict spec `113`,
+  architecture `026`, and contract `043` govern ready card `1095`.
 
 ## Execution Rule
 
@@ -205,7 +207,7 @@ Strict spec `110` and `g08.037` are complete through card `1092`. Strict spec
 `108` and `g08.035` are complete through cards `1088` to `1090`. Strict spec
 `109` and `g08.036` are complete. Strict spec `111` and `g08.038` are complete
 through card `1093`. Strict spec `112` and `g08.039` are complete through card
-`1094`.
+`1094`. Strict spec `113` and `g08.040` are active through ready card `1095`.
 
 ## Batch Cards
 
@@ -275,6 +277,7 @@ through card `1093`. Strict spec `112` and `g08.039` are complete through card
 - [`1092-add-external-skill-task-runner.md`](./batch-cards/1092-add-external-skill-task-runner.md)
 - [`1093-add-help-first-command-discovery.md`](./batch-cards/1093-add-help-first-command-discovery.md)
 - [`1094-fix-rhai-profile-dependent-expression-limits.md`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
+- [`1095-prototype-catalog-pack-acquisition.md`](./batch-cards/1095-prototype-catalog-pack-acquisition.md)
 
 ## Current State
 
@@ -334,7 +337,13 @@ expression-depth parsing profile-independent while preserving release limits
 and every unrelated runtime boundary. Evidence:
 [`01-080923-rhai-profile-independent-limits-1094.md`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md).
 
+`g08.040` is ready under architecture `026`, contract `043`, and active strict
+spec `113`. Card `1095` owns the in-repository catalog-pack acquisition
+prototype; official publication and concrete-asset cutover remain planning.
+
 ## Next Task
 
-Return to catalog-pack acquisition planning under contract `043`. No release
-work or generation rollover.
+Execute ready card
+[`1095`](./batch-cards/1095-prototype-catalog-pack-acquisition.md). No official
+publication, release/workflow work, public no-argument update, or generation
+rollover.

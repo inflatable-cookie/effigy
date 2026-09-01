@@ -101,7 +101,31 @@ support offline/bootstrap use, preserve project overrides, and expose missing
 or unhealthy state through `doctor`. A mandatory manual install ceremony is
 not an acceptable migration.
 
-The pack acquisition and update mechanism is not selected yet.
+Every supported install keeps a compiled baseline pack permanently. It is the
+automatic offline floor, including for `cargo install`, and remains available
+for recovery after independently installed packs are introduced. Resolution is
+project override, user override, active installed default pack, then compiled
+baseline.
+
+Independent pack releases use immutable OCI artifacts through Effigy's existing
+artifact transport. Explicit local-path installation remains available for
+development and recovery. Normal service, workspace, container, and task
+commands never probe a registry or update a pack.
+
+Installation is transactional: fetch or read the candidate, validate pack
+schema and Effigy compatibility, write a versioned store entry, then atomically
+activate it. A failed candidate leaves the previous active pack untouched. If
+an active installed pack later becomes unreadable or incompatible, the resolver
+uses the compiled baseline with a visible text warning and structured JSON
+selection reason; `doctor` provides rollback or reset guidance.
+
+The first implementation lane is an in-repository acquisition prototype. It
+ships explicit digest-addressed OCI and local-path installation, status,
+rollback, and reset while keeping today's embedded assets as the baseline. It
+tests the fixed official-channel update planner but does not expose
+argument-free `service pack update` before an official artifact exists. Pack
+publication, concrete-asset movement, release/install wiring, and the live
+no-argument update command remain a separate lane.
 
 ## Release And Distribution
 
@@ -155,7 +179,8 @@ The feature-boundary follow-through is sequenced as separate lanes:
 1. help-first command discovery with no execution aliases or removals
    (shipped by card `1093`);
 2. release versus self-distribution separation;
-3. catalog-pack acquisition prototype satisfying the simplicity invariant;
+3. catalog-pack acquisition prototype satisfying the simplicity invariant,
+   followed separately by publication and concrete-asset movement;
 4. repository-intelligence grouped discovery surface;
 5. S3 migration only after the named consumer replacement proof.
 
