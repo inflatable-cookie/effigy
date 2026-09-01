@@ -49,9 +49,11 @@ parser limit under `debug_assertions`.
 - **Worker worktree policy:** follow `Completion Protocol`; launcher worktree
   first, named/manual fallback only when required
 - **Required sibling worktree links:** none
-- **Active spec lane:** [`112`](../specs/112-rhai-profile-independent-limits-strict-lane.md)
+- **Active spec lane:** [`112`](../specs/archive/112-rhai-profile-independent-limits-strict-lane.md)
+  (archived at closeout)
 - **Roadmap milestone:** [`g08.039`](../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
 - **Ready cards, in order:** [`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
+  (complete at closeout)
 - **Allowed runway:** card `1094` only
 - **Remaining card budget:** one
 - **Dispatch topology:** serial Effigy papercut lane
@@ -67,7 +69,8 @@ parser limit under `debug_assertions`.
   `effigy perf:docs-context-benchmark`, `effigy qa`, fmt, clippy, diff check
 - **PR base/head:** current pushed `main` /
   `worker/g08-039-rhai-profile-limits-1094`
-- **PR URL:** pending
+- **PR URL:** https://github.com/inflatable-cookie/effigy/pull/67
+- **Implementation commit:** `aa0b31c6e`
 - **Review state:** awaiting orchestrator review after worker completion
 - **Merge path:** orchestrator after accepted review of the current head and
   passing required checks

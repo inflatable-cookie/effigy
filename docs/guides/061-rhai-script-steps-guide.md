@@ -613,6 +613,20 @@ Rhai v1 intentionally does not provide:
 That narrow boundary is deliberate. The product goal is “native scripting for
 repo glue,” not “Effigy becomes a replacement shell.”
 
+### Parser expression envelope
+
+Every production Rhai host uses one shared configured engine with explicit,
+profile-independent expression-depth limits:
+
+- global expression depth: `64`
+- function-body expression depth: `32`
+
+Those values match Rhai's release defaults. Effigy sets them itself so a script
+that parses under an installed release binary also parses under the documented
+`cargo run --bin effigy -- <task>` source-build fallback. Finite bounds stay
+mandatory: Effigy does not disable either guard, and this envelope is not a
+public config knob.
+
 ## Expected Outcome
 
 After this guide, you should be able to:

@@ -281,7 +281,5 @@ alias-stable grouping, provider/asset placement, and migration-gate boundary.
 
 ## Next Task
 
-Execute ready papercut card
-[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
-under strict spec `112`. After closeout, return to catalog-pack acquisition
-planning under contract `043`. Keep S3 deferred; no release action.
+Return to catalog-pack acquisition planning under contract `043`. Keep S3
+deferred; no release action.

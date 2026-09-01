@@ -1,10 +1,12 @@
 # g08.039 Rhai Profile-Independent Limits Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
-Spec: [`112`](../../specs/112-rhai-profile-independent-limits-strict-lane.md)
+Completed: 2026-09-01
+Spec: [`112`](../../specs/archive/112-rhai-profile-independent-limits-strict-lane.md)
 Card: [`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
 Guide: [`061`](../../guides/061-rhai-script-steps-guide.md)
+Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 
 ## Purpose
 
@@ -43,7 +45,7 @@ without weakening the finite parser limits or changing the public script API.
 
 ## Cards
 
-- [ ] [`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md) — ready
+- [x] [`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md) — complete
 
 ## Acceptance
 
@@ -60,5 +62,7 @@ without weakening the finite parser limits or changing the public script API.
 
 ## Next Task
 
-Execute ready card
-[`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+This milestone is complete. Return to catalog-pack acquisition planning under
+contract
+[`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md).
+Keep S3 deferred; no release action or generation rollover.

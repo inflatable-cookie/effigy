@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-080923-rhai-profile-independent-limits-1094.md`](./2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 - [`2026-09/01-075717-rhai-profile-limits-papercut-planning.md`](./2026-09/01-075717-rhai-profile-limits-papercut-planning.md)
 - [`2026-08/31-233000-help-first-command-discovery-1093.md`](./2026-08/31-233000-help-first-command-discovery-1093.md)
 - [`2026-08/31-213000-northstar-profile-proof-1090.md`](./2026-08/31-213000-northstar-profile-proof-1090.md)
@@ -188,6 +189,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1094` under strict spec `112`. After closeout, return to
-catalog-pack acquisition planning under contract `043`. No release action or
-generation rollover.
+Return to catalog-pack acquisition planning under contract `043`. No release
+action or generation rollover.

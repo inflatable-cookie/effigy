@@ -63,8 +63,5 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute bounded papercut card
-[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
-After closeout, return to the catalog-pack acquisition prototype under
-architecture `026` and contract `043`. The second governance review remains due
-by 2026-09-17.
+Return to the catalog-pack acquisition prototype under architecture `026` and
+contract `043`. The second governance review remains due by 2026-09-17.

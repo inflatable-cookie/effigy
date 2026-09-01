@@ -186,6 +186,8 @@ This generation should help agents and maintainers answer questions like:
   `025`, and contract `042` govern completed card `1092`.
 - Help-first command discovery complete: archived strict spec `111`,
   architecture `026`, and contract `043` govern completed card `1093`.
+- Rhai profile-independent limits complete: archived strict spec `112` and
+  completed card `1094` govern the expression-depth papercut repair.
 
 ## Execution Rule
 
@@ -202,7 +204,8 @@ Strict spec `107` and `g08.034` are complete through cards `1086` and `1087`.
 Strict spec `110` and `g08.037` are complete through card `1092`. Strict spec
 `108` and `g08.035` are complete through cards `1088` to `1090`. Strict spec
 `109` and `g08.036` are complete. Strict spec `111` and `g08.038` are complete
-through card `1093`.
+through card `1093`. Strict spec `112` and `g08.039` are complete through card
+`1094`.
 
 ## Batch Cards
 
@@ -326,13 +329,12 @@ strict spec `111`. Card `1093` added help-first grouping with no executable
 group aliases and no selector-routing changes, and returned the
 feature-placement queue to planning.
 
-`g08.039` is ready under strict spec `112`. Card `1094` owns one bounded
-papercut: make Rhai expression-depth parsing profile-independent while
-preserving release limits and every unrelated runtime boundary.
+`g08.039` is complete under archived strict spec `112`. Card `1094` made Rhai
+expression-depth parsing profile-independent while preserving release limits
+and every unrelated runtime boundary. Evidence:
+[`01-080923-rhai-profile-independent-limits-1094.md`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md).
 
 ## Next Task
 
-Execute ready card
-[`1094`](./batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
-After closeout, return to catalog-pack acquisition planning under contract
-`043`. No release work or generation rollover.
+Return to catalog-pack acquisition planning under contract `043`. No release
+work or generation rollover.

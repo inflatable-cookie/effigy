@@ -32,6 +32,19 @@ pub const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
 pub const EFFIGY_RHAI_CATALOG_ROOT: &str = "EFFIGY_RHAI_CATALOG_ROOT";
 pub const EFFIGY_RHAI_INVOCATION_CWD: &str = "EFFIGY_RHAI_INVOCATION_CWD";
 
+/// Global expression-depth limit for every Effigy Rhai host.
+///
+/// Matches Rhai's release default so debug and release builds parse the same
+/// scripts. Must stay finite (`0` would disable the guard).
+pub const RHAI_MAX_EXPR_DEPTH: usize = 64;
+
+/// Function-body expression-depth limit for every Effigy Rhai host.
+///
+/// Matches Rhai's release default. Stock debug Rhai uses `16`; Effigy sets
+/// this explicitly so `cargo run --bin effigy` and an installed release binary
+/// share one envelope.
+pub const RHAI_MAX_FUNCTION_EXPR_DEPTH: usize = 32;
+
 static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
@@ -248,6 +261,14 @@ pub fn execute_rhai_script_with_runtime_context_and_secret_targets(
     })
 }
 
+/// Build the shared Rhai engine with Effigy-owned, profile-independent parser
+/// limits. Every production script execution path must use this seam.
+pub(crate) fn configured_rhai_engine() -> Engine {
+    let mut engine = Engine::new();
+    engine.set_max_expr_depths(RHAI_MAX_EXPR_DEPTH, RHAI_MAX_FUNCTION_EXPR_DEPTH);
+    engine
+}
+
 fn execute_rhai_script_inner(
     context: &ScriptContext,
     script: &str,
@@ -258,7 +279,7 @@ fn execute_rhai_script_inner(
     let secret_store = resolve_rhai_secret_store(&context.repo_root, secret_targets)?;
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
-    let mut engine = Engine::new();
+    let mut engine = configured_rhai_engine();
     let task_source_root = ACTIVE_RUNTIME_CONTEXT.with(|active| {
         active
             .borrow()
