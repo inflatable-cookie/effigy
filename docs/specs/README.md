@@ -79,8 +79,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready papercut card `1096` at
-`docs/roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md`. No strict
-spec is needed for its settled membership rule. Then return to official
-catalog-pack publication planning under contract `043`; keep draft `098`
-paused.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. That lane needs a real OCI coordinate and explicit
+workflow-edit authority; keep draft `098` paused.

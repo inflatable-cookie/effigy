@@ -1,10 +1,12 @@
 # g08.041 Catalog Fragment Listing Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Completed: 2026-09-01
 Card: [`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
+Evidence: [`../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md)
 
 ## Purpose
 
@@ -35,7 +37,7 @@ Make `effigy service list` report only bundled catalog fragments that carry a
 
 ## Cards
 
-- [ ] [`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md) — ready
+- [x] [`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md) — complete
 
 ## Acceptance
 
@@ -49,5 +51,5 @@ Make `effigy service list` report only bundled catalog fragments that carry a
 
 ## Next Task
 
-Execute ready card [`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md),
-then return to official catalog-pack publication planning under contract `043`.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`.

@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `effigy service list` no longer advertises root bundled catalog assets such as
+  `README.md` or `compose.override.example.yml` as callable fragments. Bundled
+  inventory membership is the set of first-level directories that carry
+  `service.toml`, matching the settled fragment boundary.
 - Rhai script hosts now set explicit expression-depth limits (`64` global /
   `32` in functions) on every production engine, matching the previous release
   defaults instead of inheriting Rhai's lower `debug_assertions` parser caps.

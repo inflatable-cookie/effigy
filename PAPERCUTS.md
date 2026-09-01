@@ -7,18 +7,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] `service list` reports non-fragment bundled files as fragments — 2026-09-01
-- Friction: `CatalogResolver::list_bundled_fragments` takes the first path
-  component of every embedded asset, so `README.md` and
-  `compose.override.example.yml` at the root of `crates/effigy-catalog/catalog/`
-  appear as catalog fragments. `effigy service list` currently claims 16
-  fragments when 14 are real. Hit while smoke-testing card `1095`.
-- Impact: the listing overstates the catalog, and `README.md` is offered as
-  something you could reference from a manifest or extract.
-- Possible fix: only count an embedded path whose first component also has a
-  `service.toml`, matching how the filesystem layers decide what is a fragment.
-- Surface: `crates/effigy-catalog/src/fragment.rs` `list_bundled_fragments`.
-
 ### [ ] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
 - Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
   an empty report. Documenting its query inside `docs/`, `README.md`,
@@ -82,6 +70,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] `service list` reports non-fragment bundled files as fragments — 2026-09-01
+- Friction: `CatalogResolver::list_bundled_fragments` took the first path
+  component of every embedded asset, so root `README.md` and
+  `compose.override.example.yml` appeared as fragments (16 names for 14 real
+  services).
+- Fix (2026-09-01): bundled membership requires a first-level
+  `<name>/service.toml`. Root docs/examples and directories without a service
+  manifest are ignored; sorting and layering are unchanged.
+- Recurrence proof: unit, integration, and CLI text/JSON proofs in
+  `docs/logs/2026-09/01-133154-catalog-fragment-listing-1096.md`.
+- Surface: `crates/effigy-catalog/src/fragment.rs` `list_bundled_fragments`.
 
 ### [x] `effigy-containers` tests read process-global env without the env lock — 2026-09-01
 - Friction: `crate::test_env_lock()` guarded process-global env mutations, but

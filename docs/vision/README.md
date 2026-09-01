@@ -63,7 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready papercut card
-[`1096`](../roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md), then
-return to official catalog-pack publication planning under architecture `026`
-and contract `043`. The second governance review remains due by 2026-09-17.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under architecture `026` and contract `043`. The second governance
+review remains due by 2026-09-17.

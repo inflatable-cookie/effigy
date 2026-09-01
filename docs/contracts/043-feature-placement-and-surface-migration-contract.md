@@ -217,8 +217,6 @@ Stop and return to planning when:
 
 ## Next Task
 
-Run bounded bundled-inventory papercut card
-[`1096`](../roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md)
-without changing this contract, then return to official pack publication and
-concrete-asset cutover planning. That later lane still needs a real OCI
-coordinate plus explicit workflow-edit authority.
+Return to planning for official pack publication and concrete-asset cutover.
+That lane still needs a real OCI coordinate plus explicit workflow-edit
+authority; it is not ready.

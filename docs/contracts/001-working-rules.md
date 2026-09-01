@@ -96,6 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready papercut card
-[`1096`](../roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md), then
-return to official catalog-pack publication planning under contract `043`.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. That lane needs a real OCI coordinate and explicit
+workflow-edit authority; it is not ready.

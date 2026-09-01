@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-133154-catalog-fragment-listing-1096.md`](./2026-09/01-133154-catalog-fragment-listing-1096.md)
 - [`2026-09/01-123424-papercuts-env-lock-audit.md`](./2026-09/01-123424-papercuts-env-lock-audit.md)
 - [`2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md`](./2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 - [`2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md`](./2026-09/01-092640-catalog-pack-acquisition-prototype-planning.md)
@@ -192,7 +193,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready papercut card `1096` at
-`docs/roadmaps/g08/batch-cards/1096-fix-catalog-fragment-listing.md`, then return
-to official catalog-pack publication planning. No publication, release/workflow
-work, public no-argument update, or rollover is in card scope.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. No publication, release/workflow work, public
+no-argument update, or rollover is authorized from this closeout.
