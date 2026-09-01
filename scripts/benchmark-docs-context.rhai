@@ -7,8 +7,9 @@
 // edited away.
 //
 // History, so a reviewer can replay any state. Six freezes changed the matrix
-// and carry the freeze discipline; one replay between freezes five and six
-// changed no case at all.
+// and carry the freeze discipline. One replay between freezes five and six
+// changed no case. After freeze six, a second replay named that freeze commit
+// without changing the matrix; that replay is not a seventh freeze.
 //
 //   398a698f2  first freeze. 9 of 11 cases held, including every live-authority
 //              and historical-retrieval case. Two cases missed for reasons in
@@ -68,12 +69,17 @@
 //              Rhai's debug-build nesting cap. Replayed against the corpus
 //              integrated with `main` at `db98139a9`: 12/12 hold, every rank
 //              unchanged, two context-byte figures moved with the corpus.
-//   this file  sixth freeze. Live `effigy-no-match` removed. Empty-result proof
+//   ff95f6a4c  sixth freeze. Live `effigy-no-match` removed. Empty-result proof
 //              is fixture-owned (`generic-no-match` only). The matrix rejects a
 //              live-target empty case before any query runs, so documenting the
 //              fixture query in Effigy profile roots cannot turn the proof red.
 //              Current matrix: 11 cases. Historical freeze logs keep the older
 //              12-case counts as historical evidence.
+//   this file  replay, after review of the unnamed sixth-freeze marker. Not a
+//              freeze and not a seventh freeze: no case, query, expected source,
+//              rival, rank bound, dimension, or pass criterion changed. The
+//              matrix remains the 11-case freeze at `ff95f6a4c`; only the
+//              history now names that commit.
 //
 // Two targets, both required:
 //

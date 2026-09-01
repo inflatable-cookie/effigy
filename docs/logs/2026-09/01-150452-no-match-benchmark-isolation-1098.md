@@ -6,6 +6,7 @@ Roadmap: g08.043
 Batch: 1098-isolate-no-match-benchmark-from-live-corpus
 Handoff: `20260901-144054-no-match-benchmark-1098.md`
 Papercut: A no-match benchmark case cannot name itself in its own corpus
+Review follow-up: PR 72 comment `5495348333`
 
 ## Summary
 
@@ -17,8 +18,11 @@ Papercut: A no-match benchmark case cannot name itself in its own corpus
   execution. The fixture case `generic-no-match` (`quokka marmalade trombone`)
   stays non-vacuous and green even though those terms already appear in the
   historical card `1090` evidence log, which is a live profile root.
-- Current matrix is 11 cases (6 fixture, 5 live). Historical freeze logs keep
-  the older 12-case counts as historical evidence.
+- Current matrix is 11 cases (6 fixture, 5 live). The sixth freeze that owns
+  that matrix is `ff95f6a4c`. Historical freeze logs keep the older 12-case
+  counts as historical evidence.
+- The head after PR 72 comment `5495348333` is a freeze-record replay of that
+  unchanged 11-case matrix, not a seventh freeze.
 - No ranking, weighting, traversal, budgeting, profile, graph-store, refresh,
   CLI, or JSON behavior changed.
 
@@ -39,10 +43,11 @@ Papercut: A no-match benchmark case cannot name itself in its own corpus
    `docs_context_benchmark_preserves_live_authority_and_historical_cases`
    (exact frozen fragments) and the 5/5 live benchmark pass.
 4. The benchmark reports an old case total or describes the current matrix as
-   the earlier freeze state — falsified by the sixth-freeze note and current
-   11-case commentary in `scripts/benchmark-docs-context.rhai`, changelog, and
-   guide `079`; historical 12/12 counts remain in freeze history and the card
-   `1090` log.
+   the earlier freeze state — falsified by the named sixth freeze `ff95f6a4c`
+   and current 11-case commentary in `scripts/benchmark-docs-context.rhai`,
+   changelog, and guide `079`; historical 12/12 counts remain in freeze history
+   and the card `1090` log. The follow-up head names that freeze commit and
+   records itself as a replay, not a seventh freeze.
 5. The change adds a product exclusion option or touches retrieval runtime,
    profile grammar, graph storage, refresh, CLI, or JSON behavior — falsified
    by diff scope (`scripts/benchmark-docs-context.rhai`, focused
@@ -65,7 +70,8 @@ rivals, rank bounds, dimensions, and pass criteria.
 ## Changes
 
 - `scripts/benchmark-docs-context.rhai`: remove live empty case; add
-  `reject_live_empty_cases`; record sixth freeze and current 11-case matrix
+  `reject_live_empty_cases`; sixth freeze is `ff95f6a4c` (11-case matrix). The
+  later history line is a freeze-record replay of that same matrix.
 - `crates/effigy-rhai/src/tests/docs_context_benchmark.rs`: focused
   matrix-guard, fixture-ownership, and live-case freeze proof
 - Guide `079`, changelog, papercut, roadmap `g08.043`, card `1098`, and Next
@@ -82,6 +88,8 @@ rivals, rank bounds, dimensions, and pass criteria.
 
 ## Validation Performed
 
+Freeze commit `ff95f6a4c`:
+
 - `cargo test -p effigy-rhai --lib docs_context_benchmark` — 5 passed
 - `./target/debug/effigy perf:docs-context-benchmark` — 11/11 predeclared
   expectations held (`generic-no-match` 0 results; five live cases unchanged)
@@ -92,6 +100,14 @@ rivals, rank bounds, dimensions, and pass criteria.
 - `cargo fmt --all -- --check` — passed
 - `cargo clippy -p effigy-rhai --all-targets -- -D warnings` — passed
   (`proc-macro-error2` future-incompat notice only)
+- `git diff --check` — passed
+
+Freeze-record replay after PR 72 comment `5495348333` (unchanged 11-case
+matrix; not a seventh freeze):
+
+- `cargo test -p effigy-rhai --lib docs_context_benchmark` — 5 passed
+- `./target/debug/effigy perf:docs-context-benchmark` — 11/11
+- `./target/debug/effigy qa:docs` — passed
 - `git diff --check` — passed
 
 ## Risks
