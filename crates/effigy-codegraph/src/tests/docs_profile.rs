@@ -677,6 +677,286 @@ labels = ["See also"]
     assert_contains_relation(&store, resolved, None, "restored escaped target");
 }
 
+#[test]
+fn leading_yaml_frontmatter_is_metadata_not_a_heading() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let markdown =
+        "---\ntitle: Example\nState: live\n---\n# Real\n\nSetext Title\n------------\n\nBody.\n";
+    let path = temp.path().join("notes/intro.md");
+    fs::write(&path, markdown).expect("write markdown");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    let document = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md")
+        .expect("document");
+    assert_eq!(document.kind, "document");
+    assert_eq!(document.span.start.line, 1);
+    assert_eq!(document.span.start.byte, 0);
+    assert_eq!(document.span.end.byte, markdown.len() as u32);
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("title: Example")
+                    || symbol.display_name.contains("State: live")
+                    || symbol.display_name.contains("---"))
+        }),
+        "frontmatter must not become a heading: {symbols:?}"
+    );
+
+    let real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#real")
+        .expect("real ATX heading");
+    assert_eq!(real.kind, "heading-h1");
+    assert_eq!(real.display_name, "Real");
+    assert_eq!(real.span.start.line, 5);
+    assert_eq!(
+        real.span.start.byte,
+        markdown.find("# Real").expect("real offset") as u32
+    );
+
+    let setext = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#setext-title")
+        .expect("setext heading");
+    assert_eq!(setext.kind, "heading-h2");
+    assert_eq!(setext.display_name, "Setext Title");
+    assert_eq!(setext.span.start.line, 7);
+    assert_eq!(
+        setext.span.start.byte,
+        markdown.find("Setext Title").expect("setext offset") as u32
+    );
+}
+
+#[test]
+fn leading_yaml_frontmatter_keeps_profile_fields_and_relations() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook/playbooks")).expect("mkdir");
+    fs::write(
+        temp.path().join("handbook/playbooks/setup.md"),
+        "---\nState: live\nSee also: [ops](ops.md)\n---\n# Setup playbook\n\nBody.\n",
+    )
+    .expect("write playbook");
+    fs::write(
+        temp.path().join("handbook/playbooks/ops.md"),
+        "# Ops\n\nState: live\n",
+    )
+    .expect("write ops");
+    write_graph_manifest(temp.path(), &generic_profile(""));
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("State: live")
+                    || symbol.display_name.contains("See also"))
+        }),
+        "frontmatter must stay out of heading inventory: {symbols:?}"
+    );
+
+    let state = symbols
+        .iter()
+        .find(|symbol| {
+            symbol.kind == "doc-field"
+                && symbol.canonical_name == "handbook/playbooks/setup.md#state"
+        })
+        .expect("state field");
+    assert_eq!(state.display_name, "live");
+    assert_eq!(state.span.start.line, 2);
+    assert_eq!(state.span.start.byte, "---\n".len() as u32);
+
+    let edges = store.list_edges().expect("edges");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.kind == "doc-rel"
+                && edge.provenance.detail.as_deref() == Some("see-also")
+                && edge.provenance.source_path == "handbook/playbooks/setup.md"
+                && (edge.unresolved_target.as_deref() == Some("ops.md")
+                    || edge.to_id.as_ref().map(GraphId::as_str)
+                        == Some("file:handbook/playbooks/ops.md"))
+        }),
+        "labelled frontmatter relation must remain: {edges:?}"
+    );
+}
+
+#[test]
+fn incomplete_and_nonleading_yaml_delimiters_keep_document_content() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    fs::write(
+        temp.path().join("notes/incomplete.md"),
+        "---\ntitle: Example\n# Still Visible\n\nKept body.\n",
+    )
+    .expect("write incomplete");
+    fs::write(
+        temp.path().join("notes/later.md"),
+        "# Lead\n\nProse before a fence.\n\n---\ntitle: not frontmatter\n---\n\n# After\n",
+    )
+    .expect("write later");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    let incomplete = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/incomplete.md#still-visible")
+        .expect("incomplete file keeps ATX heading");
+    assert_eq!(incomplete.display_name, "Still Visible");
+
+    let later_setext = symbols
+        .iter()
+        .find(|symbol| {
+            symbol.provenance.source_path == "notes/later.md"
+                && symbol.kind.starts_with("heading-h")
+                && symbol.display_name.contains("title: not frontmatter")
+        })
+        .expect("non-leading fence keeps ordinary setext behavior");
+    assert!(later_setext.span.start.byte > 0);
+
+    let after = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/later.md#after")
+        .expect("content after non-leading fence remains");
+    assert_eq!(after.display_name, "After");
+}
+
+#[test]
+fn empty_and_blank_led_complete_frontmatter_blocks_stay_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let empty = "---\n---\n# Real Empty\n";
+    let blank_led = "---\n\ntitle: Example\n---\n# Real Blank\n";
+    fs::write(temp.path().join("notes/empty.md"), empty).expect("write empty");
+    fs::write(temp.path().join("notes/blank-led.md"), blank_led).expect("write blank-led");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("title: Example")
+                    || symbol.display_name.contains("---"))
+        }),
+        "empty or blank-led frontmatter must not become a heading: {symbols:?}"
+    );
+
+    let empty_real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/empty.md#real-empty")
+        .expect("empty-block file keeps ATX heading");
+    assert_eq!(empty_real.display_name, "Real Empty");
+    assert_eq!(empty_real.span.start.line, 3);
+    assert_eq!(
+        empty_real.span.start.byte,
+        empty.find("# Real Empty").expect("empty offset") as u32
+    );
+
+    let blank_real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/blank-led.md#real-blank")
+        .expect("blank-led file keeps ATX heading");
+    assert_eq!(blank_real.display_name, "Real Blank");
+    assert_eq!(blank_real.span.start.line, 5);
+    assert_eq!(
+        blank_real.span.start.byte,
+        blank_led.find("# Real Blank").expect("blank offset") as u32
+    );
+}
+
+#[test]
+fn markdown_extractor_version_bump_reindexes_unchanged_frontmatter_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let markdown = "---\ntitle: Example\n---\n# Real\n";
+    fs::write(temp.path().join("notes/intro.md"), markdown).expect("write markdown");
+
+    run_index(temp.path()).expect("first index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let file = store
+        .list_files()
+        .expect("files")
+        .into_iter()
+        .find(|file| file.path == "notes/intro.md")
+        .expect("markdown file");
+    let real = store
+        .list_symbols()
+        .expect("symbols")
+        .into_iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#real")
+        .expect("real heading");
+
+    // Simulate a prior 0.2.0 index that retained the synthetic frontmatter heading
+    // while the file bytes and scan metadata stay unchanged.
+    store
+        .save_symbol(&SymbolRecord {
+            id: GraphId::new("symbol:doc:notes/intro.md:#title-example").expect("id"),
+            kind: "heading-h2".to_owned(),
+            display_name: "title: Example".to_owned(),
+            canonical_name: "notes/intro.md#title-example".to_owned(),
+            file_id: file.id.clone(),
+            span: real.span.clone(),
+            provenance: Provenance {
+                extractor_id: ExtractorId::new("markdown-anchors").expect("extractor"),
+                extractor_version: "0.2.0".to_owned(),
+                source_path: "notes/intro.md".to_owned(),
+                confidence: Confidence::Exact,
+                detail: Some("heading".to_owned()),
+            },
+        })
+        .expect("inject stale heading");
+    let mut prior = store
+        .list_extractors()
+        .expect("extractors")
+        .into_iter()
+        .find(|extractor| extractor.id.as_str() == "markdown-anchors")
+        .expect("markdown extractor");
+    assert_eq!(prior.version, "0.2.1");
+    prior.version = "0.2.0".to_owned();
+    store.save_extractor(&prior).expect("downgrade extractor");
+
+    let status_payload = status(temp.path()).expect("status");
+    assert!(
+        status_payload
+            .stale_paths
+            .iter()
+            .any(|path| path == "notes/intro.md"),
+        "extractor version bump must stale unchanged markdown: {:?}",
+        status_payload.stale_paths
+    );
+
+    run_index(temp.path()).expect("upgrade reindex");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h") && symbol.display_name.contains("title: Example")
+        }),
+        "upgrade reindex must drop the stale frontmatter heading: {symbols:?}"
+    );
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.canonical_name == "notes/intro.md#real"));
+    let upgraded = store
+        .list_extractors()
+        .expect("extractors")
+        .into_iter()
+        .find(|extractor| extractor.id.as_str() == "markdown-anchors")
+        .expect("markdown extractor");
+    assert_eq!(upgraded.version, "0.2.1");
+}
+
 fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
     store
         .list_edges()

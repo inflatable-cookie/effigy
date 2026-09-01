@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Leading YAML frontmatter in Markdown documents is no longer indexed as one
+  synthetic setext heading. A complete leading `---` … `---` block — including
+  an empty body or a body that begins with blank lines — stays metadata: real
+  ATX/setext headings keep their original spans, and profile-configured field
+  facts and labelled relations inside the block remain available. Incomplete or
+  non-leading `---` delimiters keep ordinary Markdown heading behavior. The
+  Markdown extractor identity bumps to `0.2.1` so unchanged files reindex after
+  upgrade instead of retaining a stale synthetic heading.
 - `effigy service list` no longer advertises root bundled catalog assets such as
   `README.md` or `compose.override.example.yml` as callable fragments. Bundled
   inventory membership is the set of first-level directories that carry

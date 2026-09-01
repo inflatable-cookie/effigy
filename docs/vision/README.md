@@ -63,8 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready papercut card
-[`1097`](../roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md),
-then return to official catalog-pack publication planning under architecture
-`026` and contract `043`. The second governance review remains due by
-2026-09-17.
+Return to official catalog-pack publication planning under architecture `026`
+and contract `043`. That lane needs a real OCI coordinate and explicit
+workflow-edit authority; it is not ready. The second governance review remains
+due by 2026-09-17.

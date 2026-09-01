@@ -79,8 +79,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready papercut card `1097` at
-`docs/roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md`.
-No strict spec is needed for the settled extraction rule. Then return to
-official catalog-pack publication planning under contract `043`; keep draft
-`098` paused.
+Return to official catalog-pack publication planning under contract `043`. That
+lane needs a real OCI coordinate and explicit workflow-edit authority; it is
+not ready. Keep draft `098` paused.

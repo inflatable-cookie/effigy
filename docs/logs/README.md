@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-135932-markdown-frontmatter-1097.md`](./2026-09/01-135932-markdown-frontmatter-1097.md)
 - [`2026-09/01-133154-catalog-fragment-listing-1096.md`](./2026-09/01-133154-catalog-fragment-listing-1096.md)
 - [`2026-09/01-123424-papercuts-env-lock-audit.md`](./2026-09/01-123424-papercuts-env-lock-audit.md)
 - [`2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md`](./2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
@@ -193,7 +194,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready papercut card `1097` at
-`docs/roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md`,
-then return to official catalog-pack publication planning. Ranking, timeout,
-publication, release/workflow, S3, and rollover work stay out of card scope.
+Return to official catalog-pack publication planning under contract `043`. That
+lane needs a real OCI coordinate and explicit workflow-edit authority; it is
+not ready. Ranking, timeout, release/workflow, S3, and rollover work stay out of
+opportunistic papercut scope.
