@@ -422,12 +422,26 @@ impl PackStore {
         let _lock = self.lock()?;
         let (mut state, quarantined_state) = match self.load() {
             Ok(state) => (state, None),
-            Err(_) => (PackStoreState::default(), Some(self.quarantine_state()?)),
+            // Preserve first, replace second. The live document is still in
+            // place at this point and stays there until `commit` renames over
+            // it, so there is no window in which the state file is absent.
+            Err(_) => (
+                PackStoreState::default(),
+                Some(self.preserve_unreadable_state()?),
+            ),
         };
 
         state.previous = self.recoverable_rollback_pointer(&state);
         state.active = None;
-        self.commit(&state)?;
+        if let Err(error) = self.commit(&state) {
+            // The original document was never removed, so it is still the live
+            // state. Drop the copy we just made rather than leaving a confusing
+            // duplicate of a document that is still in place.
+            if let Some(path) = &quarantined_state {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(error);
+        }
         Ok(PackResetReport {
             state,
             quarantined_state,
@@ -447,16 +461,64 @@ impl PackStore {
             .map(str::to_owned)
     }
 
-    /// Move an unreadable state document aside so its bytes survive the repair.
+    /// Copy an unreadable state document aside so its bytes survive the repair.
     ///
-    /// Returns where the original went, so the operator can be told rather than
+    /// Deliberately a copy, not a move. Readers do not take the mutation lock,
+    /// so removing the live document — even for the instant between a rename
+    /// and its replacement — would let a concurrent selector see no state file
+    /// at all and report a healthy-looking `no-store` instead of the visible
+    /// `fallback-store-unreadable`. The live path therefore stays put until
+    /// [`PackStore::commit`] replaces it atomically, and a failure anywhere in
+    /// here leaves the original path and bytes exactly as they were.
+    ///
+    /// The quarantine file is itself written temp-plus-rename and then read
+    /// back and compared, so the operator is never pointed at a half-written or
+    /// truncated copy of their metadata.
+    ///
+    /// Returns where the copy went, so the operator can be told rather than
     /// left to discover that their metadata was replaced.
-    fn quarantine_state(&self) -> Result<PathBuf, PackError> {
+    pub(super) fn preserve_unreadable_state(&self) -> Result<PathBuf, PackError> {
         let source = self.state_path();
+        // No-follow: recovering *through* a symlink would copy the target's
+        // bytes and then have `commit` silently replace the link with a regular
+        // file. Refuse instead, leaving the operator's link untouched.
+        let metadata =
+            std::fs::symlink_metadata(&source).map_err(|error| PackError::io(&source, &error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(PackError::StatePathUnsupported {
+                path: source,
+                kind: if metadata.file_type().is_symlink() {
+                    "symlink".to_owned()
+                } else if metadata.is_dir() {
+                    "directory".to_owned()
+                } else {
+                    "special file".to_owned()
+                },
+            });
+        }
+
+        let original = std::fs::read(&source).map_err(|error| PackError::io(&source, &error))?;
         let destination = self
             .root
             .join(format!("state.json.unreadable-{}", unique_suffix()));
-        std::fs::rename(&source, &destination).map_err(|error| PackError::io(&source, &error))?;
+        let temp = self
+            .root
+            .join(format!("state.json.unreadable-{}.tmp", unique_suffix()));
+        std::fs::write(&temp, &original).map_err(|error| PackError::io(&temp, &error))?;
+        std::fs::rename(&temp, &destination).map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            PackError::io(&destination, &error)
+        })?;
+
+        let preserved =
+            std::fs::read(&destination).map_err(|error| PackError::io(&destination, &error))?;
+        if preserved != original {
+            let _ = std::fs::remove_file(&destination);
+            return Err(PackError::StatePreservationMismatch {
+                original: source,
+                destination,
+            });
+        }
         Ok(destination)
     }
 

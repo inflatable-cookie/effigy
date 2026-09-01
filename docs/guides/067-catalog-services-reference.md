@@ -147,8 +147,10 @@ only when that same proof passes, and recommends `reset` otherwise.
 `reset` selects the compiled baseline; it retains installed content and never
 touches project or user overrides, so `rollback` still works afterwards. It is
 also the recovery path for damaged store metadata: an unreadable or unsupported
-`state.json` is moved aside under a `state.json.unreadable-*` name — never
-deleted — and replaced with a valid baseline-selected document, and selection
+`state.json` is copied aside under a `state.json.unreadable-*` name — never
+moved or deleted — and the live document is then replaced atomically with a
+valid baseline-selected one, so the state file is never briefly absent. If any
+step fails, the original file and bytes are left exactly as they were. Selection
 pointers naming no retained record are dropped. Install directories are always
 kept. Records that lived only in an unreadable document cannot be rebuilt, so
 reset reports retained records and retained content separately; the content can

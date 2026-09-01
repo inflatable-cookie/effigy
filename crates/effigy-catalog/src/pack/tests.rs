@@ -1721,3 +1721,184 @@ fn reset_on_a_healthy_store_reports_no_recovery() {
     assert_eq!(report.state.active, None);
     assert!(report.state.previous.is_some());
 }
+
+// --- unreadable-state recovery is atomic ---------------------------------
+//
+// Readers of `state.json` do not take the mutation lock, so recovery must never
+// remove the live document — not even for the instant between a rename and its
+// replacement. A concurrent selector that saw the path absent would report a
+// healthy-looking `no-store` instead of the visible `fallback-store-unreadable`,
+// and a crash in that window would make the silence permanent.
+//
+// These proofs are structural rather than timing-based: they assert the live
+// path is still present and unchanged at the point preservation finishes, which
+// is what removes the window, instead of racing a reader against it.
+
+const CORRUPT_STATE: &str = "{ this is not valid json";
+
+/// A store whose `state.json` is present but unreadable.
+fn store_with_unreadable_state(home: &Path) -> PackStore {
+    let store = store_in(home);
+    write(&store.state_path(), CORRUPT_STATE);
+    store
+}
+
+#[test]
+fn preserving_unreadable_state_leaves_the_live_document_in_place() {
+    let home = TempDir::new().expect("home");
+    let store = store_with_unreadable_state(home.path());
+
+    let quarantined = store
+        .preserve_unreadable_state()
+        .expect("preservation must succeed");
+
+    // The invariant that closes the no-store window: preservation completed and
+    // the live path was never removed, so `commit` has something to replace
+    // rather than something to recreate.
+    assert!(
+        store.state_path().is_file(),
+        "the live state document was removed before commit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(store.state_path()).expect("read live state"),
+        CORRUPT_STATE,
+        "the live state document was modified before commit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&quarantined).expect("read preserved copy"),
+        CORRUPT_STATE
+    );
+    assert_ne!(quarantined, store.state_path());
+}
+
+#[test]
+fn preservation_leaves_no_temporary_file_behind() {
+    let home = TempDir::new().expect("home");
+    let store = store_with_unreadable_state(home.path());
+    store.preserve_unreadable_state().expect("preserve");
+
+    let strays: Vec<String> = std::fs::read_dir(store.root())
+        .expect("read store root")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(strays.is_empty(), "preservation left {strays:?} behind");
+}
+
+#[test]
+fn a_successful_reset_replaces_state_without_ever_removing_it() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("install");
+    let store = store_in(home.path());
+    write(&store.state_path(), CORRUPT_STATE);
+
+    let report = store.reset().expect("reset");
+
+    // After success: the live path holds valid baseline state, and the copy
+    // holds the original bytes.
+    assert!(store.state_path().is_file());
+    let live = store
+        .load()
+        .expect("the live document is valid after recovery");
+    assert_eq!(live.active, None);
+    assert_eq!(
+        std::fs::read_to_string(report.quarantined_state.expect("preserved"))
+            .expect("read preserved"),
+        CORRUPT_STATE
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_recovery_leaves_the_original_state_path_and_bytes_intact() {
+    // Force the recovery to fail after `load` has already rejected the
+    // document, by making the store root unwritable so nothing can be written
+    // or renamed inside it.
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new().expect("home");
+    let store = store_with_unreadable_state(home.path());
+    // Create the lock file first: taking the mutation lock must not be what
+    // fails, or the test would prove nothing about recovery.
+    drop(store.lock().expect("lock"));
+
+    let root = store.root().to_path_buf();
+    let original_mode = std::fs::metadata(&root).expect("metadata").permissions();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500))
+        .expect("make store root read-only");
+
+    let outcome = store.reset();
+
+    // Restore before asserting, so a failed assertion cannot leave an
+    // undeletable temp directory behind.
+    std::fs::set_permissions(&root, original_mode).expect("restore permissions");
+
+    // A privileged user ignores the permission bits; skip rather than claim a
+    // proof that did not happen.
+    if outcome.is_ok() {
+        return;
+    }
+
+    assert!(
+        store.state_path().is_file(),
+        "a failed recovery removed the live state document"
+    );
+    assert_eq!(
+        std::fs::read_to_string(store.state_path()).expect("read live state"),
+        CORRUPT_STATE,
+        "a failed recovery modified the original bytes"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_refuses_to_read_through_a_symlinked_state_path() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let store = store_in(home.path());
+    // Give the store a real document first so the store root exists.
+    write(&store.state_path(), CORRUPT_STATE);
+    let elsewhere = src.path().join("somewhere-else.json");
+    write(&elsewhere, "{ also not valid json");
+    std::fs::remove_file(store.state_path()).expect("remove");
+    std::os::unix::fs::symlink(&elsewhere, store.state_path()).expect("symlink");
+
+    let error = store
+        .reset()
+        .expect_err("recovery must refuse a symlinked state path");
+    assert!(
+        matches!(error, PackError::StatePathUnsupported { ref kind, .. } if kind == "symlink"),
+        "{error}"
+    );
+
+    // The operator's link is still their link, pointing where it pointed.
+    let metadata = std::fs::symlink_metadata(store.state_path()).expect("metadata");
+    assert!(metadata.file_type().is_symlink());
+    assert_eq!(
+        std::fs::read_link(store.state_path()).expect("read link"),
+        elsewhere
+    );
+}
+
+#[test]
+fn recovery_refuses_a_state_path_that_is_not_a_regular_file() {
+    let home = TempDir::new().expect("home");
+    let store = store_in(home.path());
+    std::fs::create_dir_all(store.state_path()).expect("make state path a directory");
+
+    let error = store.reset().expect_err("recovery must refuse a directory");
+    assert!(
+        matches!(error, PackError::StatePathUnsupported { ref kind, .. } if kind == "directory"),
+        "{error}"
+    );
+    assert!(
+        store.state_path().is_dir(),
+        "the original path was disturbed"
+    );
+}

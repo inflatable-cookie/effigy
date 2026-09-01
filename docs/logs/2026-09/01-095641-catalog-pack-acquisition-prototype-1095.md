@@ -9,10 +9,11 @@ Batch: catalog-pack-acquisition-1095
 
 - Card `1095` landed the complete in-repository catalog-pack acquisition
   prototype under strict spec `113`, architecture `026`, and contract `043`.
-- Three review rounds: head `19cf30fb1` (six findings), head `3906ea85e`
-  (three), and head `7f91df38e` (one). All ten are repaired in the same PR; the
-  rounds are recorded in [Review Repair Round](#review-repair-round) and folded
-  into the oracle mapping below.
+- Four review rounds: head `19cf30fb1` (six findings), head `3906ea85e` (three),
+  head `7f91df38e` (one), and head `1ff1407f9` (one). All eleven are repaired in
+  the same PR; the rounds are recorded in
+  [Review Repair Round](#review-repair-round) and folded into the oracle mapping
+  below.
 - Catalog fragments now resolve through four layers — project override, user
   override, active installed pack, compiled baseline — with one selection
   implementation and one transport seam.
@@ -46,9 +47,12 @@ Batch: catalog-pack-acquisition-1095
   repair recommendation all run it, so none of them can trust a stale record
   while another re-proves the bytes.
 - `PackStore::reset` is the store-metadata recovery path, not just a selection
-  change: an unreadable document is preserved under `state.json.unreadable-*`,
-  a valid baseline-selected document replaces it, and selection pointers naming
-  no retained record are dropped. `rollback` and `activate` carry a displaced
+  change: an unreadable document is *copied* to `state.json.unreadable-*` while
+  the live path stays in place, a valid baseline-selected document then replaces
+  it through the existing temp-plus-rename commit, and selection pointers naming
+  no retained record are dropped. The live state file is never absent, so a
+  concurrent reader — which does not take the mutation lock — cannot observe a
+  silent `no-store`. `rollback` and `activate` carry a displaced
   selection into `previous` only when it has a record, so a dangling id cannot
   survive a repair.
 - `crates/effigy-catalog/src/fragment.rs` — `FragmentSource::InstalledPack` and
@@ -183,6 +187,13 @@ Each row names the exact test that would fail if the counterexample were true.
      `..::rollback_target_health_reports_the_defect_it_refuses_on`,
      `..::a_healthy_rollback_target_verifies_through_the_shared_proof`
    - `effigy` `runner::service_command::pack::tests::rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone`
+   - Recovery never removes the live state document:
+     `pack::tests::preserving_unreadable_state_leaves_the_live_document_in_place`,
+     `..::a_successful_reset_replaces_state_without_ever_removing_it`,
+     `..::a_failed_recovery_leaves_the_original_state_path_and_bytes_intact`,
+     `..::preservation_leaves_no_temporary_file_behind`,
+     `..::recovery_refuses_to_read_through_a_symlinked_state_path`,
+     `..::recovery_refuses_a_state_path_that_is_not_a_regular_file`
    - Recovery is non-destructive and pointer-scrubbing:
      `pack::tests::reset_recovers_malformed_state_without_deleting_it`,
      `..::reset_recovers_an_unsupported_state_schema_without_deleting_it`,
@@ -235,7 +246,7 @@ Each row names the exact test that would fail if the counterexample were true.
 ## Validation Performed
 
 - command: `cargo test -p effigy-catalog`
-  - result: pass — lib 122 tests (62 under `pack::tests`), integration 57 tests
+  - result: pass — lib 128 tests (68 under `pack::tests`), integration 57 tests
     (4 under `pack_layer`, 53 pre-existing unchanged)
 - command: `cargo test -p effigy-artifacts`
   - result: pass — the adapter seam is consumed, not modified
@@ -431,6 +442,48 @@ inside the same recovery contract.
     selection non-fallback — so the advertised repair is proved end to end
     rather than assumed. `reset_reports_the_recovery_path_in_json` and
     `reset_on_a_healthy_store_reports_no_recovery_path` cover the payload.
+
+### Round four — head `1ff1407f9`
+
+The review accepted the recovery behaviour and found one remaining execution
+miss in how it was sequenced.
+
+11. **Unreadable-state recovery was not atomic and opened a silent no-store
+    window.** `reset` renamed `state.json` to the quarantine name and only then
+    committed a replacement. Readers do not take the mutation lock, so between
+    those two operations a concurrent selector saw the state path absent and
+    returned a healthy-looking `no-store` instead of the visible
+    `fallback-store-unreadable`. If the commit failed or the process stopped
+    after the rename, that silence became permanent even though `reset` had
+    returned an error.
+
+    Preservation is now a copy, not a move. The unreadable document is read,
+    written to a temp file, renamed to the quarantine name, and read back and
+    compared before anything else happens — so the operator is never pointed at
+    a truncated copy. Only then does the existing temp-plus-rename `commit`
+    replace `state.json` atomically. The live path is never removed, so there is
+    no window in which it is absent: a reader sees either the original
+    unreadable document or the new valid one. A failure anywhere leaves the
+    original path and bytes untouched, and the copy made in a failed attempt is
+    cleaned up rather than left as a duplicate of a document that is still live.
+
+    No-follow handling is preserved and made explicit for the state path:
+    recovery refuses a symlinked or non-regular `state.json` rather than reading
+    through it and having `commit` silently replace the operator's link with a
+    regular file.
+
+    Proof — structural rather than timing-based, so it asserts the property that
+    removes the window instead of racing a reader against it:
+    `preserving_unreadable_state_leaves_the_live_document_in_place` (the live
+    path is still present and still holds the original bytes when preservation
+    returns), `preservation_leaves_no_temporary_file_behind`,
+    `a_successful_reset_replaces_state_without_ever_removing_it`,
+    `a_failed_recovery_leaves_the_original_state_path_and_bytes_intact` (forces
+    failure with a read-only store root, after taking the lock once so the lock
+    file is not what fails; verified on this machine to actually take the failure
+    branch, and skipped rather than falsely claimed for a privileged user),
+    `recovery_refuses_to_read_through_a_symlinked_state_path`, and
+    `recovery_refuses_a_state_path_that_is_not_a_regular_file`.
 
 ### Where each proof lives, and why
 

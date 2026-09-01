@@ -123,6 +123,23 @@ pub enum PackError {
     #[error("no previous catalog pack selection to roll back to")]
     NoRollbackTarget,
 
+    /// The state path is not a regular file, so it cannot be recovered safely.
+    #[error(
+        "catalog pack store state at {path} is a {kind}, not a regular file; \
+         refusing to recover through it"
+    )]
+    StatePathUnsupported { path: PathBuf, kind: String },
+
+    /// A preserved copy of an unreadable state document did not match it.
+    #[error(
+        "failed to preserve unreadable catalog pack store state from {original} \
+         to {destination}: the copy does not match the original"
+    )]
+    StatePreservationMismatch {
+        original: PathBuf,
+        destination: PathBuf,
+    },
+
     /// Rollback's target exists but no longer passes verification.
     #[error(
         "previous catalog pack `{install_id}` is not usable, so rollback was \
