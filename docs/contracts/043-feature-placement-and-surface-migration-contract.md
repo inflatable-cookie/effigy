@@ -141,6 +141,41 @@ effigy service pack reset
 The later publication lane adds `effigy service pack update` only when the
 official channel exists and the command can succeed from its first release.
 
+Publication and concrete-asset ownership are fixed as follows:
+
+- canonical editable assets belong to
+  `inflatable-cookie/effigy-catalog-pack` and use independent SemVer;
+- the official OCI repository is
+  `ghcr.io/inflatable-cookie/effigy-catalog-pack`;
+- the first official release is `1.0.0`, with annotated source tag and OCI
+  version tag `v1.0.0`;
+- Effigy carries a generated, pinned recovery snapshot with source commit, pack
+  version, OCI manifest digest, and unpacked content identity evidence;
+- every supported binary, Homebrew, source-build, `init`, and `bootstrap` path
+  receives that compiled baseline without contacting GHCR or mutating active
+  user pack state;
+- ordinary service, container, system, workspace, and task commands never
+  probe the registry or check channel freshness;
+- only explicit immutable install or `service pack update` may acquire registry
+  content, and update must resolve `stable` to a digest before entering the
+  existing validate-store-activate transaction;
+- `stable` moves only through protected manual dispatch against an existing
+  annotated pack version tag; source and OCI version tags are process-immutable
+  checked pointers, while the OCI manifest digest is the immutable identity;
+- the publication path requires digest-bound provenance, anonymous pull and
+  exact-byte validation, an unchanged compatibility input, and a verified
+  rollback target before channel promotion;
+- a pack release may propose a generated baseline PR through a narrowly scoped,
+  short-lived GitHub App credential, but it cannot approve, merge, or release
+  Effigy;
+- first publication and later Effigy release remain separate operator-gated
+  mutations.
+
+`stable` must remain compatible with every supported Effigy release that
+publicly exposes `service pack update`. Raising that floor requires an explicit
+support-policy change before channel movement; parallel compatibility channels
+remain unplanned until a real floor change requires them.
+
 ## Release And Distribution Contract
 
 Core retains:

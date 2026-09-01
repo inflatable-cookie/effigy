@@ -7,6 +7,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Repository task shadowing makes `docs context` unreachable — 2026-09-01
+- Friction: this repository declares `[tasks.docs]`, so `effigy docs context`
+  follows manifest-selector precedence and passes `context` to the task instead
+  of reaching the built-in documentation query.
+- Impact: the project-local Effigy agent route cannot use its documented
+  authority lookup inside Effigy itself; operators need an undocumented escape
+  or must fall back to direct file search.
+- Possible fix: provide an explicit built-in escape that preserves normal task
+  precedence, or move the query behind a non-shadowed command shape.
+- Surface: deferred built-in routing, repository-intelligence discovery, and
+  the project-local Effigy skill.
+
 ### [ ] Child-catalog suite task refs lose ancestor `[containers]` registry — 2026-09-01
 - Friction: a configured suite `{ task = "cream/test:unit" }` expands by
   changing cwd to the child catalog. Repository discovery then treats the child

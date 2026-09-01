@@ -1,7 +1,7 @@
 ---
 title: Catalog-pack publication and concrete-asset cutover
 kind: triage
-status: ready-for-review
+status: promotion-in-progress
 created: 2026-09-01
 updated: 2026-09-01
 owner: Tom / catalog-pack publication planning delegate
@@ -13,6 +13,13 @@ tags: [catalog-pack, publication, ghcr, asset-ownership, distribution]
 
 Reviewable planning packet. This records evidence and operator choices for
 later orchestrator promotion. It is not implementation or release authority.
+
+Promotion checkpoint (2026-09-01): the accepted ownership, independent-version,
+official-coordinate, automatic-availability, explicit-update, protected-channel,
+and release-separation decisions are now canonical in architecture `026` and
+contract `043`. The delegate recommendations below remain explicitly
+unpromoted until the operator confirms them; no strict spec or implementation
+card may treat them as settled authority.
 
 ## Scope
 

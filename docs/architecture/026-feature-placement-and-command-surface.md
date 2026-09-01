@@ -1,7 +1,7 @@
 # Feature Placement And Command Surface Architecture
 
 Status: active
-Updated: 2026-08-31
+Updated: 2026-09-01
 Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
 
 ## Purpose
@@ -125,13 +125,30 @@ tracks the active and previous selections needed for deterministic rollback.
 Garbage collection or a bounded retention policy requires a later explicit
 operator decision; install, rollback, and reset never infer deletion authority.
 
-The first implementation lane is an in-repository acquisition prototype. It
-ships explicit digest-addressed OCI and local-path installation, status,
-rollback, and reset while keeping today's embedded assets as the baseline. It
-tests the fixed official-channel update planner but does not expose
-argument-free `service pack update` before an official artifact exists. Pack
-publication, concrete-asset movement, release/install wiring, and the live
-no-argument update command remain a separate lane.
+The acquisition prototype shipped explicit digest-addressed OCI and local-path
+installation, status, rollback, and reset while keeping today's embedded assets
+as the baseline. Official publication is a separate ownership boundary:
+
+- canonical editable assets live in
+  `inflatable-cookie/effigy-catalog-pack`, not in Effigy core;
+- pack releases use independent SemVer and publish to
+  `ghcr.io/inflatable-cookie/effigy-catalog-pack`;
+- Effigy keeps a generated, pinned recovery snapshot with source commit, pack
+  version, and published OCI digest evidence;
+- the compiled snapshot supplies automatic availability to every supported
+  binary, Homebrew, source-build, `init`, and `bootstrap` path without a
+  registry probe or implicit installed-pack activation;
+- registry acquisition remains explicit through immutable digest install or
+  `service pack update`;
+- `stable` moves only through a protected manual dispatch for an existing
+  annotated pack version tag; the OCI manifest digest is the immutable
+  publication identity.
+
+The pack repository owns validation, publication, provenance, and generated
+baseline proposals. Effigy independently accepts or rejects each proposed
+snapshot and retains its own release authority. Public `service pack update`
+stays unavailable until an anonymously readable, digest-bound, attested
+official artifact can succeed from the first exposed release.
 
 ## Release And Distribution
 
@@ -191,7 +208,8 @@ The feature-boundary follow-through is sequenced as separate lanes:
    (shipped by card `1093`);
 2. release versus self-distribution separation;
 3. catalog-pack acquisition prototype satisfying the simplicity invariant,
-   followed separately by publication and concrete-asset movement;
+   followed separately by dedicated-repository publication, generated-baseline
+   cutover, and public update exposure;
 4. repository-intelligence grouped discovery surface;
 5. S3 migration only after the named consumer replacement proof.
 
