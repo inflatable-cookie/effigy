@@ -4,10 +4,12 @@ Roadmap: [`../046-docs-context-time-budget-papercut.md`](../046-docs-context-tim
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: graph command time-budget boundary
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-approved papercut routing
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-184159-docs-context-time-budget-1101.md`](../../../logs/2026-09/01-184159-docs-context-time-budget-1101.md)
 
 ## Purpose
 
@@ -24,14 +26,14 @@ to lazy graph refresh triggered by `effigy docs context`.
 
 ## Acceptance
 
-- [ ] a forced slow cold refresh with a tiny `EFFIGY_GRAPH_TIMEOUT_MS` exits
+- [x] a forced slow cold refresh with a tiny `EFFIGY_GRAPH_TIMEOUT_MS` exits
       within the configured bound
-- [ ] timeout detail uses the existing typed graph-timeout schema, command
+- [x] timeout detail uses the existing typed graph-timeout schema, command
       identity, health snapshot, and direct recovery guidance
-- [ ] text and JSON share the bound; JSON stdout remains a valid standard envelope
-- [ ] cold/stale refresh emits progress before the walk; warm/current query does not
-- [ ] `EFFIGY_GRAPH_TIMEOUT_MS=0` disables the bound for both graph and docs paths
-- [ ] no second index, refresh path, timeout parser, or background service appears
+- [x] text and JSON share the bound; JSON stdout remains a valid standard envelope
+- [x] cold/stale refresh emits progress before the walk; warm/current query does not
+- [x] `EFFIGY_GRAPH_TIMEOUT_MS=0` disables the bound for both graph and docs paths
+- [x] no second index, refresh path, timeout parser, or background service appears
 
 ## Review Oracle
 

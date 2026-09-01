@@ -63,8 +63,9 @@ pub use query::{
     affected, callees, callers, context, explore, files as query_files, impact, node,
     search as query_search, PreparedAffectedQuery,
 };
-/// Lazy on-query graph refresh (rebuilds stale indexes on demand).
-pub use refresh::{ensure_fresh, RefreshOutcome};
+/// Lazy on-query graph refresh (rebuilds stale indexes on demand), plus the
+/// read-only probe of whether the next query would refresh.
+pub use refresh::{ensure_fresh, refresh_pending, RefreshOutcome, RefreshPending};
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;
 /// Foreground graph watch surface and typed watch events.

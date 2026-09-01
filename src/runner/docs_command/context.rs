@@ -1,19 +1,89 @@
 //! `effigy docs context` shell: root selection, rendering, and exit behavior.
 //!
 //! Ranking, traversal, and budgeting belong to `effigy-codegraph`. This module
-//! only turns one typed report into text or the versioned JSON payload.
+//! only turns one typed report into text or the versioned JSON payload. The
+//! lazy graph refresh inside that retrieval shares the graph command's
+//! wall-clock budget, typed timeout detail, and cold/stale progress notice.
 
 use std::path::Path;
 
 use effigy_codegraph::docs_context::{
     DocsContextPayload, DocsContextRequest, DocsContextResultPayload,
 };
+use effigy_codegraph::RefreshPending;
 
 use crate::runner::render::render_command_result;
 
 use super::RunnerError;
 
+/// Command identity reused by the shared graph timeout detail.
+const DOCS_CONTEXT_COMMAND: &str = "docs context";
+
 pub(super) fn run_context(
+    repo_root: &Path,
+    query: &str,
+    max_sections: Option<usize>,
+    max_bytes: Option<usize>,
+    max_hops: Option<usize>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    // An empty query can never refresh anything; `docs_context` rejects it
+    // directly, so skip the progress probe instead of claiming a refresh.
+    if !query.trim().is_empty() {
+        if let Some(notice) = refresh_progress_notice(repo_root) {
+            eprintln!("{notice}");
+        }
+    }
+    let owned_root = repo_root.to_path_buf();
+    let owned_query = query.to_owned();
+    match super::super::graph_time_budget::graph_time_budget() {
+        Some(budget) => {
+            let worker_root = owned_root.clone();
+            super::super::graph_time_budget::run_bounded_graph_operation(
+                &owned_root,
+                DOCS_CONTEXT_COMMAND,
+                budget,
+                move || {
+                    retrieve_documentation_context(
+                        &worker_root,
+                        &owned_query,
+                        max_sections,
+                        max_bytes,
+                        max_hops,
+                        output_json,
+                    )
+                },
+            )
+        }
+        None => retrieve_documentation_context(
+            repo_root,
+            query,
+            max_sections,
+            max_bytes,
+            max_hops,
+            output_json,
+        ),
+    }
+}
+
+/// Decide the stderr progress notice for this query's lazy refresh.
+///
+/// `Some` only when the next refresh would actually do work — a cold build or
+/// a stale rebuild — so warm and current queries never claim one. Probe
+/// failures stay silent: the retrieval itself surfaces the real error.
+pub(super) fn refresh_progress_notice(repo_root: &Path) -> Option<String> {
+    match effigy_codegraph::refresh_pending(repo_root) {
+        Ok(RefreshPending::Cold) => Some(format!(
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is missing; building the shared graph index before answering"
+        )),
+        Ok(RefreshPending::Stale) => Some(format!(
+            "[docs] {DOCS_CONTEXT_COMMAND}: graph index is stale; refreshing it before answering"
+        )),
+        Ok(RefreshPending::Current) | Err(_) => None,
+    }
+}
+
+fn retrieve_documentation_context(
     repo_root: &Path,
     query: &str,
     max_sections: Option<usize>,

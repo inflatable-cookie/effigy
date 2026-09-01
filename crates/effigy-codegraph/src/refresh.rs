@@ -267,3 +267,37 @@ fn build_missing_index(
         }],
     })
 }
+
+/// What the next lazy refresh on this repository would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshPending {
+    /// The next query verifies freshness without touching graph state.
+    Current,
+    /// The graph store has no indexed files; the next query builds the index.
+    Cold,
+    /// The index exists but is stale; the next query rebuilds changed parts.
+    Stale,
+}
+
+/// Read-only probe of whether the next lazy refresh would do work.
+///
+/// Mirrors the early-exit decisions of [`ensure_fresh_with_wait`] — empty
+/// store, git skip-gate, then the scan-state walk — using the same primitives,
+/// so callers can announce a cold or stale refresh before it starts without a
+/// second freshness model. Concurrency is deliberately not modeled here: a
+/// probe that says [`RefreshPending::Stale`] may still be served by a
+/// concurrent refresher, which the refresh outcome reports afterward.
+pub fn refresh_pending(repo_root: &Path) -> Result<RefreshPending, CodeGraphError> {
+    let store = GraphStore::open(repo_root)?;
+    if store.counts()?.files == 0 {
+        return Ok(RefreshPending::Cold);
+    }
+    if crate::git::git_gate_says_fresh(repo_root, &store)? {
+        return Ok(RefreshPending::Current);
+    }
+    if stale_paths_for_repo(repo_root, &store)?.is_empty() {
+        Ok(RefreshPending::Current)
+    } else {
+        Ok(RefreshPending::Stale)
+    }
+}
