@@ -36,6 +36,48 @@ pub enum PackError {
         effigy_version: String,
     },
 
+    /// A pack tree contained a symlink or a non-regular file.
+    ///
+    /// Rejected rather than dereferenced: a pack is data from a registry or an
+    /// operator-chosen directory, and following a link would let it reach
+    /// outside its own root.
+    #[error(
+        "catalog pack content contains an unsupported {kind} at {path}; \
+         packs may only contain regular files and directories"
+    )]
+    UnsupportedEntry { path: PathBuf, kind: String },
+
+    /// Stored content no longer hashes to its recorded identity.
+    #[error(
+        "installed catalog pack `{install_id}` content changed on disk \
+         (recorded {recorded}, found {found})"
+    )]
+    ContentIdentityMismatch {
+        install_id: String,
+        recorded: String,
+        found: String,
+    },
+
+    /// A stored manifest disagrees with the record that describes it.
+    #[error(
+        "installed catalog pack `{install_id}` record and manifest disagree: \
+         {field} recorded as `{recorded}`, manifest says `{found}`"
+    )]
+    RecordManifestMismatch {
+        install_id: String,
+        field: &'static str,
+        recorded: String,
+        found: String,
+    },
+
+    /// Store state names an install that has no record.
+    #[error("catalog pack store state names unknown install `{install_id}`")]
+    StateCrossReferenceBroken { install_id: String },
+
+    /// The durable store lock could not be taken.
+    #[error("failed to lock the catalog pack store at {path}: {reason}")]
+    LockUnavailable { path: PathBuf, reason: String },
+
     /// The candidate carries no loadable catalog fragment.
     #[error("catalog pack `{pack_id}` contains no usable catalog fragment")]
     EmptyPack { pack_id: String },

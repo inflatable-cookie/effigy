@@ -110,9 +110,28 @@ unchanged. A pack cannot widen the fragment schema.
   happens last and only after the manifest, compatibility, and fragments
   validate. A failed candidate leaves the previous selection and previously
   installed content untouched.
+- Pack content may contain only regular files and directories. A symlink — file
+  or directory — is rejected before anything is hashed, copied, or validated, so
+  a pack cannot reach outside its own root.
 - The store records pack identity, pack version, manifest schema version, the
   compatibility requirement, the source, the resolved OCI digest, and a
-  deterministic content identity.
+  deterministic content identity over the whole tree.
+- Landing and activation are serialized across processes by an advisory lock on
+  the store, so concurrent installs cannot lose each other's lineage.
+  Acquisition itself stays outside the lock.
+
+### Retention
+
+Every successfully installed pack is retained. `install`, `rollback`, and
+`reset` never delete installed content — the prototype has no deletion
+authority, and garbage collection or a bounded retention policy is a later
+explicit decision. `effigy service pack status` lists everything the store
+holds.
+
+Reinstalling content the store already has re-verifies the stored bytes against
+their recorded identity. Matching content is reused; content that fails
+verification is replaced with the freshly validated candidate rather than
+reactivated, and the displaced tree is set aside, not deleted.
 
 ### Recovery
 
@@ -120,9 +139,18 @@ unchanged. A pack cannot widen the fragment schema.
 `reset` selects the compiled baseline; it retains installed content and never
 touches project or user overrides, so `rollback` still works afterwards.
 
-If an active pack later becomes unreadable or incompatible, Effigy falls back
-to the compiled baseline, warns in text, reports the reason in JSON
-(`selection.reason`), and `effigy doctor` raises `catalog.pack-health` with one
+Selection re-proves the active pack every time, not just on install: it
+revalidates the manifest and fragments, cross-checks the stored manifest
+against the install record, and re-hashes the tree against the recorded content
+identity. Deleted files, edited compose or config bytes, a swapped identity, or
+a store pointer with no record behind it all count as unhealthy.
+
+When the active pack is unhealthy, Effigy uses the compiled baseline and says
+so on stderr — a `[warn]` line normally, and a single
+`effigy.catalog-pack.fallback.v1` object under `--json`. That notice reaches
+*every* catalog-backed command, including container, system, workspace, and
+task paths that have no selection payload of their own; stdout contracts are
+unchanged. `effigy doctor` additionally raises `catalog.pack-health` with one
 direct repair command.
 
 ### Not in this surface

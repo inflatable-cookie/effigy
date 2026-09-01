@@ -20,7 +20,7 @@ use effigy_artifacts::{
 use effigy_catalog::pack::{
     install_pack, select_pack, InstalledPackRecord, LocalPackAcquirer, PackAcquireRequest,
     PackAcquisition, PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection,
-    PackSelectionReason, PackStore, PackStoreState,
+    PackSelectionReason, PackStore, PackStoreState, StoredContentOutcome,
 };
 use effigy_cli::{ServicePackInstallSource, ServicePackSubcommand};
 use effigy_doctor::{check_id, DoctorFinding, DoctorSeverity};
@@ -201,7 +201,7 @@ fn run_install(
             "ok": true,
             "installed": record_payload(&report.installed),
             "replaced": report.replaced,
-            "reused_existing_content": report.reused_existing_content,
+            "stored_content": report.stored_content.as_str(),
             "previous": report.state.previous,
             "store_root": display_path(store.root()),
         })
@@ -217,6 +217,12 @@ fn run_install(
         lines.push(format!("digest: {digest}"));
     }
     lines.push(format!("content: {}", report.installed.content_id));
+    if report.stored_content == StoredContentOutcome::RepairedCorrupt {
+        lines.push(
+            "note: existing stored content failed identity verification and was replaced"
+                .to_owned(),
+        );
+    }
     match &report.replaced {
         Some(replaced) => lines.push(format!("rollback target: {replaced}")),
         None => lines.push("rollback target: compiled baseline".to_owned()),

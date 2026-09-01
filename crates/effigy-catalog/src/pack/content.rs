@@ -1,10 +1,19 @@
-//! Immutable content identity and validation for candidate pack directories.
+//! Immutable content identity, traversal safety, and validation for pack
+//! directories.
 //!
 //! Content identity is a deterministic digest over every regular file under a
 //! pack root: relative path bytes, then file bytes, in sorted path order. Two
-//! byte-identical trees always produce the same identity regardless of how
-//! they were acquired, so a local install and an OCI install of the same pack
-//! are recognisably the same content.
+//! byte-identical trees always produce the same identity regardless of how they
+//! were acquired, so a local install and an OCI install of the same pack are
+//! recognisably the same content, and a stored tree can be re-verified against
+//! the identity recorded when it was installed.
+//!
+//! Traversal is symlink-hostile on purpose. A pack is data, not a program, and
+//! it arrives from a registry or an operator-chosen directory. Every entry is
+//! inspected with `symlink_metadata` and anything that is not a regular file or
+//! a real directory is rejected before it is hashed, copied, or validated, so
+//! content cannot escape its root, absorb arbitrary reachable files, or send
+//! traversal around a cycle.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +25,61 @@ use crate::schema::ServiceSchema;
 
 /// Prefix used for pack content identities.
 const CONTENT_ID_ALGORITHM: &str = "sha256";
+
+/// What a rejected directory entry actually was.
+fn entry_kind(metadata: &std::fs::Metadata) -> &'static str {
+    if metadata.file_type().is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "directory"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "special file"
+    }
+}
+
+/// One accepted entry in a pack tree.
+enum SafeEntry {
+    File(PathBuf),
+    Dir(PathBuf),
+}
+
+/// Inspect `path` without following symlinks and classify it, rejecting
+/// symlinks and anything that is neither a regular file nor a directory.
+fn classify(path: &Path) -> Result<SafeEntry, PackError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| PackError::io(path, &error))?;
+    if metadata.file_type().is_symlink() || !(metadata.is_file() || metadata.is_dir()) {
+        return Err(PackError::UnsupportedEntry {
+            path: path.to_path_buf(),
+            kind: entry_kind(&metadata).to_owned(),
+        });
+    }
+    if metadata.is_dir() {
+        Ok(SafeEntry::Dir(path.to_path_buf()))
+    } else {
+        Ok(SafeEntry::File(path.to_path_buf()))
+    }
+}
+
+/// Read a directory's entries, sorted, rejecting any unsupported entry type.
+fn safe_entries(dir: &Path) -> Result<Vec<SafeEntry>, PackError> {
+    let mut paths = Vec::new();
+    let listing = std::fs::read_dir(dir).map_err(|error| PackError::io(dir, &error))?;
+    for entry in listing {
+        let entry = entry.map_err(|error| PackError::io(dir, &error))?;
+        paths.push(entry.path());
+    }
+    paths.sort();
+    paths.iter().map(|path| classify(path)).collect()
+}
+
+/// Reject a path that is a symlink or an unsupported file type.
+///
+/// Used at the pack root itself, where the caller supplied the path directly.
+pub fn ensure_supported_entry(path: &Path) -> Result<(), PackError> {
+    classify(path).map(|_| ())
+}
 
 /// Compute the deterministic content identity of a pack root.
 pub fn content_id(root: &Path) -> Result<String, PackError> {
@@ -40,12 +104,14 @@ pub fn content_id(root: &Path) -> Result<String, PackError> {
     Ok(format!("{CONTENT_ID_ALGORITHM}:{hex}"))
 }
 
-/// Validate a candidate pack root end to end: manifest, compatibility, and at
-/// least one loadable catalog fragment.
+/// Validate a pack root end to end: traversal safety, manifest, compatibility,
+/// and at least one loadable catalog fragment.
 ///
 /// Fragment validation reuses [`ServiceSchema`] rather than restating fragment
-/// rules, so a pack can never widen the fragment schema.
+/// rules, so a pack can never widen the fragment schema. Used both for an
+/// install candidate and for re-verifying stored content at selection time.
 pub fn validate_pack(root: &Path, effigy_version: &str) -> Result<PackManifest, PackError> {
+    ensure_supported_entry(root)?;
     let manifest = PackManifest::load(root)?;
     manifest.ensure_compatible(effigy_version)?;
 
@@ -53,7 +119,7 @@ pub fn validate_pack(root: &Path, effigy_version: &str) -> Result<PackManifest, 
     for name in fragment_dir_names(root)? {
         let dir = root.join(&name);
         let service_toml = dir.join("service.toml");
-        if !service_toml.is_file() {
+        if !is_regular_file(&service_toml)? {
             continue;
         }
         let contents = std::fs::read_to_string(&service_toml)
@@ -63,7 +129,7 @@ pub fn validate_pack(root: &Path, effigy_version: &str) -> Result<PackManifest, 
             fragment: name.clone(),
             reason: error.to_string(),
         })?;
-        if !dir.join("compose.fragment.yml").is_file() {
+        if !is_regular_file(&dir.join("compose.fragment.yml"))? {
             return Err(PackError::InvalidPackFragment {
                 pack_id: manifest.id.clone(),
                 fragment: name,
@@ -81,15 +147,32 @@ pub fn validate_pack(root: &Path, effigy_version: &str) -> Result<PackManifest, 
     Ok(manifest)
 }
 
+/// Whether `path` is a regular file, rejecting symlinks and special files.
+///
+/// A missing path is simply `false`; a present but unsupported one is an error,
+/// so an attacker cannot smuggle content in by making a required file a link.
+fn is_regular_file(path: &Path) -> Result<bool, PackError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(PackError::io(path, &error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(PackError::UnsupportedEntry {
+            path: path.to_path_buf(),
+            kind: entry_kind(&metadata).to_owned(),
+        });
+    }
+    Ok(true)
+}
+
 /// Directory names directly under a pack root, sorted, excluding dotfiles.
 pub fn fragment_dir_names(root: &Path) -> Result<Vec<String>, PackError> {
     let mut names = Vec::new();
-    let entries = std::fs::read_dir(root).map_err(|error| PackError::io(root, &error))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+    for entry in safe_entries(root)? {
+        let SafeEntry::Dir(path) = entry else {
             continue;
-        }
+        };
         let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
@@ -103,17 +186,22 @@ pub fn fragment_dir_names(root: &Path) -> Result<Vec<String>, PackError> {
 }
 
 /// Recursively copy `source` into `destination`, creating `destination`.
+///
+/// Rejects any symlink or special file in the source tree rather than
+/// dereferencing it.
 pub fn copy_tree(source: &Path, destination: &Path) -> Result<(), PackError> {
+    ensure_supported_entry(source)?;
     std::fs::create_dir_all(destination).map_err(|error| PackError::io(destination, &error))?;
-    let entries = std::fs::read_dir(source).map_err(|error| PackError::io(source, &error))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| PackError::io(source, &error))?;
-        let from = entry.path();
-        let to = destination.join(entry.file_name());
-        if from.is_dir() {
-            copy_tree(&from, &to)?;
-        } else if from.is_file() {
-            std::fs::copy(&from, &to).map_err(|error| PackError::io(&from, &error))?;
+    for entry in safe_entries(source)? {
+        match entry {
+            SafeEntry::Dir(from) => {
+                let to = destination.join(file_name(&from)?);
+                copy_tree(&from, &to)?;
+            }
+            SafeEntry::File(from) => {
+                let to = destination.join(file_name(&from)?);
+                std::fs::copy(&from, &to).map_err(|error| PackError::io(&from, &error))?;
+            }
         }
     }
     Ok(())
@@ -124,15 +212,19 @@ pub fn copy_tree(source: &Path, destination: &Path) -> Result<(), PackError> {
 /// Transports may deliver the pack directly or nested one level down (a single
 /// wrapping directory). Anything deeper is rejected rather than guessed.
 pub fn locate_pack_root(payload_root: &Path) -> Result<PathBuf, PackError> {
-    if payload_root.join(PACK_MANIFEST_FILE).is_file() {
+    ensure_supported_entry(payload_root)?;
+    if is_regular_file(&payload_root.join(PACK_MANIFEST_FILE))? {
         return Ok(payload_root.to_path_buf());
     }
-    let mut nested: Vec<PathBuf> = std::fs::read_dir(payload_root)
-        .map_err(|error| PackError::io(payload_root, &error))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.join(PACK_MANIFEST_FILE).is_file())
-        .collect();
+    let mut nested = Vec::new();
+    for entry in safe_entries(payload_root)? {
+        let SafeEntry::Dir(path) = entry else {
+            continue;
+        };
+        if is_regular_file(&path.join(PACK_MANIFEST_FILE))? {
+            nested.push(path);
+        }
+    }
     nested.sort();
     match nested.len() {
         1 => Ok(nested.remove(0)),
@@ -142,15 +234,20 @@ pub fn locate_pack_root(payload_root: &Path) -> Result<PathBuf, PackError> {
     }
 }
 
+fn file_name(path: &Path) -> Result<&std::ffi::OsStr, PackError> {
+    path.file_name().ok_or_else(|| PackError::UnsupportedEntry {
+        path: path.to_path_buf(),
+        kind: "unnamed entry".to_owned(),
+    })
+}
+
 fn collect_files(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), PackError> {
-    let entries = std::fs::read_dir(dir).map_err(|error| PackError::io(dir, &error))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| PackError::io(dir, &error))?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files(root, &path, files)?;
-        } else if path.is_file() {
-            files.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+    for entry in safe_entries(dir)? {
+        match entry {
+            SafeEntry::Dir(path) => collect_files(root, &path, files)?,
+            SafeEntry::File(path) => {
+                files.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+            }
         }
     }
     Ok(())

@@ -11,9 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
+use super::content::{content_id, validate_pack};
 use super::error::PackError;
 use super::home::effigy_home_dir;
-use super::manifest::PackManifest;
 use super::store::{InstalledPackRecord, PackStore};
 use crate::fragment::{CatalogResolver, InstalledPackLayer};
 
@@ -34,10 +34,20 @@ pub enum PackSelectionReason {
     ActivePack,
     /// Store state exists but could not be read; baseline selected.
     FallbackStoreUnreadable,
+    /// Store state names an install it has no record for; baseline selected.
+    FallbackStateCorrupt,
     /// The active install's content is missing; baseline selected.
     FallbackMissingContent,
     /// The active install's manifest no longer parses; baseline selected.
     FallbackInvalidManifest,
+    /// Stored content no longer matches its recorded identity; baseline
+    /// selected.
+    FallbackContentChanged,
+    /// The stored manifest disagrees with the record describing it; baseline
+    /// selected.
+    FallbackRecordMismatch,
+    /// The active install's fragments no longer validate; baseline selected.
+    FallbackInvalidPack,
     /// The active install no longer accepts this Effigy; baseline selected.
     FallbackIncompatible,
 }
@@ -50,8 +60,12 @@ impl PackSelectionReason {
             Self::NoActivePack => "no-active-pack",
             Self::ActivePack => "active-pack",
             Self::FallbackStoreUnreadable => "fallback-store-unreadable",
+            Self::FallbackStateCorrupt => "fallback-state-corrupt",
             Self::FallbackMissingContent => "fallback-missing-content",
             Self::FallbackInvalidManifest => "fallback-invalid-manifest",
+            Self::FallbackContentChanged => "fallback-content-changed",
+            Self::FallbackRecordMismatch => "fallback-record-mismatch",
+            Self::FallbackInvalidPack => "fallback-invalid-pack",
             Self::FallbackIncompatible => "fallback-incompatible",
         }
     }
@@ -61,8 +75,12 @@ impl PackSelectionReason {
         matches!(
             self,
             Self::FallbackStoreUnreadable
+                | Self::FallbackStateCorrupt
                 | Self::FallbackMissingContent
                 | Self::FallbackInvalidManifest
+                | Self::FallbackContentChanged
+                | Self::FallbackRecordMismatch
+                | Self::FallbackInvalidPack
                 | Self::FallbackIncompatible
         )
     }
@@ -137,6 +155,10 @@ pub fn layered_resolver(
         pack_version: record.pack_version.clone(),
     });
     let resolver = CatalogResolver::new(project_local, user_global).with_installed_pack(layer);
+    // One boundary, one notice: every catalog-backed consumer passes through
+    // here, so none of them can silently swap pack content for baseline
+    // content without the operator being told.
+    super::fallback::report_once(&selection);
     CatalogLayers {
         resolver,
         selection,
@@ -183,6 +205,22 @@ pub fn select_pack_in(store: Option<&PackStore>, effigy_version: &str) -> PackSe
             )
         }
     };
+
+    // A selection pointer with no record behind it is corruption. Treating it
+    // as "nothing installed" would hide a damaged store behind a healthy-
+    // looking baseline.
+    let broken = state.broken_cross_references();
+    if !broken.is_empty() {
+        return baseline(
+            PackSelectionReason::FallbackStateCorrupt,
+            Some(format!(
+                "store state names unknown install(s): {}",
+                broken.join(", ")
+            )),
+            store_root,
+        );
+    }
+
     let Some(record) = state.active_record().cloned() else {
         return baseline(PackSelectionReason::NoActivePack, None, store_root);
     };
@@ -199,31 +237,106 @@ pub fn select_pack_in(store: Option<&PackStore>, effigy_version: &str) -> PackSe
             store_root,
         );
     }
-    match PackManifest::load(&root) {
-        Ok(manifest) => match manifest.ensure_compatible(effigy_version) {
-            Ok(()) => PackSelection {
-                reason: PackSelectionReason::ActivePack,
-                active: Some(record),
-                detail: None,
-                store_root,
-            },
-            Err(error) => baseline(
-                PackSelectionReason::FallbackIncompatible,
-                Some(error.to_string()),
-                store_root,
-            ),
-        },
-        Err(error) => baseline(
-            PackSelectionReason::FallbackInvalidManifest,
-            Some(unreadable_detail(&record, &error)),
+
+    match verify_active_install(&root, &record, effigy_version) {
+        Ok(()) => PackSelection {
+            reason: PackSelectionReason::ActivePack,
+            active: Some(record),
+            detail: None,
             store_root,
-        ),
+        },
+        Err((reason, detail)) => baseline(reason, Some(detail), store_root),
     }
 }
 
-fn unreadable_detail(record: &InstalledPackRecord, error: &PackError) -> String {
+/// Prove the stored bytes still are what the record says they are.
+///
+/// Reloading `pack.toml` and checking compatibility is not enough: a deleted
+/// compose fragment, an edited config file, or a swapped manifest identity all
+/// leave a parseable manifest behind. Selection therefore re-runs the same
+/// validation an install candidate faces, cross-checks the manifest against the
+/// record, and re-hashes the whole tree against the recorded content identity.
+///
+/// A pack is the same shape and order of size as the compiled baseline (~200 KB
+/// across ~50 small files), so a full re-hash costs well under a millisecond —
+/// cheap enough to pay on every resolver construction rather than introduce a
+/// cache whose invalidation would itself be a correctness surface.
+fn verify_active_install(
+    root: &Path,
+    record: &InstalledPackRecord,
+    effigy_version: &str,
+) -> Result<(), (PackSelectionReason, String)> {
+    let manifest = match validate_pack(root, effigy_version) {
+        Ok(manifest) => manifest,
+        Err(error) => return Err((reason_for_validation_error(&error), detail(record, &error))),
+    };
+
+    let recorded_fields: [(&'static str, String, String); 4] = [
+        ("pack id", record.pack_id.clone(), manifest.id.clone()),
+        (
+            "pack version",
+            record.pack_version.clone(),
+            manifest.version.clone(),
+        ),
+        (
+            "compatibility requirement",
+            record.requires_effigy.clone(),
+            manifest.requires_effigy.clone(),
+        ),
+        (
+            "manifest schema version",
+            record.manifest_schema_version.to_string(),
+            manifest.schema_version.to_string(),
+        ),
+    ];
+    for (field, recorded, found) in recorded_fields {
+        if recorded != found {
+            return Err((
+                PackSelectionReason::FallbackRecordMismatch,
+                PackError::RecordManifestMismatch {
+                    install_id: record.install_id.clone(),
+                    field,
+                    recorded,
+                    found,
+                }
+                .to_string(),
+            ));
+        }
+    }
+
+    let found = match content_id(root) {
+        Ok(found) => found,
+        Err(error) => return Err((reason_for_validation_error(&error), detail(record, &error))),
+    };
+    if found != record.content_id {
+        return Err((
+            PackSelectionReason::FallbackContentChanged,
+            PackError::ContentIdentityMismatch {
+                install_id: record.install_id.clone(),
+                recorded: record.content_id.clone(),
+                found,
+            }
+            .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn reason_for_validation_error(error: &PackError) -> PackSelectionReason {
+    match error {
+        PackError::ManifestNotFound { .. }
+        | PackError::InvalidManifest { .. }
+        | PackError::UnsupportedManifestSchema { .. } => {
+            PackSelectionReason::FallbackInvalidManifest
+        }
+        PackError::Incompatible { .. } => PackSelectionReason::FallbackIncompatible,
+        _ => PackSelectionReason::FallbackInvalidPack,
+    }
+}
+
+fn detail(record: &InstalledPackRecord, error: &PackError) -> String {
     format!(
-        "installed pack `{}` is no longer readable: {error}",
+        "installed pack `{}` failed validation: {error}",
         record.install_id
     )
 }

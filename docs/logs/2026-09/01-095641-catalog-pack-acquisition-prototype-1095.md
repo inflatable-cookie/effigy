@@ -9,6 +9,10 @@ Batch: catalog-pack-acquisition-1095
 
 - Card `1095` landed the complete in-repository catalog-pack acquisition
   prototype under strict spec `113`, architecture `026`, and contract `043`.
+- Orchestrator review of head `19cf30fb1` requested changes on six findings.
+  All six are repaired in the same PR; the repair round is recorded in
+  [Review Repair Round](#review-repair-round) and folded into the oracle
+  mapping below.
 - Catalog fragments now resolve through four layers — project override, user
   override, active installed pack, compiled baseline — with one selection
   implementation and one transport seam.
@@ -22,13 +26,20 @@ Batch: catalog-pack-acquisition-1095
 
 - `crates/effigy-catalog/src/pack/` — new pack domain: typed `pack.toml`
   manifest with identity, version, manifest schema version, and a semver Effigy
-  requirement; deterministic sha256 content identity; candidate validation that
-  reuses `ServiceSchema` rather than restating fragment rules; versioned
-  user-state store with atomic `state.json` activation, install lineage, swap
-  rollback, non-destructive reset, and retention; the acquire → validate →
-  store → activate transaction behind the injectable `PackCandidateAcquirer`
-  seam; layer selection with structured fallback reasons; and the fixed
-  baseline-owned official channel.
+  requirement; deterministic sha256 content identity over the whole tree;
+  symlink-hostile traversal that rejects anything but regular files and
+  directories; candidate validation that reuses `ServiceSchema` rather than
+  restating fragment rules; versioned user-state store with atomic `state.json`
+  activation, an advisory cross-process lock over durable mutation, full
+  install lineage with no pruning, swap rollback, and non-destructive reset;
+  the acquire → validate → store → activate transaction behind the injectable
+  `PackCandidateAcquirer` seam, with acquisition outside the lock and landing
+  plus activation inside it; selection that re-proves the active pack on every
+  use; and the fixed baseline-owned official channel.
+- `crates/effigy-catalog/src/pack/fallback.rs` — the single place a baseline
+  fallback reaches the operator, wired into `layered_resolver` so every
+  catalog-backed consumer announces a source change exactly once per process,
+  on stderr, in text or `effigy.catalog-pack.fallback.v1` form.
 - `crates/effigy-catalog/src/fragment.rs` — `FragmentSource::InstalledPack` and
   `CatalogResolver::with_installed_pack`, placing the pack layer below both
   overrides and above the compiled baseline in both `resolve` and `list`.
@@ -81,6 +92,13 @@ Each row names the exact test that would fail if the counterexample were true.
      is byte-identical afterwards)
    - `effigy-catalog` `pack::tests::install_rejects_a_candidate_with_no_usable_fragment`
    - `effigy-catalog` `pack::tests::install_leaves_no_staging_residue`
+   - `effigy-catalog` `pack::tests::reinstalling_identical_content_repairs_corrupt_storage_instead_of_reusing_it`
+     (a reinstall over tampered stored bytes reports `repaired-corrupt` and
+     leaves the recorded identity restored, rather than reactivating them)
+   - `effigy-catalog` `pack::tests::a_file_symlink_inside_a_pack_is_rejected`,
+     `..::a_directory_symlink_inside_a_pack_is_rejected`,
+     `..::a_symlink_cycle_is_rejected_rather_than_traversed`,
+     `..::a_symlinked_required_file_cannot_smuggle_content_in`
    - `effigy` `runner::service_command::pack::tests::a_pulled_but_incompatible_candidate_leaves_the_active_selection_alone`
      (the fake adapter confirms the pull happened first)
 4. **Unhealthy active state falls back silently or without repair.**
@@ -88,6 +106,23 @@ Each row names the exact test that would fail if the counterexample were true.
    - `effigy-catalog` `pack::tests::corrupted_active_manifest_falls_back_visibly_to_the_baseline`
    - `effigy-catalog` `pack::tests::newly_incompatible_active_pack_falls_back_visibly_to_the_baseline`
    - `effigy-catalog` `pack::tests::unreadable_store_state_falls_back_visibly_to_the_baseline`
+   - Post-install corruption, each with its own reason:
+     `pack::tests::edited_non_manifest_bytes_fall_back_visibly`,
+     `..::a_deleted_referenced_fragment_falls_back_visibly`,
+     `..::a_removed_compose_fragment_falls_back_visibly`,
+     `..::a_swapped_manifest_identity_falls_back_visibly`,
+     `..::a_swapped_manifest_version_falls_back_visibly`,
+     `..::a_broken_state_cross_reference_falls_back_instead_of_looking_empty`,
+     `..::a_healthy_install_verifies_clean`
+   - Propagation to ordinary consumers:
+     `effigy-containers` `tests::catalog_pack_fallback::container_catalog_resolution_reports_a_baseline_fallback`,
+     `..::the_container_boundary_announces_a_fallback_once_per_process`,
+     `..::a_healthy_pack_supplies_container_content_without_a_notice`
+   - Binary-level text and JSON proof:
+     `tests/catalog_pack_cli_tests.rs::an_unhealthy_pack_warns_visibly_in_both_text_and_json`
+     (asserts the stderr notice in both modes, that the baseline fragment is
+     what the operator actually gets, and that the stdout envelope is untouched)
+     and `..::a_healthy_machine_emits_no_fallback_notice`
    - `effigy` `runner::service_command::tests::unhealthy_active_pack_warns_in_text_and_reports_a_reason_in_json`
    - `effigy` `runner::service_command::pack::tests::deleted_active_content_yields_a_doctor_finding_with_one_repair_command`
      (asserts the remediation names exactly one command)
@@ -98,12 +133,17 @@ Each row names the exact test that would fail if the counterexample were true.
    - `effigy` `runner::service_command::pack::tests::installed_content_cannot_redirect_the_fixed_official_channel`
      (a pack declaring `[update] source = "oci://attacker.invalid/..."` is
      installed and activated first, then the resolved reference is checked)
-6. **Rollback or reset is wrong or unrecoverable.**
+6. **Rollback or reset is wrong, unrecoverable, or deletes installed content.**
    - `effigy-catalog` `pack::tests::rollback_after_two_installs_selects_the_previous_validated_pack`
      (asserts the selected content id, and that a second rollback returns)
    - `effigy-catalog` `pack::tests::reset_selects_baseline_and_still_allows_rollback`
    - `effigy-catalog` `pack::tests::rollback_without_lineage_fails_deterministically`
+   - `effigy-catalog` `pack::tests::every_successfully_installed_entry_is_retained`
+     (five installs, all records and all content directories survive)
+   - `effigy-catalog` `pack::tests::rollback_and_reset_delete_no_installed_content`
    - `effigy` `runner::service_command::pack::tests::rollback_and_reset_are_deterministic_and_keep_content_recoverable`
+   - `tests/catalog_pack_cli_tests.rs::concurrent_installs_from_separate_processes_keep_every_record`
+     (also asserts `service pack status` reports every install)
 7. **A normal command invokes the OCI adapter or probes the network.**
    - `effigy` `runner::service_command::pack::tests::ordinary_catalog_work_never_invokes_the_oci_transport`
      — structural: `effigy-catalog` declares no artifact/transport dependency and
@@ -126,24 +166,42 @@ Each row names the exact test that would fail if the counterexample were true.
 ## Store And Selection Fixtures
 
 - Every pack test drives an isolated Effigy user-state home through
-  `effigy_catalog::pack::with_test_effigy_home`, so nothing reads or writes a
-  developer's real `~/.effigy`.
-- Store layout: `~/.effigy/catalog-packs/v1/{state.json,installs/<id>/,staging/}`.
+  `effigy_catalog::pack::with_test_effigy_home` (or an explicit `PackStore`),
+  so nothing reads or writes a developer's real `~/.effigy`.
+- Store layout:
+  `~/.effigy/catalog-packs/v1/{state.json,.lock,installs/<id>/,staging/}`.
 - `state.json` is rewritten by temp-file-plus-rename, so a reader sees the whole
   previous selection or the whole new one.
-- Install identifiers are content-addressed (`<pack>-<version>-<sha256[..16]>`),
-  so a repeat install lands in the same directory and never partially
-  overwrites a neighbour.
+- Install identifiers are content-addressed and carry the **full** sha256
+  digest (`<pack>-<version>-<64 hex>`). The identifier is what decides whether
+  an existing directory is "the same content", so a prefix would let two trees
+  claim one path.
+- A repeat install never trusts an existing directory: `land_content`
+  re-hashes it against the recorded identity, reuses it only on a match, and
+  otherwise replaces it with the freshly validated candidate, setting the
+  displaced tree aside under `.corrupt-*` rather than deleting it.
+- Retention is settled by planning: nothing is pruned. `install`, `rollback`,
+  and `reset` have no deletion authority.
+- Durable mutation is serialized by an advisory `flock` on `.lock` (`fs2`, the
+  idiom already used by `effigy-codegraph` and `effigy-deps`). Acquisition runs
+  outside it; landing plus the state transition run inside it.
 
 ## Validation Performed
 
 - command: `cargo test -p effigy-catalog`
-  - result: pass — lib 82 tests (22 new under `pack::tests`), integration 57
-    tests (4 new under `pack_layer`, 53 pre-existing unchanged)
+  - result: pass — lib 103 tests (43 under `pack::tests`), integration 57 tests
+    (4 under `pack_layer`, 53 pre-existing unchanged)
 - command: `cargo test -p effigy-artifacts`
   - result: pass — the adapter seam is consumed, not modified
 - command: `cargo test -p effigy --lib runner::service_command`
   - result: pass — 15 tests (11 new pack rows, 4 service rows)
+- command: `cargo test -p effigy-containers`
+  - result: pass — 230 tests, 3 new under `tests::catalog_pack_fallback`
+- command: `cargo test -p effigy-doctor`
+  - result: pass — 69 tests
+- command: `cargo test --test catalog_pack_cli_tests`
+  - result: pass — 3 end-to-end rows (visible fallback in text and JSON,
+    healthy machine stays quiet, cross-process concurrent installs)
 - command: `cargo test --workspace`
   - result: pass
 - command: `effigy qa`
@@ -154,6 +212,68 @@ Each row names the exact test that would fail if the counterexample were true.
   - result: pass
 - command: `git diff --check`
   - result: clean
+
+## Review Repair Round
+
+Orchestrator review of head `19cf30fb1` requested changes on six findings. Each
+is repaired below, with the proof that would fail if the repair regressed.
+
+1. **Retention was invented in implementation.** `MAX_RETAINED_INSTALLS` and
+   `PackStore::prune` are removed outright; nothing in the store deletes
+   installed content. Canonical planning now settles this (architecture `026`,
+   contract `043`, roadmap `g08.040`, spec `113`, card `1095`), and the code
+   follows it rather than the other way round. Proof:
+   `every_successfully_installed_entry_is_retained`,
+   `rollback_and_reset_delete_no_installed_content`, and the CLI-level
+   `concurrent_installs_from_separate_processes_keep_every_record`.
+2. **Active-pack health was not proven after installation.** Selection now runs
+   the same validation an install candidate faces — manifest, compatibility,
+   and fragments — then cross-checks the stored manifest against the install
+   record (id, version, compatibility requirement, manifest schema version) and
+   re-hashes the whole tree against the recorded content identity. A store
+   pointer with no record behind it is `fallback-state-corrupt` rather than
+   collapsing to "nothing installed". Reinstall re-verifies existing content and
+   repairs a mismatch instead of reactivating it. Seven new selection tests plus
+   the reinstall-repair test cover it.
+3. **Fallback was silent for ordinary catalog consumers.** The notice moved into
+   `effigy_catalog::pack::fallback` and is emitted from `layered_resolver`, the
+   one boundary every catalog-backed command passes through — including the
+   container, system, workspace, and task paths that have no selection payload
+   of their own. It goes to stderr, once per process, as text or as
+   `effigy.catalog-pack.fallback.v1`, so no existing stdout contract changes.
+4. **Store mutation had no cross-process serialization.** Landing plus state
+   transition, rollback, and reset now hold an advisory `flock`; acquisition
+   stays outside it. Writing the concurrency proof also exposed a real defect
+   the lock alone would not have fixed: staging and temp-file names were built
+   from `(pid, coarse nanos)`, and two threads reading the same clock tick
+   shared a staging directory and validated each other's payload. All such
+   names now carry a process-wide counter. Proof:
+   `the_store_lock_is_actually_exclusive`,
+   `concurrent_installs_do_not_lose_lineage`,
+   `concurrent_rollback_and_reset_keep_state_self_consistent`, and the
+   genuinely multi-process
+   `concurrent_installs_from_separate_processes_keep_every_record`.
+5. **Pack traversal followed symlinks.** Every entry is now inspected with
+   `symlink_metadata`; symlinks and non-regular files are rejected before
+   hashing, copying, or validation, including for required files like
+   `compose.fragment.yml`. Four Unix counterexamples cover file symlinks,
+   directory symlinks, cycles, and a symlinked required file.
+6. **Truncated install identity plus blind reuse.** The identifier carries the
+   full 64-character digest, and reuse re-verifies stored content before
+   activation. Proof: `install_identity_carries_the_full_content_digest` and the
+   reinstall-repair test.
+
+### Where each proof lives, and why
+
+The container/system/workspace propagation proof is a unit test in
+`effigy-containers`, not an assertion against the built binary. Under
+`cargo test`, feature unification enables `effigy-containers/test-support`,
+which pins that crate's `~/.effigy` resolution to a synthetic home so container
+tests can never touch a developer's real one — so the harness binary cannot
+observe a `HOME`-based pack store on the container path. The binary-level test
+covers `service list` in both render modes, where `HOME` is honoured, and the
+crate-level test covers the container boundary. A `cargo build` binary was also
+driven by hand end to end to confirm the released shape behaves the same.
 
 ## Incidental Repairs
 
@@ -179,12 +299,17 @@ of this card's scope.
 - The official repository constant is the RFC 2606 placeholder
   `packs.invalid/effigy/default-catalog` with `published = false`. It is not a
   chosen coordinate; the publication lane must replace it deliberately.
-- Retention keeps three installs beyond pinned ones. A workflow that installs
-  many packs quickly will prune older content; lineage for one deterministic
-  rollback is always preserved.
-- Fallback is visible on `service list` and `service pack status` and in
-  `doctor`. Container, system, and workspace commands resolve the baseline
-  correctly but do not restate the warning inline.
+- Nothing is ever pruned, so a machine that installs many packs accumulates
+  store content without bound. That is the settled decision for this lane;
+  garbage collection is a later explicit operator choice.
+- Selection re-hashes the active pack on every resolver construction. A pack is
+  the same order of size as the compiled baseline (~200 KB across ~50 small
+  files), so this is well under a millisecond and is paid rather than cached —
+  a cache's invalidation would itself be a correctness surface. A materially
+  larger pack format would need that revisited.
+- The fallback notice goes to stderr. A consumer that captures only stdout will
+  still get correct baseline behaviour but will not see the warning; the
+  `service` surfaces and `doctor` carry the same facts in stdout payloads.
 
 ## Next Task
 

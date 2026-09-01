@@ -861,6 +861,7 @@ dependencies = [
 name = "effigy-catalog"
 version = "0.12.1"
 dependencies = [
+ "fs2",
  "indexmap",
  "minijinja",
  "rust-embed",

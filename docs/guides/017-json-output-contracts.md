@@ -163,6 +163,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.service.pack.install.v1`
 - `effigy.service.pack.rollback.v1`
 - `effigy.service.pack.reset.v1`
+- `effigy.catalog-pack.fallback.v1` (stderr diagnostic, not a `result` payload)
 - `effigy.artifact.inspect.v1`
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
@@ -217,6 +218,31 @@ effigy --json state capture uat --role uat-capture --source-env uat --key uat-ca
 effigy --json state history uat --kind capture --limit 5
 effigy --json build --repo /path/to/workspace
 ```
+
+## Catalog-Pack Fallback Notice
+
+When an installed catalog pack is unhealthy, every catalog-backed command falls
+back to the compiled baseline and announces it on **stderr**, so no command can
+silently change catalog source. Under `--json` the notice is one
+`effigy.catalog-pack.fallback.v1` object:
+
+```json
+{
+  "schema": "effigy.catalog-pack.fallback.v1",
+  "schema_version": 1,
+  "ok": false,
+  "layer": "compiled-baseline",
+  "reason": "fallback-content-changed",
+  "fallback": true,
+  "detail": "installed catalog pack `...` content changed on disk (...)",
+  "repair": ["effigy service pack rollback", "effigy service pack reset"]
+}
+```
+
+It is emitted at most once per process and never on stdout, so the
+`effigy.command.v1` envelope is byte-for-byte unaffected. Surfaces that own a
+selection payload — `effigy service list` and `effigy service pack status` —
+additionally carry the same facts in `result.selection`.
 
 ## Graph Watch Streaming Exception
 

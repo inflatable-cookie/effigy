@@ -10,16 +10,28 @@ use tempfile::TempDir;
 use super::channel::{official_update_reference, plan_official_update, OfficialPackChannel};
 use super::content::content_id;
 use super::error::PackError;
+use super::fallback::{notice_json, report_once, reset_for_test, DiagnosticMode};
 use super::home::with_test_effigy_home;
 use super::install::{
     install_pack, LocalPackAcquirer, PackAcquireRequest, PackAcquisition, PackCandidateAcquirer,
-    PackCandidateSource,
+    PackCandidateSource, StoredContentOutcome,
 };
 use super::manifest::PackManifest;
-use super::selection::{resolve_catalog_layers, select_pack, PackSelectionReason};
+use super::selection::{
+    resolve_catalog_layers, select_pack, select_pack_in, PackSelection, PackSelectionReason,
+};
 use super::store::{PackSourceRecord, PackStore};
 
 const EFFIGY_VERSION: &str = "0.12.1";
+
+/// The fallback once-latch is process-global, so tests that drive it take this
+/// lock rather than racing each other.
+fn fallback_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn write(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
@@ -595,4 +607,521 @@ fn published_official_channel_plans_a_baseline_owned_candidate() {
             reference: format!("packs.invalid/effigy/default-catalog@{digest}"),
         }
     );
+}
+
+// --- retention (settled: retain everything, never prune) -----------------
+
+#[test]
+fn every_successfully_installed_entry_is_retained() {
+    // Planning settled this: the prototype has no deletion authority. Five
+    // installs — comfortably past any bounded-retention window an
+    // implementation might have invented — must all survive.
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let mut ids = Vec::new();
+    for index in 0..5 {
+        let candidate = candidate_pack(
+            src.path(),
+            "p",
+            &format!("{}.0.0", index + 1),
+            ">=0.12",
+            5432 + index as u16,
+        );
+        ids.push(
+            install_local(home.path(), &candidate)
+                .expect("install")
+                .installed
+                .install_id,
+        );
+    }
+
+    let store = store_in(home.path());
+    let state = store.load().expect("state");
+    assert_eq!(state.installs.len(), 5, "an install record was pruned");
+    for id in &ids {
+        assert!(state.record(id).is_some(), "record {id} was pruned");
+        assert!(
+            store.install_dir(id).is_dir(),
+            "content for {id} was deleted"
+        );
+    }
+}
+
+#[test]
+fn rollback_and_reset_delete_no_installed_content() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let first = install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("first")
+    .installed
+    .install_id;
+    let second = install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "2.0.0", ">=0.12", 6543),
+    )
+    .expect("second")
+    .installed
+    .install_id;
+
+    let store = store_in(home.path());
+    store.rollback().expect("rollback");
+    store.reset().expect("reset");
+
+    let state = store.load().expect("state");
+    assert_eq!(state.installs.len(), 2);
+    for id in [&first, &second] {
+        assert!(state.record(id).is_some(), "record {id} was dropped");
+        assert!(store.install_dir(id).is_dir(), "content {id} was deleted");
+    }
+}
+
+// --- stored-state validation at selection time ---------------------------
+
+/// Corrupt the active install's stored tree with `mutate`, then select.
+fn select_after(home: &Path, mutate: impl FnOnce(&Path, &PackStore)) -> PackSelection {
+    let store = store_in(home);
+    let active = store.load().expect("state").active.expect("active");
+    mutate(&store.install_dir(&active), &store);
+    with_test_effigy_home(home, || select_pack(EFFIGY_VERSION))
+}
+
+fn installed_home() -> (TempDir, TempDir) {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("install");
+    (home, src)
+}
+
+#[test]
+fn edited_non_manifest_bytes_fall_back_visibly() {
+    // The manifest still parses and the pack still validates; only a compose
+    // fragment changed. Reloading `pack.toml` alone would miss this.
+    let (home, _src) = installed_home();
+    let selection = select_after(home.path(), |root, _| {
+        write(
+            &root.join("postgres/compose.fragment.yml"),
+            "image: postgres:tampered\n",
+        );
+    });
+
+    assert_eq!(
+        selection.reason,
+        PackSelectionReason::FallbackContentChanged
+    );
+    assert!(selection.uses_baseline());
+    let detail = selection.detail.expect("detail");
+    assert!(detail.contains("content changed on disk"), "{detail}");
+}
+
+#[test]
+fn a_deleted_referenced_fragment_falls_back_visibly() {
+    let (home, _src) = installed_home();
+    let selection = select_after(home.path(), |root, _| {
+        std::fs::remove_dir_all(root.join("postgres")).expect("delete fragment");
+    });
+
+    assert_eq!(selection.reason, PackSelectionReason::FallbackInvalidPack);
+    assert!(selection.uses_baseline());
+    assert!(selection.fallback_warning().is_some());
+}
+
+#[test]
+fn a_removed_compose_fragment_falls_back_visibly() {
+    let (home, _src) = installed_home();
+    let selection = select_after(home.path(), |root, _| {
+        std::fs::remove_file(root.join("postgres/compose.fragment.yml")).expect("delete");
+    });
+
+    assert_eq!(selection.reason, PackSelectionReason::FallbackInvalidPack);
+    let detail = selection.detail.expect("detail");
+    assert!(detail.contains("missing compose.fragment.yml"), "{detail}");
+}
+
+#[test]
+fn a_swapped_manifest_identity_falls_back_visibly() {
+    let (home, _src) = installed_home();
+    let selection = select_after(home.path(), |root, _| {
+        write(
+            &root.join("pack.toml"),
+            "schema_version = 1\n\n[pack]\nid = \"impostor\"\nversion = \"1.0.0\"\n\n\
+             [compatibility]\neffigy = \">=0.12\"\n",
+        );
+    });
+
+    assert_eq!(
+        selection.reason,
+        PackSelectionReason::FallbackRecordMismatch
+    );
+    let detail = selection.detail.expect("detail");
+    assert!(detail.contains("pack id"), "{detail}");
+    assert!(detail.contains("impostor"), "{detail}");
+}
+
+#[test]
+fn a_swapped_manifest_version_falls_back_visibly() {
+    let (home, _src) = installed_home();
+    let selection = select_after(home.path(), |root, _| {
+        write(
+            &root.join("pack.toml"),
+            "schema_version = 1\n\n[pack]\nid = \"p\"\nversion = \"9.9.9\"\n\n\
+             [compatibility]\neffigy = \">=0.12\"\n",
+        );
+    });
+
+    assert_eq!(
+        selection.reason,
+        PackSelectionReason::FallbackRecordMismatch
+    );
+    let detail = selection.detail.expect("detail");
+    assert!(detail.contains("pack version"), "{detail}");
+}
+
+#[test]
+fn a_broken_state_cross_reference_falls_back_instead_of_looking_empty() {
+    // An `active` pointer with no record behind it is corruption. Collapsing
+    // to `NoActivePack` would present a damaged store as a healthy baseline.
+    let (home, _src) = installed_home();
+    let store = store_in(home.path());
+    let mut state = store.load().expect("state");
+    state.active = Some("effigy-default-catalog-9-9-9-deadbeef".to_owned());
+    store.commit(&state).expect("commit");
+
+    let selection = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+
+    assert_eq!(selection.reason, PackSelectionReason::FallbackStateCorrupt);
+    assert!(selection.uses_baseline());
+    let detail = selection.detail.expect("detail");
+    assert!(detail.contains("unknown install"), "{detail}");
+}
+
+#[test]
+fn a_healthy_install_verifies_clean() {
+    let (home, _src) = installed_home();
+    let selection = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+    assert_eq!(selection.reason, PackSelectionReason::ActivePack);
+    assert!(selection.fallback_warning().is_none());
+}
+
+// --- reinstall over corrupt stored content -------------------------------
+
+#[test]
+fn reinstalling_identical_content_repairs_corrupt_storage_instead_of_reusing_it() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    let first = install_local(home.path(), &candidate).expect("first install");
+    assert_eq!(first.stored_content, StoredContentOutcome::Landed);
+
+    // A clean reinstall verifies and reuses.
+    let clean = install_local(home.path(), &candidate).expect("clean reinstall");
+    assert_eq!(clean.stored_content, StoredContentOutcome::ReusedVerified);
+
+    // Now corrupt the stored bytes and reinstall the same candidate.
+    let store = store_in(home.path());
+    let install_dir = store.install_dir(&first.installed.install_id);
+    write(
+        &install_dir.join("postgres/compose.fragment.yml"),
+        "image: postgres:corrupt\n",
+    );
+    let repaired = install_local(home.path(), &candidate).expect("repair reinstall");
+
+    assert_eq!(
+        repaired.stored_content,
+        StoredContentOutcome::RepairedCorrupt
+    );
+    assert_eq!(
+        content_id(&install_dir).expect("content id"),
+        first.installed.content_id,
+        "corrupt bytes were reactivated instead of repaired"
+    );
+    let selection = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+    assert_eq!(selection.reason, PackSelectionReason::ActivePack);
+}
+
+// --- durable identity ----------------------------------------------------
+
+#[test]
+fn install_identity_carries_the_full_content_digest() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let report = install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("install");
+
+    let digest = report
+        .installed
+        .content_id
+        .rsplit(':')
+        .next()
+        .expect("digest");
+    assert_eq!(digest.len(), 64, "sha256 hex should be 64 characters");
+    assert!(
+        report.installed.install_id.ends_with(digest),
+        "install id `{}` truncates the digest",
+        report.installed.install_id
+    );
+}
+
+// --- symlink and file-type rejection -------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_file_symlink_inside_a_pack_is_rejected() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let outside = src.path().join("outside-secret.txt");
+    write(&outside, "not yours");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    std::os::unix::fs::symlink(&outside, candidate.join("postgres/leak.conf")).expect("symlink");
+
+    let error = install_local(home.path(), &candidate).expect_err("reject");
+
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { ref kind, .. } if kind == "symlink"),
+        "{error}"
+    );
+    assert!(
+        !store_in(home.path()).exists(),
+        "a rejected pack wrote state"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_symlink_inside_a_pack_is_rejected() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let outside = src.path().join("outside-tree");
+    write(&outside.join("secret.txt"), "not yours");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    std::os::unix::fs::symlink(&outside, candidate.join("escape")).expect("symlink");
+
+    let error = install_local(home.path(), &candidate).expect_err("reject");
+
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { ref kind, .. } if kind == "symlink"),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_cycle_is_rejected_rather_than_traversed() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    std::os::unix::fs::symlink(&candidate, candidate.join("loop")).expect("symlink");
+
+    let error = install_local(home.path(), &candidate).expect_err("reject");
+
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { .. }),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_required_file_cannot_smuggle_content_in() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    let real = src.path().join("elsewhere.yml");
+    write(&real, "image: postgres:16\n");
+    std::fs::remove_file(candidate.join("postgres/compose.fragment.yml")).expect("remove");
+    std::os::unix::fs::symlink(&real, candidate.join("postgres/compose.fragment.yml"))
+        .expect("symlink");
+
+    let error = install_local(home.path(), &candidate).expect_err("reject");
+    assert!(
+        matches!(error, PackError::UnsupportedEntry { .. }),
+        "{error}"
+    );
+}
+
+// --- cross-process serialization -----------------------------------------
+
+#[test]
+fn concurrent_installs_do_not_lose_lineage() {
+    // Each worker opens the lock file independently, so this exercises the
+    // real advisory lock rather than an in-process mutex. Without
+    // serialization the read-modify-write of `state.json` drops records; the
+    // assertion is exact, not statistical.
+    const WORKERS: usize = 8;
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let store = store_in(home.path());
+
+    let candidates: Vec<PathBuf> = (0..WORKERS)
+        .map(|index| {
+            candidate_pack(
+                src.path(),
+                "p",
+                &format!("{}.0.0", index + 1),
+                ">=0.12",
+                5432 + index as u16,
+            )
+        })
+        .collect();
+
+    std::thread::scope(|scope| {
+        for candidate in &candidates {
+            let store = store.clone();
+            scope.spawn(move || {
+                let source = PackCandidateSource::local(candidate).expect("source");
+                install_pack(&store, &LocalPackAcquirer, &source, EFFIGY_VERSION).expect("install");
+            });
+        }
+    });
+
+    let state = store.load().expect("state");
+    assert_eq!(
+        state.installs.len(),
+        WORKERS,
+        "concurrent installs lost lineage: {:?}",
+        state
+            .installs
+            .iter()
+            .map(|r| &r.install_id)
+            .collect::<Vec<_>>()
+    );
+    let active = state.active.clone().expect("active");
+    assert!(state.record(&active).is_some(), "active lost its record");
+    for record in &state.installs {
+        assert!(
+            store.install_dir(&record.install_id).is_dir(),
+            "content for {} is missing",
+            record.install_id
+        );
+    }
+}
+
+#[test]
+fn concurrent_rollback_and_reset_keep_state_self_consistent() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("first");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "2.0.0", ">=0.12", 6543),
+    )
+    .expect("second");
+    let store = store_in(home.path());
+
+    std::thread::scope(|scope| {
+        for index in 0..8 {
+            let store = store.clone();
+            scope.spawn(move || {
+                if index % 2 == 0 {
+                    let _ = store.rollback();
+                } else {
+                    let _ = store.reset();
+                }
+            });
+        }
+    });
+
+    let state = store.load().expect("state");
+    assert_eq!(state.installs.len(), 2, "a mutation deleted lineage");
+    assert!(
+        state.broken_cross_references().is_empty(),
+        "state left a dangling selection pointer"
+    );
+}
+
+#[test]
+fn the_store_lock_is_actually_exclusive() {
+    let home = TempDir::new().expect("home");
+    let store = store_in(home.path());
+    let held = store.lock().expect("first lock");
+
+    let contended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = contended.clone();
+    let store_clone = store.clone();
+    let waiter = std::thread::spawn(move || {
+        let _second = store_clone.lock().expect("second lock");
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    // The waiter cannot make progress while the first lock is held.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(
+        !contended.load(std::sync::atomic::Ordering::SeqCst),
+        "a second holder acquired the store lock concurrently"
+    );
+
+    drop(held);
+    waiter.join().expect("waiter");
+    assert!(contended.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+// --- central fallback reporting ------------------------------------------
+
+#[test]
+fn the_fallback_notice_is_emitted_once_and_only_for_a_fallback() {
+    let _lock = fallback_lock();
+    let (home, _src) = installed_home();
+    let healthy = with_test_effigy_home(home.path(), || select_pack(EFFIGY_VERSION));
+    reset_for_test();
+    assert!(
+        !report_once(&healthy),
+        "a healthy selection announced itself"
+    );
+
+    let broken = select_after(home.path(), |root, _| {
+        std::fs::remove_dir_all(root).expect("delete content");
+    });
+    reset_for_test();
+    assert!(report_once(&broken), "the first fallback was not reported");
+    assert!(!report_once(&broken), "the fallback was reported twice");
+    reset_for_test();
+}
+
+#[test]
+fn the_structured_fallback_notice_carries_reason_and_repair() {
+    let (home, _src) = installed_home();
+    let broken = select_after(home.path(), |root, _| {
+        write(
+            &root.join("postgres/compose.fragment.yml"),
+            "image: postgres:tampered\n",
+        );
+    });
+
+    let payload = notice_json(&broken);
+    assert_eq!(payload["schema"], super::fallback::FALLBACK_NOTICE_SCHEMA);
+    assert_eq!(payload["fallback"], true);
+    assert_eq!(payload["layer"], "compiled-baseline");
+    assert_eq!(payload["reason"], "fallback-content-changed");
+    assert!(payload["detail"]
+        .as_str()
+        .expect("detail")
+        .contains("changed"));
+    assert_eq!(
+        payload["repair"],
+        serde_json::json!(["effigy service pack rollback", "effigy service pack reset"])
+    );
+    assert_eq!(super::fallback::diagnostic_mode(), DiagnosticMode::Text);
+}
+
+#[test]
+fn selection_without_a_store_reports_nothing() {
+    let _lock = fallback_lock();
+    let home = TempDir::new().expect("home");
+    let selection = select_pack_in(Some(&store_in(home.path())), EFFIGY_VERSION);
+    reset_for_test();
+    assert!(!report_once(&selection));
+    reset_for_test();
 }

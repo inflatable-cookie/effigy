@@ -27,13 +27,25 @@ During v0.x, MINOR bumps may include breaking changes.
   then activate — so a malformed, incompatible, or failed candidate leaves the
   previous selection and previously installed content untouched. An active pack
   that later becomes unreadable or incompatible falls back to the compiled
-  baseline with a visible warning, a structured `selection.reason` in JSON, and
-  a `catalog.pack-health` doctor finding naming one repair command. `rollback`
-  selects the previous validated install and `reset` selects the baseline
-  without deleting installed content or touching project/user overrides. There
-  is deliberately no `effigy service pack update`: the official channel is
-  fixed and baseline-owned so installed content cannot redirect it, but no
-  official artifact is published yet.
+  baseline and says so on stderr — a `[warn]` line normally, one
+  `effigy.catalog-pack.fallback.v1` object under `--json` — for every
+  catalog-backed command including container, system, workspace, and task
+  paths, leaving existing stdout contracts unchanged. `effigy doctor` adds a
+  `catalog.pack-health` finding naming one repair command. Selection re-proves
+  the active pack on every use: manifest and fragments revalidate, the stored
+  manifest is cross-checked against the install record, and the whole tree is
+  re-hashed against its recorded content identity, so edited or deleted bytes
+  cannot stay selected. Pack content may contain only regular files and
+  directories; symlinks are rejected before anything is hashed, copied, or
+  validated. Durable store mutation is serialized across processes by an
+  advisory lock. Every successfully installed pack is retained — `install`,
+  `rollback`, and `reset` never delete installed content — and reinstalling
+  content the store already holds re-verifies it, repairing rather than
+  reactivating a corrupt tree. `rollback` selects the previous validated
+  install and `reset` selects the baseline without touching project/user
+  overrides. There is deliberately no `effigy service pack update`: the
+  official channel is fixed and baseline-owned so installed content cannot
+  redirect it, but no official artifact is published yet.
 - `effigy --help` and `effigy help` now group the built-in command surface by
   operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
   and `admin`. `effigy help <group>` renders one group's inventory, and

@@ -8,14 +8,23 @@
 //!
 //! Activation is the last step and touches only `state.json`. Anything that
 //! fails earlier leaves the previous active selection and every previously
-//! installed directory exactly as they were.
+//! installed directory exactly as they were. Nothing in this path deletes
+//! installed content.
+//!
+//! Acquisition runs outside the durable-store lock — it is the slow part and
+//! touches only a private staging directory. Landing the validated content and
+//! the state transition run inside it, so concurrent installs serialize.
 
 use std::path::{Path, PathBuf};
 
-use super::content::{content_id, copy_tree, locate_pack_root, validate_pack};
+use super::content::{
+    content_id, copy_tree, ensure_supported_entry, locate_pack_root, validate_pack,
+};
 use super::error::PackError;
 use super::manifest::PackManifest;
-use super::store::{now_unix, InstalledPackRecord, PackSourceRecord, PackStore, PackStoreState};
+use super::store::{
+    now_unix, unique_suffix, InstalledPackRecord, PackSourceRecord, PackStore, PackStoreState,
+};
 
 /// An explicitly operator-selected install candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,11 +117,35 @@ impl PackCandidateAcquirer for LocalPackAcquirer {
         if !path.is_dir() {
             return Err(PackError::LocalSourceNotDirectory { path: path.clone() });
         }
+        ensure_supported_entry(path)?;
         copy_tree(path, &request.destination)?;
         Ok(PackAcquisition {
             payload_root: request.destination.clone(),
             resolved_digest: None,
         })
+    }
+}
+
+/// What the transaction did with content already present at the install path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredContentOutcome {
+    /// Nothing was there; the validated candidate was landed fresh.
+    Landed,
+    /// Existing content re-verified against the recorded identity and reused.
+    ReusedVerified,
+    /// Existing content failed verification and was replaced with the
+    /// freshly validated candidate rather than reactivated.
+    RepairedCorrupt,
+}
+
+impl StoredContentOutcome {
+    /// Stable machine-readable label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Landed => "landed",
+            Self::ReusedVerified => "reused-verified",
+            Self::RepairedCorrupt => "repaired-corrupt",
+        }
     }
 }
 
@@ -125,8 +158,8 @@ pub struct PackInstallReport {
     pub replaced: Option<String>,
     /// Store state after activation.
     pub state: PackStoreState,
-    /// Whether the store already held byte-identical content.
-    pub reused_existing_content: bool,
+    /// What happened to content already present at the install path.
+    pub stored_content: StoredContentOutcome,
 }
 
 /// Run the full install transaction for one candidate.
@@ -150,7 +183,8 @@ fn run_transaction(
     effigy_version: &str,
     staging: &Path,
 ) -> Result<PackInstallReport, PackError> {
-    // 1. Acquire into the staging area. Never into the live install tree.
+    // 1. Acquire into the staging area. Never into the live install tree, and
+    //    deliberately outside the durable-store lock: this is the slow step.
     let acquisition = acquirer.acquire(&PackAcquireRequest {
         source: source.clone(),
         destination: staging.join("payload"),
@@ -162,30 +196,93 @@ fn run_transaction(
     let content_id = content_id(&pack_root)?;
     let record = build_record(&manifest, source, &acquisition, &content_id)?;
 
-    // 3. Store the validated content under its content-addressed identity.
+    // 3. Land and activate under the durable-store lock, so a concurrent
+    //    install cannot race the landing or lose this record's lineage.
+    let _lock = store.lock()?;
     let install_dir = store.install_dir(&record.install_id);
-    let reused_existing_content = install_dir.is_dir();
-    if !reused_existing_content {
-        let parent = install_dir
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| store.root().to_path_buf());
-        std::fs::create_dir_all(&parent).map_err(|error| PackError::io(&parent, &error))?;
-        let landing = staging.join("landing");
-        copy_tree(&pack_root, &landing)?;
-        std::fs::rename(&landing, &install_dir)
-            .map_err(|error| PackError::io(&install_dir, &error))?;
-    }
+    let stored_content = land_content(store, staging, &pack_root, &install_dir, &record)?;
 
-    // 4. Activate atomically.
     let replaced = store.load()?.active;
     let state = store.activate(record.clone())?;
     Ok(PackInstallReport {
         installed: record,
         replaced,
         state,
-        reused_existing_content,
+        stored_content,
     })
+}
+
+/// Put validated content at `install_dir`, verifying anything already there.
+///
+/// Content-addressed identity means an existing directory *should* be
+/// byte-identical, but "should" is not proof: a truncated write, a partial
+/// delete, or an edit under the store would otherwise be reactivated blindly.
+/// Existing content is re-hashed and only reused when it matches; a mismatch is
+/// repaired from the freshly validated candidate rather than trusted.
+fn land_content(
+    store: &PackStore,
+    staging: &Path,
+    pack_root: &Path,
+    install_dir: &Path,
+    record: &InstalledPackRecord,
+) -> Result<StoredContentOutcome, PackError> {
+    if install_dir.is_dir() {
+        match content_id(install_dir) {
+            Ok(found) if found == record.content_id => {
+                return Ok(StoredContentOutcome::ReusedVerified)
+            }
+            Ok(_) | Err(_) => {
+                replace_install_dir(staging, pack_root, install_dir)?;
+                return Ok(StoredContentOutcome::RepairedCorrupt);
+            }
+        }
+    }
+
+    let parent = install_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| store.root().to_path_buf());
+    std::fs::create_dir_all(&parent).map_err(|error| PackError::io(&parent, &error))?;
+    let landing = staging.join("landing");
+    copy_tree(pack_root, &landing)?;
+    std::fs::rename(&landing, install_dir).map_err(|error| PackError::io(install_dir, &error))?;
+    Ok(StoredContentOutcome::Landed)
+}
+
+/// Swap corrupt stored content for the validated candidate.
+///
+/// The new tree is staged and renamed into place, and the old tree is only
+/// moved aside after the swap succeeds — so an interrupted repair never leaves
+/// the install path empty. The displaced tree is retained under
+/// `staging`-adjacent quarantine rather than deleted, because this lane has no
+/// deletion authority.
+fn replace_install_dir(
+    staging: &Path,
+    pack_root: &Path,
+    install_dir: &Path,
+) -> Result<(), PackError> {
+    let landing = staging.join("repair");
+    copy_tree(pack_root, &landing)?;
+    let displaced = quarantine_path(install_dir);
+    std::fs::rename(install_dir, &displaced).map_err(|error| PackError::io(install_dir, &error))?;
+    match std::fs::rename(&landing, install_dir) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Put the original back so the store is never left without content
+            // at a path its state may still reference.
+            let _ = std::fs::rename(&displaced, install_dir);
+            Err(PackError::io(install_dir, &error))
+        }
+    }
+}
+
+fn quarantine_path(install_dir: &Path) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "install".to_owned());
+    let parent = install_dir.parent().unwrap_or(install_dir);
+    parent.join(format!(".corrupt-{name}-{}", unique_suffix()))
 }
 
 fn build_record(
@@ -229,12 +326,16 @@ fn build_record(
     })
 }
 
-/// Content-addressed install identifier: identical content always lands in the
-/// same directory, so a repeat install never partially overwrites a neighbour.
+/// Content-addressed install identifier.
+///
+/// Carries the *full* digest, not a prefix: the identifier is what decides
+/// whether an existing directory is "the same content", so truncating it would
+/// let two different trees claim one path. Identical content always lands in
+/// the same directory, so a repeat install never partially overwrites a
+/// neighbour, and `land_content` re-verifies before reusing anything.
 fn install_id(pack_id: &str, pack_version: &str, content_id: &str) -> String {
     let digest = content_id.rsplit(':').next().unwrap_or(content_id);
-    let short: String = digest.chars().take(16).collect();
-    format!("{}-{}-{short}", slug(pack_id), slug(pack_version))
+    format!("{}-{}-{digest}", slug(pack_id), slug(pack_version))
 }
 
 fn slug(value: &str) -> String {
@@ -257,14 +358,9 @@ fn slug(value: &str) -> String {
 fn staging_dir(store: &PackStore) -> Result<PathBuf, PackError> {
     let root = store.staging_root();
     std::fs::create_dir_all(&root).map_err(|error| PackError::io(&root, &error))?;
-    let dir = root.join(format!(
-        "candidate-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_nanos())
-            .unwrap_or_default()
-    ));
+    // Must be unique per call, not per (pid, coarse clock tick): two threads
+    // sharing a staging directory would validate and hash each other's payload.
+    let dir = root.join(format!("candidate-{}", unique_suffix()));
     std::fs::create_dir_all(&dir).map_err(|error| PackError::io(&dir, &error))?;
     Ok(dir)
 }

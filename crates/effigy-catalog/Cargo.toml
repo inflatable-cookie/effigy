@@ -14,6 +14,7 @@ minijinja = "2"
 indexmap = { version = "2", features = ["serde"] }
 rust-embed = { version = "8", features = ["debug-embed"] }
 serde_yaml = "0.9"
+fs2 = "0.4"
 semver = "1"
 sha2 = "0.11"
 thiserror = "2"

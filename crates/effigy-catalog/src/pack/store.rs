@@ -12,9 +12,22 @@
 //! `state.json` is the only activation authority. It is rewritten by writing a
 //! sibling temp file and renaming over the target, so a reader either sees the
 //! whole previous selection or the whole new one — never a partial flip.
+//!
+//! Durable mutation is serialized across processes by an advisory lock on
+//! `.lock`. Read-modify-write of `state.json` and the directory landing that
+//! precedes it happen inside that lock, so two concurrent `effigy service pack`
+//! invocations cannot lose lineage or race a landing. Acquisition — the slow,
+//! network-touching part — stays outside it.
+//!
+//! Nothing here deletes installed content. Every successfully installed entry
+//! is retained; garbage collection and bounded retention are a later explicit
+//! operator decision, and install, rollback, and reset never infer deletion
+//! authority.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use super::error::PackError;
@@ -29,11 +42,6 @@ const STORE_LAYOUT_VERSION: &str = "v1";
 
 /// Schema identifier of the persisted state document.
 pub const PACK_STORE_STATE_SCHEMA: &str = "effigy.catalog-pack.store.v1";
-
-/// Installs retained beyond the active selection. Keeps one deterministic
-/// rollback target plus one spare so a rollback followed by a reinstall still
-/// has recoverable lineage.
-const MAX_RETAINED_INSTALLS: usize = 3;
 
 /// Where an installed pack came from, with its immutable content identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +152,35 @@ impl PackStoreState {
     pub fn previous_record(&self) -> Option<&InstalledPackRecord> {
         self.previous.as_deref().and_then(|id| self.record(id))
     }
+
+    /// Selection identifiers that name no install record.
+    ///
+    /// A broken cross-reference is corruption, not an empty selection: an
+    /// `active` pointing at nothing must fall back visibly rather than look
+    /// like a machine that simply never installed a pack.
+    pub fn broken_cross_references(&self) -> Vec<String> {
+        [self.active.as_deref(), self.previous.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|id| self.record(id).is_none())
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// Exclusive advisory lock over durable pack-store mutation.
+///
+/// Held across landing plus state transition so concurrent processes serialize
+/// instead of losing each other's lineage. Released on drop, including on
+/// process death, so a crashed install cannot wedge the store.
+pub struct PackStoreLock {
+    file: File,
+}
+
+impl Drop for PackStoreLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 /// Handle to the versioned installed-pack store.
@@ -253,11 +290,44 @@ impl PackStore {
         })
     }
 
+    /// Take the exclusive durable-mutation lock, waiting for any holder.
+    ///
+    /// Waiting rather than failing: a concurrent install is short, and an
+    /// operator who typed `install` wants it to happen, not to be told to
+    /// retry.
+    pub fn lock(&self) -> Result<PackStoreLock, PackError> {
+        std::fs::create_dir_all(&self.root).map_err(|error| PackError::io(&self.root, &error))?;
+        let path = self.lock_path();
+        let file = File::options()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| PackError::LockUnavailable {
+                path: path.clone(),
+                reason: error.to_string(),
+            })?;
+        file.lock_exclusive()
+            .map_err(|error| PackError::LockUnavailable {
+                path,
+                reason: error.to_string(),
+            })?;
+        Ok(PackStoreLock { file })
+    }
+
+    /// Path of the durable-mutation lock file.
+    pub fn lock_path(&self) -> PathBuf {
+        self.root.join(".lock")
+    }
+
     /// Select the previous validated install.
     ///
     /// Rollback is a swap, not a pop: the selection it replaces becomes the
-    /// next rollback target, so `rollback` after `rollback` returns.
+    /// next rollback target, so `rollback` after `rollback` returns. Installed
+    /// content is never deleted.
     pub fn rollback(&self) -> Result<PackStoreState, PackError> {
+        let _lock = self.lock()?;
         let mut state = self.load()?;
         let Some(target) = state.previous.clone() else {
             return Err(PackError::NoRollbackTarget);
@@ -276,6 +346,7 @@ impl PackStore {
     /// Installed content is retained and the displaced selection becomes the
     /// rollback target, so reset is recoverable rather than destructive.
     pub fn reset(&self) -> Result<PackStoreState, PackError> {
+        let _lock = self.lock()?;
         let mut state = self.load()?;
         if let Some(active) = state.active.take() {
             state.previous = Some(active);
@@ -285,6 +356,9 @@ impl PackStore {
     }
 
     /// Record a validated install and activate it atomically.
+    ///
+    /// The caller already holds the durable-mutation lock across landing and
+    /// this transition. Every previously installed record is retained.
     pub(super) fn activate(
         &self,
         record: InstalledPackRecord,
@@ -298,28 +372,8 @@ impl PackStore {
             .installs
             .retain(|existing| existing.install_id != record.install_id);
         state.installs.insert(0, record);
-        self.prune(&mut state);
         self.commit(&state)?;
         Ok(state)
-    }
-
-    /// Drop lineage beyond the retention limit, deleting its content.
-    fn prune(&self, state: &mut PackStoreState) {
-        let mut kept = Vec::new();
-        let mut dropped = Vec::new();
-        for record in std::mem::take(&mut state.installs) {
-            let pinned = state.active.as_deref() == Some(record.install_id.as_str())
-                || state.previous.as_deref() == Some(record.install_id.as_str());
-            if pinned || kept.len() < MAX_RETAINED_INSTALLS {
-                kept.push(record);
-            } else {
-                dropped.push(record);
-            }
-        }
-        for record in dropped {
-            let _ = std::fs::remove_dir_all(self.install_dir(&record.install_id));
-        }
-        state.installs = kept;
     }
 }
 
@@ -331,13 +385,21 @@ pub(super) fn now_unix() -> u64 {
         .unwrap_or_default()
 }
 
-fn unique_suffix() -> String {
+/// A suffix that is unique across processes *and* across threads.
+///
+/// The wall clock is not enough on its own: `SystemTime::now()` has coarse
+/// resolution on some platforms, so two threads that call it back to back can
+/// read the same value and collide on a temp path. The process-wide counter
+/// removes that, and the pid keeps separate processes apart.
+pub(super) fn unique_suffix() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     format!(
-        "{}-{}",
+        "{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|value| value.as_nanos())
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
 }

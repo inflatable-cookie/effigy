@@ -39,6 +39,13 @@ pub fn run_cli(raw_args: Vec<String>) {
         }
     };
     let global_json_mode = global_options.json_mode;
+    // Tell the catalog layer how to render its baseline-fallback notice before
+    // anything can resolve a catalog fragment.
+    effigy_catalog::pack::set_diagnostic_mode(if global_json_mode {
+        effigy_catalog::pack::DiagnosticMode::Json
+    } else {
+        effigy_catalog::pack::DiagnosticMode::Text
+    });
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let parsed = match parse_command_with_builtin_deferral(args, &cwd, &global_options) {
