@@ -53,4 +53,3 @@ Reject the implementation if any counterexample survives:
 This contract does not authorize S3 extraction, a new provider abstraction,
 general conditional writes, version matching, retries, release work, or a live
 consumer/storage mutation.
-

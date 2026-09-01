@@ -41,4 +41,3 @@ surface, unblocking Bovine's fail-closed upload collision repair.
 
 Run card `1099`, merge after exact-head review, then resume the preserved
 Bovine PR 32 worker.
-

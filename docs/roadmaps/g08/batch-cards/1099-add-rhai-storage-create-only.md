@@ -80,4 +80,3 @@ or if proof requires live storage.
 
 Return the PR for exact-head orchestrator review. After merge, the orchestrator
 resumes Bovine PR 32 on its preserved worker identity.
-

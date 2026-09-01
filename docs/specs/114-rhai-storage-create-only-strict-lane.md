@@ -42,4 +42,3 @@ a new provider abstraction, or validation requires live object storage.
 After merge, resume Bovine PR 32 on its preserved worker, update it to use the
 new option, and return Effigy's queue to official catalog-pack publication
 planning.
-

@@ -121,4 +121,3 @@ push, open one PR to `main`, and return its URL and exact head. Do not merge.
 The orchestrator reviews the exact head. Requested changes return to this same
 worker. Accepted review plus passing checks authorizes the orchestrator merge;
 the downstream Bovine lane remains separately owned.
-
