@@ -183,6 +183,19 @@ cargo test -p effigy-catalog --test integration resolve_php_fpm_fragment -- --no
 cargo test -p effigy-catalog --test integration resolve_workspace_rust_bun_fragment -- --nocapture
 ```
 
+## Packaging Fragments For Distribution
+
+The same fragment layout is what an independently versioned catalog pack
+carries. Add a `pack.toml` at the root of a directory of fragments, then
+install it with `effigy service pack install --path <DIR>` to test it against a
+real resolver. Layer order, precedence, and recovery are documented in
+[`067-catalog-services-reference.md`](./067-catalog-services-reference.md).
+
+Nothing about fragment authoring changes inside a pack: `service.toml` schema,
+variant merge order, and template rendering stay owned by
+`crates/effigy-catalog`. A pack that declares an unknown fragment shape fails
+validation before it can be activated.
+
 ## Related Guides
 
 - Consumer reference: [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)

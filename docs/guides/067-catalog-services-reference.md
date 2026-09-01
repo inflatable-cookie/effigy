@@ -47,6 +47,135 @@ Catalog-driven services land in generated compose under
 [`063-container-system-guide.md`](./063-container-system-guide.md) for the
 runtime layout.
 
+## Catalog Layers
+
+Fragments resolve in one fixed order, highest priority first:
+
+1. project override — `<repo>/infra/dev/catalog/<name>/`
+2. user override — `~/.effigy/catalog/<name>/`
+3. active installed catalog pack — see [Catalog Packs](#catalog-packs)
+4. compiled baseline — the fragments listed below, embedded in the binary
+
+The compiled baseline ships with every Effigy install and is permanent. A
+machine with no pack store, no `oras`, and no network resolves exactly the
+fragments documented here. `effigy service list` names the layer each fragment
+came from.
+
+## Catalog Packs
+
+A catalog pack is an independently versioned set of the same fragment
+directories, installed into Effigy user state and selected below your
+overrides. Packs are optional: nothing needs one, and installing one never
+changes override precedence.
+
+```sh
+effigy service pack status
+effigy service pack install oci://<REPO>@sha256:<DIGEST>
+effigy service pack install --path ./catalog-pack
+effigy service pack rollback
+effigy service pack reset
+```
+
+Every shape takes standard leading `--repo` and `--json`.
+
+### Pack shape
+
+A pack root holds `pack.toml` plus fragment directories in the usual layout:
+
+```toml
+schema_version = 1
+
+[pack]
+id = "effigy-default-catalog"
+version = "1.4.0"
+description = "Default Effigy service catalog"
+
+[compatibility]
+effigy = ">=0.12, <0.13"
+```
+
+Fragment files (`service.toml`, `compose.fragment.yml`, `Dockerfile`,
+`configs/`, `variants/`) follow
+[`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
+unchanged. A pack cannot widen the fragment schema.
+
+### Acquisition rules
+
+- Installation is always explicit. Ordinary catalog use never fetches, checks
+  for updates, or touches the network.
+- An `oci://` source must be digest-addressed (`@sha256:...`). A tag-only
+  reference is rejected before any transport call.
+- `--path <DIR>` installs from a local directory, for development and recovery.
+- Acquire, validate, store, and activate are one transaction. Activation
+  happens last and only after the manifest, compatibility, and fragments
+  validate. A failed candidate leaves the previous selection and previously
+  installed content untouched.
+- Pack content may contain only regular files and directories with valid UTF-8
+  names. A symlink — file or directory, including the pack root and `pack.toml`
+  themselves — is rejected before anything is read, hashed, or copied, so a pack
+  cannot reach outside its own root. Non-UTF-8 entry names are rejected too:
+  lossy names would let two different trees share one content identity.
+- The store records pack identity, pack version, manifest schema version, the
+  compatibility requirement, the source, the resolved OCI digest, and a
+  deterministic content identity over the whole tree.
+- Landing and activation are serialized across processes by an advisory lock on
+  the store, so concurrent installs cannot lose each other's lineage.
+  Acquisition itself stays outside the lock.
+
+### Retention
+
+Every successfully installed pack is retained. `install`, `rollback`, and
+`reset` never delete installed content — the prototype has no deletion
+authority, and garbage collection or a bounded retention policy is a later
+explicit decision. `effigy service pack status` lists everything the store
+holds.
+
+Reinstalling content the store already has re-verifies the stored bytes against
+their recorded identity. Matching content is reused; content that fails
+verification is replaced with the freshly validated candidate rather than
+reactivated, and the displaced tree is set aside, not deleted.
+
+### Recovery
+
+`rollback` selects the previous validated install and is a swap, so it returns.
+It re-proves that install against the running Effigy first, using exactly the
+check selection runs; if the previous content has since been deleted, tampered
+with, replaced by a symlink, or become incompatible, `rollback` refuses and
+leaves the current selection untouched. `effigy doctor` recommends `rollback`
+only when that same proof passes, and recommends `reset` otherwise.
+
+`reset` selects the compiled baseline; it retains installed content and never
+touches project or user overrides, so `rollback` still works afterwards. It is
+also the recovery path for damaged store metadata: an unreadable or unsupported
+`state.json` is copied aside under a `state.json.unreadable-*` name — never
+moved or deleted — and the live document is then replaced atomically with a
+valid baseline-selected one, so the state file is never briefly absent. If any
+step fails, the original file and bytes are left exactly as they were. Selection
+pointers naming no retained record are dropped. Install directories are always
+kept. Records that lived only in an unreadable document cannot be rebuilt, so
+reset reports retained records and retained content separately; the content can
+be reinstalled with `--path`.
+
+Selection re-proves the active pack every time, not just on install: it
+revalidates the manifest and fragments, cross-checks the stored manifest
+against the install record, and re-hashes the tree against the recorded content
+identity. Deleted files, edited compose or config bytes, a swapped identity, or
+a store pointer with no record behind it all count as unhealthy.
+
+When the active pack is unhealthy, Effigy uses the compiled baseline and says
+so on stderr — a `[warn]` line normally, and a single
+`effigy.catalog-pack.fallback.v1` object under `--json`. That notice reaches
+*every* catalog-backed command, including container, system, workspace, and
+task paths that have no selection payload of their own; stdout contracts are
+unchanged. `effigy doctor` additionally raises `catalog.pack-health` with one
+direct repair command.
+
+### Not in this surface
+
+There is no `effigy service pack update`. The official channel is fixed and
+baseline-owned — installed pack content cannot redirect it — but no official
+artifact is published yet, so no public update command exists.
+
 ## Catalog Services
 
 Each section below covers one shipped fragment. Parameters shown with

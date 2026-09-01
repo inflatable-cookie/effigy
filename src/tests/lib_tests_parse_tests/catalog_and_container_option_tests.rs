@@ -6,8 +6,115 @@ use crate::tests::prelude::{
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
     ContainerDataSubcommand, ContainerDbDumpInput, ContainerProfileSubcommand,
-    ContainerVolumeSubcommand,
+    ContainerVolumeSubcommand, ServicePackInstallSource, ServicePackSubcommand,
 };
+
+fn service_pack(subcommand: ServicePackSubcommand, output_json: bool) -> Command {
+    Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::Pack(subcommand),
+        repo_override: None,
+        output_json,
+    })
+}
+
+#[test]
+fn parse_service_pack_status_rollback_and_reset() {
+    for (word, expected) in [
+        ("status", ServicePackSubcommand::Status),
+        ("rollback", ServicePackSubcommand::Rollback),
+        ("reset", ServicePackSubcommand::Reset),
+    ] {
+        let cmd = parse_command(vec![
+            "service".to_owned(),
+            "pack".to_owned(),
+            word.to_owned(),
+            "--json".to_owned(),
+        ])
+        .expect("parse should succeed");
+        assert_eq!(cmd, service_pack(expected, true));
+    }
+}
+
+#[test]
+fn parse_service_pack_install_accepts_an_oci_reference_or_a_path() {
+    let cmd = parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "install".to_owned(),
+        "oci://packs.invalid/effigy/default-catalog@sha256:abc".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        service_pack(
+            ServicePackSubcommand::Install {
+                source: ServicePackInstallSource::Oci {
+                    reference: "oci://packs.invalid/effigy/default-catalog@sha256:abc".to_owned(),
+                },
+            },
+            false,
+        )
+    );
+
+    let cmd = parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "install".to_owned(),
+        "--path".to_owned(),
+        "./catalog-pack".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        service_pack(
+            ServicePackSubcommand::Install {
+                source: ServicePackInstallSource::Path {
+                    path: PathBuf::from("./catalog-pack"),
+                },
+            },
+            false,
+        )
+    );
+}
+
+#[test]
+fn parse_service_pack_install_requires_exactly_one_candidate() {
+    parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "install".to_owned(),
+    ])
+    .expect_err("no candidate must fail");
+
+    parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "install".to_owned(),
+        "oci://packs.invalid/p@sha256:abc".to_owned(),
+        "--path".to_owned(),
+        "./catalog-pack".to_owned(),
+    ])
+    .expect_err("two candidates must fail");
+}
+
+/// The official channel has no published artifact, so no public `update` shape
+/// may exist. Parsing must reject it rather than route it anywhere.
+#[test]
+fn parse_service_pack_has_no_public_update_command() {
+    parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "update".to_owned(),
+    ])
+    .expect_err("`service pack update` must not exist yet");
+}
+
+#[test]
+fn parse_service_pack_without_a_subcommand_renders_service_help() {
+    let cmd =
+        parse_command(vec!["service".to_owned(), "pack".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Service));
+}
 
 #[test]
 fn parse_service_help_is_scoped() {

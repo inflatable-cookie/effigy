@@ -96,7 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready card
-[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
-under strict spec `113`. No official publication, release/workflow work, or
-generation rollover.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`. That lane is not ready. No official publication,
+release/workflow work, or generation rollover has happened.

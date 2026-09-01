@@ -120,6 +120,6 @@ they remain in the active tree.
 ## Next Task
 
 Card `1093` closed the help-first slice of the feature-boundary follow-through.
-Ready card `1095` now owns the bounded catalog-pack acquisition prototype under
-active `g08.040`; official publication and asset cutover remain planning.
-Themes 3–5 remain unscheduled.
+Card `1095` closed the bounded catalog-pack acquisition prototype under
+completed `g08.040`; official publication and asset cutover remain planning and
+are not ready. Themes 3–5 remain unscheduled.

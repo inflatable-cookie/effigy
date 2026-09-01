@@ -5,10 +5,12 @@ Spec: [`../../../specs/113-catalog-pack-acquisition-prototype-strict-lane.md`](.
 Architecture: [`../../../architecture/026-feature-placement-and-command-surface.md`](../../../architecture/026-feature-placement-and-command-surface.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/043-feature-placement-and-surface-migration-contract.md`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: catalog-pack model, installed state, `service` routing, and doctor health
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-confirmed acquisition prototype
+Closed: 2026-09-01
+Evidence: [`2026-09-01 closeout`](../../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 
 ## Purpose
 
@@ -43,31 +45,32 @@ without changing existing catalog-backed usage.
 
 ## Acceptance
 
-- [ ] baseline-only catalog resolution works without a pack store, `oras`, or
+- [x] baseline-only catalog resolution works without a pack store, `oras`, or
       network access and preserves representative current fragment bytes
-- [ ] project and user overrides remain above an active installed pack
-- [ ] valid local and digest-addressed OCI packs record identity, version,
+- [x] project and user overrides remain above an active installed pack
+- [x] valid local and digest-addressed OCI packs record identity, version,
       compatibility, source, and immutable content identity before activation
-- [ ] invalid/incompatible/failed candidates leave active metadata and the
+- [x] invalid/incompatible/failed candidates leave active metadata and the
       previous validated pack unchanged
-- [ ] later-unreadable or incompatible active state falls back visibly to the
+- [x] later-unreadable or incompatible active state falls back visibly to the
       baseline with equivalent text/JSON facts and one-step doctor repair
-- [ ] rollback selects the previous validated installed pack; reset selects the
+- [x] rollback selects the previous validated installed pack; reset selects the
       compiled baseline without deleting project/user overrides or installed
       pack content
-- [ ] installed content cannot redirect the fixed official channel model
-- [ ] no normal catalog-backed command invokes the OCI adapter or performs a
+- [x] installed content cannot redirect the fixed official channel model
+- [x] no normal catalog-backed command invokes the OCI adapter or performs a
       network probe
-- [ ] no public `service pack update`, concrete asset move, release/workflow
+- [x] no public `service pack update`, concrete asset move, release/workflow
       change, S3 change, or new general extension mechanism lands
-- [ ] focused catalog, artifact-adapter, CLI, runner, doctor, and representative
+- [x] focused catalog, artifact-adapter, CLI, runner, doctor, and representative
       assembly tests plus full Effigy QA pass
-- [ ] spec, roadmap, card, guides, contracts, changelog, evidence, and all
+- [x] spec, roadmap, card, guides, contracts, changelog, evidence, and all
       current Next Task pointers close honestly
 
 ## Review Oracle
 
-Falsify these counterexamples before PR creation:
+Falsified. Each row maps to exact tests in the
+[closeout log](../../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
 1. With an empty user-state root and no `oras` on `PATH`, `service list`,
    extraction, and representative compose assembly differ from the current
@@ -120,5 +123,6 @@ Return any such choice to the orchestrator.
 
 ## Next Task
 
-Implement this card only. After merge, return to planning for official pack
-publication and concrete-asset cutover under contract `043`.
+Complete. Return to planning for official pack publication and concrete-asset
+cutover under contract `043`. That lane needs a real OCI coordinate and explicit
+workflow-edit authority; it is not ready.

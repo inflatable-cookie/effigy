@@ -15,6 +15,44 @@ During v0.x, MINOR bumps may include breaking changes.
   because of build-profile drift.
 
 ### Added
+- `effigy service pack` manages independently versioned catalog packs:
+  `status`, `install oci://<REPO>@sha256:<DIGEST>`, `install --path <DIR>`,
+  `rollback`, and `reset`, each with text output, a standard JSON payload, and
+  standard leading `--repo` / `--json`. Catalog fragments now resolve through
+  four layers — project override, user override, active installed pack, then
+  the compiled baseline. The compiled baseline is permanent: a machine with no
+  pack store, no `oras`, and no network resolves exactly the fragments it
+  resolved before, and no ordinary catalog-backed command performs a network
+  probe. Installation is explicit and transactional — acquire, validate, store,
+  then activate — so a malformed, incompatible, or failed candidate leaves the
+  previous selection and previously installed content untouched. An active pack
+  that later becomes unreadable or incompatible falls back to the compiled
+  baseline and says so on stderr — a `[warn]` line normally, one
+  `effigy.catalog-pack.fallback.v1` object under `--json` — for every
+  catalog-backed command including container, system, workspace, and task
+  paths, leaving existing stdout contracts unchanged. `effigy doctor` adds a
+  `catalog.pack-health` finding naming one repair command. Selection re-proves
+  the active pack on every use: manifest and fragments revalidate, the stored
+  manifest is cross-checked against the install record, and the whole tree is
+  re-hashed against its recorded content identity, so edited or deleted bytes
+  cannot stay selected. `rollback` re-proves its target with that same check
+  before mutating state and refuses rather than activating another unhealthy
+  pack, and `doctor` recommends `rollback` only when that proof passes,
+  otherwise `reset`. `reset` is also the recovery path for damaged store
+  metadata: an unreadable or unsupported `state.json` is preserved under a
+  `state.json.unreadable-*` name rather than deleted, a valid
+  baseline-selected document is written, selection pointers naming no retained
+  record are dropped, and every install directory is kept. Pack content may contain only regular files and
+  directories with valid UTF-8 names; symlinks — including the pack root and
+  `pack.toml` — are rejected before anything is read, hashed, or copied. Durable store mutation is serialized across processes by an
+  advisory lock. Every successfully installed pack is retained — `install`,
+  `rollback`, and `reset` never delete installed content — and reinstalling
+  content the store already holds re-verifies it, repairing rather than
+  reactivating a corrupt tree. `rollback` selects the previous validated
+  install and `reset` selects the baseline without touching project/user
+  overrides. There is deliberately no `effigy service pack update`: the
+  official channel is fixed and baseline-owned so installed content cannot
+  redirect it, but no official artifact is published yet.
 - `effigy --help` and `effigy help` now group the built-in command surface by
   operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
   and `admin`. `effigy help <group>` renders one group's inventory, and

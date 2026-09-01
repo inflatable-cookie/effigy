@@ -1,7 +1,9 @@
 # g08.040 Catalog-Pack Acquisition Prototype
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Closed: 2026-09-01
+Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Spec: [`113`](../../specs/113-catalog-pack-acquisition-prototype-strict-lane.md)
@@ -56,7 +58,7 @@ existing catalog-backed workflow harder or network-dependent.
 
 ## Cards
 
-- [ ] [`1095`](./batch-cards/1095-prototype-catalog-pack-acquisition.md) — ready
+- [x] [`1095`](./batch-cards/1095-prototype-catalog-pack-acquisition.md) — complete
 
 ## Acceptance
 
@@ -74,8 +76,6 @@ existing catalog-backed workflow harder or network-dependent.
 
 ## Next Task
 
-Execute ready card
-[`1095`](./batch-cards/1095-prototype-catalog-pack-acquisition.md). After merge,
-return to planning for official pack publication and concrete-asset cutover;
-that follow-up requires a real OCI coordinate and explicit workflow-edit
-authority.
+Complete. Return to planning for official pack publication and concrete-asset
+cutover; that follow-up requires a real OCI coordinate and explicit
+workflow-edit authority and is not ready.

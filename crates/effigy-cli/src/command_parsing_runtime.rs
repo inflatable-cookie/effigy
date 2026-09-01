@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
-    Command, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ServiceArgs, ServiceSubcommand,
-    SystemArgs, SystemSubcommand, WorkspaceArgs,
+    Command, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
+    ServicePackInstallSource, ServicePackSubcommand, ServiceSubcommand, SystemArgs,
+    SystemSubcommand, WorkspaceArgs,
 };
 
 use super::{unknown_argument, CliParseError};
@@ -201,8 +202,109 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
         "list" => parse_service_list(args),
         "extract" => parse_service_extract(args),
+        "pack" => parse_service_pack(args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_service_pack<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Service));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
+        "status" => parse_service_pack_simple(args, ServicePackSubcommand::Status),
+        "rollback" => parse_service_pack_simple(args, ServicePackSubcommand::Rollback),
+        "reset" => parse_service_pack_simple(args, ServicePackSubcommand::Reset),
+        "install" => parse_service_pack_install(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_service_pack_simple<I>(
+    args: I,
+    subcommand: ServicePackSubcommand,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::Pack(subcommand),
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_service_pack_install<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut path: Option<PathBuf> = None;
+    let mut reference: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--path" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--path".to_owned(),
+                    },
+                )?;
+                path = Some(PathBuf::from(value));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other if reference.is_none() => reference = Some(other.to_owned()),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    // Exactly one candidate. Ambiguity here would decide what gets activated,
+    // so it fails rather than picking a winner.
+    let source = match (reference, path) {
+        (Some(_), Some(_)) => {
+            return Err(CliParseError::UnknownArgument(
+                "--path with an `oci://` reference".to_owned(),
+            ))
+        }
+        (Some(reference), None) => ServicePackInstallSource::Oci { reference },
+        (None, Some(path)) => ServicePackInstallSource::Path { path },
+        (None, None) => {
+            return Err(CliParseError::MissingFlagValue {
+                flag: "oci://<REPO>@sha256:<DIGEST> or --path <DIR>".to_owned(),
+            })
+        }
+    };
+
+    Ok(Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::Pack(ServicePackSubcommand::Install { source }),
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_service_list<I>(args: I) -> Result<Command, CliParseError>

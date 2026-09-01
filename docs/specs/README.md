@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`113`](./113-catalog-pack-acquisition-prototype-strict-lane.md) governs the
-  ready in-repository catalog-pack acquisition prototype under card `1095`
+- none
 
 Queued strict lanes:
 
@@ -39,6 +38,9 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
+- [`113`](./archive/113-catalog-pack-acquisition-prototype-strict-lane.md)
+  archived after the in-repository catalog-pack acquisition prototype closed on
+  2026-09-01
 - [`112`](./archive/112-rhai-profile-independent-limits-strict-lane.md) archived
   after profile-independent Rhai expression limits closed on 2026-09-01
 - [`108`](./archive/108-documentation-graph-profiles-strict-lane.md) archived
@@ -77,7 +79,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card
-[`1095`](../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
-under strict spec `113`. Keep draft `098` paused; no official pack publication,
-release/workflow work, public no-argument update, or generation rollover.
+Return to planning for official catalog-pack publication and concrete-asset
+cutover under contract `043`; that lane is not ready and needs a real OCI
+coordinate plus explicit workflow-edit authority. Keep draft `098` paused; no
+public no-argument update or generation rollover.

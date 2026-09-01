@@ -339,7 +339,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Local,
         command: "effigy service",
-        description: "Inspect the layered service catalog and extract bundled fragments for override ownership",
+        description: "Inspect the layered service catalog, extract bundled fragments, and manage installed catalog packs",
         deferred_builtin: Some("service"),
         help_argument: Some("service"),
     },

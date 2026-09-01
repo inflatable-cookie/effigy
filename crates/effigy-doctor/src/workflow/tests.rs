@@ -121,7 +121,7 @@ fn runtime_diagnostic_findings_are_included_before_summary() {
     let output = handler::summarize_and_report_with_diagnostics(state, resolved, diagnostics);
 
     assert_eq!(output.report.summary.warning, 1);
-    assert_eq!(output.report.summary.checks, 20);
+    assert_eq!(output.report.summary.checks, crate::ALL_CHECK_IDS.len());
     assert_eq!(output.report.findings.len(), 1);
     assert_eq!(
         output.report.findings[0].check_id,

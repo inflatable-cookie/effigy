@@ -213,9 +213,10 @@ executable group aliases or selector-routing changes.
 `g08.039` is complete under archived strict spec `112`. Card `1094` made Rhai
 expression-depth parsing profile-independent while preserving release limits.
 
-`g08.040` is ready under active strict spec `113`, architecture `026`, and
-contract `043`. Card `1095` prototypes explicit catalog-pack acquisition,
-selection, recovery, and diagnostics while retaining the compiled baseline.
+`g08.040` is complete under archived strict spec `113`, architecture `026`, and
+contract `043`. Card `1095` landed explicit catalog-pack acquisition, selection,
+recovery, and diagnostics while retaining the permanent compiled baseline. No
+official pack is published.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -239,9 +240,9 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context, help-first, and Rhai papercut lanes are closed.
-Strict spec `113` now owns the bounded catalog-pack acquisition prototype. Do
-not open `g09`, publish a pack, or start release work.
+The documentation-context, help-first, Rhai papercut, and catalog-pack
+acquisition prototype lanes are all closed. No strict lane is active. Do not
+open `g09`, publish a pack, or start release work.
 
 ## Research Roadmaps
 
