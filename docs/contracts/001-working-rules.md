@@ -96,6 +96,4 @@ one vague “polish” lane.
 
 ## Next Task
 
-Cards `1099` through `1102` are merged and their bounded lanes are complete.
-Resolve the eight unpromoted catalog-pack publication recommendations, then
-compile the next strict implementation runway under contract `043`.
+Execute ready card `1103` under strict spec `115` and contract `043`.

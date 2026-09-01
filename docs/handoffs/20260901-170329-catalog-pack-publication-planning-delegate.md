@@ -6,7 +6,7 @@ planning_mode: conversational-discovery
 dispatch_authority: orchestrator
 promotion_authority: orchestrator
 handoff: single-file-path-only
-status: ready-to-launch
+status: complete-promoted
 owner: Tom / Effigy orchestrator
 created: 2026-09-01
 updated: 2026-09-01
@@ -16,6 +16,11 @@ tags: [coordination, handoff, planning, conversation, catalog-pack, distribution
 ---
 
 ## What This Thread Was Doing
+
+Closeout: the operator approved the recommendations on 2026-09-01. The
+orchestrator promoted them into architecture `026`, contract `043`, strict spec
+`115`, and roadmap `g08.048`. The named triage packet was then removed; its
+primary-source evidence is preserved in research source map `002`.
 
 Effigy's in-repository catalog-pack acquisition prototype is complete. The
 operator has now selected the official OCI repository and authorized the

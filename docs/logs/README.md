@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md`](./2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md)
 - [`2026-09/01-184159-docs-context-time-budget-1101.md`](./2026-09/01-184159-docs-context-time-budget-1101.md)
 - [`2026-09/01-173500-child-catalog-suite-registry-1100.md`](./2026-09/01-173500-child-catalog-suite-registry-1100.md)
 - [`2026-09/01-182838-rhai-storage-create-only-1099.md`](./2026-09/01-182838-rhai-storage-create-only-1099.md)
@@ -200,6 +201,4 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Cards `1099` through `1102` are merged with unique closeout logs. Resolve the
-eight unpromoted catalog-pack publication recommendations, then compile the
-next strict implementation runway.
+Execute ready card `1103` under strict spec `115` and roadmap `g08.048`.

@@ -98,6 +98,7 @@ This generation should help agents and maintainers answer questions like:
 - [`045-child-catalog-suite-registry-papercut.md`](./045-child-catalog-suite-registry-papercut.md)
 - [`046-docs-context-time-budget-papercut.md`](./046-docs-context-time-budget-papercut.md)
 - [`047-docs-context-traversal-budget-papercut.md`](./047-docs-context-traversal-budget-papercut.md)
+- [`048-catalog-pack-publication-and-cutover.md`](./048-catalog-pack-publication-and-cutover.md)
 
 ## Design Posture
 
@@ -290,6 +291,12 @@ through card `1093`. Strict spec `112` and `g08.039` are complete through card
 - [`1100-preserve-ancestor-container-registry.md`](./batch-cards/1100-preserve-ancestor-container-registry.md)
 - [`1101-bound-docs-context-cold-refresh.md`](./batch-cards/1101-bound-docs-context-cold-refresh.md)
 - [`1102-reserve-docs-context-traversal-slot.md`](./batch-cards/1102-reserve-docs-context-traversal-slot.md)
+- [`1103-establish-catalog-pack-support-floor.md`](./batch-cards/1103-establish-catalog-pack-support-floor.md)
+- [`1104-build-catalog-pack-repository-foundation.md`](./batch-cards/1104-build-catalog-pack-repository-foundation.md)
+- [`1105-publish-first-official-catalog-pack.md`](./batch-cards/1105-publish-first-official-catalog-pack.md)
+- [`1106-cut-over-generated-catalog-baseline.md`](./batch-cards/1106-cut-over-generated-catalog-baseline.md)
+- [`1107-expose-official-catalog-pack-update.md`](./batch-cards/1107-expose-official-catalog-pack-update.md)
+- [`1108-propose-generated-baseline-updates.md`](./batch-cards/1108-propose-generated-baseline-updates.md)
 
 ## Current State
 
@@ -382,9 +389,12 @@ PR 32 proved HEAD then PUT cannot close the collision race. Evidence:
 child-catalog registry preservation, cold docs-context time bounds/progress,
 and traversal-budget reachability.
 
+`g08.048` is active under architecture `026`, contract `043`, and strict spec
+`115`. Card `1103` is Ready to establish Effigy's compatibility authority.
+Cards `1104` through `1108` remain blocked by the named repository,
+publication, artifact, and operator gates.
+
 ## Next Task
 
-Cards `1099` through `1102` are merged. Resolve the eight unpromoted
-catalog-pack publication recommendations, then compile the strict publication
-and concrete-asset cutover runway. Downstream Bovine and Acowtancy revalidation
-remain separately owned.
+Execute ready card `1103`. Downstream Bovine and Acowtancy revalidation remain
+separately owned.

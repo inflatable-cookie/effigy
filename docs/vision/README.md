@@ -63,7 +63,5 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Cards `1099` through `1102` are complete. Resolve the remaining catalog-pack
-publication recommendations under architecture `026` and contract `043`, then
-compile the next strict runway. The second governance review remains due by
-2026-09-17.
+Execute ready card `1103` under the promoted catalog-pack publication runway.
+The second governance review remains due by 2026-09-17.

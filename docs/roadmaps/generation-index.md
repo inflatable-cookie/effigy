@@ -234,6 +234,13 @@ execution, then returned the queue to publication planning.
 create-if-absent behavior to the retained Rhai storage surface, unblocking
 Bovine PR 32 without reopening S3 placement or removal.
 
+`g08.045` through `g08.047` are complete through cards `1100` through `1102`.
+
+`g08.048` is active under architecture `026`, contract `043`, and strict spec
+`115`. Card `1103` is the sole Ready edge. Cards `1104` through `1108` preserve
+the serial support-floor, repository, publication, and generated-baseline gates;
+`1107` and `1108` become parallel-safe only after `1106`.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
@@ -291,6 +298,4 @@ closeout there first.
 
 ## Next Task
 
-Cards `1099` through `1102` are merged and spec `114` is archived. Resolve the
-eight unpromoted catalog-pack publication recommendations, then compile the
-strict publication and concrete-asset cutover runway. Do not open `g09`.
+Execute ready card `1103` under strict spec `115`. Do not open `g09`.

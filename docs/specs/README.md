@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
+  catalog-pack publication and generated-baseline cutover; card `1103` Ready
 
 Queued strict lanes:
 
@@ -81,6 +82,5 @@ Other planning specs:
 
 ## Next Task
 
-Spec `114` is archived and cards `1099` through `1102` are complete. Resolve
-the eight unpromoted catalog-pack publication recommendations before compiling
-the next strict spec. Keep draft `098` paused.
+Execute ready card `1103` under spec `115`. Card `1104` remains serial behind
+the landed Effigy support-floor authority. Keep draft `098` paused.

@@ -15,6 +15,7 @@ Each source map follows the pattern: `NNN-area-source-map-vN.md`
 | Map | Status | Coverage |
 |-----|--------|----------|
 | 001-task-runner-research-source-map.md | Draft | Make, Just, Task baseline |
+| [002-catalog-pack-publication-source-map-v1.md](./002-catalog-pack-publication-source-map-v1.md) | Active | GHCR, ORAS, attestations, protected publication, GitHub App proposals |
 
 ## Source Quality Hierarchy
 
@@ -52,4 +53,3 @@ Each source map follows the pattern: `NNN-area-source-map-vN.md`
 ## Next Task
 
 Create source map 001 for task runner research baseline.
-

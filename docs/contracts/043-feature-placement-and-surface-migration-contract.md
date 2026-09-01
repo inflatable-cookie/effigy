@@ -4,6 +4,7 @@ Status: active
 Owner: product architecture, CLI routing, and extension boundaries
 Created: 2026-08-31
 Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
+Research: [`catalog-pack publication source map`](../research/source-hubs/002-catalog-pack-publication-source-map-v1.md)
 
 ## Purpose
 
@@ -176,6 +177,85 @@ publicly exposes `service pack update`. Raising that floor requires an explicit
 support-policy change before channel movement; parallel compatibility channels
 remain unplanned until a real floor change requires them.
 
+### Canonical Source And Generated Snapshot
+
+- The dedicated source repository has one canonical release root, `pack/`,
+  containing top-level `pack.toml` and the exact catalog/support tree.
+  Repository docs, workflows, and tooling stay outside it.
+- Effigy's compiled baseline is a byte-for-byte generated copy of `pack/`.
+  It is marked generated and direct edits fail repository checks.
+- A typed sidecar lock records source repository, source commit, pack version,
+  OCI manifest digest, and unpacked pack content identity.
+- Offline QA recomputes manifest identity, version, and content identity from
+  the snapshot and compares them with the lock without network access.
+- Publication and baseline-proposal verification additionally pull by recorded
+  digest, verify the digest-bound attestation, and compare exact paths and bytes.
+- OCI manifest digest and unpacked content identity are distinct required facts;
+  neither substitutes for the other.
+
+### Effigy Compatibility Authority
+
+Effigy owns `support/catalog-pack-update.toml`. Its versioned schema contains:
+
+- `schema_version`;
+- `as_of_release`;
+- a nonempty, duplicate-free `required_versions` set containing the current
+  release and every still-supported Effigy release that publicly exposes
+  `service pack update`;
+- optional `oldest_update_capable_release`, equal to the oldest required
+  version once a public update-capable release exists.
+
+Before the first update-capable release, `oldest_update_capable_release` is
+absent and the current release still keeps the compatibility oracle non-vacuous.
+Only an Effigy support-policy or release PR may change this file. Pack content,
+installed state, and the pack repository may consume it but cannot redefine it.
+
+Before any package mutation, publication resolves the file from Effigy's current
+default-branch commit, records that commit and the file blob digest, and proves:
+
+- schema validity and internal oldest-version agreement;
+- a GitHub Release exists for every required version;
+- `as_of_release` equals Effigy's latest non-draft, non-prerelease release;
+- the candidate pack compatibility range admits every required version.
+
+The job resolves and rechecks the same authority before `stable` promotion.
+Missing, empty, malformed, unresolvable, stale, inconsistent, changed, or
+incompatible input stops the run with `stable` unchanged.
+
+### Deterministic Publication And Update
+
+- A protected manual dispatch accepts an existing annotated source `vX.Y.Z`
+  tag and verifies its tag object, peeled commit, and manifest version.
+- Source `v*` tags reject update and deletion. Neither routine maintainers nor
+  the publication job have a bypass.
+- Artifact construction fixes source bytes, path order, artifact type,
+  configuration, annotations, and source-derived timestamp before computing a
+  local OCI manifest digest.
+- OCI `vX.Y.Z` absent permits creation at the candidate digest; the same digest
+  permits idempotent retry; a different digest is a collision and stops without
+  overwriting the pointer or moving `stable`.
+- Package writes belong only to the protected publication job, serialized by
+  version. The OCI manifest digest is the immutable release identity and retry
+  oracle; source and OCI version tags are process-immutable checked pointers.
+- The job re-resolves the version pointer, attaches and verifies digest-bound
+  provenance, pulls anonymously by digest, validates exact bytes and pack
+  compatibility, rechecks the Effigy support input, then moves and verifies
+  `stable` at the same digest.
+- A partial-push retry rebuilds the same candidate. It resumes only for an
+  absent or same-digest remote version state; a changed source tag, changed
+  deterministic input, or different-digest collision stops.
+- `service pack update` reports the resolved channel and digest and sends only
+  a digest-addressed candidate through the existing acquire-validate-store-
+  activate transaction.
+- An already-active digest that re-verifies is a deterministic no-op.
+  Resolution, pull, compatibility, validation, or activation failure preserves
+  active and previous local selections and channel metadata.
+
+First publication remains an explicit operator-gated external mutation. Scoped
+workflow implementation and a no-push rehearsal are authorized implementation
+work; source-tag creation, package creation/visibility, channel movement, and an
+Effigy binary release are not inferred from that authority.
+
 ## Release And Distribution Contract
 
 Core retains:
@@ -257,7 +337,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Card `1099` is merged. The official pack coordinate and scoped future workflow
-authority are settled; resolve the eight still-unpromoted recommendations in
-the publication triage packet, then compile the strict publication and
-concrete-asset cutover runway. Bovine continuation remains downstream-owned.
+Execute ready card [`1103`](../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
+under strict spec [`115`](../specs/115-catalog-pack-publication-and-cutover-strict-lane.md).
+The dedicated pack repository remains serial behind that Effigy-owned
+compatibility authority. First publication remains operator-gated.
