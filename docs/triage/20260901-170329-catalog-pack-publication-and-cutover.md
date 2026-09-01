@@ -153,6 +153,28 @@ These decisions are operator-confirmed and stay closed:
   [ORAS push/pull](https://oras.land/docs/1.2/how_to_guides/pushing_and_pulling/),
   [ORAS formatted output](https://oras.land/docs/how_to_guides/format_output/),
   [ORAS annotations](https://oras.land/docs/1.2/how_to_guides/manifest_annotations/)
+- GHCR documents digest-addressed pulls and tags that identify manifests; it
+  does not supply a registry-enforced immutable-tag contract for this generic
+  artifact. Here, `vX.Y.Z` immutability must therefore be enforced by repository
+  policy and the publication process. The manifest digest is the immutable OCI
+  identity; Git and OCI version tags are checked pointers to it.
+  [GitHub container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+  [ORAS push/pull](https://oras.land/docs/1.2/how_to_guides/pushing_and_pulling/)
+- ORAS can produce an OCI image layout on local disk and copy that layout to a
+  registry. This allows the publication lane to compute and inspect the
+  candidate manifest digest before it decides whether the remote version tag is
+  absent, an idempotent match, or a collision.
+  [ORAS push](https://oras.land/docs/commands/oras_push/),
+  [ORAS OCI layouts](https://oras.land/docs/how_to_guides/distributing_oci_layouts/)
+- GitHub tag rulesets can restrict matching-tag updates and deletions, with any
+  bypass actors declared explicitly. The pack repository can therefore enforce
+  `v*` source-tag stability independently of its workflow rechecks.
+  [GitHub ruleset rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+- GitHub's Releases API returns the latest non-draft, non-prerelease release and
+  individual releases by tag. Those endpoints provide the freshness and
+  existence cross-check for the Effigy-owned compatibility input; they do not
+  decide which older releases remain supported.
+  [GitHub Releases API](https://docs.github.com/en/rest/releases/releases?apiVersion=latest)
 - GitHub can produce build-provenance attestations for OCI container subjects
   when the workflow has `contents: read`, `packages: write`,
   `attestations: write`, and `id-token: write`, and the attestation is bound to
@@ -195,21 +217,45 @@ Not operator decisions yet:
    lock. A publication or baseline-PR provenance check additionally pulls the
    public artifact by recorded digest, verifies its attestation, and compares
    exact paths and bytes with the snapshot.
-4. Publish the immutable `vX.Y.Z` manifest first, attest and revalidate it, then
-   promote `stable` to that same digest. This avoids moving the public channel
-   before immutable-version proof completes while keeping both operations in
-   one protected release run.
+4. Publish process-immutable `vX.Y.Z` only at the locally computed immutable
+   manifest digest, attest and revalidate that digest, then promote `stable` to
+   it. This avoids moving the public channel before version-pointer and digest
+   proof complete while keeping both operations in one protected release run.
 5. Make `service pack update` report the resolved channel and digest. If that
    digest is already active and verified, return a deterministic no-op. Any
    resolution, pull, compatibility, validation, or activation failure leaves
    the current active pack and `stable` channel metadata unchanged.
+6. Make Effigy the machine-readable owner of the required compatibility set.
+   Promote an Effigy-owned `support/catalog-pack-update.toml` before publication
+   implementation. It contains a schema version, `as_of_release`, a nonempty
+   `required_versions` list containing the current Effigy release plus every
+   still-supported release that exposes `service pack update`, and an optional
+   `oldest_update_capable_release` that must equal the oldest such list member.
+   Before the first update-capable Effigy release, that field is absent and the
+   current release keeps the compatibility oracle non-vacuous. Only an Effigy
+   support-policy or release PR may change the file; the pack repository can
+   consume it but cannot redefine it.
+7. Resolve that support file from Effigy's current default-branch commit and
+   record the commit and blob digest in pack-release evidence. Before any
+   package mutation, require a valid schema, an existing GitHub Release for every
+   `required_versions` entry, internal agreement between the oldest field and
+   list, and `as_of_release` equal to the latest non-prerelease Effigy release.
+   Then require the candidate compatibility range to admit every required
+   version. A missing, empty, malformed, unresolvable, stale, inconsistent, or
+   incompatible input stops publication and leaves `stable` unchanged.
+8. Treat both `vX.Y.Z` tags as process-immutable pointers, not immutable
+   identities. Protect source `v*` tags against update and deletion, restrict
+   package write authority to the protected publication job, and serialize by
+   version. Give neither that job nor routine maintainer roles a source-tag
+   ruleset bypass. The OCI manifest digest produced from deterministic source
+   bytes and fixed manifest metadata is the release identity and retry oracle.
 
 ## Derived Source And Artifact Shape
 
 - Source repository: `inflatable-cookie/effigy-catalog-pack`.
 - Canonical asset root: `pack/`.
 - First manifest identity/version: `effigy-default-catalog` / `1.0.0`.
-- Git and OCI immutable version tag: `v1.0.0`.
+- Git and OCI process-immutable version tag: `v1.0.0`.
 - OCI repository: `ghcr.io/inflatable-cookie/effigy-catalog-pack`.
 - OCI channel tag: `stable`.
 - Recommended artifact type:
@@ -229,25 +275,46 @@ The former pins registry transport bytes and metadata; the latter proves the
 unpacked tree. Record and verify both rather than pretending one can be
 recomputed from the other.
 
+The OCI digest, not `vX.Y.Z`, is the immutable publication identity. Artifact
+assembly must be deterministic across retries: source bytes, file order,
+artifact type, configuration, and manifest annotations are fixed by the source
+tag and commit. A created-time annotation uses a fixed source timestamp rather
+than workflow wall-clock time.
+
 ## Stable Channel And Update Semantics
 
-1. A protected manual dispatch accepts an existing annotated source tag.
-2. The workflow proves the checked-out commit equals that tag and
-   `pack.toml` declares the same SemVer without the `v` prefix.
-3. It validates the source tree, compatibility range, and artifact shape with
-   no package mutation.
-4. The publish job writes immutable `vX.Y.Z`, records the returned manifest
-   digest, attaches provenance, pulls by digest, and reruns validation.
-5. Only after that proof does the gated promotion move `stable` to the same
-   digest. It then verifies anonymous pull through `stable` and by digest.
-6. `service pack update` uses the existing ORAS-backed artifact boundary to
+1. A protected manual dispatch accepts an existing annotated source tag. A
+   repository ruleset rejects update or deletion of `v*`; the workflow records
+   the tag object and peeled commit.
+2. Before package mutation and again before channel promotion, the workflow
+   proves the remote tag still exists, remains annotated, and resolves to the
+   recorded object and commit. Missing, moved, or deleted source tags stop the
+   run with `stable` unchanged.
+3. The workflow proves the checked-out commit equals that tag and `pack.toml`
+   declares the same SemVer without the `v` prefix. It validates the source
+   tree, deterministic artifact shape, and the Effigy-owned support input.
+4. The publish job produces a local OCI layout and records the candidate manifest
+   digest before registry mutation. It then resolves OCI `vX.Y.Z`: absent permits
+   one push at that exact digest; the same digest is an idempotent retry; a
+   different digest is a collision and stops without overwriting either version
+   or `stable`.
+5. The workflow re-resolves OCI `vX.Y.Z` after creation or retry and requires it
+   to equal the candidate digest. It attaches digest-bound provenance, pulls by
+   digest, and reruns exact-byte and pack validation.
+6. Before promotion, the workflow re-resolves the Effigy default branch and
+   support file. The blob must remain unchanged and fresh; otherwise the run
+   stops for validation against the new input. Only after that proof does the
+   gated promotion move `stable` to the same digest, then verify anonymous pull
+   through `stable` and by digest.
+7. `service pack update` uses the existing ORAS-backed artifact boundary to
    resolve `stable` to a digest. It passes only the digest-addressed candidate
    into the settled acquire, validate, store, and activate transaction.
-7. A pack release may move `stable` only if its compatibility range admits the
-   oldest still-supported update-capable Effigy and the current Effigy release.
-8. A channel rollback revalidates a previously published immutable digest, then
+8. A pack release may move `stable` only if its compatibility range admits every
+   `required_versions` entry in Effigy's verified
+   `support/catalog-pack-update.toml` input.
+9. A channel rollback revalidates a previously published immutable digest, then
    moves only `stable` through the same protected promotion path. It never
-   deletes or overwrites an immutable version.
+   deletes or overwrites a process-immutable version tag.
 
 No Homebrew, binary download, source build, `init`, `bootstrap`, service,
 container, system, workspace, or task path resolves `stable` implicitly.
@@ -261,22 +328,30 @@ container, system, workspace, or task path resolves `stable` implicitly.
 - pins third-party actions to full commits or installs a fixed ORAS binary with
   a verified checksum
 - validates manifest, fragments, compatibility, exact file inventory, pack
-  content identity, and reproducible generated-snapshot input
+  content identity, reproducible generated-snapshot input, and deterministic OCI
+  manifest construction
+- consumes the Effigy-owned support file by resolved default-branch commit;
+  rejects absent, invalid, stale, or incompatible support input before mutation
 
 ### Publication
 
 - manual dispatch only, with an existing annotated `vX.Y.Z` tag
 - concurrency keyed by tag, with cancellation disabled
+- source-tag ruleset blocks `v*` update and deletion with no publication-job or
+  routine-maintainer bypass; the job rechecks tag object and peeled commit before
+  mutation and before channel promotion
 - protected publication environment with required reviewer and no self-review
 - publish job permissions limited to `contents: read`, `packages: write`,
   `attestations: write`, and `id-token: write`
 - no delete permission and no Effigy repository credential in the publish job
-- immutable-version failure never rewrites the tag; repair publishes the next
-  SemVer patch
+- OCI version-tag preflight distinguishes absent, same-digest retry, and
+  different-digest collision; it never overwrites a different digest
+- version-tag failure never rewrites the source tag or an existing OCI version
+  pointer; a genuine collision repairs through the next SemVer patch
 
 ### Baseline PR proposal
 
-- starts only after immutable publication, provenance, and channel proof pass
+- starts only after digest-bound publication, provenance, and channel proof pass
 - uses a separate GitHub App installation token narrowed to the Effigy
   repository and the minimum contents/pull-request permissions
 - writes one generated snapshot, one provenance lock, and required generated
@@ -294,29 +369,42 @@ Workflow implementation and first publication are separate lanes.
 2. Prove read-only validation and a no-push release rehearsal.
 3. An operator creates the annotated `v1.0.0` source tag and explicitly
    authorizes the protected publication job.
-4. The job may create only immutable `v1.0.0`; it records the digest and
-   provenance before channel promotion.
-5. The operator confirms repository linkage and changes the GHCR package to
+4. The job records the protected source tag object and commit, verifies the
+   current Effigy support input, and deterministically produces the candidate
+   digest in a local OCI layout before registry mutation.
+5. OCI `v1.0.0` must be absent or already resolve to that same candidate digest.
+   Absence permits creation; the same digest permits idempotent continuation; a
+   different digest stops the release without overwrite or channel movement.
+   The job records the digest and provenance before channel promotion.
+6. The operator confirms repository linkage and changes the GHCR package to
    public. The first public package mutation is not delegated to this planning
    thread or inferred from workflow-edit authority.
-6. The gated promotion verifies anonymous pulls, exact bytes, manifest,
-   compatibility, digest, and attestation, then moves `stable` to the proved
-   digest and verifies it again.
-7. Record workflow run, source tag/commit, pack version, OCI digest,
-   attestation, visibility/linkage, anonymous pull, and rollback target.
-8. Only that evidence may unblock Effigy's coordinate cutover and public
+7. The gated promotion rechecks both version pointers and the support-input blob,
+   then verifies anonymous pulls, exact bytes, manifest, compatibility, digest,
+   and attestation. It moves `stable` to the proved digest and verifies it again.
+8. Record workflow run, source tag object/commit, support-input commit/blob,
+   pack version, OCI digest, version-tag resolution, attestation,
+   visibility/linkage, anonymous pull, and rollback target.
+9. Only that evidence may unblock Effigy's coordinate cutover and public
    `service pack update` implementation.
 
-If the initial immutable push partially succeeds, do not overwrite or re-tag
-`v1.0.0`. Preserve evidence, leave `stable` absent or unchanged, fix the cause,
-and publish the next valid patch after operator review.
+For a retry after a partial push, rebuild the deterministic candidate and run
+the same three-way OCI check. An absent version tag resumes creation; a tag at
+the same digest resumes missing attestation, verification, or promotion work; a
+tag at a different digest is a collision and stops. A missing, moved, or deleted
+source tag also stops. Preserve evidence and leave `stable` absent or unchanged.
+Only a genuine collision requires the next valid SemVer patch after operator
+review; a same-digest retry does not invent a new release.
 
 ## Implementation Sequence
 
 1. **Canonical promotion in Effigy.** The orchestrator promotes accepted
    ownership, channel, automatic-availability, trust, migration, and gate rules
    into architecture `026`, contract `043`, a strict spec, roadmap, card, and
-   front doors. No implementation starts from this packet alone.
+   front doors. It also establishes the machine-readable
+   `support/catalog-pack-update.toml` ownership and update rule before the pack
+   publication lane consumes it. No implementation starts from this packet
+   alone.
 2. **Pack repository foundation.** Create the dedicated repository; import the
    current concrete assets without byte changes; add `pack/pack.toml` at
    `1.0.0`; add repo-owned validation, release tasks, read-only CI, publication
@@ -325,8 +413,8 @@ and publish the next valid patch after operator review.
    Effigy acquisition boundary and prove an isolated local install, full
    fragment inventory, representative assembly, and generated-snapshot input.
 4. **First-publication gate.** Follow the operator-owned sequence above. The
-   result is a public, attested immutable `v1.0.0` plus `stable` at the same
-   verified digest.
+   result is a public, attested immutable digest with process-immutable
+   `v1.0.0` and `stable` pointers at that same verified digest.
 5. **Effigy cutover and update lane.** Generate the pinned baseline and lock
    from the published pack; change the current catalog directory from editable
    authority to generated recovery snapshot; add offline drift and online
@@ -357,21 +445,35 @@ The implementation plan must falsify these cases:
 6. A failed resolution, pull, attestation, compatibility check, validation, or
    activation changes active or previous local state.
 7. A candidate that excludes a still-supported update-capable Effigy moves
-   `stable` anyway.
-8. Publication moves `stable` before immutable-tag, digest, attestation,
-   anonymous-pull, and exact-byte proof complete.
-9. A baseline-update workflow receives broader repository authority, edits
+   `stable` anyway; the proof must also fail when the Effigy-owned support input
+   is absent, empty, malformed, names a nonexistent release, has an inconsistent
+   oldest-update field, trails the latest non-prerelease Effigy release, or
+   disagrees with the candidate range.
+8. A source `vX.Y.Z` tag is deleted or moved after dispatch and publication or
+   promotion continues against the stale object or commit.
+9. OCI `vX.Y.Z` is absent and cannot be created at the candidate digest, already
+   resolves to that digest and cannot resume idempotently, or resolves to a
+   different digest and is overwritten rather than rejected as a collision.
+10. A retry after a partial push changes deterministic manifest input, invents
+    a new digest for the same source release, or moves `stable` before the
+    same-digest artifact completes provenance and validation.
+11. Publication moves `stable` before process-immutable version-tag, digest,
+    support-input, attestation, anonymous-pull, and exact-byte proof complete.
+12. A baseline-update workflow receives broader repository authority, edits
    product code, approves its own PR, or makes pack publication depend on merge.
-10. A bad channel promotion cannot be restored to the previous verified digest,
+13. A bad channel promotion cannot be restored to the previous verified digest,
     or a user cannot recover through installed-pack rollback/reset and the
     permanent compiled baseline.
-11. `service pack update` is advertised before the official artifact exists, or
+14. `service pack update` is advertised before the official artifact exists, or
     its first released form cannot succeed against the public channel when ORAS
     and network access are available.
 
 Required evidence includes focused pack/source validation, current-baseline byte
-parity, anonymous stable/digest pulls, provenance verification, supported-version
-compatibility, isolated `HOME` update/no-op/failure tests, representative
+parity, source-tag object/commit rechecks, all three OCI version-tag states,
+same-digest partial-push retry, anonymous stable/digest pulls, provenance
+verification, active source-tag ruleset, support-input commit/blob and freshness,
+supported-version compatibility, isolated `HOME` update/no-op/failure tests,
+representative
 service/container/system/workspace/task regression, offline source install, full
 Effigy QA, workflow run URLs, exact source and artifact identities, and a tested
 stable rollback target.
@@ -403,7 +505,10 @@ Future support-floor changes, parallel compatibility channels, and installed
 pack retention remain separate decisions. The implementation lane must stop if
 GHCR cannot attest the chosen generic OCI artifact shape, anonymous pull differs
 from authenticated proof, the GitHub App cannot be narrowed as planned, or
-exact-byte snapshot reproduction is not deterministic.
+exact-byte snapshot reproduction is not deterministic. It must also stop if the
+Effigy-owned support input is unavailable or stale, either version pointer moves,
+an OCI version collision exists, or a retry cannot reproduce the recorded
+candidate digest.
 
 ## Proposed Canonical Destinations
 
@@ -421,3 +526,5 @@ To be chosen by the orchestrator after this packet is accepted:
   validation tasks, publication workflow, recovery runbook, and evidence format
 - Effigy generated surfaces: snapshot ownership marker, typed provenance lock,
   offline drift task, and registry-backed provenance verification task
+- Effigy support-policy surface: machine-readable required compatibility set,
+  release-owned update rule, and freshness check consumed by pack publication
