@@ -33,6 +33,10 @@ Batch: 1095 planning
 - The first lane stops at the in-repository prototype.
 - Public no-argument `service pack update` waits for the official artifact so it
   is not released as a guaranteed failure.
+- Review returned the previously reserved retention choice to the operator. The
+  prototype retains every successfully installed pack entry and performs no
+  automatic pruning; garbage collection or bounded retention waits for a later
+  explicit decision.
 
 ## Readiness
 

@@ -34,6 +34,9 @@ break source installs, offline use, and the current zero-ceremony command path.
 - Candidate acquisition, validation, storage, and activation form one
   transaction; activation changes atomically only after validation.
 - A failed candidate preserves the previous active pack.
+- The prototype retains every successfully installed content entry. Install,
+  rollback, and reset perform no automatic pruning or deletion; garbage
+  collection and bounded retention remain a later operator decision.
 - An active pack that later becomes unreadable or incompatible yields a visible
   baseline fallback, a structured selection reason, and a `doctor` repair.
 - Rollback selects the previous validated installed version. Reset selects the
@@ -83,7 +86,8 @@ system, workspace, and task invocation keep their current grammar.
 - unreadable or newly incompatible active state selects the baseline with a
   warning in text, equivalent facts in JSON, and an actionable doctor finding
 - rollback selects exactly the previous validated installed version; reset
-  selects baseline; neither mutates project/user overrides
+  selects baseline; neither mutates project/user overrides or deletes installed
+  pack content
 - installed pack content cannot redirect the fixed official update source
 - no normal catalog-backed command calls the OCI adapter or probes a network
 - no public update command, concrete-asset move, or release wiring appears
@@ -95,6 +99,8 @@ system, workspace, and task invocation keep their current grammar.
 - move `crates/effigy-catalog/catalog/` out of the compiled baseline
 - modify release archives, Homebrew, workflows, or source-install docs
 - automatically check, download, or activate updates
+- automatically prune installed pack content or define a retention/garbage-
+  collection policy
 - create a general extension marketplace or reuse bundle semantics blindly
 - change catalog schema/assembly behavior, override precedence, or command
   routing outside the nested pack surface
@@ -105,8 +111,8 @@ system, workspace, and task invocation keep their current grammar.
 Return to the orchestrator if implementation needs a live official OCI
 coordinate, workflow or release changes, signing/authenticity policy beyond the
 fixed-origin plus digest boundary, a new general plugin/extension store, a
-different override order, silent fallback, destructive reset, an implicit
-network check, or movement of concrete catalog assets.
+different override order, silent fallback, destructive reset or pruning, an
+implicit network check, or movement of concrete catalog assets.
 
 ## Next Task
 

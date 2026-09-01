@@ -114,6 +114,9 @@ implementation card can be ready. That prototype is now fixed as follows:
   HTTP client or implicit network probe;
 - installation validates before atomic activation, and a failed candidate
   leaves the prior active pack unchanged;
+- the prototype retains all successfully installed pack content and performs no
+  automatic pruning; garbage collection or bounded retention remains a later
+  explicit operator decision;
 - an active pack that later becomes unreadable or incompatible falls back to
   the compiled baseline with a visible warning and structured selection reason;
 - `doctor` reports unhealthy installed state with one direct rollback or reset
