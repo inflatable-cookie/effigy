@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/01-202830-catalog-pack-support-floor-1103.md`](./2026-09/01-202830-catalog-pack-support-floor-1103.md)
 - [`2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md`](./2026-09/01-201505-catalog-pack-publication-promotion-and-runway.md)
 - [`2026-09/01-184159-docs-context-time-budget-1101.md`](./2026-09/01-184159-docs-context-time-budget-1101.md)
 - [`2026-09/01-173500-child-catalog-suite-registry-1100.md`](./2026-09/01-173500-child-catalog-suite-registry-1100.md)
@@ -201,4 +202,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1103` under strict spec `115` and roadmap `g08.048`.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then.

@@ -7,6 +7,17 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `graph explore` can hang with no output on a cold worktree — 2026-09-01
+- Friction: `effigy graph explore "<question>" --json` produced no stdout for
+  more than 100s during worker startup on a fresh worktree; the process had to
+  be killed.
+- Impact: the documented code-understanding first command is not fail-fast, so
+  workers fall back to direct search and lose the promised time bound.
+- Possible fix: share the graph time-budget and stderr progress seam with
+  `explore`, or fail quickly when the index is missing instead of blocking
+  silently.
+- Surface: `effigy graph explore`; worker-mode code-understanding routing.
+
 ### [ ] Repository task shadowing makes `docs context` unreachable — 2026-09-01
 - Friction: this repository declares `[tasks.docs]`, so `effigy docs context`
   follows manifest-selector precedence and passes `context` to the task instead

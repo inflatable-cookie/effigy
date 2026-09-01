@@ -63,5 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready card `1103` under the promoted catalog-pack publication runway.
-The second governance review remains due by 2026-09-17.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then. The second governance
+review remains due by 2026-09-17.

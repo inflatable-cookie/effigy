@@ -152,13 +152,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   is complete under contract `041`.
   Active [`g08.048`](./g08/048-catalog-pack-publication-and-cutover.md)
   owns the official catalog-pack publication and generated-baseline cutover
-  under strict spec `115`; card `1103` is Ready.
+  under strict spec `115`; card `1103` is complete.
 
 ## Active Strict Lane
 
-Spec `115` is active for `g08.048`. Card `1103` is the sole Ready edge; later
-cards remain behind named compatibility, publication, artifact, and operator
-gates.
+Spec `115` is active for `g08.048`. Card `1103` is complete; later cards remain
+behind named compatibility, publication, artifact, and operator gates. Card
+`1104` stays blocked until `1103` is on pushed `main`.
 
 ## Research Program
 
@@ -213,7 +213,8 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card `1103`. Keep pack-repository creation, first publication,
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then. Keep first publication,
 Effigy release execution, S3 extraction, and `g09` rollover behind their named
 gates.
 

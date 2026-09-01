@@ -390,11 +390,11 @@ child-catalog registry preservation, cold docs-context time bounds/progress,
 and traversal-budget reachability.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Card `1103` is Ready to establish Effigy's compatibility authority.
-Cards `1104` through `1108` remain blocked by the named repository,
-publication, artifact, and operator gates.
+`115`. Card `1103` is complete. Cards `1104` through `1108` remain blocked by
+the named repository, publication, artifact, and operator gates.
 
 ## Next Task
 
-Execute ready card `1103`. Downstream Bovine and Acowtancy revalidation remain
-separately owned.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then. Downstream Bovine and
+Acowtancy revalidation remain separately owned.

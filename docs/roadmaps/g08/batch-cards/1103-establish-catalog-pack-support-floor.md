@@ -4,10 +4,12 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contracts: [`001`](../../../contracts/001-working-rules.md), [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: Effigy support-policy data and validation
 Created: 2026-09-01
 Ready since: 2026-09-01 operator approval
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-202830-catalog-pack-support-floor-1103.md`](../../../logs/2026-09/01-202830-catalog-pack-support-floor-1103.md)
 
 ## Purpose
 
@@ -28,16 +30,16 @@ publication must consume before it can mutate a package or channel.
 
 ## Acceptance
 
-- [ ] the committed file parses through one typed owner and rejects unknown keys
-- [ ] schema version, semantic versions, nonempty/duplicate-free required set,
+- [x] the committed file parses through one typed owner and rejects unknown keys
+- [x] schema version, semantic versions, nonempty/duplicate-free required set,
       current release membership, and `as_of_release` agreement are validated
-- [ ] the pre-update state rejects any `oldest_update_capable_release`
-- [ ] a future update-capable state requires the oldest field to equal the
+- [x] the pre-update state rejects any `oldest_update_capable_release`
+- [x] a future update-capable state requires the oldest field to equal the
       minimum required semantic version
-- [ ] validation needs no network and cannot affect runtime pack selection
-- [ ] docs identify Effigy as sole policy owner and the pack repository as a
+- [x] validation needs no network and cannot affect runtime pack selection
+- [x] docs identify Effigy as sole policy owner and the pack repository as a
       read-only consumer by resolved commit/blob
-- [ ] focused tests, repository docs QA, full Effigy QA, fmt, clippy, and diff
+- [x] focused tests, repository docs QA, full Effigy QA, fmt, clippy, and diff
       checks pass
 
 ## Review Oracle
@@ -77,5 +79,5 @@ or a second compatibility owner.
 
 ## Next Task
 
-Execute this card. After merge, promote card `1104` to Ready; do not create the
-pack repository before this authority is on pushed `main`.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then.

@@ -180,6 +180,8 @@ which the policy was checked, every still-supported Effigy version that exposes
 update, and—once update exists—the oldest such version. Only an Effigy
 support-policy or release change may alter it. The pack repository consumes the
 file from a resolved Effigy default-branch commit and cannot redefine it.
+`effigy-catalog` validates the file locally and network-free. That parser is
+not on the pack selection, acquisition, or activation path.
 
 Pack publication is deterministic and process-immutable. A protected manual
 dispatch builds a local OCI layout from fixed source bytes and metadata,

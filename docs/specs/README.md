@@ -29,7 +29,8 @@ Historical command-reference rule:
 Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
-  catalog-pack publication and generated-baseline cutover; card `1103` Ready
+  catalog-pack publication and generated-baseline cutover; card `1103` complete,
+  card `1104` blocked until merge
 
 Queued strict lanes:
 
@@ -82,5 +83,5 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card `1103` under spec `115`. Card `1104` remains serial behind
-the landed Effigy support-floor authority. Keep draft `098` paused.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository before then. Keep draft `098` paused.

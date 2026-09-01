@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Effigy now owns `support/catalog-pack-update.toml`, the machine-readable
+  catalog-pack update support floor. A typed `effigy-catalog` validator checks
+  schema, semantic versions, current-release membership, and the
+  `oldest_update_capable_release` rule locally. Pack selection, acquisition,
+  and activation do not read the file. Pack repositories may consume it only
+  by resolved commit and blob digest.
 - `storage::put` accepts an optional boolean `create_only`. When true, Effigy
   attaches S3 `If-None-Match: *` to the same PutObject request that carries the
   bytes, so exactly one of two writers racing for an absent key succeeds and an

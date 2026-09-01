@@ -76,7 +76,7 @@ Current authority surfaces:
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
 | `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
-| `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
+| `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema, and local catalog-pack support-floor validation |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
 | `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
@@ -238,7 +238,7 @@ Current retained small-crate rationale:
 | Crate | Keep / defer note |
 | --- | --- |
 | `effigy-core` | Keep. Bottom utility layer for build info, shell helpers, resolver helpers, and runtime-dir helpers. |
-| `effigy-catalog` | Keep. Owns service-catalog fragment/schema/template assembly without pulling in runner, manifest, or CLI policy. |
+| `effigy-catalog` | Keep. Owns service-catalog fragment/schema/template assembly and the local catalog-pack support-floor parser without pulling in runner, manifest, or CLI policy. |
 | `effigy-changelog` | Keep. Owns changelog AST, parse, format, validate, and extract logic behind one reusable seam. |
 | `effigy-exec` | Keep. Owns pure container-exec routing, cwd mapping, and alias logic without runtime side effects. |
 | `effigy-routing` | Keep. Explicit catalog membership, selector routing, and catalog lookup order stay independent from CLI and runner orchestration. |

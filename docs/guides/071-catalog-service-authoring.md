@@ -196,6 +196,10 @@ variant merge order, and template rendering stay owned by
 `crates/effigy-catalog`. A pack that declares an unknown fragment shape fails
 validation before it can be activated.
 
+Effigy's compatibility authority is `support/catalog-pack-update.toml`, not
+pack content. A pack may declare its own `compatibility.effigy` range; it
+cannot redefine the Effigy-owned required set.
+
 ## Related Guides
 
 - Consumer reference: [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
