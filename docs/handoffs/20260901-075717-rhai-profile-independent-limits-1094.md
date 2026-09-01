@@ -53,7 +53,8 @@ parser limit under `debug_assertions`.
   (archived at closeout)
 - **Roadmap milestone:** [`g08.039`](../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
 - **Ready cards, in order:** [`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
-  (complete at closeout)- **Allowed runway:** card `1094` only
+  (complete at closeout)
+- **Allowed runway:** card `1094` only
 - **Remaining card budget:** one
 - **Dispatch topology:** serial Effigy papercut lane
 - **Parallel safety check:** no open Effigy PR and no active implementation
@@ -69,10 +70,11 @@ parser limit under `debug_assertions`.
 - **PR base/head:** current pushed `main` /
   `worker/g08-039-rhai-profile-limits-1094`
 - **PR URL:** https://github.com/inflatable-cookie/effigy/pull/67
+- **Implementation commit:** `aa0b31c6e`
 - **Review state:** awaiting orchestrator review after worker completion
 - **Merge path:** orchestrator after accepted review of the current head and
   passing required checks
-- **Exact head:** `ce037e698012b0196426e0bda2ad094b262b82b7`
+
 ## Boundaries
 
 - **In scope:** reproduce, diagnose, and fix card `1094`; exact `64` / `32`
