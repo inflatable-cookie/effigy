@@ -46,8 +46,14 @@ mod support;
 mod walk;
 pub mod watch;
 
-/// Bounded documentation context retrieval over the shared graph.
-pub use docs_context::{docs_context, DocsContextPayload, DocsContextRequest};
+/// Pure usage validation so callers can reject empty queries and invalid
+/// budgets before starting bounded graph work.
+pub use docs_context::validate_docs_context_request;
+/// Bounded documentation context retrieval over the shared graph, with an
+/// optional progress callback for the lazy refresh.
+pub use docs_context::{
+    docs_context, docs_context_with_progress, DocsContextPayload, DocsContextRequest,
+};
 /// Shared error type for graph indexing, query, storage, and watch failures.
 pub use error::CodeGraphError;
 /// Cheap index/refresh health snapshot for bounded-failure reporting.
@@ -63,9 +69,9 @@ pub use query::{
     affected, callees, callers, context, explore, files as query_files, impact, node,
     search as query_search, PreparedAffectedQuery,
 };
-/// Lazy on-query graph refresh (rebuilds stale indexes on demand), plus the
-/// read-only probe of whether the next query would refresh.
-pub use refresh::{ensure_fresh, refresh_pending, RefreshOutcome, RefreshPending};
+/// Lazy on-query graph refresh (rebuilds stale indexes on demand) and the
+/// progress verdict reported while it runs.
+pub use refresh::{ensure_fresh, RefreshOutcome, RefreshPending};
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;
 /// Foreground graph watch surface and typed watch events.

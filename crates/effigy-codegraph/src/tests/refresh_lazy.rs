@@ -2,7 +2,9 @@ use super::*;
 
 use std::time::Duration;
 
-use crate::refresh::{ensure_fresh_with_wait, run_index_exclusive_with_wait, RefreshLock};
+use crate::refresh::{
+    ensure_fresh_with_wait_and_progress, run_index_exclusive_with_wait, RefreshLock,
+};
 
 #[test]
 fn query_refreshes_stale_index_on_demand() {
@@ -121,7 +123,8 @@ fn query_serves_stale_when_refresh_lock_is_held() {
         .expect("lock must be free");
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome = ensure_fresh_with_wait(temp.path(), &store, 250).expect("ensure fresh");
+    let outcome = ensure_fresh_with_wait_and_progress(temp.path(), &store, 250, |_| {})
+        .expect("ensure fresh");
     assert!(outcome.freshness.stale);
     assert_eq!(outcome.freshness.state, "refresh-recommended");
     assert!(outcome
@@ -157,7 +160,8 @@ fn query_detects_refresh_completed_by_concurrent_process() {
     });
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome = ensure_fresh_with_wait(temp.path(), &store, 1_000).expect("ensure fresh");
+    let outcome = ensure_fresh_with_wait_and_progress(temp.path(), &store, 1_000, |_| {})
+        .expect("ensure fresh");
     handle.join().expect("join refresh thread");
 
     assert!(!outcome.freshness.stale);

@@ -128,6 +128,58 @@ fn docs_cold_and_warm_queries_succeed_when_the_bound_is_disabled() {
 }
 
 #[test]
+fn empty_query_usage_error_wins_over_a_tiny_bound() {
+    let root = docs_graph_fixture("docs-empty-query-tiny-bound");
+    let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
+
+    let error = run_command(docs_context_command(&root, "   ", false))
+        .expect_err("empty query is a usage error");
+    assert!(
+        error.to_string().contains("non-empty query"),
+        "usage error must surface: {error}"
+    );
+    assert_eq!(
+        error.rendered_output(),
+        None,
+        "usage errors must not be rewrapped as graph timeouts"
+    );
+}
+
+#[test]
+fn invalid_budget_usage_errors_win_over_a_tiny_bound() {
+    let root = docs_graph_fixture("docs-invalid-budget-tiny-bound");
+    let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
+
+    let zero = docs_context_command(&root, "contracts", false);
+    let Command::Docs(mut args) = zero else {
+        panic!("expected docs command");
+    };
+    let DocsSubcommand::Context { max_sections, .. } = &mut args.subcommand else {
+        panic!("expected docs context subcommand");
+    };
+    *max_sections = Some(0);
+    let error = run_command(Command::Docs(args)).expect_err("zero budget is a usage error");
+    assert!(
+        error.to_string().contains("must be greater than 0"),
+        "usage error must surface: {error}"
+    );
+
+    let over_max = docs_context_command(&root, "contracts", false);
+    let Command::Docs(mut args) = over_max else {
+        panic!("expected docs command");
+    };
+    let DocsSubcommand::Context { max_sections, .. } = &mut args.subcommand else {
+        panic!("expected docs context subcommand");
+    };
+    *max_sections = Some(999);
+    let error = run_command(Command::Docs(args)).expect_err("over-max budget is a usage error");
+    assert!(
+        error.to_string().contains("must be at most 32"),
+        "usage error must surface: {error}"
+    );
+}
+
+#[test]
 fn graph_search_timeout_behavior_is_unchanged() {
     let root = docs_graph_fixture("graph-search-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);

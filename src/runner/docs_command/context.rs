@@ -27,13 +27,18 @@ pub(super) fn run_context(
     max_hops: Option<usize>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    // An empty query can never refresh anything; `docs_context` rejects it
-    // directly, so skip the progress probe instead of claiming a refresh.
-    if !query.trim().is_empty() {
-        if let Some(notice) = refresh_progress_notice(repo_root) {
-            eprintln!("{notice}");
-        }
-    }
+    let request = DocsContextRequest {
+        max_sections,
+        max_bytes,
+        max_hops,
+    };
+    // Usage errors — empty query, invalid budgets — must win over the
+    // wall-clock bound: they are validated here, on the caller thread, before
+    // any bounded graph work starts. The same validation runs again inside
+    // the retrieval because it is pure.
+    effigy_codegraph::docs_context::validate_docs_context_request(query, request)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+
     let owned_root = repo_root.to_path_buf();
     let owned_query = query.to_owned();
     match super::super::graph_time_budget::graph_time_budget() {
@@ -44,63 +49,43 @@ pub(super) fn run_context(
                 DOCS_CONTEXT_COMMAND,
                 budget,
                 move || {
-                    retrieve_documentation_context(
-                        &worker_root,
-                        &owned_query,
-                        max_sections,
-                        max_bytes,
-                        max_hops,
-                        output_json,
-                    )
+                    retrieve_documentation_context(&worker_root, &owned_query, request, output_json)
                 },
             )
         }
-        None => retrieve_documentation_context(
-            repo_root,
-            query,
-            max_sections,
-            max_bytes,
-            max_hops,
-            output_json,
-        ),
+        None => retrieve_documentation_context(repo_root, query, request, output_json),
     }
 }
 
-/// Decide the stderr progress notice for this query's lazy refresh.
+/// Map a refresh verdict to the stderr progress notice.
 ///
-/// `Some` only when the next refresh would actually do work — a cold build or
-/// a stale rebuild — so warm and current queries never claim one. Probe
-/// failures stay silent: the retrieval itself surfaces the real error.
-pub(super) fn refresh_progress_notice(repo_root: &Path) -> Option<String> {
-    match effigy_codegraph::refresh_pending(repo_root) {
-        Ok(RefreshPending::Cold) => Some(format!(
+/// `Some` only when the refresh will actually do work — a cold build or a
+/// stale rebuild — so warm and current queries never claim one.
+pub(super) fn refresh_progress_message(pending: RefreshPending) -> Option<String> {
+    match pending {
+        RefreshPending::Cold => Some(format!(
             "[docs] {DOCS_CONTEXT_COMMAND}: graph index is missing; building the shared graph index before answering"
         )),
-        Ok(RefreshPending::Stale) => Some(format!(
+        RefreshPending::Stale => Some(format!(
             "[docs] {DOCS_CONTEXT_COMMAND}: graph index is stale; refreshing it before answering"
         )),
-        Ok(RefreshPending::Current) | Err(_) => None,
+        RefreshPending::Current => None,
     }
 }
 
 fn retrieve_documentation_context(
     repo_root: &Path,
     query: &str,
-    max_sections: Option<usize>,
-    max_bytes: Option<usize>,
-    max_hops: Option<usize>,
+    request: DocsContextRequest,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let payload = effigy_codegraph::docs_context(
-        repo_root,
-        query,
-        DocsContextRequest {
-            max_sections,
-            max_bytes,
-            max_hops,
-        },
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let payload =
+        effigy_codegraph::docs_context_with_progress(repo_root, query, request, |pending| {
+            if let Some(notice) = refresh_progress_message(pending) {
+                eprintln!("{notice}");
+            }
+        })
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
     let text = render_context_text(&payload);
     let json = serde_json::to_value(&payload)

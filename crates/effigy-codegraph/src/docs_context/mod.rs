@@ -13,6 +13,7 @@ use crate::docs_profile::{load_docs_profile_state, CompiledDocsProfile, DocsProf
 use crate::error::CodeGraphError;
 use crate::json::GraphFreshnessPayload;
 use crate::model::{DiagnosticSeverity, SourceSpan};
+use crate::refresh::RefreshPending;
 use crate::storage::GraphStore;
 
 mod payload;
@@ -48,16 +49,46 @@ pub fn docs_context(
     query: &str,
     request: DocsContextRequest,
 ) -> Result<DocsContextPayload, CodeGraphError> {
+    docs_context_with_progress(repo_root, query, request, |_| {})
+}
+
+/// Validate the query and budgets without touching graph state.
+///
+/// Callers that run graph work under a wall-clock bound invoke this on their
+/// own thread first, so usage errors can never be pre-empted by a timeout.
+/// [`docs_context`] runs the same validation because it is pure; there is one
+/// validation model.
+pub fn validate_docs_context_request(
+    query: &str,
+    request: DocsContextRequest,
+) -> Result<DocsContextBudgetSetPayload, CodeGraphError> {
     let query = query.trim();
     if query.is_empty() {
         return Err(CodeGraphError::validation(
             "`docs context` requires a non-empty query",
         ));
     }
-    let applied = resolve_budgets(request)?;
+    resolve_budgets(request)
+}
+
+/// [`docs_context`] with a progress callback for the lazy refresh.
+///
+/// The callback receives the refresh verdict before any rebuild walk starts —
+/// `Cold` before a missing index is built, `Stale` after the freshness scan
+/// finds changed files and before the rebuild — so a caller can announce
+/// progress while the refresh is still inside its own bound. Current graphs
+/// produce no callback.
+pub fn docs_context_with_progress(
+    repo_root: &Path,
+    query: &str,
+    request: DocsContextRequest,
+    progress: impl FnMut(RefreshPending),
+) -> Result<DocsContextPayload, CodeGraphError> {
+    let applied = validate_docs_context_request(query, request)?;
+    let query = query.trim();
 
     let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
+    let freshness = ensure_freshness(repo_root, &store, progress)?;
     let profile_state = load_docs_profile_state(repo_root)?;
     let scope = collect_scope(&store, &profile_state)?;
 
@@ -178,8 +209,9 @@ fn bounded(
 fn ensure_freshness(
     repo_root: &Path,
     store: &GraphStore,
+    progress: impl FnMut(RefreshPending),
 ) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let outcome = crate::refresh::ensure_fresh(repo_root, store)?;
+    let outcome = crate::refresh::ensure_fresh_with_progress(repo_root, store, progress)?;
     let mut freshness = outcome.freshness;
     if !outcome.notes.is_empty() {
         freshness.summary = format!("{} ({})", freshness.summary, outcome.notes.join("; "));

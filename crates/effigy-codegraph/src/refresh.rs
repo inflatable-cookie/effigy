@@ -126,16 +126,31 @@ pub fn ensure_fresh(
     repo_root: &Path,
     store: &GraphStore,
 ) -> Result<RefreshOutcome, CodeGraphError> {
-    ensure_fresh_with_wait(repo_root, store, IN_FLIGHT_WAIT_MS)
+    ensure_fresh_with_progress(repo_root, store, |_| {})
 }
 
-pub(crate) fn ensure_fresh_with_wait(
+/// Same freshness pass with a progress callback that receives the refresh
+/// verdict before any rebuild walk starts, so a caller can announce cold or
+/// stale work while it is still inside the caller's bound. The verdict is
+/// derived from the same single freshness scan that feeds the rebuild — no
+/// duplicate scan is performed.
+pub(crate) fn ensure_fresh_with_progress(
+    repo_root: &Path,
+    store: &GraphStore,
+    progress: impl FnMut(RefreshPending),
+) -> Result<RefreshOutcome, CodeGraphError> {
+    ensure_fresh_with_wait_and_progress(repo_root, store, IN_FLIGHT_WAIT_MS, progress)
+}
+
+pub(crate) fn ensure_fresh_with_wait_and_progress(
     repo_root: &Path,
     store: &GraphStore,
     in_flight_wait_ms: u64,
+    mut progress: impl FnMut(RefreshPending),
 ) -> Result<RefreshOutcome, CodeGraphError> {
     let counts = store.counts()?;
     if counts.files == 0 {
+        progress(RefreshPending::Cold);
         return build_missing_index(repo_root, store, in_flight_wait_ms);
     }
 
@@ -167,6 +182,9 @@ pub(crate) fn ensure_fresh_with_wait(
             notes: Vec::new(),
         });
     }
+    // The scan above is the single freshness scan for this pass: its result
+    // feeds both the verdict and the rebuild below.
+    progress(RefreshPending::Stale);
 
     let Some(lock) = RefreshLock::acquire_wait(repo_root, in_flight_wait_ms)? else {
         // Another process is refreshing. Check whether it finished inside the
@@ -268,7 +286,9 @@ fn build_missing_index(
     })
 }
 
-/// What the next lazy refresh on this repository would do.
+/// The refresh verdict reported by the lazy-refresh progress callback. The
+/// verdict is derived from the same freshness scan that feeds the rebuild, so
+/// callers can announce cold or stale work without a second scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshPending {
     /// The next query verifies freshness without touching graph state.
@@ -277,27 +297,4 @@ pub enum RefreshPending {
     Cold,
     /// The index exists but is stale; the next query rebuilds changed parts.
     Stale,
-}
-
-/// Read-only probe of whether the next lazy refresh would do work.
-///
-/// Mirrors the early-exit decisions of [`ensure_fresh_with_wait`] — empty
-/// store, git skip-gate, then the scan-state walk — using the same primitives,
-/// so callers can announce a cold or stale refresh before it starts without a
-/// second freshness model. Concurrency is deliberately not modeled here: a
-/// probe that says [`RefreshPending::Stale`] may still be served by a
-/// concurrent refresher, which the refresh outcome reports afterward.
-pub fn refresh_pending(repo_root: &Path) -> Result<RefreshPending, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    if store.counts()?.files == 0 {
-        return Ok(RefreshPending::Cold);
-    }
-    if crate::git::git_gate_says_fresh(repo_root, &store)? {
-        return Ok(RefreshPending::Current);
-    }
-    if stale_paths_for_repo(repo_root, &store)?.is_empty() {
-        Ok(RefreshPending::Current)
-    } else {
-        Ok(RefreshPending::Stale)
-    }
 }
