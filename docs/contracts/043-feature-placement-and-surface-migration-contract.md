@@ -207,8 +207,13 @@ Effigy owns `support/catalog-pack-update.toml`. Its versioned schema contains:
 
 Before the first update-capable release, `oldest_update_capable_release` is
 absent and the current release still keeps the compatibility oracle non-vacuous.
-Only an Effigy support-policy or release PR may change this file. Pack content,
-installed state, and the pack repository may consume it but cannot redefine it.
+Official artifact or channel publication does not, by itself, require that
+field. It appears only once a released Effigy exposes public
+`service pack update`. Only an Effigy support-policy or release PR may change
+this file. Pack content, installed state, and the pack repository may consume
+it but cannot redefine it. Effigy validates the file locally through one typed
+parser; that validation does not contact the network and does not affect pack
+selection, acquisition, or activation.
 
 Before any package mutation, publication resolves the file from Effigy's current
 default-branch commit, records that commit and the file blob digest, and proves:
@@ -337,7 +342,6 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card [`1103`](../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
-under strict spec [`115`](../specs/115-catalog-pack-publication-and-cutover-strict-lane.md).
-The dedicated pack repository remains serial behind that Effigy-owned
-compatibility authority. First publication remains operator-gated.
+Update card [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
+to Ready after the card `1103` support floor is on pushed `main`. Do not create
+the pack repository before then. First publication remains operator-gated.

@@ -1,0 +1,13 @@
+# Effigy catalog-pack update support floor.
+#
+# Only an Effigy support-policy or release PR may change this file.
+# The pack repository consumes it by resolved default-branch commit and blob
+# digest. Pack content and installed state cannot redefine it.
+#
+# `oldest_update_capable_release` is omitted until a released Effigy exposes
+# public `service pack update`. Validation is local and network-free; remote
+# release existence and candidate compatibility belong to pack publication.
+
+schema_version = 1
+as_of_release = "0.12.1"
+required_versions = ["0.12.1"]

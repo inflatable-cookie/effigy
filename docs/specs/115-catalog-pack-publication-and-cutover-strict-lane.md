@@ -41,14 +41,15 @@ offline operation or Effigy release authority.
 
 Cards `1107` and `1108` may run in parallel only after `1106`: they have
 different repository owners and write scopes. Same-repository PR review and
-merge order remains serial. No other edge is ready while `1103` is open.
+merge order remains serial. No other edge is ready until `1103` is on pushed
+`main` and `1104` is promoted.
 
 ## Cards
 
 - [`1103`](../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
-  — Ready; Effigy-owned compatibility authority.
+  — Complete; Effigy-owned compatibility authority.
 - [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
-  — Blocked on `1103`.
+  — Blocked on `1103` merge.
 - [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
   — Blocked on `1104` and explicit operator mutation authority.
 - [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
@@ -112,5 +113,6 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Execute card `1103`. Do not create the pack repository or publication state
-from this spec alone.
+Update card `1104` to Ready after the card `1103` support floor is on pushed
+`main`. Do not create the pack repository or publication state from this spec
+alone.

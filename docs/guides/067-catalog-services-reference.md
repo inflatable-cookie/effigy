@@ -176,6 +176,16 @@ There is no `effigy service pack update`. The official channel is fixed and
 baseline-owned — installed pack content cannot redirect it — but no official
 artifact is published yet, so no public update command exists.
 
+Effigy owns `support/catalog-pack-update.toml`, the machine-readable
+compatibility set for that future public channel. Only an Effigy
+support-policy or release PR may change it. Catalog-pack publication consumes
+the file from a resolved Effigy default-branch commit and blob digest; the
+pack repository, pack content, and installed state cannot redefine the
+required set. Local Effigy validation is network-free and does not affect pack
+selection, acquisition, or activation. `oldest_update_capable_release` tracks
+whether a released Effigy exposes public update; publishing an official
+artifact or channel does not, by itself, add that field.
+
 ## Catalog Services
 
 Each section below covers one shipped fragment. Parameters shown with

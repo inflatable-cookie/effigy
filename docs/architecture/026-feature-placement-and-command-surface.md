@@ -177,9 +177,13 @@ The former owns registry transport identity; the latter owns the extracted tree.
 Effigy owns `support/catalog-pack-update.toml`, the machine-readable compatibility
 set for the public update channel. It records a schema version, the release at
 which the policy was checked, every still-supported Effigy version that exposes
-update, and—once update exists—the oldest such version. Only an Effigy
-support-policy or release change may alter it. The pack repository consumes the
-file from a resolved Effigy default-branch commit and cannot redefine it.
+update, and—once a released Effigy exposes public update—the oldest such version.
+Official artifact or channel publication does not, by itself, introduce that
+oldest field. Only an Effigy support-policy or release change may alter the
+file. The pack repository consumes it from a resolved Effigy default-branch
+commit and cannot redefine it. `effigy-catalog` validates the file locally and
+network-free. That parser is not on the pack selection, acquisition, or
+activation path.
 
 Pack publication is deterministic and process-immutable. A protected manual
 dispatch builds a local OCI layout from fixed source bytes and metadata,
