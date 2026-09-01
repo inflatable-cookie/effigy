@@ -401,6 +401,55 @@ fn docs_context_baseline_repository_uses_the_same_report_shape() {
 }
 
 #[test]
+fn docs_context_omits_leading_yaml_frontmatter_from_heading_results() {
+    let repo = unique_repo("frontmatter", Some(GENERIC_PROFILE));
+    std::fs::write(
+        repo.join("handbook/playbooks/setup.md"),
+        "---\ntitle: Setup note\nState: live\nSee also: [ops](ops.md)\n---\n# Setup playbook\n\nCalibrate the flux capacitor before the run.\n",
+    )
+    .expect("rewrite setup with frontmatter");
+
+    let text = run_docs(&repo, &["docs", "context", "flux capacitor"]);
+    assert!(text.status.success(), "{text:?}");
+    let rendered = stdout(&text);
+    assert!(
+        !rendered.contains("title: Setup note"),
+        "text output leaked frontmatter as a heading:\n{rendered}"
+    );
+
+    let structured = json(&run_docs(
+        &repo,
+        &["--json", "docs", "context", "flux capacitor"],
+    ));
+    let results = structured["result"]["results"]
+        .as_array()
+        .expect("results array");
+    assert!(
+        !results.is_empty(),
+        "expected a real section hit after frontmatter"
+    );
+    for entry in results {
+        let heading = entry["heading"].as_str().unwrap_or_default();
+        assert!(
+            !heading.contains("title: Setup note") && !heading.contains("State: live"),
+            "JSON heading leaked frontmatter: {heading}"
+        );
+        if entry["path"] == "handbook/playbooks/setup.md" {
+            assert_eq!(entry["heading"], "Setup playbook");
+            assert_eq!(entry["span"]["start"]["line"], 6);
+            let fields = entry["fields"].as_array().cloned().unwrap_or_default();
+            assert!(
+                fields
+                    .iter()
+                    .any(|field| field["field"] == "state" && field["value"] == "live"),
+                "frontmatter State fact missing: {fields:?}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+#[test]
 fn docs_context_reports_budget_truncation_without_partial_sections() {
     let repo = unique_repo("budgets", Some(GENERIC_PROFILE));
     let output = run_docs(

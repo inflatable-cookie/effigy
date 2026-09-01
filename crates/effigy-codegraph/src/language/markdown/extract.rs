@@ -93,6 +93,7 @@ pub(super) fn extract_markdown(
     let mut link_start = 0usize;
     let mut emitted_path_refs = BTreeSet::new();
     let mut emitted_link_file_refs = BTreeSet::new();
+    let frontmatter = leading_yaml_frontmatter_range(content);
 
     for (event, range) in Parser::new(content).into_offset_iter() {
         match event {
@@ -103,6 +104,15 @@ pub(super) fn extract_markdown(
             }
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(level) = heading_level.take() {
+                    // A complete leading YAML fence can parse as one setext
+                    // heading. Keep that block as metadata only.
+                    if frontmatter
+                        .as_ref()
+                        .is_some_and(|block| heading_start < block.end)
+                    {
+                        heading_text.clear();
+                        continue;
+                    }
                     headings.push(Heading {
                         level: heading_level_number(level),
                         text: heading_text.trim().to_owned(),
@@ -650,6 +660,43 @@ fn split_label_line(line: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((label, value.trim()))
+}
+
+/// Byte range of a complete leading YAML frontmatter block, when present.
+///
+/// A complete block starts with a standalone `---` on the first line and ends
+/// at the next standalone `---` line, with at least one non-blank body line
+/// between them. Incomplete opening fences and later delimiter shapes return
+/// `None` so ordinary Markdown heading behavior is unchanged.
+fn leading_yaml_frontmatter_range(content: &str) -> Option<Range<usize>> {
+    let lines = iter_lines(content);
+    let (_, _, first_line) = *lines.first()?;
+    if !is_yaml_frontmatter_fence(first_line) {
+        return None;
+    }
+
+    let mut saw_body_line = false;
+    for &(_start, end, line) in lines.iter().skip(1) {
+        if is_yaml_frontmatter_fence(line) {
+            if !saw_body_line {
+                return None;
+            }
+            let range_end = if end < content.len() { end + 1 } else { end };
+            return Some(0..range_end);
+        }
+        if line.trim().is_empty() {
+            if !saw_body_line {
+                return None;
+            }
+            continue;
+        }
+        saw_body_line = true;
+    }
+    None
+}
+
+fn is_yaml_frontmatter_fence(line: &str) -> bool {
+    line.trim_end() == "---"
 }
 
 fn iter_lines(content: &str) -> Vec<(usize, usize, &str)> {

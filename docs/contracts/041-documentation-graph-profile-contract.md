@@ -212,7 +212,5 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Execute ready papercut card
-[`1097`](../roadmaps/g08/batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md),
-then return this contract to maintenance state and the project queue to
-official catalog-pack publication planning.
+Return this contract to maintenance state. Official catalog-pack publication
+planning under contract `043` is the project Next Task.

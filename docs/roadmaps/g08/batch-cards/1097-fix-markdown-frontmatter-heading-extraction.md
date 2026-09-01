@@ -4,10 +4,12 @@ Roadmap: [`../042-markdown-frontmatter-extraction-papercut.md`](../042-markdown-
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: `effigy-codegraph` Markdown structural extraction
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
+Completed: 2026-09-01
+Evidence: [`../../../logs/2026-09/01-135932-markdown-frontmatter-1097.md`](../../../logs/2026-09/01-135932-markdown-frontmatter-1097.md)
 
 ## Purpose
 
@@ -35,21 +37,21 @@ unusable section competes for the bounded `docs context` result budget.
 
 ## Acceptance
 
-- [ ] no frontmatter key/value or closing fence becomes a heading section
-- [ ] the first real ATX heading after frontmatter has its exact original line
+- [x] no frontmatter key/value or closing fence becomes a heading section
+- [x] the first real ATX heading after frontmatter has its exact original line
       and byte span
-- [ ] an ordinary setext heading after frontmatter remains indexed with exact
+- [x] an ordinary setext heading after frontmatter remains indexed with exact
       provenance
-- [ ] configured field facts and labelled relation links inside frontmatter
+- [x] configured field facts and labelled relation links inside frontmatter
       remain available with exact spans
-- [ ] incomplete leading and non-leading `---` shapes do not cause content to
+- [x] incomplete leading and non-leading `---` shapes do not cause content to
       be silently skipped
-- [ ] baseline extraction requires no docs profile or Northstar vocabulary
-- [ ] no ranking, budgeting, traversal, graph-store, refresh, CLI, or JSON
+- [x] baseline extraction requires no docs profile or Northstar vocabulary
+- [x] no ranking, budgeting, traversal, graph-store, refresh, CLI, or JSON
       contract changes
-- [ ] focused codegraph/CLI tests, `perf:docs-context-benchmark`, `effigy qa`,
+- [x] focused codegraph/CLI tests, `perf:docs-context-benchmark`, `effigy qa`,
       fmt, clippy, and diff checks pass
-- [ ] papercut, contract, roadmap, card, evidence, and active next-task pointers
+- [x] papercut, contract, roadmap, card, evidence, and active next-task pointers
       close honestly and return to publication planning
 
 ## Review Oracle
@@ -94,5 +96,4 @@ Northstar-specific runtime rule.
 
 ## Next Task
 
-Execute this card, then return to official catalog-pack publication planning
-under contract `043`.
+Return to official catalog-pack publication planning under contract `043`.

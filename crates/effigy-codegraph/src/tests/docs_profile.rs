@@ -677,6 +677,159 @@ labels = ["See also"]
     assert_contains_relation(&store, resolved, None, "restored escaped target");
 }
 
+#[test]
+fn leading_yaml_frontmatter_is_metadata_not_a_heading() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    let markdown =
+        "---\ntitle: Example\nState: live\n---\n# Real\n\nSetext Title\n------------\n\nBody.\n";
+    let path = temp.path().join("notes/intro.md");
+    fs::write(&path, markdown).expect("write markdown");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    let document = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md")
+        .expect("document");
+    assert_eq!(document.kind, "document");
+    assert_eq!(document.span.start.line, 1);
+    assert_eq!(document.span.start.byte, 0);
+    assert_eq!(document.span.end.byte, markdown.len() as u32);
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("title: Example")
+                    || symbol.display_name.contains("State: live")
+                    || symbol.display_name.contains("---"))
+        }),
+        "frontmatter must not become a heading: {symbols:?}"
+    );
+
+    let real = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#real")
+        .expect("real ATX heading");
+    assert_eq!(real.kind, "heading-h1");
+    assert_eq!(real.display_name, "Real");
+    assert_eq!(real.span.start.line, 5);
+    assert_eq!(
+        real.span.start.byte,
+        markdown.find("# Real").expect("real offset") as u32
+    );
+
+    let setext = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/intro.md#setext-title")
+        .expect("setext heading");
+    assert_eq!(setext.kind, "heading-h2");
+    assert_eq!(setext.display_name, "Setext Title");
+    assert_eq!(setext.span.start.line, 7);
+    assert_eq!(
+        setext.span.start.byte,
+        markdown.find("Setext Title").expect("setext offset") as u32
+    );
+}
+
+#[test]
+fn leading_yaml_frontmatter_keeps_profile_fields_and_relations() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook/playbooks")).expect("mkdir");
+    fs::write(
+        temp.path().join("handbook/playbooks/setup.md"),
+        "---\nState: live\nSee also: [ops](ops.md)\n---\n# Setup playbook\n\nBody.\n",
+    )
+    .expect("write playbook");
+    fs::write(
+        temp.path().join("handbook/playbooks/ops.md"),
+        "# Ops\n\nState: live\n",
+    )
+    .expect("write ops");
+    write_graph_manifest(temp.path(), &generic_profile(""));
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    assert!(
+        !symbols.iter().any(|symbol| {
+            symbol.kind.starts_with("heading-h")
+                && (symbol.display_name.contains("State: live")
+                    || symbol.display_name.contains("See also"))
+        }),
+        "frontmatter must stay out of heading inventory: {symbols:?}"
+    );
+
+    let state = symbols
+        .iter()
+        .find(|symbol| {
+            symbol.kind == "doc-field"
+                && symbol.canonical_name == "handbook/playbooks/setup.md#state"
+        })
+        .expect("state field");
+    assert_eq!(state.display_name, "live");
+    assert_eq!(state.span.start.line, 2);
+    assert_eq!(state.span.start.byte, "---\n".len() as u32);
+
+    let edges = store.list_edges().expect("edges");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.kind == "doc-rel"
+                && edge.provenance.detail.as_deref() == Some("see-also")
+                && edge.provenance.source_path == "handbook/playbooks/setup.md"
+                && (edge.unresolved_target.as_deref() == Some("ops.md")
+                    || edge.to_id.as_ref().map(GraphId::as_str)
+                        == Some("file:handbook/playbooks/ops.md"))
+        }),
+        "labelled frontmatter relation must remain: {edges:?}"
+    );
+}
+
+#[test]
+fn incomplete_and_nonleading_yaml_delimiters_keep_document_content() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("notes")).expect("mkdir");
+    fs::write(
+        temp.path().join("notes/incomplete.md"),
+        "---\ntitle: Example\n# Still Visible\n\nKept body.\n",
+    )
+    .expect("write incomplete");
+    fs::write(
+        temp.path().join("notes/later.md"),
+        "# Lead\n\nProse before a fence.\n\n---\ntitle: not frontmatter\n---\n\n# After\n",
+    )
+    .expect("write later");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+
+    let incomplete = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/incomplete.md#still-visible")
+        .expect("incomplete file keeps ATX heading");
+    assert_eq!(incomplete.display_name, "Still Visible");
+
+    let later_setext = symbols
+        .iter()
+        .find(|symbol| {
+            symbol.provenance.source_path == "notes/later.md"
+                && symbol.kind.starts_with("heading-h")
+                && symbol.display_name.contains("title: not frontmatter")
+        })
+        .expect("non-leading fence keeps ordinary setext behavior");
+    assert!(later_setext.span.start.byte > 0);
+
+    let after = symbols
+        .iter()
+        .find(|symbol| symbol.canonical_name == "notes/later.md#after")
+        .expect("content after non-leading fence remains");
+    assert_eq!(after.display_name, "After");
+}
+
 fn source_contains_edges(store: &GraphStore) -> Vec<crate::model::EdgeRecord> {
     store
         .list_edges()

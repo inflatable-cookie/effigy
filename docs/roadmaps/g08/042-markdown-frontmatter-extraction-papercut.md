@@ -1,10 +1,12 @@
 # g08.042 Markdown Frontmatter Extraction Papercut
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
+Completed: 2026-09-01
 Card: [`1097`](./batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
+Evidence: [`../../logs/2026-09/01-135932-markdown-frontmatter-1097.md`](../../logs/2026-09/01-135932-markdown-frontmatter-1097.md)
 
 ## Purpose
 
@@ -40,7 +42,7 @@ exact source spans.
 
 ## Cards
 
-- [ ] [`1097`](./batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md) — ready
+- [x] [`1097`](./batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md) — complete
 
 ## Acceptance
 
@@ -54,6 +56,4 @@ exact source spans.
 
 ## Next Task
 
-Execute ready card
-[`1097`](./batch-cards/1097-fix-markdown-frontmatter-heading-extraction.md), then
-return to official catalog-pack publication planning under contract `043`.
+Return to official catalog-pack publication planning under contract `043`.

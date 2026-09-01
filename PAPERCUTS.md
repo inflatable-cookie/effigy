@@ -20,17 +20,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   keep no-match assertions on fixture corpora only.
 - Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
 
-### [ ] YAML frontmatter is indexed as one setext heading — 2026-08-31
-- Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
-  frontmatter block as a single heading string, because the closing `---` reads
-  as a setext underline for the preceding line. The result is a heading value
-  hundreds of characters long that is useless in an agent context window.
-- Impact: any repository whose Markdown carries frontmatter gets one unusable
-  section per such document, and it competes for the section budget.
-- Possible fix: skip a leading frontmatter fence in the Markdown extractor
-  before heading detection, and keep frontmatter keys out of section headings.
-- Surface: `crates/effigy-codegraph/src/language/markdown/extract.rs`.
-
 ### [ ] `docs context` traversal is unreachable on a large corpus — 2026-08-31
 - Friction: traversed results rank after every 0-hop result, so a repository
   with more lexical seeds than `--max-sections` never surfaces a typed relation.
@@ -70,6 +59,19 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] YAML frontmatter is indexed as one setext heading — 2026-08-31
+- Friction: `effigy docs context` results for `docs/handoffs/*.md` show the whole
+  frontmatter block as a single heading string, because the closing `---` reads
+  as a setext underline for the preceding line. The result is a heading value
+  hundreds of characters long that is useless in an agent context window.
+- Impact: any repository whose Markdown carries frontmatter gets one unusable
+  section per such document, and it competes for the section budget.
+- Fix (2026-09-01): card `1097` / roadmap `g08.042` skip headings that start
+  inside a complete leading `---` … `---` block; facts, relations, and exact
+  spans remain. Evidence:
+  `docs/logs/2026-09/01-135932-markdown-frontmatter-1097.md`.
+- Surface: `crates/effigy-codegraph/src/language/markdown/extract.rs`.
 
 ### [x] `service list` reports non-fragment bundled files as fragments — 2026-09-01
 - Friction: `CatalogResolver::list_bundled_fragments` took the first path
