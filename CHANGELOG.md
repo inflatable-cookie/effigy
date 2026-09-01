@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Rhai script hosts now set explicit expression-depth limits (`64` global /
+  `32` in functions) on every production engine, matching the previous release
+  defaults instead of inheriting Rhai's lower `debug_assertions` parser caps.
+  A checked-in script that parsed under an installed release binary no longer
+  fails the documented `cargo run --bin effigy -- <task>` fallback solely
+  because of build-profile drift.
+
 ### Added
 - `effigy --help` and `effigy help` now group the built-in command surface by
   operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
