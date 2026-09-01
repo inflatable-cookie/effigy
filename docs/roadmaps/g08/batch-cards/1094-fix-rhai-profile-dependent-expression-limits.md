@@ -1,15 +1,17 @@
 # 1094 - Fix Rhai Profile-Dependent Expression Limits
 
 Roadmap: [`../039-rhai-profile-independent-limits-papercut.md`](../039-rhai-profile-independent-limits-papercut.md)
-Spec: [`../../../specs/112-rhai-profile-independent-limits-strict-lane.md`](../../../specs/112-rhai-profile-independent-limits-strict-lane.md)
+Spec: [`../../../specs/archive/112-rhai-profile-independent-limits-strict-lane.md`](../../../specs/archive/112-rhai-profile-independent-limits-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md)
 Guide: [`../../../guides/061-rhai-script-steps-guide.md`](../../../guides/061-rhai-script-steps-guide.md)
 Papercut: [`PAPERCUTS.md`](../../../../PAPERCUTS.md)
 
-Status: Ready
+Status: Complete
 Owner: `effigy-rhai` engine construction and first-party script policy
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
+Completed: 2026-09-01
+Evidence: [`2026-09-01 closeout`](../../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 
 ## Purpose
 
@@ -39,17 +41,17 @@ fallback with `Expression exceeds maximum complexity`.
 
 ## Acceptance
 
-- [ ] all production Rhai execution routes use the explicitly configured engine
-- [ ] `max_expr_depth()` is `64` and `max_function_expr_depth()` is `32` in
+- [x] all production Rhai execution routes use the explicitly configured engine
+- [x] `max_expr_depth()` is `64` and `max_function_expr_depth()` is `32` in
       both debug and release test builds
-- [ ] the over-16/within-32 function fixture parses and executes
-- [ ] an over-32 function fixture fails with the parser complexity guard
-- [ ] current first-party Rhai scripts still compile or execute under the host
-- [ ] no call-stack, operation, collection, module, host API, S3, or CLI surface
+- [x] the over-16/within-32 function fixture parses and executes
+- [x] an over-32 function fixture fails with the parser complexity guard
+- [x] current first-party Rhai scripts still compile or execute under the host
+- [x] no call-stack, operation, collection, module, host API, S3, or CLI surface
       changes
-- [ ] focused debug and release tests, `effigy qa`, fmt, clippy, and diff checks
+- [x] focused debug and release tests, `effigy qa`, fmt, clippy, and diff checks
       pass
-- [ ] papercut and all planning/front-door closeout state are honest
+- [x] papercut and all planning/front-door closeout state are honest
 
 ## Review Oracle
 
@@ -91,4 +93,5 @@ or CLI change, consumer migration, release work, or a graph/catalog-pack change.
 
 ## Next Task
 
-Implement this card in the dispatched worker lane.
+This card is complete. Return to catalog-pack acquisition planning under
+contract `043`.

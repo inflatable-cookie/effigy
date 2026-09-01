@@ -28,9 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`112`](./112-rhai-profile-independent-limits-strict-lane.md) — ready;
-  profile-independent Rhai expression limits under roadmap `g08.039` and card
-  `1094`
+- none
 
 Queued strict lanes:
 
@@ -40,6 +38,8 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
+- [`112`](./archive/112-rhai-profile-independent-limits-strict-lane.md) archived
+  after profile-independent Rhai expression limits closed on 2026-09-01
 - [`108`](./archive/108-documentation-graph-profiles-strict-lane.md) archived
   after the repository-defined documentation graph closed on 2026-08-31
 - `076` through `096` are archived
@@ -76,7 +76,5 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card
-[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
-After closeout, return to the catalog-pack acquisition prototype under contract
-`043`. Keep draft `098` paused; no release work or generation rollover.
+Return to the catalog-pack acquisition prototype under contract `043`. Keep
+draft `098` paused; no release work or generation rollover.

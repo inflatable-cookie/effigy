@@ -7,20 +7,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
-### [ ] Rhai scripts can parse in release and fail in debug — 2026-08-31
-- Friction: Rhai caps in-function expression nesting at 16 in debug builds and 32
-  in release. `scripts/benchmark-docs-context.rhai` ran fine under
-  `target/release/effigy` and failed under the `AGENTS.md`-documented
-  `cargo run --bin effigy -- <task>` fallback with
-  `Expression exceeds maximum complexity`. A reviewer found it, not the author.
-- Impact: a first-party script can ship green from one build profile and be
-  unrunnable from the other, including for any contributor without an installed
-  binary. The error names a line and column but not the cap or the profile.
-- Possible fix: set explicit, profile-independent Rhai depth limits in the host
-  engine so both builds parse identically, or add a script-policy test that
-  parses every first-party `.rhai` under the debug limits.
-- Surface: `crates/effigy-rhai` engine construction; `scripts/*.rhai`.
-
 ### [ ] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
 - Friction: the `effigy-no-match` case in `perf:docs-context-benchmark` asserts
   an empty report. Documenting its query inside `docs/`, `README.md`,
@@ -84,6 +70,21 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] Rhai scripts can parse in release and fail in debug — 2026-08-31
+- Friction: Rhai caps in-function expression nesting at 16 in debug builds and 32
+  in release. `scripts/benchmark-docs-context.rhai` ran fine under
+  `target/release/effigy` and failed under the `AGENTS.md`-documented
+  `cargo run --bin effigy -- <task>` fallback with
+  `Expression exceeds maximum complexity`. A reviewer found it, not the author.
+- Impact: a first-party script can ship green from one build profile and be
+  unrunnable from the other, including for any contributor without an installed
+  binary. The error names a line and column but not the cap or the profile.
+- Fix (2026-09-01): `configured_rhai_engine()` sets explicit expression depths
+  `64` / `32` on every production host, matching release defaults. Card `1094`
+  closed under archived strict spec `112`.
+- Surface: `crates/effigy-rhai` engine construction; `scripts/*.rhai`.
+
 
 ### [x] `git fetch origin` can hang indefinitely waiting on SSH — 2026-08-30
 - Friction: worker preflight `git fetch origin` sat silent for minutes until

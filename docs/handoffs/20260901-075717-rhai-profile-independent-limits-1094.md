@@ -49,10 +49,11 @@ parser limit under `debug_assertions`.
 - **Worker worktree policy:** follow `Completion Protocol`; launcher worktree
   first, named/manual fallback only when required
 - **Required sibling worktree links:** none
-- **Active spec lane:** [`112`](../specs/112-rhai-profile-independent-limits-strict-lane.md)
+- **Active spec lane:** [`112`](../specs/archive/112-rhai-profile-independent-limits-strict-lane.md)
+  (archived at closeout)
 - **Roadmap milestone:** [`g08.039`](../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
 - **Ready cards, in order:** [`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
-- **Allowed runway:** card `1094` only
+  (complete at closeout)- **Allowed runway:** card `1094` only
 - **Remaining card budget:** one
 - **Dispatch topology:** serial Effigy papercut lane
 - **Parallel safety check:** no open Effigy PR and no active implementation

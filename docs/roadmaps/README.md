@@ -121,16 +121,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.038`](./g08/038-help-first-command-discovery.md) groups
   command discovery under the six operator-job topics without adding execution
   aliases; card `1093` is complete and strict spec `111` is archived.
-  Ready [`g08.039`](./g08/039-rhai-profile-independent-limits-papercut.md)
-  removes build-profile drift from Rhai expression limits; card `1094` is the
-  only ready implementation card.
+  Completed [`g08.039`](./g08/039-rhai-profile-independent-limits-papercut.md)
+  makes Rhai expression-depth parsing profile-independent while preserving
+  release limits; card `1094` is complete and strict spec `112` is archived.
 
 ## Active Strict Lane
 
-Strict spec
-[`112`](../specs/112-rhai-profile-independent-limits-strict-lane.md) is ready
-with roadmap `g08.039` and card `1094`. It is one bounded papercut interruption;
-catalog-pack acquisition remains the next planning checkpoint after closeout.
+No active strict lane. Catalog-pack acquisition under contract `043` remains
+the next planning checkpoint.
 
 ## Research Program
 
@@ -185,10 +183,8 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card
-[`1094`](./g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
-After closeout, return to catalog-pack acquisition planning under contract
-`043`. Keep S3 deferred; no release action or `g09` rollover.
+Return to catalog-pack acquisition planning under contract `043`. Keep S3
+deferred; no release action or `g09` rollover.
 
 ## Historical language boundary
 

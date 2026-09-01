@@ -1,10 +1,12 @@
 # 112 Rhai Profile-Independent Limits Strict Lane
 
-Status: Ready
+Status: Complete
 Created: 2026-09-01
-Roadmap: [`g08.039`](../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
-Card: [`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
-Guide: [`061`](../guides/061-rhai-script-steps-guide.md)
+Closed: 2026-09-01
+Roadmap: [`g08.039`](../../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
+Card: [`1094`](../../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
+Guide: [`061`](../../guides/061-rhai-script-steps-guide.md)
+Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 
 ## Outcome
 
@@ -14,9 +16,9 @@ release builds.
 ## Problem
 
 The Rhai dependency changes default parser limits under `debug_assertions`.
-Effigy currently constructs a raw engine and inherits function depth `16` in
-debug and `32` in release, so a script can pass the installed release binary and
-fail the documented source-build fallback.
+Effigy previously constructed a raw engine and inherited function depth `16` in
+debug and `32` in release, so a script could pass the installed release binary
+and fail the documented source-build fallback.
 
 ## Decisions
 
@@ -61,5 +63,6 @@ compatibility issue.
 
 ## Next Task
 
-Execute ready card
-[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
+This lane is complete and archived. Return to catalog-pack acquisition planning
+under contract `043`. Keep S3 deferred; no release action or generation
+rollover.

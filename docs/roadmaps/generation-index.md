@@ -210,8 +210,8 @@ has since closed.
 contract `043`. Card `1093` added help-first command discovery without
 executable group aliases or selector-routing changes.
 
-`g08.039` is ready under strict spec `112`. Card `1094` is a single bounded
-papercut lane for explicit, profile-independent Rhai expression limits.
+`g08.039` is complete under archived strict spec `112`. Card `1094` made Rhai
+expression-depth parsing profile-independent while preserving release limits.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -270,7 +270,5 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card
-[`1094`](./g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md).
-After closeout, return to catalog-pack acquisition planning under contract
-`043`. No release action or `g09` rollover.
+Return to catalog-pack acquisition planning under contract `043`. No release
+action or `g09` rollover.

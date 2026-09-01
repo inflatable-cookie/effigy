@@ -96,7 +96,5 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready card
-[`1094`](../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
-under strict spec `112`. After closeout, return to catalog-pack acquisition
-planning under contract `043`. No release work or generation rollover.
+Return to catalog-pack acquisition planning under contract `043`. No release
+work or generation rollover.
