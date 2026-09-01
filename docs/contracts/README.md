@@ -285,6 +285,5 @@ exclusive-create boundary.
 
 ## Next Task
 
-Request explicit operator authority for card `1105`. First catalog-pack
-publication remains blocked until that instruction names the external
-mutations.
+Execute ready card `1105` from its committed worker handoff. Effigy release
+authority remains separate.

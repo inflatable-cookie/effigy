@@ -30,7 +30,7 @@ Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
   catalog-pack publication and generated-baseline cutover; cards `1103` and
-  `1104` complete, card `1105` operator-gated
+  `1104` complete, card `1105` Ready under explicit publication authority
 
 Queued strict lanes:
 
@@ -83,4 +83,5 @@ Other planning specs:
 
 ## Next Task
 
-Request explicit operator authority for card `1105`. Keep draft `098` paused.
+Execute ready card `1105` from its committed worker handoff. Keep draft `098`
+paused.

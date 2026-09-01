@@ -63,5 +63,5 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Request explicit operator authority for card `1105`. First publication remains
-gated. The second governance review remains due by 2026-09-17.
+Execute ready card `1105` from its committed worker handoff. Effigy release
+remains gated. The second governance review remains due by 2026-09-17.

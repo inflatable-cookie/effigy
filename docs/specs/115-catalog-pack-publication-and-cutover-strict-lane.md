@@ -51,7 +51,7 @@ external publication mutations remain operator-gated.
 - [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
   — Complete; dedicated public repository foundation and no-push rehearsal.
 - [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
-  — Blocked on explicit operator mutation authority.
+  — Ready; explicit first-publication authority recorded 2026-09-02.
 - [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
   — Blocked on accepted `1105` evidence.
 - [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
@@ -113,6 +113,6 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Request explicit operator authority for card `1105`. The first annotated source
-tag, GHCR package, public visibility, attestation, and `stable` movement remain
-blocked until that instruction names the publication mutation.
+Execute card `1105` from its committed worker handoff. The implementation PR
+must merge before the same worker creates the annotated source tag or mutates
+GHCR; Effigy release authority remains separate.

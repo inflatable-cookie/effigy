@@ -342,7 +342,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Request explicit operator authority for
-[`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md).
-First publication remains blocked until the instruction names the annotated
-tag, GHCR package/public visibility, attestation, and `stable` mutations.
+Execute ready card
+[`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
+under the explicit 2026-09-02 first-publication authority. Merge the
+implementation-only PR before creating the annotated tag or mutating GHCR.

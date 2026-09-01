@@ -18,9 +18,9 @@ ceremony, surprise network access, or a second release authority.
 2. [`1104`](./batch-cards/1104-build-catalog-pack-repository-foundation.md) —
    Complete: dedicated public pack repository, exact import, validation, and
    no-push publication rehearsal.
-3. [`1105`](./batch-cards/1105-publish-first-official-catalog-pack.md) — blocked
-   on explicit operator mutation authority: publish and prove `v1.0.0` and
-   `stable` at one verified digest.
+3. [`1105`](./batch-cards/1105-publish-first-official-catalog-pack.md) — Ready:
+   publish and prove `v1.0.0` and `stable` at one verified digest under the
+   explicit 2026-09-02 operator authority.
 4. [`1106`](./batch-cards/1106-cut-over-generated-catalog-baseline.md) — blocked
    on accepted publication evidence: generate Effigy's baseline and lock, then
    prove offline and public-artifact drift.
@@ -54,6 +54,6 @@ serial.
 
 ## Next Task
 
-Request explicit operator authority for card `1105`. Cards `1106` through
-`1108` remain blocked exactly as named above; no package, source tag,
-attestation, or `stable` state exists yet.
+Execute card `1105` from its committed worker handoff. Cards `1106` through
+`1108` remain blocked exactly as named above; the implementation PR must merge
+before any package, source-tag, attestation, or `stable` mutation.
