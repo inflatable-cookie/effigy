@@ -207,11 +207,13 @@ Effigy owns `support/catalog-pack-update.toml`. Its versioned schema contains:
 
 Before the first update-capable release, `oldest_update_capable_release` is
 absent and the current release still keeps the compatibility oracle non-vacuous.
-Only an Effigy support-policy or release PR may change this file. Pack content,
-installed state, and the pack repository may consume it but cannot redefine it.
-Effigy validates the file locally through one typed parser; that validation
-does not contact the network and does not affect pack selection, acquisition,
-or activation.
+Official artifact or channel publication does not, by itself, require that
+field. It appears only once a released Effigy exposes public
+`service pack update`. Only an Effigy support-policy or release PR may change
+this file. Pack content, installed state, and the pack repository may consume
+it but cannot redefine it. Effigy validates the file locally through one typed
+parser; that validation does not contact the network and does not affect pack
+selection, acquisition, or activation.
 
 Before any package mutation, publication resolves the file from Effigy's current
 default-branch commit, records that commit and the file blob digest, and proves:

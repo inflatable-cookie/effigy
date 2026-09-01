@@ -58,14 +58,50 @@ fn committed_file_matches_this_crate_release_without_oldest_field() {
 }
 
 #[test]
-fn this_build_does_not_claim_public_update() {
-    assert!(
-        !OfficialPackChannel::baseline().published,
-        "public update remains unpublished; do not record oldest_update_capable_release yet"
-    );
+fn this_build_does_not_claim_released_public_update() {
     assert_eq!(
         PackUpdateCapability::for_this_build(),
         PackUpdateCapability::Absent
+    );
+}
+
+#[test]
+fn artifact_publication_alone_does_not_require_the_oldest_field() {
+    let published_channel = OfficialPackChannel {
+        published: true,
+        ..OfficialPackChannel::baseline()
+    };
+    assert!(
+        published_channel.published,
+        "counterexample: an official artifact/channel may exist"
+    );
+    assert_eq!(
+        PackUpdateCapability::for_this_build(),
+        PackUpdateCapability::Absent,
+        "channel publication must not advance released-update capability"
+    );
+
+    let policy = parse(
+        VALID_PRE_UPDATE,
+        "0.12.1",
+        PackUpdateCapability::for_this_build(),
+    )
+    .expect("pre-update policy stays valid while a channel may be published");
+    assert_eq!(policy.oldest_update_capable_release, None);
+
+    let error = parse_err(
+        r#"
+schema_version = 1
+as_of_release = "0.12.1"
+required_versions = ["0.12.1"]
+oldest_update_capable_release = "0.12.1"
+"#,
+        "0.12.1",
+        PackUpdateCapability::for_this_build(),
+    );
+    assert!(
+        error.contains("`oldest_update_capable_release` is forbidden"),
+        "{error}"
     );
 }
 
@@ -291,6 +327,16 @@ fn parse_accepts_only_local_document_current_release_and_capability() {
 
 #[test]
 fn pack_runtime_modules_do_not_reference_the_support_floor() {
+    const TOKENS: &[&str] = &[
+        "support_policy",
+        "catalog-pack-update",
+        "CatalogPackUpdatePolicy",
+        "PackUpdateCapability",
+        "SupportPolicyError",
+        "CATALOG_PACK_UPDATE_POLICY_FILE",
+        "SUPPORTED_CATALOG_PACK_UPDATE_SCHEMA",
+        "current_effigy_release",
+    ];
     const SOURCES: &[(&str, &str)] = &[
         ("pack.rs", include_str!("../pack.rs")),
         ("pack/channel.rs", include_str!("../pack/channel.rs")),
@@ -303,12 +349,22 @@ fn pack_runtime_modules_do_not_reference_the_support_floor() {
         ("pack/selection.rs", include_str!("../pack/selection.rs")),
         ("pack/store.rs", include_str!("../pack/store.rs")),
         ("pack/verify.rs", include_str!("../pack/verify.rs")),
+        (
+            "runner/service_command/pack.rs",
+            include_str!("../../../../src/runner/service_command/pack.rs"),
+        ),
+        (
+            "effigy-containers/src/lib.rs",
+            include_str!("../../../effigy-containers/src/lib.rs"),
+        ),
     ];
 
     for (name, source) in SOURCES {
-        assert!(
-            !source.contains("support_policy") && !source.contains("catalog-pack-update"),
-            "{name} must not read the catalog-pack support floor"
-        );
+        for token in TOKENS {
+            assert!(
+                !source.contains(token),
+                "{name} must not reference support-floor token `{token}`"
+            );
+        }
     }
 }

@@ -182,7 +182,9 @@ support-policy or release PR may change it. Catalog-pack publication consumes
 the file from a resolved Effigy default-branch commit and blob digest; the
 pack repository, pack content, and installed state cannot redefine the
 required set. Local Effigy validation is network-free and does not affect pack
-selection, acquisition, or activation.
+selection, acquisition, or activation. `oldest_update_capable_release` tracks
+whether a released Effigy exposes public update; publishing an official
+artifact or channel does not, by itself, add that field.
 
 ## Catalog Services
 

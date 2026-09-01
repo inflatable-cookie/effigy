@@ -14,41 +14,40 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 use serde::Deserialize;
 
-use crate::pack::OfficialPackChannel;
-
 /// Repository-relative path of the committed support-policy file.
 pub const CATALOG_PACK_UPDATE_POLICY_FILE: &str = "support/catalog-pack-update.toml";
 
 /// Highest `schema_version` this build can read.
 pub const SUPPORTED_CATALOG_PACK_UPDATE_SCHEMA: u32 = 1;
 
-/// Whether this Effigy build exposes public `service pack update`.
+/// Whether a released Effigy exposes public `service pack update`.
 ///
-/// The committed file is validated against [`PackUpdateCapability::for_this_build`].
-/// Tests inject [`PackUpdateCapability::Present`] to prove the future oldest-field
-/// invariant without claiming that this release exposes update.
+/// Independent of official artifact and channel publication. An artifact or
+/// public channel may exist, and a command may even exist on `main`, before any
+/// released binary exposes update. The committed file is validated against
+/// [`PackUpdateCapability::for_this_build`]. Tests inject
+/// [`PackUpdateCapability::Present`] to prove the future oldest-field invariant
+/// without claiming that this release exposes update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackUpdateCapability {
     /// No released Effigy yet exposes public `service pack update`.
     ///
     /// `oldest_update_capable_release` is forbidden.
     Absent,
-    /// Public update exists. `oldest_update_capable_release` is required and must
-    /// equal the minimum `required_versions` entry.
+    /// A released Effigy exposes public update. `oldest_update_capable_release`
+    /// is required and must equal the minimum `required_versions` entry.
     Present,
 }
 
 impl PackUpdateCapability {
-    /// Capability compiled into this Effigy build.
+    /// Released-update capability for this Effigy version.
     ///
-    /// Derived from the baseline-owned official channel flag, not from pack
-    /// content, installed state, or network access.
+    /// Owned by support-policy/release data, not by
+    /// [`crate::pack::OfficialPackChannel::published`]. Flip this in the same
+    /// support-policy or release PR that records
+    /// `oldest_update_capable_release`.
     pub fn for_this_build() -> Self {
-        if OfficialPackChannel::baseline().published {
-            Self::Present
-        } else {
-            Self::Absent
-        }
+        Self::Absent
     }
 }
 
@@ -98,7 +97,8 @@ impl CatalogPackUpdatePolicy {
     /// Parse and validate support-policy TOML.
     ///
     /// `current_release` is the current Cargo package version. `update_capability`
-    /// is whether public update exists; it is not inferred from the file.
+    /// is whether a released Effigy exposes public update; it is not inferred
+    /// from the file, pack content, or channel publication.
     pub fn parse(
         contents: &str,
         current_release: &Version,

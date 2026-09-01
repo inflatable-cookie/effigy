@@ -19,9 +19,11 @@ Handoff: `20260901-201505-catalog-pack-support-floor-1103.md`
   activation do not read the file. Validation takes a TOML string, the current
   release, and an explicit update-capability flag. No network client exists on
   that path.
-- This build still has `OfficialPackChannel::published = false`. Tests inject
+- `PackUpdateCapability::for_this_build()` is a support-policy-owned fact and
+  returns `Absent`. Official artifact/channel publication is independent and
+  does not require `oldest_update_capable_release`. Tests inject
   `PackUpdateCapability::Present` for the future oldest-field invariant without
-  claiming public `service pack update`.
+  claiming that a released Effigy exposes public `service pack update`.
 
 ## Committed policy
 
@@ -50,7 +52,8 @@ file.
 3. The oldest field is present before public update, or later disagrees with
    the minimum required version, and passes — falsified by
    `oldest_field_is_forbidden_before_public_update`,
-   `this_build_does_not_claim_public_update`,
+   `this_build_does_not_claim_released_public_update`,
+   `artifact_publication_alone_does_not_require_the_oldest_field`,
    `future_update_capable_state_requires_oldest_equal_to_minimum_required`,
    `future_update_capable_state_rejects_missing_oldest_field`, and
    `future_update_capable_state_rejects_oldest_that_disagrees_with_minimum`.
@@ -59,7 +62,14 @@ file.
 5. Local validation depends on GitHub/network access or mutates runtime pack
    state — falsified by
    `parse_accepts_only_local_document_current_release_and_capability` and
-   `pack_runtime_modules_do_not_reference_the_support_floor`.
+   `pack_runtime_modules_do_not_reference_the_support_floor`. The isolation
+   test scans crate-root symbols
+   (`CatalogPackUpdatePolicy`, `PackUpdateCapability`, `SupportPolicyError`,
+   `CATALOG_PACK_UPDATE_POLICY_FILE`, `SUPPORTED_CATALOG_PACK_UPDATE_SCHEMA`,
+   `current_effigy_release`) plus `support_policy` and `catalog-pack-update`
+   across pack selection/acquisition/activation owners: pack domain modules,
+   runner `service_command/pack.rs`, and `effigy-containers` `lib.rs`. It does
+   not scan `lib.rs` (legitimate re-exports) or `pack/tests.rs`.
 6. The pack repository or installed content can redefine the required set —
    falsified by docs in `067`, `071`, architecture `026`, and contract `043`,
    plus `committed_file_matches_this_crate_release_without_oldest_field`
@@ -97,15 +107,27 @@ file.
   commit/blob; remote release existence and candidate compatibility; public
   update still absent
 
+## Review repair
+
+PR 78 review on `f1c9025f` required two in-bounds repairs:
+
+1. `for_this_build()` no longer derives released-update capability from
+   `OfficialPackChannel::published`. Support-policy owns `Absent` until a
+   released Effigy exposes public update. The publication counterexample
+   constructs a published channel and still forbids the oldest field.
+2. Isolation scan covers crate-root symbols and activation/selection
+   consumers, not only `support_policy` / `catalog-pack-update` in pack
+   domain sources.
+
 ## Validation Performed
 
-- `cargo test -p effigy-catalog --lib support_policy` — 16 passed
+- `cargo test -p effigy-catalog --lib support_policy` — 17 passed
 - `cargo fmt --all -- --check` — pass
 - `cargo clippy --all-targets -- -D warnings` — pass
 - `git diff --check` — pass
 - `effigy qa:docs` — pass (links, json-examples, indexes, forbidden, headings,
   contains, workflow-paths, vision next-action)
-- `effigy qa` — 3687 passed, 1 skipped; docs and JSON-contract checks passed
+- `effigy qa` — 3688 passed, 1 skipped; docs and JSON-contract checks passed
 
 ## Next Task
 
