@@ -347,6 +347,7 @@ fn run_manifest_task_builtin_test_child_task_ref_pins_ancestor_container_registr
     let json = run_builtin_ok(fixture.root.clone(), "test", &["--plan", "--json", "api"]);
     let command = planned_suite_command(&json);
     assert_nested_child_task_ref_keeps_ancestor_discovery(&fixture, &command);
+    assert_nested_invocation_container_default(&command, "workspace");
     assert!(
         !planned_suite_root(&json).ends_with("/api"),
         "parent suite target should stay the originating catalog, got {}",
@@ -367,6 +368,7 @@ fn run_manifest_task_builtin_test_child_owned_suite_task_ref_pins_ancestor_conta
     );
     let command = planned_suite_command(&json);
     assert_nested_child_task_ref_keeps_ancestor_discovery(&fixture, &command);
+    assert_nested_invocation_container_default(&command, "workspace");
     assert!(
         planned_suite_root(&json).ends_with("/api"),
         "child-owned suite should keep the child catalog cwd, got {}",
@@ -391,6 +393,7 @@ fn run_manifest_task_builtin_test_child_explicit_container_registry_still_nests(
         quoted_arg_after(&command, "--repo '").is_some(),
         "child explicit registry must keep ancestor fallback available: {command}"
     );
+    assert_nested_invocation_container_default(&command, "child");
 }
 
 #[test]
@@ -649,4 +652,63 @@ fn quoted_arg_after<'a>(command: &'a str, marker: &str) -> Option<&'a str> {
     let start = command.find(marker)? + marker.len();
     let end = command[start..].find('\'')?;
     Some(&command[start..start + end])
+}
+
+fn nested_selector_before_repo(command: &str) -> Option<&str> {
+    let before = command.rsplit_once(" --repo ")?.0;
+    let end = before.rfind('\'')?;
+    let start = before[..end].rfind('\'')?;
+    Some(&before[start + 1..end])
+}
+
+fn assert_nested_invocation_container_default(command: &str, expected_default: &str) {
+    let cwd = PathBuf::from(
+        quoted_arg_after(command, "(cd '").expect("nested command should wrap a child cwd"),
+    );
+    let repo = quoted_arg_after(command, "--repo '")
+        .expect("nested command should pin the originating repository")
+        .to_owned();
+    let selector = nested_selector_before_repo(command)
+        .expect("nested command should keep the child task selector")
+        .to_owned();
+    let task = TaskInvocation {
+        name: selector,
+        args: vec!["--repo".to_owned(), repo.clone()],
+    };
+    let preflight = crate::runner::execute::api::build_execution_preflight(&task, cwd.clone())
+        .expect("nested invocation should rediscover catalogs");
+    assert_eq!(
+        preflight.invocation_cwd,
+        crate::runner::command_context::canonicalize_or_original(&cwd),
+        "nested discovery must keep the child invocation cwd: {command}"
+    );
+    assert!(
+        preflight.catalogs.iter().any(|catalog| {
+            catalog
+                .manifest
+                .containers
+                .as_ref()
+                .and_then(|config| config.default.as_deref())
+                == Some("workspace")
+        }),
+        "pinned --repo {repo:?} did not reload the ancestor containers registry: {command}"
+    );
+    let selection = effigy_routing::select_catalog_and_task(
+        &preflight.selector,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )
+    .expect("nested invocation should select the child task");
+    let (_default_run_in, _systems, containers) =
+        crate::runner::execute::api::effective_task_binding_inputs(
+            &preflight.invocation_cwd,
+            &preflight.catalogs,
+            &selection,
+        );
+    let containers = containers.expect("nested catalogs should expose a containers registry");
+    assert_eq!(
+        containers.default.as_deref(),
+        Some(expected_default),
+        "nested effective container default: {command}"
+    );
 }

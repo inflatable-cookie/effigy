@@ -36,15 +36,19 @@ nested execution.
 1. Recurrence only passes by moving the child task cwd back to the parent —
    falsified by `run_manifest_task_builtin_test_child_task_ref_pins_ancestor_container_registry`
    and the child-owned suite twin: wrap cwd is the child, `--repo` is the
-   ancestor, and `printf inherited-container` is not inlined.
+   ancestor, and `printf inherited-container` is not inlined. Nested preflight
+   keeps that child `invocation_cwd`.
 2. Ancestor registry is still absent when the task ref reaches execution —
-   falsified by the same nested command: `--repo` is the min-depth ancestor of
-   the selected catalog in the already loaded graph, so nested discovery keeps
-   `[containers] default = "workspace"`.
+   falsified by feeding the planned nested semantics (child cwd, child
+   selector, pinned `--repo`) through `build_execution_preflight`,
+   `select_catalog_and_task`, and `effective_task_binding_inputs`. Loaded
+   catalogs include ancestor `default = "workspace"`; the inherited-only
+   fixtures resolve that default.
 3. Preserving the ancestor overrides an explicit child registry —
-   falsified by `run_manifest_task_builtin_test_child_explicit_container_registry_still_nests`
-   (child still nests; ancestor pin remains fallback only) plus existing
-   `effective_task_binding_inputs` merge tests where child default wins.
+   falsified by `run_manifest_task_builtin_test_child_explicit_container_registry_still_nests`:
+   nested discovery still loads ancestor `workspace`, then the effective
+   binding default is `child`. Plan text still keeps `--repo` as fallback
+   only.
 4. Direct child invocation begins discovering ambient undeclared ancestors —
    falsified by `run_manifest_task_direct_child_task_does_not_inherit_undeclared_ancestor_containers`
    (`test:unit` from the child cwd still errors with `no container target is defined`).
@@ -61,14 +65,16 @@ nested execution.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --lib -- suite_selection_tests` | 18 passed |
-| `effigy graph affected` (changed source) | index current after auto-refresh (1729 files); changed paths are the four files in this PR; likely-test surface is heuristic/`qa`; ran the exact changed module plus full `effigy qa` |
+| `cargo test --lib -- suite_selection_tests` | 18 passed after nested binding assertions |
+| `effigy graph affected` (changed source) | index current after auto-refresh (1729 files); first closeout ran the exact changed module plus full `effigy qa` |
 | `effigy test --plan` | cargo-nextest workspace plan |
-| `effigy qa` | 3649 passed, 1 skipped; docs and JSON contracts passed |
+| `effigy qa` | first closeout: 3649 passed, 1 skipped; docs and JSON contracts passed |
 | `cargo fmt --all -- --check` | passed |
-| `cargo clippy --all-targets -- -D warnings` | passed |
+| `cargo clippy --all-targets -- -D warnings` | passed on first closeout; follow-up is test/log only |
 | `git diff --check` | passed |
 | rust-quality closeout | RUST-READ-001, RUST-ERR-001; tool status `warning` from crates.io future-incompat noise, not this tranche |
+
+PR75 requested a nested discovery/binding proof rather than plan-text `--repo` presence alone. The renderer assertions remain; the two registry-precedence rows now also inspect typed effective container defaults.
 
 ## Downstream boundary
 
@@ -81,7 +87,8 @@ owner revalidates against this head. This card does not remove it.
 - Movement: child-catalog suite task-ref expansion discarded the loaded
   ancestor `[containers]` graph → nested re-entry pins originating `--repo`
   while keeping child cwd
-- Remaining gap: Acowtancy revalidation; orchestrator merge of this PR
+- Remaining gap: Acowtancy revalidation; orchestrator merge of this PR after
+  the nested binding proof
 
 ## Next Task
 
