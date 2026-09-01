@@ -583,3 +583,205 @@ fn rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone() {
         "a refused rollback changed lineage"
     );
 }
+
+// --- corrupt store metadata is actually repairable ------------------------
+//
+// Doctor advertises exactly one command for each of these shapes. Running that
+// command must succeed, leave a self-consistent store, and make the next
+// selection healthy — otherwise the repair is a promise the surface cannot keep.
+
+/// The one command doctor advertises for the current machine state.
+fn advertised_repair(home: &Path) -> String {
+    let finding =
+        with_test_effigy_home(home, || pack_health_finding(&select_pack(effigy_version())))
+            .expect("an unhealthy machine must produce a doctor finding");
+    assert_eq!(finding.check_id, check_id::CATALOG_PACK_HEALTH);
+    assert_eq!(
+        finding.remediation.matches("effigy service pack").count(),
+        1,
+        "repair must name exactly one command: {}",
+        finding.remediation
+    );
+    if finding.remediation.contains("rollback") {
+        "rollback".to_owned()
+    } else {
+        "reset".to_owned()
+    }
+}
+
+/// Run the advertised repair and assert the machine is actually repaired.
+fn run_advertised_repair(home: &Path) -> String {
+    let repair = advertised_repair(home);
+    let rendered = with_test_effigy_home(home, || match repair.as_str() {
+        "rollback" => run_rollback(false),
+        _ => run_reset(false),
+    })
+    .unwrap_or_else(|error| panic!("advertised `{repair}` failed: {error}"));
+
+    let store = with_test_effigy_home(home, || PackStore::user().expect("store"));
+    let state = store.load().expect("state is readable after the repair");
+    assert!(
+        state.broken_cross_references().is_empty(),
+        "`{repair}` left a dangling selection pointer"
+    );
+    let selection = with_test_effigy_home(home, || select_pack(effigy_version()));
+    assert!(
+        !selection.reason.is_fallback(),
+        "`{repair}` reported success but selection still falls back: {}",
+        selection.reason.as_str()
+    );
+    rendered
+}
+
+#[test]
+fn the_advertised_repair_recovers_malformed_store_metadata() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local_pack(
+        home.path(),
+        &candidate_pack(src.path(), "1.0.0", "16"),
+        false,
+    )
+    .expect("install");
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    let installs_root = store.root().join("installs");
+    let dirs_before = std::fs::read_dir(&installs_root)
+        .expect("read installs")
+        .flatten()
+        .count();
+
+    let corrupt = "{ not json at all";
+    write(&store.state_path(), corrupt);
+
+    assert_eq!(advertised_repair(home.path()), "reset");
+    let rendered = run_advertised_repair(home.path());
+
+    assert!(
+        rendered.contains("the original is preserved at"),
+        "reset silently replaced unreadable metadata: {rendered}"
+    );
+    assert!(
+        rendered.contains("kept on disk"),
+        "reset did not distinguish lost records from retained content: {rendered}"
+    );
+    let preserved: Vec<String> = std::fs::read_dir(store.root())
+        .expect("read store root")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("state.json.unreadable-"))
+        .collect();
+    assert_eq!(preserved.len(), 1, "the original bytes were not preserved");
+    assert_eq!(
+        std::fs::read_to_string(store.root().join(&preserved[0])).expect("read preserved"),
+        corrupt
+    );
+    assert_eq!(
+        std::fs::read_dir(&installs_root)
+            .expect("read installs")
+            .flatten()
+            .count(),
+        dirs_before,
+        "recovery deleted installed content"
+    );
+}
+
+#[test]
+fn the_advertised_repair_recovers_a_dangling_active_with_a_healthy_previous() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local_pack(
+        home.path(),
+        &candidate_pack(src.path(), "1.0.0", "16"),
+        false,
+    )
+    .expect("install");
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    let mut state = store.load().expect("state");
+    let healthy = state.active.clone().expect("active");
+    state.active = Some("effigy-default-catalog-9-9-9-nosuchinstall".to_owned());
+    state.previous = Some(healthy.clone());
+    store.commit(&state).expect("commit");
+
+    // The healthy previous verifies, so rollback is the honest advice.
+    assert_eq!(advertised_repair(home.path()), "rollback");
+    run_advertised_repair(home.path());
+
+    let state = store.load().expect("state");
+    assert_eq!(state.active.as_deref(), Some(healthy.as_str()));
+    assert_eq!(state.previous, None);
+}
+
+#[test]
+fn the_advertised_repair_recovers_a_dangling_previous_with_no_active() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local_pack(
+        home.path(),
+        &candidate_pack(src.path(), "1.0.0", "16"),
+        false,
+    )
+    .expect("install");
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    let mut state = store.load().expect("state");
+    let retained = state.installs.len();
+    state.active = None;
+    state.previous = Some("effigy-default-catalog-9-9-9-nosuchinstall".to_owned());
+    store.commit(&state).expect("commit");
+
+    assert_eq!(advertised_repair(home.path()), "reset");
+    run_advertised_repair(home.path());
+
+    let state = store.load().expect("state");
+    assert_eq!(state.previous, None);
+    assert_eq!(
+        state.installs.len(),
+        retained,
+        "recovery dropped valid install records"
+    );
+}
+
+#[test]
+fn reset_reports_the_recovery_path_in_json() {
+    let home = TempDir::new().expect("home");
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    write(&store.state_path(), "{ not json at all");
+
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_reset(true)).expect("reset"),
+    )
+    .expect("json");
+
+    assert_eq!(payload["schema"], "effigy.service.pack.reset.v1");
+    assert_eq!(payload["active"], Value::Null);
+    let quarantined = payload["quarantined_state"]
+        .as_str()
+        .expect("the recovery path must be reported");
+    assert!(
+        quarantined.contains("state.json.unreadable-"),
+        "{quarantined}"
+    );
+    assert!(std::path::Path::new(quarantined).is_file());
+    // Records were unrecoverable; content is reported separately so the two
+    // are never conflated.
+    assert_eq!(payload["retained_installs"], 0);
+    assert_eq!(payload["retained_install_dirs"], 0);
+}
+
+#[test]
+fn reset_on_a_healthy_store_reports_no_recovery_path() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local_pack(
+        home.path(),
+        &candidate_pack(src.path(), "1.0.0", "16"),
+        false,
+    )
+    .expect("install");
+
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_reset(true)).expect("reset"),
+    )
+    .expect("json");
+
+    assert_eq!(payload["quarantined_state"], Value::Null);
+}

@@ -9,11 +9,10 @@ Batch: catalog-pack-acquisition-1095
 
 - Card `1095` landed the complete in-repository catalog-pack acquisition
   prototype under strict spec `113`, architecture `026`, and contract `043`.
-- Orchestrator review of head `19cf30fb1` requested changes on six findings, and
-  re-review of head `3906ea85e` requested changes on three more. All nine are
-  repaired in the same PR; both rounds are recorded in
-  [Review Repair Round](#review-repair-round) and folded into the oracle
-  mapping below.
+- Three review rounds: head `19cf30fb1` (six findings), head `3906ea85e`
+  (three), and head `7f91df38e` (one). All ten are repaired in the same PR; the
+  rounds are recorded in [Review Repair Round](#review-repair-round) and folded
+  into the oracle mapping below.
 - Catalog fragments now resolve through four layers — project override, user
   override, active installed pack, compiled baseline — with one selection
   implementation and one transport seam.
@@ -46,6 +45,12 @@ Batch: catalog-pack-acquisition-1095
   still what the record says it is. Selection, `rollback`, and the `doctor`
   repair recommendation all run it, so none of them can trust a stale record
   while another re-proves the bytes.
+- `PackStore::reset` is the store-metadata recovery path, not just a selection
+  change: an unreadable document is preserved under `state.json.unreadable-*`,
+  a valid baseline-selected document replaces it, and selection pointers naming
+  no retained record are dropped. `rollback` and `activate` carry a displaced
+  selection into `previous` only when it has a record, so a dangling id cannot
+  survive a repair.
 - `crates/effigy-catalog/src/fragment.rs` — `FragmentSource::InstalledPack` and
   `CatalogResolver::with_installed_pack`, placing the pack layer below both
   overrides and above the compiled baseline in both `resolve` and `list`.
@@ -143,6 +148,14 @@ Each row names the exact test that would fail if the counterexample were true.
    - The advertised repair is honest:
      `..::doctor_recommends_reset_when_the_rollback_target_no_longer_verifies`,
      `..::doctor_recommends_rollback_only_when_the_target_actually_verifies`
+   - The advertised repair actually repairs, for every state that triggers it:
+     `..::the_advertised_repair_recovers_malformed_store_metadata`,
+     `..::the_advertised_repair_recovers_a_dangling_active_with_a_healthy_previous`,
+     `..::the_advertised_repair_recovers_a_dangling_previous_with_no_active`
+     (each runs the exact command doctor names, then asserts the store is
+     self-consistent and the next selection is non-fallback)
+   - `..::reset_reports_the_recovery_path_in_json`,
+     `..::reset_on_a_healthy_store_reports_no_recovery_path`
    - `effigy` `runner::service_command::pack::tests::unreadable_store_state_still_lets_status_report_instead_of_failing`
 5. **Installed content redirects the fixed official channel.**
    - `effigy-catalog` `pack::tests::official_update_ignores_update_sources_declared_by_pack_content`
@@ -170,6 +183,13 @@ Each row names the exact test that would fail if the counterexample were true.
      `..::rollback_target_health_reports_the_defect_it_refuses_on`,
      `..::a_healthy_rollback_target_verifies_through_the_shared_proof`
    - `effigy` `runner::service_command::pack::tests::rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone`
+   - Recovery is non-destructive and pointer-scrubbing:
+     `pack::tests::reset_recovers_malformed_state_without_deleting_it`,
+     `..::reset_recovers_an_unsupported_state_schema_without_deleting_it`,
+     `..::reset_scrubs_a_dangling_active_pointer_instead_of_demoting_it`,
+     `..::reset_scrubs_a_dangling_previous_pointer_when_nothing_is_active`,
+     `..::rollback_from_a_dangling_active_does_not_carry_the_dangling_id_forward`,
+     `..::reset_on_a_healthy_store_reports_no_recovery`
 7. **A normal command invokes the OCI adapter or probes the network.**
    - `effigy` `runner::service_command::pack::tests::ordinary_catalog_work_never_invokes_the_oci_transport`
      — structural: `effigy-catalog` declares no artifact/transport dependency and
@@ -215,12 +235,12 @@ Each row names the exact test that would fail if the counterexample were true.
 ## Validation Performed
 
 - command: `cargo test -p effigy-catalog`
-  - result: pass — lib 116 tests (56 under `pack::tests`), integration 57 tests
+  - result: pass — lib 122 tests (62 under `pack::tests`), integration 57 tests
     (4 under `pack_layer`, 53 pre-existing unchanged)
 - command: `cargo test -p effigy-artifacts`
   - result: pass — the adapter seam is consumed, not modified
 - command: `cargo test -p effigy --lib runner::service_command`
-  - result: pass — 18 tests (14 pack rows, 4 service rows)
+  - result: pass — 23 tests (19 pack rows, 4 service rows)
 - command: `cargo test -p effigy-containers`
   - result: pass — 230 tests, 3 new under `tests::catalog_pack_fallback`
 - command: `cargo test -p effigy-doctor`
@@ -360,6 +380,58 @@ and found three remaining execution misses.
    `doctor_recommends_rollback_only_when_the_target_actually_verifies`, and
    `rollback_refuses_an_unhealthy_target_and_leaves_the_selection_alone`.
 
+### Round three — head `7f91df38e`
+
+The review accepted rounds one and two and found one remaining execution miss
+inside the same recovery contract.
+
+10. **The advertised one-step repair could not repair corrupt store metadata.**
+    Selection reported `fallback-store-unreadable` and `fallback-state-corrupt`
+    and `doctor` advertised `reset` or a verified `rollback`, but both mutation
+    paths still assumed readable, internally consistent state:
+
+    - `reset` began with `self.load()?`, so on a malformed or unsupported
+      `state.json` it failed with the very error that made doctor recommend it.
+    - `rollback` from a dangling `active` onto a healthy `previous` copied the
+      dangling id into `previous`, so `broken_cross_references()` still flagged
+      the result and selection kept falling back — the command reported success
+      while the machine stayed broken.
+    - `reset` had the mirror problem: it demoted a dangling `active` into
+      `previous`, and left an already-dangling `previous` untouched when nothing
+      was active.
+
+    `reset` is now a genuine recovery operation. An unreadable document is moved
+    aside to `state.json.unreadable-<suffix>` — preserved verbatim, never
+    deleted — and replaced with a valid baseline-selected document. Selection
+    pointers are scrubbed unless they name a retained record, preferring the
+    displaced `active` and falling back to the existing `previous`, so a valid
+    recoverable rollback target survives while a dangling one does not.
+    `rollback` and `activate` apply the same rule to the id they displace.
+    Install records and install directories are never touched.
+
+    Records that lived only in an unreadable document cannot be rebuilt without
+    inventing their source and install time, so recovery does not fabricate
+    them. It reports retained records and retained content separately instead —
+    the directories stay on disk and can be reinstalled with `--path`. Saying
+    `retained installs: 0` alone would have read as a deletion.
+
+    Proof, store level:
+    `reset_recovers_malformed_state_without_deleting_it` (asserts the preserved
+    bytes are byte-identical and the install directories are unchanged),
+    `reset_recovers_an_unsupported_state_schema_without_deleting_it`,
+    `reset_scrubs_a_dangling_active_pointer_instead_of_demoting_it`,
+    `reset_scrubs_a_dangling_previous_pointer_when_nothing_is_active`,
+    `rollback_from_a_dangling_active_does_not_carry_the_dangling_id_forward`,
+    `reset_on_a_healthy_store_reports_no_recovery`.
+
+    Proof, command and doctor level: the three
+    `the_advertised_repair_recovers_*` tests each read the command doctor
+    actually names, run exactly that command, and then assert it exited
+    successfully, left `broken_cross_references()` empty, and made the next
+    selection non-fallback — so the advertised repair is proved end to end
+    rather than assumed. `reset_reports_the_recovery_path_in_json` and
+    `reset_on_a_healthy_store_reports_no_recovery_path` cover the payload.
+
 ### Where each proof lives, and why
 
 The container/system/workspace propagation proof is a unit test in
@@ -404,6 +476,10 @@ of this card's scope.
   files), so this is well under a millisecond and is paid rather than cached —
   a cache's invalidation would itself be a correctness surface. A materially
   larger pack format would need that revisited.
+- Recovering an unreadable `state.json` cannot rebuild the install records it
+  held, so lineage and rollback history are lost even though every install
+  directory survives. The bytes are preserved for inspection and the content is
+  reinstallable with `--path`, but the operator has to do that step.
 - Pack entry names must be valid UTF-8. That is a real constraint on what a
   pack may contain, taken deliberately so content identity stays injective; a
   pack built from a tree with non-UTF-8 names will be refused rather than

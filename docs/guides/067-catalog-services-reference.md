@@ -145,7 +145,14 @@ leaves the current selection untouched. `effigy doctor` recommends `rollback`
 only when that same proof passes, and recommends `reset` otherwise.
 
 `reset` selects the compiled baseline; it retains installed content and never
-touches project or user overrides, so `rollback` still works afterwards.
+touches project or user overrides, so `rollback` still works afterwards. It is
+also the recovery path for damaged store metadata: an unreadable or unsupported
+`state.json` is moved aside under a `state.json.unreadable-*` name — never
+deleted — and replaced with a valid baseline-selected document, and selection
+pointers naming no retained record are dropped. Install directories are always
+kept. Records that lived only in an unreadable document cannot be rebuilt, so
+reset reports retained records and retained content separately; the content can
+be reinstalled with `--path`.
 
 Selection re-proves the active pack every time, not just on install: it
 revalidates the manifest and fragments, cross-checks the stored manifest

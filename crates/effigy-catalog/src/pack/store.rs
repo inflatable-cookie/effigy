@@ -184,6 +184,15 @@ impl Drop for PackStoreLock {
     }
 }
 
+/// Outcome of a reset, including any metadata recovery it performed.
+#[derive(Debug, Clone)]
+pub struct PackResetReport {
+    /// Store state after the reset.
+    pub state: PackStoreState,
+    /// Where an unreadable state document was preserved, when one was found.
+    pub quarantined_state: Option<PathBuf>,
+}
+
 /// Handle to the versioned installed-pack store.
 #[derive(Debug, Clone)]
 pub struct PackStore {
@@ -223,6 +232,25 @@ impl PackStore {
     /// Content directory of one install.
     pub fn install_dir(&self, install_id: &str) -> PathBuf {
         self.root.join("installs").join(install_id)
+    }
+
+    /// Install directories currently present on disk, sorted.
+    ///
+    /// Records live in `state.json` and content lives here; recovery from an
+    /// unreadable document loses the former but never the latter, so the two
+    /// counts are reported separately rather than conflated.
+    pub fn stored_install_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = std::fs::read_dir(self.root.join("installs"))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.path().is_dir())
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        ids.sort();
+        ids
     }
 
     /// Transient staging directory used by the install transaction.
@@ -350,7 +378,10 @@ impl PackStore {
                 detail: failure.detail,
             });
         }
-        state.previous = state.active.take();
+        // Carry the displaced selection into `previous` only when it has a
+        // record. Rolling back *out of* a dangling active id must not preserve
+        // that id, or the repair would leave the state just as corrupt.
+        state.previous = state.active.take().filter(|id| state.record(id).is_some());
         state.active = Some(target);
         self.commit(&state)?;
         Ok(state)
@@ -374,18 +405,59 @@ impl PackStore {
         Some((record, verdict))
     }
 
-    /// Select the compiled baseline.
+    /// Select the compiled baseline, recovering unreadable metadata if needed.
     ///
-    /// Installed content is retained and the displaced selection becomes the
-    /// rollback target, so reset is recoverable rather than destructive.
-    pub fn reset(&self) -> Result<PackStoreState, PackError> {
+    /// This is the repair `doctor` advertises when nothing else is safe, so it
+    /// has to work on exactly the states that make `doctor` advertise it. An
+    /// unreadable or unsupported `state.json` is set aside under a recovery
+    /// name — never deleted — and replaced with a valid baseline-selected
+    /// document. Selection pointers that name no retained record are dropped,
+    /// because a dangling pointer is what made selection unhealthy in the first
+    /// place; carrying one through the repair would report success while the
+    /// fallback continued.
+    ///
+    /// Install records and install directories are never touched. Reset has no
+    /// deletion authority over content.
+    pub fn reset(&self) -> Result<PackResetReport, PackError> {
         let _lock = self.lock()?;
-        let mut state = self.load()?;
-        if let Some(active) = state.active.take() {
-            state.previous = Some(active);
-        }
+        let (mut state, quarantined_state) = match self.load() {
+            Ok(state) => (state, None),
+            Err(_) => (PackStoreState::default(), Some(self.quarantine_state()?)),
+        };
+
+        state.previous = self.recoverable_rollback_pointer(&state);
+        state.active = None;
         self.commit(&state)?;
-        Ok(state)
+        Ok(PackResetReport {
+            state,
+            quarantined_state,
+        })
+    }
+
+    /// The rollback pointer reset should leave behind.
+    ///
+    /// Prefer the selection being displaced, fall back to whatever rollback
+    /// pointer already existed, and keep neither unless it names a record —
+    /// so a dangling id cannot survive the repair.
+    fn recoverable_rollback_pointer(&self, state: &PackStoreState) -> Option<String> {
+        [state.active.as_deref(), state.previous.as_deref()]
+            .into_iter()
+            .flatten()
+            .find(|id| state.record(id).is_some())
+            .map(str::to_owned)
+    }
+
+    /// Move an unreadable state document aside so its bytes survive the repair.
+    ///
+    /// Returns where the original went, so the operator can be told rather than
+    /// left to discover that their metadata was replaced.
+    fn quarantine_state(&self) -> Result<PathBuf, PackError> {
+        let source = self.state_path();
+        let destination = self
+            .root
+            .join(format!("state.json.unreadable-{}", unique_suffix()));
+        std::fs::rename(&source, &destination).map_err(|error| PackError::io(&source, &error))?;
+        Ok(destination)
     }
 
     /// Record a validated install and activate it atomically.
@@ -398,7 +470,7 @@ impl PackStore {
     ) -> Result<PackStoreState, PackError> {
         let mut state = self.load()?;
         if state.active.as_deref() != Some(record.install_id.as_str()) {
-            state.previous = state.active.take();
+            state.previous = state.active.take().filter(|id| state.record(id).is_some());
         }
         state.active = Some(record.install_id.clone());
         state

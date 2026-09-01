@@ -255,7 +255,8 @@ fn run_rollback(output_json: bool) -> Result<String, RunnerError> {
 
 fn run_reset(output_json: bool) -> Result<String, RunnerError> {
     let store = require_store()?;
-    let state = store.reset().map_err(pack_error)?;
+    let report = store.reset().map_err(pack_error)?;
+    let state = &report.state;
 
     if output_json {
         return Ok(json!({
@@ -265,6 +266,8 @@ fn run_reset(output_json: bool) -> Result<String, RunnerError> {
             "active": Value::Null,
             "previous": state.previous,
             "retained_installs": state.installs.len(),
+            "retained_install_dirs": store.stored_install_ids().len(),
+            "quarantined_state": report.quarantined_state.as_deref().map(display_path),
         })
         .to_string());
     }
@@ -275,6 +278,26 @@ fn run_reset(output_json: bool) -> Result<String, RunnerError> {
         "retained installs: {} (project and user overrides unchanged)",
         state.installs.len()
     ));
+    if let Some(path) = &report.quarantined_state {
+        lines.push(format!(
+            "recovered unreadable store metadata; the original is preserved at {}",
+            display_path(path)
+        ));
+        // Records lived in the unreadable document and cannot be rebuilt
+        // without inventing their source and install time. Content is
+        // untouched, so say so rather than let `retained installs: 0` read as
+        // a deletion.
+        lines.push(format!(
+            "install records could not be recovered from it; {} install \
+             director{} kept on disk and can be reinstalled with `--path`",
+            store.stored_install_ids().len(),
+            if store.stored_install_ids().len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        ));
+    }
     match &state.previous {
         Some(previous) => lines.push(format!("rollback target: {previous}")),
         None => lines.push("rollback target: none".to_owned()),

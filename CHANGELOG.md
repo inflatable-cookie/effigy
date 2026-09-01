@@ -38,7 +38,11 @@ During v0.x, MINOR bumps may include breaking changes.
   cannot stay selected. `rollback` re-proves its target with that same check
   before mutating state and refuses rather than activating another unhealthy
   pack, and `doctor` recommends `rollback` only when that proof passes,
-  otherwise `reset`. Pack content may contain only regular files and
+  otherwise `reset`. `reset` is also the recovery path for damaged store
+  metadata: an unreadable or unsupported `state.json` is preserved under a
+  `state.json.unreadable-*` name rather than deleted, a valid
+  baseline-selected document is written, selection pointers naming no retained
+  record are dropped, and every install directory is kept. Pack content may contain only regular files and
   directories with valid UTF-8 names; symlinks — including the pack root and
   `pack.toml` — are rejected before anything is read, hashed, or copied. Durable store mutation is serialized across processes by an
   advisory lock. Every successfully installed pack is retained — `install`,

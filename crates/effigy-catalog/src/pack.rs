@@ -52,8 +52,8 @@ pub use selection::{
     PROJECT_LOCAL_CATALOG_DIR,
 };
 pub use store::{
-    InstalledPackRecord, PackSourceRecord, PackStore, PackStoreLock, PackStoreState,
-    PACK_STORE_STATE_SCHEMA,
+    InstalledPackRecord, PackResetReport, PackSourceRecord, PackStore, PackStoreLock,
+    PackStoreState, PACK_STORE_STATE_SCHEMA,
 };
 pub use verify::{verify_installed_pack, PackDefect, PackVerificationFailure};
 
