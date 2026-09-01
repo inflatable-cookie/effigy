@@ -1,9 +1,12 @@
 use crate::runner::tests::prelude::cases::*;
+use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
 use crate::runner::tests::prelude::harness::*;
 use crate::runner::tests::prelude::json::*;
 use crate::runner::tests::prelude::output::*;
 use crate::runner::tests::prelude::setup_fanout_catalog_repo;
+use crate::runner::tests::prelude::TaskInvocation;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn run_manifest_task_builtin_test_uses_configured_suites_as_source_of_truth() {
@@ -332,6 +335,163 @@ workspace = "app"
 }
 
 #[test]
+fn run_manifest_task_builtin_test_child_task_ref_pins_ancestor_container_registry() {
+    let fixture = setup_ancestor_container_child_task_fixture(
+        "builtin-test-child-task-ref-ancestor-registry",
+        ParentSuiteSpec {
+            containers: ANCESTOR_WORKSPACE_CONTAINERS,
+            child_containers: "",
+        },
+    );
+
+    let json = run_builtin_ok(fixture.root.clone(), "test", &["--plan", "--json", "api"]);
+    let command = planned_suite_command(&json);
+    assert_nested_child_task_ref_keeps_ancestor_discovery(&fixture, &command);
+    assert_nested_invocation_container_default(&command, "workspace");
+    assert!(
+        !planned_suite_root(&json).ends_with("/api"),
+        "parent suite target should stay the originating catalog, got {}",
+        planned_suite_root(&json)
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_child_owned_suite_task_ref_pins_ancestor_container_registry() {
+    let fixture = setup_child_owned_suite_ancestor_container_fixture(
+        "builtin-test-child-owned-suite-ancestor-registry",
+    );
+
+    let json = run_builtin_ok(
+        fixture.root.clone(),
+        "api/test",
+        &["--plan", "--json", "unit"],
+    );
+    let command = planned_suite_command(&json);
+    assert_nested_child_task_ref_keeps_ancestor_discovery(&fixture, &command);
+    assert_nested_invocation_container_default(&command, "workspace");
+    assert!(
+        planned_suite_root(&json).ends_with("/api"),
+        "child-owned suite should keep the child catalog cwd, got {}",
+        planned_suite_root(&json)
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_child_explicit_container_registry_still_nests() {
+    let fixture = setup_ancestor_container_child_task_fixture(
+        "builtin-test-child-explicit-container-registry",
+        ParentSuiteSpec {
+            containers: ANCESTOR_WORKSPACE_CONTAINERS,
+            child_containers: CHILD_EXPLICIT_CONTAINERS,
+        },
+    );
+
+    let json = run_builtin_ok(fixture.root.clone(), "test", &["--plan", "--json", "api"]);
+    let command = planned_suite_command(&json);
+    assert_nested_child_task_ref_keeps_ancestor_discovery(&fixture, &command);
+    assert!(
+        quoted_arg_after(&command, "--repo '").is_some(),
+        "child explicit registry must keep ancestor fallback available: {command}"
+    );
+    assert_nested_invocation_container_default(&command, "child");
+}
+
+#[test]
+fn run_manifest_task_direct_child_task_does_not_inherit_undeclared_ancestor_containers() {
+    let fixture = setup_ancestor_container_child_task_fixture(
+        "builtin-test-direct-child-no-ambient-ancestor",
+        ParentSuiteSpec {
+            containers: ANCESTOR_WORKSPACE_CONTAINERS,
+            child_containers: "",
+        },
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test:unit".to_owned(),
+            args: Vec::new(),
+        },
+        fixture.api,
+    )
+    .expect_err("direct child invocation should not inherit undeclared ancestor containers");
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "test:unit",
+            "run_in = \"container\"",
+            "no container target is defined",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_host_child_task_ref_stays_inlined_at_child_cwd() {
+    let root = temp_workspace("builtin-test-host-child-task-ref-cwd");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+
+[test.suites.api]
+run = [{ task = "api/echo" }]
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[tasks.echo]
+run = "printf host-child"
+"#,
+    );
+
+    let json = run_builtin_ok(root.clone(), "test", &["--plan", "--json", "api"]);
+    let command = planned_suite_command(&json);
+    assert!(
+        command.contains("printf host-child"),
+        "host child task-ref should stay inlined: {command}"
+    );
+    assert!(
+        command.contains(&api.display().to_string()),
+        "inlined host task-ref lost the child cwd: {command}"
+    );
+    assert!(
+        !command.contains("--repo"),
+        "host inlined task-ref should not pin discovery: {command}"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_child_command_suite_does_not_pin_repo() {
+    let root = temp_workspace("builtin-test-child-command-suite-no-repo-pin");
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        r#"[catalog.members]
+api = "api"
+"#,
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[test.suites.unit]
+run = "printf command-suite"
+"#,
+    );
+
+    let json = run_builtin_ok(root, "api/test", &["--plan", "--json", "unit"]);
+    let command = planned_suite_command(&json);
+    assert_eq!(command, "printf command-suite");
+    assert!(!command.contains("--repo"));
+}
+
+#[test]
 fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector-unavailable");
     write_package_json_with_test_script(&root);
@@ -347,5 +507,208 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
             "Use `effigy test --plan <args>`",
             "effigy test vitest",
         ],
+    );
+}
+
+const ANCESTOR_WORKSPACE_CONTAINERS: &str = r#"
+[containers]
+default = "workspace"
+
+[containers.workspace]
+primary_service = "workspace"
+"#;
+
+const CHILD_EXPLICIT_CONTAINERS: &str = r#"
+[containers]
+default = "child"
+
+[containers.child]
+primary_service = "app"
+"#;
+
+struct ParentSuiteSpec {
+    containers: &'static str,
+    child_containers: &'static str,
+}
+
+struct AncestorContainerFixture {
+    root: PathBuf,
+    api: PathBuf,
+}
+
+fn setup_ancestor_container_child_task_fixture(
+    workspace: &str,
+    spec: ParentSuiteSpec,
+) -> AncestorContainerFixture {
+    let root = temp_workspace(workspace);
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"[catalog.members]
+api = "api"
+{containers}
+[test.suites.api]
+run = [{{ task = "api/test:unit" }}]
+"#,
+            containers = spec.containers,
+        ),
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        &format!(
+            r#"[catalog]
+alias = "api"
+{child_containers}
+[task_defaults]
+run_in = "container"
+
+[tasks."test:unit"]
+run = "printf inherited-container"
+"#,
+            child_containers = spec.child_containers,
+        ),
+    );
+    AncestorContainerFixture { root, api }
+}
+
+fn setup_child_owned_suite_ancestor_container_fixture(workspace: &str) -> AncestorContainerFixture {
+    let root = temp_workspace(workspace);
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"[catalog.members]
+api = "api"
+{ANCESTOR_WORKSPACE_CONTAINERS}
+"#
+        ),
+    );
+    write_manifest(
+        &api.join("effigy.toml"),
+        r#"[catalog]
+alias = "api"
+
+[task_defaults]
+run_in = "container"
+
+[tasks."test:unit"]
+run = "printf inherited-container"
+
+[test.suites.unit]
+run = [{ task = "test:unit" }]
+"#,
+    );
+    AncestorContainerFixture { root, api }
+}
+
+fn planned_suite_command(json: &str) -> String {
+    let parsed = parse_json_output_with_schema(json, "effigy.test.plan.v1");
+    parsed["targets"][0]["commands"][0]
+        .as_str()
+        .expect("command")
+        .to_owned()
+}
+
+fn planned_suite_root(json: &str) -> String {
+    let parsed = parse_json_output_with_schema(json, "effigy.test.plan.v1");
+    parsed["targets"][0]["root"]
+        .as_str()
+        .expect("root")
+        .to_owned()
+}
+
+fn assert_nested_child_task_ref_keeps_ancestor_discovery(
+    fixture: &AncestorContainerFixture,
+    command: &str,
+) {
+    assert!(
+        command.contains("api/test:unit") || command.contains("test:unit"),
+        "expected nested task invocation, got {command}"
+    );
+    assert!(
+        command.contains(&fixture.api.display().to_string()) || command.contains("/api'"),
+        "expanded task lost the child catalog cwd: {command}"
+    );
+    let cwd = quoted_arg_after(command, "(cd '").unwrap_or("");
+    let repo = quoted_arg_after(command, "--repo '").unwrap_or("");
+    assert!(
+        !repo.is_empty(),
+        "nested task-ref did not pin the originating repository: {command}"
+    );
+    assert!(
+        Path::new(cwd).starts_with(repo) && cwd != repo,
+        "nested task-ref pinned {repo:?} instead of the ancestor of {cwd:?}: {command}"
+    );
+    assert!(
+        !command.contains("printf inherited-container"),
+        "container task-ref was inlined onto the host: {command}"
+    );
+}
+
+fn quoted_arg_after<'a>(command: &'a str, marker: &str) -> Option<&'a str> {
+    let start = command.find(marker)? + marker.len();
+    let end = command[start..].find('\'')?;
+    Some(&command[start..start + end])
+}
+
+fn nested_selector_before_repo(command: &str) -> Option<&str> {
+    let before = command.rsplit_once(" --repo ")?.0;
+    let end = before.rfind('\'')?;
+    let start = before[..end].rfind('\'')?;
+    Some(&before[start + 1..end])
+}
+
+fn assert_nested_invocation_container_default(command: &str, expected_default: &str) {
+    let cwd = PathBuf::from(
+        quoted_arg_after(command, "(cd '").expect("nested command should wrap a child cwd"),
+    );
+    let repo = quoted_arg_after(command, "--repo '")
+        .expect("nested command should pin the originating repository")
+        .to_owned();
+    let selector = nested_selector_before_repo(command)
+        .expect("nested command should keep the child task selector")
+        .to_owned();
+    let task = TaskInvocation {
+        name: selector,
+        args: vec!["--repo".to_owned(), repo.clone()],
+    };
+    let preflight = crate::runner::execute::api::build_execution_preflight(&task, cwd.clone())
+        .expect("nested invocation should rediscover catalogs");
+    assert_eq!(
+        preflight.invocation_cwd,
+        crate::runner::command_context::canonicalize_or_original(&cwd),
+        "nested discovery must keep the child invocation cwd: {command}"
+    );
+    assert!(
+        preflight.catalogs.iter().any(|catalog| {
+            catalog
+                .manifest
+                .containers
+                .as_ref()
+                .and_then(|config| config.default.as_deref())
+                == Some("workspace")
+        }),
+        "pinned --repo {repo:?} did not reload the ancestor containers registry: {command}"
+    );
+    let selection = effigy_routing::select_catalog_and_task(
+        &preflight.selector,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )
+    .expect("nested invocation should select the child task");
+    let (_default_run_in, _systems, containers) =
+        crate::runner::execute::api::effective_task_binding_inputs(
+            &preflight.invocation_cwd,
+            &preflight.catalogs,
+            &selection,
+        );
+    let containers = containers.expect("nested catalogs should expose a containers registry");
+    assert_eq!(
+        containers.default.as_deref(),
+        Some(expected_default),
+        "nested effective container default: {command}"
     );
 }

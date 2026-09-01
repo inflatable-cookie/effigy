@@ -1,5 +1,7 @@
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
+use effigy_core::shell::shell_quote;
 use effigy_manifest::{
     resolve_task_execution_binding, LoadedCatalog, ManifestManagedRun, ManifestTaskRunIn,
     ResolvedTaskExecutionBinding, TaskResolverFn, TaskSelection,
@@ -116,11 +118,7 @@ where
         );
     if let Some(run_spec) = selection.task.run.as_ref() {
         if resolution.host_launched && host_needs_container {
-            return render_builtin_reference_invocation(
-                selector_rendered,
-                resolution.args_rendered,
-                &selection.catalog.catalog_root,
-            );
+            return render_nested_catalog_invocation(selector_rendered, selection, resolution);
         }
         return render_selected_task_run(selection, run_spec, task_name, resolution);
     }
@@ -129,14 +127,51 @@ where
         || has_concurrent_schema(selection.task)
         || execution_binding.is_some()
     {
-        return render_builtin_reference_invocation(
-            selector_rendered,
-            resolution.args_rendered,
-            &selection.catalog.catalog_root,
-        );
+        return render_nested_catalog_invocation(selector_rendered, selection, resolution);
     }
 
     Err(missing_run_error())
+}
+
+fn render_nested_catalog_invocation(
+    selector_rendered: &str,
+    selection: &TaskSelection<'_>,
+    resolution: ReferenceResolution<'_, '_>,
+) -> Result<String, ManagedError> {
+    let args = nested_discovery_args(
+        resolution.args_rendered,
+        resolution.catalogs,
+        &selection.catalog.catalog_root,
+    );
+    render_builtin_reference_invocation(
+        selector_rendered,
+        args.as_ref(),
+        &selection.catalog.catalog_root,
+    )
+}
+
+fn nested_discovery_args<'a>(
+    args_rendered: &'a str,
+    catalogs: &[LoadedCatalog],
+    selected_root: &Path,
+) -> Cow<'a, str> {
+    let Some(origin) = catalogs
+        .iter()
+        .filter(|catalog| selected_root.starts_with(&catalog.catalog_root))
+        .min_by_key(|catalog| catalog.depth)
+        .map(|catalog| catalog.catalog_root.as_path())
+    else {
+        return Cow::Borrowed(args_rendered);
+    };
+    if origin == selected_root {
+        return Cow::Borrowed(args_rendered);
+    }
+    let pin = format!("--repo {}", shell_quote(&origin.display().to_string()));
+    if args_rendered.is_empty() {
+        Cow::Owned(pin)
+    } else {
+        Cow::Owned(format!("{pin} {args_rendered}"))
+    }
 }
 
 fn render_selected_task_run<'request, 'a>(
