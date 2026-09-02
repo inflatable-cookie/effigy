@@ -1,0 +1,919 @@
+//! Compiled catalog-pack baseline snapshot and provenance lock.
+//!
+//! Effigy's embedded `catalog/` tree is no longer an editable concrete asset
+//! authority: it is a byte-for-byte generated copy of the official pack
+//! repository's `pack/` root at one pinned source commit. This module owns the
+//! typed sidecar lock (`catalog-pack.lock.toml`, next to the snapshot) and the
+//! offline proof that the checked-in snapshot still matches it.
+//!
+//! The lock records the source repository, the peeled source commit, the
+//! source commit time, the annotated source tag and its tag object, the pack
+//! identity and version, and the two distinct identity facts required by the
+//! catalog-pack contract:
+//!
+//! - `oci_manifest_digest` — the deterministic OCI manifest digest (registry
+//!   transport identity), recomputed here from the snapshot bytes plus the
+//!   recorded provenance; and
+//! - `content_identity` — the digest over the unpacked pack tree, recomputed
+//!   by [`super::content::content_id`].
+//!
+//! Neither substitutes for the other. Both are recomputed without network
+//! access: [`verify_snapshot`] proves the manifest facts, content identity,
+//! and deterministic OCI manifest digest of a snapshot all agree with the
+//! lock, which is what makes a hand edit fail repository QA instead of
+//! silently becoming a second editable authority.
+//!
+//! Nothing in this module runs during ordinary catalog use. It is exercised
+//! by focused repository tests under `cargo test`, which is part of
+//! `effigy qa`; the regeneration seam is [`compose_baseline_lock`].
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
+
+use super::content::{collect_files, content_id};
+use super::error::PackError;
+use super::manifest::PackManifest;
+
+/// Committed file name of the compiled-baseline provenance lock, relative to
+/// this crate root.
+pub const BASELINE_LOCK_FILE: &str = "catalog-pack.lock.toml";
+
+/// Highest `schema_version` this build can read.
+pub const SUPPORTED_BASELINE_LOCK_SCHEMA: u32 = 1;
+
+/// The canonical pack source repository (GitHub slug). Baseline-owned: the
+/// official repository cannot be redirected by installed pack content, so a
+/// lock naming any other repository is rejected.
+pub const BASELINE_SOURCE_REPOSITORY: &str = "inflatable-cookie/effigy-catalog-pack";
+
+/// OCI media types and artifact type of the deterministic pack manifest.
+///
+/// These mirror the canonical publication model so the manifest digest can be
+/// recomputed byte-for-byte from the snapshot plus the recorded provenance.
+const OCI_MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
+const OCI_ARTIFACT_TYPE: &str = "application/vnd.effigy.catalog.pack.v1";
+const OCI_EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
+const OCI_FILE_LAYER_MEDIA_TYPE: &str = "application/vnd.effigy.catalog.pack.file.v1";
+
+/// Digest prefix used for recorded and recomputed identities.
+const SHA256_PREFIX: &str = "sha256:";
+
+/// A validated compiled-baseline provenance lock.
+///
+/// Fields mirror the committed TOML (`[baseline]`, `[identities]`) and are
+/// validated on parse; drift between the snapshot and the lock is proven by
+/// [`verify_snapshot`], not by parse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledBaselineLock {
+    /// Lock schema version, checked before any other field is trusted.
+    pub schema_version: u32,
+
+    /// Where the snapshot bytes came from and how the artifact was named.
+    pub baseline: BaselineSource,
+
+    /// The two distinct identity facts recorded for the snapshot.
+    pub identities: BaselineIdentities,
+}
+
+/// Source provenance of the generated snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineSource {
+    /// Source repository GitHub slug, e.g. `inflatable-cookie/effigy-catalog-pack`.
+    pub source_repository: String,
+
+    /// Peeled source commit the snapshot and artifact were built from.
+    pub source_commit: String,
+
+    /// Commit timestamp of the source commit, UTC RFC 3339 (`...Z`).
+    pub source_created: String,
+
+    /// Annotated source version tag, e.g. `v1.0.1`.
+    pub source_tag: String,
+
+    /// Git object id of the annotated source tag.
+    pub source_tag_object: String,
+
+    /// Pack identity from the snapshot manifest.
+    pub pack_id: String,
+
+    /// Pack version from the snapshot manifest.
+    pub pack_version: String,
+}
+
+/// Identity facts recorded against the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineIdentities {
+    /// Deterministic OCI manifest digest (`sha256:...`).
+    pub oci_manifest_digest: String,
+
+    /// Unpacked pack tree content identity (`sha256:...`).
+    pub content_identity: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLock {
+    schema_version: u32,
+    baseline: RawBaselineSource,
+    identities: RawBaselineIdentities,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBaselineSource {
+    source_repository: String,
+    source_commit: String,
+    source_created: String,
+    source_tag: String,
+    source_tag_object: String,
+    pack_id: String,
+    pack_version: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBaselineIdentities {
+    oci_manifest_digest: String,
+    content_identity: String,
+}
+
+/// What a successful offline snapshot proof established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotProof {
+    /// Number of regular files in the snapshot.
+    pub file_count: usize,
+
+    /// Total snapshot bytes.
+    pub byte_count: u64,
+
+    /// Recomputed unpacked tree content identity.
+    pub content_identity: String,
+
+    /// Recomputed deterministic OCI manifest digest.
+    pub oci_manifest_digest: String,
+}
+
+/// Failures reading the lock or proving the snapshot against it.
+#[derive(Debug, thiserror::Error)]
+pub enum BaselineError {
+    /// The committed lock file could not be read.
+    #[error("compiled baseline lock {path} is unreadable: {reason}")]
+    LockUnreadable { path: PathBuf, reason: String },
+
+    /// The lock failed structural or field validation.
+    #[error("compiled baseline lock is invalid: {reason}")]
+    InvalidLock { reason: String },
+
+    /// The lock declares a schema this build cannot read.
+    #[error(
+        "compiled baseline lock declares schema version {found}, \
+         but this Effigy supports {supported}"
+    )]
+    UnsupportedLockSchema { found: u32, supported: u32 },
+
+    /// The snapshot's `pack.toml` cannot be parsed as a pack manifest.
+    #[error("compiled baseline snapshot manifest is unusable: {reason}")]
+    ManifestUnusable { reason: String },
+
+    /// The snapshot manifest identity disagrees with the lock.
+    #[error("compiled baseline snapshot pack id `{found}` disagrees with the lock (`{recorded}`)")]
+    PackIdMismatch { recorded: String, found: String },
+
+    /// The snapshot manifest version disagrees with the lock.
+    #[error(
+        "compiled baseline snapshot pack version `{found}` disagrees with the lock (`{recorded}`)"
+    )]
+    PackVersionMismatch { recorded: String, found: String },
+
+    /// The snapshot tree does not hash to the recorded content identity.
+    #[error(
+        "compiled baseline snapshot content identity is {found}, \
+         but the lock records {recorded}"
+    )]
+    ContentIdentityMismatch { recorded: String, found: String },
+
+    /// The deterministic manifest digest does not match the recorded digest.
+    #[error(
+        "compiled baseline snapshot OCI manifest digest is {found}, \
+         but the lock records {recorded}"
+    )]
+    OciManifestDigestMismatch { recorded: String, found: String },
+
+    /// The snapshot tree could not be read or classified safely.
+    #[error("compiled baseline snapshot is unusable: {reason}")]
+    SnapshotUnusable { reason: String },
+}
+
+impl CompiledBaselineLock {
+    /// Parse and validate a lock from TOML contents.
+    pub fn parse(contents: &str) -> Result<Self, BaselineError> {
+        let raw: RawLock =
+            toml::from_str(contents).map_err(|error| BaselineError::InvalidLock {
+                reason: error.to_string(),
+            })?;
+
+        if raw.schema_version == 0 || raw.schema_version > SUPPORTED_BASELINE_LOCK_SCHEMA {
+            return Err(BaselineError::UnsupportedLockSchema {
+                found: raw.schema_version,
+                supported: SUPPORTED_BASELINE_LOCK_SCHEMA,
+            });
+        }
+
+        let lock = Self {
+            schema_version: raw.schema_version,
+            baseline: BaselineSource {
+                source_repository: raw.baseline.source_repository,
+                source_commit: raw.baseline.source_commit,
+                source_created: raw.baseline.source_created,
+                source_tag: raw.baseline.source_tag,
+                source_tag_object: raw.baseline.source_tag_object,
+                pack_id: raw.baseline.pack_id,
+                pack_version: raw.baseline.pack_version,
+            },
+            identities: BaselineIdentities {
+                oci_manifest_digest: raw.identities.oci_manifest_digest,
+                content_identity: raw.identities.content_identity,
+            },
+        };
+        lock.validate()?;
+        Ok(lock)
+    }
+
+    /// Read and validate the lock at `path`.
+    pub fn load(path: &Path) -> Result<Self, BaselineError> {
+        let contents =
+            std::fs::read_to_string(path).map_err(|error| BaselineError::LockUnreadable {
+                path: path.to_path_buf(),
+                reason: error.to_string(),
+            })?;
+        Self::parse(&contents)
+    }
+
+    fn validate(&self) -> Result<(), BaselineError> {
+        let field = |name: &str, value: &str| -> Result<(), BaselineError> {
+            Err(BaselineError::InvalidLock {
+                reason: format!("`{name}` is invalid: `{value}`"),
+            })
+        };
+
+        if self.baseline.source_repository != BASELINE_SOURCE_REPOSITORY {
+            return field(
+                "baseline.source_repository",
+                &self.baseline.source_repository,
+            );
+        }
+        if !is_lower_hex(&self.baseline.source_commit, 40) {
+            return field("baseline.source_commit", &self.baseline.source_commit);
+        }
+        if !is_lower_hex(&self.baseline.source_tag_object, 40) {
+            return field(
+                "baseline.source_tag_object",
+                &self.baseline.source_tag_object,
+            );
+        }
+        if !is_utc_rfc3339_second(&self.baseline.source_created) {
+            return field("baseline.source_created", &self.baseline.source_created);
+        }
+        let Ok(version) = Version::parse(&self.baseline.pack_version) else {
+            return field("baseline.pack_version", &self.baseline.pack_version);
+        };
+        if self.baseline.source_tag != format!("v{version}") {
+            return field("baseline.source_tag", &self.baseline.source_tag);
+        }
+        if self.baseline.pack_id.trim().is_empty() {
+            return field("baseline.pack_id", &self.baseline.pack_id);
+        }
+        for (name, digest) in [
+            (
+                "identities.content_identity",
+                &self.identities.content_identity,
+            ),
+            (
+                "identities.oci_manifest_digest",
+                &self.identities.oci_manifest_digest,
+            ),
+        ] {
+            if !is_sha256_digest(digest) {
+                return field(name, digest);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Prove the snapshot at `snapshot_root` still matches `lock`, offline.
+///
+/// Checks, in order: the snapshot manifest parses; the manifest pack id and
+/// version agree with the lock; the tree hashes to the recorded content
+/// identity; and the deterministic OCI manifest digest rebuilt from the
+/// snapshot bytes plus the recorded provenance equals the recorded digest.
+/// Returns the recomputed facts on success.
+pub fn verify_snapshot(
+    snapshot_root: &Path,
+    lock: &CompiledBaselineLock,
+) -> Result<SnapshotProof, BaselineError> {
+    let manifest =
+        PackManifest::load(snapshot_root).map_err(|error| BaselineError::ManifestUnusable {
+            reason: error.to_string(),
+        })?;
+    if manifest.id != lock.baseline.pack_id {
+        return Err(BaselineError::PackIdMismatch {
+            recorded: lock.baseline.pack_id.clone(),
+            found: manifest.id,
+        });
+    }
+    if manifest.version != lock.baseline.pack_version {
+        return Err(BaselineError::PackVersionMismatch {
+            recorded: lock.baseline.pack_version.clone(),
+            found: manifest.version,
+        });
+    }
+
+    let found_identity = content_id(snapshot_root).map_err(snapshot_unusable)?;
+    if found_identity != lock.identities.content_identity {
+        return Err(BaselineError::ContentIdentityMismatch {
+            recorded: lock.identities.content_identity.clone(),
+            found: found_identity,
+        });
+    }
+
+    let mut files = Vec::new();
+    collect_files(snapshot_root, snapshot_root, &mut files).map_err(snapshot_unusable)?;
+    files.sort();
+    let (found_digest, byte_count) = manifest_digest_from_files(snapshot_root, lock, &files)?;
+    if found_digest != lock.identities.oci_manifest_digest {
+        return Err(BaselineError::OciManifestDigestMismatch {
+            recorded: lock.identities.oci_manifest_digest.clone(),
+            found: found_digest,
+        });
+    }
+
+    Ok(SnapshotProof {
+        file_count: files.len(),
+        byte_count,
+        content_identity: found_identity,
+        oci_manifest_digest: found_digest,
+    })
+}
+
+/// Recompute the deterministic OCI manifest digest of `snapshot_root`.
+///
+/// The published pack artifact is built deterministically: one layer per
+/// regular file in sorted path order, an empty config, and annotations fixed
+/// by the snapshot's own content identity and version plus the recorded
+/// provenance. Mirroring that construction is what lets offline QA recompute
+/// the manifest identity — the registry transport identity — without touching
+/// a registry.
+pub fn recompute_oci_manifest_digest(
+    snapshot_root: &Path,
+    lock: &CompiledBaselineLock,
+) -> Result<String, BaselineError> {
+    let mut files = Vec::new();
+    collect_files(snapshot_root, snapshot_root, &mut files).map_err(snapshot_unusable)?;
+    files.sort();
+    let (digest, _) = manifest_digest_from_files(snapshot_root, lock, &files)?;
+    Ok(digest)
+}
+
+/// Regenerate the lock for `snapshot_root` from recorded source provenance.
+///
+/// The regeneration seam for a future accepted baseline: give the candidate
+/// snapshot's directory and the provenance of the accepted artifact, and this
+/// recomputes both identities the same way offline QA does. `pack_id` and
+/// `pack_version` in `provenance` must already match the candidate manifest.
+pub fn compose_baseline_lock(
+    snapshot_root: &Path,
+    provenance: BaselineSource,
+) -> Result<CompiledBaselineLock, BaselineError> {
+    let manifest =
+        PackManifest::load(snapshot_root).map_err(|error| BaselineError::ManifestUnusable {
+            reason: error.to_string(),
+        })?;
+    if manifest.id != provenance.pack_id {
+        return Err(BaselineError::PackIdMismatch {
+            recorded: provenance.pack_id,
+            found: manifest.id,
+        });
+    }
+    if manifest.version != provenance.pack_version {
+        return Err(BaselineError::PackVersionMismatch {
+            recorded: provenance.pack_version,
+            found: manifest.version,
+        });
+    }
+
+    let content_identity = content_id(snapshot_root).map_err(snapshot_unusable)?;
+    let mut files = Vec::new();
+    collect_files(snapshot_root, snapshot_root, &mut files).map_err(snapshot_unusable)?;
+    files.sort();
+    let provisional = CompiledBaselineLock {
+        schema_version: SUPPORTED_BASELINE_LOCK_SCHEMA,
+        baseline: provenance,
+        identities: BaselineIdentities {
+            oci_manifest_digest: String::new(),
+            content_identity: content_identity.clone(),
+        },
+    };
+    let (oci_manifest_digest, _) = manifest_digest_from_files(snapshot_root, &provisional, &files)?;
+    let lock = CompiledBaselineLock {
+        identities: BaselineIdentities {
+            oci_manifest_digest,
+            content_identity,
+        },
+        ..provisional
+    };
+    lock.validate()?;
+    Ok(lock)
+}
+
+fn snapshot_unusable(error: PackError) -> BaselineError {
+    BaselineError::SnapshotUnusable {
+        reason: error.to_string(),
+    }
+}
+
+/// Deterministically rebuild the canonical pack manifest JSON and return its
+/// sha256 digest plus the total snapshot bytes.
+///
+/// The construction mirrors the canonical publication model exactly: layers
+/// follow the sorted file inventory, the config is the fixed empty config,
+/// and annotations are derived from the snapshot's own facts and the lock's
+/// recorded provenance. JSON is canonicalised (sorted keys, compact
+/// separators) so the digest is a pure function of those inputs.
+fn manifest_digest_from_files(
+    snapshot_root: &Path,
+    lock: &CompiledBaselineLock,
+    files: &[PathBuf],
+) -> Result<(String, u64), BaselineError> {
+    let mut layers = Vec::with_capacity(files.len());
+    let mut byte_count = 0u64;
+    for relative in files {
+        let absolute = snapshot_root.join(relative);
+        let data = std::fs::read(&absolute).map_err(|error| BaselineError::SnapshotUnusable {
+            reason: format!("cannot read {}: {error}", absolute.display()),
+        })?;
+        byte_count += data.len() as u64;
+        let title = relative
+            .to_str()
+            .ok_or_else(|| BaselineError::SnapshotUnusable {
+                reason: format!("snapshot path {} is not valid UTF-8", absolute.display()),
+            })?;
+        layers.push(object([
+            (
+                "annotations",
+                object([(
+                    "org.opencontainers.image.title",
+                    JsonValue::String(title.to_owned()),
+                )]),
+            ),
+            ("digest", JsonValue::String(sha256_digest(&data))),
+            (
+                "mediaType",
+                JsonValue::String(OCI_FILE_LAYER_MEDIA_TYPE.to_owned()),
+            ),
+            ("size", JsonValue::from(data.len())),
+        ]));
+    }
+
+    let empty_config = b"{}";
+    let config = object([
+        ("data", JsonValue::String("e30=".to_owned())),
+        ("digest", JsonValue::String(sha256_digest(empty_config))),
+        (
+            "mediaType",
+            JsonValue::String(OCI_EMPTY_CONFIG_MEDIA_TYPE.to_owned()),
+        ),
+        ("size", JsonValue::from(2u64)),
+    ]);
+
+    let source_url = format!("https://github.com/{BASELINE_SOURCE_REPOSITORY}");
+    let content_id = content_id(snapshot_root).map_err(snapshot_unusable)?;
+    let annotations = object([
+        (
+            "io.effigy.catalog.pack.content-id",
+            JsonValue::String(content_id),
+        ),
+        (
+            "io.effigy.catalog.pack.source-commit",
+            JsonValue::String(lock.baseline.source_commit.clone()),
+        ),
+        (
+            "io.effigy.catalog.pack.source-tag",
+            JsonValue::String(lock.baseline.source_tag.clone()),
+        ),
+        (
+            "io.effigy.catalog.pack.source-tag-object",
+            JsonValue::String(lock.baseline.source_tag_object.clone()),
+        ),
+        (
+            "org.opencontainers.image.created",
+            JsonValue::String(lock.baseline.source_created.clone()),
+        ),
+        (
+            "org.opencontainers.image.revision",
+            JsonValue::String(lock.baseline.source_commit.clone()),
+        ),
+        (
+            "org.opencontainers.image.source",
+            JsonValue::String(source_url),
+        ),
+        (
+            "org.opencontainers.image.version",
+            JsonValue::String(lock.baseline.pack_version.clone()),
+        ),
+    ]);
+
+    let manifest = object([
+        ("annotations", annotations),
+        (
+            "artifactType",
+            JsonValue::String(OCI_ARTIFACT_TYPE.to_owned()),
+        ),
+        ("config", config),
+        ("layers", JsonValue::Array(layers)),
+        (
+            "mediaType",
+            JsonValue::String(OCI_MANIFEST_MEDIA_TYPE.to_owned()),
+        ),
+        ("schemaVersion", JsonValue::from(2u64)),
+    ]);
+
+    let bytes = serde_json::to_vec(&manifest).map_err(|error| BaselineError::SnapshotUnusable {
+        reason: format!("cannot canonicalise the deterministic manifest: {error}"),
+    })?;
+    Ok((sha256_digest(&bytes), byte_count))
+}
+
+/// Build a JSON object whose keys serialize in sorted order.
+///
+/// Keys are collected into a `BTreeMap` first, so the serialized key order is
+/// the canonical sorted order no matter which map backend serde_json uses.
+fn object<'a>(pairs: impl IntoIterator<Item = (&'a str, JsonValue)>) -> JsonValue {
+    let map = pairs
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect::<BTreeMap<String, JsonValue>>();
+    JsonValue::Object(map.into_iter().collect())
+}
+
+fn sha256_digest(data: &[u8]) -> String {
+    let digest = Sha256::digest(data);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    format!("{SHA256_PREFIX}{hex}")
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value
+        .strip_prefix(SHA256_PREFIX)
+        .is_some_and(|hex| is_lower_hex(hex, 64))
+}
+
+fn is_lower_hex(value: &str, len: usize) -> bool {
+    value.len() == len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether `value` is `YYYY-MM-DDTHH:MM:SSZ` (UTC, whole seconds).
+fn is_utc_rfc3339_second(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 20 {
+        return false;
+    }
+    let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
+    digits(0..4)
+        && digits(5..7)
+        && digits(8..10)
+        && digits(11..13)
+        && digits(14..16)
+        && digits(17..19)
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+
+    /// The committed snapshot directory and lock file inside the crate.
+    fn committed_snapshot_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog")
+    }
+
+    fn committed_lock_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BASELINE_LOCK_FILE)
+    }
+
+    /// Identity facts of the accepted `v1.0.1` artifact, pinned here so a
+    /// future baseline bump must deliberately update both the lock and these
+    /// markers together.
+    const PINNED_CONTENT_IDENTITY: &str =
+        "sha256:9498d33f1eccbb91e971b55f5169830baca26326a8f802408a0432e733254974";
+    const PINNED_OCI_MANIFEST_DIGEST: &str =
+        "sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3";
+    const PINNED_FILE_COUNT: usize = 42;
+    const PINNED_BYTE_COUNT: u64 = 88_600;
+
+    /// Provenance of the accepted `v1.0.1` publication, shared by the
+    /// committed lock and fixture locks.
+    fn provenance() -> BaselineSource {
+        BaselineSource {
+            source_repository: BASELINE_SOURCE_REPOSITORY.to_owned(),
+            source_commit: "5ef0ec2b64612c7803cc6105a65ea462862a0b21".to_owned(),
+            source_created: "2026-09-02T11:49:10Z".to_owned(),
+            source_tag: "v1.0.1".to_owned(),
+            source_tag_object: "2bb561109dfe8ec1346779370e2e9f428ef5ddd2".to_owned(),
+            pack_id: "effigy-default-catalog".to_owned(),
+            pack_version: "1.0.1".to_owned(),
+        }
+    }
+
+    fn pack_toml(version: &str) -> String {
+        format!(
+            "schema_version = 1\n\n[pack]\nid = \"effigy-default-catalog\"\n\
+             version = \"{version}\"\ndescription = \"fixture pack\"\n\n\
+             [compatibility]\neffigy = \">=0.12, <0.13\"\n"
+        )
+    }
+
+    /// A small pack-shaped fixture tree with one fragment.
+    fn fixture_snapshot(root: &Path) -> PathBuf {
+        let pack = root.join("snapshot");
+        write(&pack.join("pack.toml"), &pack_toml("1.0.1"));
+        write(
+            &pack.join("postgres/service.toml"),
+            "[service]\nname = \"postgres\"\n",
+        );
+        write(
+            &pack.join("postgres/compose.fragment.yml"),
+            "image: postgres:17\n",
+        );
+        write(&pack.join("postgres/configs/default.conf"), "port 5432\n");
+        pack
+    }
+
+    fn write(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir");
+        }
+        std::fs::write(path, contents).expect("write");
+    }
+
+    fn fixture_lock(snapshot: &Path) -> CompiledBaselineLock {
+        compose_baseline_lock(snapshot, provenance()).expect("fixture lock")
+    }
+
+    #[test]
+    fn committed_snapshot_verifies_against_committed_lock() {
+        let lock = CompiledBaselineLock::load(&committed_lock_path()).expect("committed lock");
+        let proof = verify_snapshot(&committed_snapshot_dir(), &lock).expect("snapshot proof");
+
+        assert_eq!(proof.file_count, PINNED_FILE_COUNT);
+        assert_eq!(proof.byte_count, PINNED_BYTE_COUNT);
+        assert_eq!(proof.content_identity, PINNED_CONTENT_IDENTITY);
+        assert_eq!(proof.oci_manifest_digest, PINNED_OCI_MANIFEST_DIGEST);
+        assert_eq!(lock.identities.content_identity, PINNED_CONTENT_IDENTITY);
+        assert_eq!(
+            lock.identities.oci_manifest_digest,
+            PINNED_OCI_MANIFEST_DIGEST
+        );
+    }
+
+    #[test]
+    fn committed_snapshot_regeneration_is_deterministic() {
+        // Composing a fresh lock from the committed snapshot and the recorded
+        // provenance must reproduce the committed lock exactly: regeneration
+        // is a pure function of snapshot bytes and provenance.
+        let committed = CompiledBaselineLock::load(&committed_lock_path()).expect("committed lock");
+        let regenerated =
+            compose_baseline_lock(&committed_snapshot_dir(), provenance()).expect("regenerate");
+        assert_eq!(regenerated, committed);
+    }
+
+    #[test]
+    fn committed_lock_rejects_unknown_fields_and_foreign_repository() {
+        let contents = std::fs::read_to_string(committed_lock_path()).expect("committed lock");
+        let tampered = contents.replace(
+            "source_repository = \"inflatable-cookie/effigy-catalog-pack\"",
+            "source_repository = \"attacker/effigy-catalog-pack\"",
+        );
+        assert!(matches!(
+            CompiledBaselineLock::parse(&tampered),
+            Err(BaselineError::InvalidLock { .. })
+        ));
+
+        let tampered = format!("{contents}\nstray = \"field\"\n");
+        assert!(matches!(
+            CompiledBaselineLock::parse(&tampered),
+            Err(BaselineError::InvalidLock { .. })
+        ));
+    }
+
+    #[test]
+    fn unsupported_lock_schema_is_rejected() {
+        let contents = std::fs::read_to_string(committed_lock_path()).expect("committed lock");
+        let tampered = contents.replacen("schema_version = 1", "schema_version = 2", 1);
+        assert!(matches!(
+            CompiledBaselineLock::parse(&tampered),
+            Err(BaselineError::UnsupportedLockSchema {
+                found: 2,
+                supported: 1,
+            })
+        ));
+    }
+
+    #[test]
+    fn byte_drift_in_snapshot_content_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        write(
+            &snapshot.join("postgres/configs/default.conf"),
+            "port 5433\n",
+        );
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::ContentIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn added_snapshot_file_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        write(&snapshot.join("scratch/note.txt"), "not part of the pack\n");
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::ContentIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn manifest_version_drift_is_rejected_before_hashing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        write(&snapshot.join("pack.toml"), &pack_toml("1.0.2"));
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::PackVersionMismatch {
+                recorded,
+                found
+            }) if recorded == "1.0.1" && found == "1.0.2"
+        ));
+    }
+
+    #[test]
+    fn manifest_pack_id_drift_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        let manifest = std::fs::read_to_string(snapshot.join("pack.toml")).expect("manifest");
+        write(
+            &snapshot.join("pack.toml"),
+            &manifest.replace("effigy-default-catalog", "effigy-other-catalog"),
+        );
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::PackIdMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn missing_manifest_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        std::fs::remove_file(snapshot.join("pack.toml")).expect("remove manifest");
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::ManifestUnusable { .. })
+        ));
+    }
+
+    #[test]
+    fn lock_content_identity_drift_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let mut lock = fixture_lock(&snapshot);
+
+        lock.identities.content_identity = format!("{SHA256_PREFIX}{}", "0".repeat(64));
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::ContentIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn lock_manifest_digest_drift_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let mut lock = fixture_lock(&snapshot);
+
+        lock.identities.oci_manifest_digest = format!("{SHA256_PREFIX}{}", "0".repeat(64));
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::OciManifestDigestMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn lock_version_drift_is_rejected_against_snapshot_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let mut lock = fixture_lock(&snapshot);
+
+        lock.baseline.pack_version = "9.9.9".to_owned();
+        assert!(matches!(
+            verify_snapshot(&snapshot, &lock),
+            Err(BaselineError::PackVersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn fixture_recomputed_digest_is_stable_and_digest_driven() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = fixture_snapshot(temp.path());
+        let lock = fixture_lock(&snapshot);
+
+        let first = recompute_oci_manifest_digest(&snapshot, &lock).expect("recompute once");
+        let second = recompute_oci_manifest_digest(&snapshot, &lock).expect("recompute twice");
+        assert_eq!(first, second);
+        assert_eq!(first, lock.identities.oci_manifest_digest);
+
+        // The manifest digest must move when content moves, even when the
+        // content identity recorded in the lock stays behind: the digest
+        // rebuild derives the content-id annotation from the snapshot bytes.
+        write(
+            &snapshot.join("postgres/service.toml"),
+            "[service]\nname = \"x\"\n",
+        );
+        let moved = recompute_oci_manifest_digest(&snapshot, &lock).expect("recompute edited");
+        assert_ne!(moved, first);
+    }
+
+    /// Marker tokens the repository-owned source scanner treats as generated
+    /// content (mirrors `crates/effigy-scan/src/constants.rs`
+    /// `GENERATED_MARKERS`). This hand-authored verifier must never trip the
+    /// `scan.generated-in-src` content-marker classification.
+    const SCAN_GENERATED_MARKERS: &[&str] = &[
+        "@generated",
+        "auto-generated",
+        "autogenerated",
+        "code generated",
+        "do not edit",
+        "generated by",
+    ];
+
+    #[test]
+    fn verifier_source_header_avoids_generated_marker_tokens() {
+        // The scanner samples the first 24 lines, lowercased, and flags any
+        // marker substring - including accidental joins such as
+        // "generated byte-for-byte", which contains "generated by". Keep this
+        // file's header window free of every token so `effigy doctor --json`
+        // stays error-free for the verifier itself.
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pack/baseline.rs"));
+        let header = source.lines().take(24).collect::<Vec<&str>>().join("\n");
+        let lower = header.to_ascii_lowercase();
+        for marker in SCAN_GENERATED_MARKERS {
+            assert!(
+                !lower.contains(marker),
+                "baseline.rs header must not contain scan marker `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn committed_lock_keeps_its_generated_marker_header() {
+        // The generated snapshot and lock stay clearly marked: the lock file
+        // next to the snapshot carries the generated-file header, and nothing
+        // inside the byte-exact snapshot itself can carry an extra marker
+        // without breaking content identity.
+        let contents = std::fs::read_to_string(committed_lock_path()).expect("committed lock");
+        assert!(
+            contents.contains("GENERATED FILE") && contents.contains("DO NOT HAND-EDIT"),
+            "committed lock must keep its generated-file marker header"
+        );
+    }
+}

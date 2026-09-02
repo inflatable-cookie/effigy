@@ -390,10 +390,12 @@ child-catalog registry preservation, cold docs-context time bounds/progress,
 and traversal-budget reachability.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Cards `1103` through `1105` are complete. Card `1106` is Ready; cards
-`1107` and `1108` remain behind its generated-baseline cutover gate.
+`115`. Cards `1103` through `1106` are complete; the `1106` cutover PR is
+under review. Cards `1107` and `1108` remain behind its generated-baseline
+cutover gate until the orchestrator refreshes their readiness after merge.
 
 ## Next Task
 
-Implement ready card `1106`. Downstream Bovine and Acowtancy revalidation
-remain separately owned.
+Card `1106`'s generated-baseline cutover PR is under review. After it merges,
+refresh ready-frontier status for cards `1107` and `1108`. Downstream Bovine
+and Acowtancy revalidation remain separately owned.

@@ -285,4 +285,6 @@ exclusive-create boundary.
 
 ## Next Task
 
-Implement ready card `1106`. Effigy release authority remains separate.
+Card `1106`'s generated-baseline cutover is implemented and under review.
+After its PR merges, refresh ready-frontier status for cards `1107` and
+`1108`. Effigy release authority remains separate.

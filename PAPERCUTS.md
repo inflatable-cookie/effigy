@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
+- Friction: `effigy::cli_output_tests` `cli_container_attached_session_handles_sigint_during_startup` failed under `effigy qa` and in isolation (twice) while passing under `cargo test --workspace`; it also fails on the clean base with this lane's changes stashed, so it is a pre-existing environment/timing race, not a regression.
+- Impact: full `effigy qa` rounds fail intermittently on a container-attach SIGINT startup race, blocking worker required-validation runs.
+- Possible fix: make the SIGINT-during-startup assertion race-free (wait for the attach/startup handshake before signalling) or mark it for container-availability/timing tolerance.
+- Surface: workspace `cli_output_tests` container attach tests; any worker running `effigy qa`.
+
 ### [ ] `graph explore` can hang with no output on a cold worktree — 2026-09-01
 - Friction: `effigy graph explore "<question>" --json` produced no stdout for
   more than 100s during worker startup on a fresh worktree; the process had to
