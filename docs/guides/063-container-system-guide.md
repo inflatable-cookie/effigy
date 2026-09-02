@@ -5,12 +5,12 @@ Use this guide when a repo wants a host-clean local environment with:
 - databases, queues, or other backing services
 - a workspace container for Linux-native app work
 - local domains and gateway routing
-- explicit lifecycle control through `effigy local container ...`
+- explicit lifecycle control through `effigy container ...`
 
 This is the practical command guide for the container commands.
 
 Use:
-- this guide for the direct `effigy local container ...` commands and container
+- this guide for the direct `effigy container ...` commands and container
   manifest shape
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
   for the model behind `system`, `workspace`, and `dev`
@@ -22,9 +22,9 @@ Use:
 Shortest path:
 
 1. declare a named container in `effigy.toml`
-2. run `effigy local container up`
-3. use `effigy local container shell` or a task such as `effigy dev`
-4. run `effigy local container down` when you want the environment gone
+2. run `effigy container up`
+3. use `effigy container shell` or a task such as `effigy dev`
+4. run `effigy container down` when you want the environment gone
 
 ## Host prerequisites (macOS)
 
@@ -64,15 +64,15 @@ brew install --cask docker
 Useful backend controls:
 
 ```sh
-effigy admin config set containers.backend containerd
-effigy admin config set containers.backend docker
-effigy deliver bootstrap <git-url> --backend docker
+effigy config set containers.backend containerd
+effigy config set containers.backend docker
+effigy bootstrap <git-url> --backend docker
 effigy doctor --verbose
 ```
 
 ### OCI artifacts (optional)
 
-If you use `data dump --push`, `data seed` with OCI refs, or `effigy deliver artifact`
+If you use `data dump --push`, `data seed` with OCI refs, or `effigy artifact`
 commands, install `oras`:
 
 ```bash
@@ -93,33 +93,33 @@ brew install mkcert
 mkcert -install
 ```
 
-Effigy also provides `effigy local gateway setup-tls` as the “do the right thing”
+Effigy also provides `effigy gateway setup-tls` as the “do the right thing”
 helper for mkcert-backed TLS.
 
 Common commands:
 
 ```sh
-effigy local container up
-effigy local container <NAME> up
-effigy local container down
-effigy local container <NAME> down
-effigy local container status --global
-effigy local container stats --global
-effigy local container <NAME> status
-effigy local container profile status
-effigy local container profile resize
-effigy local container profile purge --yes
-effigy local container profile recreate --disk 180 --yes
-effigy local container <NAME> logs
-effigy local container <NAME> shell
-effigy local container <NAME> data list
-effigy local container <NAME> data export <VOLUME> <PATH>
-effigy local container <NAME> data import <VOLUME> <PATH>
-effigy local container <NAME> data pull-production
-effigy local container <NAME> reset --keep-data
-effigy local container <NAME> eject
-effigy local container cache list --global
-effigy local container volume list --dormant
+effigy container up
+effigy container <NAME> up
+effigy container down
+effigy container <NAME> down
+effigy container status --global
+effigy container stats --global
+effigy container <NAME> status
+effigy container profile status
+effigy container profile resize
+effigy container profile purge --yes
+effigy container profile recreate --disk 180 --yes
+effigy container <NAME> logs
+effigy container <NAME> shell
+effigy container <NAME> data list
+effigy container <NAME> data export <VOLUME> <PATH>
+effigy container <NAME> data import <VOLUME> <PATH>
+effigy container <NAME> data pull-production
+effigy container <NAME> reset --keep-data
+effigy container <NAME> eject
+effigy container cache list --global
+effigy container volume list --dormant
 ```
 
 Default resolution:
@@ -301,7 +301,7 @@ mounts = ["./:/workspace"]
 Use this when:
 
 - the repo already owns its own compose file
-- the repo has taken local ownership through `effigy local container <name> eject`
+- the repo has taken local ownership through `effigy container <name> eject`
 - the generated catalog path is not sufficient
 
 ## Core Rules
@@ -349,7 +349,7 @@ Use this with `effigy.local.toml` for per-machine mounts.
 
 ## Runtime Behavior
 
-`effigy local container up` means:
+`effigy container up` means:
 
 1. ensure the named Colima profile is running
 2. bring the compose environment up
@@ -365,23 +365,23 @@ Attached mode behavior:
 - interactive runs use Effigy's tabbed session runtime
 - non-interactive runs fall back to stream-mode output
 
-`effigy local container down` is intentionally narrow:
+`effigy container down` is intentionally narrow:
 
 - it tears down the compose environment
 - it does not stop the Colima profile itself
 
 Cross-project views:
 
-- `effigy local container status --global`
-- `effigy local container stats --global`
-- `effigy local container cache list --global`
-- `effigy local container volume list --global`
+- `effigy container status --global`
+- `effigy container stats --global`
+- `effigy container cache list --global`
+- `effigy container volume list --global`
 
 Repo-local cleanup views:
 
-- `effigy local container cache list`
-- `effigy local container volume list`
-- `effigy local container volume list --dormant`
+- `effigy container cache list`
+- `effigy container volume list`
+- `effigy container volume list --dormant`
 
 Use `cache` for disposable build/install artifacts. Use `volume` for named
 volume ownership, dormant repo leftovers, and global orphan discovery.
@@ -395,7 +395,7 @@ Container-backed tasks now use two distinct lifecycle models.
 Interactive public shell/session surfaces include:
 
 - `effigy dev`
-- `effigy local workspace`
+- `effigy workspace`
 - tasks that end in `stay_in_shell = true`
 
 These are session-owned lifecycles:
@@ -431,7 +431,7 @@ Default lease behavior:
 - lease duration defaults to 5 minutes
 - the lease is refreshed on reuse
 - the runtime shuts down after the lease expires unless the user explicitly
-  keeps it up through `effigy local container up`, `effigy dev`, or another owned
+  keeps it up through `effigy container up`, `effigy dev`, or another owned
   session
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
@@ -439,7 +439,7 @@ behavior for deferred versus explicit container routing.
 
 ### Workspace Exec Identity
 
-Host-routed tasks and `effigy local exec` use the container's declared
+Host-routed tasks and `effigy exec` use the container's declared
 `workspace_user` and `workspace_home` when they target the primary service.
 Explicit execs against another service keep that service's configured user.
 Interactive terminals retain a TTY; pipes, agents, and other non-console
@@ -475,28 +475,28 @@ when the data change is intentional.
 
 ### Data Dump and Push
 
-`effigy local container data dump` exports logical SQL dumps from generated-compose
+`effigy container data dump` exports logical SQL dumps from generated-compose
 database services. By default it writes local files:
 
 ```sh
 # Bare target writes ./<target>.sql
-effigy local container data dump legacy_mysql
+effigy container data dump legacy_mysql
 
 # Explicit local path
-effigy local container data dump app=./app.sql app_test=./app_test.sql
+effigy container data dump app=./app.sql app_test=./app_test.sql
 ```
 
 You can also target an OCI registry. This stages the dump locally and reports
 the planned destination without publishing:
 
 ```sh
-effigy local container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
 ```
 
 To publish after staging, add `--push`:
 
 ```sh
-effigy local container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 ```
 
 Push rules:
@@ -509,19 +509,19 @@ Push rules:
 
 ### Data Seed
 
-`effigy local container data seed` stages local or OCI artifacts and invokes the
+`effigy container data seed` stages local or OCI artifacts and invokes the
 standard `bootstrap:db-seed` task. It currently targets the repo default
 container only.
 
 ```sh
 # Local file
-effigy local container data seed --db-seed ./latest.sql
+effigy container data seed --db-seed ./latest.sql
 
 # OCI artifact
-effigy local container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
+effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
 
 # Multiple targets
-effigy local container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql
+effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql
 ```
 
 OCI refs must use the explicit `oci://` prefix. `data seed` stages the artifact
@@ -529,7 +529,7 @@ under `.effigy/local/db-seeds/` before the app-specific seed logic runs.
 
 ## Cache Lifecycle
 
-`effigy local container cache list` and `cache prune` manage purge-safe isolated
+`effigy container cache list` and `cache prune` manage purge-safe isolated
 build cache volumes. These are disposable build artifacts, not persistent app
 data.
 
@@ -551,20 +551,20 @@ instead of reusing one with stale absolute-path metadata.
 
 ```sh
 # List caches for the current repo
-effigy local container cache list
+effigy container cache list
 
 # List caches across all projects on the Colima profile
-effigy local container cache list --global
+effigy container cache list --global
 
 # Filter by project or kind
-effigy local container cache list --project example-app-dev
-effigy local container cache list --kind rust-target
+effigy container cache list --project example-app-dev
+effigy container cache list --kind rust-target
 
 # Prune (requires confirmation)
-effigy local container cache prune --yes
-effigy local container cache prune --kind node-modules --yes
-effigy local container cache prune --global --yes
-effigy local container cache prune --kind rust-target --yes
+effigy container cache prune --yes
+effigy container cache prune --kind node-modules --yes
+effigy container cache prune --global --yes
+effigy container cache prune --kind rust-target --yes
 ```
 
 Safety rules:
@@ -577,27 +577,27 @@ Safety rules:
 
 ## Volume Lifecycle
 
-`effigy local container volume list` and `volume prune` manage Effigy-managed named
+`effigy container volume list` and `volume prune` manage Effigy-managed named
 volumes, including persistent app data and orphaned volumes.
 
 `volume list` is read-only. By default it shows volumes for the current repo:
 
 ```sh
 # List volumes for the current repo
-effigy local container volume list
+effigy container volume list
 
 # Show repo-scoped volumes that are no longer declared (superseded)
-effigy local container volume list --dormant
+effigy container volume list --dormant
 ```
 
 Add `--global` for a machine-wide view across all runtimes:
 
 ```sh
 # List all Effigy-managed volumes across repos
-effigy local container volume list --global
+effigy container volume list --global
 
 # Show only orphaned volumes whose owning repo is gone or no longer declares them
-effigy local container volume list --global --orphans
+effigy container volume list --global --orphans
 ```
 
 `volume prune` removes volumes. It requires either `--dormant` for repo-scoped
@@ -605,10 +605,10 @@ cleanup or `--global --orphans` for machine-wide orphan cleanup:
 
 ```sh
 # Remove superseded volumes for the current repo
-effigy local container volume prune --dormant --yes
+effigy container volume prune --dormant --yes
 
 # Remove orphaned volumes across all repos
-effigy local container volume prune --global --orphans --yes
+effigy container volume prune --global --orphans --yes
 ```
 
 Safety rules:
@@ -623,7 +623,7 @@ Safety rules:
 `[containers.<name>.dns]` integrates with the gateway:
 
 - route registration and cleanup happen during container lifecycle
-- `tls = true` works with `effigy local gateway setup-tls`
+- `tls = true` works with `effigy gateway setup-tls`
 - when TLS is enabled, plain HTTP requests are redirected to HTTPS
 
 TCP catalog services such as postgres, mariadb, redis, and memcached also get
@@ -637,15 +637,15 @@ files), and it reverse-proxies to whatever upstream each route names. So it
 verifies its route table before trusting it: Effigy writes `routes.json`
 owner-only (`0o600`) with a managed marker, and the daemon refuses a
 group/other-writable or unmarked table, keeping its last-known-good routes
-instead. `effigy local gateway status` reports `route_table_trust` and
+instead. `effigy gateway status` reports `route_table_trust` and
 `effigy doctor` warns when the table is untrusted. If you upgrade from a build
-that predates this and see an "untrusted" warning, re-run `effigy local container up`
+that predates this and see an "untrusted" warning, re-run `effigy container up`
 (or re-register routes) once to re-stamp the table. The full model is in
 [`033-gateway-route-table-trust-contract.md`](../contracts/033-gateway-route-table-trust-contract.md).
 
 ## Troubleshooting: stale SSH-agent forwarding
 
-Symptom: `effigy local container up` fails the workspace container with
+Symptom: `effigy container up` fails the workspace container with
 
 ```
 fatal: failed to mkdir "/run/host-services/ssh-auth.sock": ... file exists
@@ -663,7 +663,7 @@ workspace back up:
 
 ```bash
 colima restart <profile>
-effigy local container up
+effigy container up
 ```
 
 Effigy pre-empts this: `container up` warns when the forwarded socket is stale
@@ -691,20 +691,20 @@ Use the profile commands for that workflow:
 
 ```sh
 # Inspect actual profile sizing against Effigy's managed targets
-effigy local container profile status
+effigy container profile status
 
 # Apply the managed sizing in place by stopping and restarting the profile
-effigy local container profile resize
+effigy container profile resize
 
 # Persist a different managed disk target
-effigy admin config set containers.profile_disk_gib 180
+effigy config set containers.profile_disk_gib 180
 
 # Delete the managed profile and all profile runtime data without restarting it
-effigy local container profile purge --yes
+effigy container profile purge --yes
 
 # Recreate only if resize cannot get the profile to the managed target
 # This deletes local profile data, including containers, images, and volumes.
-effigy local container profile recreate --disk 180 --yes
+effigy container profile recreate --disk 180 --yes
 ```
 
 When `container profile recreate` runs interactively without `--disk`, Effigy
@@ -731,5 +731,5 @@ Still intentionally narrow:
 ## Next Step
 
 Use this page when deciding whether a repo should stay on direct
-`effigy local container ...` commands or move to the broader `system` and
+`effigy container ...` commands or move to the broader `system` and
 `workspace` model.

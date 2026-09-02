@@ -27,7 +27,7 @@ If you only need the shortest maintenance path:
 
 1. update the affected docs in the same batch as the behavior change
 2. run `effigy qa:docs`
-3. run `effigy repo docs check workflow-paths`
+3. run `effigy docs check workflow-paths`
 4. widen to JSON or broader QA only when the change actually touches that surface
 
 ## 1) Choose Change Type
@@ -110,7 +110,7 @@ Run in this order:
 
 ```sh
 effigy qa:docs
-effigy repo docs check workflow-paths
+effigy docs check workflow-paths
 ```
 
 If the change touches `AGENTS.md`, adoption snippets, setup/install docs, or
@@ -151,7 +151,7 @@ Copy into PR description:
 - [ ] Style/terminology checked against 033/034
 - [ ] `effigy qa:docs` passed
 - [ ] Agent/default guidance changes: `effigy qa:docs:agent-defaults` run
-- [ ] `effigy repo docs check workflow-paths` passed
+- [ ] `effigy docs check workflow-paths` passed
 - [ ] JSON-related changes: `effigy qa:json:ci` run
 ```
 

@@ -12,8 +12,8 @@ const PAPERCUTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "Papercuts remain observations; this command does not prioritize or promote them.",
     ],
     usage: &[
-        "effigy repo papercuts [--all] [--scope <PATH>] [--json]",
-        "effigy repo papercuts add <TITLE> --friction <TEXT> --impact <TEXT> --fix <TEXT> --surface <TEXT> [--scope <PATH>] [--json]",
+        "effigy papercuts [--all] [--scope <PATH>] [--json]",
+        "effigy papercuts add <TITLE> --friction <TEXT> --impact <TEXT> --fix <TEXT> --surface <TEXT> [--scope <PATH>] [--json]",
     ],
     leading_common_options: &[],
     options: &[
@@ -30,9 +30,9 @@ const PAPERCUTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy repo papercuts",
-        "effigy --json repo papercuts --scope ~/Dev/projects",
-        "effigy repo papercuts --all",
-        "effigy repo papercuts add \"Graph output is noisy\" --friction \"stale output floods context\" --impact \"repeat orientation cost\" --fix \"refresh once\" --surface \"Effigy graph\"",
+        "effigy papercuts",
+        "effigy --json papercuts --scope ~/Dev/projects",
+        "effigy papercuts --all",
+        "effigy papercuts add \"Graph output is noisy\" --friction \"stale output floods context\" --impact \"repeat orientation cost\" --fix \"refresh once\" --surface \"Effigy graph\"",
     ],
 };

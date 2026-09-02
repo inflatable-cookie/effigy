@@ -181,7 +181,7 @@ pub fn apply_global_cli_options(
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
             }
-            Command::Task(task) | Command::GroupedBuiltin(task) => {
+            Command::Task(task) => {
                 if !runtime_flag_present_before_passthrough(&task.args, "--repo") {
                     task.args.insert(0, repo_override.display().to_string());
                     task.args.insert(0, "--repo".to_owned());
@@ -202,7 +202,7 @@ pub fn apply_global_cli_options(
 
     if options.task_verbose_root {
         match &mut cmd {
-            Command::Task(task) | Command::GroupedBuiltin(task) => {
+            Command::Task(task) => {
                 if !runtime_flag_present_before_passthrough(&task.args, "--verbose-root") {
                     task.args.insert(0, "--verbose-root".to_owned());
                 }
@@ -213,7 +213,7 @@ pub fn apply_global_cli_options(
 
     if let Some(env_schema) = options.task_env_schema.as_ref() {
         match &mut cmd {
-            Command::Task(task) | Command::GroupedBuiltin(task) => {
+            Command::Task(task) => {
                 if !runtime_flag_present_before_passthrough(&task.args, "--env-schema") {
                     task.args.insert(0, env_schema.display().to_string());
                     task.args.insert(0, "--env-schema".to_owned());
@@ -249,7 +249,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Workspace(args) => args.output_json = true,
         Command::Gateway(args) => args.output_json = true,
         Command::Service(args) => args.output_json = true,
-        Command::Task(task) | Command::GroupedBuiltin(task) => {
+        Command::Task(task) => {
             if !runtime_flag_present_before_passthrough(&task.args, "--json") {
                 let insert_at =
                     if task.args.first().map(String::as_str).is_some_and(|arg| {
@@ -318,9 +318,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
-        Command::Task(task) | Command::GroupedBuiltin(task) => {
-            runtime_flag_present_before_passthrough(&task.args, "--json")
-        }
+        Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,

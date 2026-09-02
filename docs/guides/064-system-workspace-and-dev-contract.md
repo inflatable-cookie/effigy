@@ -5,10 +5,10 @@ Effigy supposed to think about host-clean local dev?"
 
 This is the mental-model guide for:
 
-- `effigy local system ...`
-- `effigy local workspace`
+- `effigy system ...`
+- `effigy workspace`
 - `dev` tasks that bind to a system
-- the relationship between those commands and `effigy local container ...`
+- the relationship between those commands and `effigy container ...`
 
 Use:
 - this guide for the model and naming rules
@@ -81,15 +81,15 @@ maintenance work do not have to hide inside normal app startup.
 
 ## Command Roles
 
-### `effigy local system ...`
+### `effigy system ...`
 
 This is the public infra lifecycle command:
 
 ```sh
-effigy local system up
-effigy local system down
-effigy local system status
-effigy local system logs
+effigy system up
+effigy system down
+effigy system status
+effigy system logs
 ```
 
 Use it when you want to:
@@ -98,7 +98,7 @@ Use it when you want to:
 - inspect or repair infra without launching the app
 - keep the system running across several commands
 
-### `effigy local workspace`
+### `effigy workspace`
 
 This is the Linux-native maintenance entrypoint.
 
@@ -142,7 +142,7 @@ The key distinction is simple:
 
 That rule applies to both `dev` and `workspace`.
 
-### `effigy local system up`
+### `effigy system up`
 
 - idempotent
 - if already up, report that cleanly
@@ -163,7 +163,7 @@ Default closeout policy for auto-started systems:
 
 - `auto-stop`
 
-### `effigy local workspace`
+### `effigy workspace`
 
 Contract:
 
@@ -198,7 +198,7 @@ Bad default `dev` behavior:
 Typical pattern:
 
 ```sh
-effigy local workspace
+effigy workspace
 cd /workspace-root/<repo>/acme-front
 bun add <pkg>
 exit
@@ -318,7 +318,7 @@ Behavior:
 ### Linux-native maintenance session
 
 ```sh
-effigy local workspace
+effigy workspace
 ```
 
 Behavior:
@@ -331,10 +331,10 @@ Behavior:
 ### Manual substrate control
 
 ```sh
-effigy local system up
-effigy local workspace
+effigy system up
+effigy workspace
 effigy dev
-effigy local system down
+effigy system down
 ```
 
 Behavior:

@@ -7,7 +7,7 @@ current directory tree, run its declared setup, and (by default) run
 The goal is straightforward:
 
 ```sh
-effigy deliver bootstrap <git-url>
+effigy bootstrap <git-url>
 ```
 
 and the repo should describe the rest in `effigy.toml`.
@@ -31,26 +31,26 @@ Use bootstrap when:
 Start with:
 
 ```sh
-effigy deliver bootstrap <git-url> --plan
+effigy bootstrap <git-url> --plan
 ```
 
 Then run the real bring-up (starts `[bootstrap].start` by default):
 
 ```sh
-effigy deliver bootstrap <git-url>
+effigy bootstrap <git-url>
 ```
 
 To bring up without running `[bootstrap].start`:
 
 ```sh
-effigy deliver bootstrap <git-url> --no-start
+effigy bootstrap <git-url> --no-start
 ```
 
 ## Command Shape
 
 ```sh
-effigy deliver bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
-effigy deliver bootstrap teardown [--yes] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
+effigy bootstrap teardown [--yes] [--json]
 ```
 
 What each flag means:
@@ -76,7 +76,7 @@ What each flag means:
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
 
-Use `effigy deliver bootstrap teardown --yes` afterward to remove the fresh-session
+Use `effigy bootstrap teardown --yes` afterward to remove the fresh-session
 runtime and generated-compose volumes recorded during a `--fresh` bootstrap.
 
 ## Backend Choice During Bootstrap
@@ -84,8 +84,8 @@ runtime and generated-compose volumes recorded during a `--fresh` bootstrap.
 Use `--backend` when you already know the runtime you want:
 
 ```sh
-effigy deliver bootstrap <git-url> --backend docker --fresh
-effigy deliver bootstrap <git-url> --backend containerd
+effigy bootstrap <git-url> --backend docker --fresh
+effigy bootstrap <git-url> --backend containerd
 ```
 
 If both Docker Desktop and Colima are available and bootstrap reaches a
@@ -103,17 +103,17 @@ The prompt is lazy on purpose:
 ## Bootstrap DB Seeds
 
 When a repo supports one-command database bring-up, pass one or more SQL dumps
-directly to `effigy deliver bootstrap`:
+directly to `effigy bootstrap`:
 
 ```bash
-effigy deliver bootstrap <git-url> --db-seed ./backups/latest.sql --start
+effigy bootstrap <git-url> --db-seed ./backups/latest.sql --start
 ```
 
 For multi-database bundles, name each dump explicitly with the bundle database
 name:
 
 ```bash
-effigy deliver bootstrap git@github.com:Cumberland-BS/cbs.git \
+effigy bootstrap git@github.com:Cumberland-BS/cbs.git \
   --db-seed cbs=./backups/cbs.sql \
   --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql \
   --start
@@ -162,8 +162,8 @@ named `bootstrap:db-seed` and runs it after root bootstrap setup, before
 The same staged seed contract is now available after bootstrap too:
 
 ```bash
-effigy local container data seed --db-seed ./backups/latest.sql
-effigy local container data seed --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql
+effigy container data seed --db-seed ./backups/latest.sql
+effigy container data seed --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql
 ```
 
 That command reuses the same target validation, TTY prompt collection, staged
@@ -202,7 +202,7 @@ Use `--fresh` when you need a clean generated-compose namespace for bootstrap
 testing without reusing named volumes from a previous local run:
 
 ```sh
-effigy deliver bootstrap git@github.com:example-app/market.git --fresh
+effigy bootstrap git@github.com:example-app/market.git --fresh
 ```
 
 Effigy records the fresh session under `.effigy/runtime/` for the root repo and
@@ -213,7 +213,7 @@ isolated across retries and parallel bring-up tests.
 When you are done with that throwaway runtime, run:
 
 ```sh
-effigy deliver bootstrap teardown --yes
+effigy bootstrap teardown --yes
 ```
 
 That cleanup path reads the recorded session, resets each touched repo on the
@@ -280,7 +280,7 @@ emits both `start.task` (first selector, for back-compat) and
 need ad-hoc `bun install` / `cargo fetch` shell chains.
 
 ```sh
-effigy deliver bootstrap deps sync [--js-only|--rust-only] [--json] [<path>...]
+effigy bootstrap deps sync [--js-only|--rust-only] [--json] [<path>...]
 ```
 
 What it does:
@@ -347,8 +347,8 @@ Rules:
 After bootstrap, refresh declared child repos from the root repo with:
 
 ```sh
-effigy deliver bootstrap children status
-effigy deliver bootstrap children sync
+effigy bootstrap children status
+effigy bootstrap children sync
 ```
 
 The sync command reads the composed manifest, including bundle-provided

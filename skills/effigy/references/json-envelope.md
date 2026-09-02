@@ -72,7 +72,7 @@ These commands produce stable JSON payloads suitable for agents to consume:
 | `effigy --json graph affected` | affected files, likely tests/tasks after edits |
 | `effigy --json graph context "<q>"` | ranked context items (lower-level than explore) |
 
-**Streaming exception:** `effigy repo graph watch --json` emits newline-delimited
+**Streaming exception:** `effigy graph watch --json` emits newline-delimited
 `effigy.graph.watch.event.v1` events — not wrapped in `effigy.command.v1`.
 
 ## Worked `jq` examples

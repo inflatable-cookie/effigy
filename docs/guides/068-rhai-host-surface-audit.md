@@ -3,7 +3,7 @@
 This audit tracks Effigy features that are available to `.rhai` scripts without
 recursively launching `effigy`.
 
-For machine-readable discovery, use `effigy extend rhai surface --json`. This audit
+For machine-readable discovery, use `effigy rhai surface --json`. This audit
 explains policy and intent; the runtime command reports the registered module
 and function surface available to scripts.
 
@@ -391,7 +391,7 @@ Effigy owns the path and handoff decision.
 
 - `container::shell(name, command)` — shell in the default service
 - `container::shell(name, service, command)` — shell in a specific service
-- `container::down_all()` — stop all containers (equivalent to `effigy local container down --global`)
+- `container::down_all()` — stop all containers (equivalent to `effigy container down --global`)
 
 ### Crypto and Random
 

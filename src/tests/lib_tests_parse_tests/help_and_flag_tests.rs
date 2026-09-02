@@ -510,45 +510,24 @@ fn parse_help_rejects_more_than_one_topic() {
 }
 
 #[test]
-fn executable_namespace_words_route_to_grouped_builtin_parsing() {
-    // `work` stays help-only; the other five groups are reserved executable
-    // namespaces (spec `116`), so their words never fall through to task
-    // selectors at parse time.
-    assert_eq!(
-        parse(&["work"]),
-        Command::Task(TaskInvocation {
-            name: "work".to_owned(),
-            args: Vec::new(),
-        }),
-        "`effigy work` stays a task selector"
-    );
-
-    for group in [
-        HelpGroup::Local,
-        HelpGroup::Repo,
-        HelpGroup::Deliver,
-        HelpGroup::Extend,
-        HelpGroup::Admin,
-    ] {
+fn parse_help_group_words_stay_available_to_task_selectors() {
+    for group in HelpGroup::ALL {
         assert_eq!(
             parse(&[group.slug()]),
-            Command::HelpGroup(group),
-            "`effigy {}` must render its group inventory",
-            group.slug()
-        );
-        assert_eq!(
-            parse(&[group.slug(), "--help"]),
-            Command::HelpGroup(group),
-            "`effigy {} --help` must render its group inventory",
+            Command::Task(TaskInvocation {
+                name: group.slug().to_owned(),
+                args: Vec::new(),
+            }),
+            "`effigy {}` must keep task routing",
             group.slug()
         );
     }
 
-    // A recognized child delegates to the typed command owner instead of a
-    // `repo` task selector.
     assert_eq!(
         parse(&["repo", "docs"]),
-        parse(&["docs"]),
-        "grouped child parse must equal the direct typed parse"
+        Command::Task(TaskInvocation {
+            name: "repo".to_owned(),
+            args: vec!["docs".to_owned()],
+        })
     );
 }

@@ -92,11 +92,11 @@ A secret can target multiple consumers: `targets = ["tasks", "containers", "rhai
 ### Initialize
 
 ```sh
-effigy admin secrets init
+effigy secrets init
 ```
 
 Creates the vault file if it does not exist and prints guidance. If
-`[secrets.vault].generate` is configured, `effigy admin secrets init` creates the
+`[secrets.vault].generate` is configured, `effigy secrets init` creates the
 local vault and then runs that configured inline hook instead of stopping at
 an empty vault. Initialization also creates an ignored, mode-`0600` local-dev
 key beside the vault.
@@ -124,8 +124,8 @@ how injected secrets are consumed.
 ### List declared secrets
 
 ```sh
-effigy admin secrets list
-effigy admin secrets list --json
+effigy secrets list
+effigy secrets list --json
 ```
 
 Reports names, targets, required flags, and vault state. Never prints values.
@@ -133,19 +133,19 @@ Reports names, targets, required flags, and vault state. Never prints values.
 ### Store a value
 
 ```sh
-effigy admin secrets set database_url
-effigy admin secrets set render_api_key
+effigy secrets set database_url
+effigy secrets set render_api_key
 ```
 
 Prompts for the value and stores it in the vault. For CI or non-TTY use, values
 must be supplied through stdin or environment variables depending on the Effigy
-version; check `effigy admin secrets set --help`.
+version; check `effigy secrets set --help`.
 
 ### Read one value
 
 ```sh
-effigy admin secrets get render_api_key
-effigy admin secrets get render_api_key --json
+effigy secrets get render_api_key
+effigy secrets get render_api_key --json
 ```
 
 Prints one declared stored secret after unlocking the vault. This intentionally
@@ -154,7 +154,7 @@ reveals the value; use it only for explicit operator handoff or debugging.
 ### Remove a value
 
 ```sh
-effigy admin secrets unset render_api_key
+effigy secrets unset render_api_key
 ```
 
 Removes the value from the vault. The declaration stays in the manifest until
@@ -163,9 +163,9 @@ you edit it.
 ### Import from a dotenv file
 
 ```sh
-effigy admin secrets import
-effigy admin secrets import infra/local.env
-effigy admin secrets import --json
+effigy secrets import
+effigy secrets import infra/local.env
+effigy secrets import --json
 ```
 
 Imports declared keys from a `.env`-style file into the vault:
@@ -178,7 +178,7 @@ Imports declared keys from a `.env`-style file into the vault:
 ### Change the vault passphrase
 
 ```sh
-effigy admin secrets change-passphrase
+effigy secrets change-passphrase
 ```
 
 Prompts for the current passphrase, then prompts for and confirms the new
@@ -188,7 +188,7 @@ printed.
 ### Diagnostics
 
 ```sh
-effigy admin secrets doctor
+effigy secrets doctor
 ```
 
 Prompts for the vault passphrase when run interactively, then checks vault
@@ -199,7 +199,7 @@ available.
 ### Export (compatibility bridge)
 
 ```sh
-effigy admin secrets export --format env --output .effigy/runtime/secrets/local.env --yes
+effigy secrets export --format env --output .effigy/runtime/secrets/local.env --yes
 ```
 
 Writes plaintext values to a file. This is an explicit compatibility escape
@@ -235,7 +235,7 @@ The same startup eagerly unlocks container-targeted values, but it does not
 promote optional keys: a container key with `required = false` may be absent
 without blocking the managed task.
 
-If `[secrets.vault].generate` is configured, Effigy may run `effigy admin secrets init`
+If `[secrets.vault].generate` is configured, Effigy may run `effigy secrets init`
 during `secrets = "required"` startup when required task-target secrets are
 missing. `secrets init` then delegates to the configured generator hook. The
 common local-dev shape is a direct Rhai script that fills repo-local defaults:
@@ -253,7 +253,7 @@ general deploy/state/artifact generation hook.
 
 ## Use In Containers
 
-Secrets with `targets = ["containers"]` are resolved before `effigy local container
+Secrets with `targets = ["containers"]` are resolved before `effigy container
 up`. No repo-root `.env` file is written.
 
 Stored optional values are injected when the vault is unlocked. Missing
@@ -352,7 +352,7 @@ values, no hashes, no decrypted contents. See
 Migration path:
 
 1. Move secret declarations from `.env.schema` to `[secrets.keys]`
-2. Store values with `effigy admin secrets set`
+2. Store values with `effigy secrets set`
 3. Update `targets` to match the actual consumers
 4. Remove the old `@sensitive` entries from `.env.schema` once tasks no longer
    depend on them

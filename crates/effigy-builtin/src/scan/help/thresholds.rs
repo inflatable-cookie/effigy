@@ -4,10 +4,10 @@ pub(super) fn render_generated_in_src_help() -> String {
     render_threshold_scan_help(
         "scan generated-in-src",
         &[
-            "effigy repo scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
-            "effigy repo scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
-            "effigy repo scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
-            "effigy repo scan generated-in-src [--json] [--fail-on-findings]",
+            "effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
+            "effigy scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
+            "effigy scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
+            "effigy scan generated-in-src [--json] [--fail-on-findings]",
         ],
         &[
             "--threshold, --warn <BYTES> : warning threshold in bytes (default 1)",
@@ -26,10 +26,10 @@ pub(super) fn render_comment_ratio_help() -> String {
     render_threshold_scan_help(
         "scan comment-ratio",
         &[
-            "effigy repo scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
-            "effigy repo scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
-            "effigy repo scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
-            "effigy repo scan comment-ratio [--json] [--fail-on-findings]",
+            "effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
+            "effigy scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
+            "effigy scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
+            "effigy scan comment-ratio [--json] [--fail-on-findings]",
         ],
         &[
             "--threshold, --warn <RATIO> : warning threshold in comment/code ratio (default 1.5)",
@@ -48,10 +48,10 @@ pub(super) fn render_duplicate_blocks_help() -> String {
     render_threshold_scan_help(
         "scan duplicate-blocks",
         &[
-            "effigy repo scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
-            "effigy repo scan duplicate-blocks [--show-warnings] [--no-gitignore]",
-            "effigy repo scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
-            "effigy repo scan duplicate-blocks [--json] [--fail-on-findings]",
+            "effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
+            "effigy scan duplicate-blocks [--show-warnings] [--no-gitignore]",
+            "effigy scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
+            "effigy scan duplicate-blocks [--json] [--fail-on-findings]",
         ],
         &[
             "--threshold, --warn <N> : warning threshold in normalized code lines (default 20)",
@@ -67,10 +67,10 @@ pub(super) fn render_god_files_help() -> String {
     render_threshold_scan_help(
         "scan god-files",
         &[
-            "effigy repo scan god-files [--threshold <N>] [--high <N>] [--critical <N>]",
-            "effigy repo scan god-files [--show-warnings] [--no-gitignore]",
-            "effigy repo scan god-files [--markdown] [--out reports/god-files.md]",
-            "effigy repo scan god-files [--json] [--fail-on-findings]",
+            "effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>]",
+            "effigy scan god-files [--show-warnings] [--no-gitignore]",
+            "effigy scan god-files [--markdown] [--out reports/god-files.md]",
+            "effigy scan god-files [--json] [--fail-on-findings]",
         ],
         &[
             "--threshold, --warn <N> : warning threshold (default 250)",
@@ -86,10 +86,10 @@ pub(super) fn render_generated_assets_help() -> String {
     render_threshold_scan_help(
         "scan generated-assets",
         &[
-            "effigy repo scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
-            "effigy repo scan generated-assets [--show-warnings] [--no-gitignore]",
-            "effigy repo scan generated-assets [--markdown] [--out reports/generated-assets.md]",
-            "effigy repo scan generated-assets [--json] [--fail-on-findings]",
+            "effigy scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
+            "effigy scan generated-assets [--show-warnings] [--no-gitignore]",
+            "effigy scan generated-assets [--markdown] [--out reports/generated-assets.md]",
+            "effigy scan generated-assets [--json] [--fail-on-findings]",
         ],
         &[
             "--threshold, --warn <BYTES> : warning threshold in bytes (default 1000000)",

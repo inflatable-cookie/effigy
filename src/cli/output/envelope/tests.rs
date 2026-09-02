@@ -1,6 +1,4 @@
-use super::{
-    build_json_envelope_error_with_warnings, build_json_envelope_success, parse_json_or_string,
-};
+use super::{build_json_envelope_error, build_json_envelope_success, parse_json_or_string};
 use serde_json::json;
 
 #[test]
@@ -22,13 +20,12 @@ fn build_json_envelope_success_sets_contract_shape() {
 
 #[test]
 fn build_json_envelope_error_sets_contract_shape() {
-    let payload = build_json_envelope_error_with_warnings(
+    let payload = build_json_envelope_error(
         "doctor",
         "doctor",
         "RunnerError",
         "boom",
         Some(json!({"code": 1})),
-        &[],
     );
     assert_eq!(payload["schema"], "effigy.command.v1");
     assert_eq!(payload["schema_version"], 1);

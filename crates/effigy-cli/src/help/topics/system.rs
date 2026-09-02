@@ -7,7 +7,7 @@ pub(crate) fn render_system_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
     )?;
     renderer.section("Usage")?;
     renderer.text(
-        "effigy local system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--follow] [--json]",
+        "effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--follow] [--json]",
     )?;
     renderer.text("")?;
     renderer.section("Options")?;
@@ -26,11 +26,11 @@ pub(crate) fn render_system_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
     ])?;
     renderer.text("")?;
     renderer.section("Examples")?;
-    renderer.text("effigy local system up")?;
-    renderer.text("effigy local system status")?;
-    renderer.text("effigy local system logs --follow")?;
-    renderer.text("effigy local system repair")?;
-    renderer.text("effigy local system reset-runtime")?;
-    renderer.text("effigy local system down --system dev")?;
+    renderer.text("effigy system up")?;
+    renderer.text("effigy system status")?;
+    renderer.text("effigy system logs --follow")?;
+    renderer.text("effigy system repair")?;
+    renderer.text("effigy system reset-runtime")?;
+    renderer.text("effigy system down --system dev")?;
     Ok(())
 }

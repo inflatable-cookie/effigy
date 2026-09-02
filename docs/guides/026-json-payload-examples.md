@@ -205,7 +205,7 @@ Companion references:
             "action": "create",
             "description": "refresh the Effigy-managed Cargo patch block",
             "before": null,
-            "after": "# >>> effigy admin deps cargo /workspace/signal >>>\n[patch.\"https://github.com/example/signal.git\"]\n\"signal-core\" = { path = \"/workspace/signal/crates/signal-core\" }\n# <<< effigy admin deps cargo /workspace/signal <<<\n"
+            "after": "# >>> effigy deps cargo /workspace/signal >>>\n[patch.\"https://github.com/example/signal.git\"]\n\"signal-core\" = { path = \"/workspace/signal/crates/signal-core\" }\n# <<< effigy deps cargo /workspace/signal <<<\n"
           }
         ],
         "warnings": [
@@ -414,7 +414,7 @@ Companion references:
   },
   "errors": [],
   "next_actions": [
-    "re-run `effigy admin deps pin bun /workspace/poodle` without `--dry-run`",
+    "re-run `effigy deps pin bun /workspace/poodle` without `--dry-run`",
     "then run `bun install` and review the resulting lockfile separately"
   ]
 }
@@ -1467,7 +1467,7 @@ Companion references:
 }
 ```
 
-`effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy repo scan god-files` text output hides warning rows by default.
+`effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
 The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, `scan.generated-in-src`, and `scan.attention-markers` when those scanners are enabled for doctor.
 
@@ -2161,7 +2161,7 @@ Checklist inventory (`effigy init --checklist --json`):
       "can_run_noninteractive": true,
       "summary": "Inspect local graph freshness before code-understanding work.",
       "reason": "graph surface is always available",
-      "recommended_command": "effigy repo graph status --json"
+      "recommended_command": "effigy graph status --json"
     }
   ]
 }
@@ -2194,7 +2194,7 @@ Selected action execution (`effigy init --apply-actions <ID>[,<ID>...] --json`):
       "status": "inspected",
       "summary": "Inspect local graph freshness before code-understanding work.",
       "reason": "command executed",
-      "command": "effigy repo graph status --json",
+      "command": "effigy graph status --json",
       "output": "{\n  \"schema\": \"effigy.graph.status.v1\",\n  ...\n}"
     }
   ]
@@ -2868,7 +2868,7 @@ task/import/stage step.
 
 ### 28) State Stack Capture (`effigy.state-stack.capture.v1`)
 
-This payload is the state-level report shape for `effigy deliver state capture`. The
+This payload is the state-level report shape for `effigy state capture`. The
 capture boundary stays separate from app-owned diff/reconciliation logic.
 
 Planned UAT overlay capture:
@@ -2941,7 +2941,7 @@ available in `EFFIGY_STATE_CAPTURE_CONTEXT`.
 
 ### 28b) State Capture Set (`effigy.state-stack.capture-set.v1`)
 
-This payload is the aggregate report shape for `effigy deliver state capture-set`, which
+This payload is the aggregate report shape for `effigy state capture-set`, which
 runs multiple named capture profiles with one shared key.
 
 ```json
@@ -3429,7 +3429,7 @@ secret values in JSON or text output. Export metadata adds `action = "export"`,
 
 ### Bounded Documentation Context (`effigy.docs.context.v1`)
 
-`effigy repo docs context <QUERY>` returns exact repository sections, never a
+`effigy docs context <QUERY>` returns exact repository sections, never a
 generated summary. Relevance gates inclusion; currentness and authority only
 order results that already match. Here the historical authority-20 bulletin
 outranks the current authority-80 playbook because the query names it directly.

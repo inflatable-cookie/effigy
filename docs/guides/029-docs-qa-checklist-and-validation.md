@@ -11,7 +11,7 @@ For most docs changes, the first commands should be:
 
 ```sh
 effigy qa:docs
-effigy repo docs check workflow-paths
+effigy docs check workflow-paths
 ```
 
 Then widen the scope only when the change touched command behavior, JSON
@@ -43,9 +43,9 @@ Manual checks:
 - new log artifacts are indexed in `docs/logs/README.md`
 - new log artifacts include a `Vision Target Delta` section
 - roadmap/guides vision metadata checks pass via `effigy qa:docs:vision`
-- docs-referenced workflow paths resolve via `effigy repo docs check workflow-paths`
-- vision artifact index is consistent via `effigy repo docs check index --policy-index vision`
-- vision artifacts have non-empty, actionable follow-on actions via `effigy repo docs check next-action --policy vision`
+- docs-referenced workflow paths resolve via `effigy docs check workflow-paths`
+- vision artifact index is consistent via `effigy docs check index --policy-index vision`
+- vision artifacts have non-empty, actionable follow-on actions via `effigy docs check next-action --policy vision`
 - next-action negative-path coverage lives in Rust CLI tests, not the docs QA runtime bundle
 
 Optional broader check:
@@ -84,7 +84,7 @@ workflow examples from drifting back to copied `--repo .` defaults.
 
 The current docs QA surface intentionally splits into two layers:
 
-- generic built-ins such as `effigy repo docs check links`,
+- generic built-ins such as `effigy docs check links`,
   `check-json-examples`, `check-paths`, `check-index`,
   `check-workflow-paths`, and
   `check-forbidden`
@@ -117,7 +117,7 @@ Proposed config direction:
 ## 3) What the Link Checker Validates
 
 Built-in command:
-- `effigy repo docs check links`
+- `effigy docs check links`
 
 Behavior:
 - scans markdown inline links (`[label](target)`)
@@ -132,7 +132,7 @@ Default scope when called with no args:
 ## 4) What the JSON Example Checker Validates
 
 Built-in command:
-- `effigy repo docs check json-examples`
+- `effigy docs check json-examples`
 
 Behavior:
 - inspects section `13) Completion Candidates` in `026-json-payload-examples.md`
@@ -148,7 +148,7 @@ Behavior:
 ## 5) What the Logs Index Checker Validates
 
 Built-in command:
-- `effigy repo docs check index`
+- `effigy docs check index`
 
 Behavior:
 - scans `docs/logs/YYYY-MM/*.md` and excludes `docs/logs/README.md`
@@ -157,7 +157,7 @@ Behavior:
 - fails when index entries point to non-existent log files
 
 Helper:
-- `effigy repo docs add-log-index <log-file>` inserts a missing log entry ahead of archived links.
+- `effigy docs add-log-index <log-file>` inserts a missing log entry ahead of archived links.
 
 Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
@@ -166,7 +166,7 @@ Forward-only policy cutoff:
 ## 5b) What the Forbidden-Text Checker Validates
 
 Built-in command:
-- `effigy repo docs check forbidden`
+- `effigy docs check forbidden`
 
 Behavior:
 - scans one or more text files for exact substrings that should not appear
@@ -177,7 +177,7 @@ Behavior:
 ## 5c) What the Path Checker Validates
 
 Built-in command:
-- `effigy repo docs check paths`
+- `effigy docs check paths`
 
 Behavior:
 - checks that one or more repo-relative files or directories exist
@@ -196,7 +196,7 @@ Behavior:
 ### Named docs-policy indexes
 
 Built-in command:
-- `effigy repo docs check index --policy-index vision`
+- `effigy docs check index --policy-index vision`
 
 Behavior:
 - loads a named index definition from `[docs_policy.indexes.<NAME>]` in `effigy.toml`
@@ -206,7 +206,7 @@ Behavior:
 ## 5a) What the Next-Action Checker Validates
 
 Built-in command:
-- `effigy repo docs check next-action --policy vision`
+- `effigy docs check next-action --policy vision`
 
 Behavior:
 - loads a named rule from `[docs_policy.next_actions.<NAME>]` in `effigy.toml`
@@ -217,12 +217,12 @@ Behavior:
 
 ## 5d) What `docs context` Retrieves
 
-`effigy repo docs context <QUERY>` is retrieval, not validation. It reads the shared
+`effigy docs context <QUERY>` is retrieval, not validation. It reads the shared
 code graph and returns exact Markdown sections with provenance so an agent can
 answer from source instead of guessing at file layout.
 
 ```sh
-effigy repo docs context "release gates"
+effigy docs context "release gates"
 effigy --json docs context "documentation graph profile" --max-sections 4
 ```
 
@@ -300,9 +300,9 @@ Copy into PR description:
 - [ ] `effigy qa:docs`
 - [ ] `effigy qa:docs:agent-defaults`
 - [ ] `effigy qa:docs:vision`
-- [ ] `effigy repo docs check workflow-paths`
-- [ ] `effigy repo docs check index --policy-index vision`
-- [ ] `effigy repo docs check next-action --policy vision`
+- [ ] `effigy docs check workflow-paths`
+- [ ] `effigy docs check index --policy-index vision`
+- [ ] `effigy docs check next-action --policy vision`
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
@@ -326,19 +326,19 @@ effigy qa:docs:agent-defaults
 effigy qa:docs:vision
 
 # workflow path references in docs
-effigy repo docs check workflow-paths
+effigy docs check workflow-paths
 
 # vision closeout index consistency
-effigy repo docs check index --policy-index vision
+effigy docs check index --policy-index vision
 
 # vision next-task section coverage
-effigy repo docs check next-action --policy vision
+effigy docs check next-action --policy vision
 
 # index a newly added log artifact
-effigy repo docs add-log-index docs/logs/YYYY-MM/DD-HHMMSS-topic.md
+effigy docs add-log-index docs/logs/YYYY-MM/DD-HHMMSS-topic.md
 
 # bounded documentation evidence for a question
-effigy repo docs context "release gates"
+effigy docs context "release gates"
 
 # json contracts only
 effigy qa:json:ci

@@ -34,7 +34,7 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             &["--help"],
             &[
                 "completion Help",
-                "effigy admin config completion [<bash|zsh|fish>] [--install|--export] [--json]",
+                "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]",
             ],
         ),
     ];
@@ -50,7 +50,7 @@ fn run_manifest_task_builtin_completion_ok_contract_table() {
             &["bash", "--export"],
             &[
                 "complete -F _effigy effigy",
-                "effigy admin config completion candidates --prefix \"$cur\"",
+                "effigy config completion candidates --prefix \"$cur\"",
             ],
         ),
         builtin_invocation_case(

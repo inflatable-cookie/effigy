@@ -33,9 +33,7 @@ fn build_help_payload_sets_schema_and_topic() {
 }
 
 #[test]
-fn explicitly_deferred_builtins_keep_their_grouped_inventory_rows() {
-    // `[defer] builtins` owns the direct word, but the grouped route is the
-    // explicit built-in escape, so the grouped-primary row stays visible.
+fn build_help_payload_for_root_hides_explicitly_deferred_builtins() {
     let root = temp_workspace("help-hidden-deferred-builtin");
     fs::write(
         root.join("effigy.toml"),
@@ -43,9 +41,9 @@ fn explicitly_deferred_builtins_keep_their_grouped_inventory_rows() {
     )
     .expect("write manifest");
 
-    let payload = build_help_payload_for_root(HelpTopic::General, &root, None);
+    let payload = build_help_payload_for_root(HelpTopic::General, &root);
     let text = payload["text"].as_str().expect("help text");
-    assert!(text.contains("effigy deliver release"), "got: {text}");
+    assert!(!text.contains("effigy release"), "got: {text}");
     assert!(text.contains("effigy doctor"), "got: {text}");
 }
 
@@ -58,9 +56,9 @@ fn build_help_payload_for_root_keeps_release_visible_when_explicit_deferral_owns
     )
     .expect("write manifest");
 
-    let payload = build_help_payload_for_root(HelpTopic::General, &root, None);
+    let payload = build_help_payload_for_root(HelpTopic::General, &root);
     let text = payload["text"].as_str().expect("help text");
-    assert!(text.contains("effigy deliver release"), "got: {text}");
+    assert!(text.contains("effigy release"), "got: {text}");
 }
 
 #[test]
@@ -73,11 +71,11 @@ fn build_help_group_payload_sets_schema_and_group_topic() {
     assert_eq!(payload["topic"], "repo");
     let text = payload["text"].as_str().expect("help text");
     assert!(text.contains("Repo Commands"), "got: {text}");
-    assert!(text.contains("effigy repo graph"), "got: {text}");
+    assert!(text.contains("effigy graph"), "got: {text}");
 }
 
 #[test]
-fn explicitly_deferred_builtins_stay_visible_as_grouped_rows() {
+fn build_help_group_payload_hides_explicitly_deferred_builtins() {
     let root = temp_workspace("help-group-explicit-deferral");
     fs::write(
         root.join("effigy.toml"),
@@ -87,24 +85,19 @@ fn explicitly_deferred_builtins_stay_visible_as_grouped_rows() {
 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
-    assert!(
-        group_text.contains("effigy repo graph"),
-        "got: {group_text}"
-    );
-    assert!(group_text.contains("effigy repo docs"), "got: {group_text}");
+    assert!(!group_text.contains("effigy graph"), "got: {group_text}");
+    assert!(group_text.contains("effigy docs"), "got: {group_text}");
 
-    let general = build_help_payload_for_root(HelpTopic::General, &root, None);
+    let general = build_help_payload_for_root(HelpTopic::General, &root);
     let general_text = general["text"].as_str().expect("general help text");
     assert!(
-        general_text.contains("effigy repo graph"),
+        !general_text.contains("effigy graph"),
         "got: {general_text}"
     );
 }
 
 #[test]
-fn shadowed_builtins_stay_visible_as_grouped_rows_in_general_and_group_help() {
-    // A manifest task owns the direct word, but the grouped row teaches the
-    // explicit built-in escape and stays in primary help.
+fn manifest_selector_shadowing_a_builtin_hides_it_from_general_and_group_help() {
     let root = temp_workspace("help-group-shadowed-builtin");
     fs::write(
         root.join("effigy.toml"),
@@ -114,18 +107,12 @@ fn shadowed_builtins_stay_visible_as_grouped_rows_in_general_and_group_help() {
 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
-    assert!(group_text.contains("effigy repo docs"), "got: {group_text}");
-    assert!(
-        group_text.contains("effigy repo graph"),
-        "got: {group_text}"
-    );
+    assert!(!group_text.contains("effigy docs"), "got: {group_text}");
+    assert!(group_text.contains("effigy graph"), "got: {group_text}");
 
-    let general = build_help_payload_for_root(HelpTopic::General, &root, None);
+    let general = build_help_payload_for_root(HelpTopic::General, &root);
     let general_text = general["text"].as_str().expect("general help text");
-    assert!(
-        general_text.contains("effigy repo docs"),
-        "got: {general_text}"
-    );
+    assert!(!general_text.contains("effigy docs"), "got: {general_text}");
 }
 
 // The direct `effigy help docs` route is refused before rendering when a

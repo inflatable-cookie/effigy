@@ -301,22 +301,22 @@ Generate completions for your shell:
 
 ```sh
 # Interactive setup
-effigy admin config completion
+effigy config completion
 
 # Explicit user-local installs
-effigy admin config completion bash --install
-effigy admin config completion zsh --install
-effigy admin config completion fish --install
+effigy config completion bash --install
+effigy config completion zsh --install
+effigy config completion fish --install
 
 # Raw script export
-effigy admin config completion bash --export > ~/.local/share/bash-completion/completions/effigy
+effigy config completion bash --export > ~/.local/share/bash-completion/completions/effigy
 ```
 
 List available selector candidates (useful for IDE integration):
 
 ```sh
-effigy admin config completion candidates
-effigy admin config completion candidates --prefix app/
+effigy config completion candidates
+effigy config completion candidates --prefix app/
 ```
 
 Use when you want tab-completion for task selectors in your shell.
@@ -337,30 +337,30 @@ exclude = ["docs/**", "dist/**", "coverage/**"]
 Run:
 
 ```sh
-effigy repo scan god-files
-effigy repo scan god-files --show-warnings
-effigy repo scan god-files --fail-on-findings
-effigy repo scan god-files --markdown --out reports/god-files.md
-effigy repo scan duplicate-blocks
-effigy repo scan duplicate-blocks --show-warnings
-effigy repo scan duplicate-blocks --fail-on-findings
-effigy repo scan duplicate-blocks --markdown --out reports/duplicate-blocks.md
-effigy repo scan comment-ratio
-effigy repo scan comment-ratio --show-warnings
-effigy repo scan comment-ratio --fail-on-findings
-effigy repo scan comment-ratio --markdown --out reports/comment-ratio.md
-effigy repo scan generated-assets
-effigy repo scan generated-assets --show-warnings
-effigy repo scan generated-assets --markdown --out reports/generated-assets.md
-effigy repo scan generated-in-src
-effigy repo scan generated-in-src --show-warnings
-effigy repo scan generated-in-src --markdown --out reports/generated-in-src.md
-effigy repo scan attention-markers
-effigy repo scan attention-markers --show-warnings
-effigy repo scan attention-markers --markdown --out reports/attention-markers.md
-effigy repo scan stale-suppressions
-effigy repo scan stale-suppressions --show-warnings
-effigy repo scan stale-suppressions --markdown --out reports/stale-suppressions.md
+effigy scan god-files
+effigy scan god-files --show-warnings
+effigy scan god-files --fail-on-findings
+effigy scan god-files --markdown --out reports/god-files.md
+effigy scan duplicate-blocks
+effigy scan duplicate-blocks --show-warnings
+effigy scan duplicate-blocks --fail-on-findings
+effigy scan duplicate-blocks --markdown --out reports/duplicate-blocks.md
+effigy scan comment-ratio
+effigy scan comment-ratio --show-warnings
+effigy scan comment-ratio --fail-on-findings
+effigy scan comment-ratio --markdown --out reports/comment-ratio.md
+effigy scan generated-assets
+effigy scan generated-assets --show-warnings
+effigy scan generated-assets --markdown --out reports/generated-assets.md
+effigy scan generated-in-src
+effigy scan generated-in-src --show-warnings
+effigy scan generated-in-src --markdown --out reports/generated-in-src.md
+effigy scan attention-markers
+effigy scan attention-markers --show-warnings
+effigy scan attention-markers --markdown --out reports/attention-markers.md
+effigy scan stale-suppressions
+effigy scan stale-suppressions --show-warnings
+effigy scan stale-suppressions --markdown --out reports/stale-suppressions.md
 ```
 
 Default text mode hides warning rows and prints a warning count summary. Use `--show-warnings` when you need the full terminal list.

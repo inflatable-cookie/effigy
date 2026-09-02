@@ -12,9 +12,9 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "Keep contract structure in JSON files and repo-specific policy in task wiring; the built-in command just enforces the published shape.",
     ],
     usage: &[
-        "effigy repo contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]",
-        "effigy repo contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]",
-        "effigy --json repo contracts validate-selection [--repo <PATH>] [--artifact <PATH>]",
+        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]",
+        "effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]",
+        "effigy --json contracts validate-selection [--repo <PATH>] [--artifact <PATH>]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
@@ -50,10 +50,10 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy repo contracts check-json --fast --print-selected",
-        "effigy repo contracts check-json --fast --changed-only origin/main --print-selected=json",
-        "effigy repo contracts validate-selection",
-        "effigy repo contracts validate-selection --artifact tmp/selected.json",
-        "effigy --json repo contracts validate-selection --artifact json-contracts-selected.json",
+        "effigy contracts check-json --fast --print-selected",
+        "effigy contracts check-json --fast --changed-only origin/main --print-selected=json",
+        "effigy contracts validate-selection",
+        "effigy contracts validate-selection --artifact tmp/selected.json",
+        "effigy --json contracts validate-selection --artifact json-contracts-selected.json",
     ],
 };

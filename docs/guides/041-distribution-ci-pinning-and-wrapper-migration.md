@@ -69,7 +69,7 @@ cargo install \
 effigy --version
 ```
 
-For local self-built installs, `effigy admin version` may show a stamped active build
+For local self-built installs, `effigy version` may show a stamped active build
 string such as `v0.5.0+local.abc123`. Treat `binary.version` / release semver
 as the pinning source of truth; the local suffix is there to distinguish
 working builds while iterating.
@@ -77,7 +77,7 @@ working builds while iterating.
 Policy:
 - Pin `EFFIGY_VERSION` in CI variables.
 - Bump only via reviewed release PRs.
-- Validate with `effigy deliver release verify-install --tag <tag>` before changing tag pins.
+- Validate with `effigy release verify-install --tag <tag>` before changing tag pins.
 
 ## 4) Wrapper Migration (`bun effigy` -> `effigy`)
 

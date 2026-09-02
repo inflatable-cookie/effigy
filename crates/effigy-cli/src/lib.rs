@@ -49,14 +49,6 @@ pub enum Command {
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
     Task(TaskInvocation),
-    /// Run an effigy built-in registry command directly, bypassing manifest
-    /// selector resolution.
-    ///
-    /// Produced by grouped routes such as `effigy admin config` and
-    /// `effigy repo scan`: those commands own their argument parse inside
-    /// the built-in layer instead of a typed CLI value, and the grouped
-    /// route is the explicit escape from repository task shadowing.
-    GroupedBuiltin(TaskInvocation),
     #[doc(hidden)]
     InternalScriptRun(InternalScriptRunArgs),
     #[doc(hidden)]

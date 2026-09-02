@@ -194,11 +194,11 @@ effigy test --plan
 
 Definition:
 - Effigy's local deterministic repo index under `.effigy/graph/graph.db`, built
-  by first-party extractors and queried through `effigy repo graph`.
+  by first-party extractors and queried through `effigy graph`.
 
 Notes:
 - it is a navigation aid for agents and humans, not compiler-grade semantic truth
-- queries do not rebuild the index; run `effigy repo graph index` explicitly
+- queries do not rebuild the index; run `effigy graph index` explicitly
 
 Deep dive:
 - [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
@@ -212,7 +212,7 @@ Definition:
 Example:
 
 ```sh
-effigy repo graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
 ```
 
 ## Graph Affected
@@ -225,7 +225,7 @@ Definition:
 Example:
 
 ```sh
-git diff --name-only | effigy repo graph affected --stdin --json
+git diff --name-only | effigy graph affected --stdin --json
 ```
 
 ## Graph Freshness State
@@ -244,7 +244,7 @@ Values:
 ## Graph Watch Event
 
 Definition:
-- Newline-delimited JSON event emitted by `effigy repo graph watch --json` with schema
+- Newline-delimited JSON event emitted by `effigy graph watch --json` with schema
   `effigy.graph.watch.event.v1`.
 
 Notes:

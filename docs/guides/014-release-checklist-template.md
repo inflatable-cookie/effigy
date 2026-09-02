@@ -25,13 +25,13 @@ Owner: `name/team`
   - [ ] `gh workflow run ci.yml --ref main`
   - [ ] matching run watched with `gh run watch <RUN_ID> --exit-status`
 - [ ] Distribution preflight passes:
-  - [ ] `effigy deliver release preflight --tag v0.__.__`
+  - [ ] `effigy release preflight --tag v0.__.__`
 - [ ] Safe release simulation passes:
-  - [ ] `effigy deliver release simulate`
+  - [ ] `effigy release simulate`
 - [ ] Release readiness check passes:
-  - [ ] `effigy deliver release status --check-gates`
+  - [ ] `effigy release status --check-gates`
 - [ ] Consolidated release gate pass:
-  - [ ] `effigy deliver release gates`
+  - [ ] `effigy release gates`
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
 - [ ] Local quality gates pass:
@@ -52,7 +52,7 @@ Owner: `name/team`
 
 - [ ] Version bump matches policy (`PATCH` vs `MINOR`) from release contract.
 - [ ] Planned version reviewed in built-in prepare preview:
-  - [ ] `effigy deliver release prepare --plan`
+  - [ ] `effigy release prepare --plan`
 - [ ] Changelog entry drafted.
 - [ ] Root `README.md` and other front-door install examples updated when they
   pin a specific release tag/version.
@@ -67,27 +67,27 @@ Owner: `name/team`
 - [ ] Operator path chosen explicitly:
   - [ ] built-in commands are the primary path for this release
 - [ ] Prepared-state apply succeeds:
-  - [ ] `effigy deliver release prepare --yes --check-gates`
+  - [ ] `effigy release prepare --yes --check-gates`
 - [ ] Execute preflight succeeds:
-  - [ ] `effigy deliver release execute --plan`
+  - [ ] `effigy release execute --plan`
 - [ ] Human approval recorded before irreversible step.
 - [ ] Final execute succeeds:
-  - [ ] `effigy deliver release execute --yes`
+  - [ ] `effigy release execute --yes`
 
 ## 5) Channel Artifacts
 
 ### GitHub Releases and Source Install
 - [ ] Package metadata verified.
 - [ ] Distribution metadata validation passes:
-  - [ ] `effigy deliver release validate --tag v0.__.__`
+  - [ ] `effigy release validate --tag v0.__.__`
 - [ ] Tag points to intended commit.
 - [ ] Install validated from git tag:
-  - [ ] `effigy deliver release verify-install --tag v0.__.__`
+  - [ ] `effigy release verify-install --tag v0.__.__`
 - [ ] Source-install path validated:
   - [ ] `cargo install --locked --git https://github.com/inflatable-cookie/effigy.git --tag v0.__.__ effigy --force`
 - [ ] First-publish artifact bundle captured:
-  - [ ] `effigy deliver release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
-  - [ ] `effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -108,7 +108,7 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
-  - [ ] `effigy deliver release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 8) Sign-off
 

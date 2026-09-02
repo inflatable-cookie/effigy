@@ -23,7 +23,7 @@ That's it. If the repo uses Effigy, you already know how to work in it.
 
 **Before:** You `cd` into `web/`, run `npm test`, then `cd ../api`, run `cargo test`, then remember the e2e suite needs `./scripts/e2e.sh` and a running database.
 
-**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy deliver demo run login-smoke` proves the login flow still works. `effigy deliver release prepare` cuts a release without you touching version files. One command from any directory.
+**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy demo run login-smoke` proves the login flow still works. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
 
 Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, every command speaks JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
 
@@ -166,10 +166,10 @@ Effigy ships with scanners that catch drift before it becomes a problem. No exte
 
 ```bash
 effigy doctor --verbose              # Run all enabled scans + health check
-effigy repo scan god-files                # Find files that grew too large
-effigy repo scan comment-ratio            # Spot files with suspicious comment balance
-effigy repo scan generated-in-src         # Catch generated files polluting source trees
-effigy repo scan attention-markers        # Surface TODO/FIXME/SECURITY markers
+effigy scan god-files                # Find files that grew too large
+effigy scan comment-ratio            # Spot files with suspicious comment balance
+effigy scan generated-in-src         # Catch generated files polluting source trees
+effigy scan attention-markers        # Surface TODO/FIXME/SECURITY markers
 ```
 
 Each scanner respects `.gitignore`, supports `--json` for CI integration, and can be configured in `effigy.toml` with thresholds, include/exclude globs, and automatic `doctor` inclusion. Findings write to `.effigy/reports/doctor/` as markdown for review.
@@ -261,7 +261,7 @@ Prerequisites: Colima or Docker Desktop must be installed (e.g. `brew install co
 For one-off maintenance inside the same environment:
 
 ```bash
-effigy local workspace         # Shell inside the container
+effigy workspace         # Shell inside the container
 # ... run migrations, install packages, etc.
 exit
 ```
@@ -303,7 +303,7 @@ tls = true
 ```
 
 ```bash
-effigy local gateway up       # Start the local DNS + proxy
+effigy gateway up       # Start the local DNS + proxy
 effigy dev              # Your app is now at https://my-app.test
 ```
 
@@ -321,18 +321,18 @@ status = "ready"
 ```
 
 ```bash
-effigy deliver demo list
-effigy deliver demo run login-smoke
-effigy deliver demo browser      # Interactive TUI
+effigy demo list
+effigy demo run login-smoke
+effigy demo browser      # Interactive TUI
 ```
 
 ### Release Without the Ritual
 
 ```bash
-effigy deliver release simulate         # Dry-run: what would happen?
-effigy deliver release prepare --plan   # Preview file mutations
-effigy deliver release prepare --yes    # Bump version, update changelog
-effigy deliver release execute --yes    # Commit, tag, push
+effigy release simulate         # Dry-run: what would happen?
+effigy release prepare --plan   # Preview file mutations
+effigy release prepare --yes    # Bump version, update changelog
+effigy release execute --yes    # Commit, tag, push
 gh workflow run release-binaries.yml -f tag=vX.Y.Z  # Publish explicitly
 ```
 
@@ -360,8 +360,8 @@ effigy watch --max-runs 5 dev            # Bounded, explicit, composable
 Give a git URL. Effigy clones, runs the repo's declared setup, and starts the dev stack:
 
 ```bash
-effigy deliver bootstrap git@github.com:acme/app.git --plan    # Preview first
-effigy deliver bootstrap git@github.com:acme/app.git           # Clone, setup, start
+effigy bootstrap git@github.com:acme/app.git --plan    # Preview first
+effigy bootstrap git@github.com:acme/app.git           # Clone, setup, start
 ```
 
 The repo declares its own bring-up in `effigy.toml`:
@@ -395,8 +395,8 @@ required = false
 One command clones the root repo, clones every child into the right relative paths, runs each repo's setup, and starts the dev stack. After the initial bring-up, keep children in sync:
 
 ```bash
-effigy deliver bootstrap children status   # See what's ahead/behind or missing
-effigy deliver bootstrap children sync     # Pull and fast-forward all children
+effigy bootstrap children status   # See what's ahead/behind or missing
+effigy bootstrap children sync     # Pull and fast-forward all children
 ```
 
 Effigy itself keeps adjacent provider, bundle, and action repos under
@@ -456,7 +456,7 @@ effigy --help                    # Every command and flag, grouped by job
 effigy --json release simulate   # Machine-readable dry-runs
 ```
 
-Route by job: use `effigy repo graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
+Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
 Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md)
 
@@ -474,7 +474,7 @@ This repo uses its own `effigy.toml` tasks:
 
 ```bash
 effigy qa                  # Full QA pass
-effigy deliver release gates       # Check release readiness
+effigy release gates       # Check release readiness
 ```
 
 If `effigy` is not on `PATH` yet:

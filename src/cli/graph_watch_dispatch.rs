@@ -7,11 +7,7 @@ use effigy_ui::{PlainRenderer, Renderer};
 
 use crate::{render_cli_header, CliExecutionContext};
 
-pub fn run_graph_watch_command(
-    context: &CliExecutionContext<'_>,
-    args: GraphArgs,
-    legacy_direct_warning: Option<&crate::cli::legacy_direct::LegacyDirectWarning>,
-) {
+pub fn run_graph_watch_command(context: &CliExecutionContext<'_>, args: GraphArgs) {
     let GraphArgs {
         subcommand: GraphSubcommand::Watch { debounce_ms },
         output_json,
@@ -25,11 +21,6 @@ pub fn run_graph_watch_command(
     if !context.suppress_header {
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
-    // `graph watch` streams events on stdout in text and JSON-stream modes
-    // (the JSON form emits `effigy.graph.watch.event.v1` lines, never a
-    // command envelope), so the displaced-direct warning always goes to
-    // stderr as one line; grouped routes never pass a warning here.
-    crate::cli::legacy_direct::print_human_warnings_option(legacy_direct_warning, false);
 
     let repo_root = context.command_root;
     let options = GraphWatchOptions { debounce_ms };

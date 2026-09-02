@@ -98,8 +98,8 @@ Decision path:
 Core scripts:
 
 ```sh
-effigy repo contracts check-json --full --print-selected=json
-effigy repo contracts validate-selection --artifact ./json-contracts-selected.json
+effigy contracts check-json --full --print-selected=json
+effigy contracts validate-selection --artifact ./json-contracts-selected.json
 ```
 
 Exit criteria:

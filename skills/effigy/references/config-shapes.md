@@ -18,7 +18,7 @@ itself; see `effigy --help` for the list.
 
 This optional repository-owned profile teaches the local Markdown graph how to
 classify documentation, resolve currentness, and name typed relations. It is
-consumed by `effigy repo graph index` and by `effigy repo docs context <QUERY>`, the
+consumed by `effigy graph index` and by `effigy docs context <QUERY>`, the
 bounded documentation retrieval surface.
 
 ```toml
@@ -185,7 +185,7 @@ from the workspace catalog crate rather than redefining.
 
 ## `[bootstrap]`
 
-First-run setup steps, executed by `effigy deliver bootstrap`:
+First-run setup steps, executed by `effigy bootstrap`:
 
 ```toml
 [bootstrap]

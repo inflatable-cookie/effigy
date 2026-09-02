@@ -165,7 +165,7 @@ pub(super) fn first_symbol_line(
 ///
 /// Correctness-gated scans (dead-code, validation-gaps, boundary-violations)
 /// used to refuse on a stale or missing index and send the operator to
-/// `effigy repo graph index`. Lazy refresh fixes the common case: the index is
+/// `effigy graph index`. Lazy refresh fixes the common case: the index is
 /// rebuilt here, under the same cross-process lock queries use. The scan only
 /// refuses when the refresh itself could not complete — for example another
 /// process is mid-refresh and the wait budget expired.
@@ -179,7 +179,7 @@ pub(super) fn open_fresh_graph_store(
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
     if !outcome.freshness.usable || outcome.freshness.stale {
         return Err(BuiltinError::task_invocation(format!(
-            "`scan {scan_label}` requires a fresh graph index ({}); run `effigy repo graph index` if the automatic refresh did not complete",
+            "`scan {scan_label}` requires a fresh graph index ({}); run `effigy graph index` if the automatic refresh did not complete",
             outcome.freshness.summary
         )));
     }

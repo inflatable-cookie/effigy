@@ -1,25 +1,13 @@
-use crate::cli::legacy_direct::{warning_values, LegacyDirectWarning};
-use crate::{
-    build_binary_metadata, emit_json_envelope_success_value_with_warnings, CliExecutionContext,
-};
+use crate::{build_binary_metadata, emit_json_envelope_success_value, CliExecutionContext};
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 
-pub fn run_version_command(
-    context: &CliExecutionContext<'_>,
-    legacy_direct_warning: Option<&LegacyDirectWarning>,
-) {
+pub fn run_version_command(context: &CliExecutionContext<'_>) {
     let payload = build_version_payload();
     if context.emit_json_envelope {
-        emit_json_envelope_success_value_with_warnings(
-            context.command_kind,
-            context.command_name,
-            payload,
-            &warning_values(legacy_direct_warning),
-        );
+        emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
         return;
     }
-    crate::cli::legacy_direct::print_human_warnings_option(legacy_direct_warning, false);
 
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     let _ = renderer.text(payload["display"].as_str().unwrap_or_default());

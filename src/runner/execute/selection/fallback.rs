@@ -50,13 +50,7 @@ fn resolve_builtin_selection_output(
     preflight: &ExecutionPreflight,
 ) -> Result<Option<String>, RunnerError> {
     let ports = RunnerBuiltinPorts::new();
-    // The registry built-in owns this invocation only now that manifest
-    // selection failed. Record it so the direct CLI route can warn about the
-    // displaced direct spelling on success, usage-error, and runtime-error
-    // envelopes alike; grouped and nested executions never have a recording
-    // scope open. `Ok(None)` means the name is not a registry built-in (or
-    // its target root did not resolve), so nothing was selected.
-    match try_run_builtin_task(
+    try_run_builtin_task(
         &ports,
         &preflight.selector,
         task,
@@ -64,17 +58,8 @@ fn resolve_builtin_selection_output(
         &preflight.resolved.resolved_root,
         &preflight.catalogs,
         &preflight.invocation_cwd,
-    ) {
-        Ok(Some(output)) => {
-            crate::cli::legacy_direct::record_registry_warning(&task.name);
-            Ok(Some(output))
-        }
-        Ok(None) => Ok(None),
-        Err(error) => {
-            crate::cli::legacy_direct::record_registry_warning(&task.name);
-            Err(error.into())
-        }
-    }
+    )
+    .map_err(RunnerError::from)
 }
 
 fn removed_builtin_invocation_error(selector: &TaskSelector) -> Option<RunnerError> {

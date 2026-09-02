@@ -68,7 +68,7 @@ For machine parsing: `effigy test --plan --json`.
 Use this when you need to know what `effigy test` would actually do before you
 run it.
 
-## 4. `effigy admin config`
+## 4. `effigy config`
 
 Show resolved config — merged `effigy.toml` + `config/tasks.toml` +
 catalog imports + defaults. This is what Effigy actually sees, after
@@ -100,7 +100,7 @@ When the job is code understanding, use this directly. Do not require the
 other commands first if the question is already code-location shaped:
 
 ```bash
-effigy repo graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
+effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
 ```
 
 The query builds or refreshes the index on demand. Use `graph status` only

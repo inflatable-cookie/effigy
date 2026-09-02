@@ -16,7 +16,7 @@ pub(super) fn render_zsh_completion() -> String {
     doc.blank();
     doc.line("if (( CURRENT == 2 )); then");
     doc.line("  local -a dynamic_commands");
-    doc.line("  dynamic_commands=(${(f)\"$(effigy admin config completion candidates --prefix $words[CURRENT] 2>/dev/null)\"})");
+    doc.line("  dynamic_commands=(${(f)\"$(effigy config completion candidates --prefix $words[CURRENT] 2>/dev/null)\"})");
     doc.line("  if (( ${#dynamic_commands[@]} > 0 )); then");
     doc.line("    _describe 'command-or-task' dynamic_commands");
     doc.line("    return");

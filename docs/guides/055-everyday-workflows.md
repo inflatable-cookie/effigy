@@ -99,9 +99,9 @@ Deep dive:
 ### Repo scans
 
 ```sh
-effigy repo scan god-files
-effigy repo scan comment-ratio
-effigy repo scan generated-in-src
+effigy scan god-files
+effigy scan comment-ratio
+effigy scan generated-in-src
 ```
 
 Use scanners when you want concrete findings about codebase drift instead of
@@ -114,12 +114,12 @@ Deep dive:
 ### Agent code-understanding context
 
 ```sh
-effigy repo graph index
-effigy repo graph status --json
-effigy repo graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy repo graph affected --stdin --json
-effigy repo graph context "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
-effigy repo graph search release --limit 10 --json
+effigy graph index
+effigy graph status --json
+effigy graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy graph affected --stdin --json
+effigy graph context "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
+effigy graph search release --limit 10 --json
 ```
 
 Use the graph before broad file scanning when the job is code understanding and you need:
@@ -133,13 +133,13 @@ Do not treat this as the front door for every task. For discovery, health, and
 test routing, start with `effigy doctor`, `effigy tasks`, and
 `effigy test --plan`.
 
-If `graph status --json` reports `stale_paths`, refresh with `effigy repo graph index --json`
+If `graph status --json` reports `stale_paths`, refresh with `effigy graph index --json`
 before trusting query output.
 
 If the repo is changing while you work:
 
 ```sh
-effigy repo graph watch --json
+effigy graph watch --json
 ```
 
 Deep dive:
@@ -151,10 +151,10 @@ For web or service-heavy repos, the clean daily path should read as one chain
 instead of a pile of unrelated commands:
 
 ```sh
-effigy local service list
-effigy local container up
-effigy local gateway status
-effigy local exec composer install
+effigy service list
+effigy container up
+effigy gateway status
+effigy exec composer install
 effigy dev
 ```
 
@@ -187,10 +187,10 @@ Once a repo has been around for a while, two cleanup questions show up:
 Use the built-in inventory surfaces instead of raw runtime commands:
 
 ```sh
-effigy local container cache list --global
-effigy local container cache prune --project my-app-dev --yes
-effigy local container volume list --dormant
-effigy local container volume prune --dormant --yes
+effigy container cache list --global
+effigy container cache prune --project my-app-dev --yes
+effigy container volume list --dormant
+effigy container volume prune --dormant --yes
 ```
 
 Use `cache` for safe disposable build artifacts such as `target`,
@@ -204,24 +204,24 @@ artifact substrate instead of ad-hoc file copies:
 
 ```sh
 # Inspect an OCI artifact before using it
-effigy deliver artifact inspect oci://ghcr.io/acme/uat-content:2026-05-06 --json
+effigy artifact inspect oci://ghcr.io/acme/uat-content:2026-05-06 --json
 
 # Stage a local dump for seeding
-effigy deliver artifact stage ./data/legacy.sql.gz --json
+effigy artifact stage ./data/legacy.sql.gz --json
 
 # Capture and push a UAT snapshot
-effigy deliver artifact capture ./dumps/uat.sql.gz \
+effigy artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --push --json
 
 # Seed a container from an OCI artifact
-effigy local container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
+effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
 
 # Dump and push to OCI in one command
-effigy local container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 
 # Bootstrap a new checkout with an OCI seed
-effigy deliver bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
 ```
 
 Workflow rules:
@@ -249,7 +249,7 @@ effigy init --check --json
 effigy init --checklist --json
 effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
 effigy tasks migrate --from package.json
-effigy admin config --schema --minimal
+effigy config --schema --minimal
 ```
 
 This is usually where Effigy starts to feel easier: env handling, test
@@ -292,11 +292,11 @@ run, inspect, and review, move them into `[demos.<id>]` instead of keeping
 them as an ad hoc script pile.
 
 ```sh
-effigy deliver demo list
-effigy deliver demo browser
-effigy deliver demo inspect login-smoke
-effigy deliver demo history login-smoke --limit 5
-effigy deliver demo run login-smoke
+effigy demo list
+effigy demo browser
+effigy demo inspect login-smoke
+effigy demo history login-smoke --limit 5
+effigy demo run login-smoke
 ```
 
 Use demos when the repo should name what the proof covers and keep review in
@@ -314,10 +314,10 @@ candidate SHA with the repository's full hosted CI board; for Effigy, manually
 dispatch `ci.yml` and watch the exact-SHA run to success.
 
 ```sh
-effigy deliver release status --check-gates
-effigy deliver release prepare --plan
-effigy deliver release preflight --tag vX.Y.Z
-effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release status --check-gates
+effigy release prepare --plan
+effigy release preflight --tag vX.Y.Z
+effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```
 
 Use `release` for release readiness, mutation flow, artifact validation,
@@ -336,8 +336,8 @@ tasks, use deferral as a migration bridge instead of maintaining two separate
 runners:
 
 ```sh
-effigy admin defer prep
-effigy admin defer release -- --dry-run
+effigy defer prep
+effigy defer release -- --dry-run
 ```
 
 Configure the fallback in `effigy.toml`:
@@ -389,8 +389,8 @@ tasks, use deferral as a migration bridge instead of maintaining two separate
 runners:
 
 ```sh
-effigy admin defer prep
-effigy admin defer release -- --dry-run
+effigy defer prep
+effigy defer release -- --dry-run
 ```
 
 Configure the fallback in `effigy.toml`:
