@@ -239,13 +239,23 @@ incompatible input stops the run with `stable` unchanged.
 - OCI `vX.Y.Z` absent permits creation at the candidate digest; the same digest
   permits idempotent retry; a different digest is a collision and stops without
   overwriting the pointer or moving `stable`.
-- Package writes belong only to the protected publication job, serialized by
-  version. The OCI manifest digest is the immutable release identity and retry
-  oracle; source and OCI version tags are process-immutable checked pointers.
-- The job re-resolves the version pointer, attaches and verifies digest-bound
-  provenance, pulls anonymously by digest, validates exact bytes and pack
-  compatibility, rechecks the Effigy support input, then moves and verifies
-  `stable` at the same digest.
+- Artifact and tag writes belong only to protected publication jobs, serialized
+  by version. For the first package, GitHub's documented operator package-
+  settings control performs the explicitly authorized public-visibility change
+  between the protected publish and finalize jobs; no undocumented REST PATCH
+  is a release dependency. The OCI manifest digest is the immutable release
+  identity and retry oracle; source and OCI version tags are process-immutable
+  checked pointers.
+- The finalize job re-resolves the version pointer, verifies public package
+  linkage, attaches and verifies digest-bound provenance through exact-SHA
+  `actions/attest`, pulls anonymously by digest, validates exact bytes and pack
+  compatibility, fetches and rechecks Effigy's current support/release input,
+  then moves and verifies `stable` at the same digest.
+- When a previous verified `stable` digest exists, finalization exercises live
+  retag rollback before restoring the candidate. When the first-publication
+  target is absent, the non-mutating oracle proves rollback-to-absence and the
+  live path moves `stable` once; it never deletes a manifest to imitate tag
+  absence.
 - A partial-push retry rebuilds the same candidate. It resumes only for an
   absent or same-digest remote version state; a changed source tag, changed
   deterministic input, or different-digest collision stops.

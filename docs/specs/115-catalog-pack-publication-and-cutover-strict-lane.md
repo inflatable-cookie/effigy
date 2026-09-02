@@ -69,6 +69,16 @@ external publication mutations remain operator-gated.
   mutation exactly.
 - Workflow edits are limited to the pack repository implementation lane.
   Effigy's `.github/workflows/` remains out of scope without separate authority.
+- First publication uses serialized protected publish/finalize jobs. GitHub's
+  documented operator package-settings control supplies the one-time public
+  visibility checkpoint between them; no undocumented package PATCH is part of
+  the release transaction.
+- The finalize job uses exact-SHA `actions/attest`. Its repository selected-
+  actions policy may add only that exact action before dispatch.
+- An absent pre-publication `stable` target is rollback evidence, not deletion
+  authority. Prove that branch in the non-mutating model and move `stable` once
+  after final gates. A live retag rollback exercise applies only when a previous
+  verified digest exists.
 - Preserve the compiled baseline and current selection transaction until card
   `1106` proves an exact generated replacement.
 - Public `service pack update` remains absent until card `1107` has a public,
