@@ -5,7 +5,7 @@ Created: 2026-09-02
 Closed: 2026-09-02 — card `1109` shipped the additive preview; strict spec
 `116` archived; direct-route removal remains gated on the `v1.0`
 consumer-evidence checkpoint
-Spec: [`116`](../../specs/116-command-surface-compaction-preview-strict-lane.md)
+Spec: [`116`](../../../specs/archive/116-command-surface-compaction-preview-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
@@ -16,10 +16,12 @@ preserving current automation through an explicit pre-`v1.0` migration window.
 
 ## Sequence
 
-1. [`1109`](./batch-cards/1109-add-executable-command-namespaces.md) — Ready:
-   add the five canonical namespaces, retain direct routes with structured
-   diagnostics, update discovery/completion/docs, and prove routing and output
-   parity.
+1. [`1109`](./batch-cards/1109-add-executable-command-namespaces.md) —
+   **Complete**: added the five canonical namespaces, retained direct routes
+   with structured migration diagnostics, updated discovery/completion/docs,
+   and proved routing and output parity. The additive preview is the complete
+   milestone; direct-route removal stays behind the `v1.0` consumer-evidence
+   gate.
 
 The implementation is one serial lane because parser, dispatch, help,
 completion, envelope, and managed-skill surfaces share the same command-route

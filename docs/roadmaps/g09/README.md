@@ -23,9 +23,14 @@ destructive cleanup behind explicit compatibility evidence.
 
 ## Current State
 
-Card [`1109`](./batch-cards/1109-add-executable-command-namespaces.md) is Ready.
-It is the only current implementation lane.
+[`g09.001`](./001-command-surface-compaction-preview.md) is complete: card
+[`1109`](./batch-cards/1109-add-executable-command-namespaces.md) shipped the
+additive preview and strict spec `116` is archived. No implementation lane is
+active.
 
 ## Next Task
 
-Execute ready card [`1109`](./batch-cards/1109-add-executable-command-namespaces.md).
+Await the future `v1.0` consumer-evidence checkpoint: direct-route removal
+requires a refreshed consumer inventory plus explicit release authority, and
+no removal card is readied before that gate. Effigy release authority stays
+separate.

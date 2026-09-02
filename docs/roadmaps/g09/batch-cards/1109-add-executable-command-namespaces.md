@@ -1,7 +1,7 @@
 # 1109 - Add Executable Command Namespaces
 
 Roadmap: [`../001-command-surface-compaction-preview.md`](../001-command-surface-compaction-preview.md)
-Spec: [`../../../specs/116-command-surface-compaction-preview-strict-lane.md`](../../../specs/116-command-surface-compaction-preview-strict-lane.md)
+Spec: [`../../../specs/archive/116-command-surface-compaction-preview-strict-lane.md`](../../../specs/archive/116-command-surface-compaction-preview-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
 Status: Complete
@@ -90,5 +90,7 @@ mutation, S3 extraction, or extension transport.
 
 ## Next Task
 
-Implement this card, open a PR, and return it to the Effigy orchestrator for
-exact-head review. Do not merge or start the `v1.0` removal lane.
+This card is complete and merged (PR `85` at `a50a2fc`). The next checkpoint
+is the future `v1.0` consumer-evidence gate: direct-route removal requires a
+refreshed consumer inventory and explicit release authority, and no removal
+card exists yet. Effigy release authority stays separate.

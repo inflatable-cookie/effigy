@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/02-205536-command-surface-preview-1109.md`](./2026-09/02-205536-command-surface-preview-1109.md)
 - [`2026-09/02-192316-command-surface-preview-planning.md`](./2026-09/02-192316-command-surface-preview-planning.md)
 - [`2026-09/02-155016-official-catalog-pack-update-1107.md`](./2026-09/02-155016-official-catalog-pack-update-1107.md)
 - [`2026-09/02-144609-catalog-pack-generated-baseline-1106.md`](./2026-09/02-144609-catalog-pack-generated-baseline-1106.md)
@@ -207,10 +208,12 @@ Batch: <batch-slug>
 
 ## Next Task
 
-[`02-185453`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md)
-closes `g08.048`: card `1107` merged safe public update at `20d9040c`; card
-`1108` merged generated-only proposal automation and the honest empty-delta
-provider checkpoint at catalog-pack `ebb813e1`. Effigy release remains a
-separate operator-gated mutation.
-
-- [`2026-09/02-205536-command-surface-preview-1109.md`](./2026-09/02-205536-command-surface-preview-1109.md)
+`g09.001` and card `1109` are complete (evidence log
+[`02-205536`](./2026-09/02-205536-command-surface-preview-1109.md), indexed
+under Active logs above); `g08.048` closed earlier at
+[`02-185453`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md).
+The next
+checkpoint is the future `v1.0` consumer-evidence gate: direct-route removal
+requires a refreshed consumer inventory plus explicit release authority, and
+no removal card exists yet. Effigy release remains a separate operator-gated
+mutation.
