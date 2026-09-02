@@ -1,10 +1,8 @@
 use crate::HelpTopic;
 
-/// Primary operator-job group that owns a general-help entry.
-///
-/// Grouping is a discovery concern only: no `effigy <group> <command>`
-/// execution route exists, and group words stay available to manifest task
-/// selectors (contract `043`).
+/// Five groups are executable namespaces: an exact space-separated namespace
+/// word routes to the group's child commands (spec `116`), and `work` stays
+/// help-only with the daily task spine direct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HelpGroup {
     Work,
@@ -16,16 +14,6 @@ pub enum HelpGroup {
 }
 
 impl HelpGroup {
-    /// Every group, in the order general help renders them.
-    pub const ALL: &'static [HelpGroup] = &[
-        HelpGroup::Work,
-        HelpGroup::Local,
-        HelpGroup::Repo,
-        HelpGroup::Deliver,
-        HelpGroup::Extend,
-        HelpGroup::Admin,
-    ];
-
     /// Topic word accepted by `effigy help <group>`.
     pub fn slug(self) -> &'static str {
         match self {
@@ -37,6 +25,15 @@ impl HelpGroup {
             HelpGroup::Admin => "admin",
         }
     }
+    /// Every group, in the order general help renders them.
+    pub const ALL: &'static [HelpGroup] = &[
+        HelpGroup::Work,
+        HelpGroup::Local,
+        HelpGroup::Repo,
+        HelpGroup::Deliver,
+        HelpGroup::Extend,
+        HelpGroup::Admin,
+    ];
 
     /// Section title used by general help and group help.
     pub fn title(self) -> &'static str {
@@ -73,6 +70,73 @@ impl HelpGroup {
             .copied()
             .find(|group| group.slug() == slug)
     }
+}
+
+/// Canonical child commands per executable namespace (spec `116`).
+///
+/// `effigy <namespace> <child>` delegates to the child's existing typed
+/// command value after the namespace token is removed. Every child word is a
+/// displaced direct built-in during the preview; the namespace is the exact
+/// space-separated route that owns it.
+pub const NAMESPACE_CHILDREN: &[(HelpGroup, &[&str])] = &[
+    (
+        HelpGroup::Local,
+        &["container", "system", "workspace", "gateway", "service", "exec"],
+    ),
+    (
+        HelpGroup::Repo,
+        &["graph", "scan", "docs", "contracts", "papercuts"],
+    ),
+    (
+        HelpGroup::Deliver,
+        &[
+            "artifact",
+            "state",
+            "deploy",
+            "release",
+            "bundle",
+            "bootstrap",
+            "demo",
+        ],
+    ),
+    (HelpGroup::Extend, &["skill", "rhai"]),
+    (
+        HelpGroup::Admin,
+        &["config", "deps", "secrets", "defer", "uninstall", "version"],
+    ),
+];
+
+/// Resolve an exact reserved namespace word (`local`, `repo`, `deliver`,
+/// `extend`, or `admin`) to its group. `work` is not executable.
+pub fn group_for_namespace_word(word: &str) -> Option<HelpGroup> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(group, _)| group.slug() == word)
+        .map(|(group, _)| *group)
+}
+
+/// Every reserved namespace word, in canonical order.
+pub fn namespace_words() -> impl Iterator<Item = &'static str> {
+    NAMESPACE_CHILDREN.iter().map(|(group, _)| group.slug())
+}
+
+/// The canonical child commands of one executable namespace.
+pub fn namespace_children(group: HelpGroup) -> Option<&'static [&'static str]> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(candidate, _)| *candidate == group)
+        .map(|(_, children)| *children)
+}
+
+/// The namespace group that owns `child` as a grouped child command.
+///
+/// A direct built-in named `child` is displaced during the preview whenever
+/// this returns a group.
+pub fn group_for_child_word(child: &str) -> Option<HelpGroup> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(_, children)| children.contains(&child))
+        .map(|(group, _)| *group)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -571,6 +635,19 @@ pub fn help_topic_for_help_argument(name: &str) -> Option<HelpTopic> {
         .iter()
         .find(|(candidate, _)| *candidate == name)
         .map(|(_, topic)| *topic)
+}
+
+/// The direct command word whose legacy route renders `topic`'s typed panel.
+///
+/// `General` is shared by several direct words (`help`, `version`) and has no
+/// single legacy owner; topics without a top-level direct word (`migrate`,
+/// `changelog`) return `None`.
+pub fn direct_word_for_topic(topic: HelpTopic) -> Option<&'static str> {
+    HELP_COMMAND_TOPICS
+        .iter()
+        .find(|(_, candidate)| *candidate == topic)
+        .filter(|(_, candidate)| *candidate != HelpTopic::General)
+        .map(|(name, _)| *name)
 }
 
 /// Names accepted by `effigy help <command>` whose detailed help is owned by

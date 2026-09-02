@@ -41,7 +41,7 @@ fn build_help_payload_for_root_hides_explicitly_deferred_builtins() {
     )
     .expect("write manifest");
 
-    let payload = build_help_payload_for_root(HelpTopic::General, &root);
+    let payload = build_help_payload_for_root(HelpTopic::General, &root, None);
     let text = payload["text"].as_str().expect("help text");
     assert!(!text.contains("effigy release"), "got: {text}");
     assert!(text.contains("effigy doctor"), "got: {text}");
@@ -56,7 +56,7 @@ fn build_help_payload_for_root_keeps_release_visible_when_explicit_deferral_owns
     )
     .expect("write manifest");
 
-    let payload = build_help_payload_for_root(HelpTopic::General, &root);
+    let payload = build_help_payload_for_root(HelpTopic::General, &root, None);
     let text = payload["text"].as_str().expect("help text");
     assert!(text.contains("effigy release"), "got: {text}");
 }
@@ -88,7 +88,7 @@ fn build_help_group_payload_hides_explicitly_deferred_builtins() {
     assert!(!group_text.contains("effigy graph"), "got: {group_text}");
     assert!(group_text.contains("effigy docs"), "got: {group_text}");
 
-    let general = build_help_payload_for_root(HelpTopic::General, &root);
+    let general = build_help_payload_for_root(HelpTopic::General, &root, None);
     let general_text = general["text"].as_str().expect("general help text");
     assert!(
         !general_text.contains("effigy graph"),
@@ -110,7 +110,7 @@ fn manifest_selector_shadowing_a_builtin_hides_it_from_general_and_group_help() 
     assert!(!group_text.contains("effigy docs"), "got: {group_text}");
     assert!(group_text.contains("effigy graph"), "got: {group_text}");
 
-    let general = build_help_payload_for_root(HelpTopic::General, &root);
+    let general = build_help_payload_for_root(HelpTopic::General, &root, None);
     let general_text = general["text"].as_str().expect("general help text");
     assert!(!general_text.contains("effigy docs"), "got: {general_text}");
 }

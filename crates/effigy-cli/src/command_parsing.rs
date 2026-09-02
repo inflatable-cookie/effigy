@@ -102,9 +102,117 @@ where
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         "__host-process-supervise" => parse_internal_host_process_supervise_command(args),
         "__host-process-stop" => parse_internal_host_process_stop_command(args),
+        "local" | "repo" | "deliver" | "extend" | "admin" => {
+            parse_namespace_command(cmd, args)
+        }
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+/// Parse `effigy <namespace> [<child> ...]` for one of the five executable
+/// namespaces (spec `116`).
+///
+/// A namespace without a child renders its group inventory; a recognized
+/// child delegates to the existing typed command parser (or the built-in
+/// registry run for commands that own their parse inside the built-in
+/// layer). An unknown or missing child is a grouped-command usage error and
+/// never falls through to manifest task execution.
+fn parse_namespace_command<I>(namespace: String, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let group = crate::command_surface::group_for_namespace_word(&namespace)
+        .expect("namespace parse arm only fires for reserved words");
+    let mut args = args.into_iter();
+    let Some(child) = args.next() else {
+        return Ok(Command::HelpGroup(group));
+    };
+    if matches!(child.as_str(), "--help" | "-h") {
+        return Ok(Command::HelpGroup(group));
+    }
+
+    match parse_grouped_child(group, &child, args) {
+        Some(parsed) => parsed,
+        None => {
+            let mut children = crate::command_surface::namespace_children(group)
+                .expect("executable namespace has children")
+                .to_vec();
+            children.sort_unstable();
+            Err(CliParseError::InvalidArguments(format!(
+                "unknown `{}` command `{child}` (expected one of: {}); run `effigy help {}` for the group inventory",
+                group.slug(),
+                children.join(", "),
+                group.slug()
+            )))
+        }
+    }
+}
+
+/// Route one grouped child to its single existing command owner.
+///
+/// Typed children produce the same `Command` value as their direct spelling;
+/// `config` and `scan` own their parse inside the built-in layer, so their
+/// grouped route runs the built-in registry command directly.
+fn parse_grouped_child<I>(
+    group: crate::HelpGroup,
+    child: &str,
+    args: I,
+) -> Option<Result<Command, CliParseError>>
+where
+    I: IntoIterator<Item = String>,
+{
+    let parse = match group {
+        crate::HelpGroup::Local => match child {
+            "container" => parse_container_command(args),
+            "system" => parse_system_command(args),
+            "workspace" => parse_workspace_command(args),
+            "gateway" => parse_gateway_command(args),
+            "service" => parse_service_command(args),
+            "exec" => parse_exec_command(args),
+            _ => return None,
+        },
+        crate::HelpGroup::Repo => match child {
+            "graph" => parse_graph_command(args),
+            "docs" => parse_docs_command(args),
+            "contracts" => parse_contracts_command(args),
+            "papercuts" => parse_papercuts_command(args),
+            "scan" => return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
+                name: "scan".to_owned(),
+                args: args.into_iter().collect(),
+            }))),
+            _ => return None,
+        },
+        crate::HelpGroup::Deliver => match child {
+            "artifact" => parse_artifact_command(args),
+            "state" => parse_state_command(args),
+            "deploy" => parse_deploy_command(args),
+            "release" => parse_release_command(args),
+            "bundle" => parse_bundle_command(args),
+            "bootstrap" => parse_bootstrap_command(args),
+            "demo" => parse_demo_command(args),
+            _ => return None,
+        },
+        crate::HelpGroup::Extend => match child {
+            "skill" => parse_skill_command(args),
+            "rhai" => parse_rhai_command(args),
+            _ => return None,
+        },
+        crate::HelpGroup::Admin => match child {
+            "config" => return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
+                name: "config".to_owned(),
+                args: args.into_iter().collect(),
+            }))),
+            "deps" => parse_deps_command(args),
+            "secrets" => parse_secrets_command(args),
+            "defer" => parse_defer_command(args),
+            "uninstall" => parse_uninstall_command(args),
+            "version" => parse_version_command(args),
+            _ => return None,
+        },
+        crate::HelpGroup::Work => return None,
+    };
+    Some(parse)
 }
 
 fn parse_skill_command<I>(args: I) -> Result<Command, CliParseError>
