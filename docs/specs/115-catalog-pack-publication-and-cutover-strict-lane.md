@@ -44,8 +44,9 @@ offline operation or Effigy release authority.
 
 Cards `1107` and `1108` may run in parallel only after `1106`: they have
 different repository owners and write scopes. Same-repository PR review and
-merge order remains serial. Card `1105` is complete; card `1106` is the next
-dependency edge.
+merge order remains serial. Cards `1105` and `1106` are complete; the `1106`
+cutover PR is under review and `1107`/`1108` become the next dependency edge
+after its merge.
 
 ## Cards
 
@@ -57,7 +58,9 @@ dependency edge.
   — Complete; `v1.0.0` is preserved and public `v1.0.1` plus `stable` resolve
   to the accepted attested digest.
 - [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
-  — Ready; cut over Effigy's generated recovery snapshot and provenance lock.
+  — Complete; Effigy's generated recovery snapshot and provenance lock are cut
+  over (evidence
+  [`02-144609`](../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
 - [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
   — Blocked on `1106`.
 - [`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
@@ -130,5 +133,6 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Implement ready card `1106` from the accepted `v1.0.1` publication evidence.
-Effigy release authority remains separate.
+Card `1106`'s generated-baseline cutover PR is under review. After it merges,
+refresh ready-frontier status for cards `1107` and `1108`. Effigy release
+authority remains separate.

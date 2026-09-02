@@ -4,9 +4,13 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: Effigy compiled catalog snapshot and provenance verification
 Created: 2026-09-01
+Closed: 2026-09-02 — cut over the generated snapshot and typed provenance lock
+from the accepted `v1.0.1` artifact; evidence
+[`02-144609`](../../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md);
+cutover PR under review
 
 ## Publication Input
 
@@ -51,5 +55,6 @@ network access, or the embed path cannot remain a permanent recovery floor.
 
 ## Next Task
 
-Implement this card. After merge, refresh readiness for cards `1107` and
-`1108`; they may become a parallel frontier.
+Card implemented; the cutover PR is under review. After it merges, the
+orchestrator refreshes readiness for cards `1107` and `1108`; they remain
+blocked until then and may then become a parallel frontier.

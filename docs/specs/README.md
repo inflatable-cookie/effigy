@@ -29,8 +29,10 @@ Historical command-reference rule:
 Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
-  catalog-pack publication and generated-baseline cutover; cards `1103` through
-  `1105` complete, card `1106` Ready for the generated recovery snapshot
+  catalog-pack publication and generated-baseline cutover; cards `1103`
+  through `1106` complete (the `1106` cutover PR is under review), cards
+  `1107` and `1108` blocked until the orchestrator refreshes readiness after
+  that merge
 
 Queued strict lanes:
 
@@ -83,4 +85,6 @@ Other planning specs:
 
 ## Next Task
 
-Implement ready card `1106`. Keep draft `098` paused.
+Card `1106`'s generated-baseline cutover PR is under review. After it merges,
+refresh ready-frontier status for cards `1107` and `1108`. Keep draft `098`
+paused.
