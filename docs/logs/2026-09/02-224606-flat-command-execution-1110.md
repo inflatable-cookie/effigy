@@ -6,8 +6,9 @@ Roadmap: `g09.002`
 Spec: `117` (archived with this closeout)
 Card: `1110`
 Branch: `worker/g09-002-flat-command-execution-1110`
-PR: pending exact-head review
-Review head: `worker/g09-002-flat-command-execution-1110` tip at submission
+PR: [inflatable-cookie/effigy#87](https://github.com/inflatable-cookie/effigy/pull/87)
+Review head: `a4685d249e240fd9a03c77a065cd6357e95d37cc` at first submission; this
+closeout records the PR URL on the same branch
 
 ## Outcome
 

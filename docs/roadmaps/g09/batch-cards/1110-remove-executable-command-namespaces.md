@@ -8,7 +8,9 @@ Status: Complete
 Owner: CLI command routing, discovery, completion, migration-diagnostic removal,
 and current guidance
 Created: 2026-09-02
-Closed: 2026-09-02 — rollback PR submitted for exact-head review; evidence log
+Closed: 2026-09-02 — rollback PR
+[#87](https://github.com/inflatable-cookie/effigy/pull/87) submitted for
+exact-head review; evidence log
 [`02-224606-flat-command-execution-1110.md`](../../../logs/2026-09/02-224606-flat-command-execution-1110.md)
 
 ## Purpose
@@ -89,6 +91,8 @@ extension-transport design.
 
 ## Next Task
 
-This card is complete on the worker branch awaiting orchestrator review and
-merge. Direct invocation is canonical. No `v1.0` direct-route-removal gate
-remains. Effigy release and S3 extraction stay separately gated.
+This card is complete on PR
+[#87](https://github.com/inflatable-cookie/effigy/pull/87) awaiting
+orchestrator review and merge. Direct invocation is canonical. No `v1.0`
+direct-route-removal gate remains. Effigy release and S3 extraction stay
+separately gated.
