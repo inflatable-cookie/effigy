@@ -10,7 +10,7 @@ use std::path::Path;
 
 use super::content::{content_id, validate_pack};
 use super::error::PackError;
-use super::store::InstalledPackRecord;
+use super::store::{InstalledPackRecord, PackStore, PackStoreState};
 
 /// Why stored content failed its proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,55 @@ pub struct PackVerificationFailure {
     pub defect: PackDefect,
     /// Human-readable explanation naming the install and the discrepancy.
     pub detail: String,
+}
+
+/// The active install, when it is this digest and still verifies.
+///
+/// Captured under the durable-store lock together with the state snapshot used
+/// to render a no-op, so a concurrent rollback or install cannot change
+/// `active`/`previous` between the decision and the report. Unreadable state,
+/// a local install, a different digest, or failed verification are not no-ops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedActiveDigest {
+    /// Active record that still proves as this digest.
+    pub record: InstalledPackRecord,
+    /// Store snapshot taken under the same lock as the decision.
+    pub state: PackStoreState,
+}
+
+/// The active install, when it is this digest and still verifies.
+///
+/// Used by official update to skip acquire/store/activate when `stable`
+/// already names the verified local content. Unreadable state, a local
+/// install, a different digest, or failed verification are not no-ops.
+pub fn verified_active_digest(
+    store: &PackStore,
+    digest: &str,
+    effigy_version: &str,
+) -> Option<VerifiedActiveDigest> {
+    snapshot_verified_active(store, digest, effigy_version, |_| {})
+}
+
+pub(super) fn snapshot_verified_active(
+    store: &PackStore,
+    digest: &str,
+    effigy_version: &str,
+    hold: impl FnOnce(&PackStoreState),
+) -> Option<VerifiedActiveDigest> {
+    let _lock = store.lock().ok()?;
+    let state = store.load().ok()?;
+    let record = state.active_record()?.clone();
+    if record.source.digest() != Some(digest) {
+        return None;
+    }
+    verify_installed_pack(
+        &store.install_dir(&record.install_id),
+        &record,
+        effigy_version,
+    )
+    .ok()?;
+    hold(&state);
+    Some(VerifiedActiveDigest { record, state })
 }
 
 /// Prove `root` still holds exactly the content `record` describes, and that it

@@ -72,6 +72,7 @@ changes override precedence.
 effigy service pack status
 effigy service pack install oci://<REPO>@sha256:<DIGEST>
 effigy service pack install --path ./catalog-pack
+effigy service pack update
 effigy service pack rollback
 effigy service pack reset
 ```
@@ -103,8 +104,16 @@ unchanged. A pack cannot widen the fragment schema.
 
 - Installation is always explicit. Ordinary catalog use never fetches, checks
   for updates, or touches the network.
+- `effigy service pack update` is the official no-argument path. It inspects
+  the compiled `stable` channel on
+  `ghcr.io/inflatable-cookie/effigy-catalog-pack`, then sends only the resolved
+  digest through the same acquire-validate-store-activate transaction as
+  `install`. Text and JSON report the channel and digest. A verified
+  already-active digest is a deterministic no-op: no pull, and no change to
+  active, previous, or compiled channel identity.
 - An `oci://` source must be digest-addressed (`@sha256:...`). A tag-only
-  reference is rejected before any transport call.
+  reference is rejected before any transport call. Update is the only command
+  that may resolve `stable`, and it does so before entering that transaction.
 - `--path <DIR>` installs from a local directory, for development and recovery.
 - Acquire, validate, store, and activate are one transaction. Activation
   happens last and only after the manifest, compatibility, and fragments
@@ -170,21 +179,30 @@ task paths that have no selection payload of their own; stdout contracts are
 unchanged. `effigy doctor` additionally raises `catalog.pack-health` with one
 direct repair command.
 
+### Official update
+
+`effigy service pack update` uses the compiled official repository and `stable`
+channel. Installed pack content cannot redirect that coordinate. Resolution
+failure, pull failure, compatibility failure, validation failure, or activation
+failure leaves active, previous, and channel identity unchanged.
+
+The compiled baseline remains the recovery snapshot. Update never runs during
+ordinary service, container, system, workspace, or task use.
+
 ### Not in this surface
 
-There is no `effigy service pack update`. The official channel is fixed and
-baseline-owned — installed pack content cannot redirect it — but no official
-artifact is published yet, so no public update command exists.
+There is no implicit registry probe and no hidden coordinate override.
+`service pack update` takes no repository, tag, or digest arguments.
 
 Effigy owns `support/catalog-pack-update.toml`, the machine-readable
-compatibility set for that future public channel. Only an Effigy
+compatibility set for the public channel. Only an Effigy
 support-policy or release PR may change it. Catalog-pack publication consumes
 the file from a resolved Effigy default-branch commit and blob digest; the
 pack repository, pack content, and installed state cannot redefine the
 required set. Local Effigy validation is network-free and does not affect pack
 selection, acquisition, or activation. `oldest_update_capable_release` tracks
-whether a released Effigy exposes public update; publishing an official
-artifact or channel does not, by itself, add that field.
+whether a released Effigy exposes public update; shipping the command on
+`main` does not, by itself, add that field.
 
 ## Catalog Services
 

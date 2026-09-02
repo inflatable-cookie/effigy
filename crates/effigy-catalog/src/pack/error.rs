@@ -107,6 +107,14 @@ pub enum PackError {
     )]
     OciSourceNotPinned { reference: String },
 
+    /// A value claimed to be an OCI digest is not `sha256:` plus 64 lowercase hex.
+    #[error(
+        "OCI digest `{digest}` is not an immutable `sha256:` digest; \
+         channel resolution and install require `sha256:` followed by 64 \
+         lowercase hexadecimal characters"
+    )]
+    OciDigestInvalid { digest: String },
+
     /// The requested local install path is missing or not a directory.
     #[error("local catalog pack path is not a directory: {path}")]
     LocalSourceNotDirectory { path: PathBuf },
@@ -114,6 +122,14 @@ pub enum PackError {
     /// Acquisition through the injected transport seam failed.
     #[error("failed to acquire catalog pack from {origin}: {reason}")]
     AcquireFailed { origin: String, reason: String },
+
+    /// Official-channel resolution failed before the install transaction.
+    ///
+    /// Distinct from [`PackError::AcquireFailed`]: nothing was pulled or
+    /// stored. Active, previous, and compiled channel identity stay as they
+    /// were.
+    #[error("failed to resolve official catalog pack channel at {origin}: {reason}")]
+    ChannelResolutionFailed { origin: String, reason: String },
 
     /// The persisted store state could not be read or parsed.
     #[error("catalog pack store state at {path} is unreadable: {reason}")]

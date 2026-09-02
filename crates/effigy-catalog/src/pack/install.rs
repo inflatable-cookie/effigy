@@ -42,19 +42,51 @@ pub enum PackCandidateSource {
     },
 }
 
+/// Exact OCI digest: `sha256:` plus 64 lowercase hexadecimal characters.
+///
+/// The supplied bytes are matched as-is. Surrounding whitespace is not
+/// canonicalized here; operator-facing `oci://` references trim the whole
+/// reference in [`PackCandidateSource::parse_oci`] before the extracted digest
+/// is checked.
+pub fn parse_oci_digest(value: &str) -> Result<&str, PackError> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(PackError::OciDigestInvalid {
+            digest: value.to_owned(),
+        });
+    };
+    if hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Ok(value)
+    } else {
+        Err(PackError::OciDigestInvalid {
+            digest: value.to_owned(),
+        })
+    }
+}
+
 impl PackCandidateSource {
     /// Parse an operator-supplied `oci://` reference, requiring a digest.
+    ///
+    /// Surrounding whitespace on the whole reference is stripped here, then
+    /// the trailing digest is checked with [`parse_oci_digest`].
     pub fn parse_oci(value: &str) -> Result<Self, PackError> {
-        let reference = value
-            .trim()
-            .strip_prefix("oci://")
-            .unwrap_or(value.trim())
-            .trim();
+        let value = value.trim();
+        let reference = value.strip_prefix("oci://").unwrap_or(value).trim();
         if !reference.contains("@sha256:") {
             return Err(PackError::OciSourceNotPinned {
-                reference: value.trim().to_owned(),
+                reference: value.to_owned(),
             });
         }
+        let digest = reference
+            .rsplit_once('@')
+            .map(|(_, digest)| digest)
+            .ok_or_else(|| PackError::OciSourceNotPinned {
+                reference: value.to_owned(),
+            })?;
+        parse_oci_digest(digest)?;
         Ok(Self::Oci {
             reference: reference.to_owned(),
         })
@@ -189,12 +221,13 @@ fn run_transaction(
         source: source.clone(),
         destination: staging.join("payload"),
     })?;
+    require_acquired_digest_matches(source, &acquisition)?;
 
     // 2. Validate the candidate before anything durable is touched.
     let pack_root = locate_pack_root(&acquisition.payload_root)?;
     let manifest = validate_pack(&pack_root, effigy_version)?;
     let content_id = content_id(&pack_root)?;
-    let record = build_record(&manifest, source, &acquisition, &content_id)?;
+    let record = build_record(&manifest, source, &content_id)?;
 
     // 3. Land and activate under the durable-store lock, so a concurrent
     //    install cannot race the landing or lose this record's lineage.
@@ -301,30 +334,64 @@ fn quarantine_path(install_dir: &Path) -> PathBuf {
     parent.join(format!(".corrupt-{name}-{}", unique_suffix()))
 }
 
+fn require_acquired_digest_matches(
+    source: &PackCandidateSource,
+    acquisition: &PackAcquisition,
+) -> Result<(), PackError> {
+    let PackCandidateSource::Oci { reference } = source else {
+        return Ok(());
+    };
+    let requested = reference
+        .rsplit_once('@')
+        .map(|(_, digest)| digest)
+        .ok_or_else(|| PackError::OciSourceNotPinned {
+            reference: format!("oci://{reference}"),
+        })?;
+    let requested = parse_oci_digest(requested)?;
+    match acquisition.resolved_digest.as_deref() {
+        Some(found) => {
+            let found = parse_oci_digest(found).map_err(|error| PackError::AcquireFailed {
+                origin: format!("oci://{reference}"),
+                reason: error.to_string(),
+            })?;
+            if found == requested {
+                Ok(())
+            } else {
+                Err(PackError::AcquireFailed {
+                    origin: format!("oci://{reference}"),
+                    reason: format!(
+                        "pulled descriptor digest `{found}` does not match requested `{requested}`"
+                    ),
+                })
+            }
+        }
+        None => Err(PackError::AcquireFailed {
+            origin: format!("oci://{reference}"),
+            reason: "pull did not return an immutable digest".to_owned(),
+        }),
+    }
+}
+
+fn pinned_oci_digest(reference: &str) -> Result<String, PackError> {
+    let digest = reference
+        .rsplit_once('@')
+        .map(|(_, digest)| digest)
+        .ok_or_else(|| PackError::OciSourceNotPinned {
+            reference: format!("oci://{reference}"),
+        })?;
+    Ok(parse_oci_digest(digest)?.to_owned())
+}
+
 fn build_record(
     manifest: &PackManifest,
     source: &PackCandidateSource,
-    acquisition: &PackAcquisition,
     content_id: &str,
 ) -> Result<InstalledPackRecord, PackError> {
     let source_record = match source {
-        PackCandidateSource::Oci { reference } => {
-            let digest = acquisition
-                .resolved_digest
-                .clone()
-                .or_else(|| {
-                    reference
-                        .split_once('@')
-                        .map(|(_, digest)| digest.to_owned())
-                })
-                .ok_or_else(|| PackError::OciSourceNotPinned {
-                    reference: format!("oci://{reference}"),
-                })?;
-            PackSourceRecord::Oci {
-                reference: format!("oci://{reference}"),
-                digest,
-            }
-        }
+        PackCandidateSource::Oci { reference } => PackSourceRecord::Oci {
+            reference: format!("oci://{reference}"),
+            digest: pinned_oci_digest(reference)?,
+        },
         PackCandidateSource::Local { path } => PackSourceRecord::Local {
             path: std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
         },

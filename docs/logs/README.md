@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/02-155016-official-catalog-pack-update-1107.md`](./2026-09/02-155016-official-catalog-pack-update-1107.md)
 - [`2026-09/02-144609-catalog-pack-generated-baseline-1106.md`](./2026-09/02-144609-catalog-pack-generated-baseline-1106.md)
 - [`2026-09/02-003915-catalog-pack-first-publication-authority-1105.md`](./2026-09/02-003915-catalog-pack-first-publication-authority-1105.md)
 - [`2026-09/01-234606-catalog-pack-repository-foundation-1104.md`](./2026-09/01-234606-catalog-pack-repository-foundation-1104.md)

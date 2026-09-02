@@ -18,9 +18,10 @@ fn service_pack(subcommand: ServicePackSubcommand, output_json: bool) -> Command
 }
 
 #[test]
-fn parse_service_pack_status_rollback_and_reset() {
+fn parse_service_pack_status_update_rollback_and_reset() {
     for (word, expected) in [
         ("status", ServicePackSubcommand::Status),
+        ("update", ServicePackSubcommand::Update),
         ("rollback", ServicePackSubcommand::Rollback),
         ("reset", ServicePackSubcommand::Reset),
     ] {
@@ -97,16 +98,33 @@ fn parse_service_pack_install_requires_exactly_one_candidate() {
     .expect_err("two candidates must fail");
 }
 
-/// The official channel has no published artifact, so no public `update` shape
-/// may exist. Parsing must reject it rather than route it anywhere.
 #[test]
-fn parse_service_pack_has_no_public_update_command() {
+fn parse_service_pack_update_accepts_json_and_rejects_coordinate_args() {
+    let cmd = parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "update".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(cmd, service_pack(ServicePackSubcommand::Update, true));
+
     parse_command(vec![
         "service".to_owned(),
         "pack".to_owned(),
         "update".to_owned(),
+        "oci://ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:abc".to_owned(),
     ])
-    .expect_err("`service pack update` must not exist yet");
+    .expect_err("update must not accept a coordinate override");
+
+    parse_command(vec![
+        "service".to_owned(),
+        "pack".to_owned(),
+        "update".to_owned(),
+        "--path".to_owned(),
+        "./catalog-pack".to_owned(),
+    ])
+    .expect_err("update must not accept --path");
 }
 
 #[test]

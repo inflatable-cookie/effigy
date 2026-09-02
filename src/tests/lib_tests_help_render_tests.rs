@@ -317,6 +317,8 @@ fn render_service_help_shows_extract_options() {
     assert!(rendered.contains("effigy service extract <SERVICE>"));
     assert!(rendered.contains("--dir <PATH>"));
     assert!(rendered.contains("project-local"));
+    assert!(rendered.contains("effigy service pack update"));
+    assert!(rendered.contains("effigy service pack status"));
 }
 
 #[test]

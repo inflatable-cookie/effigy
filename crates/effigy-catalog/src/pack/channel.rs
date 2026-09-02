@@ -6,21 +6,18 @@
 //!    compiled in and are not read from any installed pack, manifest field,
 //!    config file, or environment variable. Installed content cannot redirect
 //!    where an official update would come from.
-//! 2. No public update command exists yet. [`OfficialPackChannel::published`]
-//!    is `false` while the coordinate below is a placeholder, and
-//!    [`plan_official_update`] refuses to produce an acquirable plan. The
-//!    publication lane replaces the coordinate, flips the flag, and only then
-//!    adds `effigy service pack update`.
+//! 2. Channel resolution may inspect the mutable `stable` tag, but only the
+//!    resulting immutable digest enters [`plan_official_update`]. A tag is
+//!    never an acquirable candidate.
 //!
-//! `.invalid` is reserved by RFC 2606 and never resolves, so the placeholder
-//! cannot accidentally become a live coordinate.
+//! [`OfficialPackChannel::published`] is `true` for this build: the official
+//! artifact exists and public `effigy service pack update` may resolve it.
 
 use super::error::PackError;
-use super::install::PackCandidateSource;
+use super::install::{parse_oci_digest, PackCandidateSource};
 
-/// Placeholder official repository. Not a chosen registry coordinate; the
-/// publication lane replaces this with the real one.
-pub const OFFICIAL_PACK_REPOSITORY: &str = "packs.invalid/effigy/default-catalog";
+/// Official OCI repository. Compiled in; not a runtime override.
+pub const OFFICIAL_PACK_REPOSITORY: &str = "ghcr.io/inflatable-cookie/effigy-catalog-pack";
 
 /// Official stable channel name.
 pub const OFFICIAL_PACK_CHANNEL: &str = "stable";
@@ -45,7 +42,7 @@ impl OfficialPackChannel {
         Self {
             repository: OFFICIAL_PACK_REPOSITORY,
             channel: OFFICIAL_PACK_CHANNEL,
-            published: false,
+            published: true,
         }
     }
 }
@@ -61,24 +58,27 @@ pub struct OfficialUpdatePlan {
     pub candidate: PackCandidateSource,
 }
 
+/// Mutable-tag reference used only for channel resolution (`inspect`).
+///
+/// This is not an install candidate. Acquisition always uses
+/// [`official_update_reference`] after a digest is known.
+pub fn official_channel_tag_reference(channel: &OfficialPackChannel) -> String {
+    format!("oci://{}:{}", channel.repository, channel.channel)
+}
+
 /// Build the official-channel update request for `digest`.
 ///
-/// The digest is supplied by channel resolution, not by pack content; the
+/// `digest` must be exactly `sha256:` plus 64 lowercase hexadecimal characters.
+/// The value is supplied by channel resolution, not by pack content; the
 /// repository always comes from [`OfficialPackChannel::baseline`]. Returns an
-/// error while the channel is unpublished, which is what keeps the public
-/// no-argument `update` command from existing.
+/// error while the channel is unpublished so an unpublished build cannot
+/// acquire through this seam.
 pub fn plan_official_update(
     channel: &OfficialPackChannel,
     digest: &str,
 ) -> Result<OfficialUpdatePlan, PackError> {
-    if !channel.published {
-        return Err(PackError::AcquireFailed {
-            origin: format!("oci://{}:{}", channel.repository, channel.channel),
-            reason: "the official catalog pack channel is not published yet; \
-                     install an explicit `oci://...@sha256:...` or `--path` candidate"
-                .to_owned(),
-        });
-    }
+    ensure_official_channel_published(channel)?;
+    parse_oci_digest(digest)?;
     let candidate =
         PackCandidateSource::parse_oci(&format!("oci://{}@{digest}", channel.repository))?;
     Ok(OfficialUpdatePlan {
@@ -88,7 +88,20 @@ pub fn plan_official_update(
     })
 }
 
-/// Build the request the adapter seam would receive, ignoring publication.
+/// Refuse unpublished channels before any registry inspect.
+pub fn ensure_official_channel_published(channel: &OfficialPackChannel) -> Result<(), PackError> {
+    if channel.published {
+        return Ok(());
+    }
+    Err(PackError::AcquireFailed {
+        origin: official_channel_tag_reference(channel),
+        reason: "the official catalog pack channel is not published yet; \
+                     install an explicit `oci://...@sha256:...` or `--path` candidate"
+            .to_owned(),
+    })
+}
+
+/// Build the digest-addressed request the adapter seam would receive.
 ///
 /// Used by tests and diagnostics to prove the resolved coordinate is the
 /// baseline one even when an installed pack declares an alternate source.
