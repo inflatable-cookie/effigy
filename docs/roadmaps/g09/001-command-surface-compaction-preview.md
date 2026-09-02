@@ -5,7 +5,7 @@ Created: 2026-09-02
 Closed: 2026-09-02 — card `1109` shipped the additive preview; strict spec
 `116` archived; direct-route removal remains gated on the `v1.0`
 consumer-evidence checkpoint
-Spec: [`116`](../../../specs/archive/116-command-surface-compaction-preview-strict-lane.md)
+Spec: [`116`](../../specs/archive/116-command-surface-compaction-preview-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
