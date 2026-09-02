@@ -28,10 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
-  catalog-pack publication and generated-baseline cutover; cards `1103`
-  through `1106` complete; cards `1107` and `1108` are the parallel ready
-  frontier
+- none
 
 Queued strict lanes:
 
@@ -46,6 +43,9 @@ Archived strict lanes:
   2026-09-01
 - [`114`](./archive/114-rhai-storage-create-only-strict-lane.md) archived after
   the bounded Rhai storage create-only repair closed on 2026-09-01
+- [`115`](./archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
+  archived after official publication, generated-baseline cutover, public
+  update, and proposal automation closed on 2026-09-02
 - [`112`](./archive/112-rhai-profile-independent-limits-strict-lane.md) archived
   after profile-independent Rhai expression limits closed on 2026-09-01
 - [`108`](./archive/108-documentation-graph-profiles-strict-lane.md) archived
@@ -84,4 +84,4 @@ Other planning specs:
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel. Keep draft `098` paused.
+Run the operator intent checkpoint from vision `020`. Keep draft `098` paused.

@@ -1,7 +1,7 @@
 # 1106 - Cut Over The Generated Catalog Baseline
 
 Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-publication-and-cutover.md)
-Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
+Spec: [`../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
 Status: Complete
@@ -55,4 +55,4 @@ network access, or the embed path cannot remain a permanent recovery floor.
 
 ## Next Task
 
-Cards `1107` and `1108` are the parallel ready frontier.
+Cards `1107` and `1108` are complete; return to the operator intent checkpoint.

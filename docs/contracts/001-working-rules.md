@@ -96,5 +96,5 @@ one vague “polish” lane.
 
 ## Next Task
 
-Cards `1107` and `1108` are the parallel ready frontier after card `1106`
-merged at `6271b0ff`. Effigy release authority remains separate.
+Run the operator intent checkpoint from vision `020`. Catalog-pack cards
+`1103` through `1108` are complete. Effigy release authority remains separate.

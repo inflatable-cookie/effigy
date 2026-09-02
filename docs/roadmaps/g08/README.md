@@ -389,11 +389,12 @@ PR 32 proved HEAD then PUT cannot close the collision race. Evidence:
 child-catalog registry preservation, cold docs-context time bounds/progress,
 and traversal-budget reachability.
 
-`g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Cards `1103` through `1106` are complete; cards `1107` and `1108` are
-the parallel ready frontier.
+`g08.048` is complete under architecture `026`, contract `043`, and archived
+strict spec `115`. Cards `1103` through `1108` delivered the support floor,
+canonical repository, verified publication, generated baseline, safe update,
+and generated-only proposal path.
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel. Downstream Bovine and
+Run the operator intent checkpoint from vision `020`. Downstream Bovine and
 Acowtancy revalidation remain separately owned.

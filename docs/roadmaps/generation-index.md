@@ -236,9 +236,9 @@ Bovine PR 32 without reopening S3 placement or removal.
 
 `g08.045` through `g08.047` are complete through cards `1100` through `1102`.
 
-`g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Cards `1103` through `1106` are complete; cards `1107` and `1108` are
-the parallel ready frontier with partitioned repository ownership.
+`g08.048` is complete under architecture `026`, contract `043`, and archived
+strict spec `115`. Cards `1103` through `1108` completed the external catalog
+ownership, publication, generated baseline, public update, and proposal path.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -262,9 +262,9 @@ Horizon summary:
 4. **Platform scale** — portfolio orchestration, distribution maturity, promoted
    research Phase 3 only after B–C discipline.
 
-The documentation-context, help-first, Rhai papercut, catalog-pack acquisition
-prototype, no-match benchmark isolation, and Rhai storage create-only lanes are
-closed. Do not open `g09`, publish a pack, or start release work.
+The documentation-context, help-first, Rhai papercut, catalog-pack publication
+and cutover, no-match benchmark isolation, and Rhai storage create-only lanes
+are closed. Do not open `g09` or start release work without operator intent.
 
 ## Research Roadmaps
 
@@ -297,5 +297,5 @@ closeout there first.
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel. Do not open `g09` or
+Run the operator intent checkpoint from vision `020`. Do not open `g09` or
 release Effigy.

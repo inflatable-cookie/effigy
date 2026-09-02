@@ -63,6 +63,5 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Cards `1107` and `1108` are the parallel ready frontier. Effigy release remains
-gated. The second governance review remains due by
-2026-09-17.
+Run the operator intent checkpoint from vision `020`. Effigy release remains
+gated. The second governance review remains due by 2026-09-17.

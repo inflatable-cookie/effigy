@@ -212,7 +212,7 @@ new reusable-core work.
 | `040-bun-committed-dependency-pinning-contract.md` | Platform maintainers | Pin/unpin grammar, closure selection, override conflict policy, manifest write safety, path portability, link interaction, or JSON payload shape | Focused deps, CLI, runner, JSON, and Soundcheck/Poodle consumer proofs |
 | `041-documentation-graph-profile-contract.md` | Platform maintainers | Profile grammar, section boundaries, currentness, authority ranking, context budgets, JSON shape, freshness identity, or Northstar runtime independence | Planning review against `g08.035`; focused manifest, codegraph, CLI, docs, JSON, generic-fixture, and Northstar-starter proofs during implementation |
 | `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
-| `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX/source/support/publication/update rules, release/distribution ownership, or S3 consumer migration state | Strict spec `115`; focused parity, compatibility, deterministic artifact, offline, provenance, release-safety, docs, JSON, and full Effigy QA during implementation |
+| `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX/source/support/publication/update rules, release/distribution ownership, or S3 consumer migration state | Archived strict spec `115`; focused parity, compatibility, deterministic artifact, offline, provenance, release-safety, docs, JSON, and full Effigy QA during implementation |
 | `044-rhai-storage-create-only-contract.md` | Platform maintainers | Atomic create-if-absent semantics for Rhai object storage, compatibility, collision diagnostics, and redaction | Focused `effigy-rhai` request/collision fixtures plus full Effigy QA |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
@@ -285,5 +285,5 @@ exclusive-create boundary.
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel. Effigy release authority
+Run the operator intent checkpoint from vision `020`. Effigy release authority
 remains separate.

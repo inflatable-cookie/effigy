@@ -1,12 +1,12 @@
 # 115 Catalog-Pack Publication And Cutover Strict Lane
 
-Status: Active
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-01
-Roadmap: [`g08.048`](../roadmaps/g08/048-catalog-pack-publication-and-cutover.md)
-Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
-Research: [`source map 002`](../research/source-hubs/002-catalog-pack-publication-source-map-v1.md)
+Roadmap: [`g08.048`](../../roadmaps/g08/048-catalog-pack-publication-and-cutover.md)
+Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
+Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
+Research: [`source map 002`](../../research/source-hubs/002-catalog-pack-publication-source-map-v1.md)
 
 ## Outcome
 
@@ -42,30 +42,28 @@ offline operation or Effigy release authority.
         -> 1108 narrow baseline-PR proposal automation
 ```
 
-Cards `1107` and `1108` are now the parallel ready frontier: card `1106`
-merged at `6271b0ff129d006e47202b1b00def5ea7a395af8`, and the two lanes have
-different repository owners and write scopes. Same-repository PR review and
-merge order remains serial. Shared roadmap/spec/contract and front-door
-integration remains orchestrator-owned while both workers run.
+Cards `1107` and `1108` completed on 2026-09-02. The update command merged in
+Effigy at `20d9040c`; proposal automation merged in the catalog-pack repository
+at `4dd8b8a5`, with the empty-delta provider checkpoint at `ebb813e1`.
 
 ## Cards
 
-- [`1103`](../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
+- [`1103`](../../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
   — Complete; Effigy-owned compatibility authority.
-- [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
+- [`1104`](../../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
   — Complete; dedicated public repository foundation and no-push rehearsal.
-- [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
+- [`1105`](../../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
   — Complete; `v1.0.0` is preserved and public `v1.0.1` plus `stable` resolve
   to the accepted attested digest.
-- [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
+- [`1106`](../../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
   — Complete; Effigy's generated recovery snapshot and provenance lock are cut
   over (evidence
-  [`02-144609`](../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
-- [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
-  — Ready; Effigy owns public update resolution and transaction integration.
-- [`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
-  — Ready; pack repository owns the no-provider-mutation proposal automation
-  phase, parallel-safe with `1107`.
+  [`02-144609`](../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
+- [`1107`](../../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
+  — Complete; Effigy owns public update resolution and transaction integration.
+- [`1108`](../../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
+  — Complete; pack repository owns generated-only proposal automation and its
+  narrowly scoped App installation.
 
 ## Lane Rules
 
@@ -134,7 +132,6 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel with partitioned repository
-and closeout ownership. Live GitHub App/provider mutation remains a separate
-operator gate after `1108`'s implementation PR. Effigy release authority
-remains separate.
+Run the operator intent checkpoint from vision `020`. The first non-empty
+proposal is future operational evidence; Effigy release authority remains
+separate.

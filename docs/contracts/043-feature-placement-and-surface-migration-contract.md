@@ -355,9 +355,8 @@ Stop and return to planning when:
 
 ## Next Task
 
-Dispatch ready cards
+Run the operator intent checkpoint from vision `020`. Catalog-pack cards
 [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
 and
 [`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
-in parallel with partitioned repository ownership. Effigy release authority
-remains separate.
+are complete. Effigy release authority remains separate.

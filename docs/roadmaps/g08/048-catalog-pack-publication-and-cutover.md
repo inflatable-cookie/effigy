@@ -1,8 +1,8 @@
 # g08.048 Catalog-Pack Publication And Cutover
 
-Status: Active
+Status: Complete
 Created: 2026-09-01
-Spec: [`115`](../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
+Spec: [`115`](../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
@@ -26,15 +26,14 @@ ceremony, surprise network access, or a second release authority.
    public artifact, with offline and public-artifact drift proof
    ([`02-144609`](../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
    Merged as `6271b0ff129d006e47202b1b00def5ea7a395af8`.
-5. [`1107`](./batch-cards/1107-expose-official-catalog-pack-update.md) — Ready:
-   replace the placeholder coordinate and expose safe public update.
-6. [`1108`](./batch-cards/1108-propose-generated-baseline-updates.md) — Ready:
-   implement the no-provider-mutation phase of the narrow GitHub App proposal
-   path; live provider changes remain operator-gated.
+5. [`1107`](./batch-cards/1107-expose-official-catalog-pack-update.md) —
+   Complete: safe public update through the immutable official digest.
+6. [`1108`](./batch-cards/1108-propose-generated-baseline-updates.md) —
+   Complete: generated-only proposal automation plus a narrow provider
+   checkpoint; the already-current digest correctly produced no dispatch.
 
-`1107` and `1108` form the first potential parallel frontier. All earlier edges
-are real dependency or operator-mutation gates. Same-repository merges remain
-serial.
+The parallel frontier is integrated. The first non-empty proposal remains
+future operational evidence when a new pack digest exists.
 
 ## Acceptance
 
@@ -57,7 +56,5 @@ serial.
 
 ## Next Task
 
-Dispatch cards `1107` and `1108` as the parallel ready frontier. Their
-repositories and mutable surfaces are partitioned; shared milestone/spec/
-contract and front-door integration remains with the orchestrator. Effigy
-release authority remains separate.
+Run the operator intent checkpoint from vision `020`; do not infer an Effigy
+release, S3 extraction, extension transport, or `g09` lane.

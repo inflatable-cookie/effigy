@@ -206,7 +206,8 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Card `1106` cut over the generated recovery snapshot and provenance lock from
-the accepted catalog-pack publication evidence and merged at `6271b0ff`.
-Cards `1107` and `1108` are the parallel ready frontier. Effigy release remains
-a separate operator-gated mutation.
+[`02-185453`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md)
+closes `g08.048`: card `1107` merged safe public update at `20d9040c`; card
+`1108` merged generated-only proposal automation and the honest empty-delta
+provider checkpoint at catalog-pack `ebb813e1`. Effigy release remains a
+separate operator-gated mutation.

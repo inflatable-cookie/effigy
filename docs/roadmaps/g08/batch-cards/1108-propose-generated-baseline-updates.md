@@ -1,13 +1,16 @@
 # 1108 - Propose Generated Baseline Updates
 
 Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-publication-and-cutover.md)
-Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
+Spec: [`../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: pack-repository GitHub App baseline proposal path
 Created: 2026-09-01
 Promoted: 2026-09-02 — card `1106` merged at `6271b0ff129d006e47202b1b00def5ea7a395af8`
+Closed: 2026-09-02 — proposal automation merged in catalog-pack PR 5 at
+`4dd8b8a5`; the narrowly installed App and empty-delta provider checkpoint are
+recorded in catalog-pack PR 6, merged at `ebb813e1`
 
 ## Purpose
 
@@ -39,11 +42,13 @@ generated Effigy baseline update.
 
 ## Evidence
 
-The implementation PR records the exact App permission request, repository
+Catalog-pack PR 5 records the exact App permission request, repository
 allowlist, pinned action identities, generated-path policy, no-mutation proof,
-and every oracle counterexample. Live App installation/token/PR evidence is a
-second phase only after explicit operator authorization; absence of that gate
-must leave publication independent and the card honestly paused, not weakened.
+and every oracle counterexample. PR 6 records the operator-authorized provider
+checkpoint: the App is narrowly installed on Effigy, the published digest and
+Effigy snapshot/lock are already exact, and no known-no-op proposal was
+dispatched. The first non-empty live proposal remains operational evidence for
+a future published digest, not unfinished implementation or release authority.
 
 ## Review Oracle
 
@@ -58,9 +63,5 @@ enforced, or Effigy cannot independently reproduce the proposal.
 
 ## Next Task
 
-Implement the no-provider-mutation phase from current pushed catalog-pack
-`main`. It may run in parallel with card `1107`; this lane owns only the pack
-repository workflow/scripts/tests/docs and its evidence. Effigy planning,
-product code, workflows, release state, and shared front-door closeout remain
-orchestrator-owned. Stop after the implementation PR unless the operator
-explicitly authorizes the live GitHub App/provider phase.
+Return to the operator intent checkpoint. Do not manufacture a pack release or
+proposal delta to exercise the live path.

@@ -1,7 +1,7 @@
 # 1103 - Establish The Catalog-Pack Support Floor
 
 Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-publication-and-cutover.md)
-Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
+Spec: [`../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contracts: [`001`](../../../contracts/001-working-rules.md), [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
 Status: Complete

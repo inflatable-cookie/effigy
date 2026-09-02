@@ -150,14 +150,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g08.047`](./g08/047-docs-context-traversal-budget-papercut.md)
   reserves bounded result capacity for typed-relation traversal; card `1102`
   is complete under contract `041`.
-  Active [`g08.048`](./g08/048-catalog-pack-publication-and-cutover.md)
-  owns the official catalog-pack publication and generated-baseline cutover
-  under strict spec `115`; card `1103` is complete.
+  Completed [`g08.048`](./g08/048-catalog-pack-publication-and-cutover.md)
+  externalized and published the official catalog pack, cut over the generated
+  baseline, exposed safe update, and installed generated-only proposal
+  automation under archived strict spec `115`; cards `1103` through `1108` are
+  complete.
 
 ## Active Strict Lane
 
-Spec `115` is active for `g08.048`. Cards `1103` through `1106` are complete;
-cards `1107` and `1108` are the parallel ready frontier.
+None. The next lane requires the operator intent checkpoint.
 
 ## Research Program
 
@@ -212,7 +213,7 @@ Before rollover:
 
 ## Next Task
 
-Dispatch ready cards `1107` and `1108` in parallel. Keep Effigy release
+Run the operator intent checkpoint from vision `020`. Keep Effigy release
 execution, S3 extraction, and `g09` rollover behind their named gates.
 
 ## Historical language boundary

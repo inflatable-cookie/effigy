@@ -1,7 +1,7 @@
 # 1107 - Expose Official Catalog-Pack Update
 
 Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-publication-and-cutover.md)
-Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
+Spec: [`../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/archive/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
 Status: Complete
@@ -62,7 +62,5 @@ resolution cannot return an immutable digest, or JSON compatibility would break.
 
 ## Next Task
 
-Orchestrator integrates this lane with parallel card `1108` after accepted
-exact-head review and merge. Shared roadmap/spec/contract and front-door
-next-task prose stays orchestrator-owned. This card never authorizes an Effigy
-binary release.
+Card `1108` and the shared lane closeout are complete. This card never
+authorizes an Effigy binary release.
