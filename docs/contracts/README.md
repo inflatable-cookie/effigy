@@ -138,7 +138,7 @@ new reusable-core work.
   managed marker), the fail-closed behavior on an untrusted table, and operator
   visibility in gateway status and doctor.
 - [`034-local-dependency-linking-contract.md`](./034-local-dependency-linking-contract.md):
-  `g08` machine-local dependency-linking contract covering the `effigy deps`
+  `g08` machine-local dependency-linking contract covering the `effigy admin deps`
   grammar, Cargo patch and save-less Bun link mechanisms, desired state,
   closure, verification, drift, and lock/manifest hygiene.
 - [`035-release-tag-identity-contract.md`](./035-release-tag-identity-contract.md):
@@ -203,7 +203,7 @@ new reusable-core work.
 | `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
 | `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, consumer-repo config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
 | `033-gateway-route-table-trust-contract.md` | Platform maintainers | Gateway route-table trust boundary, read-path integrity mechanism (ownership/permission + managed marker), fail-closed failure mode, and operator visibility in gateway status/doctor | Planning review against `g08.014` plus focused trust-verification fixtures (well-formed, tampered, wrong-permission, foreign-marked) once implementation starts |
-| `034-local-dependency-linking-contract.md` | Platform maintainers | `effigy deps` grammar, Cargo/Bun mechanism behavior, closure rules, desired-state schema/location, manifest/lock invariants, doctor severity, and JSON payload shape | Planning review against `g08.018` through `g08.023`; focused manager, state, doctor, and portfolio proofs once implementation starts |
+| `034-local-dependency-linking-contract.md` | Platform maintainers | `effigy admin deps` grammar, Cargo/Bun mechanism behavior, closure rules, desired-state schema/location, manifest/lock invariants, doctor severity, and JSON payload shape | Planning review against `g08.018` through `g08.023`; focused manager, state, doctor, and portfolio proofs once implementation starts |
 | `035-release-tag-identity-contract.md` | Platform maintainers | Release tag object type, annotation-message derivation, signing posture, tag push ordering, or no-retag evidence | Focused `effigy-release` tests plus execute-success local and bare-remote tag-object proof |
 | `036-papercuts-discovery-contract.md` | Platform maintainers | Papercut Markdown convention, scope rules, parser diagnostics, command grammar, JSON payload, or capture safety | `cargo test -p effigy-papercuts` plus focused CLI and command-output tests |
 | `037-explicit-catalog-membership-contract.md` | Platform maintainers | Catalog member grammar, structured system mounts, normalization, routing membership, discovery removal, or membership diagnostics/JSON evidence | Focused manifest, routing, container, doctor, CLI, test-plan, JSON, and consumer-shape proofs |
@@ -214,8 +214,8 @@ new reusable-core work.
 | `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
 | `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX/source/support/publication/update rules, release/distribution ownership, or S3 consumer migration state | Archived strict spec `115`; focused parity, compatibility, deterministic artifact, offline, provenance, release-safety, docs, JSON, and full Effigy QA during implementation |
 | `044-rhai-storage-create-only-contract.md` | Platform maintainers | Atomic create-if-absent semantics for Rhai object storage, compatibility, collision diagnostics, and redaction | Focused `effigy-rhai` request/collision fixtures plus full Effigy QA |
-| `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
-| `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
+| `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy repo contracts check-json --fast --print-selected` |
+| `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy repo contracts validate-selection --artifact json-contracts-selected.json` |
 
 ## Change Policy
 

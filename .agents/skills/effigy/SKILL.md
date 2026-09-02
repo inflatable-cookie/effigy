@@ -55,16 +55,16 @@ Pick the first Effigy command that matches the job.
 
 | Job | Use when | First command |
 |-----|----------|---------------|
-| Understand code | Ownership, behavior, implementation, impact | `effigy graph explore "<question>" --json` |
-| Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `effigy docs context "<question>" --json` |
-| Review graph-backed risk | Boundaries, likely isolation, or validation risk | `effigy scan <graph-aware-subcommand> --json` |
+| Understand code | Ownership, behavior, implementation, impact | `effigy repo graph explore "<question>" --json` |
+| Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `effigy repo docs context "<question>" --json` |
+| Review graph-backed risk | Boundaries, likely isolation, or validation risk | `effigy repo scan <graph-aware-subcommand> --json` |
 | Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
 | Inspect local dependency links | Cargo/Bun desired state, drift, or lock/peer hygiene is the task | `effigy --json deps status` |
-| Run installed skill tasks | A skill owns task code but the current repo owns runtime effects | `effigy skill tasks --path <SKILL>` |
+| Run installed skill tasks | A skill owns task code but the current repo owns runtime effects | `effigy extend skill tasks --path <SKILL>` |
 | Execute work | A task or built-in already covers the operation | `effigy <selector>` |
-| Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
+| Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy repo graph affected --stdin --json` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
 
 Graph data queries refresh stale or missing indexes on demand, so start with
@@ -99,9 +99,9 @@ Full built-in lookup: `references/built-in-surfaces.md`.
 
 Use graph-aware scans when the question is risk, not navigation:
 
-- `effigy scan boundary-violations --json`
-- `effigy scan dead-code --json`
-- `git diff --name-only | effigy scan validation-gaps --stdin --json`
+- `effigy repo scan boundary-violations --json`
+- `effigy repo scan dead-code --json`
+- `git diff --name-only | effigy repo scan validation-gaps --stdin --json`
 
 Do not run these as a greeting. They are for bounded review questions, not
 for generic repo orientation.
@@ -110,21 +110,21 @@ for generic repo orientation.
 
 | Goal | Command |
 |------|---------|
-| Orient in unfamiliar code | `effigy graph explore "<question>" --json` |
-| Find the governing document | `effigy docs context "<question>" --max-sections 4` |
+| Orient in unfamiliar code | `effigy repo graph explore "<question>" --json` |
+| Find the governing document | `effigy repo docs context "<question>" --max-sections 4` |
 | Run tests | `effigy test` |
 | Inspect test plan | `effigy test --plan` |
-| Bring local dev up | `effigy container up` then `effigy dev` |
+| Bring local dev up | `effigy local container up` then `effigy dev` |
 | Fast pre-push check | `effigy qa:ci:fast` (if defined) |
 | Full local QA | `effigy qa` or `effigy qa:ci:local` |
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
 | Inventory project papercuts | `effigy --json papercuts` or `effigy --json papercuts --scope <PROJECTS_DIR>` |
-| Run an installed skill task | `effigy skill run --path <SKILL> <SELECTOR>` |
+| Run an installed skill task | `effigy extend skill run --path <SKILL> <SELECTOR>` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
-| Read-only release check | `effigy release gates` |
+| Read-only release check | `effigy deliver release gates` |
 
 Details: `references/workflow-shortcuts.md`.
 
@@ -149,7 +149,7 @@ Returns `effigy.command.v1` with command-specific data in `result` (or
 `error.details` for some failures); graph reports may nest their payload under
 `result.payload`.
 
-**Exception:** `effigy graph watch --json` streams `effigy.graph.watch.event.v1`
+**Exception:** `effigy repo graph watch --json` streams `effigy.graph.watch.event.v1`
 lines — not the one-shot envelope.
 
 ```bash
@@ -179,23 +179,23 @@ and uses `health_wait_timeout_secs`. Optional container secrets stay optional
 even during forced local-dev unlock. Guide:
 `docs/guides/012-dev-process-manager-tui.md`.
 
-**Workspace identity** — primary-service `effigy exec` and host-routed
+**Workspace identity** — primary-service `effigy local exec` and host-routed
 workspace tasks use the declared `workspace_user` and `workspace_home`.
-`effigy exec` from a non-console caller does not request a TTY. Use
+`effigy local exec` from a non-console caller does not request a TTY. Use
 `effigy doctor --verbose` to find
 read-only `container.workspace-ownership` findings for root-owned managed
 volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 
-**Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
+**Secrets** — `effigy admin secrets init`, `set`, `import`, `list`, `doctor` when
 `[secrets]` is declared. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
 
-**Bundles** — `[bundle].base` with `path` / `git` / `oci`; `effigy bundle inspect`,
-`effigy bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.
+**Bundles** — `[bundle].base` with `path` / `git` / `oci`; `effigy deliver bundle inspect`,
+`effigy deliver bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.
 
 **Installed skill tasks** — use
-`effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML>` to inventory one explicit
+`effigy extend skill tasks --path <SKILL_DIR|EFFIGY_TOML>` to inventory one explicit
 skill catalog, then
-`effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>]`.
+`effigy extend skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>]`.
 The skill path supplies task code; invocation CWD or `--repo` supplies the
 consumer target. Do not use `--repo <SKILL>` as a substitute. V1 is host-only,
 does not merge consumer selectors/defaults/config, and rejects members or
@@ -204,7 +204,7 @@ shapes before side effects. Add `--json` when the agent needs to verify
 canonical source, target, invocation, and execution paths. Contract:
 `docs/contracts/042-external-skill-task-runner-contract.md`.
 
-**Documentation context** — `effigy docs context "<question>"` returns bounded
+**Documentation context** — `effigy repo docs context "<question>"` returns bounded
 exact Markdown sections with path, span, kind, authority, currentness, fields,
 relation path, and match reason. It is evidence, never a generated answer.
 Semantics come from the selected repository's committed `[docs_policy.graph]`
@@ -217,14 +217,14 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`.
 `[docs_policy.graph]` repository-defined Markdown graph profile.
 Details: `references/config-shapes.md`.
 
-**State stacks** — `effigy state plan`, `apply`, `capture`.
+**State stacks** — `effigy deliver state plan`, `apply`, `capture`.
 Guide: `docs/guides/073-state-stack-guide.md`.
 
-**Deployment** — `effigy deploy plan`, `apply`, `status` (human-gated apply).
+**Deployment** — `effigy deliver deploy plan`, `apply`, `status` (human-gated apply).
 Guide: `docs/guides/074-deployment-guide.md`.
 
-**Local dependencies** — use `effigy deps link <cargo|bun> <PATH>` for
-ephemeral machine-local state. Use `effigy deps pin bun <PATH>` for a committed
+**Local dependencies** — use `effigy admin deps link <cargo|bun> <PATH>` for
+ephemeral machine-local state. Use `effigy admin deps pin bun <PATH>` for a committed
 root-consumer override, then run `bun install` separately; reverse it with
 `unpin` plus another operator-run install. Status and doctor are read-only;
 never restore linked locks through Git.

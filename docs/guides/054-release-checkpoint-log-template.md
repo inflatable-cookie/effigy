@@ -36,13 +36,13 @@ Release: vX.Y.Z
 - Remaining gap: `...` or `None`
 
 ## Built-In Release Path
-- `effigy release simulate`
+- `effigy deliver release simulate`
   - result: ...
-- `effigy release status --check-gates`
+- `effigy deliver release status --check-gates`
   - result: ...
-- `effigy release prepare --yes --check-gates`
+- `effigy deliver release prepare --yes --check-gates`
   - result: ...
-- `effigy release execute --yes`
+- `effigy deliver release execute --yes`
   - result: ...
 
 ## Hosted Workflow Results
@@ -58,13 +58,13 @@ Release: vX.Y.Z
 
 ## Distribution Evidence
 - artifacts directory: `./artifacts/distribution-vX.Y.Z`
-- `effigy release verify-install --tag vX.Y.Z`
+- `effigy deliver release verify-install --tag vX.Y.Z`
   - result: ...
-- `effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy deliver release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy deliver release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
 
 ## Release Notes
@@ -79,8 +79,8 @@ Release: vX.Y.Z
 - Release evaluated: `vX.Y.Z`
 - Prior built-in release in comparison window: `v0.__.__`
 - Built-in release path used for both releases:
-  - [ ] `effigy release prepare`
-  - [ ] `effigy release execute`
+  - [ ] `effigy deliver release prepare`
+  - [ ] `effigy deliver release execute`
 - Wrapper fallback used:
   - [ ] no
   - [ ] yes, with explanation recorded
@@ -89,7 +89,7 @@ Release: vX.Y.Z
   - [ ] `JSON Contracts`
   - [ ] `Release Binaries`
 - Tag install validation green on both releases:
-  - [ ] `effigy release verify-install`
+  - [ ] `effigy deliver release verify-install`
 - Notes:
 
 ## Risks / Follow-ups

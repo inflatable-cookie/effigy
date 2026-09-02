@@ -132,7 +132,7 @@ Current special concurrent roles:
   - the lifecycle-owned process that starts the task's named container session
 - `role = "shell"`
   - opens the primary-service container shell through the shipped
-    `effigy container shell` path
+    `effigy local container shell` path
 
 The important boundary is that this remains repo-owned task configuration. The
 guide is describing one richer task contract, not a special-case built-in dev
@@ -241,24 +241,24 @@ concurrent = [
 For repos using the fuller bundle-backed local-dev story, `effigy dev` sits at the
 end of this chain:
 
-1. `effigy bundle inspect` / `effigy bundle sync` to inspect or refresh the
+1. `effigy deliver bundle inspect` / `effigy deliver bundle sync` to inspect or refresh the
    active bundle source the repo already declares
-2. `effigy service list` / `effigy service extract` for bundled service
+2. `effigy local service list` / `effigy local service extract` for bundled service
    fragments when the repo needs to take ownership of one
-3. `effigy system up` / `effigy system status` for substrate lifecycle when
-   the manifest declares `[systems.<name>]`; or `effigy container up` for
+3. `effigy local system up` / `effigy local system status` for substrate lifecycle when
+   the manifest declares `[systems.<name>]`; or `effigy local container up` for
    the `[containers.<name>]` shape without surrounding system wiring
-4. `effigy gateway up` / `effigy gateway status` for local domains and
+4. `effigy local gateway up` / `effigy local gateway status` for local domains and
    TLS-backed routes (usually auto-started via `gateway = true` on the
    managed task)
-5. `effigy workspace` for an interactive Linux-native maintenance shell
+5. `effigy local workspace` for an interactive Linux-native maintenance shell
    inside the resolved workspace service
-6. `effigy exec ...` for one ad-hoc command inside the dev container
+6. `effigy local exec ...` for one ad-hoc command inside the dev container
 7. repo-owned managed task such as `effigy dev` when the repo wants all of
    that under one named session front door
 
 That means `effigy dev` should normally be the repo's opinionated aggregator,
-not the only way the substrate can be used. Use `effigy system` + `effigy
+not the only way the substrate can be used. Use `effigy local system` + `effigy
 workspace` when you want substrate access without launching the whole app
 concurrent; use `effigy dev` for daily runtime.
 

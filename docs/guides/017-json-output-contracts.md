@@ -237,18 +237,18 @@ silently change catalog source. Under `--json` the notice is one
   "reason": "fallback-content-changed",
   "fallback": true,
   "detail": "installed catalog pack `...` content changed on disk (...)",
-  "repair": ["effigy service pack rollback", "effigy service pack reset"]
+  "repair": ["effigy local service pack rollback", "effigy local service pack reset"]
 }
 ```
 
 It is emitted at most once per process and never on stdout, so the
 `effigy.command.v1` envelope is byte-for-byte unaffected. Surfaces that own a
-selection payload — `effigy service list` and `effigy service pack status` —
+selection payload — `effigy local service list` and `effigy local service pack status` —
 additionally carry the same facts in `result.selection`.
 
 ## Graph Watch Streaming Exception
 
-`effigy graph watch --json` is intentionally different from the normal command
+`effigy repo graph watch --json` is intentionally different from the normal command
 envelope model.
 
 It is a long-running streaming command, so it emits newline-delimited JSON
@@ -261,7 +261,7 @@ It does **not** wrap each event in `effigy.command.v1`.
 Use it like this:
 
 ```bash
-effigy graph watch --json
+effigy repo graph watch --json
 ```
 
 Consume one JSON object per line. Current event kinds:
@@ -317,20 +317,20 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 
 ## Contracts Validation Workflow
 
-Use `effigy contracts` when you need to validate JSON contract artifacts or check
+Use `effigy repo contracts` when you need to validate JSON contract artifacts or check
 that Effigy's own command payloads still conform to declared schemas.
 
 ### Fast vs full checks
 
 ```bash
 # Quick check: validates only schemas that have fast validators
-effigy contracts check-json --fast
+effigy repo contracts check-json --fast
 
 # Complete check: validates every declared schema
-effigy contracts check-json --full
+effigy repo contracts check-json --full
 
 # Check only schemas touched since a git ref (great for PRs)
-effigy contracts check-json --fast --changed-only origin/main
+effigy repo contracts check-json --fast --changed-only origin/main
 ```
 
 Use `--fast` for daily local checks. Use `--full` before releases or when you
@@ -342,10 +342,10 @@ When CI produces a selection payload, gate it before using it:
 
 ```bash
 # Generate a selection artifact
-effigy contracts check-json --full --print-selected=json > contracts-selected.json
+effigy repo contracts check-json --full --print-selected=json > contracts-selected.json
 
 # Validate it independently
-effigy contracts validate-selection --artifact ./contracts-selected.json
+effigy repo contracts validate-selection --artifact ./contracts-selected.json
 ```
 
 This checks:
@@ -360,10 +360,10 @@ Use this in CI pipelines that pass contract selection data between jobs.
 
 ```bash
 # Human-readable list
-effigy contracts check-json --fast --print-selected
+effigy repo contracts check-json --fast --print-selected
 
 # Machine-readable JSON
-effigy contracts check-json --fast --print-selected=json
+effigy repo contracts check-json --fast --print-selected=json
 ```
 
 Use `--print-selected` when you need to know exactly which schemas were validated
@@ -408,4 +408,4 @@ After this guide, you should be able to:
 
 ## Next Step
 
-After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `effigy contracts check-json --fast`.
+After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `effigy repo contracts check-json --fast`.

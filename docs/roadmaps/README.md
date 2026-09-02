@@ -79,7 +79,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   trust, and docs compaction. Milestones `g08.016` and `g08.017` are also
   complete. The completed
   [`g08.018`](./g08/018-local-dependency-management-suite.md) suite added the
-  shared `effigy deps` foundation, Cargo and Bun local links, doctor hygiene,
+  shared `effigy admin deps` foundation, Cargo and Bun local links, doctor hygiene,
   and portfolio proof through `g08.023`. The bounded
   [`g08.024`](./g08/024-initial-current-version-release-tag.md) follow-up lets
   an explicitly configured new repository tag its already-declared first
@@ -191,7 +191,7 @@ Keep the session-loaded surfaces lean; let closed history rest in archives.
   carries only the current generation's month window. When a generation closes,
   move its month directories under `docs/logs/archive/<month>/` and trim the
   index. Archived logs stay in the repo (and git history) as durable evidence;
-  the default `effigy docs check index` excludes `archive/**`. Never delete a
+  the default `effigy repo docs check index` excludes `archive/**`. Never delete a
   log to compact — move it.
 - **Roadmaps.** Closed-generation milestone files and their nested
   `batch-cards/` stay in place: they are the planning record, are not loaded

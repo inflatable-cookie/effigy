@@ -24,18 +24,18 @@
 "perf:docs-context-benchmark" = { rhai = "scripts/benchmark-docs-context.rhai" }
 
 # Documentation QA
-"qa:docs:links" = "cargo run --bin effigy -- docs check links"
-"qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
-"qa:docs:index" = "cargo run --bin effigy -- docs check index"
-"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:docs:links" = "cargo run --bin effigy -- repo docs check links"
+"qa:docs:examples" = "cargo run --bin effigy -- repo docs check json-examples"
+"qa:docs:index" = "cargo run --bin effigy -- repo docs check index"
+"qa:docs:agent-defaults" = "cargo run --bin effigy -- repo docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
 "qa:docs:vision" = [
-  "cargo run --bin effigy -- docs check headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'",
-  "cargo run --bin effigy -- docs check headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md --require-heading '## Vision Alignment'",
-  "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'",
-  "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'",
-  "cargo run --bin effigy -- docs check workflow-paths",
-  "cargo run --bin effigy -- docs check index --policy-index vision",
-  "cargo run --bin effigy -- docs check next-action --policy vision",
+  "cargo run --bin effigy -- repo docs check headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'",
+  "cargo run --bin effigy -- repo docs check headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md --require-heading '## Vision Alignment'",
+  "cargo run --bin effigy -- repo docs check contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'",
+  "cargo run --bin effigy -- repo docs check contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'",
+  "cargo run --bin effigy -- repo docs check workflow-paths",
+  "cargo run --bin effigy -- repo docs check index --policy-index vision",
+  "cargo run --bin effigy -- repo docs check next-action --policy vision",
 ]
 "qa:docs" = [
   { task = "qa:docs:links" },
@@ -46,11 +46,11 @@
 ]
 
 # JSON contract QA
-"qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
-"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
+"qa:json" = "cargo run --bin effigy -- repo contracts check-json --fast --print-selected=text"
+"qa:json:ci" = "cargo run --bin effigy -- repo contracts check-json --full --print-selected=json"
 "qa:ci:json" = [
   { rhai = "scripts/write-json-contract-artifacts.rhai" },
-  "cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json",
+  "cargo run --bin effigy -- repo contracts validate-selection --artifact ./json-contracts-selected.json",
   "cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture",
 ]
 
@@ -80,7 +80,7 @@
   "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --workspace --no-fail-fast\" >&2; cargo test --workspace --no-fail-fast; fi'",
   "cargo test --workspace --doc",
   { task = "qa:released-surface" },
-  "cargo run --bin effigy -- docs check links",
+  "cargo run --bin effigy -- repo docs check links",
   { task = "qa:ci:json" },
 ]
 "qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }]

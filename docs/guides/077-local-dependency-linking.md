@@ -1,6 +1,6 @@
 # 077 - Local Dependency Linking
 
-Use `effigy deps` when a consumer is pinned to a Git tag or published package
+Use `effigy admin deps` when a consumer is pinned to a Git tag or published package
 but you need it to resolve from a local library checkout while editing.
 
 Choose the state contract first:
@@ -18,14 +18,14 @@ the complete matching closure, and removes only state it owns.
 Run these commands from the consumer repo:
 
 ```sh
-effigy deps link cargo ../signal --dry-run
-effigy deps link cargo ../signal
-effigy deps status cargo
+effigy admin deps link cargo ../signal --dry-run
+effigy admin deps link cargo ../signal
+effigy admin deps status cargo
 
 # edit ../signal and build or test the consumer
 
-effigy deps unlink cargo ../signal --dry-run
-effigy deps unlink cargo ../signal
+effigy admin deps unlink cargo ../signal --dry-run
+effigy admin deps unlink cargo ../signal
 ```
 
 Relative library paths resolve from the selected consumer repo. This remains
@@ -35,14 +35,14 @@ Absolute library paths are used unchanged.
 Use `bun` instead of `cargo` for a Bun package library:
 
 ```sh
-effigy deps link bun ../poodle --dry-run
-effigy deps link bun ../poodle
-effigy deps status bun
+effigy admin deps link bun ../poodle --dry-run
+effigy admin deps link bun ../poodle
+effigy admin deps status bun
 
 # edit ../poodle and build or test the consumer
 
-effigy deps unlink bun ../poodle --dry-run
-effigy deps unlink bun ../poodle
+effigy admin deps unlink bun ../poodle --dry-run
+effigy admin deps unlink bun ../poodle
 bun install
 ```
 
@@ -50,14 +50,14 @@ When the Bun graph crosses repository or `file:` boundaries, use a committed
 pin instead:
 
 ```sh
-effigy deps pin bun ../poodle --dry-run
-effigy deps pin bun ../poodle
+effigy admin deps pin bun ../poodle --dry-run
+effigy admin deps pin bun ../poodle
 bun install
 
 # edit ../poodle and build or type-check the consumer
 
-effigy deps unpin bun ../poodle --dry-run
-effigy deps unpin bun ../poodle
+effigy admin deps unpin bun ../poodle --dry-run
+effigy admin deps unpin bun ../poodle
 bun install
 ```
 
@@ -65,7 +65,7 @@ Pin and unpin edit only the root consumer `package.json`. Effigy reports
 resolution as pending and leaves both installs and lockfile review to the
 operator.
 
-Bare `effigy deps` reports both managers. Add top-level JSON mode when another
+Bare `effigy admin deps` reports both managers. Add top-level JSON mode when another
 tool or agent will consume the result:
 
 ```sh
@@ -167,12 +167,12 @@ Links are keyed by the resolved Bun package root, so a repo with Bun under
 `studio/` records `studio/` as its consumer root. That key selects manifests,
 `node_modules`, and every `bun` invocation. Machine-local state — the link
 ledger, `.gitignore`, and link backups — belongs to the enclosing checkout, so
-`effigy deps status` reports those links from the repo root as usual and unlink
+`effigy admin deps status` reports those links from the repo root as usual and unlink
 removes the ledger entry it wrote.
 
 Both identities are resolved from whichever path you name, so
-`effigy deps link bun ../../longhorn --repo studio` and a bare
-`effigy deps link bun ../longhorn` from the repo root produce the same link.
+`effigy admin deps link bun ../../longhorn --repo studio` and a bare
+`effigy admin deps link bun ../longhorn` from the repo root produce the same link.
 Relative library paths still resolve from the path you passed.
 
 Every command that reads link state resolves the same single ledger, so
@@ -189,8 +189,8 @@ matches direct and transitive crates by exact Git source URL, then writes the
 full matching closure into one repo-root `.cargo/config.toml`:
 
 ```sh
-effigy deps link cargo ../signal --dry-run
-effigy deps link cargo ../signal
+effigy admin deps link cargo ../signal --dry-run
+effigy admin deps link cargo ../signal
 ```
 
 The config uses canonical absolute paths. One repo-root config therefore also
@@ -206,7 +206,7 @@ entries while the patch is active. That is expected local state, but it is a
 do-not-commit condition:
 
 ```sh
-effigy deps status cargo
+effigy admin deps status cargo
 effigy doctor
 ```
 
@@ -218,8 +218,8 @@ with link-owned resolution.
 Unlink through Effigy:
 
 ```sh
-effigy deps unlink cargo ../signal --dry-run
-effigy deps unlink cargo ../signal
+effigy admin deps unlink cargo ../signal --dry-run
+effigy admin deps unlink cargo ../signal
 ```
 
 Unlink re-resolves the committed Git/tag source and proves the affected lock
@@ -234,8 +234,8 @@ direct and transitive packages present in the consumer tree. It registers each
 package, then links the full closure into the consumer in one operation:
 
 ```sh
-effigy deps link bun ../poodle --dry-run
-effigy deps link bun ../poodle
+effigy admin deps link bun ../poodle --dry-run
+effigy admin deps link bun ../poodle
 ```
 
 Every Bun process intent contains explicit `--no-save`. Effigy snapshots
@@ -247,8 +247,8 @@ desired link rather than editing the manifest:
 
 ```sh
 bun install
-effigy deps status bun
-effigy deps link bun ../poodle
+effigy admin deps status bun
+effigy admin deps link bun ../poodle
 ```
 
 Complete link loss is repairable drift. A mixed local/registry closure is an
@@ -276,8 +276,8 @@ It unregisters a package only when Effigy created the registration, the target
 still matches, and no other desired consumer remains:
 
 ```sh
-effigy deps unlink bun ../poodle --dry-run
-effigy deps unlink bun ../poodle
+effigy admin deps unlink bun ../poodle --dry-run
+effigy admin deps unlink bun ../poodle
 bun install
 ```
 
@@ -289,9 +289,9 @@ foreign, shared, stale, or unverifiable registration is retained and reported.
 Use status for dependency-specific desired/observed state:
 
 ```sh
-effigy deps
-effigy deps status cargo
-effigy deps status bun
+effigy admin deps
+effigy admin deps status cargo
+effigy admin deps status bun
 ```
 
 Bun status also inspects cross-repository `file:` dependencies. If the target

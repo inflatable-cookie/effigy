@@ -25,7 +25,7 @@ Run from repository root.
 ### A) Link integrity
 
 ```sh
-effigy docs check links README.md $(find docs -name '*.md' | sort)
+effigy repo docs check links README.md $(find docs -name '*.md' | sort)
 ```
 
 Pass criteria:
@@ -82,7 +82,7 @@ Pass criteria:
 ### F) Workflow path reference coherence
 
 ```sh
-effigy docs check workflow-paths
+effigy repo docs check workflow-paths
 ```
 
 Pass criteria:
@@ -111,7 +111,7 @@ Owner: <team/person>
 - Monthly docs drift checklist (`039`)
 
 ## Validation
-- command: `effigy docs check links README.md $(find docs -name '*.md' | sort)`
+- command: `effigy repo docs check links README.md $(find docs -name '*.md' | sort)`
   - result: pass/fail
 - command: `cargo run --bin effigy -- qa:docs`
   - result: pass/fail

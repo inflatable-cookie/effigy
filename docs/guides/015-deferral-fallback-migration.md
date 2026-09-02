@@ -10,7 +10,7 @@ Use deferral when:
 - unresolved requests should be handed off to legacy PHP Effigy,
 - you want incremental migration without breaking existing task entrypoints.
 
-Use explicit `effigy defer ...` when:
+Use explicit `effigy admin defer ...` when:
 - you already know you want the legacy fallback path,
 - the request name is known up front (`prep`, `release`, `seed`, etc.),
 - you want to bypass normal selector resolution instead of waiting for a miss.
@@ -62,7 +62,7 @@ Lease behavior:
 - default timeout is 5 minutes
 - reuse refreshes the lease
 - the reaper shuts the runtime down after the lease expires unless another
-  owned session or explicit `effigy container up` keeps it alive
+  owned session or explicit `effigy local container up` keeps it alive
 
 Optional built-in bypass:
 - `builtins = ["release", ...]` tells Effigy to skip its own parser-level built-in for those command families and treat them like deferred legacy requests instead
@@ -75,9 +75,9 @@ Run the deferral surface directly when you want the configured fallback without
 waiting for selector resolution to miss:
 
 ```bash
-effigy defer prep
-effigy defer release -- --dry-run
-effigy defer --repo /path/to/legacy-site seed
+effigy admin defer prep
+effigy admin defer release -- --dry-run
+effigy admin defer --repo /path/to/legacy-site seed
 ```
 
 This uses the same `[defer]` contract automatic fallback uses:
@@ -111,7 +111,7 @@ If loop detected, execution fails with explicit loop-guard error.
 2. Add first-party tasks in `effigy.toml` incrementally.
 3. Keep automatic selector-miss deferral for unresolved legacy requests during
    transition.
-4. Use explicit `effigy defer ...` for high-value legacy commands you still
+4. Use explicit `effigy admin defer ...` for high-value legacy commands you still
    want available even after first-party tasks start landing.
 5. Remove `[defer]` only after critical task paths are represented in `effigy.toml`.
 

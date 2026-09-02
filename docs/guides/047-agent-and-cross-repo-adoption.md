@@ -16,7 +16,7 @@ needed, execute through Effigy, then validate through Effigy.
 For repos that adopt Effigy as the primary local loop, the default contract
 should be job-based, not ritual-based:
 
-- use `effigy graph` when the job is code understanding and the agent needs a
+- use `effigy repo graph` when the job is code understanding and the agent needs a
   bounded repo map before broad file scanning (see Section 2a)
 - use `effigy tasks` when the agent needs runnable selectors or QA surfaces
 - use `effigy doctor` when routing is unclear or repo health is itself the task
@@ -70,8 +70,8 @@ When the job is code understanding before editing or review, prefer the local
 graph over spraying `rg` across the whole repo:
 
 ```sh
-effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
+effigy repo graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy repo graph affected --stdin --json
 ```
 
 Rules:
@@ -90,9 +90,9 @@ Rules:
   proof
 - use graph-aware scans when the question is review risk rather than
   navigation, for example:
-  - `effigy scan boundary-violations --json`
-  - `effigy scan dead-code --json`
-  - `git diff --name-only | effigy scan validation-gaps --stdin --json`
+  - `effigy repo scan boundary-violations --json`
+  - `effigy repo scan dead-code --json`
+  - `git diff --name-only | effigy repo scan validation-gaps --stdin --json`
 - use `rg` for exact token verification and final checks before editing
 - graph queries refresh stale or missing indexes before reading; use
   `graph status` only for the report-only pre-refresh view
@@ -107,7 +107,7 @@ contract, architecture decision, planning lane, or prior decision governs the
 work - use the documentation graph instead of guessing at file layout:
 
 ```sh
-effigy docs context "<authority-shaped question>" --max-sections 4 --max-bytes 8000
+effigy repo docs context "<authority-shaped question>" --max-sections 4 --max-bytes 8000
 effigy --json docs context "<authority-shaped question>"
 ```
 
@@ -140,7 +140,7 @@ Use Effigy as the default command surface for supported project work.
 
 Default flow:
 1. Route by job, not by startup ritual
-2. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+2. Use `effigy repo graph explore` before broad repo scanning when codebase context is needed
 3. Use `effigy tasks` when you need selector inventory
 4. Use `effigy doctor` when routing is unclear or repo health is the task
 5. Use `effigy test --plan` when test execution shape matters
@@ -173,7 +173,7 @@ Recommended enforcement task for adopted repos:
 
 ```toml
 [tasks]
-"qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
+"qa:docs:agent-defaults" = "effigy repo docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
 ```
 
 Adjust the file list to match the repo's real agent-facing surfaces. The point
@@ -345,9 +345,9 @@ test = "npm test"
 ```
 
 Expected behavior:
-- `effigy release status --check-gates` reads `package.json` version
+- `effigy deliver release status --check-gates` reads `package.json` version
   automatically
-- `effigy release prepare --plan` previews the `package.json` version
+- `effigy deliver release prepare --plan` previews the `package.json` version
   update plus changelog move
 - gate commands can stay native to the project (`npm`, `pnpm`, `bun`, shell)
 
@@ -363,9 +363,9 @@ test = "pytest -q"
 ```
 
 Expected behavior:
-- `effigy release` auto-detects `pyproject.toml`
+- `effigy deliver release` auto-detects `pyproject.toml`
 - version discovery supports `project.version` and `tool.poetry.version`
-- `effigy release prepare --plan` previews the pyproject version bump
+- `effigy deliver release prepare --plan` previews the pyproject version bump
 
 ### Multi-language / Plain `VERSION`
 
@@ -382,12 +382,12 @@ validate = "sh -lc './scripts/validate-all.sh'"
 Expected behavior:
 - use this when the repo version is intentionally decoupled from language-specific
   manifests
-- `effigy release prepare --yes --check-gates` updates `VERSION`,
+- `effigy deliver release prepare --yes --check-gates` updates `VERSION`,
   writes `.release-prepared.json`, and preserves heterogeneous gate commands
 - this is the simplest fit for monorepos with multiple language toolchains
 
 Release adoption policy:
-- prefer `effigy release simulate/status/prepare/execute` for operator-driven
+- prefer `effigy deliver release simulate/status/prepare/execute` for operator-driven
   release flow once the repo has a stable `[release]` section
 - keep wrapper scripts only when an external automation contract still requires
   them, and describe them as backup channels rather than the default operator

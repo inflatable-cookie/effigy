@@ -75,9 +75,9 @@ artifacts = ["demos/artifacts/runtime-recovery-inspector/index.html"]
 That is enough to make the proof discoverable in:
 
 ```sh
-effigy demo list
-effigy demo inspect runtime-recovery-inspector
-effigy demo run runtime-recovery-inspector
+effigy deliver demo list
+effigy deliver demo inspect runtime-recovery-inspector
+effigy deliver demo run runtime-recovery-inspector
 ```
 
 ## 4) Inline Per-Demo Wrapper Tasks When They Add No Value
@@ -138,17 +138,17 @@ The goal is not “zero tasks.” The goal is “no fake wrapper tasks.”
 After the first migrated demos land, validate the native surface:
 
 ```sh
-effigy demo list
-effigy demo inspect capability-browser
-effigy demo run capability-browser
-effigy demo history capability-browser --limit 3
+effigy deliver demo list
+effigy deliver demo inspect capability-browser
+effigy deliver demo run capability-browser
+effigy deliver demo history capability-browser --limit 3
 effigy qa:docs
 ```
 
 Then use the browser for operator proof:
 
 ```sh
-effigy demo browser
+effigy deliver demo browser
 ```
 
 What to check:

@@ -61,7 +61,7 @@ Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 
 ## Documentation context
 
-`effigy docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
+`effigy repo docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
 returns exact Markdown sections with path, span, kind, authority, currentness,
 fields, typed relation path, and match reason, as `effigy.docs.context.v1`.
 Defaults are 8 sections, 24000 bytes, 1 hop; maxima are 32, 100000, 3. It shares
@@ -109,7 +109,7 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 ## Distribution note
 
 There is **no** top-level `effigy distribution` command. Distribution work lives
-under `effigy release validate`, `release preflight`, `release proof`, and
+under `effigy deliver release validate`, `release preflight`, `release proof`, and
 `release evidence …`. Guide: `docs/guides/062-distribution-system-guide.md`.
 
 ## JSON mode

@@ -8,8 +8,8 @@ code-understanding questions, but not for every Effigy interaction.
 ## Map code before scanning
 
 ```bash
-effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
+effigy repo graph explore "<question>" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy repo graph affected --stdin --json
 ```
 
 Both queries refresh a stale or missing index before reading it.
@@ -32,15 +32,15 @@ configured suites it detects polyglot runners, preferring `cargo-nextest` over
 ## Bring local dev up
 
 ```bash
-effigy container up          # start containers declared in catalog
-effigy gateway status        # confirm gateway routing reachable
+effigy local container up          # start containers declared in catalog
+effigy local gateway status        # confirm gateway routing reachable
 effigy dev                   # repo task (commonly named dev); not a built-in verb
 ```
 
 To tear down:
 
 ```bash
-effigy container down
+effigy local container down
 ```
 
 For deeper container ops: `docs/guides/063-container-system-guide.md` and
@@ -49,10 +49,10 @@ For deeper container ops: `docs/guides/063-container-system-guide.md` and
 ## Test against local library edits
 
 ```bash
-effigy deps link cargo ../signal --dry-run
-effigy deps link cargo ../signal
+effigy admin deps link cargo ../signal --dry-run
+effigy admin deps link cargo ../signal
 effigy --json deps status cargo
-effigy deps unlink cargo ../signal
+effigy admin deps unlink cargo ../signal
 ```
 
 Use `bun` for a Bun package library. Re-run the same Bun link after
@@ -89,11 +89,11 @@ Preview without writing: `effigy tasks migrate` (omit `--apply`).
 
 ```bash
 effigy doctor --verbose              # health + enabled scan checks
-effigy scan god-files --json
-effigy scan attention-markers --json
-effigy scan boundary-violations --json
-effigy scan dead-code --json
-git diff --name-only | effigy scan validation-gaps --stdin --json
+effigy repo scan god-files --json
+effigy repo scan attention-markers --json
+effigy repo scan boundary-violations --json
+effigy repo scan dead-code --json
+git diff --name-only | effigy repo scan validation-gaps --stdin --json
 ```
 
 Use this lane only when health, drift, or scanner output is the actual job.
@@ -112,8 +112,8 @@ effigy --json changelog extract --version X.Y.Z   # JSON envelope
 When `[secrets]` is declared and values live in a dotenv file:
 
 ```bash
-effigy secrets import
-effigy secrets import infra/local.env --json
+effigy admin secrets import
+effigy admin secrets import infra/local.env --json
 ```
 
 ## Release inspection (read-only)
@@ -123,11 +123,11 @@ First prove the clean, pushed candidate commit through a manually dispatched
 accept a green run from another commit.
 
 ```bash
-effigy release simulate                # dry-run the release flow
-effigy release status --check-gates    # show gate states
-effigy release prepare --plan          # preview prepare step
-effigy release execute --plan          # preview execute step
-effigy release gates                   # list gates and current pass/fail
+effigy deliver release simulate                # dry-run the release flow
+effigy deliver release status --check-gates    # show gate states
+effigy deliver release prepare --plan          # preview prepare step
+effigy deliver release execute --plan          # preview execute step
+effigy deliver release gates                   # list gates and current pass/fail
 ```
 
 These are safe to run unprompted. Anything with `--yes` or that pushes a tag
@@ -135,7 +135,7 @@ is **not** safe to run unprompted — see `release-protocol.md` and
 `footguns.md`.
 
 Distribution evidence (`preflight`, `proof`, `evidence validate`, …) also
-lives under `effigy release`, not a separate `effigy distribution` command.
+lives under `effigy deliver release`, not a separate `effigy distribution` command.
 See `built-in-surfaces.md` and `docs/guides/062-distribution-system-guide.md`.
 
 ## Doctor + explain
@@ -158,7 +158,7 @@ Append `--json` (or prefix with `effigy --json <command>`) to get an
 When you don't have the binary on PATH yet:
 
 ```bash
-effigy bootstrap git@github.com:inflatable-cookie/effigy.git
+effigy deliver bootstrap git@github.com:inflatable-cookie/effigy.git
 ```
 
 Or run from source:

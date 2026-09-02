@@ -76,8 +76,8 @@ Every key under `[bundle]` other than `base` must be declared in
 Use:
 
 ```sh
-effigy bundle inspect
-effigy bundle sync
+effigy deliver bundle inspect
+effigy deliver bundle sync
 ```
 
 - `bundle inspect` reports the active source type, local materialized path,

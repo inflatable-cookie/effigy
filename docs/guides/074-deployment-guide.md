@@ -106,7 +106,7 @@ require_release_gates = true
 
 ```sh
 # Derive the provider-neutral deployment model
-effigy deploy model --json
+effigy deliver deploy model --json
 ```
 
 This emits `deploy.model.v1` with services, backing services, domains, secrets,
@@ -116,8 +116,8 @@ and warnings. It is the same model used by `deploy export`.
 
 ```sh
 # Export provider files through a configured provider package
-effigy deploy export railway --path infra/railway --plan
-effigy deploy export render --path infra/render --plan
+effigy deliver deploy export railway --path infra/railway --plan
+effigy deliver deploy export render --path infra/render --plan
 ```
 
 `deploy export <PROVIDER>` requires `[deploy.providers.<provider>]`. The
@@ -128,13 +128,13 @@ package currently emits service-local `railway.toml` files plus `report.json`.
 
 ```sh
 # Plan a UAT deploy
-effigy deploy plan uat
+effigy deliver deploy plan uat
 
 # Plan and write a durable report
-effigy deploy plan uat --write-report
+effigy deliver deploy plan uat --write-report
 
 # Machine-readable plan
-effigy deploy plan uat --json
+effigy deliver deploy plan uat --json
 ```
 
 Plan resolves the full transaction without mutating anything:
@@ -153,10 +153,10 @@ Plan resolves the full transaction without mutating anything:
 
 ```sh
 # Deploy to UAT
-effigy deploy apply uat --yes
+effigy deliver deploy apply uat --yes
 
 # Deploy to production
-effigy deploy apply production --yes
+effigy deliver deploy apply production --yes
 ```
 
 Apply re-runs planning, then executes:
@@ -177,8 +177,8 @@ Failures stop later stages. `--yes` is required.
 ### Status
 
 ```sh
-effigy deploy status uat
-effigy deploy status uat --json
+effigy deliver deploy status uat
+effigy deliver deploy status uat --json
 ```
 
 Reports the latest deployment for the environment, or the active one if a
@@ -187,9 +187,9 @@ deploy is in flight.
 ### History
 
 ```sh
-effigy deploy history uat
-effigy deploy history uat --limit 10
-effigy deploy history uat --json
+effigy deliver deploy history uat
+effigy deliver deploy history uat --limit 10
+effigy deliver deploy history uat --json
 ```
 
 Lists prior deployments with ids, timestamps, code refs, and outcomes.
@@ -197,7 +197,7 @@ Lists prior deployments with ids, timestamps, code refs, and outcomes.
 ### Redeploy
 
 ```sh
-effigy deploy redeploy uat --deployment <ID> --yes
+effigy deliver deploy redeploy uat --deployment <ID> --yes
 ```
 
 Replays a previous deployment using its recorded immutable inputs. This is
@@ -232,7 +232,7 @@ transaction frame, report persistence, and safety gates.
 When `state = "<stack>"` is configured:
 
 - `deploy plan` embeds a state apply summary.
-- `deploy apply` calls `effigy state apply` before provider deploy.
+- `deploy apply` calls `effigy deliver state apply` before provider deploy.
 - state reports remain canonical for state lineage.
 - deploy reports store state report paths and lineage ids.
 
@@ -259,32 +259,32 @@ Schema ids:
 
 ```sh
 # 1. plan
-effigy deploy plan uat
+effigy deliver deploy plan uat
 
 # 2. apply
-effigy deploy apply uat --yes
+effigy deliver deploy apply uat --yes
 
 # 3. capture UAT changes through state
-effigy state capture uat new-content --yes --push
+effigy deliver state capture uat new-content --yes --push
 
 # 4. verify status
-effigy deploy status uat
+effigy deliver deploy status uat
 ```
 
 ### Production release
 
 ```sh
 # 1. ensure release is ready
-effigy release status --check-gates
+effigy deliver release status --check-gates
 
 # 2. plan production
-effigy deploy plan production
+effigy deliver deploy plan production
 
 # 3. apply production
-effigy deploy apply production --yes
+effigy deliver deploy apply production --yes
 
 # 4. verify
-effigy deploy status production
+effigy deliver deploy status production
 ```
 
 ## JSON Output

@@ -119,16 +119,16 @@ task = { rhai = "state/capture-media.rhai", run_in = "host" }
 
 ```sh
 # Plan the default stack declared in the composed manifest
-effigy state plan
+effigy deliver state plan
 
 # Plan a specific stack
-effigy state plan uat
+effigy deliver state plan uat
 
 # Plan from a standalone manifest file
-effigy state plan --manifest state/production.toml
+effigy deliver state plan --manifest state/production.toml
 
 # Write the plan report for later inspection
-effigy state plan --write-report
+effigy deliver state plan --write-report
 ```
 
 Plan is always safe. It resolves layers, checks policies, and reports what
@@ -138,13 +138,13 @@ would happen without mutating anything.
 
 ```sh
 # Preview apply without executing
-effigy state apply uat
+effigy deliver state apply uat
 
 # Execute the stack
-effigy state apply uat --yes
+effigy deliver state apply uat --yes
 
 # Execute while skipping a prerequisite layer already run by a wrapper task
-effigy state apply uat --yes --skip-layer structure
+effigy deliver state apply uat --yes --skip-layer structure
 ```
 
 Apply runs layers in order. Failures stop later layers. Reports are written to
@@ -156,13 +156,13 @@ without hiding stack lineage.
 
 ```sh
 # Preview capture using a named profile
-effigy state capture uat new-content
+effigy deliver state capture uat new-content
 
 # Execute and stage local artifacts
-effigy state capture uat new-content --yes
+effigy deliver state capture uat new-content --yes
 
 # Also push to OCI
-effigy state capture uat new-content --yes --push
+effigy deliver state capture uat new-content --yes --push
 ```
 
 Capture produces replayable layers from a running environment. It is two-phase:
@@ -172,13 +172,13 @@ local staging first, then explicit `--push` to publish.
 
 ```sh
 # Latest reports for a stack
-effigy state history uat
+effigy deliver state history uat
 
 # Filter by kind
-effigy state history uat --kind capture --limit 5
+effigy deliver state history uat --kind capture --limit 5
 
 # Drill into one lineage
-effigy state history uat --lineage <ID>
+effigy deliver state history uat --lineage <ID>
 ```
 
 ## Layer Roles
@@ -233,9 +233,9 @@ lineage record inside each report.
 ## Common Workflow
 
 1. Define the stack in `effigy.toml`.
-2. Run `effigy state plan` to verify layer order and policies.
-3. Run `effigy state apply uat --yes` to build the environment.
-4. After UAT changes, run `effigy state capture uat new-content --yes --push`.
+2. Run `effigy deliver state plan` to verify layer order and policies.
+3. Run `effigy deliver state apply uat --yes` to build the environment.
+4. After UAT changes, run `effigy deliver state capture uat new-content --yes --push`.
 5. Later, refresh the legacy import layer and re-run `apply` to rebuild.
 
 ## JSON Output
