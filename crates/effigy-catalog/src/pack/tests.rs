@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use super::channel::{official_update_reference, plan_official_update, OfficialPackChannel};
+use super::channel::{
+    official_channel_tag_reference, official_update_reference, plan_official_update,
+    OfficialPackChannel, OFFICIAL_PACK_CHANNEL, OFFICIAL_PACK_REPOSITORY,
+};
 use super::content::content_id;
 use super::error::PackError;
 use super::fallback::{notice_json, report_once, reset_for_test, DiagnosticMode};
@@ -21,7 +24,7 @@ use super::selection::{
     resolve_catalog_layers, select_pack, select_pack_in, PackSelection, PackSelectionReason,
 };
 use super::store::{PackSourceRecord, PackStore};
-use super::verify::{verify_installed_pack, PackDefect};
+use super::verify::{verified_active_digest, verify_installed_pack, PackDefect};
 
 const EFFIGY_VERSION: &str = "0.12.1";
 
@@ -73,6 +76,40 @@ fn install_local(
     let store = store_in(home);
     let source = PackCandidateSource::local(candidate)?;
     install_pack(&store, &LocalPackAcquirer, &source, EFFIGY_VERSION)
+}
+
+struct FakeOci {
+    payload: PathBuf,
+    digest: String,
+}
+
+impl PackCandidateAcquirer for FakeOci {
+    fn acquire(&self, request: &PackAcquireRequest) -> Result<PackAcquisition, PackError> {
+        super::content::copy_tree(&self.payload, &request.destination)?;
+        Ok(PackAcquisition {
+            payload_root: request.destination.clone(),
+            resolved_digest: Some(self.digest.clone()),
+        })
+    }
+}
+
+fn install_oci(
+    home: &Path,
+    candidate: &Path,
+    digest: &str,
+) -> Result<super::install::PackInstallReport, PackError> {
+    let store = store_in(home);
+    let source =
+        PackCandidateSource::parse_oci(&format!("oci://{OFFICIAL_PACK_REPOSITORY}@{digest}"))?;
+    install_pack(
+        &store,
+        &FakeOci {
+            payload: candidate.to_path_buf(),
+            digest: digest.to_owned(),
+        },
+        &source,
+        EFFIGY_VERSION,
+    )
 }
 
 // --- manifest ------------------------------------------------------------
@@ -182,20 +219,6 @@ fn oci_install_retains_resolved_digest_from_the_adapter_seam() {
     let home = TempDir::new().expect("home");
     let src = TempDir::new().expect("src");
     let candidate = candidate_pack(src.path(), "p", "2.0.0", ">=0.12", 5432);
-
-    struct FakeOci {
-        payload: PathBuf,
-        digest: String,
-    }
-    impl PackCandidateAcquirer for FakeOci {
-        fn acquire(&self, request: &PackAcquireRequest) -> Result<PackAcquisition, PackError> {
-            super::content::copy_tree(&self.payload, &request.destination)?;
-            Ok(PackAcquisition {
-                payload_root: request.destination.clone(),
-                resolved_digest: Some(self.digest.clone()),
-            })
-        }
-    }
 
     let digest = "sha256:aaaabbbbccccdddd0000111122223333444455556666777788889999aaaabbbb";
     let source =
@@ -574,14 +597,21 @@ fn official_update_ignores_update_sources_declared_by_pack_content() {
     let digest = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
     let reference = official_update_reference(&channel, digest);
 
-    assert!(reference.starts_with("oci://packs.invalid/effigy/default-catalog@"));
+    assert!(reference.starts_with(&format!("oci://{OFFICIAL_PACK_REPOSITORY}@")));
     assert!(!reference.contains("hostile.invalid"));
+    assert_eq!(
+        official_channel_tag_reference(&channel),
+        format!("oci://{OFFICIAL_PACK_REPOSITORY}:{OFFICIAL_PACK_CHANNEL}")
+    );
+    assert!(!official_channel_tag_reference(&channel).contains('@'));
 }
 
 #[test]
-fn official_update_plan_stays_closed_until_publication() {
-    let channel = OfficialPackChannel::baseline();
-    assert!(!channel.published);
+fn unpublished_official_channel_still_refuses_a_plan() {
+    let channel = OfficialPackChannel {
+        published: false,
+        ..OfficialPackChannel::baseline()
+    };
 
     let error = plan_official_update(
         &channel,
@@ -592,24 +622,84 @@ fn official_update_plan_stays_closed_until_publication() {
 }
 
 #[test]
-fn published_official_channel_plans_a_baseline_owned_candidate() {
-    // Proves the seam: once publication flips the flag, the plan targets the
-    // compiled repository and nothing else.
-    let channel = OfficialPackChannel {
-        published: true,
-        ..OfficialPackChannel::baseline()
-    };
+fn published_official_channel_plans_a_baseline_owned_digest_candidate() {
+    let channel = OfficialPackChannel::baseline();
+    assert!(channel.published);
+    assert_eq!(channel.repository, OFFICIAL_PACK_REPOSITORY);
+    assert_eq!(channel.channel, OFFICIAL_PACK_CHANNEL);
+
     let digest = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
     let plan = plan_official_update(&channel, digest).expect("plan");
 
-    assert_eq!(plan.repository, "packs.invalid/effigy/default-catalog");
-    assert_eq!(plan.channel, "stable");
+    assert_eq!(plan.repository, OFFICIAL_PACK_REPOSITORY);
+    assert_eq!(plan.channel, OFFICIAL_PACK_CHANNEL);
     assert_eq!(
         plan.candidate,
         PackCandidateSource::Oci {
-            reference: format!("packs.invalid/effigy/default-catalog@{digest}"),
+            reference: format!("{OFFICIAL_PACK_REPOSITORY}@{digest}"),
         }
     );
+}
+
+#[test]
+fn official_update_plan_rejects_a_mutable_tag_as_the_digest() {
+    let error = plan_official_update(&OfficialPackChannel::baseline(), "stable")
+        .expect_err("tag is not a digest");
+    assert!(
+        error.to_string().contains("not digest-addressed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn verified_active_digest_is_a_noop_only_when_the_active_oci_content_still_proves() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let digest = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    let candidate = candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432);
+    install_oci(home.path(), &candidate, digest).expect("install");
+
+    let store = store_in(home.path());
+    let matched = verified_active_digest(&store, digest, EFFIGY_VERSION).expect("verified");
+    assert_eq!(matched.source.digest(), Some(digest));
+
+    assert!(
+        verified_active_digest(
+            &store,
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            EFFIGY_VERSION
+        )
+        .is_none(),
+        "a different digest is not already-current"
+    );
+
+    let compose = store
+        .install_dir(&matched.install_id)
+        .join("postgres/compose.fragment.yml");
+    std::fs::write(&compose, "image: postgres:tampered\n").expect("corrupt");
+    assert!(
+        verified_active_digest(&store, digest, EFFIGY_VERSION).is_none(),
+        "corrupt active content is not a verified no-op"
+    );
+}
+
+#[test]
+fn a_local_active_install_is_never_an_official_digest_noop() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    install_local(
+        home.path(),
+        &candidate_pack(src.path(), "p", "1.0.0", ">=0.12", 5432),
+    )
+    .expect("install");
+
+    let store = store_in(home.path());
+    assert!(verified_active_digest(
+        &store,
+        "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        EFFIGY_VERSION
+    )
+    .is_none());
 }
 
 // --- retention (settled: retain everything, never prune) -----------------

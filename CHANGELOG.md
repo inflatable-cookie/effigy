@@ -7,6 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy service pack update` resolves the compiled official `stable` channel
+  on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an immutable digest,
+  then reuses the existing acquire-validate-store-activate transaction. Text
+  and JSON report the channel and digest. A verified already-active digest is
+  a no-op. Resolution, pull, compatibility, validation, and activation
+  failures leave active, previous, and channel identity unchanged. Ordinary
+  catalog use stays network-silent. The support-policy
+  `oldest_update_capable_release` field remains absent until a released Effigy
+  records that capability.
 - Effigy now owns `support/catalog-pack-update.toml`, the machine-readable
   catalog-pack update support floor. A typed `effigy-catalog` validator checks
   schema, semantic versions, current-release membership, and the
@@ -62,7 +71,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - `effigy service pack` manages independently versioned catalog packs:
   `status`, `install oci://<REPO>@sha256:<DIGEST>`, `install --path <DIR>`,
-  `rollback`, and `reset`, each with text output, a standard JSON payload, and
+  `update`, `rollback`, and `reset`, each with text output, a standard JSON payload, and
   standard leading `--repo` / `--json`. Catalog fragments now resolve through
   four layers — project override, user override, active installed pack, then
   the compiled baseline. The compiled baseline is permanent: a machine with no
@@ -95,9 +104,8 @@ During v0.x, MINOR bumps may include breaking changes.
   content the store already holds re-verifies it, repairing rather than
   reactivating a corrupt tree. `rollback` selects the previous validated
   install and `reset` selects the baseline without touching project/user
-  overrides. There is deliberately no `effigy service pack update`: the
-  official channel is fixed and baseline-owned so installed content cannot
-  redirect it, but no official artifact is published yet.
+  overrides. The official channel is compiled in, so installed content cannot
+  redirect it.
 - `effigy --help` and `effigy help` now group the built-in command surface by
   operator job under the topics `work`, `local`, `repo`, `deliver`, `extend`,
   and `admin`. `effigy help <group>` renders one group's inventory, and

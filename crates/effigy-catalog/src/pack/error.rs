@@ -115,6 +115,14 @@ pub enum PackError {
     #[error("failed to acquire catalog pack from {origin}: {reason}")]
     AcquireFailed { origin: String, reason: String },
 
+    /// Official-channel resolution failed before the install transaction.
+    ///
+    /// Distinct from [`PackError::AcquireFailed`]: nothing was pulled or
+    /// stored. Active, previous, and compiled channel identity stay as they
+    /// were.
+    #[error("failed to resolve official catalog pack channel at {origin}: {reason}")]
+    ChannelResolutionFailed { origin: String, reason: String },
+
     /// The persisted store state could not be read or parsed.
     #[error("catalog pack store state at {path} is unreadable: {reason}")]
     StoreStateUnreadable { path: PathBuf, reason: String },

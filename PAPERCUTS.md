@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `docs add-log-index` appends after `## Next Task` instead of under Active logs — 2026-09-02
+- Friction: `effigy docs add-log-index docs/logs/2026-09/02-155016-official-catalog-pack-update-1107.md` reported success and inserted the bullet after the logs README `## Next Task` paragraph, not at the top of `## Active logs`.
+- Impact: the unique index entry is present for `docs check index` but the front-door list is wrong until a human moves the bullet; workers can ship a drifted Next Task block.
+- Possible fix: insert immediately after the `## Active logs` heading (newest first), and never write below the README `## Next Task` section.
+- Surface: `effigy docs add-log-index`; card closeout log-index step.
+
 ### [ ] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
 - Friction: `effigy::cli_output_tests` `cli_container_attached_session_handles_sigint_during_startup` failed under `effigy qa` and in isolation (twice) while passing under `cargo test --workspace`; it also fails on the clean base with this lane's changes stashed, so it is a pre-existing environment/timing race, not a regression.
 - Impact: full `effigy qa` rounds fail intermittently on a container-attach SIGINT startup race, blocking worker required-validation runs.

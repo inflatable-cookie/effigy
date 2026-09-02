@@ -5,22 +5,25 @@
 //!
 //! - the OCI transport implementation, built on the existing artifact adapter
 //!   in `effigy-artifacts` rather than a second transport client;
-//! - text and JSON rendering for the four public shapes;
+//! - text and JSON rendering for the public shapes;
 //! - the doctor finding for unhealthy installed state.
 //!
-//! There is no `update` shape here. The official channel is modelled in
-//! `effigy_catalog::pack::channel` and adapter-tested, but it has no published
-//! artifact, so exposing a public command would ship one that cannot succeed.
+//! `update` inspects the compiled official `stable` tag through that same
+//! adapter, then sends only the resolved digest through the existing
+//! acquire-validate-store-activate transaction.
 
 use std::path::Path;
 
 use effigy_artifacts::{
-    ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
+    ArtifactSourceRef, OciArtifactAdapter, OciArtifactInspectRequest, OciArtifactPullRequest,
+    OrasCliArtifactAdapter,
 };
 use effigy_catalog::pack::{
-    install_pack, select_pack, InstalledPackRecord, LocalPackAcquirer, PackAcquireRequest,
-    PackAcquisition, PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection,
-    PackSelectionReason, PackStore, PackStoreState, StoredContentOutcome,
+    ensure_official_channel_published, install_pack, official_channel_tag_reference,
+    plan_official_update, select_pack, verified_active_digest, InstalledPackRecord,
+    LocalPackAcquirer, OfficialPackChannel, PackAcquireRequest, PackAcquisition,
+    PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection, PackSelectionReason,
+    PackStore, PackStoreState, StoredContentOutcome,
 };
 use effigy_cli::{ServicePackInstallSource, ServicePackSubcommand};
 use effigy_doctor::{check_id, DoctorFinding, DoctorSeverity};
@@ -95,6 +98,10 @@ pub(super) fn run_service_pack(
         ServicePackSubcommand::Install { source } => {
             let adapter = OrasCliArtifactAdapter::default();
             run_install(&source, &OciPackAcquirer::new(&adapter), output_json)
+        }
+        ServicePackSubcommand::Update => {
+            let adapter = OrasCliArtifactAdapter::default();
+            run_update(&adapter, output_json)
         }
         ServicePackSubcommand::Rollback => run_rollback(output_json),
         ServicePackSubcommand::Reset => run_reset(output_json),
@@ -228,6 +235,142 @@ fn run_install(
         None => lines.push("rollback target: compiled baseline".to_owned()),
     }
     Ok(lines.join("\n"))
+}
+
+fn run_update(oci: &dyn OciArtifactAdapter, output_json: bool) -> Result<String, RunnerError> {
+    let channel = OfficialPackChannel::baseline();
+    ensure_official_channel_published(&channel).map_err(pack_error)?;
+    let store = require_store()?;
+    let digest = resolve_official_digest(oci, &channel).map_err(pack_error)?;
+    let plan = plan_official_update(&channel, &digest).map_err(pack_error)?;
+
+    if let Some(active) = verified_active_digest(&store, &digest, effigy_version()) {
+        let state = store.load().map_err(pack_error)?;
+        return Ok(render_update(UpdateView {
+            channel: &channel,
+            digest: &digest,
+            outcome: "already-current",
+            installed: &active,
+            replaced: None,
+            stored_content: None,
+            previous: state.previous.as_deref(),
+            store_root: store.root(),
+            output_json,
+        }));
+    }
+
+    let report = install_pack(
+        &store,
+        &OciPackAcquirer::new(oci),
+        &plan.candidate,
+        effigy_version(),
+    )
+    .map_err(pack_error)?;
+
+    Ok(render_update(UpdateView {
+        channel: &channel,
+        digest: &digest,
+        outcome: "updated",
+        installed: &report.installed,
+        replaced: report.replaced.as_deref(),
+        stored_content: Some(report.stored_content.as_str()),
+        previous: report.state.previous.as_deref(),
+        store_root: store.root(),
+        output_json,
+    }))
+}
+
+fn resolve_official_digest(
+    adapter: &dyn OciArtifactAdapter,
+    channel: &OfficialPackChannel,
+) -> Result<String, PackError> {
+    let origin = official_channel_tag_reference(channel);
+    let parsed =
+        ArtifactSourceRef::parse(&origin).map_err(|error| PackError::ChannelResolutionFailed {
+            origin: origin.clone(),
+            reason: error.to_string(),
+        })?;
+    let ArtifactSourceRef::Oci(reference) = parsed else {
+        return Err(PackError::ChannelResolutionFailed {
+            origin,
+            reason: "official channel did not resolve to an OCI artifact".to_owned(),
+        });
+    };
+    let descriptor = adapter
+        .inspect(&OciArtifactInspectRequest { reference })
+        .map_err(|error| PackError::ChannelResolutionFailed {
+            origin: origin.clone(),
+            reason: error.to_string(),
+        })?;
+    match descriptor.digest {
+        Some(digest) if digest.contains("sha256:") => Ok(digest),
+        Some(digest) => Err(PackError::ChannelResolutionFailed {
+            origin,
+            reason: format!("channel resolved to `{digest}`, which is not an immutable digest"),
+        }),
+        None => Err(PackError::ChannelResolutionFailed {
+            origin,
+            reason: "channel resolution did not return an immutable digest".to_owned(),
+        }),
+    }
+}
+
+struct UpdateView<'a> {
+    channel: &'a OfficialPackChannel,
+    digest: &'a str,
+    outcome: &'a str,
+    installed: &'a InstalledPackRecord,
+    replaced: Option<&'a str>,
+    stored_content: Option<&'a str>,
+    previous: Option<&'a str>,
+    store_root: &'a Path,
+    output_json: bool,
+}
+
+fn render_update(view: UpdateView<'_>) -> String {
+    if view.output_json {
+        return json!({
+            "schema": "effigy.service.pack.update.v1",
+            "schema_version": 1,
+            "ok": true,
+            "outcome": view.outcome,
+            "channel": view.channel.channel,
+            "repository": view.channel.repository,
+            "digest": view.digest,
+            "installed": record_payload(view.installed),
+            "replaced": view.replaced,
+            "stored_content": view.stored_content,
+            "previous": view.previous,
+            "store_root": display_path(view.store_root),
+        })
+        .to_string();
+    }
+
+    let mut lines = if view.outcome == "already-current" {
+        vec!["[ok] official catalog pack already current".to_owned()]
+    } else {
+        vec![format!(
+            "[ok] updated official catalog pack {}",
+            record_line(view.installed)
+        )]
+    };
+    lines.push(format!("channel: {}", view.channel.channel));
+    lines.push(format!("repository: {}", view.channel.repository));
+    lines.push(format!("digest: {}", view.digest));
+    lines.push(format!("source: {}", view.installed.source.display()));
+    lines.push(format!("content: {}", view.installed.content_id));
+    if view.stored_content == Some(StoredContentOutcome::RepairedCorrupt.as_str()) {
+        lines.push(
+            "note: existing stored content failed identity verification and was replaced"
+                .to_owned(),
+        );
+    }
+    match view.replaced {
+        Some(replaced) => lines.push(format!("rollback target: {replaced}")),
+        None if view.outcome == "already-current" => {}
+        None => lines.push("rollback target: compiled baseline".to_owned()),
+    }
+    lines.join("\n")
 }
 
 fn run_rollback(output_json: bool) -> Result<String, RunnerError> {

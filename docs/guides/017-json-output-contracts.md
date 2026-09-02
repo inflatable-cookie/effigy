@@ -161,6 +161,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.service.extract.v1`
 - `effigy.service.pack.status.v1`
 - `effigy.service.pack.install.v1`
+- `effigy.service.pack.update.v1`
 - `effigy.service.pack.rollback.v1`
 - `effigy.service.pack.reset.v1`
 - `effigy.catalog-pack.fallback.v1` (stderr diagnostic, not a `result` payload)
@@ -189,6 +190,7 @@ effigy --json scan attention-markers
 effigy --json scan stale-suppressions
 effigy --json service list
 effigy --json service pack status
+effigy --json service pack update
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test

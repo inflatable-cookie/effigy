@@ -857,14 +857,16 @@ pub enum ServiceSubcommand {
 /// Management surface for independently versioned catalog packs, nested under
 /// the existing `service` owner.
 ///
-/// There is deliberately no no-argument `update`: the official channel has no
-/// published artifact yet, so a public update command could not succeed.
+/// `update` resolves the compiled official `stable` channel to a digest, then
+/// reuses the install transaction. It takes no coordinate arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServicePackSubcommand {
     /// Report the active selection, lineage, and health.
     Status,
     /// Install an explicit candidate and activate it after validation.
     Install { source: ServicePackInstallSource },
+    /// Resolve the official `stable` channel and install that digest.
+    Update,
     /// Select the previous validated installed pack.
     Rollback,
     /// Select the compiled baseline, retaining installed content.

@@ -37,8 +37,9 @@ pub mod store;
 pub mod verify;
 
 pub use channel::{
-    official_update_reference, plan_official_update, OfficialPackChannel, OfficialUpdatePlan,
-    OFFICIAL_PACK_CHANNEL, OFFICIAL_PACK_REPOSITORY,
+    ensure_official_channel_published, official_channel_tag_reference, official_update_reference,
+    plan_official_update, OfficialPackChannel, OfficialUpdatePlan, OFFICIAL_PACK_CHANNEL,
+    OFFICIAL_PACK_REPOSITORY,
 };
 pub use error::PackError;
 pub use fallback::{set_diagnostic_mode, DiagnosticMode, FALLBACK_NOTICE_SCHEMA};
@@ -57,7 +58,9 @@ pub use store::{
     InstalledPackRecord, PackResetReport, PackSourceRecord, PackStore, PackStoreLock,
     PackStoreState, PACK_STORE_STATE_SCHEMA,
 };
-pub use verify::{verify_installed_pack, PackDefect, PackVerificationFailure};
+pub use verify::{
+    verified_active_digest, verify_installed_pack, PackDefect, PackVerificationFailure,
+};
 
 #[cfg(test)]
 #[path = "pack/tests.rs"]

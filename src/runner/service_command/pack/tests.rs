@@ -9,7 +9,7 @@ use effigy_artifacts::{
     OciArtifactPushReport, OciArtifactPushRequest,
 };
 use effigy_catalog::pack::{with_test_effigy_home, PackSelectionReason};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -43,9 +43,14 @@ fn candidate_pack(root: &Path, version: &str, image_tag: &str) -> PathBuf {
     pack_root
 }
 
-/// Fake OCI adapter that serves a prepared payload and counts every call.
+/// Fake OCI adapter that serves a prepared payload and records every call.
 struct RecordingOciAdapter {
     payload: PathBuf,
+    digest: Option<String>,
+    inspect_error: Option<String>,
+    pull_error: Option<String>,
+    inspect_refs: RefCell<Vec<String>>,
+    pull_refs: RefCell<Vec<String>>,
     calls: Cell<usize>,
 }
 
@@ -53,7 +58,33 @@ impl RecordingOciAdapter {
     fn new(payload: PathBuf) -> Self {
         Self {
             payload,
+            digest: Some(DIGEST.to_owned()),
+            inspect_error: None,
+            pull_error: None,
+            inspect_refs: RefCell::new(Vec::new()),
+            pull_refs: RefCell::new(Vec::new()),
             calls: Cell::new(0),
+        }
+    }
+
+    fn without_digest(payload: PathBuf) -> Self {
+        Self {
+            digest: None,
+            ..Self::new(payload)
+        }
+    }
+
+    fn failing_inspect(payload: PathBuf, message: &str) -> Self {
+        Self {
+            inspect_error: Some(message.to_owned()),
+            ..Self::new(payload)
+        }
+    }
+
+    fn failing_pull(payload: PathBuf, message: &str) -> Self {
+        Self {
+            pull_error: Some(message.to_owned()),
+            ..Self::new(payload)
         }
     }
 }
@@ -64,7 +95,20 @@ impl OciArtifactAdapter for RecordingOciAdapter {
         request: &OciArtifactInspectRequest,
     ) -> Result<OciArtifactDescriptor, OciArtifactError> {
         self.calls.set(self.calls.get() + 1);
-        Ok(OciArtifactDescriptor::new(&request.reference).with_digest(DIGEST))
+        self.inspect_refs
+            .borrow_mut()
+            .push(request.reference.reference().to_owned());
+        if let Some(message) = &self.inspect_error {
+            return Err(OciArtifactError::InspectFailed {
+                reference: request.reference.redacted(),
+                message: message.clone(),
+            });
+        }
+        let descriptor = OciArtifactDescriptor::new(&request.reference);
+        Ok(match &self.digest {
+            Some(digest) => descriptor.with_digest(digest.clone()),
+            None => descriptor,
+        })
     }
 
     fn pull(
@@ -72,6 +116,15 @@ impl OciArtifactAdapter for RecordingOciAdapter {
         request: &OciArtifactPullRequest,
     ) -> Result<OciArtifactPullReport, OciArtifactError> {
         self.calls.set(self.calls.get() + 1);
+        self.pull_refs
+            .borrow_mut()
+            .push(request.reference.reference().to_owned());
+        if let Some(message) = &self.pull_error {
+            return Err(OciArtifactError::PullFailed {
+                reference: request.reference.redacted(),
+                message: message.clone(),
+            });
+        }
         let pulled_root = request.destination_root.join("pulled");
         effigy_catalog::pack::content::copy_tree(&self.payload, &pulled_root).map_err(|error| {
             OciArtifactError::PullFailed {
@@ -80,7 +133,8 @@ impl OciArtifactAdapter for RecordingOciAdapter {
             }
         })?;
         Ok(OciArtifactPullReport {
-            descriptor: OciArtifactDescriptor::new(&request.reference).with_digest(DIGEST),
+            descriptor: OciArtifactDescriptor::new(&request.reference)
+                .with_digest(self.digest.clone().unwrap_or_else(|| DIGEST.to_owned())),
             pulled_root,
             primary_files: vec![PathBuf::from("pack.toml")],
         })
@@ -105,6 +159,39 @@ fn install_local_pack(home: &Path, candidate: &Path, json: bool) -> Result<Strin
             json,
         )
     })
+}
+
+fn install_oci_pack(home: &Path, candidate: &Path, json: bool) -> Result<String, RunnerError> {
+    let adapter = RecordingOciAdapter::new(candidate.to_path_buf());
+    let reference = format!(
+        "oci://{}@{DIGEST}",
+        OfficialPackChannel::baseline().repository
+    );
+    with_test_effigy_home(home, || {
+        run_install(
+            &ServicePackInstallSource::Oci { reference },
+            &OciPackAcquirer::new(&adapter),
+            json,
+        )
+    })
+}
+
+fn state_bytes(home: &Path) -> Option<Vec<u8>> {
+    with_test_effigy_home(home, || {
+        PackStore::user().and_then(|store| std::fs::read(store.state_path()).ok())
+    })
+}
+
+fn official_tag_ref() -> String {
+    format!(
+        "{}:{}",
+        OfficialPackChannel::baseline().repository,
+        OfficialPackChannel::baseline().channel
+    )
+}
+
+fn official_digest_ref() -> String {
+    format!("{}@{DIGEST}", OfficialPackChannel::baseline().repository)
 }
 
 #[test]
@@ -408,12 +495,231 @@ fn installed_content_cannot_redirect_the_fixed_official_channel() {
     );
     install_local_pack(home.path(), &hostile, false).expect("install");
 
-    let channel = effigy_catalog::pack::OfficialPackChannel::baseline();
-    let reference = effigy_catalog::pack::official_update_reference(&channel, DIGEST);
+    let candidate = candidate_pack(src.path(), "1.1.0", "16");
+    let adapter = RecordingOciAdapter::new(candidate);
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_update(&adapter, true)).expect("update"),
+    )
+    .expect("json");
 
-    assert!(!reference.contains("attacker.invalid"), "{reference}");
-    assert!(reference.starts_with("oci://packs.invalid/effigy/default-catalog@"));
-    assert!(!channel.published, "no public update command may exist yet");
+    let inspect = adapter.inspect_refs.borrow();
+    let pull = adapter.pull_refs.borrow();
+    assert_eq!(inspect.as_slice(), &[official_tag_ref()]);
+    assert_eq!(pull.as_slice(), &[official_digest_ref()]);
+    assert!(!inspect
+        .iter()
+        .any(|value| value.contains("attacker.invalid")));
+    assert!(!pull.iter().any(|value| value.contains("attacker.invalid")));
+    assert_eq!(
+        payload["repository"],
+        OfficialPackChannel::baseline().repository
+    );
+    assert_eq!(payload["channel"], "stable");
+    assert_eq!(payload["digest"], DIGEST);
+}
+
+#[test]
+fn official_update_inspects_the_stable_tag_and_pulls_only_the_digest() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "1.0.0", "16");
+    let adapter = RecordingOciAdapter::new(candidate);
+
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_update(&adapter, true)).expect("update"),
+    )
+    .expect("json");
+
+    assert_eq!(payload["schema"], "effigy.service.pack.update.v1");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["outcome"], "updated");
+    assert_eq!(payload["channel"], "stable");
+    assert_eq!(
+        payload["repository"],
+        OfficialPackChannel::baseline().repository
+    );
+    assert_eq!(payload["digest"], DIGEST);
+    assert_eq!(payload["installed"]["digest"], DIGEST);
+    assert_eq!(
+        adapter.inspect_refs.borrow().as_slice(),
+        &[official_tag_ref()]
+    );
+    assert_eq!(
+        adapter.pull_refs.borrow().as_slice(),
+        &[official_digest_ref()]
+    );
+    assert!(
+        !adapter
+            .pull_refs
+            .borrow()
+            .iter()
+            .any(|value| value.contains(":stable")),
+        "mutable tag must not enter acquisition"
+    );
+
+    let text = with_test_effigy_home(home.path(), || {
+        // Already current on the second call.
+        run_update(&adapter, false)
+    })
+    .expect("noop text");
+    assert!(text.contains("already current"), "{text}");
+    assert!(text.contains("channel: stable"), "{text}");
+    assert!(text.contains(&format!("digest: {DIGEST}")), "{text}");
+}
+
+#[test]
+fn verified_already_active_digest_is_a_deterministic_noop() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "1.0.0", "16");
+    install_oci_pack(home.path(), &candidate, false).expect("install");
+    let before = state_bytes(home.path()).expect("state");
+
+    let adapter = RecordingOciAdapter::new(candidate);
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_update(&adapter, true)).expect("update"),
+    )
+    .expect("json");
+
+    assert_eq!(payload["outcome"], "already-current");
+    assert_eq!(payload["digest"], DIGEST);
+    assert_eq!(payload["channel"], "stable");
+    assert_eq!(
+        adapter.inspect_refs.borrow().as_slice(),
+        &[official_tag_ref()]
+    );
+    assert!(
+        adapter.pull_refs.borrow().is_empty(),
+        "verified no-op must not pull"
+    );
+    assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+}
+
+#[test]
+fn channel_resolution_failure_preserves_active_previous_and_channel_identity() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let first = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &first, false).expect("install");
+    let before = state_bytes(home.path()).expect("state");
+    let channel_before = OfficialPackChannel::baseline();
+
+    let adapter = RecordingOciAdapter::failing_inspect(first, "registry unavailable");
+    let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+        .expect_err("resolution failure");
+    assert!(
+        error
+            .to_string()
+            .contains("failed to resolve official catalog pack channel"),
+        "{error}"
+    );
+    assert!(adapter.pull_refs.borrow().is_empty());
+    assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+    assert_eq!(OfficialPackChannel::baseline(), channel_before);
+}
+
+#[test]
+fn tag_resolution_without_a_digest_does_not_enter_the_install_transaction() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "1.0.0", "16");
+    let adapter = RecordingOciAdapter::without_digest(candidate);
+
+    let error = with_test_effigy_home(home.path(), || run_update(&adapter, true))
+        .expect_err("missing digest");
+    assert!(
+        error
+            .to_string()
+            .contains("did not return an immutable digest"),
+        "{error}"
+    );
+    assert!(adapter.pull_refs.borrow().is_empty());
+    assert!(state_bytes(home.path()).is_none());
+}
+
+#[test]
+fn pull_failure_after_digest_resolution_leaves_store_state_untouched() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let good = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &good, false).expect("first");
+    let before = state_bytes(home.path()).expect("state");
+
+    let adapter = RecordingOciAdapter::failing_pull(good, "blob missing");
+    let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+        .expect_err("pull failure");
+    assert!(error.to_string().contains("failed to acquire"), "{error}");
+    assert_eq!(
+        adapter.inspect_refs.borrow().as_slice(),
+        &[official_tag_ref()]
+    );
+    assert_eq!(
+        adapter.pull_refs.borrow().as_slice(),
+        &[official_digest_ref()]
+    );
+    assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+}
+
+#[test]
+fn incompatible_official_update_candidate_leaves_the_active_selection_alone() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let good = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &good, false).expect("first install");
+    let before = state_bytes(home.path()).expect("state");
+
+    let hostile = src.path().join("incompatible");
+    write(
+        &hostile.join("pack.toml"),
+        "schema_version = 1\n\n[pack]\nid = \"effigy-default-catalog\"\n\
+         version = \"9.9.9\"\n\n[compatibility]\neffigy = \">=99.0\"\n",
+    );
+    write(
+        &hostile.join("postgres/service.toml"),
+        "[service]\nname = \"postgres\"\ndescription = \"hostile\"\n",
+    );
+    write(
+        &hostile.join("postgres/compose.fragment.yml"),
+        "image: postgres:evil\n",
+    );
+    let adapter = RecordingOciAdapter::new(hostile);
+    let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+        .expect_err("reject incompatible");
+    assert!(
+        error.to_string().contains("requires Effigy >=99.0"),
+        "{error}"
+    );
+    assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+}
+
+#[test]
+fn corrupt_already_active_digest_is_repaired_rather_than_treated_as_a_noop() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let candidate = candidate_pack(src.path(), "1.0.0", "16");
+    install_oci_pack(home.path(), &candidate, false).expect("install");
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    let active = store.load().expect("state").active.expect("active");
+    let compose = store
+        .install_dir(&active)
+        .join("postgres/compose.fragment.yml");
+    write(&compose, "image: postgres:tampered\n");
+
+    let adapter = RecordingOciAdapter::new(candidate);
+    let payload: Value = serde_json::from_str(
+        &with_test_effigy_home(home.path(), || run_update(&adapter, true)).expect("repair"),
+    )
+    .expect("json");
+
+    assert_eq!(payload["outcome"], "updated");
+    assert_eq!(payload["stored_content"], "repaired-corrupt");
+    assert!(!adapter.pull_refs.borrow().is_empty());
+    let restored = std::fs::read_to_string(&compose).expect("restored compose");
+    assert!(
+        restored.contains("postgres:16"),
+        "corrupt bytes must be replaced: {restored}"
+    );
+    assert!(!restored.contains("tampered"));
 }
 
 #[test]
@@ -423,8 +729,9 @@ fn ordinary_catalog_work_never_invokes_the_oci_transport() {
     // 1. `effigy-catalog` owns fragment resolution, listing, selection, and
     //    assembly. It declares no artifact/transport dependency and spawns no
     //    process, so a catalog-backed command physically cannot reach `oras`.
-    // 2. The adapter is threaded into `run_install` and nowhere else. Running
-    //    the ordinary paths with a recorder in scope leaves its count at zero.
+    // 2. The adapter is threaded into `run_install` and `run_update` only.
+    //    Running the ordinary paths with a recorder in scope leaves its count
+    //    at zero.
     let manifest = include_str!("../../../../crates/effigy-catalog/Cargo.toml");
     for forbidden in ["effigy-artifacts", "reqwest", "ureq", "hyper", "curl"] {
         assert!(

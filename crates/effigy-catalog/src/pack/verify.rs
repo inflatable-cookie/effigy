@@ -10,7 +10,7 @@ use std::path::Path;
 
 use super::content::{content_id, validate_pack};
 use super::error::PackError;
-use super::store::InstalledPackRecord;
+use super::store::{InstalledPackRecord, PackStore};
 
 /// Why stored content failed its proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,29 @@ pub struct PackVerificationFailure {
     pub defect: PackDefect,
     /// Human-readable explanation naming the install and the discrepancy.
     pub detail: String,
+}
+
+/// The active install, when it is this digest and still verifies.
+///
+/// Used by official update to skip acquire/store/activate when `stable`
+/// already names the verified local content. Unreadable state, a local
+/// install, a different digest, or failed verification are not no-ops.
+pub fn verified_active_digest(
+    store: &PackStore,
+    digest: &str,
+    effigy_version: &str,
+) -> Option<InstalledPackRecord> {
+    let record = store.load().ok()?.active_record()?.clone();
+    if record.source.digest() != Some(digest) {
+        return None;
+    }
+    verify_installed_pack(
+        &store.install_dir(&record.install_id),
+        &record,
+        effigy_version,
+    )
+    .ok()?;
+    Some(record)
 }
 
 /// Prove `root` still holds exactly the content `record` describes, and that it

@@ -4,10 +4,13 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: Effigy official channel resolution and public update command
 Created: 2026-09-01
 Promoted: 2026-09-02 — card `1106` merged at `6271b0ff129d006e47202b1b00def5ea7a395af8`
+Closed: 2026-09-02 — public `service pack update` resolves compiled `stable` to
+the accepted immutable digest and reuses the existing transaction; evidence
+[`02-155016`](../../../logs/2026-09/02-155016-official-catalog-pack-update-1107.md)
 
 ## Purpose
 
@@ -40,10 +43,11 @@ Replace the placeholder official coordinate and expose explicit
 
 ## Evidence
 
-Record one dated log mapping every acceptance and review-oracle row to named
-proof. Include the resolved channel/digest, isolated store state before and
-after success/no-op/failure, network-silence counterexamples, and any live
-read-only registry evidence. No Effigy release is part of the log.
+[`02-155016`](../../../logs/2026-09/02-155016-official-catalog-pack-update-1107.md)
+maps every acceptance and review-oracle row to named tests plus the isolated
+live smoke (channel, digest, store before/after success and no-op, network
+silence). Failure atomicity is the runner unit table in that log. No Effigy
+release is part of the log.
 
 ## Review Oracle
 
@@ -58,8 +62,7 @@ resolution cannot return an immutable digest, or JSON compatibility would break.
 
 ## Next Task
 
-Implement this card from current pushed `main`. It may run in parallel with
-card `1108`; this lane owns Effigy runtime, CLI, tests, card closeout, changelog,
-guide `067`, and the Effigy-side evidence log. Shared roadmap/spec/contract and
-front-door integration remains with the orchestrator. This card never
-authorizes an Effigy binary release.
+Orchestrator integrates this lane with parallel card `1108` after accepted
+exact-head review and merge. Shared roadmap/spec/contract and front-door
+next-task prose stays orchestrator-owned. This card never authorizes an Effigy
+binary release.

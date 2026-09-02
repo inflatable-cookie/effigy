@@ -219,6 +219,7 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
         "status" => parse_service_pack_simple(args, ServicePackSubcommand::Status),
+        "update" => parse_service_pack_simple(args, ServicePackSubcommand::Update),
         "rollback" => parse_service_pack_simple(args, ServicePackSubcommand::Rollback),
         "reset" => parse_service_pack_simple(args, ServicePackSubcommand::Reset),
         "install" => parse_service_pack_install(args),
