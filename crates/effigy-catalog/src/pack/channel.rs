@@ -14,7 +14,7 @@
 //! artifact exists and public `effigy service pack update` may resolve it.
 
 use super::error::PackError;
-use super::install::PackCandidateSource;
+use super::install::{parse_oci_digest, PackCandidateSource};
 
 /// Official OCI repository. Compiled in; not a runtime override.
 pub const OFFICIAL_PACK_REPOSITORY: &str = "ghcr.io/inflatable-cookie/effigy-catalog-pack";
@@ -68,7 +68,8 @@ pub fn official_channel_tag_reference(channel: &OfficialPackChannel) -> String {
 
 /// Build the official-channel update request for `digest`.
 ///
-/// The digest is supplied by channel resolution, not by pack content; the
+/// `digest` must be exactly `sha256:` plus 64 lowercase hexadecimal characters.
+/// The value is supplied by channel resolution, not by pack content; the
 /// repository always comes from [`OfficialPackChannel::baseline`]. Returns an
 /// error while the channel is unpublished so an unpublished build cannot
 /// acquire through this seam.
@@ -77,6 +78,7 @@ pub fn plan_official_update(
     digest: &str,
 ) -> Result<OfficialUpdatePlan, PackError> {
     ensure_official_channel_published(channel)?;
+    parse_oci_digest(digest)?;
     let candidate =
         PackCandidateSource::parse_oci(&format!("oci://{}@{digest}", channel.repository))?;
     Ok(OfficialUpdatePlan {

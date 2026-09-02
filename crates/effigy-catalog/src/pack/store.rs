@@ -16,8 +16,11 @@
 //! Durable mutation is serialized across processes by an advisory lock on
 //! `.lock`. Read-modify-write of `state.json` and the directory landing that
 //! precedes it happen inside that lock, so two concurrent `effigy service pack`
-//! invocations cannot lose lineage or race a landing. Acquisition — the slow,
-//! network-touching part — stays outside it.
+//! invocations cannot lose lineage or race a landing. The verified
+//! already-current no-op holds the same lock across active-record selection,
+//! verification, and the snapshot used to render the report, then releases it
+//! before any network work. Acquisition — the slow, network-touching part —
+//! stays outside it.
 //!
 //! Nothing here deletes installed content. Every successfully installed entry
 //! is retained; garbage collection and bounded retention are a later explicit

@@ -9,8 +9,8 @@
 //! - the doctor finding for unhealthy installed state.
 //!
 //! `update` inspects the compiled official `stable` tag through that same
-//! adapter, then sends only the resolved digest through the existing
-//! acquire-validate-store-activate transaction.
+//! adapter, requires an exact `sha256:` digest, then sends only that pin
+//! through the existing acquire-validate-store-activate transaction.
 
 use std::path::Path;
 
@@ -20,10 +20,10 @@ use effigy_artifacts::{
 };
 use effigy_catalog::pack::{
     ensure_official_channel_published, install_pack, official_channel_tag_reference,
-    plan_official_update, select_pack, verified_active_digest, InstalledPackRecord,
-    LocalPackAcquirer, OfficialPackChannel, PackAcquireRequest, PackAcquisition,
-    PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection, PackSelectionReason,
-    PackStore, PackStoreState, StoredContentOutcome,
+    parse_oci_digest, plan_official_update, select_pack, verified_active_digest,
+    InstalledPackRecord, LocalPackAcquirer, OfficialPackChannel, PackAcquireRequest,
+    PackAcquisition, PackCandidateAcquirer, PackCandidateSource, PackError, PackSelection,
+    PackSelectionReason, PackStore, PackStoreState, StoredContentOutcome,
 };
 use effigy_cli::{ServicePackInstallSource, ServicePackSubcommand};
 use effigy_doctor::{check_id, DoctorFinding, DoctorSeverity};
@@ -244,16 +244,17 @@ fn run_update(oci: &dyn OciArtifactAdapter, output_json: bool) -> Result<String,
     let digest = resolve_official_digest(oci, &channel).map_err(pack_error)?;
     let plan = plan_official_update(&channel, &digest).map_err(pack_error)?;
 
-    if let Some(active) = verified_active_digest(&store, &digest, effigy_version()) {
-        let state = store.load().map_err(pack_error)?;
+    // Lock is held only inside `verified_active_digest` for the decision and
+    // the snapshot used below, then released before any network acquisition.
+    if let Some(current) = verified_active_digest(&store, &digest, effigy_version()) {
         return Ok(render_update(UpdateView {
             channel: &channel,
             digest: &digest,
             outcome: "already-current",
-            installed: &active,
+            installed: &current.record,
             replaced: None,
             stored_content: None,
-            previous: state.previous.as_deref(),
+            previous: current.state.previous.as_deref(),
             store_root: store.root(),
             output_json,
         }));
@@ -303,11 +304,12 @@ fn resolve_official_digest(
             reason: error.to_string(),
         })?;
     match descriptor.digest {
-        Some(digest) if digest.contains("sha256:") => Ok(digest),
-        Some(digest) => Err(PackError::ChannelResolutionFailed {
-            origin,
-            reason: format!("channel resolved to `{digest}`, which is not an immutable digest"),
-        }),
+        Some(digest) => parse_oci_digest(&digest)
+            .map(str::to_owned)
+            .map_err(|error| PackError::ChannelResolutionFailed {
+                origin,
+                reason: error.to_string(),
+            }),
         None => Err(PackError::ChannelResolutionFailed {
             origin,
             reason: "channel resolution did not return an immutable digest".to_owned(),

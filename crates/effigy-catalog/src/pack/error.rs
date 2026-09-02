@@ -107,6 +107,14 @@ pub enum PackError {
     )]
     OciSourceNotPinned { reference: String },
 
+    /// A value claimed to be an OCI digest is not `sha256:` plus 64 lowercase hex.
+    #[error(
+        "OCI digest `{digest}` is not an immutable `sha256:` digest; \
+         channel resolution and install require `sha256:` followed by 64 \
+         lowercase hexadecimal characters"
+    )]
+    OciDigestInvalid { digest: String },
+
     /// The requested local install path is missing or not a directory.
     #[error("local catalog pack path is not a directory: {path}")]
     LocalSourceNotDirectory { path: PathBuf },

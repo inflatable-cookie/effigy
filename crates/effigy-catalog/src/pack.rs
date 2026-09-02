@@ -45,8 +45,8 @@ pub use error::PackError;
 pub use fallback::{set_diagnostic_mode, DiagnosticMode, FALLBACK_NOTICE_SCHEMA};
 pub use home::{effigy_home_dir, with_test_effigy_home};
 pub use install::{
-    install_pack, LocalPackAcquirer, PackAcquireRequest, PackAcquisition, PackCandidateAcquirer,
-    PackCandidateSource, PackInstallReport, StoredContentOutcome,
+    install_pack, parse_oci_digest, LocalPackAcquirer, PackAcquireRequest, PackAcquisition,
+    PackCandidateAcquirer, PackCandidateSource, PackInstallReport, StoredContentOutcome,
 };
 pub use manifest::{PackManifest, PACK_MANIFEST_FILE, SUPPORTED_PACK_MANIFEST_SCHEMA};
 pub use selection::{
@@ -60,6 +60,7 @@ pub use store::{
 };
 pub use verify::{
     verified_active_digest, verify_installed_pack, PackDefect, PackVerificationFailure,
+    VerifiedActiveDigest,
 };
 
 #[cfg(test)]

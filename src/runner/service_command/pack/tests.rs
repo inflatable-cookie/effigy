@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 const DIGEST: &str = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+const OTHER_DIGEST: &str =
+    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 fn write(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
@@ -46,7 +48,8 @@ fn candidate_pack(root: &Path, version: &str, image_tag: &str) -> PathBuf {
 /// Fake OCI adapter that serves a prepared payload and records every call.
 struct RecordingOciAdapter {
     payload: PathBuf,
-    digest: Option<String>,
+    inspect_digest: Option<String>,
+    pull_digest: Option<String>,
     inspect_error: Option<String>,
     pull_error: Option<String>,
     inspect_refs: RefCell<Vec<String>>,
@@ -58,7 +61,8 @@ impl RecordingOciAdapter {
     fn new(payload: PathBuf) -> Self {
         Self {
             payload,
-            digest: Some(DIGEST.to_owned()),
+            inspect_digest: Some(DIGEST.to_owned()),
+            pull_digest: Some(DIGEST.to_owned()),
             inspect_error: None,
             pull_error: None,
             inspect_refs: RefCell::new(Vec::new()),
@@ -69,9 +73,19 @@ impl RecordingOciAdapter {
 
     fn without_digest(payload: PathBuf) -> Self {
         Self {
-            digest: None,
+            inspect_digest: None,
             ..Self::new(payload)
         }
+    }
+
+    fn with_inspect_digest(mut self, digest: Option<String>) -> Self {
+        self.inspect_digest = digest;
+        self
+    }
+
+    fn with_pull_digest(mut self, digest: Option<String>) -> Self {
+        self.pull_digest = digest;
+        self
     }
 
     fn failing_inspect(payload: PathBuf, message: &str) -> Self {
@@ -104,11 +118,9 @@ impl OciArtifactAdapter for RecordingOciAdapter {
                 message: message.clone(),
             });
         }
-        let descriptor = OciArtifactDescriptor::new(&request.reference);
-        Ok(match &self.digest {
-            Some(digest) => descriptor.with_digest(digest.clone()),
-            None => descriptor,
-        })
+        let mut descriptor = OciArtifactDescriptor::new(&request.reference);
+        descriptor.digest = self.inspect_digest.clone();
+        Ok(descriptor)
     }
 
     fn pull(
@@ -132,9 +144,10 @@ impl OciArtifactAdapter for RecordingOciAdapter {
                 message: error.to_string(),
             }
         })?;
+        let mut descriptor = OciArtifactDescriptor::new(&request.reference);
+        descriptor.digest = self.pull_digest.clone();
         Ok(OciArtifactPullReport {
-            descriptor: OciArtifactDescriptor::new(&request.reference)
-                .with_digest(self.digest.clone().unwrap_or_else(|| DIGEST.to_owned())),
+            descriptor,
             pulled_root,
             primary_files: vec![PathBuf::from("pack.toml")],
         })
@@ -635,6 +648,100 @@ fn tag_resolution_without_a_digest_does_not_enter_the_install_transaction() {
     );
     assert!(adapter.pull_refs.borrow().is_empty());
     assert!(state_bytes(home.path()).is_none());
+}
+
+#[test]
+fn malformed_channel_digest_claims_do_not_enter_the_install_transaction() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let first = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &first, false).expect("install");
+    let before = state_bytes(home.path()).expect("state");
+    let hex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    let claims = [
+        Some("sha256:short".to_owned()),
+        Some(format!("sha256:{}", "A".repeat(64))),
+        Some(format!("prefix@sha256:{hex}")),
+    ];
+
+    for inspect_digest in claims {
+        let adapter = RecordingOciAdapter::new(first.clone()).with_inspect_digest(inspect_digest);
+        let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+            .expect_err("malformed digest");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to resolve official catalog pack channel"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("not an immutable"), "{error}");
+        assert!(
+            adapter.pull_refs.borrow().is_empty(),
+            "malformed resolution must not pull"
+        );
+        assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+    }
+}
+
+#[test]
+fn mismatched_pull_digest_does_not_activate_or_become_a_future_noop() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let first = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &first, false).expect("install");
+    let before = state_bytes(home.path()).expect("state");
+    let second = candidate_pack(src.path(), "2.0.0", "17");
+    let adapter = RecordingOciAdapter::new(second).with_pull_digest(Some(OTHER_DIGEST.to_owned()));
+
+    let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+        .expect_err("digest mismatch");
+    assert!(
+        error.to_string().contains("does not match requested"),
+        "{error}"
+    );
+    assert_eq!(
+        adapter.inspect_refs.borrow().as_slice(),
+        &[official_tag_ref()]
+    );
+    assert_eq!(
+        adapter.pull_refs.borrow().as_slice(),
+        &[official_digest_ref()]
+    );
+    assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+
+    let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+    assert!(
+        verified_active_digest(&store, DIGEST, effigy_version()).is_none(),
+        "requested digest was never activated"
+    );
+    assert!(
+        verified_active_digest(&store, OTHER_DIGEST, effigy_version()).is_none(),
+        "a mismatched report must not become a future no-op"
+    );
+}
+
+#[test]
+fn absent_or_malformed_pull_digest_does_not_activate() {
+    let home = TempDir::new().expect("home");
+    let src = TempDir::new().expect("src");
+    let first = candidate_pack(src.path(), "1.0.0", "16");
+    install_local_pack(home.path(), &first, false).expect("install");
+    let before = state_bytes(home.path()).expect("state");
+    let second = candidate_pack(src.path(), "2.0.0", "17");
+
+    for pull_digest in [None, Some("sha256:short".to_owned())] {
+        let adapter = RecordingOciAdapter::new(second.clone()).with_pull_digest(pull_digest);
+        let error = with_test_effigy_home(home.path(), || run_update(&adapter, false))
+            .expect_err("reject pull digest");
+        assert!(error.to_string().contains("failed to acquire"), "{error}");
+        assert_eq!(
+            adapter.pull_refs.borrow().as_slice(),
+            &[official_digest_ref()]
+        );
+        assert_eq!(state_bytes(home.path()).as_deref(), Some(before.as_slice()));
+        let store = with_test_effigy_home(home.path(), || PackStore::user().expect("store"));
+        assert!(verified_active_digest(&store, DIGEST, effigy_version()).is_none());
+    }
 }
 
 #[test]

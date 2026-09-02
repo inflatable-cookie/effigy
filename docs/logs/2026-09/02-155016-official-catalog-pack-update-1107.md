@@ -55,10 +55,13 @@ edited.
   a mutable tag cannot become an install candidate.
 - `ensure_official_channel_published` refuses unpublished channels before any
   inspect.
-- `run_update` inspects `:stable` via `OciArtifactAdapter`, requires a digest
-  containing `sha256:`, plans that digest, then either returns
-  `verified_active_digest` as `already-current` or calls `install_pack` with
-  `OciPackAcquirer` (same adapter as `service pack install`).
+- `run_update` inspects `:stable` via `OciArtifactAdapter`, requires an exact
+  `sha256:`-plus-64-lowercase-hex digest, plans that digest, then either
+  returns `verified_active_digest` as `already-current` (decision and report
+  snapshot taken under the durable store lock) or calls `install_pack` with
+  `OciPackAcquirer` (same adapter as `service pack install`). A pulled
+  descriptor digest that is absent, malformed, or different from the requested
+  pin is refused before activation.
 - JSON schema `effigy.service.pack.update.v1` reports `outcome` (`updated` or
   `already-current`), `channel`, `repository`, and `digest` inside the standard
   `effigy.command.v1` envelope.
@@ -74,7 +77,9 @@ Spec `115` whole-lane rows 6 and 7, plus card `1107`:
 | --- | --- |
 | `stable` resolves to a digest through the existing artifact boundary | `official_update_inspects_the_stable_tag_and_pulls_only_the_digest`; live `oras manifest fetch --descriptor` of `:stable` equals `sha256:91de584e…` |
 | text/JSON/help report channel and resolved digest | runner JSON assertions; `parse_service_pack_update_accepts_json_and_rejects_coordinate_args`; help render contains `effigy service pack update`; live `--json service pack update` envelope |
-| verified already-active digest is a deterministic no-op | `verified_active_digest_is_a_noop_only_when_the_active_oci_content_still_proves`; `verified_already_active_digest_is_a_deterministic_noop`; live isolated no-op (`state.json` sha256 unchanged) |
+| verified already-active digest is a deterministic no-op | `verified_active_digest_is_a_noop_only_when_the_active_oci_content_still_proves`; `verified_already_active_digest_is_a_deterministic_noop`; `verified_noop_snapshot_is_taken_under_the_store_lock`; live isolated no-op (`state.json` sha256 unchanged) |
+| channel identity is an exact OCI digest | `parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`; `official_update_plan_rejects_malformed_digest_claims`; `malformed_channel_digest_claims_do_not_enter_the_install_transaction` |
+| pulled descriptor digest is bound to the requested pin | `oci_install_rejects_a_mismatched_adapter_digest_before_activation`; `oci_install_rejects_an_absent_or_malformed_adapter_digest_before_activation`; `mismatched_pull_digest_does_not_activate_or_become_a_future_noop`; `absent_or_malformed_pull_digest_does_not_activate` |
 | corrupt same-digest is repaired, not a no-op | `corrupt_already_active_digest_is_repaired_rather_than_treated_as_a_noop`; `a_local_active_install_is_never_an_official_digest_noop` |
 | every resolution/pull/compatibility/validation/activation failure preserves active, previous, and channel metadata | `channel_resolution_failure_preserves_active_previous_and_channel_identity`; `tag_resolution_without_a_digest_does_not_enter_the_install_transaction`; `pull_failure_after_digest_resolution_leaves_store_state_untouched`; `incompatible_official_update_candidate_leaves_the_active_selection_alone`; unpublished plan still refused by `unpublished_official_channel_still_refuses_a_plan` |
 | installed content cannot redirect the official coordinate | `installed_content_cannot_redirect_the_fixed_official_channel`; domain hostile-pack coordinate still plans `ghcr.io/inflatable-cookie/effigy-catalog-pack` |
@@ -140,17 +145,17 @@ was not edited; card `1108` stays orchestrator-integrated.
 
 Profile `docs/contracts/rust-quality-profile.json`: `strict`; deviations empty;
 toolchain `1.97.1` from `rust-toolchain.toml`. Applicable rules:
-`RUST-READ-001`, `RUST-API-001`, `RUST-ERR-001`. No unsafe, async, MSRV, or
-pass-through-wrapper trigger. `UpdateView` is a private render struct (clippy
-`too_many_arguments`), not a wrapper. Public additions: channel helpers, error
-variant `ChannelResolutionFailed`, `verified_active_digest`, CLI `Update`.
+`RUST-READ-001`, `RUST-API-001`, `RUST-ERR-001`. No unsafe, async, or MSRV
+trigger. `snapshot_verified_active` owns the lock-hold test seam; it is not a
+pass-through. Public additions on this repair: `parse_oci_digest`,
+`PackError::OciDigestInvalid`, `VerifiedActiveDigest` (`Debug`/`Clone`/`Eq`).
 Mechanical closeout ran through `northstar-rust-quality closeout` (snapshot
-`9c9f7776…`) with cargo check, clippy `-D warnings`, and focused `pack::`
-tests. Compact result lives outside the worktree under git metadata. Check and
-clippy records are `warning` solely because Cargo reports a pre-existing
-future-incompat for `proc-macro-error2 v2.0.1` (zero diagnostics in this
-tranche). Focused `pack::` tests passed. Human review: `RUST-READ-001`,
-`RUST-API-001`, and `RUST-ERR-001` compliant.
+`52274a82…`) with cargo check/clippy `-D warnings` on `effigy-catalog` and
+`effigy`, plus focused `pack::` tests (92 catalog + 29 runner). Compact result
+lives outside the worktree under git metadata. Check, clippy, and test records
+are `warning` solely because Cargo reports a pre-existing future-incompat for
+`proc-macro-error2 v2.0.1` (zero diagnostics in this tranche). Human review:
+`RUST-READ-001`, `RUST-API-001`, and `RUST-ERR-001` compliant.
 
 ## Vision Target Delta
 
@@ -163,19 +168,52 @@ tranche). Focused `pack::` tests passed. Human review: `RUST-READ-001`,
   binary release that may record `oldest_update_capable_release`; both remain
   outside this PR
 
+## Exact-Head Review Repair (reviewed head `7de3cc5b6f9f827a75fc3586d510fd6824b7c06b`)
+
+Exact-head review of PR 84 required three `execution-miss` repairs on this
+branch:
+
+1. Channel identity is an exact OCI digest. `resolve_official_digest` and
+   `plan_official_update` now require `sha256:` plus 64 lowercase hexadecimal
+   characters. `sha256:short`, uppercase 64-hex, and `prefix@sha256:<64 hex>`
+   fail at resolution with zero pull/store calls and preserved state.
+2. The pulled descriptor digest is bound to the requested pin.
+   `require_acquired_digest_matches` refuses an absent, malformed, or different
+   digest before activation. `build_record` records the requested pin, not the
+   adapter's claim. A mismatched report cannot become a future
+   `already-current` no-op.
+3. The verified no-op holds `PackStore::lock` across active-record selection,
+   verification, and the snapshot used to render the report, then releases it
+   before network acquisition. A concurrent rollback cannot commit during that
+   window; the snapshot `active`/`previous` stay the locked decision.
+
+Named proofs: `parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`,
+`official_update_plan_rejects_malformed_digest_claims`,
+`malformed_channel_digest_claims_do_not_enter_the_install_transaction`,
+`oci_install_rejects_a_mismatched_adapter_digest_before_activation`,
+`oci_install_rejects_an_absent_or_malformed_adapter_digest_before_activation`,
+`mismatched_pull_digest_does_not_activate_or_become_a_future_noop`,
+`absent_or_malformed_pull_digest_does_not_activate`,
+`verified_noop_snapshot_is_taken_under_the_store_lock`.
+
+Shared spec/roadmap/contract/front-door next-task prose remains untouched.
+
 ## Final Validation Round
+
+Repair-head round (after the three execution-miss fixes):
 
 - `cargo fmt --all -- --check`: clean.
 - `git diff --check`: clean.
 - `cargo clippy --all-targets -- -D warnings`: clean (same pre-existing Cargo
   future-incompat note as above; clippy itself denied warnings).
-- Focused runner pack suite: 26 passed.
+- Focused catalog `pack::` suite: 92 passed.
+- Focused runner pack suite: 29 passed.
 - `catalog_pack_cli_tests`: 3 passed.
 - `effigy-containers` `catalog_pack_fallback`: 3 passed.
 - `effigy-catalog` `support_policy`: 17 passed, including
   `this_build_does_not_claim_released_public_update`.
-- `effigy-catalog` `pack::baseline`: 15 passed.
-- `effigy qa`: passed. `effigy test` 3713 passed, 1 skipped; `qa:docs` (links,
+- `parse_service_pack_update_accepts_json_and_rejects_coordinate_args`: passed.
+- `effigy qa`: passed. `effigy test` 3722 passed, 1 skipped; `qa:docs` (links,
   json-examples, index, forbidden, vision headings/contains/workflow-paths,
   next-action) passed; `qa:json` passed. The known
   `cli_container_attached_session_handles_sigint_during_startup` flake did not

@@ -8,12 +8,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 - `effigy service pack update` resolves the compiled official `stable` channel
-  on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an immutable digest,
-  then reuses the existing acquire-validate-store-activate transaction. Text
-  and JSON report the channel and digest. A verified already-active digest is
-  a no-op. Resolution, pull, compatibility, validation, and activation
-  failures leave active, previous, and channel identity unchanged. Ordinary
-  catalog use stays network-silent. The support-policy
+  on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an exact
+  `sha256:`-plus-64-lowercase-hex digest, then reuses the existing
+  acquire-validate-store-activate transaction. A pulled descriptor digest that
+  is absent, malformed, or different from the requested pin is refused before
+  activation. Text and JSON report the channel and digest. A verified
+  already-active digest is a no-op whose decision and report snapshot are taken
+  under the durable store lock. Resolution, pull, compatibility, validation,
+  and activation failures leave active, previous, and channel identity
+  unchanged. Ordinary catalog use stays network-silent. The support-policy
   `oldest_update_capable_release` field remains absent until a released Effigy
   records that capability.
 - Effigy now owns `support/catalog-pack-update.toml`, the machine-readable
