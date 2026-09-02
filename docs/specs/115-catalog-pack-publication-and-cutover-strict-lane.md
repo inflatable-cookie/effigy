@@ -42,11 +42,11 @@ offline operation or Effigy release authority.
         -> 1108 narrow baseline-PR proposal automation
 ```
 
-Cards `1107` and `1108` may run in parallel only after `1106`: they have
+Cards `1107` and `1108` are now the parallel ready frontier: card `1106`
+merged at `6271b0ff129d006e47202b1b00def5ea7a395af8`, and the two lanes have
 different repository owners and write scopes. Same-repository PR review and
-merge order remains serial. Cards `1105` and `1106` are complete; the `1106`
-cutover PR is under review and `1107`/`1108` become the next dependency edge
-after its merge.
+merge order remains serial. Shared roadmap/spec/contract and front-door
+integration remains orchestrator-owned while both workers run.
 
 ## Cards
 
@@ -62,9 +62,10 @@ after its merge.
   over (evidence
   [`02-144609`](../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
 - [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
-  — Blocked on `1106`.
+  — Ready; Effigy owns public update resolution and transaction integration.
 - [`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
-  — Blocked on `1106`; parallel-safe with `1107` once ready.
+  — Ready; pack repository owns the no-provider-mutation proposal automation
+  phase, parallel-safe with `1107`.
 
 ## Lane Rules
 
@@ -133,6 +134,7 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`. Effigy release
-authority remains separate.
+Dispatch ready cards `1107` and `1108` in parallel with partitioned repository
+and closeout ownership. Live GitHub App/provider mutation remains a separate
+operator gate after `1108`'s implementation PR. Effigy release authority
+remains separate.

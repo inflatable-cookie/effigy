@@ -96,7 +96,5 @@ one vague “polish” lane.
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover is implemented and under review.
-After its PR merges, refresh ready-frontier status for cards `1107` and
-`1108`; both stay blocked until then. Effigy release authority remains
-separate.
+Cards `1107` and `1108` are the parallel ready frontier after card `1106`
+merged at `6271b0ff`. Effigy release authority remains separate.

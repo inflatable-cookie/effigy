@@ -30,9 +30,8 @@ Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
   catalog-pack publication and generated-baseline cutover; cards `1103`
-  through `1106` complete (the `1106` cutover PR is under review), cards
-  `1107` and `1108` blocked until the orchestrator refreshes readiness after
-  that merge
+  through `1106` complete; cards `1107` and `1108` are the parallel ready
+  frontier
 
 Queued strict lanes:
 
@@ -85,6 +84,4 @@ Other planning specs:
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`. Keep draft `098`
-paused.
+Dispatch ready cards `1107` and `1108` in parallel. Keep draft `098` paused.

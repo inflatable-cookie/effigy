@@ -355,9 +355,9 @@ Stop and return to planning when:
 
 ## Next Task
 
-Card
-[`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
-cut over the generated recovery snapshot and provenance lock from the accepted
-public `v1.0.1` artifact; the cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`. Effigy release
-authority remains separate.
+Dispatch ready cards
+[`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
+and
+[`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
+in parallel with partitioned repository ownership. Effigy release authority
+remains separate.

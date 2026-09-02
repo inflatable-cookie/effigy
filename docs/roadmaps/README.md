@@ -157,9 +157,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 Spec `115` is active for `g08.048`. Cards `1103` through `1106` are complete;
-the `1106` generated-baseline cutover PR is under review. Cards `1107` and
-`1108` stay blocked until the orchestrator refreshes their readiness after
-that merge.
+cards `1107` and `1108` are the parallel ready frontier.
 
 ## Research Program
 
@@ -214,8 +212,7 @@ Before rollover:
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`. Keep Effigy release
+Dispatch ready cards `1107` and `1108` in parallel. Keep Effigy release
 execution, S3 extraction, and `g09` rollover behind their named gates.
 
 ## Historical language boundary

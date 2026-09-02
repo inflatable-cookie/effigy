@@ -237,9 +237,8 @@ Bovine PR 32 without reopening S3 placement or removal.
 `g08.045` through `g08.047` are complete through cards `1100` through `1102`.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Cards `1103` through `1106` are complete; the `1106` generated-baseline
-cutover PR is under review. Cards `1107` and `1108` preserve the
-generated-baseline gate and become parallel-safe only after that merge.
+`115`. Cards `1103` through `1106` are complete; cards `1107` and `1108` are
+the parallel ready frontier with partitioned repository ownership.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -298,6 +297,5 @@ closeout there first.
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`. Do not open `g09`
-or release Effigy.
+Dispatch ready cards `1107` and `1108` in parallel. Do not open `g09` or
+release Effigy.

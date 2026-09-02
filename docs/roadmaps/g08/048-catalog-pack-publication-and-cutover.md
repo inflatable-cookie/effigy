@@ -25,12 +25,12 @@ ceremony, surprise network access, or a second release authority.
    Complete: Effigy's generated baseline and lock cut over from the accepted
    public artifact, with offline and public-artifact drift proof
    ([`02-144609`](../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
-   The cutover PR is under review; cards `1107` and `1108` stay blocked until
-   the orchestrator refreshes their readiness after it merges.
-5. [`1107`](./batch-cards/1107-expose-official-catalog-pack-update.md) — blocked
-   on `1106`: replace the placeholder coordinate and expose safe public update.
-6. [`1108`](./batch-cards/1108-propose-generated-baseline-updates.md) — blocked
-   on `1106`: enable the narrow GitHub App proposal path.
+   Merged as `6271b0ff129d006e47202b1b00def5ea7a395af8`.
+5. [`1107`](./batch-cards/1107-expose-official-catalog-pack-update.md) — Ready:
+   replace the placeholder coordinate and expose safe public update.
+6. [`1108`](./batch-cards/1108-propose-generated-baseline-updates.md) — Ready:
+   implement the no-provider-mutation phase of the narrow GitHub App proposal
+   path; live provider changes remain operator-gated.
 
 `1107` and `1108` form the first potential parallel frontier. All earlier edges
 are real dependency or operator-mutation gates. Same-repository merges remain
@@ -57,6 +57,7 @@ serial.
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review. After it merges,
-refresh ready-frontier status for cards `1107` and `1108`; they remain blocked
-until then. Effigy release authority remains separate.
+Dispatch cards `1107` and `1108` as the parallel ready frontier. Their
+repositories and mutable surfaces are partitioned; shared milestone/spec/
+contract and front-door integration remains with the orchestrator. Effigy
+release authority remains separate.

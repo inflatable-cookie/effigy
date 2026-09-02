@@ -206,6 +206,6 @@ Batch: <batch-slug>
 ## Next Task
 
 Card `1106` cut over the generated recovery snapshot and provenance lock from
-the accepted catalog-pack publication evidence; the cutover PR is under review.
-After it merges, refresh ready-frontier status for cards `1107` and `1108`.
-Effigy release remains a separate operator-gated mutation.
+the accepted catalog-pack publication evidence and merged at `6271b0ff`.
+Cards `1107` and `1108` are the parallel ready frontier. Effigy release remains
+a separate operator-gated mutation.

@@ -63,7 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Card `1106`'s generated-baseline cutover PR is under review; after it merges,
-the orchestrator refreshes ready-frontier status for cards `1107` and `1108`.
-Effigy release remains gated. The second governance review remains due by
+Cards `1107` and `1108` are the parallel ready frontier. Effigy release remains
+gated. The second governance review remains due by
 2026-09-17.
