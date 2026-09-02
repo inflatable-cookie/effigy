@@ -314,6 +314,20 @@ During v0.x, MINOR bumps may include breaking changes.
   of forking a partial local one. Vault creation still writes where it was
   asked to.
 
+### Changed
+- Effigy's embedded catalog is now a generated snapshot of the official
+  `inflatable-cookie/effigy-catalog-pack` `v1.0.1` artifact. The checked-in
+  `crates/effigy-catalog/catalog/` tree is a byte-for-byte copy of the pack
+  repository's canonical `pack/` root (now including `pack.toml`) at source
+  commit `5ef0ec2b64612c7803cc6105a65ea462862a0b21`, and fragment behavior is
+  unchanged. A typed `catalog-pack.lock.toml` records the source
+  repository/commit, pack version, OCI manifest digest, and unpacked content
+  identity; offline repository tests recompute manifest facts, content
+  identity, and the deterministic OCI manifest digest from the snapshot and
+  reject byte, manifest, version, content-identity, or lock drift, so a hand
+  edit now fails `cargo test`. No public command is added and ordinary QA and
+  use stay offline.
+
 ## [0.12.1] - 2026-08-25
 
 ### Added
