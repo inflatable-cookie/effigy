@@ -211,29 +211,29 @@ fn cli_docs_help_is_command_specific() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("docs Help"));
-    assert!(stdout.contains("effigy docs check links [--repo <PATH>] [<FILE>...] [--json]"));
+    assert!(stdout.contains("effigy repo docs check links [--repo <PATH>] [<FILE>...] [--json]"));
     assert!(stdout.contains(
-        "effigy docs check headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]"
+        "effigy repo docs check headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]"
     ));
-    assert!(stdout.contains("effigy docs check paths [--repo <PATH>] <PATH>... [--json]"));
+    assert!(stdout.contains("effigy repo docs check paths [--repo <PATH>] <PATH>... [--json]"));
     assert!(stdout.contains(
-        "effigy docs check contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]"
+        "effigy repo docs check contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]"
     ));
     assert!(stdout.contains(
-        "effigy docs check forbidden [--repo <PATH>] <FILE>... --forbid <TEXT>... [--json]"
+        "effigy repo docs check forbidden [--repo <PATH>] <FILE>... --forbid <TEXT>... [--json]"
     ));
     assert!(
         stdout.contains(
-            "effigy docs check index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]"
+            "effigy repo docs check index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]"
         )
     );
     assert!(
-        stdout.contains("effigy docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]")
+        stdout.contains("effigy repo docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]")
     );
     assert!(
-        stdout.contains("effigy docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]")
+        stdout.contains("effigy repo docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]")
     );
-    assert!(stdout.contains("effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]"));
+    assert!(stdout.contains("effigy repo docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]"));
     assert!(!stdout.contains("contracts Help"));
 }
 
@@ -249,15 +249,15 @@ fn cli_demo_help_is_command_specific() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("demo Help"));
-    assert!(stdout.contains("effigy demo list [--search <TEXT>] [--owner <NAME>]"));
-    assert!(stdout.contains("effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]"));
-    assert!(stdout.contains("effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]"));
-    assert!(stdout.contains("effigy demo run <DEMO_ID> [--repo <PATH>] [--json]"));
-    assert!(stdout.contains("effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver demo list [--search <TEXT>] [--owner <NAME>]"));
+    assert!(stdout.contains("effigy deliver demo inspect <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver demo run <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver demo stop <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains(
-        "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]"
+        "effigy deliver demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]"
     ));
-    assert!(stdout.contains("effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver demo rerun <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("--group-by <FIELD>"));
     assert!(stdout.contains("--stale-only"));
     assert!(stdout.contains("--outcome <OUTCOME>"));
@@ -280,10 +280,10 @@ fn cli_contracts_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("contracts Help"));
     assert!(stdout.contains(
-        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]"
+        "effigy repo contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]"
     ));
     assert!(stdout.contains(
-        "effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]"
+        "effigy repo contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]"
     ));
     assert!(!stdout.contains("docs Help"));
 }
@@ -301,9 +301,9 @@ fn cli_release_help_includes_distribution_evidence_commands() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("release Help"));
     assert!(stdout
-        .contains("effigy release preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
-    assert!(stdout.contains("effigy release validate [--repo <PATH>] [--tag <TAG>] [--json]"));
-    assert!(stdout.contains("effigy release evidence summary"));
+        .contains("effigy deliver release preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
+    assert!(stdout.contains("effigy deliver release validate [--repo <PATH>] [--tag <TAG>] [--json]"));
+    assert!(stdout.contains("effigy deliver release evidence summary"));
     assert!(!stdout.contains("contracts Help"));
 }
 
@@ -320,35 +320,35 @@ fn cli_container_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("container Help"));
     assert!(
-        stdout.contains("effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]")
+        stdout.contains("effigy local container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]")
     );
     assert!(stdout.contains(
-        "effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]"
+        "effigy local container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]"
     ));
     assert!(stdout.contains(
-        "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]"
+        "effigy local container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]"
     ));
     assert!(stdout.contains(
-        "effigy container cache list [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--json]"
+        "effigy local container cache list [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--json]"
     ));
     assert!(
         stdout.contains(
-            "effigy container cache prune [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--yes] [--json]"
+            "effigy local container cache prune [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--yes] [--json]"
         )
     );
-    assert!(stdout.contains("effigy container volume list --global [--orphans] [--json]"));
-    assert!(stdout.contains("effigy container <NAME> cache list [--repo <PATH>] [--json]"));
-    assert!(stdout.contains("effigy container <NAME> data list [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy local container volume list --global [--orphans] [--json]"));
+    assert!(stdout.contains("effigy local container <NAME> cache list [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy local container <NAME> data list [--repo <PATH>] [--json]"));
     assert!(stdout
-        .contains("effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]"));
+        .contains("effigy local container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]"));
     assert!(stdout.contains(
-        "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--push] [--repo <PATH>] [--json]"
+        "effigy local container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--push] [--repo <PATH>] [--json]"
     ));
     assert!(stdout.contains(
-        "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]"
+        "effigy local container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]"
     ));
     assert!(stdout.contains(
-        "effigy container data seed [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]"
+        "effigy local container data seed [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]"
     ));
     assert!(!stdout.contains("distribution Help"));
 }
@@ -397,23 +397,23 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("Repo Commands"), "got: {stdout}");
     for command in [
-        "effigy graph",
-        "effigy scan",
-        "effigy docs",
-        "effigy contracts",
-        "effigy papercuts",
+        "effigy repo graph",
+        "effigy repo scan",
+        "effigy repo docs",
+        "effigy repo contracts",
+        "effigy repo papercuts",
     ] {
         assert!(stdout.contains(command), "missing {command}: {stdout}");
     }
     for foreign in [
-        "effigy container",
-        "effigy exec",
-        "effigy system",
-        "effigy release",
-        "effigy deploy",
-        "effigy artifact",
-        "effigy bundle",
-        "effigy skill",
+        "effigy local container",
+        "effigy local exec",
+        "effigy local system",
+        "effigy deliver release",
+        "effigy deliver deploy",
+        "effigy deliver artifact",
+        "effigy deliver bundle",
+        "effigy extend skill",
     ] {
         assert!(!stdout.contains(foreign), "leaked {foreign}: {stdout}");
     }
@@ -441,7 +441,9 @@ fn cli_help_command_and_direct_command_help_render_the_same_facts() {
 }
 
 #[test]
-fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
+fn manifest_selector_colliding_with_a_namespace_word_loses_the_bare_word() {
+    // The five namespace words are reserved (spec `116`): even a manifest
+    // task named `repo` no longer owns the bare word.
     let root = temp_workspace("help-group-selector-collision");
     fs::write(
         root.join("effigy.toml"),
@@ -449,28 +451,26 @@ fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
     )
     .expect("write manifest");
 
-    let task = run_help_cli(&root, &["repo"]);
-    assert!(task.status.success());
-    let task_stdout = String::from_utf8(task.stdout).expect("utf8 stdout");
-    assert!(task_stdout.contains("repo-task"), "got: {task_stdout}");
-    assert!(!task_stdout.contains("Repo Commands"), "got: {task_stdout}");
+    let bare = run_help_cli(&root, &["repo"]);
+    assert!(bare.status.success(), "bare repo: {bare:?}");
+    let bare_stdout = String::from_utf8(bare.stdout).expect("utf8 stdout");
+    assert!(bare_stdout.contains("Repo Commands"), "got: {bare_stdout}");
+    assert!(!bare_stdout.contains("repo-task"), "got: {bare_stdout}");
 
     let grouped = run_help_cli(&root, &["repo", "docs"]);
+    assert!(grouped.status.success(), "repo docs: {grouped:?}");
     let grouped_stdout = String::from_utf8(grouped.stdout).expect("utf8 stdout");
     assert!(
-        !grouped_stdout.contains("Repo Commands"),
-        "`effigy repo docs` must not become a grouped built-in route: {grouped_stdout}"
+        grouped_stdout.contains("docs Help"),
+        "`effigy repo docs` must reach the typed built-in panel: {grouped_stdout}"
     );
-    assert!(
-        !grouped_stdout.contains("docs Help"),
-        "`effigy repo docs` must not become a grouped built-in route: {grouped_stdout}"
-    );
+    assert!(!grouped_stdout.contains("repo-task"), "got: {grouped_stdout}");
 
     let help = run_help_cli(&root, &["help", "repo"]);
     assert!(help.status.success());
     let help_stdout = String::from_utf8(help.stdout).expect("utf8 stdout");
     assert!(help_stdout.contains("Repo Commands"), "got: {help_stdout}");
-    assert!(help_stdout.contains("effigy graph"), "got: {help_stdout}");
+    assert!(help_stdout.contains("effigy repo graph"), "got: {help_stdout}");
 }
 
 #[test]
@@ -554,13 +554,18 @@ fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows
     );
     let stderr = String::from_utf8(via_help.stderr).expect("utf8 stderr");
     assert!(stderr.contains("`docs` is deferred"), "got: {stderr}");
-    assert!(stderr.contains("run `effigy docs --help`"), "got: {stderr}");
+    assert!(
+        stderr.contains("`effigy repo docs --help` for the built-in panel"),
+        "got: {stderr}"
+    );
 
     let group = run_help_cli(&root, &["help", "repo"]);
     assert!(group.status.success());
     let group_stdout = String::from_utf8(group.stdout).expect("utf8 stdout");
-    assert!(!group_stdout.contains("effigy docs"), "got: {group_stdout}");
-    assert!(group_stdout.contains("effigy graph"), "got: {group_stdout}");
+    // The grouped row stays in primary help: the namespace route is the
+    // explicit built-in escape even when the direct word is shadowed.
+    assert!(group_stdout.contains("effigy repo docs"), "got: {group_stdout}");
+    assert!(group_stdout.contains("effigy repo graph"), "got: {group_stdout}");
 }
 
 /// `config` and `scan` own their detailed help inside the built-in rather than

@@ -406,9 +406,21 @@ fn reject_help_for_deferred_builtin(
         _ => None,
     };
     match owned_name {
-        Some(name) => Err(effigy_cli::CliParseError::InvalidArguments(format!(
-            "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; run `effigy {name} --help` for what `effigy {name}` actually does"
-        ))),
+        Some(name) => {
+            let canonical = effigy_cli::command_surface::group_for_child_word(&name)
+                .map(|group| format!("effigy {} {name}", group.slug()));
+            let guidance = match canonical {
+                Some(route) => format!(
+                    "run `effigy {name} --help` for what `effigy {name}` actually does, or `{route} --help` for the built-in panel"
+                ),
+                None => format!(
+                    "run `effigy {name} --help` for what `effigy {name}` actually does"
+                ),
+            };
+            Err(effigy_cli::CliParseError::InvalidArguments(format!(
+                "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; {guidance}"
+            )))
+        }
         None => Ok(command),
     }
 }

@@ -12,8 +12,8 @@ fn run_manifest_task_builtin_config_prints_reference() {
         &out,
         &[
             "effigy.toml Reference",
-            "Use `effigy config --inspect` to inspect the effective composed manifest",
-            "Use `effigy config path|get|set|unset` for user-global machine settings",
+            "Use `effigy admin config --inspect` to inspect the effective composed manifest",
+            "Use `effigy admin config path|get|set|unset` for user-global machine settings",
             "[manifest]",
             "[docs_policy.graph]",
             "roots = [\"README.md\", \"docs\"]",

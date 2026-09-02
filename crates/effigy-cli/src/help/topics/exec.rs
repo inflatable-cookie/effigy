@@ -12,8 +12,8 @@ pub(crate) fn render_exec_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
             "Bare alias commands still route through the same exec path when declared in `[containers.<name>.aliases]`.",
         ],
         &[
-            "effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]",
-            "effigy --json exec [--repo <PATH>] [--service <NAME>] <COMMAND> [ARGS...]",
+            "effigy local exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]",
+            "effigy --json local exec [--repo <PATH>] [--service <NAME>] <COMMAND> [ARGS...]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
@@ -25,9 +25,9 @@ pub(crate) fn render_exec_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
             ("-h, --help", "Print command help"),
         ],
         &[
-            "effigy exec composer install",
-            "effigy exec php artisan migrate",
-            "effigy exec --service db mysql",
+            "effigy local exec composer install",
+            "effigy local exec php artisan migrate",
+            "effigy local exec --service db mysql",
         ],
     )
 }

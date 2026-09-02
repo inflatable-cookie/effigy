@@ -13,9 +13,9 @@ const DEFER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "Container deferral reuses the normal container/runtime path and short-circuits to local execution when already inside an Effigy handoff container.",
     ],
     usage: &[
-        "effigy defer <REQUEST> [args...]",
-        "effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]",
-        "effigy --json defer <REQUEST> [args...]",
+        "effigy admin defer <REQUEST> [args...]",
+        "effigy admin defer [--repo <PATH>] [--json] <REQUEST> [args...]",
+        "effigy --json admin defer <REQUEST> [args...]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[],
@@ -24,9 +24,9 @@ const DEFER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy defer prep",
-        "effigy defer release -- --dry-run",
-        "effigy defer --repo /path/to/legacy-site seed",
-        "effigy --json defer prep",
+        "effigy admin defer prep",
+        "effigy admin defer release -- --dry-run",
+        "effigy admin defer --repo /path/to/legacy-site seed",
+        "effigy --json admin defer prep",
     ],
 };

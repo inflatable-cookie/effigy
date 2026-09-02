@@ -2010,6 +2010,7 @@ run = "sh -lc 'test -t 1 && printf \"tty-yes\\n\" || printf \"tty-no\\n\"; print
     .expect("write demo manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("deliver")
         .arg("demo")
         .arg("run")
         .arg("prompt")

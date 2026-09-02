@@ -26,14 +26,14 @@ fn run_manifest_task_builtin_config_reference_mentions_bundle_discovery_and_name
     assert_output_contains_all(
         &out,
         &[
-            "Use `effigy bundle inspect` to inspect the active repo bundle source and `effigy bundle sync` to refresh remote git or OCI bundle sources.",
+            "Use `effigy deliver bundle inspect` to inspect the active repo bundle source and `effigy deliver bundle sync` to refresh remote git or OCI bundle sources.",
             "Use `[bundle].base = { type = \"path\", dir = \"...\" }` for repo-local bundle directories",
             "[bundle]",
             "base = { type = \"path\", dir = \"bundles/acme\" }",
             "# Or use a git-hosted bundle:",
-            "Inspect the active repo bundle source: `effigy bundle inspect`",
-            "Refresh remote git or OCI sources: `effigy bundle sync`",
-            "Render the generic bundle config schema: `effigy config --schema --target bundle`",
+            "Inspect the active repo bundle source: `effigy deliver bundle inspect`",
+            "Refresh remote git or OCI sources: `effigy deliver bundle sync`",
+            "Render the generic bundle config schema: `effigy admin config --schema --target bundle`",
         ],
     );
 }

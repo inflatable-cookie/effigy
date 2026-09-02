@@ -36,10 +36,10 @@ pub(super) fn render_completion_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy config completion",
-                    "effigy config completion zsh --install",
-                    "effigy config completion bash --export > ~/.local/share/bash-completion/completions/effigy",
-                    "effigy config completion fish --install --json",
+                    "effigy admin config completion",
+                    "effigy admin config completion zsh --install",
+                    "effigy admin config completion bash --export > ~/.local/share/bash-completion/completions/effigy",
+                    "effigy admin config completion fish --install --json",
                     COMPLETION_CANDIDATES_EXAMPLE_LINE,
                 ],
             },
@@ -66,9 +66,9 @@ pub(super) fn render_completion_candidates_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy config completion candidates",
-                    "effigy config completion candidates --prefix api",
-                    "effigy config completion candidates --repo /path/to/other-repo --json",
+                    "effigy admin config completion candidates",
+                    "effigy admin config completion candidates --prefix api",
+                    "effigy admin config completion candidates --repo /path/to/other-repo --json",
                 ],
             },
         ],

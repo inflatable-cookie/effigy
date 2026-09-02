@@ -21,7 +21,7 @@ pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
             &["--help", "--wat"],
             &[
                 "completion Help",
-                "effigy config completion [<bash|zsh|fish>] [--install|--export]",
+                "effigy admin config completion [<bash|zsh|fish>] [--install|--export]",
             ],
         ),
         builtin_help_case(
@@ -30,7 +30,7 @@ pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
             &["candidates", "--help", "--wat"],
             &[
                 "completion candidates Help",
-                "effigy config completion candidates [--repo <path>] [--prefix <value>] [--json]",
+                "effigy admin config completion candidates [--repo <path>] [--prefix <value>] [--json]",
             ],
         ),
     ]
@@ -44,7 +44,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &[],
             &[
                 "scan Help",
-                "effigy scan <subcommand> [options]",
+                "effigy repo scan <subcommand> [options]",
                 "stale-suppressions : detect lint/type/tool suppression markers that hide warnings and failures",
             ],
         ),
@@ -54,7 +54,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["god-files", "--help", "--wat"],
             &[
                 "scan god-files Help",
-                "effigy scan god-files [--markdown] [--out reports/god-files.md]",
+                "effigy repo scan god-files [--markdown] [--out reports/god-files.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
             ],
@@ -65,7 +65,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["duplicate-blocks", "--help", "--wat"],
             &[
                 "scan duplicate-blocks Help",
-                "effigy scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
+                "effigy repo scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "detects repeated normalized code blocks across files, excluding common docs/data/generated paths by default",
             ],
@@ -76,7 +76,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["comment-ratio", "--help", "--wat"],
             &[
                 "scan comment-ratio Help",
-                "effigy scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
+                "effigy repo scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "counts comment-only lines against code-only lines in source and test files",
             ],
@@ -87,7 +87,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["generated-in-src", "--help", "--wat"],
             &[
                 "scan generated-in-src Help",
-                "effigy scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
+                "effigy repo scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "targets source roots such as src, app, lib, crates, and packages/*/src",
             ],
@@ -98,7 +98,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["attention-markers", "--help", "--wat"],
             &[
                 "scan attention-markers Help",
-                "effigy scan attention-markers [--markdown] [--out reports/attention-markers.md]",
+                "effigy repo scan attention-markers [--markdown] [--out reports/attention-markers.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "detects TODO/FIXME/HACK/deprecation/workaround-style markers in source and test files",
             ],
@@ -109,7 +109,7 @@ pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<Buil
             &["stale-suppressions", "--help", "--wat"],
             &[
                 "scan stale-suppressions Help",
-                "effigy scan stale-suppressions [--markdown] [--out reports/stale-suppressions.md]",
+                "effigy repo scan stale-suppressions [--markdown] [--out reports/stale-suppressions.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "matches common TS, Python, Rust, shell, and linter suppression markers in source and test files",
             ],
@@ -125,8 +125,8 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["god-files", "--help", "--wat"],
             &[
                 "scan god-files Help",
-                "effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>]",
-                "effigy scan god-files [--show-warnings] [--no-gitignore]",
+                "effigy repo scan god-files [--threshold <N>] [--high <N>] [--critical <N>]",
+                "effigy repo scan god-files [--show-warnings] [--no-gitignore]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],
@@ -137,8 +137,8 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["duplicate-blocks", "--help", "--wat"],
             &[
                 "scan duplicate-blocks Help",
-                "effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
-                "effigy scan duplicate-blocks [--show-warnings] [--no-gitignore]",
+                "effigy repo scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
+                "effigy repo scan duplicate-blocks [--show-warnings] [--no-gitignore]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],
@@ -149,8 +149,8 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["comment-ratio", "--help", "--wat"],
             &[
                 "scan comment-ratio Help",
-                "effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
-                "effigy scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
+                "effigy repo scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
+                "effigy repo scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],
@@ -161,8 +161,8 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["generated-in-src", "--help", "--wat"],
             &[
                 "scan generated-in-src Help",
-                "effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
-                "effigy scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
+                "effigy repo scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
+                "effigy repo scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],
@@ -173,7 +173,7 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["attention-markers", "--help", "--wat"],
             &[
                 "scan attention-markers Help",
-                "effigy scan attention-markers [--show-warnings] [--no-gitignore]",
+                "effigy repo scan attention-markers [--show-warnings] [--no-gitignore]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],
@@ -184,8 +184,8 @@ pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<Buil
             &["stale-suppressions", "--help", "--wat"],
             &[
                 "scan stale-suppressions Help",
-                "effigy scan stale-suppressions [--show-warnings] [--no-gitignore]",
-                "effigy scan stale-suppressions [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>]",
+                "effigy repo scan stale-suppressions [--show-warnings] [--no-gitignore]",
+                "effigy repo scan stale-suppressions [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],

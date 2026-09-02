@@ -13,8 +13,8 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "The skill supplies task code; the current or --repo repository owns runtime effects.",
     ],
     usage: &[
-        "effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]",
-        "effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]",
+        "effigy extend skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]",
+        "effigy extend skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]",
     ],
     leading_common_options: &[],
     options: &[
@@ -26,8 +26,8 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy skill tasks --path ~/.agents/skills/northstar",
-        "effigy skill run --path ~/.agents/skills/northstar northstar/rust-quality:check",
-        "effigy skill run --path /opt/skills/northstar/effigy.toml northstar/setup --repo /work/consumer -- apply",
+        "effigy extend skill tasks --path ~/.agents/skills/northstar",
+        "effigy extend skill run --path ~/.agents/skills/northstar northstar/rust-quality:check",
+        "effigy extend skill run --path /opt/skills/northstar/effigy.toml northstar/setup --repo /work/consumer -- apply",
     ],
 };

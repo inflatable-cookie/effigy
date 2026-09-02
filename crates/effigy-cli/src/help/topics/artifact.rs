@@ -10,9 +10,9 @@ pub(crate) fn render_artifact_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -
             "Local files and directories are staged into the repo-owned Effigy artifact cache. OCI references are explicit with `oci://` and use the local `oras` CLI plus its normal registry auth config.",
         ],
         &[
-            "effigy artifact inspect <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
-            "effigy artifact stage <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
-            "effigy artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--push] [--json]",
+            "effigy deliver artifact inspect <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy deliver artifact stage <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy deliver artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--push] [--json]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
@@ -37,12 +37,12 @@ pub(crate) fn render_artifact_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -
             ("-h, --help", "Print command help"),
         ],
         &[
-            "effigy artifact inspect seed.sql --json",
-            "effigy artifact stage ./data/legacy.sql.gz --farmyard-handoff --json",
-            "effigy artifact capture ./state/media --ref oci://ghcr.io/acme/media:uat --kind object-store --push --json",
-            "effigy artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --environment uat --json",
-            "effigy artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push --json",
-            "effigy artifact inspect oci://ghcr.io/acme/private-data:uat",
+            "effigy deliver artifact inspect seed.sql --json",
+            "effigy deliver artifact stage ./data/legacy.sql.gz --farmyard-handoff --json",
+            "effigy deliver artifact capture ./state/media --ref oci://ghcr.io/acme/media:uat --kind object-store --push --json",
+            "effigy deliver artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --environment uat --json",
+            "effigy deliver artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push --json",
+            "effigy deliver artifact inspect oci://ghcr.io/acme/private-data:uat",
         ],
     )
 }

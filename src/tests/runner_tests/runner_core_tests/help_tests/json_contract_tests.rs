@@ -17,7 +17,7 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "completion",
             &["--help", "--json", "--wat"],
             "completion",
-            "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]",
+            "effigy admin config completion [<bash|zsh|fish>] [--install|--export] [--json]",
         ),
         builtin_help_json_case(
             "builtin-config-help-json-contract",
@@ -59,7 +59,7 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "scan",
             &["--help", "--json", "--wat"],
             "scan",
-            "effigy scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
+            "effigy repo scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
         ),
         builtin_help_json_case(
             "builtin-tasks-help-json-contract",
