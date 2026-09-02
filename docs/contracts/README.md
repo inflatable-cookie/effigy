@@ -285,6 +285,6 @@ exclusive-create boundary.
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
-Effigy release and direct-route removal authority remain separate.
+The grouped-command preview shipped (card `1109`; strict spec `116` archived).
+Direct-route removal remains blocked on the explicit `v1.0` gate with
+refreshed consumer evidence; Effigy release authority stays separate.

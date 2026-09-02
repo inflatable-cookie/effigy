@@ -378,6 +378,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
-Effigy release and direct-route removal authority remain separate.
+The additive preview (card `1109`, spec `116`) is complete and shipped under
+this contract. Direct-route removal remains blocked on the explicit `v1.0`
+gate with refreshed consumer evidence; Effigy release authority stays
+separate.

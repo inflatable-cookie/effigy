@@ -81,7 +81,14 @@ impl HelpGroup {
 pub const NAMESPACE_CHILDREN: &[(HelpGroup, &[&str])] = &[
     (
         HelpGroup::Local,
-        &["container", "system", "workspace", "gateway", "service", "exec"],
+        &[
+            "container",
+            "system",
+            "workspace",
+            "gateway",
+            "service",
+            "exec",
+        ],
     ),
     (
         HelpGroup::Repo,

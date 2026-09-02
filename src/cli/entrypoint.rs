@@ -53,9 +53,9 @@ pub fn run_cli(raw_args: Vec<String>) {
     let parsed = parse_command_with_builtin_deferral(args, &cwd, &global_options);
     // Displaced direct built-ins warn only after routing proved the built-in
     // owns the invocation; grouped routes and manifest-routed tasks never do.
-    let legacy_direct_warning = first_word.as_deref().and_then(|word| {
-        crate::cli::legacy_direct::direct_warning_for_parse(word, &parsed)
-    });
+    let legacy_direct_warning = first_word
+        .as_deref()
+        .and_then(|word| crate::cli::legacy_direct::direct_warning_for_parse(word, &parsed));
     let parsed = match parsed {
         Ok(cmd) => cmd,
         Err(err) => {
@@ -158,9 +158,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     };
 
     match cmd {
-        Command::Version => {
-            crate::run_version_command(&context, legacy_direct_warning.as_ref())
-        }
+        Command::Version => crate::run_version_command(&context, legacy_direct_warning.as_ref()),
         Command::Help(topic) => {
             let legacy_note =
                 crate::cli::legacy_direct::legacy_help_note(first_word.as_deref(), topic);
@@ -780,12 +778,9 @@ mod namespace_reservation_tests {
             "grouped route must ignore target-repo shadowing: {grouped:?}"
         );
 
-        let direct = parse_command_with_builtin_deferral(
-            vec!["docs".to_owned()],
-            &root,
-            &override_options,
-        )
-        .expect("parse");
+        let direct =
+            parse_command_with_builtin_deferral(vec!["docs".to_owned()], &root, &override_options)
+                .expect("parse");
         assert!(
             matches!(&direct, Command::Task(task) if task.name == "docs"),
             "direct route must keep target-repo deferral: {direct:?}"

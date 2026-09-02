@@ -227,12 +227,10 @@ fn cli_docs_help_is_command_specific() {
             "effigy repo docs check index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]"
         )
     );
-    assert!(
-        stdout.contains("effigy repo docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]")
-    );
-    assert!(
-        stdout.contains("effigy repo docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]")
-    );
+    assert!(stdout
+        .contains("effigy repo docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]"));
+    assert!(stdout
+        .contains("effigy repo docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]"));
     assert!(stdout.contains("effigy repo docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]"));
     assert!(!stdout.contains("contracts Help"));
 }
@@ -302,7 +300,9 @@ fn cli_release_help_includes_distribution_evidence_commands() {
     assert!(stdout.contains("release Help"));
     assert!(stdout
         .contains("effigy deliver release preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
-    assert!(stdout.contains("effigy deliver release validate [--repo <PATH>] [--tag <TAG>] [--json]"));
+    assert!(
+        stdout.contains("effigy deliver release validate [--repo <PATH>] [--tag <TAG>] [--json]")
+    );
     assert!(stdout.contains("effigy deliver release evidence summary"));
     assert!(!stdout.contains("contracts Help"));
 }
@@ -319,9 +319,8 @@ fn cli_container_help_is_command_specific() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("container Help"));
-    assert!(
-        stdout.contains("effigy local container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]")
-    );
+    assert!(stdout
+        .contains("effigy local container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]"));
     assert!(stdout.contains(
         "effigy local container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]"
     ));
@@ -339,8 +338,9 @@ fn cli_container_help_is_command_specific() {
     assert!(stdout.contains("effigy local container volume list --global [--orphans] [--json]"));
     assert!(stdout.contains("effigy local container <NAME> cache list [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy local container <NAME> data list [--repo <PATH>] [--json]"));
-    assert!(stdout
-        .contains("effigy local container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains(
+        "effigy local container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]"
+    ));
     assert!(stdout.contains(
         "effigy local container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--push] [--repo <PATH>] [--json]"
     ));
@@ -464,13 +464,19 @@ fn manifest_selector_colliding_with_a_namespace_word_loses_the_bare_word() {
         grouped_stdout.contains("docs Help"),
         "`effigy repo docs` must reach the typed built-in panel: {grouped_stdout}"
     );
-    assert!(!grouped_stdout.contains("repo-task"), "got: {grouped_stdout}");
+    assert!(
+        !grouped_stdout.contains("repo-task"),
+        "got: {grouped_stdout}"
+    );
 
     let help = run_help_cli(&root, &["help", "repo"]);
     assert!(help.status.success());
     let help_stdout = String::from_utf8(help.stdout).expect("utf8 stdout");
     assert!(help_stdout.contains("Repo Commands"), "got: {help_stdout}");
-    assert!(help_stdout.contains("effigy repo graph"), "got: {help_stdout}");
+    assert!(
+        help_stdout.contains("effigy repo graph"),
+        "got: {help_stdout}"
+    );
 }
 
 #[test]
@@ -564,8 +570,14 @@ fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows
     let group_stdout = String::from_utf8(group.stdout).expect("utf8 stdout");
     // The grouped row stays in primary help: the namespace route is the
     // explicit built-in escape even when the direct word is shadowed.
-    assert!(group_stdout.contains("effigy repo docs"), "got: {group_stdout}");
-    assert!(group_stdout.contains("effigy repo graph"), "got: {group_stdout}");
+    assert!(
+        group_stdout.contains("effigy repo docs"),
+        "got: {group_stdout}"
+    );
+    assert!(
+        group_stdout.contains("effigy repo graph"),
+        "got: {group_stdout}"
+    );
 }
 
 /// `config` and `scan` own their detailed help inside the built-in rather than

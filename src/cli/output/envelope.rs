@@ -70,14 +70,8 @@ pub fn emit_json_envelope_error_with_warnings(
     details: Option<serde_json::Value>,
     warnings: &[serde_json::Value],
 ) -> ! {
-    let payload = build_json_envelope_error_with_warnings(
-        kind,
-        name,
-        error_kind,
-        message,
-        details,
-        warnings,
-    );
+    let payload =
+        build_json_envelope_error_with_warnings(kind, name, error_kind, message, details, warnings);
     print_json_payload(&payload);
     std::process::exit(exit_code);
 }

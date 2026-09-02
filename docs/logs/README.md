@@ -212,3 +212,5 @@ closes `g08.048`: card `1107` merged safe public update at `20d9040c`; card
 `1108` merged generated-only proposal automation and the honest empty-delta
 provider checkpoint at catalog-pack `ebb813e1`. Effigy release remains a
 separate operator-gated mutation.
+
+- [`2026-09/02-205536-command-surface-preview-1109.md`](./2026-09/02-205536-command-surface-preview-1109.md)

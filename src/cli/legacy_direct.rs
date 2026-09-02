@@ -64,9 +64,7 @@ pub fn direct_warning_for_parse(
     word: &str,
     cmd: &Result<effigy_cli::Command, effigy_cli::CliParseError>,
 ) -> Option<LegacyDirectWarning> {
-    if command_surface::group_for_child_word(word).is_none() {
-        return None;
-    }
+    command_surface::group_for_child_word(word)?;
     match cmd {
         Ok(
             effigy_cli::Command::Task(_)
@@ -129,10 +127,7 @@ pub fn print_human_warnings(warnings: &[LegacyDirectWarning], json_mode: bool) {
 }
 
 /// Print one statically classified warning, unless a JSON envelope carries it.
-pub fn print_human_warnings_option(
-    warning: Option<&LegacyDirectWarning>,
-    json_mode: bool,
-) {
+pub fn print_human_warnings_option(warning: Option<&LegacyDirectWarning>, json_mode: bool) {
     if let Some(warning) = warning {
         print_human_warnings(std::slice::from_ref(warning), json_mode);
     }
@@ -177,8 +172,8 @@ pub fn legacy_help_note(first_word: Option<&str>, topic: effigy_cli::HelpTopic) 
 
 #[cfg(test)]
 mod tests {
-    use super::{close_registry_scope, open_registry_scope, record_registry_warning};
     use super::LegacyDirectWarning;
+    use super::{close_registry_scope, open_registry_scope, record_registry_warning};
 
     #[test]
     fn warning_carries_the_contract_schema_facts() {

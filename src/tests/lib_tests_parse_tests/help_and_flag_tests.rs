@@ -523,7 +523,13 @@ fn executable_namespace_words_route_to_grouped_builtin_parsing() {
         "`effigy work` stays a task selector"
     );
 
-    for group in [HelpGroup::Local, HelpGroup::Repo, HelpGroup::Deliver, HelpGroup::Extend, HelpGroup::Admin] {
+    for group in [
+        HelpGroup::Local,
+        HelpGroup::Repo,
+        HelpGroup::Deliver,
+        HelpGroup::Extend,
+        HelpGroup::Admin,
+    ] {
         assert_eq!(
             parse(&[group.slug()]),
             Command::HelpGroup(group),

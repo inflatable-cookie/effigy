@@ -177,10 +177,12 @@ where
             "docs" => parse_docs_command(args),
             "contracts" => parse_contracts_command(args),
             "papercuts" => parse_papercuts_command(args),
-            "scan" => return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
-                name: "scan".to_owned(),
-                args: args.into_iter().collect(),
-            }))),
+            "scan" => {
+                return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
+                    name: "scan".to_owned(),
+                    args: args.into_iter().collect(),
+                })))
+            }
             _ => return None,
         },
         crate::HelpGroup::Deliver => match child {
@@ -199,10 +201,12 @@ where
             _ => return None,
         },
         crate::HelpGroup::Admin => match child {
-            "config" => return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
-                name: "config".to_owned(),
-                args: args.into_iter().collect(),
-            }))),
+            "config" => {
+                return Some(Ok(Command::GroupedBuiltin(TaskInvocation {
+                    name: "config".to_owned(),
+                    args: args.into_iter().collect(),
+                })))
+            }
             "deps" => parse_deps_command(args),
             "secrets" => parse_secrets_command(args),
             "defer" => parse_defer_command(args),

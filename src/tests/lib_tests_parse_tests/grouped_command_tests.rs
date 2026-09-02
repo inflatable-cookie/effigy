@@ -34,7 +34,9 @@ fn every_namespace_child_parses_identically_to_its_direct_spelling() {
                     grouped.expect("grouped parse should mirror direct"),
                     direct_cmd,
                     "`effigy {} {}` must produce the same command value as `effigy {}`",
-                    group.slug(), child, child
+                    group.slug(),
+                    child,
+                    child
                 ),
                 Err(direct_error) => {
                     let grouped_error = grouped.expect_err("grouped parse should mirror direct");
@@ -42,7 +44,9 @@ fn every_namespace_child_parses_identically_to_its_direct_spelling() {
                         grouped_error.to_string(),
                         direct_error.to_string(),
                         "`effigy {} {}` usage failure must match `effigy {}`",
-                        group.slug(), child, child
+                        group.slug(),
+                        child,
+                        child
                     );
                 }
             }
@@ -76,9 +80,12 @@ fn grouped_child_help_renders_the_existing_typed_panel() {
             let direct = parse(&[child, "--help"]);
             let grouped = parse(&[group.slug(), child, "--help"]);
             assert_eq!(
-                grouped, direct,
+                grouped,
+                direct,
                 "`effigy {} {} --help` must equal `effigy {} --help`",
-                group.slug(), child, child
+                group.slug(),
+                child,
+                child
             );
         }
     }
@@ -131,12 +138,21 @@ fn namespace_without_child_renders_the_group_inventory() {
 #[test]
 fn unknown_grouped_child_fails_as_usage_and_lists_children() {
     let message = parse_error(&["repo", "deploy"]);
-    assert!(message.contains("unknown `repo` command `deploy`"), "{message}");
-    assert!(message.contains("expected one of: contracts, docs, graph, papercuts, scan"), "{message}");
+    assert!(
+        message.contains("unknown `repo` command `deploy`"),
+        "{message}"
+    );
+    assert!(
+        message.contains("expected one of: contracts, docs, graph, papercuts, scan"),
+        "{message}"
+    );
     assert!(message.contains("effigy help repo"), "{message}");
 
     let message = parse_error(&["local", "graph"]);
-    assert!(message.contains("unknown `local` command `graph`"), "{message}");
+    assert!(
+        message.contains("unknown `local` command `graph`"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -165,14 +181,26 @@ fn grouped_parse_never_falls_through_to_a_task_selector() {
     // it appears as a namespace child; manifest-backed fixture coverage lives
     // in tests/cli_output_tests/grouped_command_surface_tests.rs.
     let message = parse_error(&["deliver", "anything"]);
-    assert!(message.contains("unknown `deliver` command `anything`"), "{message}");
+    assert!(
+        message.contains("unknown `deliver` command `anything`"),
+        "{message}"
+    );
 }
 
 #[test]
 fn namespace_children_match_the_spec_taxonomy() {
     assert_eq!(
         effigy_cli::command_surface::namespace_children(HelpGroup::Local),
-        Some(&["container", "system", "workspace", "gateway", "service", "exec"][..])
+        Some(
+            &[
+                "container",
+                "system",
+                "workspace",
+                "gateway",
+                "service",
+                "exec"
+            ][..]
+        )
     );
     assert_eq!(
         effigy_cli::command_surface::namespace_children(HelpGroup::Repo),
@@ -182,7 +210,13 @@ fn namespace_children_match_the_spec_taxonomy() {
         effigy_cli::command_surface::namespace_children(HelpGroup::Deliver),
         Some(
             &[
-                "artifact", "state", "deploy", "release", "bundle", "bootstrap", "demo"
+                "artifact",
+                "state",
+                "deploy",
+                "release",
+                "bundle",
+                "bootstrap",
+                "demo"
             ][..]
         )
     );

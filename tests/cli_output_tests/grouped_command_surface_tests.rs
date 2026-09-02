@@ -3,13 +3,11 @@
 //! preservation, unknown-child no-execution, JSON success/usage/runtime
 //! warning parity, and legacy-detail help notes.
 
-use serde_json::{json, Value};
+use serde_json::json;
 use std::fs;
 use std::process::Command;
 
-use super::support::{
-    parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace,
-};
+use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
 
 fn stdout_of(output: &std::process::Output) -> String {
     String::from_utf8(output.stdout.clone()).expect("utf8 stdout")
@@ -76,9 +74,16 @@ fn catalog_slash_alias_stays_a_selector_under_admin_namespace() {
     // Space-separated `admin hello` is grouped routing; `hello` is not an
     // admin child, so it is a usage error that never executes the task.
     let spaced = run_cli_command(&root, &["admin", "hello"]);
-    assert_eq!(spaced.status.code(), Some(2), "spaced admin hello: {spaced:?}");
+    assert_eq!(
+        spaced.status.code(),
+        Some(2),
+        "spaced admin hello: {spaced:?}"
+    );
     let stderr = stderr_of(&spaced);
-    assert!(stderr.contains("unknown `admin` command `hello`"), "{stderr}");
+    assert!(
+        stderr.contains("unknown `admin` command `hello`"),
+        "{stderr}"
+    );
     assert!(!stdout_of(&spaced).contains("SLASH-HELLO"));
     assert_no_migration_warning(&spaced);
 }
@@ -113,13 +118,21 @@ fn json_success_parity_between_direct_and_grouped_routes() {
     assert!(direct.status.success(), "direct: {direct:?}");
     let direct_payload = parse_stdout_json(&direct);
     assert_eq!(direct_payload["ok"], true);
-    let direct_warnings = direct_payload["warnings"].as_array().expect("warnings array");
+    let direct_warnings = direct_payload["warnings"]
+        .as_array()
+        .expect("warnings array");
     assert_eq!(direct_warnings.len(), 1);
     assert_eq!(direct_warnings[0]["code"], "legacy-direct-command");
-    assert_eq!(direct_warnings[0]["message"], "direct command `graph` is deprecated; use `effigy repo graph`");
+    assert_eq!(
+        direct_warnings[0]["message"],
+        "direct command `graph` is deprecated; use `effigy repo graph`"
+    );
     assert_eq!(direct_warnings[0]["replacement"], "effigy repo graph");
     assert_eq!(direct_warnings[0]["removal"], "v1.0");
-    assert_eq!(direct_payload["command"], json!({"kind": "graph", "name": "graph"}));
+    assert_eq!(
+        direct_payload["command"],
+        json!({"kind": "graph", "name": "graph"})
+    );
     assert_no_migration_warning(&direct);
 
     let grouped = run_json_cli_command(&root, &["repo", "graph", "status"]);
@@ -132,8 +145,7 @@ fn json_success_parity_between_direct_and_grouped_routes() {
     );
     assert_eq!(grouped_payload["command"], direct_payload["command"]);
     assert_eq!(
-        grouped_payload["result"],
-        direct_payload["result"],
+        grouped_payload["result"], direct_payload["result"],
         "grouped route must not change the inner payload"
     );
     assert_eq!(grouped_payload["error"], direct_payload["error"]);
@@ -149,7 +161,10 @@ fn json_usage_error_warning_parity_between_direct_and_grouped_routes() {
     let direct_payload = parse_stdout_json(&direct);
     assert_eq!(direct_payload["ok"], false);
     assert_eq!(direct_payload["error"]["kind"], "CliParseError");
-    assert_eq!(direct_payload["warnings"][0]["code"], "legacy-direct-command");
+    assert_eq!(
+        direct_payload["warnings"][0]["code"],
+        "legacy-direct-command"
+    );
 
     let grouped = run_json_cli_command(&root, &["repo", "graph", "status", "--bogus"]);
     assert_eq!(grouped.status.code(), Some(2), "grouped: {grouped:?}");
@@ -171,7 +186,10 @@ fn json_runtime_error_warning_parity_between_direct_and_grouped_routes() {
     let direct_payload = parse_stdout_json(&direct);
     assert_eq!(direct_payload["ok"], false);
     assert_eq!(direct_payload["error"]["kind"], "RunnerError");
-    assert_eq!(direct_payload["warnings"][0]["code"], "legacy-direct-command");
+    assert_eq!(
+        direct_payload["warnings"][0]["code"],
+        "legacy-direct-command"
+    );
 
     let grouped = run_json_cli_command(&root, &["deliver", "release", "status"]);
     assert_eq!(grouped.status.code(), Some(1), "grouped: {grouped:?}");
@@ -300,13 +318,18 @@ fn legacy_detailed_help_carries_the_migration_note_only_on_legacy_routes() {
     assert!(legacy.status.success(), "help graph: {legacy:?}");
     let stdout = stdout_of(&legacy);
     assert!(
-        stdout.contains("direct command `graph` is deprecated; use `effigy repo graph`; removal at v1.0"),
+        stdout.contains(
+            "direct command `graph` is deprecated; use `effigy repo graph`; removal at v1.0"
+        ),
         "{stdout}"
     );
 
     // Canonical detail route: `effigy repo graph --help` has no note.
     let canonical = run_cli_command(&root, &["repo", "graph", "--help"]);
-    assert!(canonical.status.success(), "repo graph --help: {canonical:?}");
+    assert!(
+        canonical.status.success(),
+        "repo graph --help: {canonical:?}"
+    );
     let stdout = stdout_of(&canonical);
     assert!(!stdout.contains("is deprecated"), "{stdout}");
 
@@ -333,4 +356,3 @@ fn json_help_legacy_payload_keeps_the_note_inside_the_text() {
         "legacy help payload must carry the migration facts in its text"
     );
 }
-

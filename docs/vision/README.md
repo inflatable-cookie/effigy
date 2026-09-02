@@ -63,7 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
-Effigy release remains gated. The second governance review remains due by
-2026-09-17.
+Run the second governance review by 2026-09-17. The command-surface preview
+(card `1109`, roadmap `g09.001`) is complete; the direct-route removal lane
+stays behind the `v1.0` evidence gate, and Effigy release remains gated.

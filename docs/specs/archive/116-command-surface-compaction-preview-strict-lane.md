@@ -1,6 +1,6 @@
 # 116 Command-Surface Compaction Preview Strict Lane
 
-Status: Active
+Status: Archived (completed with card `1109` under `g09.001`)
 Owner: Effigy orchestrator
 Created: 2026-09-02
 Roadmap: [`g09.001`](../roadmaps/g09/001-command-surface-compaction-preview.md)

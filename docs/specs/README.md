@@ -28,8 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`116`](./116-command-surface-compaction-preview-strict-lane.md) — executable
-  command namespaces with retained pre-`v1.0` migration aliases
+- none — the grouped-command preview shipped and its strict lane is archived;
+  direct-route removal stays behind the `v1.0` consumer-evidence gate
 
 Queued strict lanes:
 
@@ -37,6 +37,9 @@ Queued strict lanes:
 
 Archived strict lanes:
 
+- [`116`](./archive/116-command-surface-compaction-preview-strict-lane.md) —
+  executable command namespaces with retained pre-`v1.0` migration aliases
+  (completed with card `1109` under `g09.001`)
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
 - [`113`](./archive/113-catalog-pack-acquisition-prototype-strict-lane.md)

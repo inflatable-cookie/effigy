@@ -87,12 +87,18 @@ fn explicitly_deferred_builtins_stay_visible_as_grouped_rows() {
 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
-    assert!(group_text.contains("effigy repo graph"), "got: {group_text}");
+    assert!(
+        group_text.contains("effigy repo graph"),
+        "got: {group_text}"
+    );
     assert!(group_text.contains("effigy repo docs"), "got: {group_text}");
 
     let general = build_help_payload_for_root(HelpTopic::General, &root, None);
     let general_text = general["text"].as_str().expect("general help text");
-    assert!(general_text.contains("effigy repo graph"), "got: {general_text}");
+    assert!(
+        general_text.contains("effigy repo graph"),
+        "got: {general_text}"
+    );
 }
 
 #[test]
@@ -109,11 +115,17 @@ fn shadowed_builtins_stay_visible_as_grouped_rows_in_general_and_group_help() {
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
     assert!(group_text.contains("effigy repo docs"), "got: {group_text}");
-    assert!(group_text.contains("effigy repo graph"), "got: {group_text}");
+    assert!(
+        group_text.contains("effigy repo graph"),
+        "got: {group_text}"
+    );
 
     let general = build_help_payload_for_root(HelpTopic::General, &root, None);
     let general_text = general["text"].as_str().expect("general help text");
-    assert!(general_text.contains("effigy repo docs"), "got: {general_text}");
+    assert!(
+        general_text.contains("effigy repo docs"),
+        "got: {general_text}"
+    );
 }
 
 // The direct `effigy help docs` route is refused before rendering when a

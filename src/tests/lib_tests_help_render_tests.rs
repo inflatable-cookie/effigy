@@ -141,7 +141,9 @@ fn render_artifact_help_shows_stage_and_handoff_options() {
     assert!(rendered.contains("artifact Help"));
     assert!(rendered.contains("effigy deliver artifact inspect <REF|PATH>"));
     assert!(rendered.contains("effigy deliver artifact stage <REF|PATH>"));
-    assert!(rendered.contains("effigy deliver artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>"));
+    assert!(
+        rendered.contains("effigy deliver artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>")
+    );
     assert!(rendered.contains("--environment <LABEL>"));
     assert!(rendered.contains("--farmyard-handoff"));
     assert!(rendered.contains("--push"));
@@ -384,8 +386,9 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy local container data dump --db-dump app=oci://"));
     assert!(rendered.contains("--push"));
     assert!(rendered.contains("effigy local container data seed --db-seed ./latest.sql"));
-    assert!(rendered
-        .contains("effigy local container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"));
+    assert!(rendered.contains(
+        "effigy local container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"
+    ));
     assert!(rendered.contains("effigy local container web reset --keep-data"));
     assert!(rendered.contains(
         "interactive workspace/shell exits now ask whether to bring the environment down"
@@ -422,13 +425,14 @@ fn render_release_help_shows_status_and_gate_options() {
     assert!(rendered.contains("Effigy's self-hosting tagged-binary check"));
     assert!(rendered.contains("repo-owned consumer smoke"));
     assert!(rendered.contains("effigy deliver release simulate"));
-    assert!(
-        rendered.contains("effigy deliver release simulate [--repo <PATH>] [--version <SEMVER>] [--json]")
-    );
+    assert!(rendered
+        .contains("effigy deliver release simulate [--repo <PATH>] [--version <SEMVER>] [--json]"));
     assert!(rendered.contains("effigy deliver release prepare [--repo <PATH>] [--check-gates]"));
     assert!(rendered.contains("effigy deliver release prepare (--plan|--dry-run)"));
     assert!(rendered.contains("effigy deliver release prepare --yes"));
-    assert!(rendered.contains("effigy deliver release resume [--repo <PATH>] [--allow-stale] [--json]"));
+    assert!(
+        rendered.contains("effigy deliver release resume [--repo <PATH>] [--allow-stale] [--json]")
+    );
     assert!(rendered.contains("effigy deliver release execute [--repo <PATH>] [--allow-stale]"));
     assert!(rendered.contains("effigy deliver release execute (--plan|--dry-run)"));
     assert!(rendered.contains("effigy deliver release execute --yes"));

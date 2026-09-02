@@ -142,7 +142,9 @@ mod tests {
             );
         }
         // ...while the daily spine stays, and namespaces lead to descendants.
-        for retained in ["help", "version", "tasks", "test", "watch", "doctor", "init"] {
+        for retained in [
+            "help", "version", "tasks", "test", "watch", "doctor", "init",
+        ] {
             assert!(command_names().contains(&retained), "{retained}");
         }
         for group in namespace_words() {

@@ -100,9 +100,13 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
 
 /// Run one CLI-routed task-style invocation (manifest selector or grouped
 /// built-in registry command) through the execution request machinery.
-fn run_cli_task(task: effigy_cli::TaskInvocation, surface: ExecutionSurface, cwd: &Path) -> Result<String, RunnerError> {
-    let runtime_context = crate::runner::command_context::active_runtime_context()
-        .unwrap_or_else(|| {
+fn run_cli_task(
+    task: effigy_cli::TaskInvocation,
+    surface: ExecutionSurface,
+    cwd: &Path,
+) -> Result<String, RunnerError> {
+    let runtime_context =
+        crate::runner::command_context::active_runtime_context().unwrap_or_else(|| {
             EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
                 .expect("runtime context capture should fall back to cwd")
         });

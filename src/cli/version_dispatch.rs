@@ -1,7 +1,7 @@
+use crate::cli::legacy_direct::{warning_values, LegacyDirectWarning};
 use crate::{
     build_binary_metadata, emit_json_envelope_success_value_with_warnings, CliExecutionContext,
 };
-use crate::cli::legacy_direct::{warning_values, LegacyDirectWarning};
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 

@@ -1,4 +1,6 @@
-use super::{build_json_envelope_error_with_warnings, build_json_envelope_success, parse_json_or_string};
+use super::{
+    build_json_envelope_error_with_warnings, build_json_envelope_success, parse_json_or_string,
+};
 use serde_json::json;
 
 #[test]
