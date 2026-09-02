@@ -96,5 +96,5 @@ one vague “polish” lane.
 
 ## Next Task
 
-Execute ready card `1105` from its committed worker handoff. Effigy release
-authority remains separate.
+Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
+repair. Effigy release authority remains separate.

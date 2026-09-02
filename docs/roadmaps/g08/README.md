@@ -396,5 +396,5 @@ their artifact and cutover gates.
 
 ## Next Task
 
-Execute ready card `1105` from its committed worker handoff. Downstream Bovine
-and Acowtancy revalidation remain separately owned.
+Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
+repair. Downstream Bovine and Acowtancy revalidation remain separately owned.

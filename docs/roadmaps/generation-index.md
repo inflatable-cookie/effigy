@@ -299,5 +299,5 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card `1105` from its committed worker handoff. Do not open `g09`
-or release Effigy.
+Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
+repair. Do not open `g09` or release Effigy.

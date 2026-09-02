@@ -7,22 +7,28 @@ Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration
 Status: Ready
 Owner: protected pack publication and operator-controlled package visibility
 Created: 2026-09-01
-Authorized: 2026-09-02 — annotated `v1.0.0` tag, public GHCR package,
-digest-bound attestation, and `stable` movement
+Authorized: 2026-09-02 — preserve the failed immutable `v1.0.0` source tag;
+publish the repaired first public artifact as `v1.0.1`, with public GHCR
+visibility, digest-bound attestation, and `stable` movement
 
 ## Purpose
 
-Create and prove the first public `v1.0.0` artifact and `stable` channel at one
-immutable digest.
+Create and prove the first public `v1.0.1` artifact and `stable` channel at one
+immutable digest. Retain the failed pre-push `v1.0.0` source tag as incident
+evidence; never move, delete, or reuse it.
 
 ## Acceptance
 
-- annotated source `v1.0.0` is protected and rechecked by object and peeled commit
+- failed annotated source `v1.0.0` remains protected at
+  `f70637abe1024cf7b54cabe58c3bd5877dcf8eca`; the new annotated source
+  `v1.0.1` is created only from the separately reviewed repair head and is
+  rechecked by object and peeled commit
 - support input resolves from Effigy's current default-branch commit, records
   that commit and blob, and is fresh, internally valid, release-backed, and
   compatible; the immutable one-time import pin is not reused as current
   support authority
-- OCI `v1.0.0` is created only at the deterministic candidate digest
+- OCI `v1.0.1` is created only at the deterministic candidate digest; no OCI
+  `v1.0.0` package version is invented after the failed pre-push run
 - digest-bound attestation verifies; anonymous digest pull reproduces exact bytes
 - package linkage and public visibility are confirmed explicitly; first-package
   visibility uses the documented operator package-settings control between the
@@ -35,24 +41,47 @@ immutable digest.
 
 ## Ordered Execution
 
-1. Land a reviewable implementation PR that turns the protected rehearsal into
-   a serialized two-job publication transaction and proves every pre-mutation
-   gate. No source tag, package, attestation, visibility, provider allowlist, or
-   channel mutation occurs before exact-head review and merge.
-2. After the orchestrator merges that reviewed head to pack `main`, continue
-   with the same worker identity. Add only the exact pinned `actions/attest`
-   action to this repository's selected-actions policy, create the annotated
-   `v1.0.0` tag at the reviewed merged source, and dispatch the protected
-   version-publish job. Stop on any gate failure with `stable` unchanged.
-3. After the private first version exists, pause before finalization. The
+1. The implementation PR is accepted and merged at
+   `f70637abe1024cf7b54cabe58c3bd5877dcf8eca`. The selected-actions policy now
+   contains exactly the pinned checkout and attest actions.
+2. The first protected run created annotated `v1.0.0` at that merge and failed
+   before package write because live ORAS 1.3.3 reported an absent GHCR
+   descriptor as `failed to find ...: not found`, a shape absent from the
+   network-free oracle. Run `33622687650` failed; package, attestation, and
+   `stable` remain absent.
+3. Preserve `v1.0.0`. On the same worker lane, land one repair PR that adds the
+   exact live stderr fixture and narrow absence classification, updates the
+   provider-control oracle for the already-authorized attest pin, bumps the pack
+   to `1.0.1`, and reconciles publication docs/evidence. Ordinary validation
+   remains write-free. No second live attempt occurs before exact-head review
+   and merge.
+4. From that reviewed merge, create annotated `v1.0.1` and dispatch the same
+   protected version-publish job. Stop on any gate failure with `stable`
+   unchanged. Never delete, move, or recreate `v1.0.0`.
+5. After the private first version exists, pause before finalization. The
    operator changes the linked organization package to public through GitHub's
    documented package-settings control. The protected finalize job starts only
    after that checkpoint, verifies public linkage, uses the pinned attestation
    action, pulls anonymously, refreshes Effigy support/release authority, then
    moves `stable` once. If finalization is approved prematurely, it fails
    closed and remains safely retryable.
-4. Record immutable publication and rollback evidence in a follow-up PR. Card
+6. Record immutable incident, publication, and rollback evidence in the repair
+   or a follow-up evidence PR. Card
    `1105` is not complete until that evidence is reviewed and merged.
+
+## Validation
+
+- exact live ORAS stderr fixture passes as remote absence; credential/tool,
+  auth, timeout, and generic local `not found` fixtures still fail closed
+- pack manifest, source identity, candidate reference, docs, and workflow proofs
+  agree on `1.0.1` / `v1.0.1`
+- `effigy doctor`, `effigy validate`, `effigy qa`, deterministic candidate
+  replay, and provider controls pass; ordinary validation performs no write
+- live read-back proves `v1.0.0` still names tag object
+  `f2b59e65b1938600907de8dea566ad957e63be69`, no package or `stable` exists,
+  and selected-actions contains exactly the two authorized pinned actions
+- repair/evidence records failed run `33622687650`, its first-read stop point,
+  and every retained or absent provider identity
 
 ## Review Oracle
 
@@ -63,15 +92,22 @@ undocumented visibility API, manifest deletion used to restore an absent
 channel, support proof still pinned to the one-time import commit, or live
 mutation before the implementation PR is accepted and merged.
 
+Also reject a classifier repair that lacks the exact live ORAS
+`Error response from registry: failed to find "<ref>": <ref>: not found`
+counterexample, treats a generic local `not found` as registry absence, executes
+new scripts against the old `v1.0.0` source identity, or retries publication
+before the `v1.0.1` repair head is accepted and merged.
+
 ## Stop Conditions
 
-The 2026-09-02 instruction authorizes only the named first-publication
-mutations. Stop on attestation-shape failure, anonymous-pull mismatch,
+The 2026-09-02 recovery decision authorizes only the named `v1.0.1`
+first-publication mutations and preservation of failed `v1.0.0`. Stop on
+attestation-shape failure, anonymous-pull mismatch,
 non-deterministic retry, support-input drift, tag collision, permission drift,
 or any need to release Effigy or widen package/repository authority.
 
 ## Next Task
 
-Execute the implementation-only first phase from the committed worker handoff.
-Accepted publication evidence unblocks card `1106`; it does not authorize an
-Effigy binary release.
+Resume the same worker lane for the bounded `v1.0.1` repair PR. Accepted
+publication evidence unblocks card `1106`; it does not authorize an Effigy
+binary release.

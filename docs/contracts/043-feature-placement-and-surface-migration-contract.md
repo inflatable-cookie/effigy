@@ -148,8 +148,9 @@ Publication and concrete-asset ownership are fixed as follows:
   `inflatable-cookie/effigy-catalog-pack` and use independent SemVer;
 - the official OCI repository is
   `ghcr.io/inflatable-cookie/effigy-catalog-pack`;
-- the first official release is `1.0.0`, with annotated source tag and OCI
-  version tag `v1.0.0`;
+- the failed pre-push annotated source tag `v1.0.0` remains immutable incident
+  evidence; the first public release is `1.0.1`, with a separately reviewed
+  annotated source tag and OCI version tag `v1.0.1`;
 - Effigy carries a generated, pinned recovery snapshot with source commit, pack
   version, OCI manifest digest, and unpacked content identity evidence;
 - every supported binary, Homebrew, source-build, `init`, and `bootstrap` path
@@ -163,6 +164,8 @@ Publication and concrete-asset ownership are fixed as follows:
 - `stable` moves only through protected manual dispatch against an existing
   annotated pack version tag; source and OCI version tags are process-immutable
   checked pointers, while the OCI manifest digest is the immutable identity;
+- a failed source/version tag is never deleted, moved, or reused; repair ships
+  under the next PATCH only after exact-head review and merge;
 - the publication path requires digest-bound provenance, anonymous pull and
   exact-byte validation, an unchanged compatibility input, and a verified
   rollback target before channel promotion;
@@ -352,7 +355,8 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
+Resume ready card
 [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
-under the explicit 2026-09-02 first-publication authority. Merge the
-implementation-only PR before creating the annotated tag or mutating GHCR.
+under the explicit 2026-09-02 `v1.0.1` recovery authority. Merge the bounded
+classifier/version repair before creating the new annotated tag or retrying
+GHCR.

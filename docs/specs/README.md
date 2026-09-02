@@ -30,7 +30,8 @@ Active strict lane:
 
 - [`115`](./115-catalog-pack-publication-and-cutover-strict-lane.md) — official
   catalog-pack publication and generated-baseline cutover; cards `1103` and
-  `1104` complete, card `1105` Ready under explicit publication authority
+  `1104` complete, card `1105` Ready for the authorized `v1.0.1` recovery after
+  the preserved pre-push `v1.0.0` failure
 
 Queued strict lanes:
 
@@ -83,5 +84,5 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card `1105` from its committed worker handoff. Keep draft `098`
-paused.
+Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
+repair. Keep draft `098` paused.

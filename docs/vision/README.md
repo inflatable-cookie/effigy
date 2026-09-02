@@ -63,5 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready card `1105` from its committed worker handoff. Effigy release
-remains gated. The second governance review remains due by 2026-09-17.
+Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
+repair. Effigy release remains gated. The second governance review remains due
+by 2026-09-17.

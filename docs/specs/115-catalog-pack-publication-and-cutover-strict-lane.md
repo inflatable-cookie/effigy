@@ -18,7 +18,8 @@ offline operation or Effigy release authority.
 ## Fixed Decisions
 
 - Source repository: public `inflatable-cookie/effigy-catalog-pack`.
-- Canonical asset root: `pack/`; first pack version/tag: `1.0.0` / `v1.0.0`.
+- Canonical asset root: `pack/`. Failed pre-push source tag `v1.0.0` is retained
+  immutably; the first public pack version/tag is `1.0.1` / `v1.0.1`.
 - OCI repository: `ghcr.io/inflatable-cookie/effigy-catalog-pack`; channel:
   `stable`; OCI manifest digest is the immutable identity.
 - Effigy keeps an exact generated baseline plus typed provenance lock.
@@ -27,6 +28,8 @@ offline operation or Effigy release authority.
   commit and blob digest.
 - First publication and every Effigy binary release remain separate explicit
   operator mutations.
+- A failed source tag is never moved or reused. A pre-package failure resumes
+  from a newly reviewed PATCH source/version tag.
 
 ## Dependency Runway
 
@@ -51,7 +54,8 @@ external publication mutations remain operator-gated.
 - [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
   — Complete; dedicated public repository foundation and no-push rehearsal.
 - [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
-  — Ready; explicit first-publication authority recorded 2026-09-02.
+  — Ready; `v1.0.0` failed before package write and is preserved; explicit
+  `v1.0.1` recovery authority recorded 2026-09-02.
 - [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
   — Blocked on accepted `1105` evidence.
 - [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
@@ -75,6 +79,9 @@ external publication mutations remain operator-gated.
   the release transaction.
 - The finalize job uses exact-SHA `actions/attest`. Its repository selected-
   actions policy may add only that exact action before dispatch.
+- Failed publication tag `v1.0.0` is immutable incident evidence. The narrow
+  live-ORAS classifier repair and provider-control reconciliation must merge
+  before a new annotated `v1.0.1` source tag and protected retry.
 - An absent pre-publication `stable` target is rollback evidence, not deletion
   authority. Prove that branch in the non-mutating model and move `stable` once
   after final gates. A live retag rollback exercise applies only when a previous
@@ -123,6 +130,6 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Execute card `1105` from its committed worker handoff. The implementation PR
-must merge before the same worker creates the annotated source tag or mutates
-GHCR; Effigy release authority remains separate.
+Resume card `1105` on its existing worker lane for the bounded `v1.0.1` repair
+PR. The repair must merge before the worker creates the new annotated source
+tag or retries GHCR; Effigy release authority remains separate.
