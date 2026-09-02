@@ -88,5 +88,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Card `1109` under `g09.001` is complete and strict spec `116` is archived.
+The next checkpoint is the future `v1.0` consumer-evidence gate (refreshed
+consumer inventory plus explicit release authority); no removal spec or card
+exists yet. Effigy release authority stays separate.
