@@ -19,12 +19,12 @@ If `effigy` is not yet available on `PATH`, bootstrap first:
 
 ```sh
 cargo run --bin effigy -- bootstrap:local
-effigy version
+effigy admin version
 type -a effigy
 ```
 
 `bootstrap:local` installs a local binary and stamps an active build identity.
-Expect `effigy version` to show the stable semver plus a local suffix such as
+Expect `effigy admin version` to show the stable semver plus a local suffix such as
 `v0.5.0+local.abc123` when you are using a self-built checkout.
 
 ## Prerequisites

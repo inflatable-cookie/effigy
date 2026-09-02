@@ -18,8 +18,8 @@ impact looks like, or which files to read first.
 Use the graph in this order:
 
 ```sh
-effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
-effigy graph status --json
+effigy repo graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+effigy repo graph status --json
 ```
 
 That gives you:
@@ -29,7 +29,7 @@ That gives you:
 - a bounded starting packet with primary owners, excerpts, related symbols,
   reasons, guidance, and overflow
 
-You normally do not need to run `effigy graph index` first: queries rebuild a
+You normally do not need to run `effigy repo graph index` first: queries rebuild a
 stale or missing index themselves. Pre-warm explicitly only when you want to
 pay the indexing cost up front (large repos, batch runs).
 
@@ -40,7 +40,7 @@ health, use the matching Effigy surface first.
 If the repo is changing while you work:
 
 ```sh
-effigy graph watch --json
+effigy repo graph watch --json
 ```
 
 ## What The Graph Is For
@@ -70,8 +70,8 @@ Do not use the graph as the only truth source when you need:
 ### Build or refresh the index
 
 ```sh
-effigy graph index
-effigy graph index --json
+effigy repo graph index
+effigy repo graph index --json
 ```
 
 This writes local graph state under:
@@ -97,7 +97,7 @@ unbounded.
 ### Check freshness
 
 ```sh
-effigy graph status --json
+effigy repo graph status --json
 ```
 
 `graph status` without `--refresh` reports only. When you want the report *and*
@@ -106,7 +106,7 @@ exception to rebuild a stale or missing index on demand (the same lazy-refresh
 gate queries use):
 
 ```sh
-effigy graph status --refresh --json
+effigy repo graph status --refresh --json
 ```
 
 `effigy doctor` also surfaces a stale or degraded graph index as a
@@ -143,7 +143,7 @@ rebuild it locally:
 
 ```sh
 mv .effigy/graph .effigy/graph.backup-$(date +%s)
-effigy graph index --json
+effigy repo graph index --json
 ```
 
 The graph is a cache. Move it aside so the old state remains recoverable while
@@ -217,8 +217,8 @@ changed.
 
 The exception is the first query ever on a large repo: no index exists, so
 the query builds the whole thing. That is a one-time cost — warm the index
-ahead with `effigy graph index` when onboarding a big repository, or rely on
-`effigy graph watch` during long sessions.
+ahead with `effigy repo graph index` when onboarding a big repository, or rely on
+`effigy repo graph watch` during long sessions.
 
 ### Trust states after a query
 
@@ -230,7 +230,7 @@ agents can see what the answer cost.
 ### Search
 
 ```sh
-effigy graph search release --limit 10 --json
+effigy repo graph search release --limit 10 --json
 ```
 
 Use this when you know a term, not yet a symbol id.
@@ -238,7 +238,7 @@ Use this when you know a term, not yet a symbol id.
 ### Inspect one node
 
 ```sh
-effigy graph node symbol:rust:crate::runner::run_release --json
+effigy repo graph node symbol:rust:crate::runner::run_release --json
 ```
 
 Use this after search, callers, callees, or context gives you a stable id.
@@ -246,8 +246,8 @@ Use this after search, callers, callees, or context gives you a stable id.
 ### Call neighborhoods
 
 ```sh
-effigy graph callers <ID> --limit 20 --json
-effigy graph callees <ID> --limit 20 --json
+effigy repo graph callers <ID> --limit 20 --json
+effigy repo graph callees <ID> --limit 20 --json
 ```
 
 Use these when you already have a symbol id and need impact around it.
@@ -255,8 +255,8 @@ Use these when you already have a symbol id and need impact around it.
 ### Impact
 
 ```sh
-effigy graph impact src/runner/release_command.rs --limit 20 --json
-effigy graph impact symbol:rust:crate::runner::run_release --limit 20 --json
+effigy repo graph impact src/runner/release_command.rs --limit 20 --json
+effigy repo graph impact symbol:rust:crate::runner::run_release --limit 20 --json
 ```
 
 Use this when the starting point is a file path or a known symbol.
@@ -264,8 +264,8 @@ Use this when the starting point is a file path or a known symbol.
 ### Changed-file validation narrowing
 
 ```sh
-effigy graph affected src/runner/graph_command.rs --json
-git diff --name-only | effigy graph affected --stdin --depth 2 --json
+effigy repo graph affected src/runner/graph_command.rs --json
+git diff --name-only | effigy repo graph affected --stdin --depth 2 --json
 ```
 
 Use this when the question is "what should I validate after these edits?".
@@ -294,7 +294,7 @@ Use `graph explore` first when an agent needs to understand a task-shaped
 question with fewer immediate file reads:
 
 ```sh
-effigy graph explore "trace deploy provider export" \
+effigy repo graph explore "trace deploy provider export" \
   --max-files 6 \
   --max-bytes 12288 \
   --json
@@ -398,7 +398,7 @@ paths = ["src/shared/**"]
 Then run:
 
 ```sh
-effigy scan boundary-violations --json
+effigy repo scan boundary-violations --json
 ```
 
 The scan refreshes a stale or missing graph index through the lazy-refresh
@@ -443,7 +443,7 @@ such as "where are task routes parsed" or "find graph status stale detection".
 Use `graph context` when you want the lower-level ranked item packet:
 
 ```sh
-effigy graph context "trace deploy provider export" \
+effigy repo graph context "trace deploy provider export" \
   --max-files 8 \
   --max-bytes 4096 \
   --json
@@ -452,7 +452,7 @@ effigy graph context "trace deploy provider export" \
 Filters:
 
 ```sh
-effigy graph context "trace release orchestrator" \
+effigy repo graph context "trace release orchestrator" \
   --language rust \
   --language markdown \
   --path src/runner \
@@ -470,9 +470,9 @@ of broad `rg` across the repo and does not need the assembled `explore` shape.
 If the repo is moving while an agent or human is working, keep the graph warm:
 
 ```sh
-effigy graph watch
-effigy graph watch --debounce-ms 1000
-effigy graph watch --json
+effigy repo graph watch
+effigy repo graph watch --debounce-ms 1000
+effigy repo graph watch --json
 ```
 
 Current posture:
@@ -510,12 +510,12 @@ Event kinds:
 
 Recommended code-understanding sequence:
 
-1. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json` — a
+1. `effigy repo graph explore "<task>" --max-files 6 --max-bytes 12288 --json` — a
    stale or missing index is refreshed on demand as part of the query
 2. trust returned excerpts for first-pass orientation
 3. only then widen to `graph context`, `graph search`, `graph node`,
    `graph callers/callees`, direct file reads, and `rg`
-4. use `effigy graph status --json` when you need the honest pre-refresh trust
+4. use `effigy repo graph status --json` when you need the honest pre-refresh trust
    state or index counts
 
 Do not front-load `doctor`, `tasks`, or `test --plan` when the job is already
@@ -525,12 +525,12 @@ ambiguity, selector inventory, or test-shape discovery.
 Good examples:
 
 ```sh
-effigy graph explore "trace release execute path" --json
-effigy graph explore "find deploy provider export owner" --language rust --json
-effigy graph context "docs for graph agent workflow" --json
-effigy graph search railway --json
-effigy graph impact src/runner/graph_command.rs --json
-git diff --name-only | effigy graph affected --stdin --json
+effigy repo graph explore "trace release execute path" --json
+effigy repo graph explore "find deploy provider export owner" --language rust --json
+effigy repo graph context "docs for graph agent workflow" --json
+effigy repo graph search railway --json
+effigy repo graph impact src/runner/graph_command.rs --json
+git diff --name-only | effigy repo graph affected --stdin --json
 ```
 
 The graph should reduce aimless scanning, not replace source reading.
@@ -585,8 +585,8 @@ allow_symbols = ["crate::bootstrap::*", "main"]
 Run it like this:
 
 ```sh
-effigy scan dead-code
-effigy scan dead-code --json
+effigy repo scan dead-code
+effigy repo scan dead-code --json
 ```
 
 Current dead-code finding types:
@@ -614,9 +614,9 @@ allow_paths = ["src/bin/**", "scripts/**"]
 Run it like this:
 
 ```sh
-effigy scan validation-gaps
-effigy scan validation-gaps --path src/lib.rs
-git diff --name-only | effigy scan validation-gaps --stdin --json
+effigy repo scan validation-gaps
+effigy repo scan validation-gaps --path src/lib.rs
+git diff --name-only | effigy repo scan validation-gaps --stdin --json
 ```
 
 Current validation-gap finding types:

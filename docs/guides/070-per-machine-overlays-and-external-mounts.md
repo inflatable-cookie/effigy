@@ -276,7 +276,7 @@ Both are documented in [059](./059-manifest-composition-guide.md).
 
 ## Inspection And Verification
 
-`effigy config --inspect` prints the merged manifest plus
+`effigy admin config --inspect` prints the merged manifest plus
 file-source attribution. After enabling an overlay, expect to see:
 
 - `containers.web.dns.routes` containing the env's domains, sourced
@@ -289,7 +289,7 @@ file-source attribution. After enabling an overlay, expect to see:
 A simple end-to-end smoke test on a configured machine:
 
 ```sh
-effigy config --inspect | grep <env-name>-tunnel
+effigy admin config --inspect | grep <env-name>-tunnel
 git check-ignore -v effigy.local.toml
 git grep <env-name>-bastion envs/   # alias name only — never a real host
 ```

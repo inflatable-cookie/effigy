@@ -4,11 +4,11 @@ pub(super) const COMPLETION_ACTION_TARGETS_QUOTED: &str = "`--install` or `--exp
 pub(super) const COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED: &str =
     "`bash`, `zsh`, `fish`, or `candidates`";
 pub(super) const COMPLETION_HELP_USAGE_LINE: &str =
-    "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]";
+    "effigy admin config completion [<bash|zsh|fish>] [--install|--export] [--json]";
 pub(super) const COMPLETION_CANDIDATES_USAGE_LINE: &str =
-    "effigy config completion candidates [--repo <path>] [--prefix <value>] [--json]";
+    "effigy admin config completion candidates [--repo <path>] [--prefix <value>] [--json]";
 pub(super) const COMPLETION_CANDIDATES_EXAMPLE_LINE: &str =
-    "effigy config completion candidates --prefix farm";
+    "effigy admin config completion candidates --prefix farm";
 
 pub(super) const COMPLETION_COMMAND_OPTIONS: &[&str] = &[
     "bash",

@@ -73,7 +73,7 @@ fed back into starter templates.
 
 ## Theme 4 — Breaking command-surface and compaction preview
 
-**Status:** active (`g09.001`, ready card `1109`, strict spec `116`)
+**Status:** complete (`g09.001`, card `1109`, archived strict spec `116`)
 
 **Primary tags:** `MAINT`, `ROUTE`, `RELEASE`
 
@@ -121,5 +121,6 @@ they remain in the active tree.
 
 ## Next Task
 
-Execute ready card `1109` under `g09.001`. Themes 3 and 5 remain unscheduled;
-direct-route removal and release execution remain gated.
+Theme 4 shipped under `g09.001` (card `1109`). Themes 3 and 5 remain
+unscheduled; direct-route removal and release execution remain gated behind
+the `v1.0` consumer-evidence checkpoint.

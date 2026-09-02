@@ -29,9 +29,9 @@ Legacy string bundle names are intentionally gone:
 ## Commands
 
 ```sh
-effigy bundle inspect
-effigy bundle sync
-effigy config --inspect
+effigy deliver bundle inspect
+effigy deliver bundle sync
+effigy admin config --inspect
 effigy tasks
 effigy doctor --verbose
 ```
@@ -54,8 +54,8 @@ exported manifest fragments, Rhai helpers, and onboarding docs.
 ## Adoption Checklist
 
 1. Add a typed `[bundle].base` source.
-2. Run `effigy bundle inspect`.
-3. Run `effigy config --inspect` and check the composed manifest.
+2. Run `effigy deliver bundle inspect`.
+3. Run `effigy admin config --inspect` and check the composed manifest.
 4. Run `effigy tasks` and `effigy doctor --verbose`.
 5. Keep product-specific starter or migration checklists in the external
    bundle repo, not in core Effigy docs.

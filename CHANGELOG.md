@@ -7,6 +7,26 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy local`, `effigy repo`, `effigy deliver`, `effigy extend`, and
+  `effigy admin` are executable command namespaces: an exact space-separated
+  namespace word routes to its grouped child commands, which delegate to the
+  existing typed command values (`effigy repo graph`, `effigy admin config
+  completion`, `effigy local container`, ...). A namespace with no child
+  renders its group inventory. The namespace words are reserved, so manifest
+  selectors named `local`/`repo`/`deliver`/`extend`/`admin` no longer own the
+  bare word; slash selectors such as `admin/<task>` stay catalog/task
+  selectors; grouped routes are the explicit built-in escape when a manifest
+  task or `[defer] builtins` entry shadows the direct child name.
+- Retained direct built-in spellings are migration aliases until `v1.0`: when
+  routing proves the built-in owns the invocation they print one migration
+  warning ("direct command \`graph\` is deprecated; use \`effigy repo graph\`")
+  on stderr in human mode, or a top-level \`warnings\` array on the
+  \`effigy.command.v1\` envelope in JSON mode (only when nonempty). Grouped
+  routes, the daily spine, manifest tasks, and slash selectors never warn.
+- General/group help, typed command panels, shell completions, current
+  guides, and the managed Effigy skill teach the canonical grouped spellings.
+  Legacy detail help (`effigy help <command>`, `effigy <command> --help`)
+  remains available with one migration note until `v1.0`.
 - `effigy service pack update` resolves the compiled official `stable` channel
   on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an exact
   `sha256:`-plus-64-lowercase-hex digest with no surrounding whitespace, then

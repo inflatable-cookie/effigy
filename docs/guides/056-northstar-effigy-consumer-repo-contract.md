@@ -21,7 +21,7 @@ Use this guide when you are preparing a consuming repo to:
 
 Route by job, not by startup ritual:
 
-- use `effigy graph` when the job is code understanding
+- use `effigy repo graph` when the job is code understanding
 - use `effigy tasks` when you need selector inventory or QA surfaces
 - use `effigy doctor` when routing is unclear or repo health is the task
 - use `effigy test --plan` when test execution shape matters
@@ -155,7 +155,7 @@ or scope clearly.
 Minimum semantics:
 
 1. route by job, not by startup ritual
-2. use `effigy graph` when the job is code understanding and the repo keeps a
+2. use `effigy repo graph` when the job is code understanding and the repo keeps a
    fresh local graph
 3. use `effigy tasks` when you need selector inventory
 4. use `effigy doctor` when routing is unclear or repo health is the task
@@ -302,7 +302,7 @@ Example:
 
 ```toml
 [tasks]
-"qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
+"qa:docs:agent-defaults" = "effigy repo docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
 ```
 
 ### Starter `qa:northstar` bundle
@@ -340,7 +340,7 @@ documentation ontology - contract, architecture, spec, archived spec, vision,
 roadmap, ready card, guide, front door, log, and handoff kinds, with `Status:`
 driving currentness and typed relations for contract, roadmap, spec, card,
 evidence, supersedes, and next task. That block is what makes
-`effigy docs context "<question>"` answer with the governing document rather
+`effigy repo docs context "<question>"` answer with the governing document rather
 than the first lexical hit.
 
 The block is **copied configuration, not inherited runtime behavior**:
@@ -363,14 +363,14 @@ equivalent:
 
 ```toml
 [tasks]
-"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
-"qa:northstar:agent-contract" = "effigy docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
-"qa:northstar:readme" = "effigy docs check contains README.md --require 'docs/README.md'"
-"qa:northstar:docs-front-door" = "effigy docs check contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
-"qa:northstar:indexes" = "effigy docs check index --policy-index vision"
-"qa:northstar:next-action" = "effigy docs check next-action --policy vision"
-"qa:northstar:headings" = "effigy docs check headings docs/vision/README.md --require-heading '## Current Vision'"
-"qa:northstar:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'"
+"qa:northstar:spine" = "effigy repo docs check paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy repo docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy repo docs check contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy repo docs check contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:indexes" = "effigy repo docs check index --policy-index vision"
+"qa:northstar:next-action" = "effigy repo docs check next-action --policy vision"
+"qa:northstar:headings" = "effigy repo docs check headings docs/vision/README.md --require-heading '## Current Vision'"
+"qa:northstar:agent-defaults" = "effigy repo docs check forbidden AGENTS.md README.md --forbid '--repo .'"
 "qa:northstar" = [
   { task = "qa:northstar:spine" },
   { task = "qa:northstar:agent-contract" },

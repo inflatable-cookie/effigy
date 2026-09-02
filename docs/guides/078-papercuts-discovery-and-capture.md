@@ -1,6 +1,6 @@
 # Papercuts Discovery And Capture
 
-Use `effigy papercuts` to collect small, actionable execution-friction notes
+Use `effigy repo papercuts` to collect small, actionable execution-friction notes
 from conventional project-root `PAPERCUTS.md` queues.
 
 ## Discover One Project
@@ -8,8 +8,8 @@ from conventional project-root `PAPERCUTS.md` queues.
 From anywhere inside a project:
 
 ```bash
-effigy papercuts
-effigy papercuts --all
+effigy repo papercuts
+effigy repo papercuts --all
 effigy --json papercuts
 ```
 
@@ -23,7 +23,7 @@ From a directory such as `~/Dev/projects`:
 
 ```bash
 cd ~/Dev/projects
-effigy papercuts
+effigy repo papercuts
 effigy --json papercuts
 ```
 
@@ -35,7 +35,7 @@ templates, fixtures, vendor trees, or descendant repositories.
 Use an explicit scope without changing directory:
 
 ```bash
-effigy papercuts --scope ~/Dev/projects
+effigy repo papercuts --scope ~/Dev/projects
 effigy --json papercuts --scope ~/Dev/projects
 ```
 
@@ -44,7 +44,7 @@ effigy --json papercuts --scope ~/Dev/projects
 `add` accepts one project only:
 
 ```bash
-effigy papercuts add "Graph output is noisy" \
+effigy repo papercuts add "Graph output is noisy" \
   --friction "stale output floods agent context" \
   --impact "every orientation repeats the refresh step" \
   --fix "refresh once before returning query output" \

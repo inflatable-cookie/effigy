@@ -20,7 +20,7 @@ effigy tasks
 `effigy --help` and `effigy help` group the built-in surface by job: `work`,
 `local`, `repo`, `deliver`, `extend`, and `admin`. Narrow to one group with
 `effigy help repo`, or ask for one command with `effigy help docs` (the same
-panel as `effigy docs --help`). Grouping is discovery only — every command still
+panel as `effigy repo docs --help`). Grouping is discovery only — every command still
 runs exactly as it does today, and there is no `effigy <group> <command>` route.
 
 The default **`minimal`** `init` also drops a root **`README.md`** when that path
@@ -131,7 +131,7 @@ effigy help repo
 effigy help release
 effigy help config
 effigy test --help
-effigy release --help
+effigy deliver release --help
 ```
 
 `effigy help <command>` works for every command in the inventory, including the
@@ -165,7 +165,7 @@ effigy validate --verbose-root
 
 Built-ins that use Effigy's shared **passthrough** parser reject
 `--verbose-root` and `--env-schema` on the **builtin** invocation itself
-(today: `effigy doctor`, `effigy watch`, `effigy scan`). Use
+(today: `effigy doctor`, `effigy watch`, `effigy repo scan`). Use
 `effigy <builtin> --help` for the exact flag set.
 
 ## 4) Run tasks shipped by an installed skill
@@ -174,9 +174,9 @@ Use `skill tasks` when a skill owns an `effigy.toml` but the current repository
 must own runtime effects:
 
 ```sh
-effigy skill tasks --path ~/.agents/skills/northstar
-effigy skill run --path ~/.agents/skills/northstar northstar/check
-effigy skill run --path ~/.agents/skills/northstar northstar/check \
+effigy extend skill tasks --path ~/.agents/skills/northstar
+effigy extend skill run --path ~/.agents/skills/northstar northstar/check
+effigy extend skill run --path ~/.agents/skills/northstar northstar/check \
   --repo /path/to/consumer -- --task-argument
 ```
 
@@ -207,11 +207,11 @@ If Docker Desktop is also installed, Effigy can use either backend. Common
 paths:
 
 - keep Colima/containerd as the machine default:
-  `effigy config set containers.backend containerd`
+  `effigy admin config set containers.backend containerd`
 - switch the machine default to Docker Desktop:
-  `effigy config set containers.backend docker`
+  `effigy admin config set containers.backend docker`
 - force one bootstrap session:
-  `effigy bootstrap <git-url> --backend docker`
+  `effigy deliver bootstrap <git-url> --backend docker`
 
 If the repo uses local HTTPS routes (`tls = true`), also install `mkcert` and
 run the one-time trust-store install:
@@ -222,15 +222,15 @@ mkcert -install
 ```
 
 ```sh
-effigy container up      # Start the local environment
+effigy local container up      # Start the local environment
 effigy dev               # Run the repo's dev task inside it
 ```
 
 When old local runtime state starts to pile up:
 
 ```sh
-effigy container cache list --global
-effigy container volume list --dormant
+effigy local container cache list --global
+effigy local container volume list --dormant
 ```
 
 Read more: [`063-container-system-guide.md`](./063-container-system-guide.md)
@@ -272,7 +272,7 @@ Use `--plan` first when you want to confirm what will run before running it.
 ```sh
 effigy init
 effigy tasks migrate --from package.json
-effigy config --schema --minimal
+effigy admin config --schema --minimal
 ```
 
 Use these when the repo still depends on scattered scripts and ad-hoc setup.
@@ -280,9 +280,9 @@ Use these when the repo still depends on scattered scripts and ad-hoc setup.
 ### Bootstrap a repo from anywhere
 
 ```sh
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git --start
+effigy deliver bootstrap git@github.com:inflatable-cookie/loophole.git --plan
+effigy deliver bootstrap git@github.com:inflatable-cookie/loophole.git
+effigy deliver bootstrap git@github.com:inflatable-cookie/loophole.git --start
 ```
 
 Use this when the repo should describe its own bring-up path in `[bootstrap]`
@@ -301,23 +301,23 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
 ### Build a bounded repo map before broad scanning
 
 ```sh
-effigy graph index
-effigy graph status --json
-effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
-effigy graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
+effigy repo graph index
+effigy repo graph status --json
+effigy repo graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy repo graph affected --stdin --json
+effigy repo graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
 ```
 
 Use this when an agent needs the first files to read without spraying `rg`
 across the whole repo.
 
-If `graph status --json` reports `stale_paths`, re-run `effigy graph index --json`
+If `graph status --json` reports `stale_paths`, re-run `effigy repo graph index --json`
 before trusting query results.
 
 If the repo is changing while you work:
 
 ```sh
-effigy graph watch --json
+effigy repo graph watch --json
 ```
 
 ## 7) Manage Secrets
@@ -325,10 +325,10 @@ effigy graph watch --json
 If the repo declares secrets under `[secrets.keys]`:
 
 ```sh
-effigy secrets init              # create the vault
-effigy secrets set database_url  # store a value
-effigy secrets list              # inspect declarations
-effigy secrets doctor            # check vault health
+effigy admin secrets init              # create the vault
+effigy admin secrets set database_url  # store a value
+effigy admin secrets list              # inspect declarations
+effigy admin secrets doctor            # check vault health
 ```
 
 Secrets are injected into tasks, containers, Rhai scripts, and deploy hooks

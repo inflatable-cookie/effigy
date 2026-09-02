@@ -1,10 +1,8 @@
 use crate::HelpTopic;
 
-/// Primary operator-job group that owns a general-help entry.
-///
-/// Grouping is a discovery concern only: no `effigy <group> <command>`
-/// execution route exists, and group words stay available to manifest task
-/// selectors (contract `043`).
+/// Five groups are executable namespaces: an exact space-separated namespace
+/// word routes to the group's child commands (spec `116`), and `work` stays
+/// help-only with the daily task spine direct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HelpGroup {
     Work,
@@ -16,16 +14,6 @@ pub enum HelpGroup {
 }
 
 impl HelpGroup {
-    /// Every group, in the order general help renders them.
-    pub const ALL: &'static [HelpGroup] = &[
-        HelpGroup::Work,
-        HelpGroup::Local,
-        HelpGroup::Repo,
-        HelpGroup::Deliver,
-        HelpGroup::Extend,
-        HelpGroup::Admin,
-    ];
-
     /// Topic word accepted by `effigy help <group>`.
     pub fn slug(self) -> &'static str {
         match self {
@@ -37,6 +25,15 @@ impl HelpGroup {
             HelpGroup::Admin => "admin",
         }
     }
+    /// Every group, in the order general help renders them.
+    pub const ALL: &'static [HelpGroup] = &[
+        HelpGroup::Work,
+        HelpGroup::Local,
+        HelpGroup::Repo,
+        HelpGroup::Deliver,
+        HelpGroup::Extend,
+        HelpGroup::Admin,
+    ];
 
     /// Section title used by general help and group help.
     pub fn title(self) -> &'static str {
@@ -73,6 +70,80 @@ impl HelpGroup {
             .copied()
             .find(|group| group.slug() == slug)
     }
+}
+
+/// Canonical child commands per executable namespace (spec `116`).
+///
+/// `effigy <namespace> <child>` delegates to the child's existing typed
+/// command value after the namespace token is removed. Every child word is a
+/// displaced direct built-in during the preview; the namespace is the exact
+/// space-separated route that owns it.
+pub const NAMESPACE_CHILDREN: &[(HelpGroup, &[&str])] = &[
+    (
+        HelpGroup::Local,
+        &[
+            "container",
+            "system",
+            "workspace",
+            "gateway",
+            "service",
+            "exec",
+        ],
+    ),
+    (
+        HelpGroup::Repo,
+        &["graph", "scan", "docs", "contracts", "papercuts"],
+    ),
+    (
+        HelpGroup::Deliver,
+        &[
+            "artifact",
+            "state",
+            "deploy",
+            "release",
+            "bundle",
+            "bootstrap",
+            "demo",
+        ],
+    ),
+    (HelpGroup::Extend, &["skill", "rhai"]),
+    (
+        HelpGroup::Admin,
+        &["config", "deps", "secrets", "defer", "uninstall", "version"],
+    ),
+];
+
+/// Resolve an exact reserved namespace word (`local`, `repo`, `deliver`,
+/// `extend`, or `admin`) to its group. `work` is not executable.
+pub fn group_for_namespace_word(word: &str) -> Option<HelpGroup> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(group, _)| group.slug() == word)
+        .map(|(group, _)| *group)
+}
+
+/// Every reserved namespace word, in canonical order.
+pub fn namespace_words() -> impl Iterator<Item = &'static str> {
+    NAMESPACE_CHILDREN.iter().map(|(group, _)| group.slug())
+}
+
+/// The canonical child commands of one executable namespace.
+pub fn namespace_children(group: HelpGroup) -> Option<&'static [&'static str]> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(candidate, _)| *candidate == group)
+        .map(|(_, children)| *children)
+}
+
+/// The namespace group that owns `child` as a grouped child command.
+///
+/// A direct built-in named `child` is displaced during the preview whenever
+/// this returns a group.
+pub fn group_for_child_word(child: &str) -> Option<HelpGroup> {
+    NAMESPACE_CHILDREN
+        .iter()
+        .find(|(_, children)| children.contains(&child))
+        .map(|(group, _)| *group)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,42 +381,42 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- local --------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy container",
+        command: "effigy local container",
         description: "Operate manifest-defined local container environments",
-        deferred_builtin: Some("container"),
+        deferred_builtin: None,
         help_argument: Some("container"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy system",
+        command: "effigy local system",
         description: "Operate the manifest default system substrate through its default workspace container",
-        deferred_builtin: Some("system"),
+        deferred_builtin: None,
         help_argument: Some("system"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy workspace",
+        command: "effigy local workspace",
         description: "Ensure the selected system is up, then open the resolved workspace shell",
-        deferred_builtin: Some("workspace"),
+        deferred_builtin: None,
         help_argument: Some("workspace"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy gateway",
+        command: "effigy local gateway",
         description: "Operate the host-native local DNS and reverse-proxy gateway",
-        deferred_builtin: Some("gateway"),
+        deferred_builtin: None,
         help_argument: Some("gateway"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy service",
+        command: "effigy local service",
         description: "Inspect the layered service catalog, extract bundled fragments, and manage installed catalog packs",
-        deferred_builtin: Some("service"),
+        deferred_builtin: None,
         help_argument: Some("service"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
-        command: "effigy exec",
+        command: "effigy local exec",
         description: "Run one ad-hoc command inside the manifest's default system workspace container",
         deferred_builtin: None,
         help_argument: Some("exec"),
@@ -353,35 +424,35 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- repo ---------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy graph",
+        command: "effigy repo graph",
         description: "Build and query the local deterministic code graph for agent navigation",
-        deferred_builtin: Some("graph"),
+        deferred_builtin: None,
         help_argument: Some("graph"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy scan",
+        command: "effigy repo scan",
         description: "Run built-in repository scanners such as `god-files` and `attention-markers`",
         deferred_builtin: None,
         help_argument: Some("scan"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy docs",
+        command: "effigy repo docs",
         description: "Run reusable docs QA checks and bounded `docs context` documentation retrieval",
-        deferred_builtin: Some("docs"),
+        deferred_builtin: None,
         help_argument: Some("docs"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy contracts",
+        command: "effigy repo contracts",
         description: "Validate reusable JSON contract artifacts such as selection payloads",
-        deferred_builtin: Some("contracts"),
+        deferred_builtin: None,
         help_argument: Some("contracts"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy papercuts",
+        command: "effigy repo papercuts",
         description: "Discover project papercut queues for humans and agents",
         deferred_builtin: None,
         help_argument: Some("papercuts"),
@@ -389,64 +460,64 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- deliver ------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy artifact",
+        command: "effigy deliver artifact",
         description: "Inspect and stage standalone seed/apply/capture data artifacts",
-        deferred_builtin: Some("artifact"),
+        deferred_builtin: None,
         help_argument: Some("artifact"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy state",
+        command: "effigy deliver state",
         description: "Plan layered state-stack manifests and lineage without executing app hooks",
         deferred_builtin: None,
         help_argument: Some("state"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy deploy",
+        command: "effigy deliver deploy",
         description: "Inspect the provider-neutral production deployment model derived from the effective manifest",
-        deferred_builtin: Some("deploy"),
+        deferred_builtin: None,
         help_argument: Some("deploy"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy release",
+        command: "effigy deliver release",
         description: "Inspect release readiness from changelog, version files, and optional gates",
-        deferred_builtin: Some("release"),
+        deferred_builtin: None,
         help_argument: Some("release"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy bundle",
+        command: "effigy deliver bundle",
         description: "Inspect or refresh the active repo bundle source",
-        deferred_builtin: Some("bundle"),
+        deferred_builtin: None,
         help_argument: Some("bundle"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy bootstrap",
+        command: "effigy deliver bootstrap",
         description: "Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract",
-        deferred_builtin: Some("bootstrap"),
+        deferred_builtin: None,
         help_argument: Some("bootstrap"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy demo",
+        command: "effigy deliver demo",
         description: "List declared demos and inspect the latest known proof state without starting execution",
-        deferred_builtin: Some("demo"),
+        deferred_builtin: None,
         help_argument: Some("demo"),
     },
     // ---- extend -------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Extend,
-        command: "effigy skill",
+        command: "effigy extend skill",
         description: "Run tasks from one explicit external skill source against a separate consumer repository",
         deferred_builtin: None,
         help_argument: Some("skill"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Extend,
-        command: "effigy rhai surface",
+        command: "effigy extend rhai surface",
         description: "Inspect the registered Rhai host API available to scripts",
         deferred_builtin: None,
         help_argument: Some("rhai"),
@@ -454,49 +525,49 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- admin --------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy config",
+        command: "effigy admin config",
         description: "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
         deferred_builtin: None,
         help_argument: Some("config"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy deps",
+        command: "effigy admin deps",
         description: "Inspect dependency state, manage machine-local links, and author committed Bun pins",
-        deferred_builtin: Some("deps"),
+        deferred_builtin: None,
         help_argument: Some("deps"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy secrets",
+        command: "effigy admin secrets",
         description: "Inspect declarations and manage the local encrypted secrets vault",
-        deferred_builtin: Some("secrets"),
+        deferred_builtin: None,
         help_argument: Some("secrets"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy defer",
+        command: "effigy admin defer",
         description: "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
-        deferred_builtin: Some("defer"),
+        deferred_builtin: None,
         help_argument: Some("defer"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy uninstall",
+        command: "effigy admin uninstall",
         description: "Plan or remove Effigy-owned local machine state",
         deferred_builtin: None,
         help_argument: Some("uninstall"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy version",
+        command: "effigy admin version",
         description: "Print the current Effigy version (same as --version)",
         deferred_builtin: None,
         help_argument: Some("version"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy config completion",
+        command: "effigy admin config completion",
         description: "Generate shell completion scripts and selector candidates",
         deferred_builtin: None,
         help_argument: None,
@@ -573,6 +644,19 @@ pub fn help_topic_for_help_argument(name: &str) -> Option<HelpTopic> {
         .map(|(_, topic)| *topic)
 }
 
+/// The direct command word whose legacy route renders `topic`'s typed panel.
+///
+/// `General` is shared by several direct words (`help`, `version`) and has no
+/// single legacy owner; topics without a top-level direct word (`migrate`,
+/// `changelog`) return `None`.
+pub fn direct_word_for_topic(topic: HelpTopic) -> Option<&'static str> {
+    HELP_COMMAND_TOPICS
+        .iter()
+        .find(|(_, candidate)| *candidate == topic)
+        .filter(|(_, candidate)| *candidate != HelpTopic::General)
+        .map(|(name, _)| *name)
+}
+
 /// Names accepted by `effigy help <command>` whose detailed help is owned by
 /// the built-in itself instead of a typed [`HelpTopic`] panel.
 ///
@@ -614,7 +698,16 @@ pub fn deferred_builtin_for_help_topic(topic: HelpTopic) -> Option<&'static str>
                 .and_then(help_topic_for_help_argument)
                 .is_some_and(|candidate| candidate == topic)
         })
-        .and_then(|entry| entry.deferred_builtin)
+        .and_then(|entry| {
+            let argument = entry.help_argument?;
+            // A displaced child keeps its legacy detail help only while the
+            // repository does not own the direct word; the canonical grouped
+            // route stays available either way.
+            if group_for_child_word(argument).is_some() && topic != HelpTopic::General {
+                return Some(argument);
+            }
+            entry.deferred_builtin
+        })
 }
 
 pub fn general_help_entries() -> &'static [GeneralHelpEntry] {

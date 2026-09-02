@@ -187,7 +187,7 @@ cargo test -p effigy-catalog --test integration resolve_workspace_rust_bun_fragm
 
 The same fragment layout is what an independently versioned catalog pack
 carries. Add a `pack.toml` at the root of a directory of fragments, then
-install it with `effigy service pack install --path <DIR>` to test it against a
+install it with `effigy local service pack install --path <DIR>` to test it against a
 real resolver. Layer order, precedence, and recovery are documented in
 [`067-catalog-services-reference.md`](./067-catalog-services-reference.md).
 

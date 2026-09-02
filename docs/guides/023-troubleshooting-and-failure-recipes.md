@@ -102,8 +102,8 @@ Fix:
 Diagnosis:
 
 ```sh
-effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> --json
-effigy skill --help
+effigy extend skill tasks --path <SKILL_DIR|EFFIGY_TOML> --json
+effigy extend skill --help
 ```
 
 Fix:
@@ -126,7 +126,7 @@ selects the consumer where runtime effects belong.
 Run from inside the consumer repository or pass it explicitly:
 
 ```sh
-effigy skill run --path <SKILL_DIR> <SELECTOR> --repo /path/to/consumer --json
+effigy extend skill run --path <SKILL_DIR> <SELECTOR> --repo /path/to/consumer --json
 ```
 
 The JSON result should show distinct `source.root` and `target.root` values,
@@ -436,17 +436,17 @@ The `Root Resolution` section shows:
 - the active Docker context, when Docker is installed
 
 Fix:
-- pin a global preference with `effigy config set containers.backend docker` or
-  `effigy config set containers.backend containerd`
+- pin a global preference with `effigy admin config set containers.backend docker` or
+  `effigy admin config set containers.backend containerd`
 - for one-shot override, pass `--backend docker` or `--backend containerd` to
   `bootstrap`
-- clear a pinned preference with `effigy config unset containers.backend`
+- clear a pinned preference with `effigy admin config unset containers.backend`
 
 When the repo is already bootstrapped and you are trying to understand what it
 will use next, also check:
 
 ```sh
-effigy container status
+effigy local container status
 ```
 
 That shows both:
@@ -459,18 +459,18 @@ That shows both:
 Diagnosis:
 
 ```sh
-effigy container status
-effigy system status
+effigy local container status
+effigy local system status
 ```
 
 Fix:
 
 ```sh
 # Gentle repair: restart services without data loss
-effigy system repair
+effigy local system repair
 
 # Nuclear option: reset runtime state and rebuild from manifest
-effigy system reset-runtime
+effigy local system reset-runtime
 ```
 
 Use `system repair` when:
@@ -502,7 +502,7 @@ Fix:
 - rerun `effigy doctor --verbose`
 
 The finding is read-only. Host-routed workspace tasks and primary-service
-`effigy exec` calls use the declared workspace user and HOME. Explicit
+`effigy local exec` calls use the declared workspace user and HOME. Explicit
 non-primary `--service` execs keep that service's configured user; pipes,
 agents, and other non-console callers run without requesting a TTY.
 
@@ -511,18 +511,18 @@ agents, and other non-console callers run without requesting a TTY.
 Diagnosis:
 
 ```sh
-effigy container cache list --global
-effigy container volume list --dormant
+effigy local container cache list --global
+effigy local container volume list --dormant
 ```
 
 Fix:
 
 ```sh
 # drop only safe disposable build caches
-effigy container cache prune --project <project-name> --yes
+effigy local container cache prune --project <project-name> --yes
 
 # drop repo-scoped stale named volumes the current repo no longer declares
-effigy container volume prune --dormant --yes
+effigy local container volume prune --dormant --yes
 ```
 
 Use `cache` for disposable artifacts such as `target`, `node_modules`,
@@ -533,10 +533,10 @@ have gone stale as the repo evolved.
 
 ```sh
 # See what services are available
-effigy service list
+effigy local service list
 
 # Extract one service into your repo for modification
-effigy service extract postgres --dir ./services
+effigy local service extract postgres --dir ./services
 ```
 
 This writes the bundled service definition to `./services/postgres.toml` so you
@@ -546,10 +546,10 @@ can modify it without losing upstream updates.
 
 ```sh
 # Show resource usage for running containers
-effigy container stats
+effigy local container stats
 
 # Export the generated compose for manual inspection
-effigy container <name> eject
+effigy local container <name> eject
 ```
 
 Use `stats` when you need to debug memory/CPU issues.  

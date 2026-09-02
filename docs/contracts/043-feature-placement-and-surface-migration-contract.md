@@ -58,11 +58,19 @@ preview now makes the five non-work groups executable.
   shadowed. Retained direct routes preserve existing manifest deferral.
 - Displaced direct built-ins remain executable until `v1.0`. They warn only
   after built-in routing is selected; shadowing tasks and catalog selectors do
-  not warn.
+  not warn. Warning recording is bound to the original direct child and the
+  top-level execution depth: registry-built-in selection reached through
+  nested task execution (for example a shadowing manifest task whose run array
+  invokes `config` or `scan`) never populates the invocation's warning.
 - Human warnings use stderr without changing stdout or exit. JSON remains one
   `effigy.command.v1` document and adds a top-level `warnings` array only when
   nonempty. Each item has `code`, `message`, `replacement`, and `removal`; the
-  code is `legacy-direct-command` and removal is `v1.0`.
+  code is `legacy-direct-command` and removal is `v1.0`. The one established
+  exception is `graph watch`: its JSON form streams
+  `effigy.graph.watch.event.v1` events instead of a command envelope (guide
+  `017`), so the displaced direct spelling emits the single warning line on
+  stderr in text and JSON-stream modes alike; the grouped route stays silent.
+  Event stdout is never changed by the diagnostic.
 - General/group help and completion candidates use canonical grouped spellings.
   Legacy detailed help remains with the replacement and removal facts until
   the gate wherever existing deferral does not give the name to a manifest
@@ -378,6 +386,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
-Effigy release and direct-route removal authority remain separate.
+The additive preview (card `1109`, spec `116`) is complete and shipped under
+this contract. Direct-route removal remains blocked on the explicit `v1.0`
+gate with refreshed consumer evidence; Effigy release authority stays
+separate.

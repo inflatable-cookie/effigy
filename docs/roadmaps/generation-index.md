@@ -246,9 +246,9 @@ specs are archived, and draft spec `098` is archived as paused history.
 
 `g09` is active. The operator selected Theme 4 on 2026-09-02 after a current
 30-repository impact inventory. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
-opens the additive executable-namespace preview under strict spec `116`; card
-`1109` is Ready. Direct-route removal remains gated on `v1.0` and refreshed
-consumer evidence.
+completed the additive executable-namespace preview under strict spec `116`
+(archived); card `1109` is complete. Direct-route removal remains gated on
+`v1.0` and refreshed consumer evidence.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -309,6 +309,5 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card
-[`1109`](./g09/batch-cards/1109-add-executable-command-namespaces.md). Do not
-release Effigy or remove direct routes.
+`g09.001` and card `1109` are complete. Do not release Effigy or remove
+direct routes until the `v1.0` consumer-evidence checkpoint.

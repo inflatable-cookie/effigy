@@ -4,9 +4,13 @@ Roadmap: [`../001-command-surface-compaction-preview.md`](../001-command-surface
 Spec: [`../../../specs/116-command-surface-compaction-preview-strict-lane.md`](../../../specs/116-command-surface-compaction-preview-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: CLI command routing, discovery, completion, migration diagnostics, and current guidance
 Created: 2026-09-02
+Closed: 2026-09-02 — additive preview PR
+[#85](https://github.com/inflatable-cookie/effigy/pull/85) submitted for
+exact-head review; evidence log
+[`02-205536-command-surface-preview-1109.md`](../../../logs/2026-09/02-205536-command-surface-preview-1109.md)
 
 ## Purpose
 

@@ -534,7 +534,7 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
             ),
             (
                 "metadata",
-                "cargo build --bin effigy && ./target/debug/effigy release validate"
+                "cargo build --bin effigy && ./target/debug/effigy deliver release validate"
             ),
         ]
     );

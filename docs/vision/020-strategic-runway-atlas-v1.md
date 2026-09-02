@@ -180,6 +180,6 @@ specs were archived, and `g09.001` opened with additive migration only.
 
 ## Next Task
 
-Execute ready card
-[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
-Direct-route removal and release execution remain separately gated.
+Execute the `v1.0` consumer-evidence checkpoint when it opens: direct-route
+removal and release execution remain separately gated, and the additive
+command-surface preview (card `1109`, roadmap `g09.001`) is complete.

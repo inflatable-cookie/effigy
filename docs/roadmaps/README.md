@@ -79,7 +79,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   trust, and docs compaction. Milestones `g08.016` and `g08.017` are also
   complete. The completed
   [`g08.018`](./g08/018-local-dependency-management-suite.md) suite added the
-  shared `effigy deps` foundation, Cargo and Bun local links, doctor hygiene,
+  shared `effigy admin deps` foundation, Cargo and Bun local links, doctor hygiene,
   and portfolio proof through `g08.023`. The bounded
   [`g08.024`](./g08/024-initial-current-version-release-tag.md) follow-up lets
   an explicitly configured new repository tag its already-declared first
@@ -157,13 +157,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   automation under archived strict spec `115`; cards `1103` through `1108` are
   complete.
 - `g09` is active. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
-  opens the operator-approved additive command-surface preview under strict
-  spec `116`; card `1109` is Ready.
+  completed the operator-approved additive command-surface preview (card
+  `1109`); strict spec `116` is archived. Direct-route removal stays behind
+  the `v1.0` consumer-evidence gate.
 
 ## Active Strict Lane
 
-Strict spec [`116`](../specs/116-command-surface-compaction-preview-strict-lane.md)
-is active. Card `1109` is Ready.
+No strict lane is active; the next checkpoint is the future `v1.0`
+consumer-evidence gate for direct-route removal.
 
 ## Research Program
 
@@ -191,7 +192,7 @@ Keep the session-loaded surfaces lean; let closed history rest in archives.
   carries only the current generation's month window. When a generation closes,
   move its month directories under `docs/logs/archive/<month>/` and trim the
   index. Archived logs stay in the repo (and git history) as durable evidence;
-  the default `effigy docs check index` excludes `archive/**`. Never delete a
+  the default `effigy repo docs check index` excludes `archive/**`. Never delete a
   log to compact — move it.
 - **Roadmaps.** Closed-generation milestone files and their nested
   `batch-cards/` stay in place: they are the planning record, are not loaded
@@ -218,10 +219,9 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card
-[`1109`](./g09/batch-cards/1109-add-executable-command-namespaces.md). Keep
+Card `1109` is complete and `g09.001` is closed; spec `116` is archived. Keep
 Effigy release execution, direct-route removal, and S3 extraction behind their
-named gates.
+named gates until the `v1.0` consumer-evidence checkpoint.
 
 ## Historical language boundary
 

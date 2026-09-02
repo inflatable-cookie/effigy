@@ -1,7 +1,10 @@
 # g09.001 Command-Surface Compaction Preview
 
-Status: Active
+Status: Complete
 Created: 2026-09-02
+Closed: 2026-09-02 — card `1109` shipped the additive preview; strict spec
+`116` archived; direct-route removal remains gated on the `v1.0`
+consumer-evidence checkpoint
 Spec: [`116`](../../specs/116-command-surface-compaction-preview-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
@@ -47,4 +50,6 @@ authority. Direct-route removal is not part of this milestone.
 
 ## Next Task
 
-Execute ready card [`1109`](./batch-cards/1109-add-executable-command-namespaces.md).
+The additive preview is complete. The next checkpoint is the future `v1.0`
+consumer-evidence gate (refreshed consumer inventory plus explicit release
+authority); no removal card exists yet.

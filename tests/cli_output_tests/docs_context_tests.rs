@@ -1,4 +1,4 @@
-//! End-to-end coverage for the `effigy docs context` public surface.
+//! End-to-end coverage for the `effigy repo docs context` public surface.
 //!
 //! The fixture repository uses a deliberately generic documentation vocabulary
 //! so no repository-specific kind, status, or relation can leak into the
@@ -562,7 +562,7 @@ fn docs_help_documents_the_bounded_context_surface() {
     assert!(output.status.success(), "{output:?}");
     let rendered = stdout(&output);
     assert!(rendered.contains(
-        "effigy docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]"
+        "effigy repo docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]"
     ));
     assert!(rendered.contains("default 8, maximum 32"));
     assert!(rendered.contains("default 24000, maximum 100000"));

@@ -136,8 +136,8 @@ Effigy can pin the default container backend and Colima profile for
 machine-local usage. The normal operator path is the CLI:
 
 ```sh
-effigy config set containers.backend containerd
-effigy config set containers.profile effigy
+effigy admin config set containers.backend containerd
+effigy admin config set containers.profile effigy
 ```
 
 The same values live in `~/.effigy/config.toml` underneath that CLI surface.
@@ -169,17 +169,17 @@ profile = "effigy"
 One-shot override example:
 
 ```sh
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh
+effigy deliver bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh
 ```
 
 Inspect or clear them with:
 
 ```sh
-effigy config path
-effigy config get containers.backend
-effigy config get containers.profile
-effigy config unset containers.backend
-effigy config unset containers.profile
+effigy admin config path
+effigy admin config get containers.backend
+effigy admin config get containers.profile
+effigy admin config unset containers.backend
+effigy admin config unset containers.profile
 ```
 
 ### Rules
@@ -379,7 +379,7 @@ safely. If it depends on private key files or `IdentityFile` rules, use
 If you suspect Colima itself isn't forwarding the agent (the bridge log
 under `/var/log/effigy-ssh-bridge.log` reports `host_sock missing`), stop
 Colima entirely and bring it back up so the `--ssh-agent` flag actually
-applies — `colima stop --profile <profile>` followed by `effigy container
+applies — `colima stop --profile <profile>` followed by `effigy local container
 reset`. A `colima start` against an already-running profile is a no-op and
 won't pick up new flags.
 

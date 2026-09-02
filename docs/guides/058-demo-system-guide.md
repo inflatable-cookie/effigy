@@ -19,11 +19,11 @@ Effigy demos are repo-owned proof entries declared in the manifest at
 
 Each demo gives you:
 
-- stable proof inventory through `effigy demo list`
-- one interactive browser through `effigy demo browser`
-- latest or active detail through `effigy demo inspect <id>`
-- retained attempt review through `effigy demo history <id>`
-- normalized execution through `effigy demo run <id>`
+- stable proof inventory through `effigy deliver demo list`
+- one interactive browser through `effigy deliver demo browser`
+- latest or active detail through `effigy deliver demo inspect <id>`
+- retained attempt review through `effigy deliver demo history <id>`
+- normalized execution through `effigy deliver demo run <id>`
 - lifecycle control through `demo stop` / `demo rerun` when the runtime owns
   that demo directly
 
@@ -85,33 +85,33 @@ run = [
 Start with:
 
 ```sh
-effigy demo list
-effigy demo inspect login-smoke
-effigy demo run login-smoke
+effigy deliver demo list
+effigy deliver demo inspect login-smoke
+effigy deliver demo run login-smoke
 ```
 
 Use filters when the inventory grows:
 
 ```sh
-effigy demo list --owner platform --status ready
-effigy demo list --tag smoke --mode interactive
-effigy demo list --group-by owner --stale-only
+effigy deliver demo list --owner platform --status ready
+effigy deliver demo list --tag smoke --mode interactive
+effigy deliver demo list --group-by owner --stale-only
 ```
 
 Use history when the question is “what happened recently?” instead of “what is
 the latest state?”:
 
 ```sh
-effigy demo history login-smoke --limit 5
-effigy demo history login-smoke --attempt login-smoke-1775944053944
+effigy deliver demo history login-smoke --limit 5
+effigy deliver demo history login-smoke --attempt login-smoke-1775944053944
 ```
 
 Use lifecycle control when the runner owns the demo process:
 
 ```sh
-effigy demo run lifecycle-window
-effigy demo stop lifecycle-window
-effigy demo rerun lifecycle-window
+effigy deliver demo run lifecycle-window
+effigy deliver demo stop lifecycle-window
+effigy deliver demo rerun lifecycle-window
 ```
 
 ## 4) Use The Browser
@@ -119,7 +119,7 @@ effigy demo rerun lifecycle-window
 Open the browser with:
 
 ```sh
-effigy demo browser
+effigy deliver demo browser
 ```
 
 Current browser model:
@@ -162,7 +162,7 @@ terminal.
 
 Human text-mode runs stay direct too:
 
-- `effigy demo run <id>` attaches directly for interactive or hybrid demos when
+- `effigy deliver demo run <id>` attaches directly for interactive or hybrid demos when
   the runtime supports it
 
 ## 6) Organize Demo Manifests Cleanly

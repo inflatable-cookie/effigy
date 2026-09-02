@@ -38,8 +38,8 @@ catalog = "redis"
 Inspect the active repo bundle source directly:
 
 ```sh
-effigy bundle inspect
-effigy bundle sync
+effigy deliver bundle inspect
+effigy deliver bundle sync
 ```
 
 Catalog-driven services land in generated compose under
@@ -58,7 +58,7 @@ Fragments resolve in one fixed order, highest priority first:
 
 The compiled baseline ships with every Effigy install and is permanent. A
 machine with no pack store, no `oras`, and no network resolves exactly the
-fragments documented here. `effigy service list` names the layer each fragment
+fragments documented here. `effigy local service list` names the layer each fragment
 came from.
 
 ## Catalog Packs
@@ -69,12 +69,12 @@ overrides. Packs are optional: nothing needs one, and installing one never
 changes override precedence.
 
 ```sh
-effigy service pack status
-effigy service pack install oci://<REPO>@sha256:<DIGEST>
-effigy service pack install --path ./catalog-pack
-effigy service pack update
-effigy service pack rollback
-effigy service pack reset
+effigy local service pack status
+effigy local service pack install oci://<REPO>@sha256:<DIGEST>
+effigy local service pack install --path ./catalog-pack
+effigy local service pack update
+effigy local service pack rollback
+effigy local service pack reset
 ```
 
 Every shape takes standard leading `--repo` and `--json`.
@@ -104,7 +104,7 @@ unchanged. A pack cannot widen the fragment schema.
 
 - Installation is always explicit. Ordinary catalog use never fetches, checks
   for updates, or touches the network.
-- `effigy service pack update` is the official no-argument path. It inspects
+- `effigy local service pack update` is the official no-argument path. It inspects
   the compiled `stable` channel on
   `ghcr.io/inflatable-cookie/effigy-catalog-pack`, then sends only the resolved
   digest through the same acquire-validate-store-activate transaction as
@@ -136,7 +136,7 @@ unchanged. A pack cannot widen the fragment schema.
 Every successfully installed pack is retained. `install`, `rollback`, and
 `reset` never delete installed content — the prototype has no deletion
 authority, and garbage collection or a bounded retention policy is a later
-explicit decision. `effigy service pack status` lists everything the store
+explicit decision. `effigy local service pack status` lists everything the store
 holds.
 
 Reinstalling content the store already has re-verifies the stored bytes against
@@ -181,7 +181,7 @@ direct repair command.
 
 ### Official update
 
-`effigy service pack update` uses the compiled official repository and `stable`
+`effigy local service pack update` uses the compiled official repository and `stable`
 channel. Installed pack content cannot redirect that coordinate. Resolution
 failure, pull failure, compatibility failure, validation failure, or activation
 failure leaves active, previous, and channel identity unchanged.
@@ -234,7 +234,7 @@ Long-running Rust + Bun workspace container. Used by `[bundle].base =
 - Volumes: `cargo-registry` at `/usr/local/cargo/registry` and `cargo-git` at
   `/usr/local/cargo/git`, both named and persistent.
 - Healthcheck: `command -v cargo && command -v bun`.
-- Shell target: yes (`/bin/bash`); usable for `effigy workspace` and
+- Shell target: yes (`/bin/bash`); usable for `effigy local workspace` and
   `role = "shell"` tabs.
 
 ### `postgres`
@@ -272,7 +272,7 @@ editor with history. This is the default database UI in the shipped
 - Auth: no web-UI login by default. That is only acceptable because
   generated compose binds published ports to `127.0.0.1`; set `login` /
   `password` (DbGate's `LOGIN` / `PASSWORD` env contract) when publishing
-  beyond loopback, and source them from the effigy secrets vault.
+  beyond loopback, and source them from the effigy admin secrets vault.
 - Exposed port: `3000`.
 - Volume: persistent `data` volume at `/root/.dbgate` for saved queries
   and settings.
@@ -556,6 +556,6 @@ After this guide, you should be able to:
 When adding a service to a repo's substrate, start with the default catalog
 parameters in this reference, then narrow only the parameters that matter.
 If the repo needs a service shape not listed here, either extract the
-closest fragment with `effigy service extract <name>` or declare the service
+closest fragment with `effigy local service extract <name>` or declare the service
 directly in a user-owned `compose_file` as documented in
 [`063-container-system-guide.md`](./063-container-system-guide.md).

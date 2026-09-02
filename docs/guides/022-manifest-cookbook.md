@@ -37,8 +37,8 @@ Useful companion commands while editing:
 
 ```sh
 effigy init
-effigy config --schema --minimal
-effigy config --inspect
+effigy admin config --schema --minimal
+effigy admin config --inspect
 effigy tasks
 effigy test --plan
 ```
@@ -185,8 +185,8 @@ Rules:
 Inspection:
 
 ```sh
-effigy config --inspect
-effigy config --inspect --path tasks.dev
+effigy admin config --inspect
+effigy admin config --inspect --path tasks.dev
 ```
 
 Use this to confirm include order, overridden paths, effective sources, and the
@@ -224,24 +224,24 @@ Registry rules:
 - declare exactly one runnable entrypoint with `task = "..."` or `run = "..."`
 - demo `run` also accepts the same run-step array shape as task `run`, so small
   proof chains can live directly in `[demos.*]` without an extra `demo:*` task
-- `receipt` and `artifacts` are optional, but they let `effigy demo inspect`
+- `receipt` and `artifacts` are optional, but they let `effigy deliver demo inspect`
   show the latest known proof state instead of only static metadata
-- if `receipt` is omitted, `effigy demo run` writes a normalized receipt to
+- if `receipt` is omitted, `effigy deliver demo run` writes a normalized receipt to
   `.effigy/demo/receipts/<demo-id>.json`
 
 Discovery, inspection, and execution:
 
 ```sh
-effigy demo list
-effigy demo browser
-effigy demo list --owner platform --status ready
-effigy demo list --group-by owner --stale-only
-effigy demo inspect login-smoke
-effigy demo history login-smoke --limit 5
-effigy demo history login-smoke --attempt login-smoke-1775944053944
-effigy demo run login-smoke
-effigy demo stop login-smoke
-effigy demo rerun login-smoke
+effigy deliver demo list
+effigy deliver demo browser
+effigy deliver demo list --owner platform --status ready
+effigy deliver demo list --group-by owner --stale-only
+effigy deliver demo inspect login-smoke
+effigy deliver demo history login-smoke --limit 5
+effigy deliver demo history login-smoke --attempt login-smoke-1775944053944
+effigy deliver demo run login-smoke
+effigy deliver demo stop login-smoke
+effigy deliver demo rerun login-smoke
 effigy --json demo inspect login-smoke
 ```
 
@@ -251,7 +251,7 @@ entrypoint now.
 The Effigy repo now self-hosts this surface with two concrete demos:
 - `browser-proof-report` is task-backed and generates a human-checkable HTML
   artifact plus browser query snapshots
-- `lifecycle-window` is run-backed and stays active until `effigy demo stop
+- `lifecycle-window` is run-backed and stays active until `effigy deliver demo stop
   lifecycle-window` is used
 
 Lifecycle notes:
@@ -652,7 +652,7 @@ run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
 ```
 
 Use this when the repo should be able to describe its own first-run bring-up
-path after `effigy bootstrap <git-url>`.
+path after `effigy deliver bootstrap <git-url>`.
 
 Behavior:
 - root bootstrap `run` executes in the cloned or updated root repo
@@ -725,9 +725,9 @@ out = "reports/god-files.md"
 Use this when you want a repo-level oversized-file check that can also feed `effigy doctor`.
 
 Typical commands:
-- `effigy scan god-files`
-- `effigy scan god-files --show-warnings`
-- `effigy scan god-files --fail-on-findings`
+- `effigy repo scan god-files`
+- `effigy repo scan god-files --show-warnings`
+- `effigy repo scan god-files --fail-on-findings`
 - `effigy --json scan god-files`
 
 Behavior:
@@ -758,9 +758,9 @@ out = "reports/generated-assets.md"
 Use this when you want a repo-level check for bulky vendored/generated artifacts that slipped into versioned paths.
 
 Typical commands:
-- `effigy scan generated-assets`
-- `effigy scan generated-assets --show-warnings`
-- `effigy scan generated-assets --fail-on-findings`
+- `effigy repo scan generated-assets`
+- `effigy repo scan generated-assets --show-warnings`
+- `effigy repo scan generated-assets --fail-on-findings`
 - `effigy --json scan generated-assets`
 
 Behavior:
@@ -791,9 +791,9 @@ out = "reports/duplicate-blocks.md"
 Use this when you want a repo-level scan for large repeated normalized code spans across source files.
 
 Typical commands:
-- `effigy scan duplicate-blocks`
-- `effigy scan duplicate-blocks --show-warnings`
-- `effigy scan duplicate-blocks --fail-on-findings`
+- `effigy repo scan duplicate-blocks`
+- `effigy repo scan duplicate-blocks --show-warnings`
+- `effigy repo scan duplicate-blocks --fail-on-findings`
 - `effigy --json scan duplicate-blocks`
 
 Behavior:
@@ -825,9 +825,9 @@ out = "reports/generated-in-src.md"
 Use this when you want a repo-level scan for generated files that have landed inside maintained source trees.
 
 Typical commands:
-- `effigy scan generated-in-src`
-- `effigy scan generated-in-src --show-warnings`
-- `effigy scan generated-in-src --source-root src/** --source-root packages/*/src/**`
+- `effigy repo scan generated-in-src`
+- `effigy repo scan generated-in-src --show-warnings`
+- `effigy repo scan generated-in-src --source-root src/** --source-root packages/*/src/**`
 - `effigy --json scan generated-in-src`
 
 Behavior:
@@ -859,9 +859,9 @@ out = "reports/attention-markers.md"
 Use this when you want a repo-level scan for deferred-work, deprecation, and placeholder markers that can also feed `effigy doctor`.
 
 Typical commands:
-- `effigy scan attention-markers`
-- `effigy scan attention-markers --show-warnings`
-- `effigy scan attention-markers --fail-on-findings`
+- `effigy repo scan attention-markers`
+- `effigy repo scan attention-markers --show-warnings`
+- `effigy repo scan attention-markers --fail-on-findings`
 - `effigy --json scan attention-markers`
 
 Behavior:
@@ -892,9 +892,9 @@ out = "reports/comment-ratio.md"
 Use this when you want a repo-level scan for files where comment-only lines materially outweigh executable lines.
 
 Typical commands:
-- `effigy scan comment-ratio`
-- `effigy scan comment-ratio --show-warnings`
-- `effigy scan comment-ratio --fail-on-findings`
+- `effigy repo scan comment-ratio`
+- `effigy repo scan comment-ratio --show-warnings`
+- `effigy repo scan comment-ratio --fail-on-findings`
 - `effigy --json scan comment-ratio`
 
 Behavior:
@@ -926,9 +926,9 @@ out = "reports/stale-suppressions.md"
 Use this when you want a repo-level scan for inline suppressions that hide warnings, lint failures, or type errors.
 
 Typical commands:
-- `effigy scan stale-suppressions`
-- `effigy scan stale-suppressions --show-warnings`
-- `effigy scan stale-suppressions --critical-marker "eslint-disable"`
+- `effigy repo scan stale-suppressions`
+- `effigy repo scan stale-suppressions --show-warnings`
+- `effigy repo scan stale-suppressions --critical-marker "eslint-disable"`
 - `effigy --json scan stale-suppressions`
 
 Behavior:
@@ -1009,7 +1009,7 @@ timeout_ms = 30000
 ```
 
 Use this when one repo should declare a reproducible developer substrate (VM +
-compose + gateway + workspace shell) that `effigy system up`, `effigy workspace`,
+compose + gateway + workspace shell) that `effigy local system up`, `effigy local workspace`,
 and managed `mode = "tui"` tasks can all bind to.
 
 Shape rules (current v0.3+ form):
@@ -1020,17 +1020,17 @@ Shape rules (current v0.3+ form):
   fragment (e.g. `postgres`, `redis`, `mariadb`, `workspace-rust-bun`).
 - `[systems.<name>.services.<svc>.health]` declares container health gates
   (`tcp = <port>`, `http = "<url>"`, `exec = ["..."]`, `timeout_ms = <N>`,
-  `interval_ms = <N>`) used by `health_wait = true` and `effigy system status`.
+  `interval_ms = <N>`) used by `health_wait = true` and `effigy local system status`.
 - `[systems.<name>.workspaces.<ws>]` picks which service hosts the interactive
   workspace plus workspace-local overrides; defaults come from the system body.
 - generated compose now lives under `.effigy/runtime/compose/`; `infra/dev/` is
-  only used for user-owned ejected compose files (`effigy container <name> eject`).
+  only used for user-owned ejected compose files (`effigy local container <name> eject`).
 
 Typical commands:
-- `effigy system up` / `effigy system down` / `effigy system status`
-- `effigy system logs --follow`
-- `effigy system repair` or `effigy system reset-runtime` for recovery
-- `effigy workspace` to open the resolved workspace shell after system is up
+- `effigy local system up` / `effigy local system down` / `effigy local system status`
+- `effigy local system logs --follow`
+- `effigy local system repair` or `effigy local system reset-runtime` for recovery
+- `effigy local workspace` to open the resolved workspace shell after system is up
 
 ### Multi-Catalog Monorepo Baseline
 
@@ -1112,7 +1112,7 @@ targets = ["tasks", "containers"]
 description = "Application database connection URL"
 ```
 
-Store values with `effigy secrets set database_url`. Values inject into task
+Store values with `effigy admin secrets set database_url`. Values inject into task
 processes, containers, Rhai scripts, deploy hooks, and state hooks without
 writing plaintext to repo files. See
 [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
@@ -1135,8 +1135,8 @@ apply_mode = "task"
 environment_policy = "all"
 ```
 
-Plan with `effigy state plan uat`, apply with `effigy state apply uat --yes`,
-capture with `effigy state capture uat new-content --yes`. See
+Plan with `effigy deliver state plan uat`, apply with `effigy deliver state apply uat --yes`,
+capture with `effigy deliver state capture uat new-content --yes`. See
 [`073-state-stack-guide.md`](./073-state-stack-guide.md).
 
 ## Deploy Config
@@ -1155,7 +1155,7 @@ artifact_policy = "digest-preferred"
 adapter = "railway"
 ```
 
-Plan with `effigy deploy plan uat`, apply with `effigy deploy apply uat --yes`.
+Plan with `effigy deliver deploy plan uat`, apply with `effigy deliver deploy apply uat --yes`.
 See [`074-deployment-guide.md`](./074-deployment-guide.md).
 
 ## Notes
