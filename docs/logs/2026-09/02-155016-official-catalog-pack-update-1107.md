@@ -78,7 +78,7 @@ Spec `115` whole-lane rows 6 and 7, plus card `1107`:
 | `stable` resolves to a digest through the existing artifact boundary | `official_update_inspects_the_stable_tag_and_pulls_only_the_digest`; live `oras manifest fetch --descriptor` of `:stable` equals `sha256:91de584e…` |
 | text/JSON/help report channel and resolved digest | runner JSON assertions; `parse_service_pack_update_accepts_json_and_rejects_coordinate_args`; help render contains `effigy service pack update`; live `--json service pack update` envelope |
 | verified already-active digest is a deterministic no-op | `verified_active_digest_is_a_noop_only_when_the_active_oci_content_still_proves`; `verified_already_active_digest_is_a_deterministic_noop`; `verified_noop_snapshot_is_taken_under_the_store_lock`; live isolated no-op (`state.json` sha256 unchanged) |
-| channel identity is an exact OCI digest | `parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`; `official_update_plan_rejects_malformed_digest_claims`; `malformed_channel_digest_claims_do_not_enter_the_install_transaction` |
+| channel identity is an exact OCI digest | `parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`; `official_update_plan_rejects_malformed_digest_claims`; `malformed_channel_digest_claims_do_not_enter_the_install_transaction` (including leading/trailing whitespace); `parse_oci_trims_surrounding_whitespace_on_the_whole_reference` |
 | pulled descriptor digest is bound to the requested pin | `oci_install_rejects_a_mismatched_adapter_digest_before_activation`; `oci_install_rejects_an_absent_or_malformed_adapter_digest_before_activation`; `mismatched_pull_digest_does_not_activate_or_become_a_future_noop`; `absent_or_malformed_pull_digest_does_not_activate` |
 | corrupt same-digest is repaired, not a no-op | `corrupt_already_active_digest_is_repaired_rather_than_treated_as_a_noop`; `a_local_active_install_is_never_an_official_digest_noop` |
 | every resolution/pull/compatibility/validation/activation failure preserves active, previous, and channel metadata | `channel_resolution_failure_preserves_active_previous_and_channel_identity`; `tag_resolution_without_a_digest_does_not_enter_the_install_transaction`; `pull_failure_after_digest_resolution_leaves_store_state_untouched`; `incompatible_official_update_candidate_leaves_the_active_selection_alone`; unpublished plan still refused by `unpublished_official_channel_still_refuses_a_plan` |
@@ -198,29 +198,42 @@ Named proofs: `parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`,
 
 Shared spec/roadmap/contract/front-door next-task prose remains untouched.
 
+## Exact-Head Re-review Repair (reviewed head `02533430b1413ba31c642f6c5c0487315c3906f0`)
+
+Re-review found one remaining `execution-miss`: `parse_oci_digest` called
+`trim()`, so ` sha256:<64 lowercase hex>` and `sha256:<64 lowercase hex>\n`
+were accepted and could enter plan/pull. The validator now matches the
+supplied bytes with no canonicalization. Operator-facing `parse_oci` still
+trims the whole reference, then hands the extracted digest to the strict
+checker. Channel inspect values with leading or trailing whitespace fail
+resolution with zero pull/store calls and preserved state. Pull-digest
+binding and the locked no-op snapshot are unchanged.
+
+Named proofs: whitespace cases on
+`parse_oci_digest_accepts_only_exact_sha256_lowercase_hex`,
+`official_update_plan_rejects_malformed_digest_claims`, and
+`malformed_channel_digest_claims_do_not_enter_the_install_transaction`;
+`parse_oci_trims_surrounding_whitespace_on_the_whole_reference`. Everyday Rust
+closeout (`RUST-READ-001`, `RUST-ERR-001`) snapshot `48e5d56d…`; check/clippy/test
+records are `warning` only for the pre-existing `proc-macro-error2` future-incompat.
+
+Shared spec/roadmap/contract/front-door next-task prose remains untouched.
+
 ## Final Validation Round
 
-Repair-head round (after the three execution-miss fixes):
+Previous repair head (`02533430b1413ba31c642f6c5c0487315c3906f0`): `effigy qa`
+3722 passed, 1 skipped; `qa:docs` and `qa:json` passed; `effigy doctor --json`
+`ok: true` with seven pre-existing `scan.god-files` warnings.
+
+Whitespace-strict digest repair (this head):
 
 - `cargo fmt --all -- --check`: clean.
 - `git diff --check`: clean.
-- `cargo clippy --all-targets -- -D warnings`: clean (same pre-existing Cargo
-  future-incompat note as above; clippy itself denied warnings).
-- Focused catalog `pack::` suite: 92 passed.
+- `cargo clippy -p effigy-catalog -p effigy --all-targets -- -D warnings`:
+  clean (same pre-existing Cargo future-incompat note; clippy denied warnings).
+- Focused catalog `pack::` suite: 93 passed.
 - Focused runner pack suite: 29 passed.
-- `catalog_pack_cli_tests`: 3 passed.
-- `effigy-containers` `catalog_pack_fallback`: 3 passed.
-- `effigy-catalog` `support_policy`: 17 passed, including
-  `this_build_does_not_claim_released_public_update`.
-- `parse_service_pack_update_accepts_json_and_rejects_coordinate_args`: passed.
-- `effigy qa`: passed. `effigy test` 3722 passed, 1 skipped; `qa:docs` (links,
-  json-examples, index, forbidden, vision headings/contains/workflow-paths,
-  next-action) passed; `qa:json` passed. The known
-  `cli_container_attached_session_handles_sigint_during_startup` flake did not
-  fire in this round.
-- `effigy doctor --json`: `ok: true`, zero error findings. Seven pre-existing
-  warning-level `scan.god-files` findings remain. No `scan.generated-in-src`
-  error.
+- `changelog_tests`: 10 passed.
 
 ## Next Task
 

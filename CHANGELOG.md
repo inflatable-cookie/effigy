@@ -9,7 +9,8 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - `effigy service pack update` resolves the compiled official `stable` channel
   on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an exact
-  `sha256:`-plus-64-lowercase-hex digest, then reuses the existing
+  `sha256:`-plus-64-lowercase-hex digest with no surrounding whitespace, then
+  reuses the existing
   acquire-validate-store-activate transaction. A pulled descriptor digest that
   is absent, malformed, or different from the requested pin is refused before
   activation. Text and JSON report the channel and digest. A verified

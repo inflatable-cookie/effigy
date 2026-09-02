@@ -44,10 +44,11 @@ pub enum PackCandidateSource {
 
 /// Exact OCI digest: `sha256:` plus 64 lowercase hexadecimal characters.
 ///
-/// Channel resolution and OCI install pins use this shape. A substring that
-/// merely contains `sha256:` is not an immutable digest.
+/// The supplied bytes are matched as-is. Surrounding whitespace is not
+/// canonicalized here; operator-facing `oci://` references trim the whole
+/// reference in [`PackCandidateSource::parse_oci`] before the extracted digest
+/// is checked.
 pub fn parse_oci_digest(value: &str) -> Result<&str, PackError> {
-    let value = value.trim();
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(PackError::OciDigestInvalid {
             digest: value.to_owned(),
@@ -68,22 +69,22 @@ pub fn parse_oci_digest(value: &str) -> Result<&str, PackError> {
 
 impl PackCandidateSource {
     /// Parse an operator-supplied `oci://` reference, requiring a digest.
+    ///
+    /// Surrounding whitespace on the whole reference is stripped here, then
+    /// the trailing digest is checked with [`parse_oci_digest`].
     pub fn parse_oci(value: &str) -> Result<Self, PackError> {
-        let reference = value
-            .trim()
-            .strip_prefix("oci://")
-            .unwrap_or(value.trim())
-            .trim();
+        let value = value.trim();
+        let reference = value.strip_prefix("oci://").unwrap_or(value).trim();
         if !reference.contains("@sha256:") {
             return Err(PackError::OciSourceNotPinned {
-                reference: value.trim().to_owned(),
+                reference: value.to_owned(),
             });
         }
         let digest = reference
             .rsplit_once('@')
             .map(|(_, digest)| digest)
             .ok_or_else(|| PackError::OciSourceNotPinned {
-                reference: value.trim().to_owned(),
+                reference: value.to_owned(),
             })?;
         parse_oci_digest(digest)?;
         Ok(Self::Oci {

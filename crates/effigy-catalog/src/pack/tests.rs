@@ -729,6 +729,8 @@ fn official_update_plan_rejects_malformed_digest_claims() {
         "sha256:short",
         &format!("sha256:{}", "A".repeat(64)),
         &format!("prefix@sha256:{valid}"),
+        &format!(" sha256:{valid}"),
+        &format!("sha256:{valid}\n"),
     ];
     for digest in cases {
         let error = plan_official_update(&channel, digest).expect_err(digest);
@@ -750,13 +752,21 @@ fn parse_oci_digest_accepts_only_exact_sha256_lowercase_hex() {
 
     let uppercase = format!("sha256:{}", "A".repeat(64));
     let prefixed = format!("prefix@{valid}");
-    for digest in ["sha256:short", uppercase.as_str(), prefixed.as_str()] {
+    let leading = format!(" {valid}");
+    let trailing = format!("{valid}\n");
+    for digest in [
+        "sha256:short",
+        uppercase.as_str(),
+        prefixed.as_str(),
+        leading.as_str(),
+        trailing.as_str(),
+    ] {
         assert!(
             matches!(
                 parse_oci_digest(digest),
                 Err(PackError::OciDigestInvalid { .. })
             ),
-            "{digest}"
+            "{digest:?}"
         );
     }
 }
@@ -768,6 +778,19 @@ fn parse_oci_rejects_a_trailing_digest_that_is_not_exactly_sha256_hex() {
     assert!(
         matches!(error, PackError::OciDigestInvalid { .. }),
         "{error}"
+    );
+}
+
+#[test]
+fn parse_oci_trims_surrounding_whitespace_on_the_whole_reference() {
+    let digest = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    let source = PackCandidateSource::parse_oci(&format!("  oci://packs.invalid/p@{digest}  \n"))
+        .expect("trim whole reference");
+    assert_eq!(
+        source,
+        PackCandidateSource::Oci {
+            reference: format!("packs.invalid/p@{digest}"),
+        }
     );
 }
 

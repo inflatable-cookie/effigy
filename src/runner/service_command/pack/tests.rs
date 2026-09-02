@@ -662,6 +662,8 @@ fn malformed_channel_digest_claims_do_not_enter_the_install_transaction() {
         Some("sha256:short".to_owned()),
         Some(format!("sha256:{}", "A".repeat(64))),
         Some(format!("prefix@sha256:{hex}")),
+        Some(format!(" sha256:{hex}")),
+        Some(format!("sha256:{hex}\n")),
     ];
 
     for inspect_digest in claims {
