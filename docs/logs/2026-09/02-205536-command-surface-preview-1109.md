@@ -8,7 +8,8 @@ Card: `1109`
 Branch: `worker/g09-001-command-surface-preview-1109`
 PR: [inflatable-cookie/effigy#85](https://github.com/inflatable-cookie/effigy/pull/85)
 Review head: `worker/g09-001-command-surface-preview-1109` tip at submission
-(recorded with the PR URL)
+(recorded with the PR URL); repair commit `d37b6f816` below, branch tip
+returned for re-review is the pushed head of this closeout
 
 ## Outcome
 
@@ -144,7 +145,8 @@ rewritten.
 
 Review of head `f8fa874cb91267ee12db1742026893cf7966625c` returned three
 findings; all repaired on the same branch (classes `execution-miss`,
-`integration-drift`, `oracle-gap`). New head recorded with the PR URL.
+`integration-drift`, `oracle-gap`). Repair head:
+`d37b6f816` (returned for re-review).
 
 ### 1. Nested registry fallback warning leak (execution-miss)
 
