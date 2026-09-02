@@ -7,7 +7,9 @@ Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration
 Status: Complete
 Owner: CLI command routing, discovery, completion, migration diagnostics, and current guidance
 Created: 2026-09-02
-Closed: 2026-09-02 — PR pending exact-head review; evidence log
+Closed: 2026-09-02 — additive preview PR
+[#85](https://github.com/inflatable-cookie/effigy/pull/85) submitted for
+exact-head review; evidence log
 [`02-205536-command-surface-preview-1109.md`](../../../logs/2026-09/02-205536-command-surface-preview-1109.md)
 
 ## Purpose

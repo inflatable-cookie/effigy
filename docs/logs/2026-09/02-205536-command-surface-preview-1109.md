@@ -6,8 +6,9 @@ Roadmap: `g09.001`
 Spec: `116` (archived with this closeout)
 Card: `1109`
 Branch: `worker/g09-001-command-surface-preview-1109`
-PR: pending exact-head review (URL recorded on amend)
-Review head: pending (recorded on amend)
+PR: [inflatable-cookie/effigy#85](https://github.com/inflatable-cookie/effigy/pull/85)
+Review head: `worker/g09-001-command-surface-preview-1109` tip at submission
+(recorded with the PR URL)
 
 ## Outcome
 
