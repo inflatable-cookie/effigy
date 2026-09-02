@@ -287,7 +287,11 @@ fn file_name(path: &Path) -> Result<&std::ffi::OsStr, PackError> {
     })
 }
 
-fn collect_files(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), PackError> {
+pub(super) fn collect_files(
+    root: &Path,
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), PackError> {
     for entry in safe_entries(dir)? {
         match entry {
             SafeEntry::Dir(path) => collect_files(root, &path, files)?,

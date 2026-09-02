@@ -13,6 +13,8 @@
 //! Acquisition is explicit, digest-addressed for OCI, and always validated
 //! before activation.
 
+#[path = "pack/baseline.rs"]
+pub mod baseline;
 #[path = "pack/channel.rs"]
 pub mod channel;
 #[path = "pack/content.rs"]

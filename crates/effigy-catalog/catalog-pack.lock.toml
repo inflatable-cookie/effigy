@@ -1,0 +1,29 @@
+# Effigy compiled catalog-pack baseline lock.
+#
+# GENERATED FILE — DO NOT HAND-EDIT.
+#
+# The checked-in `crates/effigy-catalog/catalog/` snapshot is a byte-for-byte
+# generated copy of the official pack repository's `pack/` root at the pinned
+# source commit below. This lock records where those bytes came from and the
+# identities offline QA recomputes from the snapshot and compares back
+# against. Regenerate the snapshot and this lock together from an accepted
+# published artifact; a hand edit fails repository checks.
+#
+# OCI manifest digest and unpacked content identity are distinct required
+# facts. The manifest digest is the registry transport identity; the content
+# identity is the digest over the extracted pack tree (relative path bytes,
+# NUL, byte length, file bytes, in sorted path order).
+schema_version = 1
+
+[baseline]
+source_repository = "inflatable-cookie/effigy-catalog-pack"
+source_commit = "5ef0ec2b64612c7803cc6105a65ea462862a0b21"
+source_created = "2026-09-02T11:49:10Z"
+source_tag = "v1.0.1"
+source_tag_object = "2bb561109dfe8ec1346779370e2e9f428ef5ddd2"
+pack_id = "effigy-default-catalog"
+pack_version = "1.0.1"
+
+[identities]
+oci_manifest_digest = "sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3"
+content_identity = "sha256:9498d33f1eccbb91e971b55f5169830baca26326a8f802408a0432e733254974"
