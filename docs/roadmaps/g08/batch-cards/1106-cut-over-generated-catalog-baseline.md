@@ -4,9 +4,22 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Blocked on accepted card `1105` evidence
+Status: Ready
 Owner: Effigy compiled catalog snapshot and provenance verification
 Created: 2026-09-01
+
+## Publication Input
+
+- source repository: `inflatable-cookie/effigy-catalog-pack`
+- source tag: annotated `v1.0.1`, object
+  `2bb561109dfe8ec1346779370e2e9f428ef5ddd2`, peeling to
+  `5ef0ec2b64612c7803cc6105a65ea462862a0b21`
+- OCI manifest:
+  `ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3`
+- unpacked content identity:
+  `sha256:9498d33f1eccbb91e971b55f5169830baca26326a8f802408a0432e733254974`
+- accepted publication evidence: catalog-pack PR `#4`, merged as
+  `7427421a3bebf207ce9979c47f60609d1b276713`
 
 ## Purpose
 
@@ -38,4 +51,5 @@ network access, or the embed path cannot remain a permanent recovery floor.
 
 ## Next Task
 
-Blocked. After merge, cards `1107` and `1108` may become a parallel frontier.
+Implement this card. After merge, refresh readiness for cards `1107` and
+`1108`; they may become a parallel frontier.

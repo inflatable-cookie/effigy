@@ -117,5 +117,9 @@ justified. Material risk stays with frontier-strength exact-head review.
 
 ## Next Task
 
-Resume the existing pack worker lane for the bounded `v1.0.1` repair PR. Merge
-that reviewed repair before the new protected publication attempt.
+Card `1105` completed after catalog-pack evidence PR `#4` merged as
+`7427421a3bebf207ce9979c47f60609d1b276713`. Public `v1.0.1` and `stable`
+resolve to manifest digest
+`sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3`;
+the digest-bound attestation and anonymous exact-byte pull passed. Proceed to
+ready card `1106`. Effigy release authority remains separate.

@@ -44,8 +44,8 @@ offline operation or Effigy release authority.
 
 Cards `1107` and `1108` may run in parallel only after `1106`: they have
 different repository owners and write scopes. Same-repository PR review and
-merge order remains serial. Card `1105` is the next dependency edge, but its
-external publication mutations remain operator-gated.
+merge order remains serial. Card `1105` is complete; card `1106` is the next
+dependency edge.
 
 ## Cards
 
@@ -54,10 +54,10 @@ external publication mutations remain operator-gated.
 - [`1104`](../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
   — Complete; dedicated public repository foundation and no-push rehearsal.
 - [`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
-  — Ready; `v1.0.0` failed before package write and is preserved; explicit
-  `v1.0.1` recovery authority recorded 2026-09-02.
+  — Complete; `v1.0.0` is preserved and public `v1.0.1` plus `stable` resolve
+  to the accepted attested digest.
 - [`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
-  — Blocked on accepted `1105` evidence.
+  — Ready; cut over Effigy's generated recovery snapshot and provenance lock.
 - [`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
   — Blocked on `1106`.
 - [`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
@@ -130,6 +130,5 @@ exceeds the current operator gate.
 
 ## Next Task
 
-Resume card `1105` on its existing worker lane for the bounded `v1.0.1` repair
-PR. The repair must merge before the worker creates the new annotated source
-tag or retries GHCR; Effigy release authority remains separate.
+Implement ready card `1106` from the accepted `v1.0.1` publication evidence.
+Effigy release authority remains separate.

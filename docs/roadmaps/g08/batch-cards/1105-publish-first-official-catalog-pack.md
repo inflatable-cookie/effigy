@@ -4,7 +4,7 @@ Roadmap: [`../048-catalog-pack-publication-and-cutover.md`](../048-catalog-pack-
 Spec: [`../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md`](../../../specs/115-catalog-pack-publication-and-cutover-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: protected pack publication and operator-controlled package visibility
 Created: 2026-09-01
 Authorized: 2026-09-02 — preserve the failed immutable `v1.0.0` source tag;
@@ -108,6 +108,6 @@ or any need to release Effigy or widen package/repository authority.
 
 ## Next Task
 
-Resume the same worker lane for the bounded `v1.0.1` repair PR. Accepted
-publication evidence unblocks card `1106`; it does not authorize an Effigy
-binary release.
+Proceed to ready card
+[`1106`](./1106-cut-over-generated-catalog-baseline.md). Effigy binary release
+authority remains separate.

@@ -237,9 +237,8 @@ Bovine PR 32 without reopening S3 placement or removal.
 `g08.045` through `g08.047` are complete through cards `1100` through `1102`.
 
 `g08.048` is active under architecture `026`, contract `043`, and strict spec
-`115`. Cards `1103` and `1104` are complete. Card `1105` is Ready under
-explicit first-publication authority. Cards `1106` through `1108` preserve the
-serial artifact and generated-baseline gates; `1107` and `1108` become
+`115`. Cards `1103` through `1105` are complete. Card `1106` is Ready. Cards
+`1107` and `1108` preserve the generated-baseline gate and become
 parallel-safe only after `1106`.
 
 ## Strategic runway (Atlas 2026-08-17)
@@ -299,5 +298,4 @@ closeout there first.
 
 ## Next Task
 
-Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
-repair. Do not open `g09` or release Effigy.
+Implement ready card `1106`. Do not open `g09` or release Effigy.

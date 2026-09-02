@@ -204,5 +204,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
-repair. Effigy release remains a separate operator-gated mutation.
+Implement ready card `1106` from the accepted catalog-pack publication
+evidence. Effigy release remains a separate operator-gated mutation.

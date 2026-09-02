@@ -355,8 +355,7 @@ Stop and return to planning when:
 
 ## Next Task
 
-Resume ready card
-[`1105`](../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
-under the explicit 2026-09-02 `v1.0.1` recovery authority. Merge the bounded
-classifier/version repair before creating the new annotated tag or retrying
-GHCR.
+Implement ready card
+[`1106`](../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
+from the accepted public `v1.0.1` artifact. Effigy release authority remains
+separate.

@@ -156,10 +156,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Spec `115` is active for `g08.048`. Cards `1103` and `1104` are complete. Card
-`1105` is Ready for the authorized `v1.0.1` recovery after the preserved
-pre-push `v1.0.0` failure; later cards remain behind named artifact and cutover
-gates.
+Spec `115` is active for `g08.048`. Cards `1103` through `1105` are complete.
+Card `1106` is Ready; later cards remain behind its generated-baseline cutover
+gate.
 
 ## Research Program
 
@@ -214,9 +213,8 @@ Before rollover:
 
 ## Next Task
 
-Resume ready card `1105` on its existing worker lane for the bounded `v1.0.1`
-repair. Keep Effigy release execution, S3 extraction, and `g09` rollover behind
-their named gates.
+Implement ready card `1106`. Keep Effigy release execution, S3 extraction, and
+`g09` rollover behind their named gates.
 
 ## Historical language boundary
 
