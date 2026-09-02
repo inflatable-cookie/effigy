@@ -86,6 +86,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/02-222056-flat-command-execution-planning.md`](./2026-09/02-222056-flat-command-execution-planning.md)
+
 - [`2026-09/02-205536-command-surface-preview-1109.md`](./2026-09/02-205536-command-surface-preview-1109.md)
 - [`2026-09/02-192316-command-surface-preview-planning.md`](./2026-09/02-192316-command-surface-preview-planning.md)
 - [`2026-09/02-155016-official-catalog-pack-update-1107.md`](./2026-09/02-155016-official-catalog-pack-update-1107.md)
@@ -208,12 +210,9 @@ Batch: <batch-slug>
 
 ## Next Task
 
-`g09.001` and card `1109` are complete (evidence log
-[`02-205536`](./2026-09/02-205536-command-surface-preview-1109.md), indexed
-under Active logs above); `g08.048` closed earlier at
+The preview evidence remains at
+[`02-205536`](./2026-09/02-205536-command-surface-preview-1109.md). Active
+roadmap `g09.002`, strict spec `117`, and ready card `1110` remove its executable
+aliases while keeping grouped help. The catalog-pack lane closed earlier at
 [`02-185453`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md).
-The next
-checkpoint is the future `v1.0` consumer-evidence gate: direct-route removal
-requires a refreshed consumer inventory plus explicit release authority, and
-no removal card exists yet. Effigy release remains a separate operator-gated
-mutation.
+Effigy release remains a separate operator-gated mutation.

@@ -247,8 +247,10 @@ specs are archived, and draft spec `098` is archived as paused history.
 `g09` is active. The operator selected Theme 4 on 2026-09-02 after a current
 30-repository impact inventory. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
 completed the additive executable-namespace preview under strict spec `116`
-(archived); card `1109` is complete. Direct-route removal remains gated on
-`v1.0` and refreshed consumer evidence.
+(archived); card `1109` is complete. Live use rejected the added execution
+ceremony. [`g09.002`](./g09/002-flat-command-execution.md) is active under
+strict spec `117`; card `1110` restores direct canonical execution while
+keeping grouped help.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -309,5 +311,5 @@ closeout there first.
 
 ## Next Task
 
-`g09.001` and card `1109` are complete. Do not release Effigy or remove
-direct routes until the `v1.0` consumer-evidence checkpoint.
+Execute ready card `1110` under `g09.002` and strict spec `117`. Do not release
+Effigy or widen the lane into unrelated feature placement.

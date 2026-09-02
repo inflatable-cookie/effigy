@@ -41,43 +41,36 @@ response, release coupling, command coherence, and real consumer evidence are.
 
 ## Operator Surface
 
-Help-first discovery shipped first without changing execution. The approved
-second migration makes five operator-job groups executable while retaining a
-small direct daily spine and a bounded pre-`v1.0` compatibility window.
+Help-first discovery groups the broad inventory without changing execution.
+The later executable-namespace preview proved too heavy in normal use. Direct
+built-in invocation is the canonical operator grammar.
 
-1. `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, and `init`
-   remain direct.
+1. `<task>`, `<catalog>/<task>`, and built-ins all remain direct.
 2. `help`, `--help`, `--version`, leading `--json`, and `--repo` remain direct.
-3. `local`, `repo`, `deliver`, `extend`, and `admin` become executable
-   namespaces and delegate to the existing typed child command owner.
-4. Exact space-separated namespace words are reserved. Slash selectors remain
-   catalog/task selectors; `admin/test` is not `admin test`.
-5. A namespace with no child renders its existing group inventory. A grouped
-   child route is the explicit escape when a repository task shadows the direct
-   child name.
-6. Displaced direct built-ins remain executable until `v1.0`. Human mode warns
-   once on stderr; JSON adds typed optional envelope warning metadata. Neither
-   changes stdout, exit, command identity, result, or error facts.
-7. General help, group help, completions, current guides, and managed skill
-   guidance teach grouped routes. Legacy detailed help remains with replacement
-   and removal facts during the preview.
-8. Removal at `v1.0` requires a refreshed consumer inventory and explicit
-   release authority. The additive preview does not authorize either.
+3. `local`, `repo`, `deliver`, `extend`, and `admin` are help categories, not
+   executable built-in namespaces or reserved selector words.
+4. `effigy --help` and `effigy help <group>` preserve job-based discovery while
+   displaying direct command spellings.
+5. Completion, current guides, generated references, and managed skills teach
+   direct spellings.
+6. Repository task shadowing and slash-selector precedence remain unchanged.
+7. Genuine command-owned subcommands stay nested under their owning command.
 
 The exact primary help taxonomy is:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| direct work spine | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| work | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 
-`help` stays direct. Each operation still has one implementation and one output
-owner. Detailed help may cross-link borderline capabilities such as
-`bootstrap`, `demo`, or `secrets` without creating another primary route.
+The topic names organize help only. Each listed built-in executes as
+`effigy <command> ...` and retains one implementation and one output owner.
+Detailed help may cross-link borderline capabilities such as `bootstrap`,
+`demo`, or `secrets` without creating another primary route.
 
 ## Repository Intelligence
 
@@ -85,10 +78,9 @@ Graph, scan, docs, contracts, and papercuts remain Effigy core. They provide
 provider-neutral, deterministic repository navigation and policy evidence for
 operators, agents, and CI.
 
-Grouping improves discovery; it does not justify a second implementation or an
-optional binary. `effigy repo graph` and `effigy repo docs` become canonical
-routes to the existing implementations. Retained direct forms stay migration
-aliases until `v1.0` and keep current manifest deferral behavior.
+Grouping improves discovery; it does not become execution grammar or justify a
+second implementation. `effigy graph` and `effigy docs` are the canonical
+routes and keep current manifest deferral behavior.
 
 ## Local Runtime And Providers
 

@@ -30,8 +30,9 @@ Binary size alone cannot justify extraction or retention.
 
 ## Command Grouping Contract
 
-Help-first discovery shipped as the first migration. The approved additive
-preview now makes the five non-work groups executable.
+Help-first discovery groups the inventory without adding execution ceremony.
+The executable namespace preview shipped and was then rejected by the operator;
+direct invocation is canonical.
 
 - `effigy --help` and `effigy help` group the general inventory by operator job.
 - `effigy help <group>` accepts exactly `work`, `local`, `repo`, `deliver`,
@@ -40,45 +41,23 @@ preview now makes the five non-work groups executable.
   `effigy <command> --help` through the existing typed help owner.
 - An unknown help topic fails deterministically and points at valid groups and
   commands. It must not silently fall back to general help.
-- Legacy direct help keeps current deferral where repository routing gives a
-  manifest selector precedence. Canonical grouped inventory and grouped child
-  help remain available because the namespace is the explicit built-in route.
+- Direct help keeps current deferral where repository routing gives a manifest
+  selector precedence.
 - Every general-help entry has exactly one primary group. Cross-links in detail
   help do not create a second primary entry or execution route.
-- `local`, `repo`, `deliver`, `extend`, and `admin` are exact top-level built-in
-  namespaces. `work` remains help-only; the daily task spine stays direct.
-- A recognized grouped child delegates to the existing typed command value.
-  Arguments, side effects, exits, text, command identity, result payload, and
-  error details retain one owner.
-- Exact space-separated namespace words are reserved. Slash selectors remain
-  task/catalog selectors, including a catalog alias such as `admin/<task>`.
-- A namespace without a child renders its group inventory. An unknown child is
-  a deterministic usage error and never falls through to task execution.
-- A grouped child is the explicit built-in escape when its direct name is
-  shadowed. Retained direct routes preserve existing manifest deferral.
-- Displaced direct built-ins remain executable until `v1.0`. They warn only
-  after built-in routing is selected; shadowing tasks and catalog selectors do
-  not warn. Warning recording is bound to the original direct child and the
-  top-level execution depth: registry-built-in selection reached through
-  nested task execution (for example a shadowing manifest task whose run array
-  invokes `config` or `scan`) never populates the invocation's warning.
-- Human warnings use stderr without changing stdout or exit. JSON remains one
-  `effigy.command.v1` document and adds a top-level `warnings` array only when
-  nonempty. Each item has `code`, `message`, `replacement`, and `removal`; the
-  code is `legacy-direct-command` and removal is `v1.0`. The one established
-  exception is `graph watch`: its JSON form streams
-  `effigy.graph.watch.event.v1` events instead of a command envelope (guide
-  `017`), so the displaced direct spelling emits the single warning line on
-  stderr in text and JSON-stream modes alike; the grouped route stays silent.
-  Event stdout is never changed by the diagnostic.
-- General/group help and completion candidates use canonical grouped spellings.
-  Legacy detailed help remains with the replacement and removal facts until
-  the gate wherever existing deferral does not give the name to a manifest
-  selector.
-- `help`, `--help`, `--version`, leading `--json`, `--repo`, `<task>`,
-  `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, and `init` stay direct.
-- Direct-route removal requires a refreshed consumer inventory and explicit
-  `v1.0` release authority. The additive preview grants neither.
+- `local`, `repo`, `deliver`, `extend`, and `admin` remain help topics only.
+  They are not built-in execution namespaces and do not reserve manifest task
+  selectors.
+- Every built-in uses its direct `effigy <command> ...` spelling. Arguments,
+  side effects, exits, text, command identity, result payload, and error details
+  retain one owner.
+- General/group help preserves the primary topic taxonomy while showing direct
+  spellings. Completion candidates use those direct spellings too.
+- Direct detailed help carries no namespace-migration warning or removal fact.
+- Existing repository task shadowing, slash selectors, and leading global flags
+  retain their prior precedence.
+- Genuine subcommands remain nested under their owning built-in; help taxonomy
+  does not flatten domain grammar.
 
 Primary ownership is fixed as follows:
 
@@ -91,21 +70,19 @@ Primary ownership is fixed as follows:
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 
-`help` remains direct. Canonical detail uses
-`effigy <namespace> <child> --help`; retained `effigy help <child>` remains the
-legacy detail route where current deferral permits it. No multi-token
-`effigy help <namespace> <child>` grammar is required by this contract.
+These names are help topics, not route prefixes. Canonical detail uses
+`effigy <command> --help`; `effigy help <command>` remains available where
+current deferral permits it. No multi-token
+`effigy help <group> <command>` grammar is required by this contract.
 
 ## Repository-Intelligence Contract
 
 Graph, scan, docs, contracts, and papercuts remain provider-neutral core
 capabilities.
 
-A grouped execution route:
+The help group:
 
-- reuses their current implementations and output contracts;
-- preserves direct `graph`, `scan`, `docs`, `contracts`, and `papercuts` as
-  warned migration aliases until `v1.0`;
+- points at the current direct implementations and output contracts;
 - explains which job each child surface performs;
 - preserves standard leading `--repo` and `--json` behavior;
 - does not add a second index, policy store, or refresh lifecycle.
@@ -354,7 +331,7 @@ Every feature-placement migration must record:
 - old owner, new owner, and retained Effigy invariant;
 - current consumers and compatibility boundary;
 - dependency and release-policy movement;
-- direct and grouped command parity where applicable;
+- direct command and help-group inventory parity where applicable;
 - failure and repair behavior when an optional asset/provider is absent;
 - docs, completion, agent-skill, JSON, and generated-reference impact;
 - rollback or staged-removal path;
@@ -365,28 +342,28 @@ Every feature-placement migration must record:
 Stop and return to planning when:
 
 - a façade route is used as the only proof of core ownership;
-- a grouped command needs a second implementation;
-- grouped routing consumes a slash selector or an unrecorded bare-task
-  collision;
+- help grouping needs a second command implementation or starts consuming
+  selector grammar;
 - an alias removal lacks explicit operator approval;
 - catalog externalization adds mandatory operator ceremony or weakens offline
   behavior;
 - release extraction weakens exact-SHA or irreversible-action safety;
 - S3 removal precedes the consumer replacement gate;
-- an extension transport or namespace spelling must be invented to proceed.
+- an extension transport or execution namespace spelling must be invented to
+  proceed.
 
 ## Non-Goals
 
-- command removals before the `v1.0` gate;
+- removal of established direct commands;
 - immediate S3 extraction;
-- a second implementation behind grouped namespaces;
+- a second implementation behind help groups;
 - a general plugin marketplace;
 - binary-size optimization;
 - release execution.
 
 ## Next Task
 
-The additive preview (card `1109`, spec `116`) is complete and shipped under
-this contract. Direct-route removal remains blocked on the explicit `v1.0`
-gate with refreshed consumer evidence; Effigy release authority stays
-separate.
+The additive preview (card `1109`, spec `116`) shipped and is retained as
+historical evidence. Active card `1110` removes its executable aliases and
+migration warnings while preserving help grouping. Effigy release authority
+stays separate.

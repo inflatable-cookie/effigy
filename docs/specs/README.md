@@ -28,8 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none — the grouped-command preview shipped and its strict lane is archived;
-  direct-route removal stays behind the `v1.0` consumer-evidence gate
+- [`117`](./117-flat-command-execution-strict-lane.md) — remove executable help
+  namespaces, keep grouped discovery, and restore direct built-in invocation
 
 Queued strict lanes:
 
@@ -88,7 +88,5 @@ Other planning specs:
 
 ## Next Task
 
-Card `1109` under `g09.001` is complete and strict spec `116` is archived.
-The next checkpoint is the future `v1.0` consumer-evidence gate (refreshed
-consumer inventory plus explicit release authority); no removal spec or card
-exists yet. Effigy release authority stays separate.
+Execute ready card `1110` under `g09.002` and strict spec `117`. Effigy release
+authority stays separate.

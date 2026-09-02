@@ -158,13 +158,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   complete.
 - `g09` is active. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
   completed the operator-approved additive command-surface preview (card
-  `1109`); strict spec `116` is archived. Direct-route removal stays behind
-  the `v1.0` consumer-evidence gate.
+  `1109`); strict spec `116` is archived. Live use rejected executable help
+  namespaces, so [`g09.002`](./g09/002-flat-command-execution.md) is active
+  with ready card `1110` to restore direct canonical execution.
 
 ## Active Strict Lane
 
-No strict lane is active; the next checkpoint is the future `v1.0`
-consumer-evidence gate for direct-route removal.
+Strict spec `117` and ready card `1110` own the flat-command rollback.
 
 ## Research Program
 
@@ -219,9 +219,8 @@ Before rollover:
 
 ## Next Task
 
-Card `1109` is complete and `g09.001` is closed; spec `116` is archived. Keep
-Effigy release execution, direct-route removal, and S3 extraction behind their
-named gates until the `v1.0` consumer-evidence checkpoint.
+Execute ready card `1110` under `g09.002` and strict spec `117`. Keep Effigy
+release execution and S3 extraction behind their named gates.
 
 ## Historical language boundary
 
