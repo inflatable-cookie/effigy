@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: g08
-Updated: 2026-09-01
+Current generation: g09
+Updated: 2026-09-02
 
 ## Generation history
 
@@ -94,7 +94,8 @@ Updated: 2026-09-01
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is active. Milestones `g08.001` through `g08.031` are complete.
+`g08` completed milestones `g08.001` through `g08.031` before its later
+follow-through and final closeout at `g08.048`.
 `g08.027` completes papercut portfolio discovery and capture under strict spec
 `100`; cards `1070` and `1071` are complete.
 
@@ -240,10 +241,20 @@ Bovine PR 32 without reopening S3 placement or removal.
 strict spec `115`. Cards `1103` through `1108` completed the external catalog
 ownership, publication, generated baseline, public update, and proposal path.
 
+`g08` is closed through `g08.048`. All roadmaps are Complete, completed strict
+specs are archived, and draft spec `098` is archived as paused history.
+
+`g09` is active. The operator selected Theme 4 on 2026-09-02 after a current
+30-repository impact inventory. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
+opens the additive executable-namespace preview under strict spec `116`; card
+`1109` is Ready. Direct-route removal remains gated on `v1.0` and refreshed
+consumer evidence.
+
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
-narrow `g08.035` documentation-graph extension. No `g09` rollover is implied.
+narrow `g08.035` documentation-graph extension, then selected Theme 4 on
+2026-09-02 to open `g09` with command-surface compaction.
 
 Canonical atlas artifact:
 [`docs/vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md)
@@ -264,7 +275,8 @@ Horizon summary:
 
 The documentation-context, help-first, Rhai papercut, catalog-pack publication
 and cutover, no-match benchmark isolation, and Rhai storage create-only lanes
-are closed. Do not open `g09` or start release work without operator intent.
+are closed. The operator selected Theme 4 and opened `g09.001`; release work
+remains separately gated.
 
 ## Research Roadmaps
 
@@ -297,5 +309,6 @@ closeout there first.
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Do not open `g09` or
-release Effigy.
+Execute ready card
+[`1109`](./g09/batch-cards/1109-add-executable-command-namespaces.md). Do not
+release Effigy or remove direct routes.

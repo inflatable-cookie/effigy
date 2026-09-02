@@ -1,6 +1,6 @@
 # g08 Roadmaps
 
-Status: Active
+Status: Closed
 Theme: Graph-aware scan intelligence and code quality boundary follow-through,
 extended with the 2026-06-10 security and posture hardening tranche
 (g08.010–g08.015, complete), the machine-local dependency management suite
@@ -396,5 +396,5 @@ and generated-only proposal path.
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Downstream Bovine and
-Acowtancy revalidation remain separately owned.
+Continue at [`g09.001`](../g09/001-command-surface-compaction-preview.md).
+Downstream Bovine and Acowtancy revalidation remain separately owned.

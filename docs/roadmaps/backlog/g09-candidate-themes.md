@@ -3,12 +3,12 @@
 Status: Exploratory
 Owner: Platform
 Created: 2026-08-17
-Selected: 2026-08-29 — **Theme 2 active as a narrow g08 extension**
-(`g08.035`, strict spec `108`)
+Selected: 2026-09-02 — **Theme 4 active as `g09.001`** (strict spec `116`)
 Source: Northstar Atlas refresh ([`020-strategic-runway-atlas-v1.md`](../../vision/020-strategic-runway-atlas-v1.md))
 
-These are strategic theme options for the next planning era. Theme 2 is now
-scheduled as a narrow `g08` extension; themes 3–5 remain unscheduled.
+These are strategic theme options for the next planning era. Theme 2 completed
+as a narrow `g08` extension. Theme 4 is promoted as `g09.001`; themes 3 and 5
+remain unscheduled.
 
 Do not treat this file as an execution queue. Promote exactly one theme (or a
 deliberate `g08` extension) into a numbered roadmap, spec, and ready cards.
@@ -73,6 +73,8 @@ fed back into starter templates.
 
 ## Theme 4 — Breaking command-surface and compaction preview
 
+**Status:** active (`g09.001`, ready card `1109`, strict spec `116`)
+
 **Primary tags:** `MAINT`, `ROUTE`, `RELEASE`
 
 **Target envelope:** operator-approved breaking plan with migration guide,
@@ -119,7 +121,5 @@ they remain in the active tree.
 
 ## Next Task
 
-Card `1093` closed the help-first slice of the feature-boundary follow-through.
-Card `1095` closed the bounded catalog-pack acquisition prototype under
-completed `g08.040`; official publication and asset cutover remain planning and
-are not ready. Themes 3–5 remain unscheduled.
+Execute ready card `1109` under `g09.001`. Themes 3 and 5 remain unscheduled;
+direct-route removal and release execution remain gated.

@@ -28,7 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`116`](./116-command-surface-compaction-preview-strict-lane.md) — executable
+  command namespaces with retained pre-`v1.0` migration aliases
 
 Queued strict lanes:
 
@@ -79,9 +80,10 @@ Archived strict lanes:
 
 Other planning specs:
 
-- [`098-effigy-uninstall-command.md`](./098-effigy-uninstall-command.md) -
-  draft top-level uninstall command scope and safety rules
+- [`098`](./archive/098-effigy-uninstall-command.md) is paused historical
+  planning; the shipped uninstall surface is not reopened by `g09.001`
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Keep draft `098` paused.
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).

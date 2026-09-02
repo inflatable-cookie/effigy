@@ -4,7 +4,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01` through `g08`, and future `gNN` generations
+- Use generation folders: `g01` through `g09`, and future `gNN` generations
   opened by explicit rollover.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
@@ -20,8 +20,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g08/` current graph-aware scan, hardening, and local dependency management
-  generation
+- `g09/` current command-surface compaction and migration generation
+- `g08/` closed graph-aware scan, hardening, dependency, documentation, and
+  catalog-pack generation
 - `g07/` previous native code graph intelligence generation
 - `g06/` previous codebase lean-down and ownership simplification generation
 - `g05/` previous secret and reusable-core hardening generation
@@ -63,7 +64,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   agent-adoption follow-through focused on cross-repo freshness trust,
   behavioral query ranking, edit-target packets, benchmark proof, and agent
   guidance.
-- `g08` is active. Milestones `g08.001` through
+- `g08` is closed. Milestones `g08.001` through
   [`g08.009`](./g08/009-code-quality-boundary-sweep-suite.md) are complete: the
   first tranche covered graph-aware scan intelligence (preserving deterministic
   filesystem scans, adding optional graph enrichment, and graph-native scans for
@@ -155,10 +156,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   baseline, exposed safe update, and installed generated-only proposal
   automation under archived strict spec `115`; cards `1103` through `1108` are
   complete.
+- `g09` is active. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
+  opens the operator-approved additive command-surface preview under strict
+  spec `116`; card `1109` is Ready.
 
 ## Active Strict Lane
 
-None. The next lane requires the operator intent checkpoint.
+Strict spec [`116`](../specs/116-command-surface-compaction-preview-strict-lane.md)
+is active. Card `1109` is Ready.
 
 ## Research Program
 
@@ -213,8 +218,10 @@ Before rollover:
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Keep Effigy release
-execution, S3 extraction, and `g09` rollover behind their named gates.
+Execute ready card
+[`1109`](./g09/batch-cards/1109-add-executable-command-namespaces.md). Keep
+Effigy release execution, direct-route removal, and S3 extraction behind their
+named gates.
 
 ## Historical language boundary
 

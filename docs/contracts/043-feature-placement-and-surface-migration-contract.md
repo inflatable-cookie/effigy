@@ -30,7 +30,8 @@ Binary size alone cannot justify extraction or retention.
 
 ## Command Grouping Contract
 
-The approved first migration is help-first and execution-stable.
+Help-first discovery shipped as the first migration. The approved additive
+preview now makes the five non-work groups executable.
 
 - `effigy --help` and `effigy help` group the general inventory by operator job.
 - `effigy help <group>` accepts exactly `work`, `local`, `repo`, `deliver`,
@@ -39,43 +40,64 @@ The approved first migration is help-first and execution-stable.
   `effigy <command> --help` through the existing typed help owner.
 - An unknown help topic fails deterministically and points at valid groups and
   commands. It must not silently fall back to general help.
-- Deferred built-ins stay omitted from general, group, and direct help wherever
-  current repository routing gives the manifest selector precedence.
+- Legacy direct help keeps current deferral where repository routing gives a
+  manifest selector precedence. Canonical grouped inventory and grouped child
+  help remain available because the namespace is the explicit built-in route.
 - Every general-help entry has exactly one primary group. Cross-links in detail
   help do not create a second primary entry or execution route.
-- The lane adds no `effigy <group> <command>` grammar, no new top-level built-in
-  names, and no execution-routing changes. A manifest task named `repo`,
-  `local`, `deliver`, `extend`, `admin`, or `work` keeps current precedence.
-- Existing direct commands, arguments, side effects, text/JSON contracts,
-  diagnostics, and exits remain unchanged.
-- Documentation, completions where applicable, agent guidance, generated
-  references, and shipped help must describe the help-first discovery path
-  without advertising executable grouped aliases.
-- Warning, hidden-help, deprecation, alias, or removal behavior requires a
-  separate approved migration card with consumer inventory and compatibility
-  evidence.
+- `local`, `repo`, `deliver`, `extend`, and `admin` are exact top-level built-in
+  namespaces. `work` remains help-only; the daily task spine stays direct.
+- A recognized grouped child delegates to the existing typed command value.
+  Arguments, side effects, exits, text, command identity, result payload, and
+  error details retain one owner.
+- Exact space-separated namespace words are reserved. Slash selectors remain
+  task/catalog selectors, including a catalog alias such as `admin/<task>`.
+- A namespace without a child renders its group inventory. An unknown child is
+  a deterministic usage error and never falls through to task execution.
+- A grouped child is the explicit built-in escape when its direct name is
+  shadowed. Retained direct routes preserve existing manifest deferral.
+- Displaced direct built-ins remain executable until `v1.0`. They warn only
+  after built-in routing is selected; shadowing tasks and catalog selectors do
+  not warn.
+- Human warnings use stderr without changing stdout or exit. JSON remains one
+  `effigy.command.v1` document and adds a top-level `warnings` array only when
+  nonempty. Each item has `code`, `message`, `replacement`, and `removal`; the
+  code is `legacy-direct-command` and removal is `v1.0`.
+- General/group help and completion candidates use canonical grouped spellings.
+  Legacy detailed help remains with the replacement and removal facts until
+  the gate wherever existing deferral does not give the name to a manifest
+  selector.
+- `help`, `--help`, `--version`, leading `--json`, `--repo`, `<task>`,
+  `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, and `init` stay direct.
+- Direct-route removal requires a refreshed consumer inventory and explicit
+  `v1.0` release authority. The additive preview grants neither.
 
 Primary ownership is fixed as follows:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
-| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion, help |
+| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
+
+`help` remains direct. Canonical detail uses
+`effigy <namespace> <child> --help`; retained `effigy help <child>` remains the
+legacy detail route where current deferral permits it. No multi-token
+`effigy help <namespace> <child>` grammar is required by this contract.
 
 ## Repository-Intelligence Contract
 
 Graph, scan, docs, contracts, and papercuts remain provider-neutral core
 capabilities.
 
-A grouped discovery route:
+A grouped execution route:
 
 - reuses their current implementations and output contracts;
-- preserves direct `graph`, `scan`, `docs`, `contracts`, and `papercuts`
-  commands initially;
+- preserves direct `graph`, `scan`, `docs`, `contracts`, and `papercuts` as
+  warned migration aliases until `v1.0`;
 - explains which job each child surface performs;
 - preserves standard leading `--repo` and `--json` behavior;
 - does not add a second index, policy store, or refresh lifecycle.
@@ -336,7 +358,8 @@ Stop and return to planning when:
 
 - a façade route is used as the only proof of core ownership;
 - a grouped command needs a second implementation;
-- help grouping changes execution routing or reserves a new top-level name;
+- grouped routing consumes a slash selector or an unrecorded bare-task
+  collision;
 - an alias removal lacks explicit operator approval;
 - catalog externalization adds mandatory operator ceremony or weakens offline
   behavior;
@@ -346,17 +369,15 @@ Stop and return to planning when:
 
 ## Non-Goals
 
-- immediate command removals;
+- command removals before the `v1.0` gate;
 - immediate S3 extraction;
-- executable group namespaces;
+- a second implementation behind grouped namespaces;
 - a general plugin marketplace;
 - binary-size optimization;
 - release execution.
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Catalog-pack cards
-[`1107`](../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
-and
-[`1108`](../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
-are complete. Effigy release authority remains separate.
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Effigy release and direct-route removal authority remain separate.

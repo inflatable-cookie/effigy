@@ -63,5 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Effigy release remains
-gated. The second governance review remains due by 2026-09-17.
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Effigy release remains gated. The second governance review remains due by
+2026-09-17.

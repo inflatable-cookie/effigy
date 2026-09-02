@@ -96,5 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Catalog-pack cards
-`1103` through `1108` are complete. Effigy release authority remains separate.
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Effigy release and direct-route removal authority remain separate.

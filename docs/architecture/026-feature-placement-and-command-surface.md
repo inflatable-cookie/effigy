@@ -1,7 +1,7 @@
 # Feature Placement And Command Surface Architecture
 
 Status: active
-Updated: 2026-09-01
+Updated: 2026-09-02
 Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
 Research: [`catalog-pack publication source map`](../research/source-hubs/002-catalog-pack-publication-source-map-v1.md)
 
@@ -41,33 +41,43 @@ response, release coupling, command coherence, and real consumer evidence are.
 
 ## Operator Surface
 
-The approved first migration is help-first and execution-stable.
+Help-first discovery shipped first without changing execution. The approved
+second migration makes five operator-job groups executable while retaining a
+small direct daily spine and a bounded pre-`v1.0` compatibility window.
 
-1. `effigy --help` and `effigy help` present commands by operator job instead
-   of one flat list.
-2. `effigy help <group>` presents one grouped inventory.
-3. `effigy help <command>` presents the existing detailed command help and is
-   equivalent in facts to `effigy <command> --help`.
-4. The first lane adds no `effigy <group> <command>` execution aliases and
-   reserves no new top-level built-in names.
-5. Existing direct commands and manifest-selector routing remain unchanged.
-6. Adding help groups does not approve deprecation. Any later executable alias,
-   warning, hiding, or removal needs a separate migration decision and evidence.
+1. `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, and `init`
+   remain direct.
+2. `help`, `--help`, `--version`, leading `--json`, and `--repo` remain direct.
+3. `local`, `repo`, `deliver`, `extend`, and `admin` become executable
+   namespaces and delegate to the existing typed child command owner.
+4. Exact space-separated namespace words are reserved. Slash selectors remain
+   catalog/task selectors; `admin/test` is not `admin test`.
+5. A namespace with no child renders its existing group inventory. A grouped
+   child route is the explicit escape when a repository task shadows the direct
+   child name.
+6. Displaced direct built-ins remain executable until `v1.0`. Human mode warns
+   once on stderr; JSON adds typed optional envelope warning metadata. Neither
+   changes stdout, exit, command identity, result, or error facts.
+7. General help, group help, completions, current guides, and managed skill
+   guidance teach grouped routes. Legacy detailed help remains with replacement
+   and removal facts during the preview.
+8. Removal at `v1.0` requires a refreshed consumer inventory and explicit
+   release authority. The additive preview does not authorize either.
 
 The exact primary help taxonomy is:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| `work` | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| direct work spine | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
-| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`, completion, help |
+| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 
-Each general-help entry has one primary home. Detailed help may cross-link
-borderline capabilities such as `bootstrap`, `demo`, or `secrets` without
-duplicating execution routes.
+`help` stays direct. Each operation still has one implementation and one output
+owner. Detailed help may cross-link borderline capabilities such as
+`bootstrap`, `demo`, or `secrets` without creating another primary route.
 
 ## Repository Intelligence
 
@@ -76,9 +86,9 @@ provider-neutral, deterministic repository navigation and policy evidence for
 operators, agents, and CI.
 
 Grouping improves discovery; it does not justify a second implementation or an
-optional binary. `effigy help repo` discovers the family while direct forms
-such as `effigy graph` and `effigy docs` remain the only built-in execution
-routes unless a later migration explicitly decides otherwise.
+optional binary. `effigy repo graph` and `effigy repo docs` become canonical
+routes to the existing implementations. Retained direct forms stay migration
+aliases until `v1.0` and keep current manifest deferral behavior.
 
 ## Local Runtime And Providers
 
@@ -263,7 +273,7 @@ The feature-boundary follow-through is sequenced as separate lanes:
 3. catalog-pack acquisition prototype satisfying the simplicity invariant,
    followed separately by dedicated-repository publication, generated-baseline
    cutover, and public update exposure;
-4. repository-intelligence grouped discovery surface;
+4. executable grouped-command preview with retained direct migration aliases;
 5. S3 migration only after the named consumer replacement proof.
 
 These lanes should remain separate. None implies release work.
@@ -272,7 +282,7 @@ These lanes should remain separate. None implies release work.
 
 - optimize binary size;
 - remove commands merely to reduce a count;
-- add executable group namespaces in the help-first lane;
+- remove displaced direct routes before the `v1.0` evidence gate;
 - require a plugin marketplace;
 - remove S3 before consumer replacement;
 - make catalog use more manual;
@@ -281,7 +291,8 @@ These lanes should remain separate. None implies release work.
 
 ## Drift Triggers
 
-Revisit this architecture when a new top-level family is proposed, a provider
+Revisit this architecture when a new top-level family is proposed, the `v1.0`
+direct-route removal gate is approached, a provider
 dependency enters mandatory core, a grouped route diverges from its shortcut,
 catalog acquisition adds operator ceremony, product-specific release defaults
 enter reusable release code, or the S3 consumer dependency changes.

@@ -279,11 +279,12 @@ repository-defined documentation graph and bounded retrieval boundary, and
 `042-external-skill-task-runner-contract.md` as the explicit external task
 source and consumer runtime target boundary, and
 `043-feature-placement-and-surface-migration-contract.md` as the semantic core,
-alias-stable grouping, provider/asset placement, and migration-gate boundary,
+grouped-command preview, provider/asset placement, and migration-gate boundary,
 and `044-rhai-storage-create-only-contract.md` as the retained Rhai storage
 exclusive-create boundary.
 
 ## Next Task
 
-Run the operator intent checkpoint from vision `020`. Effigy release authority
-remains separate.
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Effigy release and direct-route removal authority remain separate.

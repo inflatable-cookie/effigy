@@ -149,9 +149,9 @@ contracted extension surfaces.
 | Defer breaking command compaction | root CLI stays noisier longer | operator breaking-release appetite | high once moved |
 | Research Phase 3 later | remote/plugin demand unserved short-term | Phase 2 DX closure | low until promoted |
 
-Sequencing constraint: do not open `g09` until operator selects Horizon A lane
-and any stale strict specs (`097`, `099`, `100`) are archived on the next
-planning sweep.
+The sequencing constraint was satisfied on 2026-09-02: the operator selected
+the breaking-cleanup preview, all `g08` roadmaps were complete, stale strict
+specs were archived, and `g09.001` opened with additive migration only.
 
 ## 6. Coarse runway (milestone transitions, not a task queue)
 
@@ -180,5 +180,6 @@ planning sweep.
 
 ## Next Task
 
-Run the operator intent checkpoint: choose one Horizon A owner and compile the
-next strict lane from [`g09-candidate-themes.md`](../roadmaps/backlog/g09-candidate-themes.md).
+Execute ready card
+[`1109`](../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md).
+Direct-route removal and release execution remain separately gated.

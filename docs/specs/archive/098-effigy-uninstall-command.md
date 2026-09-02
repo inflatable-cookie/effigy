@@ -1,8 +1,10 @@
 # 098 - Effigy Uninstall Command
 
-Status: Initial implementation
+Status: Paused historical planning
 Owner: Platform
 Created: 2026-06-15
+Archived: 2026-09-02 — removed from the active spec tree during `g09` rollover;
+the shipped uninstall surface is not reopened by `g09.001`
 
 ## Intent
 
