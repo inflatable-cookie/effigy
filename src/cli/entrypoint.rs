@@ -1,8 +1,7 @@
 use crate::{
-    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_error_with_warnings,
-    emit_json_envelope_success_with_warnings, parse_error_json_details, parse_json_or_string,
-    render_cli_header, render_parse_error, run_graph_watch_command, run_help_command,
-    run_help_group_command, CliExecutionContext,
+    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
+    parse_error_json_details, parse_json_or_string, render_cli_header, render_parse_error,
+    run_graph_watch_command, run_help_command, run_help_group_command, CliExecutionContext,
 };
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command,
@@ -49,34 +48,19 @@ pub fn run_cli(raw_args: Vec<String>) {
     });
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let first_word = args.first().cloned();
-    let second_word = args.get(1).cloned();
-    let parsed = parse_command_with_builtin_deferral(args, &cwd, &global_options);
-    // Displaced direct built-ins warn only after routing proved the built-in
-    // owns the invocation; grouped routes and manifest-routed tasks never do.
-    let legacy_direct_warning = first_word
-        .as_deref()
-        .and_then(|word| crate::cli::legacy_direct::direct_warning_for_parse(word, &parsed));
-    let parsed = match parsed {
+    let parsed = match parse_command_with_builtin_deferral(args, &cwd, &global_options) {
         Ok(cmd) => cmd,
         Err(err) => {
-            let warning_values =
-                crate::cli::legacy_direct::warning_values(legacy_direct_warning.as_ref());
             if global_json_mode {
-                emit_json_envelope_error_with_warnings(
+                emit_json_envelope_error(
                     2,
                     "cli",
                     "parse",
                     "CliParseError",
                     &err.to_string(),
                     Some(parse_error_json_details()),
-                    &warning_values,
                 );
             }
-            crate::cli::legacy_direct::print_human_warnings_option(
-                legacy_direct_warning.as_ref(),
-                global_json_mode,
-            );
             let mut renderer = PlainRenderer::stderr(output_mode);
             let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
@@ -87,23 +71,16 @@ pub fn run_cli(raw_args: Vec<String>) {
     let cmd = match apply_global_cli_flags(parsed, &global_options) {
         Ok(cmd) => cmd,
         Err(err) => {
-            let warning_values =
-                crate::cli::legacy_direct::warning_values(legacy_direct_warning.as_ref());
             if global_json_mode {
-                emit_json_envelope_error_with_warnings(
+                emit_json_envelope_error(
                     2,
                     "cli",
                     "parse",
                     "CliParseError",
                     &err.to_string(),
                     Some(parse_error_json_details()),
-                    &warning_values,
                 );
             }
-            crate::cli::legacy_direct::print_human_warnings_option(
-                legacy_direct_warning.as_ref(),
-                global_json_mode,
-            );
             let mut renderer = PlainRenderer::stderr(output_mode);
             let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
@@ -125,23 +102,16 @@ pub fn run_cli(raw_args: Vec<String>) {
         Err(error) => {
             let message =
                 format!("failed to capture runtime context after cwd was resolved: {error}");
-            let warning_values =
-                crate::cli::legacy_direct::warning_values(legacy_direct_warning.as_ref());
             if emit_json_envelope {
-                emit_json_envelope_error_with_warnings(
+                emit_json_envelope_error(
                     1,
                     command_kind,
                     &command_name,
                     "RuntimeContextError",
                     &message,
                     None,
-                    &warning_values,
                 );
             }
-            crate::cli::legacy_direct::print_human_warnings_option(
-                legacy_direct_warning.as_ref(),
-                emit_json_envelope,
-            );
             let mut renderer = PlainRenderer::stderr(output_mode);
             let _ = renderer.error_block(&MessageBlock::new("Task failed", message));
             std::process::exit(1);
@@ -159,22 +129,15 @@ pub fn run_cli(raw_args: Vec<String>) {
     };
 
     match cmd {
-        Command::Version => crate::run_version_command(&context, legacy_direct_warning.as_ref()),
-        Command::Help(topic) => {
-            let legacy_note = crate::cli::legacy_direct::legacy_help_note(
-                first_word.as_deref(),
-                second_word.as_deref(),
-                topic,
-            );
-            run_help_command(&context, topic, legacy_note.as_deref())
-        }
+        Command::Version => crate::run_version_command(&context),
+        Command::Help(topic) => run_help_command(&context, topic),
         Command::HelpGroup(group) => run_help_group_command(&context, group),
         Command::Graph(
             args @ effigy_cli::GraphArgs {
                 subcommand: GraphSubcommand::Watch { .. },
                 ..
             },
-        ) => run_graph_watch_command(&context, args, legacy_direct_warning.as_ref()),
+        ) => run_graph_watch_command(&context, args),
         command @ (Command::Bundle(_)
         | Command::Changelog(_)
         | Command::Deploy(_)
@@ -206,32 +169,11 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::InternalContainerLeaseReaper(_)
         | Command::InternalHostProcessSupervise(_)
         | Command::InternalHostProcessStop(_)
-        | Command::Task(_)
-        | Command::GroupedBuiltin(_)) => {
-            run_and_render_command(&context, command, legacy_direct_warning.as_ref())
-        }
+        | Command::Task(_)) => run_and_render_command(&context, command),
     }
 }
 
-pub fn run_and_render_command(
-    context: &CliExecutionContext<'_>,
-    command: Command,
-    legacy_direct_warning: Option<&crate::cli::legacy_direct::LegacyDirectWarning>,
-) {
-    // `config` and `scan` prove built-in ownership at the runner's manifest
-    // selection fallback; open a recording scope around the run so those
-    // direct invocations warn exactly when the built-in was selected.
-    let registry_scope_task = match &command {
-        Command::Task(task)
-            if effigy_cli::command_surface::group_for_child_word(&task.name).is_some() =>
-        {
-            Some(task.name.clone())
-        }
-        _ => None,
-    };
-    if let Some(task_name) = registry_scope_task.as_deref() {
-        crate::cli::legacy_direct::open_registry_scope(task_name);
-    }
+pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     if !context.suppress_header {
         let _ = render_cli_header(&mut renderer, context.command_root);
@@ -241,30 +183,13 @@ pub fn run_and_render_command(
     } else {
         None
     };
-    let outcome = crate::runner::run_command_with_context(command, context.runtime_context);
-    let registry_warnings = if registry_scope_task.is_some() {
-        crate::cli::legacy_direct::close_registry_scope()
-    } else {
-        Vec::new()
-    };
-    let mut warnings = Vec::with_capacity(registry_warnings.len() + 1);
-    if let Some(warning) = legacy_direct_warning {
-        warnings.push(warning.to_json());
-    }
-    warnings.extend(registry_warnings.iter().map(|w| w.to_json()));
-    crate::cli::legacy_direct::print_human_warning_values(&warnings, context.emit_json_envelope);
-    match outcome {
+    match crate::runner::run_command_with_context(command, context.runtime_context) {
         Ok(output) => {
             if let Some(spinner) = spinner.as_ref() {
                 spinner.finish_clear();
             }
             if context.emit_json_envelope {
-                emit_json_envelope_success_with_warnings(
-                    context.command_kind,
-                    context.command_name,
-                    &output,
-                    &warnings,
-                );
+                emit_json_envelope_success(context.command_kind, context.command_name, &output);
                 return;
             }
             if !output.trim().is_empty() {
@@ -277,14 +202,13 @@ pub fn run_and_render_command(
                 spinner.finish_clear();
             }
             if context.emit_json_envelope {
-                emit_json_envelope_error_with_warnings(
+                emit_json_envelope_error(
                     1,
                     context.command_kind,
                     context.command_name,
                     "RunnerError",
                     &err.to_string(),
                     err.rendered_output().map(parse_json_or_string),
-                    &warnings,
                 );
             }
             if let Some(rendered) = err.rendered_output() {
@@ -294,14 +218,13 @@ pub fn run_and_render_command(
                 }
             }
             if context.emit_json_envelope {
-                emit_json_envelope_error_with_warnings(
+                emit_json_envelope_error(
                     1,
                     context.command_kind,
                     context.command_name,
                     "RunnerError",
                     &err.to_string(),
                     None,
-                    &warnings,
                 );
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);
@@ -361,13 +284,6 @@ fn parse_command_with_builtin_deferral(
         return parse_command(args);
     };
 
-    // The five namespace words are reserved: an exact space-separated
-    // namespace enters grouped built-in routing and no manifest task or
-    // `[defer] builtins` entry owns the bare word after this preview.
-    if effigy_cli::command_surface::group_for_namespace_word(first).is_some() {
-        return parse_command(args);
-    }
-
     let Some(root) = deferred_builtin_root(&args[1..], cwd, global_options.repo_override.clone())
     else {
         return parse_command(args);
@@ -411,21 +327,9 @@ fn reject_help_for_deferred_builtin(
         _ => None,
     };
     match owned_name {
-        Some(name) => {
-            let canonical = effigy_cli::command_surface::group_for_child_word(&name)
-                .map(|group| format!("effigy {} {name}", group.slug()));
-            let guidance = match canonical {
-                Some(route) => format!(
-                    "run `effigy {name} --help` for what `effigy {name}` actually does, or `{route} --help` for the built-in panel"
-                ),
-                None => format!(
-                    "run `effigy {name} --help` for what `effigy {name}` actually does"
-                ),
-            };
-            Err(effigy_cli::CliParseError::InvalidArguments(format!(
-                "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; {guidance}"
-            )))
-        }
+        Some(name) => Err(effigy_cli::CliParseError::InvalidArguments(format!(
+            "`{name}` is deferred to this repository's own routing, so its built-in help panel is unavailable here; run `effigy {name} --help` for what `effigy {name}` actually does"
+        ))),
         None => Ok(command),
     }
 }
@@ -667,130 +571,6 @@ mod help_deferral_tests {
         assert_eq!(
             parse(&root, &["help", "repo"]).expect("parse"),
             Command::HelpGroup(effigy_cli::HelpGroup::Repo)
-        );
-    }
-}
-
-#[cfg(test)]
-mod namespace_reservation_tests {
-    use super::parse_command_with_builtin_deferral;
-    use effigy_cli::{Command, GlobalCliOptions, HelpGroup};
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("effigy-namespace-reservation-{name}-{ts}"));
-        fs::create_dir_all(&root).expect("mkdir root");
-        root
-    }
-
-    fn parse(root: &std::path::Path, args: &[&str]) -> Result<Command, effigy_cli::CliParseError> {
-        parse_command_with_builtin_deferral(
-            args.iter().map(|arg| (*arg).to_owned()).collect(),
-            root,
-            &GlobalCliOptions::default(),
-        )
-    }
-
-    #[test]
-    fn namespace_words_beat_explicit_deferral_entries() {
-        let root = temp_root("defer-namespace");
-        fs::write(
-            root.join("effigy.toml"),
-            "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"repo\", \"graph\"]\n",
-        )
-        .expect("write manifest");
-
-        // The namespace word is reserved: `effigy repo docs` enters grouped
-        // built-in routing even though `[defer] builtins` names `repo`.
-        assert_eq!(
-            parse(&root, &["repo", "docs"]).expect("parse"),
-            Command::Help(effigy_cli::HelpTopic::Docs),
-            "bare grouped child renders the built-in typed panel"
-        );
-        assert_eq!(
-            parse(&root, &["repo"]).expect("parse"),
-            Command::HelpGroup(HelpGroup::Repo),
-            "bare namespace word renders the group inventory"
-        );
-
-        // The retained direct spelling keeps its deferral: the manifest owns
-        // `graph` through `[defer] builtins`.
-        assert!(
-            matches!(
-                parse(&root, &["graph"]).expect("parse"),
-                Command::Task(task) if task.name == "graph"
-            ),
-            "direct `effigy graph` must keep manifest deferral"
-        );
-    }
-
-    #[test]
-    fn grouped_routes_escape_root_task_shadowing_at_parse_time() {
-        let root = temp_root("grouped-escape");
-        fs::write(
-            root.join("effigy.toml"),
-            "[tasks.docs]\nrun = \"printf repo-docs-task\"\n",
-        )
-        .expect("write manifest");
-
-        // Direct `effigy docs` defers to the repository task...
-        assert!(
-            matches!(
-                parse(&root, &["docs"]).expect("parse"),
-                Command::Task(task) if task.name == "docs"
-            ),
-            "direct `effigy docs` must defer to the manifest task"
-        );
-        // ...while the grouped route keeps the typed built-in value (the
-        // built-in docs panel for a bare child).
-        assert!(
-            matches!(
-                parse(&root, &["repo", "docs"]).expect("parse"),
-                Command::Help(effigy_cli::HelpTopic::Docs)
-            ),
-            "`effigy repo docs` must reach the typed built-in owner"
-        );
-    }
-
-    #[test]
-    fn repo_override_still_resolves_for_grouped_invocations() {
-        let root = temp_root("grouped-repo-override");
-        let target = root.join("target");
-        fs::create_dir_all(&target).expect("mkdir target");
-        fs::write(
-            target.join("effigy.toml"),
-            "[tasks.docs]\nrun = \"printf target-docs\"\n",
-        )
-        .expect("write manifest");
-
-        // The target repo shadows `docs`, so the grouped route must keep the
-        // typed built-in even under the override; the direct spelling defers.
-        let override_options = GlobalCliOptions {
-            repo_override: Some(target.clone()),
-            ..GlobalCliOptions::default()
-        };
-        let grouped = parse_command_with_builtin_deferral(
-            vec!["repo".to_owned(), "docs".to_owned()],
-            &root,
-            &override_options,
-        )
-        .expect("parse");
-        assert!(
-            matches!(grouped, Command::Help(effigy_cli::HelpTopic::Docs)),
-            "grouped route must ignore target-repo shadowing: {grouped:?}"
-        );
-
-        let direct =
-            parse_command_with_builtin_deferral(vec!["docs".to_owned()], &root, &override_options)
-                .expect("parse");
-        assert!(
-            matches!(&direct, Command::Task(task) if task.name == "docs"),
-            "direct route must keep target-repo deferral: {direct:?}"
         );
     }
 }

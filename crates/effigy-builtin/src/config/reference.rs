@@ -13,12 +13,8 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         "Supported project-level configuration keys for task execution, bundle defaults, and built-in test behavior",
     )?;
     renderer.notice(
-        NoticeLevel::Warning,
-        "the direct `effigy config` spelling is deprecated; use `effigy admin config` (removal at v1.0)",
-    )?;
-    renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy admin config --inspect` to inspect the effective composed manifest for the current repo.",
+        "Use `effigy config --inspect` to inspect the effective composed manifest for the current repo.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -26,11 +22,11 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy admin config path|get|set|unset` for user-global machine settings, or `effigy admin config --user-inspect` for the full rendered user config without editing `~/.effigy/config.toml` by hand.",
+        "Use `effigy config path|get|set|unset` for user-global machine settings, or `effigy config --user-inspect` for the full rendered user config without editing `~/.effigy/config.toml` by hand.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy deliver bundle inspect` to inspect the active repo bundle source and `effigy deliver bundle sync` to refresh remote git or OCI bundle sources.",
+        "Use `effigy bundle inspect` to inspect the active repo bundle source and `effigy bundle sync` to refresh remote git or OCI bundle sources.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -51,9 +47,9 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
             "# Or use an OCI bundle:",
             "# base = { type = \"oci\", url = \"ghcr.io/org/bundle:v1\" }",
             "# Bundle-defined inputs depend on the selected preset.",
-            "# Inspect the active repo bundle source: `effigy deliver bundle inspect`",
-            "# Refresh remote git or OCI sources: `effigy deliver bundle sync`",
-            "# Render the generic bundle config schema: `effigy admin config --schema --target bundle`",
+            "# Inspect the active repo bundle source: `effigy bundle inspect`",
+            "# Refresh remote git or OCI sources: `effigy bundle sync`",
+            "# Render the generic bundle config schema: `effigy config --schema --target bundle`",
             "# Define local bundles with `bundle.toml` and `export.toml` in the chosen `dir`.",
             "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.",
             "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.",

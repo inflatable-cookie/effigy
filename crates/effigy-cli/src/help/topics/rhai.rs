@@ -11,7 +11,7 @@ const RHAI_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "Inspect Effigy's in-process Rhai host API surface.",
         "Use this before writing scripts when you need module names, function names, and side-effect posture without leaving the runtime.",
     ],
-    usage: &["effigy extend rhai surface [--json]"],
+    usage: &["effigy rhai surface [--json]"],
     leading_common_options: &[],
     options: &[("surface", "List registered Rhai modules and functions")],
     trailing_common_options: &[
@@ -19,8 +19,8 @@ const RHAI_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy extend rhai surface",
-        "effigy extend rhai surface --json",
-        "effigy --json extend rhai surface",
+        "effigy rhai surface",
+        "effigy rhai surface --json",
+        "effigy --json rhai surface",
     ],
 };

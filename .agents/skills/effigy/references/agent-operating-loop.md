@@ -8,8 +8,8 @@ even when the work is clearly code understanding or direct execution.
 
 | Job | First command |
 |-----|---------------|
-| Code understanding | `effigy repo graph explore "<question>" --json` |
-| Graph-backed risk review | `effigy repo scan <graph-aware-subcommand> --json` |
+| Code understanding | `effigy graph explore "<question>" --json` |
+| Graph-backed risk review | `effigy scan <graph-aware-subcommand> --json` |
 | Selector inventory | `effigy tasks` |
 | Test-routing inspection | `effigy test --plan` |
 | Routing ambiguity or repo health | `effigy doctor` |
@@ -38,7 +38,7 @@ Do this when you need to find owners, trace behavior, or orient in an
 unfamiliar tree — **before** spraying `rg` or opening many files.
 
 ```bash
-effigy repo graph explore "<question>" --max-files 6 --max-bytes 12288 --json
+effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 ```
 
 Graph queries build or refresh the index on demand. Use `graph status` only
@@ -64,7 +64,7 @@ built-in covers the path.
 ## Validation lane
 
 ```bash
-git diff --name-only | effigy repo graph affected --stdin --json
+git diff --name-only | effigy graph affected --stdin --json
 effigy test                        # or a repo-specific qa:* task
 ```
 
@@ -73,9 +73,9 @@ Use `graph affected` to pick a smaller target; it is not exhaustive proof.
 ## Risk-review lane
 
 ```bash
-effigy repo scan boundary-violations --json
-effigy repo scan dead-code --json
-git diff --name-only | effigy repo scan validation-gaps --stdin --json
+effigy scan boundary-violations --json
+effigy scan dead-code --json
+git diff --name-only | effigy scan validation-gaps --stdin --json
 ```
 
 Use this lane when the question is boundary drift, likely isolation, or
@@ -85,7 +85,7 @@ validation risk. Do not substitute it for code navigation or exact proof.
 
 ```bash
 effigy doctor --verbose            # includes enabled scan checks
-effigy repo scan god-files --json       # individual scanners also available
+effigy scan god-files --json       # individual scanners also available
 ```
 
 ## Not part of the default route
@@ -94,10 +94,10 @@ Use only when the repo or user needs them:
 
 | Need | Surface |
 |------|---------|
-| Local stack | `effigy local container up`, `effigy dev` (repo task) |
-| Cross-repo clone | `effigy deliver bootstrap <git-url>` |
-| Secrets | `effigy admin secrets doctor`, `effigy admin secrets list` |
-| State / deploy | `effigy deliver state plan`, `effigy deliver deploy plan` |
+| Local stack | `effigy container up`, `effigy dev` (repo task) |
+| Cross-repo clone | `effigy bootstrap <git-url>` |
+| Secrets | `effigy secrets doctor`, `effigy secrets list` |
+| State / deploy | `effigy state plan`, `effigy deploy plan` |
 | Release cut | human-gated; see `release-protocol.md` |
 
 ## Source checkout fallback
@@ -109,4 +109,4 @@ cargo run --bin effigy -- <command>
 ```
 
 Outside that repo, install the binary per the project README or use
-`effigy deliver bootstrap`.
+`effigy bootstrap`.

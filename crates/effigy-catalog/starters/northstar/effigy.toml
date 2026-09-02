@@ -39,14 +39,14 @@ validate = [
   { task = "qa:northstar:readme" },
 ]
 
-"qa:northstar:spine" = "effigy repo docs check paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
-"qa:northstar:agent-contract" = "effigy repo docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
-"qa:northstar:readme" = "effigy repo docs check contains README.md --require 'docs/README.md'"
-"qa:northstar:docs-front-door" = "effigy repo docs check contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
-"qa:northstar:indexes" = "effigy repo docs check index --policy-index vision"
-"qa:northstar:next-action" = "effigy repo docs check next-action --policy vision"
-"qa:northstar:headings" = "effigy repo docs check headings docs/vision/README.md --require-heading '## Vision Artifacts'"
-"qa:northstar:agent-defaults" = "effigy repo docs check forbidden AGENTS.md README.md --forbid '--repo .'"
+"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:indexes" = "effigy docs check index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check next-action --policy vision"
+"qa:northstar:headings" = "effigy docs check headings docs/vision/README.md --require-heading '## Vision Artifacts'"
+"qa:northstar:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'"
 
 "qa:northstar" = [
   { task = "qa:northstar:spine" },
@@ -67,7 +67,7 @@ qa = [
 
 # ---- Docs policy -------------------------------------------------------------
 # Starter `[docs_policy]` block — wire the vision index to the
-# `effigy repo docs check index` / `check-next-action` engines.
+# `effigy docs check index` / `check-next-action` engines.
 
 [docs_policy.indexes.vision]
 file = "docs/vision/README.md"

@@ -15,7 +15,7 @@ pub(super) fn render_bash_completion() -> String {
     doc.line("  if [[ ${COMP_CWORD} -eq 1 ]]; then");
     doc.line("    local candidates");
     doc.line(
-        "    candidates=\"$(effigy admin config completion candidates --prefix \"$cur\" 2>/dev/null)\"",
+        "    candidates=\"$(effigy config completion candidates --prefix \"$cur\" 2>/dev/null)\"",
     );
     doc.line("    if [[ -z \"$candidates\" ]]; then");
     doc.line(format!(

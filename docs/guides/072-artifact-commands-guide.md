@@ -3,8 +3,8 @@
 Use this guide when you need to move versioned data payloads between local
 files, OCI registries, and Effigy-managed seed/dump workflows.
 
-This is the practical command guide for `effigy deliver artifact ...` and the artifact
-surfaces inside `effigy local container ...` and `effigy deliver bootstrap ...`.
+This is the practical command guide for `effigy artifact ...` and the artifact
+surfaces inside `effigy container ...` and `effigy bootstrap ...`.
 
 Use:
 
@@ -57,8 +57,8 @@ oras login <registry-host>
 Check what Effigy would resolve before staging:
 
 ```sh
-effigy deliver artifact inspect ./data/legacy.sql.gz --json
-effigy deliver artifact inspect oci://ghcr.io/acme/private-data:uat --json
+effigy artifact inspect ./data/legacy.sql.gz --json
+effigy artifact inspect oci://ghcr.io/acme/private-data:uat --json
 ```
 
 Inspect works for local files and OCI refs. It reports the artifact kind,
@@ -69,8 +69,8 @@ staged root, primary files, and metadata.
 Copy a local file or pull an OCI artifact into the repo-owned artifact cache:
 
 ```sh
-effigy deliver artifact stage ./data/legacy.sql.gz --json
-effigy deliver artifact stage oci://ghcr.io/acme/private-data:uat --json
+effigy artifact stage ./data/legacy.sql.gz --json
+effigy artifact stage oci://ghcr.io/acme/private-data:uat --json
 ```
 
 Staging is deterministic: the same source produces the same staged root path
@@ -82,17 +82,17 @@ Package a local payload into a new artifact and optionally push it to a registry
 
 ```sh
 # Plan only: stage locally, report the planned destination
-effigy deliver artifact capture ./dumps/uat.sql.gz \
+effigy artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --json
 
 # Push: stage locally, then publish to the registry
-effigy deliver artifact capture ./dumps/uat.sql.gz \
+effigy artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --push --json
 
 # Directory/object-tree capture
-effigy deliver artifact capture ./state/media \
+effigy artifact capture ./state/media \
   --ref oci://ghcr.io/acme/media:uat \
   --kind object-store --push --json
 ```
@@ -131,38 +131,38 @@ Artifacts integrate with container data lifecycle and bootstrap:
 
 ```sh
 # Local file
-effigy local container data seed --db-seed ./latest.sql
+effigy container data seed --db-seed ./latest.sql
 
 # OCI artifact
-effigy local container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
+effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
 
 # Multiple targets
-effigy local container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql
+effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql
 ```
 
 ### Container Data Dump with Push
 
 ```sh
 # Dump to local file
-effigy local container data dump app=./app.sql
+effigy container data dump app=./app.sql
 
 # Dump and stage for OCI
-effigy local container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
 
 # Dump, stage, and push
-effigy local container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 ```
 
 ### Bootstrap with DB Seed
 
 ```sh
-effigy deliver bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
 ```
 
 If the bootstrap flow also needs a specific runtime, combine the two:
 
 ```sh
-effigy deliver bootstrap git@github.com:acme/app.git \
+effigy bootstrap git@github.com:acme/app.git \
   --backend docker \
   --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
 ```
@@ -228,6 +228,6 @@ Every staged artifact carries an `effigy-artifact.json` metadata file shaped lik
 
 ## Next Step
 
-After staging or capturing your first artifact, use `effigy local container data seed`
-or `effigy deliver bootstrap --db-seed` to wire it into the repo's standard data
+After staging or capturing your first artifact, use `effigy container data seed`
+or `effigy bootstrap --db-seed` to wire it into the repo's standard data
 lifecycle.

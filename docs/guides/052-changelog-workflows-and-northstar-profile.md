@@ -168,11 +168,11 @@ The built-in release workflow consumes changelog state directly.
 
 Key integration points:
 
-- `effigy deliver release status`
+- `effigy release status`
   - validates changelog structure and checks whether `Unreleased` is empty
-- `effigy deliver release simulate`
+- `effigy release simulate`
   - previews the bump implied by `Unreleased`
-- `effigy deliver release prepare`
+- `effigy release prepare`
   - promotes `Unreleased` into the selected release version and keeps
     `Unreleased` present for future work
 - `.github/workflows/release-binaries.yml`
@@ -223,8 +223,8 @@ success. Then continue:
 ```bash
 effigy changelog validate CHANGELOG.md
 effigy changelog analyze CHANGELOG.md
-effigy deliver release status --check-gates
-effigy deliver release prepare --plan
+effigy release status --check-gates
+effigy release prepare --plan
 ```
 
 When drafting release notes after a tag is cut:

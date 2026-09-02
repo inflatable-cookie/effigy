@@ -158,9 +158,9 @@ auto-discovery entirely.
 Use inspection every time composition gets non-trivial:
 
 ```sh
-effigy admin config --inspect
-effigy admin config --inspect --path tasks.dev
-effigy admin config --inspect --path demos.login-smoke
+effigy config --inspect
+effigy config --inspect --path tasks.dev
+effigy config --inspect --path demos.login-smoke
 ```
 
 Use full inspect when the question is “what is the merged manifest?”

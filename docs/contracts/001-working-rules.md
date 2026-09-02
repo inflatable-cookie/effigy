@@ -96,7 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-`g09.001` and card `1109` are complete; strict spec `116` is archived. The next
-checkpoint is the future `v1.0` consumer-evidence gate: direct-route removal
-requires a refreshed consumer inventory and explicit release authority, and no
-removal card is readied before that gate.
+`g09.002` and card `1110` are complete; strict spec `117` is archived. Direct
+built-in invocation is canonical. The next operator checkpoint is the
+2026-09-17 vision governance review. Effigy release and S3 extraction remain
+separately gated.

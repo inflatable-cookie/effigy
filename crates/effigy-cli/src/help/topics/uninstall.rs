@@ -11,13 +11,13 @@ const UNINSTALL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "uninstall",
     notices: text_lines![
         "`uninstall` plans or removes Effigy-owned local machine state.",
-        "Plain `effigy admin uninstall` is plan-only. Mutation requires `--yes`.",
+        "Plain `effigy uninstall` is plan-only. Mutation requires `--yes`.",
         "The first implementation removes user-global Effigy config/catalog state and the managed Colima profile; it does not remove the Effigy binary."
     ],
     usage: text_lines![
-        "effigy admin uninstall [--json]",
-        "effigy admin uninstall --plan [--json]",
-        "effigy admin uninstall --yes [--json]",
+        "effigy uninstall [--json]",
+        "effigy uninstall --plan [--json]",
+        "effigy uninstall --yes [--json]",
     ],
     leading_common_options: &[],
     options: UNINSTALL_OPTIONS,
@@ -25,7 +25,7 @@ const UNINSTALL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Json("Render machine-readable uninstall plan/result payload"),
         CommonOption::Help,
     ],
-    examples: text_lines!["effigy admin uninstall", "effigy admin uninstall --yes"],
+    examples: text_lines!["effigy uninstall", "effigy uninstall --yes"],
 };
 
 const UNINSTALL_OPTIONS: &[(&str, &str)] = option_rows![

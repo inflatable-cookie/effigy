@@ -27,7 +27,7 @@ implementation, or changed-file impact.
 ## Standard sequence
 
 ```bash
-effigy repo graph explore "<task-shaped question>" \
+effigy graph explore "<task-shaped question>" \
   --max-files 6 --max-bytes 12288 --json
 ```
 
@@ -47,15 +47,15 @@ Good query shapes:
 After edits:
 
 ```bash
-git diff --name-only | effigy repo graph affected --stdin --json
+git diff --name-only | effigy graph affected --stdin --json
 ```
 
 When the question is risk rather than ownership, switch to graph-aware scans:
 
 ```bash
-effigy repo scan boundary-violations --json
-effigy repo scan dead-code --json
-git diff --name-only | effigy repo scan validation-gaps --stdin --json
+effigy scan boundary-violations --json
+effigy scan dead-code --json
+git diff --name-only | effigy scan validation-gaps --stdin --json
 ```
 
 ## Rules
@@ -82,7 +82,7 @@ git diff --name-only | effigy repo scan validation-gaps --stdin --json
 
 ```bash
 mv .effigy/graph .effigy/graph.backup-$(date +%s)
-effigy repo graph index --json
+effigy graph index --json
 ```
 
 Move the cache aside so it remains recoverable while the replacement index is
@@ -93,7 +93,7 @@ built.
 When you want ranked items without the assembled explore shape:
 
 ```bash
-effigy repo graph context "<question>" --max-files 8 --max-bytes 4096 --json
+effigy graph context "<question>" --max-files 8 --max-bytes 4096 --json
 ```
 
 Optional filters: `--language rust`, `--path src/runner`.
@@ -101,7 +101,7 @@ Optional filters: `--language rust`, `--path src/runner`.
 ## Watch mode (long-running repos)
 
 ```bash
-effigy repo graph watch --debounce-ms 1000 --json
+effigy graph watch --debounce-ms 1000 --json
 ```
 
 `graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1`

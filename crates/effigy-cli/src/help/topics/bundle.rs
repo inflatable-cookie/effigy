@@ -13,9 +13,9 @@ const BUNDLE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "Remote git and OCI bundle sources can be refreshed with `bundle sync`; local path bundles report not-applicable.",
     ],
     usage: &[
-        "effigy deliver bundle inspect [--repo <PATH>] [--json]",
-        "effigy deliver bundle sync [--json]",
-        "effigy --json deliver bundle inspect",
+        "effigy bundle inspect [--repo <PATH>] [--json]",
+        "effigy bundle sync [--json]",
+        "effigy --json bundle inspect",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[(
@@ -27,9 +27,9 @@ const BUNDLE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy deliver bundle inspect --repo /path/to/workspace",
-        "effigy deliver bundle inspect",
-        "effigy deliver bundle sync",
-        "effigy --json deliver bundle inspect",
+        "effigy bundle inspect --repo /path/to/workspace",
+        "effigy bundle inspect",
+        "effigy bundle sync",
+        "effigy --json bundle inspect",
     ],
 };

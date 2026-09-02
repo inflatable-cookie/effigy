@@ -1,6 +1,6 @@
 # 079 - Documentation Graph Profiles And Context
 
-`effigy repo docs context <QUERY>` returns small, exact, current documentation
+`effigy docs context <QUERY>` returns small, exact, current documentation
 evidence from the selected repository. This guide covers the repository-owned
 profile that gives that evidence meaning, the adoption boundary between a
 template and a committed profile, and the query shapes that pay off.
@@ -25,8 +25,8 @@ currentness, extracted fields, typed relation path, and a machine-readable match
 reason. Nothing is summarized, inferred, or generated.
 
 ```sh
-effigy repo docs context "release gates"
-effigy repo docs context "documentation graph profile" --max-sections 4 --max-bytes 8000
+effigy docs context "release gates"
+effigy docs context "documentation graph profile" --max-sections 4 --max-bytes 8000
 effigy --json docs context "graph freshness" --max-hops 2
 ```
 
@@ -125,22 +125,22 @@ the evidence and answer from it.
 
 ```sh
 # 1. which contract governs this behavior
-effigy repo docs context "documentation graph profile contract"
+effigy docs context "documentation graph profile contract"
 
 # 2. what is the architecture decision behind it
-effigy repo docs context "repository defined documentation graph architecture"
+effigy docs context "repository defined documentation graph architecture"
 
 # 3. which milestone owns this work right now
-effigy repo docs context "repository defined documentation graph milestone execution plan"
+effigy docs context "repository defined documentation graph milestone execution plan"
 
 # 4. what is the active planning lane
-effigy repo docs context "active strict lane spec set"
+effigy docs context "active strict lane spec set"
 
 # 5. what is the next task in that lane
-effigy repo docs context "next task" --max-sections 4
+effigy docs context "next task" --max-sections 4
 
 # 6. what did we decide before, and why
-effigy repo docs context "bounded documentation context query closeout evidence"
+effigy docs context "bounded documentation context query closeout evidence"
 ```
 
 Shapes 3, 4, and 5 are different questions and stay separate. **Current roadmap**
@@ -164,7 +164,7 @@ retired document hold identical section text and only `State:` separates them:
 
 ```sh
 # which procedure is the one in force
-effigy repo docs context "escalation rota paging order" \
+effigy docs context "escalation rota paging order" \
   --repo tests/fixtures/docs-context-benchmark/generic-handbook
 ```
 
@@ -234,6 +234,6 @@ freeze history recorded in the file. Reports land under
 ## Next Step
 
 Adopt a profile in one consumer repository, run
-`effigy repo docs context` against the five example query shapes above, and tune the
+`effigy docs context` against the five example query shapes above, and tune the
 kind authority weights until the answers you expect lead. Keep the vocabulary
 yours.

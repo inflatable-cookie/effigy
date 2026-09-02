@@ -265,7 +265,8 @@ The feature-boundary follow-through is sequenced as separate lanes:
 3. catalog-pack acquisition prototype satisfying the simplicity invariant,
    followed separately by dedicated-repository publication, generated-baseline
    cutover, and public update exposure;
-4. executable grouped-command preview with retained direct migration aliases;
+4. executable grouped-command preview with retained direct migration aliases
+   (shipped by card `1109`, then rolled back by card `1110`);
 5. S3 migration only after the named consumer replacement proof.
 
 These lanes should remain separate. None implies release work.
@@ -274,7 +275,7 @@ These lanes should remain separate. None implies release work.
 
 - optimize binary size;
 - remove commands merely to reduce a count;
-- remove displaced direct routes before the `v1.0` evidence gate;
+- reopen executable help-taxonomy aliases or reserve help-group words;
 - require a plugin marketplace;
 - remove S3 before consumer replacement;
 - make catalog use more manual;
@@ -283,8 +284,7 @@ These lanes should remain separate. None implies release work.
 
 ## Drift Triggers
 
-Revisit this architecture when a new top-level family is proposed, the `v1.0`
-direct-route removal gate is approached, a provider
-dependency enters mandatory core, a grouped route diverges from its shortcut,
-catalog acquisition adds operator ceremony, product-specific release defaults
-enter reusable release code, or the S3 consumer dependency changes.
+Revisit this architecture when a new top-level family is proposed, a provider
+dependency enters mandatory core, catalog acquisition adds operator ceremony,
+product-specific release defaults enter reusable release code, or the S3
+consumer dependency changes.

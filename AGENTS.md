@@ -28,17 +28,17 @@ Effigy is a Rust-based unified task runner for monorepos. Behavior is
 effigy tasks
 effigy test --plan
 effigy qa                 # test + docs + json contracts
-effigy deliver release gates
+effigy release gates
 ```
 
 Without `effigy` on PATH: `cargo run --bin effigy -- ...`.
 Bootstrap from outside:
-`effigy deliver bootstrap git@github.com:inflatable-cookie/effigy.git`.
+`effigy bootstrap git@github.com:inflatable-cookie/effigy.git`.
 
 Rust QA when needed: `cargo test`, `cargo fmt --all -- --check`,
 `cargo clippy --all-targets -- -D warnings` (plain `cargo clippy` matches CI).
 
-Route by job: `effigy repo graph` for code understanding; `effigy repo docs context` for
+Route by job: `effigy graph` for code understanding; `effigy docs context` for
 documentation authority (which contract, decision, or lane governs the work);
 `effigy tasks` for selectors; `effigy doctor` for routing/health;
 `effigy test --plan` for test shape.
@@ -92,16 +92,16 @@ Other repos: `npx skills add inflatable-cookie/effigy`. This repo's
 Use Effigy as the default command surface for supported project work.
 
 Route by job, not by startup ritual:
-- use `effigy repo graph` for code understanding
+- use `effigy graph` for code understanding
 - use `effigy tasks` for selector inventory
 - use `effigy doctor` for routing ambiguity or repo health
 - use `effigy test --plan` when test execution shape matters
 
-Use `effigy repo graph` when the job is code understanding: ownership, flow,
+Use `effigy graph` when the job is code understanding: ownership, flow,
 implementation, or changed-file impact. Do not insert graph into unrelated
 deployment, state, docs, release, or direct task-execution work.
 
-Use `effigy repo docs context "<question>"` when the job is documentation authority
+Use `effigy docs context "<question>"` when the job is documentation authority
 rather than code ownership. It returns exact repository sections with
 provenance, ranked by this repo's committed `[docs_policy.graph]` profile in
 `docs/effigy.docs.toml`. That profile is the only runtime authority; no

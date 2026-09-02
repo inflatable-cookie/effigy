@@ -18,7 +18,7 @@ next consumer hits the bug instead of you.
 
 When a gate fails:
 
-- Read the gate output (`effigy deliver release status --check-gates` shows them all).
+- Read the gate output (`effigy release status --check-gates` shows them all).
 - Fix the underlying cause — failing test, missing changelog entry, dirty
   working tree, version mismatch.
 - Re-run the gate.
@@ -28,7 +28,7 @@ files to make a gate pass.
 
 ## 3. Never re-tag a failed release
 
-If `effigy deliver release execute` fails partway, the tag may already exist on the
+If `effigy release execute` fails partway, the tag may already exist on the
 remote, or the manifest cache may have recorded the attempt. Re-tagging:
 
 - Confuses consumers who already pulled the broken tag.
@@ -46,18 +46,18 @@ bottle uploads, distribution manifest updates.
 
 Commands that require explicit human instruction:
 
-- `effigy deliver release prepare --yes`
-- `effigy deliver release execute --yes`
-- `effigy deliver release verify-install`
+- `effigy release prepare --yes`
+- `effigy release execute --yes`
+- `effigy release verify-install`
 - Anything that pushes tags, creates GitHub releases, or uploads artifacts.
 
 Read-only release commands (safe to run unprompted for inspection):
 
-- `effigy deliver release simulate`
-- `effigy deliver release status --check-gates`
-- `effigy deliver release prepare --plan`
-- `effigy deliver release execute --plan`
-- `effigy deliver release gates`
+- `effigy release simulate`
+- `effigy release status --check-gates`
+- `effigy release prepare --plan`
+- `effigy release execute --plan`
+- `effigy release gates`
 - `effigy changelog extract --version X.Y.Z`
 
 ## 5. Don't add `package.json` scripts re-exporting Effigy tasks

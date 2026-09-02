@@ -332,7 +332,7 @@ instead of `process::run("effigy", ["exec", ...])` or `effigy::run(["exec", ...]
 `process::run("effigy", ...)`, `process::stream("effigy", ...)`, and
 `process::tee("effigy", ...)` are rejected at runtime; hitting that seam
 means Effigy needs a new typed Rhai host helper.
-Use `effigy extend rhai surface --json` to inspect the registered host API from the
+Use `effigy rhai surface --json` to inspect the registered host API from the
 runtime itself before writing or updating scripts. That command is the
 machine-readable discovery surface; the audit guide is the human-maintained
 explanation of intent and policy.

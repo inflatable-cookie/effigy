@@ -14,12 +14,12 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "On macOS, `gateway up` and `gateway down` also manage `/etc/resolver/test` and will prompt for admin approval when host setup needs it.",
         ],
         &[
-            "effigy local gateway up [--json]",
-            "effigy local gateway down [--json]",
-            "effigy local gateway status [--json]",
-            "effigy local gateway repair [--yes] [--json]",
-            "effigy local gateway setup-tls [--json]",
-            "effigy --json local gateway status",
+            "effigy gateway up [--json]",
+            "effigy gateway down [--json]",
+            "effigy gateway status [--json]",
+            "effigy gateway repair [--yes] [--json]",
+            "effigy gateway setup-tls [--json]",
+            "effigy --json gateway status",
         ],
         &[
             ("--json", "Render machine-readable gateway payloads"),
@@ -27,12 +27,12 @@ pub(crate) fn render_gateway_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             ("-h, --help", "Print command help"),
         ],
         &[
-            "effigy local gateway up",
-            "effigy local gateway status --json",
-            "effigy local gateway repair",
-            "effigy local gateway repair --yes",
-            "effigy local gateway setup-tls",
-            "effigy local gateway down",
+            "effigy gateway up",
+            "effigy gateway status --json",
+            "effigy gateway repair",
+            "effigy gateway repair --yes",
+            "effigy gateway setup-tls",
+            "effigy gateway down",
         ],
     )
 }

@@ -19,7 +19,7 @@ Start with the smallest useful automation surface:
 effigy --json tasks
 effigy qa:docs
 effigy qa:json:ci
-effigy deliver release gates
+effigy release gates
 ```
 
 Choose the path by intent:
@@ -27,7 +27,7 @@ Choose the path by intent:
 - need machine-readable command output: use `effigy --json <command>`
 - need docs and contract validation in CI: use `qa:docs`, `qa:json`, or
   `qa:json:ci`
-- need release gating: use `effigy deliver release gates`
+- need release gating: use `effigy release gates`
 - need wrapper scripts only because an external system still expects them: keep
   them as compatibility boundaries, not as the preferred operator surface
 
@@ -39,7 +39,7 @@ Canonical operator entrypoints:
 - `effigy qa:json`
 - `effigy qa:json:ci`
 - `effigy qa:ci`
-- `effigy deliver release gates`
+- `effigy release gates`
 - `cargo run --bin effigy -- <command>` when validating the current checkout before refreshing the installed binary
 
 Compatibility fallbacks:
@@ -51,7 +51,7 @@ Compatibility fallbacks:
 - `cargo prepush-ci`
 
 Task-composition note:
-- `qa:docs` is a native task chain over `effigy repo docs check links`, `check-json-examples`, `check-index`, plus `qa:docs:vision`
+- `qa:docs` is a native task chain over `effigy docs check links`, `check-json-examples`, `check-index`, plus `qa:docs:vision`
 - `qa:ci` is the native docs-plus-CI-contracts aggregation path used by release-gate wiring
 - the remaining `docs/scripts/check-vision-*.sh` checks are intentionally
   repo-policy surfaces for now; further migration should happen behind the
@@ -69,12 +69,12 @@ Intentional remaining shell scripts:
 - none
 
 Boundary note:
-- `cargo qa-release` now maps straight to `effigy deliver release gates`
+- `cargo qa-release` now maps straight to `effigy release gates`
   rather than a separate helper binary layered on top of the release wrapper
   path
 
 Release policy note:
-- prefer built-in `effigy deliver release ...` commands for operator-driven release work
+- prefer built-in `effigy release ...` commands for operator-driven release work
 - use shell scripts only where there is a real platform-side effect or shell
   tooling reason, not as a compatibility alias for Effigy commands
 
@@ -88,16 +88,16 @@ Before debugging CI, run locally:
 ```sh
 effigy qa
 effigy qa:json:ci
-effigy deliver release gates
-effigy deliver release simulate
-effigy deliver release status --check-gates
-effigy deliver release preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
-effigy deliver release verify-install --tag v0.__.__
-effigy deliver release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release gates
+effigy release simulate
+effigy release status --check-gates
+effigy release preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
+effigy release verify-install --tag v0.__.__
+effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
-effigy deliver release validate --tag v0.__.__
-effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__
-effigy deliver release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release validate --tag v0.__.__
+effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture
 effigy qa:docs
 ```
@@ -112,13 +112,13 @@ Install pinning and team migration policy:
 PR-style changed-only simulation:
 
 ```sh
-effigy repo contracts check-json --fast --changed-only origin/main --print-selected=json
+effigy contracts check-json --fast --changed-only origin/main --print-selected=json
 ```
 
 Validate artifact payload shape:
 
 ```sh
-effigy repo contracts validate-selection --artifact ./json-contracts-selected.json
+effigy contracts validate-selection --artifact ./json-contracts-selected.json
 cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
 ```
 
@@ -166,8 +166,8 @@ jobs:
 ```
 
 Notes:
-- `effigy repo contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
-- `effigy deliver release preflight`, `check-binary`, `proof`, `validate`, `evidence validate`, and `evidence closeout` are the primary distribution validation/reporting surfaces.
+- `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
+- `effigy release preflight`, `check-binary`, `proof`, `validate`, `evidence validate`, and `evidence closeout` are the primary distribution validation/reporting surfaces.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep
@@ -259,7 +259,7 @@ This checks:
 
 ## 7) Failure Triage Playbook
 
-### Case: CI fails in `effigy repo contracts check-json`
+### Case: CI fails in `effigy contracts check-json`
 
 Run locally:
 
@@ -292,13 +292,13 @@ cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_inva
 Run fast checker with selected output:
 
 ```sh
-effigy repo contracts check-json --fast --print-selected
+effigy contracts check-json --fast --print-selected
 ```
 
 Then run full mode to catch heavy-schema paths:
 
 ```sh
-effigy repo contracts check-json --full --print-selected
+effigy contracts check-json --full --print-selected
 ```
 
 ## 8) Artifact Conventions
@@ -351,14 +351,14 @@ jobs:
       - run: cargo run --bin effigy -- release gates
 ```
 
-What `effigy deliver release gates` enforces:
+What `effigy release gates` enforces:
 - `cargo fmt --check`
 - full `cargo test`
 - docs + JSON quality gates (`qa:ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
-- distribution metadata validation (`effigy deliver release validate`)
-- install validation from the pushed tag (`effigy deliver release verify-install`)
+- distribution metadata validation (`effigy release validate`)
+- install validation from the pushed tag (`effigy release verify-install`)
 
 ## 12) Recipe: Assert Completion Cache Policy Fields
 

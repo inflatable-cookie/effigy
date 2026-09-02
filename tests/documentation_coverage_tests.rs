@@ -78,34 +78,14 @@ fn project_local_and_distributed_effigy_skills_have_semantic_parity() {
     }
 }
 
-/// Primary route the command reference must teach for each published
-/// built-in family: grouped for displaced children, direct for the retained
-/// daily spine and non-grouped built-ins (mirror of the spec `116` map).
-fn primary_route(name: &str) -> String {
-    let grouped = match name {
-        "container" | "system" | "workspace" | "gateway" | "service" | "exec" => Some("local"),
-        "graph" | "scan" | "docs" | "contracts" | "papercuts" => Some("repo"),
-        "artifact" | "state" | "deploy" | "release" | "bundle" | "bootstrap" | "demo" => {
-            Some("deliver")
-        }
-        "skill" | "rhai" => Some("extend"),
-        "config" | "deps" | "secrets" | "defer" | "uninstall" | "version" => Some("admin"),
-        _ => None,
-    };
-    match grouped {
-        Some(group) => format!("`effigy {group} {name}"),
-        None => format!("`effigy {name}"),
-    }
-}
-
 #[test]
 fn public_builtin_registry_routes_through_the_command_reference() {
     let matrix = read("docs/guides/025-command-reference-matrix.md");
     for (name, _) in BUILTIN_TASKS {
-        let route = primary_route(name);
+        let route = format!("`effigy {name}");
         assert!(
             matrix.contains(&route),
-            "command reference does not route built-in family `{name}` via `{route}`"
+            "command reference does not route built-in family `{name}`"
         );
     }
 
@@ -116,15 +96,15 @@ fn public_builtin_registry_routes_through_the_command_reference() {
 fn public_help_families_and_current_contract_paths_are_documented() {
     let matrix = read("docs/guides/025-command-reference-matrix.md");
     for route in [
-        "`effigy admin version",
-        "`effigy admin uninstall",
+        "`effigy version",
+        "`effigy uninstall",
         "`effigy tasks migrate",
         "`effigy tasks unlock",
         "`effigy tasks cache",
-        "`effigy admin config completion",
+        "`effigy config completion",
         "`effigy changelog",
-        "`effigy repo scan",
-        "`effigy extend rhai",
+        "`effigy scan",
+        "`effigy rhai",
     ] {
         assert!(
             matrix.contains(route),
@@ -142,7 +122,7 @@ fn public_help_families_and_current_contract_paths_are_documented() {
         &root,
         &[
             "Route by job",
-            "`effigy repo graph` for code understanding",
+            "`effigy graph` for code understanding",
             "`effigy tasks` for selector inventory",
             "`effigy doctor` when routing or repo health is unclear",
             "`effigy test --plan` when test execution shape matters",
@@ -282,5 +262,31 @@ fn help_first_discovery_paths_are_documented() {
             &read(relative),
             &["effigy help <group>", "effigy help <command>"],
         );
+    }
+}
+
+#[test]
+fn current_guidance_does_not_teach_namespace_prefixed_execution() {
+    let forbidden = [
+        "`effigy repo graph`",
+        "`effigy local container`",
+        "`effigy deliver release`",
+        "`effigy extend skill`",
+        "`effigy admin config`",
+    ];
+    for relative in [
+        "AGENTS.md",
+        "README.md",
+        "docs/guides/025-command-reference-matrix.md",
+        "skills/effigy/SKILL.md",
+        ".agents/skills/effigy/SKILL.md",
+    ] {
+        let contents = read(relative);
+        for token in forbidden {
+            assert!(
+                !contents.contains(token),
+                "{relative} still teaches namespace-prefixed execution `{token}`"
+            );
+        }
     }
 }

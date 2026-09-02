@@ -62,7 +62,7 @@ When merging Guide A into Guide B:
 Validation:
 
 ```sh
-effigy repo docs check links README.md $(find docs -name '*.md' | sort)
+effigy docs check links README.md $(find docs -name '*.md' | sort)
 ```
 
 ## 6) Deletion Policy
@@ -91,7 +91,7 @@ Maintain a lightweight archive list in one place (recommended: `docs/guides/READ
 - [ ] Replacement guide linked (or explicit none)
 - [ ] Removed from primary onboarding paths
 - [ ] Added to supplemental/archive section
-- [ ] `effigy repo docs check links README.md $(find docs -name '*.md' | sort)` passed
+- [ ] `effigy docs check links README.md $(find docs -name '*.md' | sort)` passed
 ```
 
 ## Expected Outcome

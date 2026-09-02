@@ -9,7 +9,7 @@ If you only want one page first, use this one. Reach for the deeper release
 policy and orchestration guides only after you know you need them.
 
 Use:
-- this guide for `effigy deliver release ...`
+- this guide for `effigy release ...`
 - [`051-release-orchestration.md`](./051-release-orchestration.md) for the
   release cut workflow
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
@@ -33,9 +33,9 @@ For Effigy's own repo, the normal sequence is:
 
 1. push the clean candidate commit to `main`
 2. dispatch `ci.yml` and watch the exact candidate SHA to success
-3. `effigy deliver release gates`
-4. `effigy deliver release prepare --plan`
-5. `effigy deliver release preflight --tag vX.Y.Z`
+3. `effigy release gates`
+4. `effigy release prepare --plan`
+5. `effigy release preflight --tag vX.Y.Z`
 6. the remaining distribution evidence commands after the release mutation path
    is ready
 
@@ -52,13 +52,13 @@ For Effigy's own repo, the normal sequence is:
 
 Effigy already ships these distribution commands:
 
-- `effigy deliver release validate`
-- `effigy deliver release check-binary`
-- `effigy deliver release preflight`
-- `effigy deliver release proof`
-- `effigy deliver release evidence validate`
-- `effigy deliver release evidence closeout`
-- `effigy deliver release evidence summary`
+- `effigy release validate`
+- `effigy release check-binary`
+- `effigy release preflight`
+- `effigy release proof`
+- `effigy release evidence validate`
+- `effigy release evidence closeout`
+- `effigy release evidence summary`
 
 The reusable core today is validation and evidence. The fuller
 `proof` path still carries more Effigy and Cargo assumptions.
@@ -77,19 +77,19 @@ The reusable core today is validation and evidence. The fuller
 
 Typical full distribution cycle:
 
-1. `effigy deliver release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
-2. `effigy deliver release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-3. `effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-4. `effigy deliver release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+1. `effigy release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
+2. `effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+3. `effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+4. `effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
 
-`proof` already runs `effigy deliver release verify-install`, writes
+`proof` already runs `effigy release verify-install`, writes
 `distribution-summary.env`, and validates captured artifacts before succeeding.
 The later validate/closeout steps are for evidence and sign-off.
 
 If you only need a quick readiness proof before a cut, start smaller:
 
 ```sh
-effigy deliver release preflight --tag vX.Y.Z
+effigy release preflight --tag vX.Y.Z
 ```
 
 ## Minimal Manifest Contract
@@ -140,9 +140,9 @@ If you only need one check or one report, use that command directly.
 Examples:
 
 ```sh
-effigy deliver release check-binary ./target/release/my-tool --glibc-floor 2.35
-effigy deliver release evidence validate --artifacts-dir ./artifacts/distribution
-effigy deliver release evidence closeout --tag v1.2.3 --artifacts-dir ./artifacts/distribution
+effigy release check-binary ./target/release/my-tool --glibc-floor 2.35
+effigy release evidence validate --artifacts-dir ./artifacts/distribution
+effigy release evidence closeout --tag v1.2.3 --artifacts-dir ./artifacts/distribution
 ```
 
 ### 2. Add Validation and Evidence

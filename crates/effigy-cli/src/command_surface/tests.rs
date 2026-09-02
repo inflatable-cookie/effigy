@@ -98,50 +98,47 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     (
         HelpGroup::Local,
         &[
-            "effigy local container",
-            "effigy local system",
-            "effigy local workspace",
-            "effigy local gateway",
-            "effigy local service",
-            "effigy local exec",
+            "effigy container",
+            "effigy system",
+            "effigy workspace",
+            "effigy gateway",
+            "effigy service",
+            "effigy exec",
         ],
     ),
     (
         HelpGroup::Repo,
         &[
-            "effigy repo graph",
-            "effigy repo scan",
-            "effigy repo docs",
-            "effigy repo contracts",
-            "effigy repo papercuts",
+            "effigy graph",
+            "effigy scan",
+            "effigy docs",
+            "effigy contracts",
+            "effigy papercuts",
         ],
     ),
     (
         HelpGroup::Deliver,
         &[
-            "effigy deliver artifact",
-            "effigy deliver state",
-            "effigy deliver deploy",
-            "effigy deliver release",
-            "effigy deliver bundle",
-            "effigy deliver bootstrap",
-            "effigy deliver demo",
+            "effigy artifact",
+            "effigy state",
+            "effigy deploy",
+            "effigy release",
+            "effigy bundle",
+            "effigy bootstrap",
+            "effigy demo",
         ],
     ),
-    (
-        HelpGroup::Extend,
-        &["effigy extend skill", "effigy extend rhai surface"],
-    ),
+    (HelpGroup::Extend, &["effigy skill", "effigy rhai surface"]),
     (
         HelpGroup::Admin,
         &[
-            "effigy admin config",
-            "effigy admin deps",
-            "effigy admin secrets",
-            "effigy admin defer",
-            "effigy admin uninstall",
-            "effigy admin version",
-            "effigy admin config completion",
+            "effigy config",
+            "effigy deps",
+            "effigy secrets",
+            "effigy defer",
+            "effigy uninstall",
+            "effigy version",
+            "effigy config completion",
             "effigy help",
         ],
     ),
@@ -278,6 +275,26 @@ fn every_help_command_has_one_primary_group_row() {
 }
 
 #[test]
+fn general_help_rows_use_direct_spellings_not_namespace_prefixes() {
+    let prefixes = [
+        "effigy local ",
+        "effigy repo ",
+        "effigy deliver ",
+        "effigy extend ",
+        "effigy admin ",
+    ];
+    for entry in general_help_entries() {
+        for prefix in prefixes {
+            assert!(
+                !entry.command.starts_with(prefix),
+                "general help row `{}` still teaches namespace-prefixed execution",
+                entry.command
+            );
+        }
+    }
+}
+
+#[test]
 fn group_inventories_match_the_contract_taxonomy() {
     for (group, expected) in CONTRACT_GROUP_INVENTORIES {
         let actual = general_help_entries_for_group(*group)
@@ -391,16 +408,8 @@ fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
         deferred_builtin_for_help_topic(HelpTopic::Graph),
         Some("graph")
     );
-    // Every displaced child keeps its legacy help behind the repository
-    // deferral guard; only the canonical grouped route bypasses it.
-    assert_eq!(
-        deferred_builtin_for_help_topic(HelpTopic::Papercuts),
-        Some("papercuts")
-    );
-    assert_eq!(
-        deferred_builtin_for_help_topic(HelpTopic::Exec),
-        Some("exec")
-    );
+    // Built-ins that repository routing cannot shadow keep their help panel.
+    assert_eq!(deferred_builtin_for_help_topic(HelpTopic::Papercuts), None);
     assert_eq!(deferred_builtin_for_help_topic(HelpTopic::General), None);
 
     for entry in general_help_entries() {

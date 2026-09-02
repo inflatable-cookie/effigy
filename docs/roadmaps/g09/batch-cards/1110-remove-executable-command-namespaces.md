@@ -1,13 +1,17 @@
 # 1110 - Remove Executable Command Namespaces
 
 Roadmap: [`../002-flat-command-execution.md`](../002-flat-command-execution.md)
-Spec: [`../../../specs/117-flat-command-execution-strict-lane.md`](../../../specs/117-flat-command-execution-strict-lane.md)
+Spec: [`../../../specs/archive/117-flat-command-execution-strict-lane.md`](../../../specs/archive/117-flat-command-execution-strict-lane.md)
 Contract: [`043`](../../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: CLI command routing, discovery, completion, migration-diagnostic removal,
 and current guidance
 Created: 2026-09-02
+Closed: 2026-09-02 — rollback PR
+[#87](https://github.com/inflatable-cookie/effigy/pull/87) submitted for
+exact-head review; evidence log
+[`02-224606-flat-command-execution-1110.md`](../../../logs/2026-09/02-224606-flat-command-execution-1110.md)
 
 ## Purpose
 
@@ -87,5 +91,8 @@ extension-transport design.
 
 ## Next Task
 
-Implement this card in one worker PR, then return the exact head to the Effigy
-orchestrator for review and merge.
+This card is complete on PR
+[#87](https://github.com/inflatable-cookie/effigy/pull/87) awaiting
+orchestrator review and merge. Direct invocation is canonical. No `v1.0`
+direct-route-removal gate remains. Effigy release and S3 extraction stay
+separately gated.

@@ -16,8 +16,6 @@ mod doctor_and_tasks_option_tests;
 mod gateway_option_tests;
 #[path = "lib_tests_parse_tests/graph_option_tests.rs"]
 mod graph_option_tests;
-#[path = "lib_tests_parse_tests/grouped_command_tests.rs"]
-mod grouped_command_tests;
 #[path = "lib_tests_parse_tests/help_and_flag_tests.rs"]
 mod help_and_flag_tests;
 #[path = "lib_tests_parse_tests/papercuts_option_tests.rs"]
@@ -30,6 +28,8 @@ mod rhai_option_tests;
 mod routing_and_passthrough_tests;
 #[path = "lib_tests_parse_tests/secrets_option_tests.rs"]
 mod secrets_option_tests;
+#[path = "lib_tests_parse_tests/selector_restoration_tests.rs"]
+mod selector_restoration_tests;
 #[path = "lib_tests_parse_tests/skill_option_tests.rs"]
 mod skill_option_tests;
 #[path = "lib_tests_parse_tests/state_option_tests.rs"]

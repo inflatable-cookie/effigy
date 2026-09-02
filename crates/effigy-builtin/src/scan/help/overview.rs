@@ -5,25 +5,19 @@ pub(super) fn render_scan_help() -> String {
         "scan",
         &[
             HelpSection::Plain {
-                heading: "Deprecation",
-                lines: &[
-                    "the direct `effigy scan` spelling is deprecated; use `effigy repo scan` (removal at v1.0)",
-                ],
-            },
-            HelpSection::Plain {
                 heading: "Usage",
                 lines: &[
-                    "effigy repo scan <subcommand> [options]",
-                    "effigy repo scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
-                    "effigy repo scan boundary-violations [--markdown] [--out <PATH>]",
-                    "effigy repo scan dead-code [--markdown] [--out <PATH>]",
-                    "effigy repo scan validation-gaps [--path <PATH>]... [--stdin] [--markdown] [--out <PATH>]",
-                    "effigy repo scan duplicate-blocks [--threshold <N>] [--markdown] [--out <PATH>]",
-                    "effigy repo scan comment-ratio [--threshold <RATIO>] [--markdown] [--out <PATH>]",
-                    "effigy repo scan generated-assets [--threshold <BYTES>] [--markdown] [--out <PATH>]",
-                    "effigy repo scan generated-in-src [--threshold <BYTES>] [--source-root <GLOB>] [--markdown] [--out <PATH>]",
-                    "effigy repo scan attention-markers [--markdown] [--out <PATH>]",
-                    "effigy repo scan stale-suppressions [--markdown] [--out <PATH>]",
+                    "effigy scan <subcommand> [options]",
+                    "effigy scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
+                    "effigy scan boundary-violations [--markdown] [--out <PATH>]",
+                    "effigy scan dead-code [--markdown] [--out <PATH>]",
+                    "effigy scan validation-gaps [--path <PATH>]... [--stdin] [--markdown] [--out <PATH>]",
+                    "effigy scan duplicate-blocks [--threshold <N>] [--markdown] [--out <PATH>]",
+                    "effigy scan comment-ratio [--threshold <RATIO>] [--markdown] [--out <PATH>]",
+                    "effigy scan generated-assets [--threshold <BYTES>] [--markdown] [--out <PATH>]",
+                    "effigy scan generated-in-src [--threshold <BYTES>] [--source-root <GLOB>] [--markdown] [--out <PATH>]",
+                    "effigy scan attention-markers [--markdown] [--out <PATH>]",
+                    "effigy scan stale-suppressions [--markdown] [--out <PATH>]",
                 ],
             },
             HelpSection::Bulleted {
@@ -67,7 +61,7 @@ pub(super) fn render_scan_help() -> String {
             HelpSection::Bulleted {
                 heading: "Notes",
                 items: &[
-                    "use `effigy repo scan <subcommand> --help` for per-scanner defaults and additional flags",
+                    "use `effigy scan <subcommand> --help` for per-scanner defaults and additional flags",
                     "terminal text hides warning rows by default and prints a warning count summary; markdown and json include full findings",
                 ],
             },
@@ -82,9 +76,9 @@ pub(super) fn render_boundary_violations_help() -> String {
             HelpSection::Plain {
                 heading: "Usage",
                 lines: &[
-                    "effigy repo scan boundary-violations",
-                    "effigy repo scan boundary-violations [--markdown] [--out reports/boundary-violations.md]",
-                    "effigy repo scan boundary-violations [--json] [--fail-on-findings]",
+                    "effigy scan boundary-violations",
+                    "effigy scan boundary-violations [--markdown] [--out reports/boundary-violations.md]",
+                    "effigy scan boundary-violations [--json] [--fail-on-findings]",
                 ],
             },
             HelpSection::Bulleted {
@@ -116,9 +110,9 @@ pub(super) fn render_dead_code_help() -> String {
             HelpSection::Plain {
                 heading: "Usage",
                 lines: &[
-                    "effigy repo scan dead-code",
-                    "effigy repo scan dead-code [--markdown] [--out reports/dead-code.md]",
-                    "effigy repo scan dead-code [--json] [--fail-on-findings]",
+                    "effigy scan dead-code",
+                    "effigy scan dead-code [--markdown] [--out reports/dead-code.md]",
+                    "effigy scan dead-code [--json] [--fail-on-findings]",
                 ],
             },
             HelpSection::Bulleted {
@@ -150,9 +144,9 @@ pub(super) fn render_validation_gaps_help() -> String {
             HelpSection::Plain {
                 heading: "Usage",
                 lines: &[
-                    "effigy repo scan validation-gaps",
-                    "effigy repo scan validation-gaps --path src/live/mod.rs --path src/orphan/mod.rs",
-                    "git diff --name-only | effigy repo scan validation-gaps --stdin --json",
+                    "effigy scan validation-gaps",
+                    "effigy scan validation-gaps --path src/live/mod.rs --path src/orphan/mod.rs",
+                    "git diff --name-only | effigy scan validation-gaps --stdin --json",
                 ],
             },
             HelpSection::Bulleted {

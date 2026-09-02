@@ -33,7 +33,7 @@ fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
     write_manifest(&root.join("effigy.toml"), "");
 
     let out = run_completion_task(root, &["bash", "--export"]).expect("run completion bash");
-    assert!(out.contains("effigy admin config completion candidates --prefix \"$cur\""));
+    assert!(out.contains("effigy config completion candidates --prefix \"$cur\""));
 }
 
 #[test]

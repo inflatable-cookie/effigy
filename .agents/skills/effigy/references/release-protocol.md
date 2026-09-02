@@ -17,11 +17,11 @@ Use these for inspection, planning, and reporting:
 
 | Command | What it does |
 |---------|--------------|
-| `effigy deliver release simulate` | Dry-run the entire release flow |
-| `effigy deliver release status --check-gates` | Show current gate states |
-| `effigy deliver release prepare --plan` | Preview prepare step |
-| `effigy deliver release execute --plan` | Preview execute step |
-| `effigy deliver release gates` | List release gates |
+| `effigy release simulate` | Dry-run the entire release flow |
+| `effigy release status --check-gates` | Show current gate states |
+| `effigy release prepare --plan` | Preview prepare step |
+| `effigy release execute --plan` | Preview execute step |
+| `effigy release gates` | List release gates |
 | `effigy changelog extract --version X.Y.Z` | Extract changelog section |
 
 ## Mutating release commands (require explicit human ask)
@@ -30,10 +30,10 @@ Never run these unprompted:
 
 | Command | Side effect |
 |---------|-------------|
-| `effigy deliver release prepare --yes` | Writes prepare artifacts |
-| `effigy deliver release execute --yes` | Commits prepared files and pushes the annotated tag |
+| `effigy release prepare --yes` | Writes prepare artifacts |
+| `effigy release execute --yes` | Commits prepared files and pushes the annotated tag |
 | `gh workflow run release-binaries.yml -f tag=vX.Y.Z` | Starts binary publication for the immutable tag |
-| `effigy deliver release verify-install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
+| `effigy release verify-install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
 
 ## Canonical sequence
 
@@ -44,15 +44,15 @@ When a human explicitly asks for a release:
 2. `gh workflow run ci.yml --ref main`
 3. Find the `workflow_dispatch` run whose `headSha` equals `$candidate_sha`,
    then run `gh run watch <RUN_ID> --exit-status`.
-4. `effigy deliver release simulate`
-5. `effigy deliver release status --check-gates`
-6. `effigy deliver release prepare --plan`
-7. `effigy deliver release prepare --yes --check-gates`
-8. `effigy deliver release execute --plan`
-9. `effigy deliver release execute --yes`
+4. `effigy release simulate`
+5. `effigy release status --check-gates`
+6. `effigy release prepare --plan`
+7. `effigy release prepare --yes --check-gates`
+8. `effigy release execute --plan`
+9. `effigy release execute --yes`
 10. Run the target repo's declared publication and consumer verification.
     - Effigy itself: `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
-      followed by `effigy deliver release verify-install --tag vX.Y.Z`.
+      followed by `effigy release verify-install --tag vX.Y.Z`.
     - Library or service repos: use their repo-owned consumer smoke. Do not run
       Effigy's fixed binary verifier.
 11. `effigy changelog extract CHANGELOG.md --version X.Y.Z`

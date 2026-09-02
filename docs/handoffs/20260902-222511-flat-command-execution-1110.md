@@ -52,7 +52,7 @@ surface without losing structured discovery.
   first, named/manual fallback only when required
 - **Required sibling worktree links:** none
 - **Active spec lane:**
-  `docs/specs/117-flat-command-execution-strict-lane.md`
+  `docs/specs/archive/117-flat-command-execution-strict-lane.md`
 - **Roadmap milestone:** `docs/roadmaps/g09/002-flat-command-execution.md`
 - **Ready cards, in order:**
   `docs/roadmaps/g09/batch-cards/1110-remove-executable-command-namespaces.md`

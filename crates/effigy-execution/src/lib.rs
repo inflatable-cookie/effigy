@@ -503,10 +503,6 @@ impl ExecutionPlanDiagnostic {
 pub enum ExecutionSurface {
     #[default]
     DirectCli,
-    /// Grouped route into the built-in registry (`effigy <namespace> <child>`
-    /// for a child that owns its parse inside the built-in layer). Bypasses
-    /// manifest selector resolution by design.
-    GroupedBuiltin,
     Deferral,
     Bootstrap,
     DataSeed,

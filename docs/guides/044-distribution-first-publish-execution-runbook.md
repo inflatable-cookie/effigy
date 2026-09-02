@@ -27,10 +27,10 @@ Required inputs:
 Recommended preflight before opening publish window:
 
 ```bash
-effigy deliver release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
+effigy release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
 ```
 
-Use `effigy deliver release proof` as the side-effecting built-in for the
+Use `effigy release proof` as the side-effecting built-in for the
 real publish/install cycle.
 
 ## 2) Execution Order
@@ -44,10 +44,10 @@ Run this sequence in one release window:
 Optional one-command execution helper:
 
 ```bash
-effigy deliver release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
-effigy deliver release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 # use --expect-homebrew when Homebrew checks are expected in this release window
-# effigy deliver release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
+# effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
 The built-in owns the Homebrew execution steps plus per-step log capture.
@@ -59,7 +59,7 @@ remain native Effigy subcommands inside the same workflow.
 ### Tag Install Validation
 
 ```bash
-effigy deliver release verify-install --tag vX.Y.Z
+effigy release verify-install --tag vX.Y.Z
 ```
 
 ### Source Install Validation
@@ -112,9 +112,9 @@ effigy --json help
 - one dated checkpoint log in `docs/logs/YYYY-MM/`
 
 When using the built-in, attach per-step logs from `--artifacts-dir` directly in the checkpoint log.
-The closeout log can be generated from those logs using `effigy deliver release evidence closeout`.
-Artifact completeness can be checked directly with `effigy deliver release evidence validate`.
-The first-publish built-in uses `effigy deliver release verify-install`, writes `distribution-summary.env` through `effigy deliver release evidence summary`, and performs final artifact completeness checks through `effigy deliver release evidence validate` before returning success.
+The closeout log can be generated from those logs using `effigy release evidence closeout`.
+Artifact completeness can be checked directly with `effigy release evidence validate`.
+The first-publish built-in uses `effigy release verify-install`, writes `distribution-summary.env` through `effigy release evidence summary`, and performs final artifact completeness checks through `effigy release evidence validate` before returning success.
 Local tooling sanity for this pipeline can be checked with `cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture`, which exercises the built-in distribution commands directly.
 
 ## 5) Acceptance Criteria Mapping

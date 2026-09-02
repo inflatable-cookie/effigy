@@ -79,7 +79,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   trust, and docs compaction. Milestones `g08.016` and `g08.017` are also
   complete. The completed
   [`g08.018`](./g08/018-local-dependency-management-suite.md) suite added the
-  shared `effigy admin deps` foundation, Cargo and Bun local links, doctor hygiene,
+  shared `effigy deps` foundation, Cargo and Bun local links, doctor hygiene,
   and portfolio proof through `g08.023`. The bounded
   [`g08.024`](./g08/024-initial-current-version-release-tag.md) follow-up lets
   an explicitly configured new repository tag its already-declared first
@@ -156,15 +156,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   baseline, exposed safe update, and installed generated-only proposal
   automation under archived strict spec `115`; cards `1103` through `1108` are
   complete.
-- `g09` is active. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
-  completed the operator-approved additive command-surface preview (card
+  Completed [`g09.001`](./g09/001-command-surface-compaction-preview.md)
+  shipped the operator-approved additive command-surface preview (card
   `1109`); strict spec `116` is archived. Live use rejected executable help
-  namespaces, so [`g09.002`](./g09/002-flat-command-execution.md) is active
-  with ready card `1110` to restore direct canonical execution.
+  namespaces, so [`g09.002`](./g09/002-flat-command-execution.md) restored
+  direct canonical execution (card `1110`); strict spec `117` is archived.
 
 ## Active Strict Lane
 
-Strict spec `117` and ready card `1110` own the flat-command rollback.
+No active strict lane. Direct invocation is canonical and help grouping remains.
 
 ## Research Program
 
@@ -192,7 +192,7 @@ Keep the session-loaded surfaces lean; let closed history rest in archives.
   carries only the current generation's month window. When a generation closes,
   move its month directories under `docs/logs/archive/<month>/` and trim the
   index. Archived logs stay in the repo (and git history) as durable evidence;
-  the default `effigy repo docs check index` excludes `archive/**`. Never delete a
+  the default `effigy docs check index` excludes `archive/**`. Never delete a
   log to compact — move it.
 - **Roadmaps.** Closed-generation milestone files and their nested
   `batch-cards/` stay in place: they are the planning record, are not loaded
@@ -219,8 +219,9 @@ Before rollover:
 
 ## Next Task
 
-Execute ready card `1110` under `g09.002` and strict spec `117`. Keep Effigy
-release execution and S3 extraction behind their named gates.
+Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
+complete. Keep Effigy release execution and S3 extraction behind their named
+gates.
 
 ## Historical language boundary
 

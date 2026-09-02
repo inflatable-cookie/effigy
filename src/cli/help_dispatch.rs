@@ -9,14 +9,10 @@ use effigy_cli::{HelpGroup, HelpTopic};
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 
-pub fn run_help_command(
-    context: &CliExecutionContext<'_>,
-    topic: HelpTopic,
-    legacy_note: Option<&str>,
-) {
+pub fn run_help_command(context: &CliExecutionContext<'_>, topic: HelpTopic) {
     let deferred_builtins = crate::runner::deferred_builtins_for_root(context.command_root);
     if context.suppress_header {
-        let payload = build_help_payload_for_root(topic, context.command_root, legacy_note);
+        let payload = build_help_payload_for_root(topic, context.command_root);
         if context.emit_json_envelope {
             emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
             return;
@@ -33,9 +29,6 @@ pub fn run_help_command(
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     if !context.suppress_header {
         let _ = render_cli_header(&mut renderer, context.command_root);
-    }
-    if let Some(note) = legacy_note {
-        let _ = renderer.notice(effigy_core::widgets::NoticeLevel::Warning, note);
     }
     let _ = render_help_with_deferred_builtins(&mut renderer, topic, &deferred_builtins);
     let _ = renderer.text("");
@@ -84,20 +77,13 @@ pub fn build_help_group_payload_for_root(
 }
 
 pub fn build_help_payload(topic: HelpTopic) -> serde_json::Value {
-    build_help_payload_for_root(topic, &std::env::current_dir().unwrap_or_default(), None)
+    build_help_payload_for_root(topic, &std::env::current_dir().unwrap_or_default())
 }
 
-pub fn build_help_payload_for_root(
-    topic: HelpTopic,
-    root: &std::path::Path,
-    legacy_note: Option<&str>,
-) -> serde_json::Value {
+pub fn build_help_payload_for_root(topic: HelpTopic, root: &std::path::Path) -> serde_json::Value {
     let topic_label = help_topic_label(topic);
     let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
-    if let Some(note) = legacy_note {
-        let _ = help_renderer.notice(effigy_core::widgets::NoticeLevel::Warning, note);
-    }
     let _ = render_help_with_deferred_builtins(&mut help_renderer, topic, &deferred_builtins);
     let rendered = String::from_utf8(help_renderer.into_inner()).unwrap_or_default();
     json!({

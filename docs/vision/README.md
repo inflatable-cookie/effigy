@@ -63,6 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. In the active execution lane,
-card `1110` under `g09.002` removes the rejected executable namespace preview
-while preserving grouped help. Effigy release remains gated.
+Run the second governance review by 2026-09-17. Card `1110` and `g09.002` are
+complete: direct invocation is canonical and help grouping remains. Effigy
+release remains gated.

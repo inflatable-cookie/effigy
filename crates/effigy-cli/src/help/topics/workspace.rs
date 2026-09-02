@@ -10,7 +10,7 @@ pub(crate) fn render_workspace_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
         "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt any producer-declared `[isolation].paths` into the workspace container; the normal path does not require a duplicate isolation list.",
     )?;
     renderer.section("Usage")?;
-    renderer.text("effigy local workspace [<NAME>] [--system <NAME>] [--repo <PATH>]")?;
+    renderer.text("effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]")?;
     renderer.text("")?;
     renderer.section("Options")?;
     renderer.key_values(&[
@@ -27,8 +27,8 @@ pub(crate) fn render_workspace_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
     ])?;
     renderer.text("")?;
     renderer.section("Examples")?;
-    renderer.text("effigy local workspace")?;
-    renderer.text("effigy local workspace admin")?;
-    renderer.text("effigy local workspace jobs --system dev")?;
+    renderer.text("effigy workspace")?;
+    renderer.text("effigy workspace admin")?;
+    renderer.text("effigy workspace jobs --system dev")?;
     Ok(())
 }

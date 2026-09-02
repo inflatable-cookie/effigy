@@ -11,7 +11,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     renderer.section("Commands")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Commands are grouped by job. Run grouped commands as `effigy <group> <command>` (for example `effigy repo graph`); use `effigy help <group>` for one group inventory.",
+        "Commands are grouped by job. Use `effigy help <group>` for one group and `effigy help <command>` for command detail.",
     )?;
     renderer.text("")?;
     for group in HelpGroup::ALL {
@@ -19,7 +19,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     }
     renderer.notice(
         NoticeLevel::Info,
-        "Command detail: `effigy <group> <command> --help` is canonical; the retained direct spellings (`effigy <command>`) still run with a migration warning until v1.0, and `effigy help <command>` keeps their legacy detail panel.",
+        "Use `effigy <built-in-task> --help`, `effigy tasks <helper> --help`, or `effigy config completion --help` for task-specific flags and examples.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -44,31 +44,14 @@ pub(crate) fn render_help_group<R: HelpRenderer + ?Sized>(
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
     render_group_section(renderer, group, deferred_builtins)?;
-    if group == HelpGroup::Work {
-        renderer.notice(
-            NoticeLevel::Info,
-            "`work` is a help-only group: run these commands directly, and task selectors stay direct.",
-        )?;
-        renderer.notice(
-            NoticeLevel::Info,
-            "Use `effigy help <command>` for command detail, or `effigy help` for every group.",
-        )?;
-    } else {
-        renderer.notice(
-            NoticeLevel::Info,
-            &format!(
-                "Run these commands as `effigy {} <command>`. The retained direct spellings still run but print a migration warning until v1.0.",
-                group.slug()
-            ),
-        )?;
-        renderer.notice(
-            NoticeLevel::Info,
-            &format!(
-                "Command detail: `effigy {} <command> --help`, or `effigy help <command>` for the legacy panel.",
-                group.slug()
-            ),
-        )?;
-    }
+    renderer.notice(
+        NoticeLevel::Info,
+        "Run these commands directly: help grouping adds discovery only, never an `effigy <group> <command>` route.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy help <command>` for command detail, or `effigy help` for every group.",
+    )?;
     Ok(())
 }
 

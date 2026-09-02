@@ -4,7 +4,7 @@ Use this guide when you want Effigy to own release readiness, preparation,
 execution preflight, install verification, and release-note extraction from a
 repo-local `[release]` contract.
 
-This is the canonical guide for the shipped `effigy deliver release` surface.
+This is the canonical guide for the shipped `effigy release` surface.
 
 Use:
 - this guide for the release workflow and `[release]` config
@@ -32,10 +32,10 @@ If you only need the shortest operator path, use:
 If you are approaching the release flow for the first time, start with:
 
 ```sh
-effigy deliver release simulate
-effigy deliver release status --check-gates
-effigy deliver release prepare --plan
-effigy deliver release gates
+effigy release simulate
+effigy release status --check-gates
+effigy release prepare --plan
+effigy release gates
 ```
 
 Use the commands by intent:
@@ -68,43 +68,43 @@ roughly like this:
 - `effigy migrate` -> `effigy tasks migrate`
 - `effigy unlock` -> `effigy tasks unlock`
 - `effigy cache ...` -> `effigy tasks cache ...`
-- `effigy completion ...` -> `effigy admin config completion ...`
+- `effigy completion ...` -> `effigy config completion ...`
 - `effigy catalogs` removed; use `effigy tasks`
 
 ## 1) Core Commands
 
 Current built-in release commands:
 
-- `effigy deliver release status`
+- `effigy release status`
   - inspect version-file state, changelog validity, suggested bump, and optional
     gate results
-- `effigy deliver release gates`
+- `effigy release gates`
   - run configured release gates as a standalone fail-fast timed check
-- `effigy deliver release resume`
+- `effigy release resume`
   - recover an existing `.release-prepared.json` state and inspect drift
-- `effigy deliver release simulate`
+- `effigy release simulate`
   - full dry-run preview of gates, version and tag selection, and file
     mutations with no written state; accepts `--version <SEMVER>`
-- `effigy deliver release prepare --plan`
+- `effigy release prepare --plan`
   - preview the exact version-file and changelog mutations; accepts
     `--version <SEMVER>`; `--dry-run` is an alias
-- `effigy deliver release prepare`
+- `effigy release prepare`
   - text-mode review before Effigy writes release changes
-- `effigy deliver release prepare --yes`
+- `effigy release prepare --yes`
   - apply supported mutations and write `.release-prepared.json` without
     committing, tagging, or pushing; accepts `--version <SEMVER>` for
     deliberate non-interactive overrides
-- `effigy deliver release execute --plan`
+- `effigy release execute --plan`
   - validate prepared state and working tree before any irreversible step;
     detects stale state and source drift; `--dry-run` is an alias
-- `effigy deliver release execute`
+- `effigy release execute`
   - text-mode final review before commit, tag, and push
-- `effigy deliver release execute --yes`
+- `effigy release execute --yes`
   - create the release commit and annotated tag, push to `origin`, and clean up
     the state file only after a full success; the annotation message exactly
     equals the rendered tag; age-based staleness requires explicit
     `--allow-stale`
-- `effigy deliver release verify-install`
+- `effigy release verify-install`
   - Effigy self-hosting only: install the tagged `effigy` binary from git into
     a temporary root and validate the installed command against a fixture repo
   - library and service repos must use a repo-owned consumer smoke instead
@@ -183,7 +183,7 @@ Supported `[release]` fields:
   - optional named gate map
   - supports string shorthand or table form with `command` and `description`
 
-During `effigy deliver release prepare`, supported structured version files keep their
+During `effigy release prepare`, supported structured version files keep their
 existing layout:
 - `Cargo.toml` and `pyproject.toml` preserve comments and table ordering
 - `package.json` preserves existing spacing and object layout around the
@@ -296,20 +296,20 @@ candidate_sha="$(git rev-parse HEAD)"
 gh workflow run ci.yml --ref main
 # Select the workflow_dispatch run whose headSha equals $candidate_sha.
 gh run watch <RUN_ID> --exit-status
-effigy deliver release simulate
-effigy deliver release simulate --version 0.2.8
-effigy deliver release status --check-gates
-effigy deliver release prepare
-effigy deliver release prepare --dry-run
-effigy deliver release prepare --plan
-effigy deliver release prepare --yes --check-gates
-effigy deliver release resume
-effigy deliver release execute
-effigy deliver release execute --dry-run
-effigy deliver release execute --plan
-effigy deliver release execute --yes
+effigy release simulate
+effigy release simulate --version 0.2.8
+effigy release status --check-gates
+effigy release prepare
+effigy release prepare --dry-run
+effigy release prepare --plan
+effigy release prepare --yes --check-gates
+effigy release resume
+effigy release execute
+effigy release execute --dry-run
+effigy release execute --plan
+effigy release execute --yes
 # Effigy binary releases only:
-effigy deliver release verify-install --tag vX.Y.Z
+effigy release verify-install --tag vX.Y.Z
 ```
 
 The candidate must be a clean commit already pushed to `main`. Select its CI
@@ -341,7 +341,7 @@ validates the supplied annotated tag. Pushing a tag alone does not publish.
 For Effigy's own release prep, the useful pre-cut habit is:
 
 ```sh
-effigy deliver release gates
+effigy release gates
 ```
 
 Treat a red gate as a fix-the-repo signal, not something to work around.
@@ -398,7 +398,7 @@ Gate behavior:
 - records timing per gate
 - stops on first failure
 - surfaces captured output for failed gates
-- can be invoked directly with `effigy deliver release gates`
+- can be invoked directly with `effigy release gates`
 
 Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. This
 is a repository policy gate, not a provider assumption in the generic release
@@ -407,7 +407,7 @@ providers should supply an equivalent gate for their CI system.
 
 Important prepare rule:
 
-- if `[release.gates]` is configured, `effigy deliver release prepare --yes` requires
+- if `[release.gates]` is configured, `effigy release prepare --yes` requires
   `--check-gates`
 
 ## 7) State File and Safety
@@ -469,9 +469,9 @@ Recommended migration direction:
 
 - move release gate definitions into `[release.gates]`
 - keep wrapper scripts only when an external caller still depends on them
-- prefer `effigy deliver release simulate/status/prepare/execute` for operator-driven
+- prefer `effigy release simulate/status/prepare/execute` for operator-driven
   runs
-- for Effigy's binary release, use `effigy deliver release verify-install` instead of
+- for Effigy's binary release, use `effigy release verify-install` instead of
   bespoke tag-install helpers
 - for library and service repos, retain an honest repo-owned consumer smoke
 
@@ -503,6 +503,6 @@ verification through built-in commands instead of wrapper scripts.
 
 ## Next Step
 
-After adding `[release]` to a repo, run `effigy deliver release simulate` and
-`effigy deliver release status --check-gates` before replacing any existing release
+After adding `[release]` to a repo, run `effigy release simulate` and
+`effigy release status --check-gates` before replacing any existing release
 wrapper or CI entrypoint.

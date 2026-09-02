@@ -9,7 +9,7 @@ This is not the first page for cutting a release.
 
 Use:
 - [`051-release-orchestration.md`](./051-release-orchestration.md) for the
-  actual `effigy deliver release ...` workflow
+  actual `effigy release ...` workflow
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
   the shipped distribution commands
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
@@ -69,7 +69,7 @@ with QEMU for the smoke test.
 Linux GNU compatibility policy:
 - Linux release binaries are built on `ubuntu-22.04` to keep the glibc floor
   stable at `GLIBC_2.35`
-- `effigy deliver release check-binary` runs in the release build job and
+- `effigy release check-binary` runs in the release build job and
   fails the workflow if a Linux artifact starts requiring a newer glibc symbol
   version
 - Effigy now also has one local rehearsal path for this on developer machines:
@@ -252,23 +252,23 @@ and resolve the failure before continuing.
      A recent green run for another SHA is not release evidence.
 
 2. **Determine the release version.**
-   - Run `effigy deliver release status --check-gates` first.
-   - Run `effigy deliver release simulate` for the full safe preview.
-   - Run `effigy deliver release prepare --plan` for the exact file mutation preview.
-   - Use `effigy deliver release prepare` for text-mode review.
-   - Use `effigy deliver release prepare --yes --check-gates` to write prepared state.
-   - Run `effigy deliver release execute --plan` after prepare.
-   - Use `effigy deliver release execute` for text-mode final review.
-   - Use `effigy deliver release execute --yes` only for the irreversible step.
+   - Run `effigy release status --check-gates` first.
+   - Run `effigy release simulate` for the full safe preview.
+   - Run `effigy release prepare --plan` for the exact file mutation preview.
+   - Use `effigy release prepare` for text-mode review.
+   - Use `effigy release prepare --yes --check-gates` to write prepared state.
+   - Run `effigy release execute --plan` after prepare.
+   - Use `effigy release execute` for text-mode final review.
+   - Use `effigy release execute --yes` only for the irreversible step.
    - Explicitly dispatch `release-binaries.yml` with the pushed tag and wait
      for publication.
-   - Run `effigy deliver release verify-install --tag <TAG> [--repo-url <URL>]` after
+   - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` after
      the release artifacts exist.
    - Treat the built-in release previews as the source of truth for version
      selection:
-     - `effigy deliver release status --check-gates`
-     - `effigy deliver release simulate`
-     - `effigy deliver release prepare --plan`
+     - `effigy release status --check-gates`
+     - `effigy release simulate`
+     - `effigy release prepare --plan`
    - If the human specifies a version, use it.
    - If the human says "patch" or "minor", compute the next version from the
      current release version and changelog state surfaced by the built-in
@@ -277,10 +277,10 @@ and resolve the failure before continuing.
 
 3. **Prepare the version bump and changelog.**
    - Prefer the built-in prepare flow:
-     - interactive operator path: `effigy deliver release prepare`
+     - interactive operator path: `effigy release prepare`
      - non-interactive apply path:
-       `effigy deliver release prepare --yes --check-gates`
-   - For repos using `[release].sync-files`, `effigy deliver release prepare --yes`
+       `effigy release prepare --yes --check-gates`
+   - For repos using `[release].sync-files`, `effigy release prepare --yes`
      updates the primary version file, moves `[Unreleased]` entries into a
      dated release heading, syncs configured `Cargo.lock` and secondary
      `package.json` files, and writes `.release-prepared.json`.
@@ -289,7 +289,7 @@ and resolve the failure before continuing.
      not lag the newly prepared version.
    - Review the changes. If the human specified a different version than the
      built-in suggestion, use the built-in custom-version path instead:
-     `effigy deliver release prepare --yes --check-gates --version X.Y.Z`
+     `effigy release prepare --yes --check-gates --version X.Y.Z`
 
 4. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
@@ -301,9 +301,9 @@ and resolve the failure before continuing.
    - Present the draft to the human for review before continuing.
 
 5. **Run release gates.**
-   - Run `effigy deliver release gates` when the repo has `[release.gates]` configured
+   - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `effigy deliver release gates`.
+   - Otherwise execute `effigy release gates`.
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
    - Effigy's `ci` gate rechecks that the successful manual `ci.yml` run
@@ -315,7 +315,7 @@ and resolve the failure before continuing.
    - This commit must be on `main`.
 
 7. **Create and push the git tag.**
-   - Prefer `effigy deliver release execute --yes`, which creates and pushes the
+   - Prefer `effigy release execute --yes`, which creates and pushes the
      annotated tag after committing the prepared files.
    - Pushing the tag does not automatically consume GitHub Actions minutes.
 
@@ -337,7 +337,7 @@ and resolve the failure before continuing.
   readiness
 - Require successful `workflow_dispatch` CI evidence for the exact clean,
   pushed candidate SHA before any release preview, prepare, or execute step
-- Use `effigy deliver release gates` to validate before
+- Use `effigy release gates` to validate before
   any release action
 - Reference exact version numbers, never floating references
 - Update consumer CI snippets to use the pattern in Section 5a
@@ -366,7 +366,7 @@ and resolve the failure before continuing.
 ### 7c) What Agents May Do Autonomously
 
 - Read and reference release documentation
-- Run release gate checks locally (`effigy deliver release gates`, `smoke:release`)
+- Run release gate checks locally (`effigy release gates`, `smoke:release`)
 - Draft release notes for human review
 - Use `effigy changelog extract` as the preferred release-note baseline
   generator before any workflow-level cutover
