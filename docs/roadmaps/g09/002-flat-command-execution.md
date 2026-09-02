@@ -1,8 +1,10 @@
 # g09.002 Flat Command Execution
 
-Status: Active
+Status: Complete
 Created: 2026-09-02
-Spec: [`117`](../../specs/117-flat-command-execution-strict-lane.md)
+Closed: 2026-09-02 — card `1110` restored canonical direct invocation; strict
+spec `117` archived
+Spec: [`117`](../../specs/archive/117-flat-command-execution-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 
@@ -15,7 +17,7 @@ operator grammar.
 ## Sequence
 
 1. [`1110`](./batch-cards/1110-remove-executable-command-namespaces.md) —
-   **Ready**: remove executable aliases and migration diagnostics; restore
+   **Complete**: removed executable aliases and migration diagnostics; restored
    direct help, completion, current documentation, generated references, and
    managed-skill guidance without changing genuine subcommands.
 
@@ -45,5 +47,6 @@ completion, docs, skill parity, and closeout share one command-route authority.
 
 ## Next Task
 
-Execute ready card
-[`1110`](./batch-cards/1110-remove-executable-command-namespaces.md).
+This milestone is complete. Direct invocation is canonical and help grouping
+remains. The next operator checkpoint is the 2026-09-17 vision governance
+review. Effigy release and S3 extraction remain separately gated.

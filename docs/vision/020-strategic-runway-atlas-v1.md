@@ -180,6 +180,6 @@ specs were archived, and `g09.001` opened with additive migration only.
 
 ## Next Task
 
-Execute the `v1.0` consumer-evidence checkpoint when it opens: direct-route
-removal and release execution remain separately gated, and the additive
-command-surface preview (card `1109`, roadmap `g09.001`) is complete.
+Run the second governance review by 2026-09-17. Direct-route removal is no
+longer a planned gate; card `1110` restored canonical direct invocation.
+Effigy release remains separately gated.

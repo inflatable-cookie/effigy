@@ -23,13 +23,11 @@ helps: grouped discovery with direct execution.
 
 ## Current State
 
-[`g09.001`](./001-command-surface-compaction-preview.md) is complete historical
-evidence. [`g09.002`](./002-flat-command-execution.md) is active under strict
-spec `117`; card
-[`1110`](./batch-cards/1110-remove-executable-command-namespaces.md) is ready.
+[`g09.001`](./001-command-surface-compaction-preview.md) and
+[`g09.002`](./002-flat-command-execution.md) are complete historical evidence.
+Direct invocation is canonical; help grouping remains.
 
 ## Next Task
 
-Execute ready card
-[`1110`](./batch-cards/1110-remove-executable-command-namespaces.md). Effigy
-release authority stays separate.
+Run the 2026-09-17 vision governance review. Effigy release authority stays
+separate.

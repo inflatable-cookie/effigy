@@ -244,13 +244,15 @@ ownership, publication, generated baseline, public update, and proposal path.
 `g08` is closed through `g08.048`. All roadmaps are Complete, completed strict
 specs are archived, and draft spec `098` is archived as paused history.
 
+## Current Planning State
+
 `g09` is active. The operator selected Theme 4 on 2026-09-02 after a current
 30-repository impact inventory. [`g09.001`](./g09/001-command-surface-compaction-preview.md)
 completed the additive executable-namespace preview under strict spec `116`
 (archived); card `1109` is complete. Live use rejected the added execution
-ceremony. [`g09.002`](./g09/002-flat-command-execution.md) is active under
-strict spec `117`; card `1110` restores direct canonical execution while
-keeping grouped help.
+ceremony. [`g09.002`](./g09/002-flat-command-execution.md) restored direct
+canonical execution under archived strict spec `117`; card `1110` is complete.
+No live implementation card remains in `g09`.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -311,5 +313,6 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card `1110` under `g09.002` and strict spec `117`. Do not release
-Effigy or widen the lane into unrelated feature placement.
+Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
+complete. Do not release Effigy or widen the lane into unrelated feature
+placement.

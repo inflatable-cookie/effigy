@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`117`](./117-flat-command-execution-strict-lane.md) — remove executable help
-  namespaces, keep grouped discovery, and restore direct built-in invocation
+- none
 
 Queued strict lanes:
 
@@ -37,9 +36,12 @@ Queued strict lanes:
 
 Archived strict lanes:
 
+- [`117`](./archive/117-flat-command-execution-strict-lane.md) —
+  restored canonical direct invocation while keeping grouped help (completed
+  with card `1110` under `g09.002`)
 - [`116`](./archive/116-command-surface-compaction-preview-strict-lane.md) —
   executable command namespaces with retained pre-`v1.0` migration aliases
-  (completed with card `1109` under `g09.001`)
+  (completed with card `1109` under `g09.001`; rolled back by spec `117`)
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
 - [`113`](./archive/113-catalog-pack-acquisition-prototype-strict-lane.md)
@@ -88,5 +90,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card `1110` under `g09.002` and strict spec `117`. Effigy release
-authority stays separate.
+Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
+complete: direct invocation is canonical and help grouping remains. Effigy
+release authority stays separate.

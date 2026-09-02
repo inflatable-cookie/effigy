@@ -363,7 +363,6 @@ Stop and return to planning when:
 
 ## Next Task
 
-The additive preview (card `1109`, spec `116`) shipped and is retained as
-historical evidence. Active card `1110` removes its executable aliases and
-migration warnings while preserving help grouping. Effigy release authority
+Card `1110` and `g09.002` are complete; strict spec `117` is archived. Direct
+invocation is canonical and help grouping remains. Effigy release authority
 stays separate.

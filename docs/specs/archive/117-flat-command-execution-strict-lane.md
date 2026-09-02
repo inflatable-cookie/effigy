@@ -1,11 +1,13 @@
 # 117 Flat Command Execution Strict Lane
 
-Status: Active
+Status: Archived (completed with card `1110` under `g09.002`)
 Owner: Effigy orchestrator
 Created: 2026-09-02
-Roadmap: [`g09.002`](../roadmaps/g09/002-flat-command-execution.md)
-Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
+Closed: 2026-09-02
+Roadmap: [`g09.002`](../../roadmaps/g09/002-flat-command-execution.md)
+Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
+Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
+Completed card: [`1110`](../../roadmaps/g09/batch-cards/1110-remove-executable-command-namespaces.md)
 
 ## Outcome
 
@@ -106,5 +108,6 @@ transport.
 
 ## Next Task
 
-Execute ready card
-[`1110`](../roadmaps/g09/batch-cards/1110-remove-executable-command-namespaces.md).
+This spec is archived with card `1110`. Direct invocation is canonical. No
+`v1.0` direct-route-removal gate remains. Effigy release and S3 extraction stay
+separately gated.
