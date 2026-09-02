@@ -80,22 +80,56 @@ pub fn direct_warning_for_parse(
 }
 
 thread_local! {
-    /// Warnings recorded by the runner for the current direct CLI invocation.
-    static REGISTRY_SCOPE: RefCell<Option<Vec<LegacyDirectWarning>>> = const { RefCell::new(None) };
+    /// Recording scope for one direct CLI invocation: the original task word
+    /// that opened the scope plus the warnings recorded for it.
+    static REGISTRY_SCOPE: RefCell<Option<(String, Vec<LegacyDirectWarning>)>> =
+        const { RefCell::new(None) };
+
+    /// Execution nesting depth of the current thread. The top-level CLI task
+    /// runs at depth one; nested task executions (run arrays, watch, skill,
+    /// rhai features) run deeper.
+    static EXECUTION_DEPTH: RefCell<u32> = const { RefCell::new(0) };
 }
 
 /// Open the recording scope for one direct CLI invocation.
 ///
 /// The runner can only prove registry-built-in selection (`config`/`scan`)
 /// at its manifest-selection fallback, so the CLI opens a scope around the
-/// run and drains whatever the runner records. Other execution surfaces
-/// never open the scope and therefore never warn.
-pub fn open_registry_scope() {
-    REGISTRY_SCOPE.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+/// run and drains whatever the runner records. Recording is bound to the
+/// original direct child word AND the top-level execution depth, so nested
+/// task executions (including shadowing manifest tasks that invoke the same
+/// or another registry built-in) can never populate the top-level warning.
+pub fn open_registry_scope(task_name: &str) {
+    REGISTRY_SCOPE.with(|slot| *slot.borrow_mut() = Some((task_name.to_owned(), Vec::new())));
 }
 
-/// Record one warning from the runner when the built-in registry owns a
-/// displaced direct invocation. Ignored unless a direct CLI scope is open.
+/// Mark one execution-request entry; returns a guard that leaves on drop.
+pub fn enter_execution_depth() -> ExecutionDepthGuard {
+    EXECUTION_DEPTH.with(|slot| *slot.borrow_mut() += 1);
+    ExecutionDepthGuard
+}
+
+pub struct ExecutionDepthGuard;
+
+impl Drop for ExecutionDepthGuard {
+    fn drop(&mut self) {
+        EXECUTION_DEPTH.with(|slot| {
+            let next = slot.borrow().saturating_sub(1);
+            *slot.borrow_mut() = next;
+        });
+    }
+}
+
+fn current_execution_depth() -> u32 {
+    EXECUTION_DEPTH.with(|slot| *slot.borrow())
+}
+
+/// Record one warning from the runner when the built-in registry owns the
+/// original direct child of an open scope.
+///
+/// Ignored unless a direct CLI scope is open whose task word equals the
+/// selected built-in and the selection happened at the top-level execution
+/// depth (nested fallbacks never record).
 pub fn record_registry_warning(child: &str) {
     if command_surface::group_for_child_word(child).is_none() {
         return;
@@ -104,7 +138,11 @@ pub fn record_registry_warning(child: &str) {
         return;
     };
     REGISTRY_SCOPE.with(|slot| {
-        if let Some(warnings) = slot.borrow_mut().as_mut() {
+        let mut slot = slot.borrow_mut();
+        let Some((task_name, warnings)) = slot.as_mut() else {
+            return;
+        };
+        if task_name == child && current_execution_depth() == 1 {
             warnings.push(warning);
         }
     });
@@ -112,7 +150,12 @@ pub fn record_registry_warning(child: &str) {
 
 /// Close the recording scope and return what the runner recorded.
 pub fn close_registry_scope() -> Vec<LegacyDirectWarning> {
-    REGISTRY_SCOPE.with(|slot| slot.borrow_mut().take().unwrap_or_default())
+    REGISTRY_SCOPE.with(|slot| {
+        slot.borrow_mut()
+            .take()
+            .map(|(_, warnings)| warnings)
+            .unwrap_or_default()
+    })
 }
 
 /// Render human-mode warning lines to stderr (one line each, stdout and exit
@@ -150,24 +193,46 @@ pub fn warning_values(warning: Option<&LegacyDirectWarning>) -> Vec<Value> {
     warning.map(|w| vec![w.to_json()]).unwrap_or_default()
 }
 
+/// Build the migration-note text for one displaced direct `child`.
+fn note_text_for(child: &str) -> Option<String> {
+    let group = command_surface::group_for_child_word(child)?;
+    Some(format!(
+        "direct command `{child}` is deprecated; use `effigy {} {child}`; removal at v1.0",
+        group.slug()
+    ))
+}
+
 /// Migration note for a legacy detailed-help rendering
 /// (`effigy help <child>` or a direct `<child> --help`), carrying the same
 /// replacement and `v1.0` removal facts as the execution warning. Canonical
 /// grouped help (`effigy <namespace> <child> --help`) renders no note.
-pub fn legacy_help_note(first_word: Option<&str>, topic: effigy_cli::HelpTopic) -> Option<String> {
+///
+/// `help_argument` is the topic word of a help-root invocation
+/// (`effigy help <word>`), needed because `version` renders the shared
+/// `General` panel: `effigy help version` and `effigy version --help` are
+/// legacy word-based forms and carry the note, while `--version`, bare
+/// `effigy help`, and canonical `effigy admin version --help` stay clean.
+pub fn legacy_help_note(
+    first_word: Option<&str>,
+    help_argument: Option<&str>,
+    topic: effigy_cli::HelpTopic,
+) -> Option<String> {
     use effigy_cli::command_surface::{direct_word_for_topic, group_for_child_word};
     if topic == effigy_cli::HelpTopic::General {
-        return None;
+        let version_legacy = first_word == Some("version")
+            || (first_word == Some("help") && help_argument == Some("version"));
+        return if version_legacy {
+            note_text_for("version")
+        } else {
+            None
+        };
     }
     let word = direct_word_for_topic(topic)?;
     let group = group_for_child_word(word)?;
     if first_word == Some(group.slug()) {
         return None;
     }
-    Some(format!(
-        "direct command `{word}` is deprecated; use `effigy {} {word}`; removal at v1.0",
-        group.slug()
-    ))
+    note_text_for(word)
 }
 
 #[cfg(test)]
@@ -213,12 +278,29 @@ mod tests {
     }
 
     #[test]
-    fn registry_scope_records_only_displaced_children() {
-        open_registry_scope();
+    fn registry_scope_records_only_the_original_child_at_top_depth() {
+        let _depth = super::enter_execution_depth();
+        open_registry_scope("scan");
         record_registry_warning("scan");
         record_registry_warning("watch");
+        record_registry_warning("config");
         let warnings = close_registry_scope();
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(warnings[0].replacement, "effigy repo scan");
+        drop(_depth);
+    }
+
+    #[test]
+    fn nested_executions_never_populate_the_scope() {
+        let _depth = super::enter_execution_depth();
+        open_registry_scope("scan");
+        // A nested execution inside the shadowing manifest task:
+        let _nested = super::enter_execution_depth();
+        record_registry_warning("scan");
+        record_registry_warning("config");
+        drop(_nested);
+        let warnings = close_registry_scope();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        drop(_depth);
     }
 }

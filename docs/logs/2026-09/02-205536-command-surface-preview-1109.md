@@ -139,3 +139,66 @@ next checkpoint is the future `v1.0` consumer-evidence gate (refreshed
 consumer inventory plus explicit release authority). Historical direct
 spellings in logs, archived specs, closed roadmaps, and the changelog were not
 rewritten.
+
+## Exact-Head Review Repair
+
+Review of head `f8fa874cb91267ee12db1742026893cf7966625c` returned three
+findings; all repaired on the same branch (classes `execution-miss`,
+`integration-drift`, `oracle-gap`). New head recorded with the PR URL.
+
+### 1. Nested registry fallback warning leak (execution-miss)
+
+The thread-local recording scope stayed open through a shadowing manifest
+task, so a nested registry fallback (counterexample: `[tasks.scan]`
+`run = [{ task = "config" }]`, running `effigy scan`) populated the
+top-level warning even though the repository-owned task executed. Recording
+is now bound to the original direct child AND the top-level execution depth:
+`open_registry_scope(task_name)` records only when the fallback selected the
+same word at depth one; every execution request enters a depth guard
+(`run_manifest_task_request_inner`), so nested fallbacks at any depth never
+record.
+
+Fixtures: `grouped_command_surface_tests.rs::nested_registry_fallback_never_warns_through_a_shadowing_manifest_task`
+(text stderr empty, JSON envelope without a `warnings` key) plus unit tests
+in `src/cli/legacy_direct.rs` (`registry_scope_records_only_the_original_child_at_top_depth`,
+`nested_executions_never_populate_the_scope`). Contract `043` and archived
+spec `116` now state the nested-execution binding.
+
+### 2. Direct `graph watch` migration diagnostic and JSON-stream exception (integration-drift)
+
+`run_cli` dispatched `Command::Graph(Watch)` straight to
+`run_graph_watch_command`, dropping the classified warning. The direct
+spelling now passes the warning through and emits the single stderr line in
+text and JSON-stream modes; grouped `repo graph watch` stays silent. Event
+stdout is untouched: the JSON stream still emits `effigy.graph.watch.event.v1`
+lines and never a command envelope, matching guide `017`. Contract `043` and
+archived spec `116` record the streaming exception to the envelope-warning
+rule.
+
+Fixtures: `grouped_command_surface_tests.rs::direct_graph_watch_warns_once_in_text_and_json_stream_modes`
+(bounded spawns; text warning count, JSON stream schema, no envelope on
+stdout, grouped silence in both modes).
+
+### 3. `version` legacy help forms lacked the migration note (oracle-gap)
+
+`version` renders the shared `General` panel, which has no single direct
+owner, so `effigy help version` and `effigy version --help` carried no note.
+`legacy_help_note` now takes the help-root topic word: the two legacy
+word-based forms render the `effigy admin version` / v1.0 note, while
+`--version` (unchanged), bare `effigy help`, and canonical
+`effigy admin version --help` stay note-free in text and JSON payloads.
+
+Fixtures: `grouped_command_surface_tests.rs::legacy_version_help_forms_carry_the_migration_note`
+(text forms, `--version` purity, grouped note-free form, and JSON payload
+assertions for both legacy forms plus the grouped form).
+
+### Repair validation
+
+- `cargo test -p effigy --test cli_output_tests` — full suite green on the
+  repaired tree (includes the three new counterexample fixtures)
+- `cargo test -p effigy --lib` — full suite green
+- `cargo test -p effigy-cli --lib`, `cargo test -p effigy-builtin`,
+  `cargo test -p effigy --test documentation_coverage_tests` — green
+- `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
+  `git diff --check` — clean
+- `effigy qa` — exit 0 on the repaired tree

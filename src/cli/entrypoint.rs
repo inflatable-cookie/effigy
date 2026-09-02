@@ -50,6 +50,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let first_word = args.first().cloned();
+    let second_word = args.get(1).cloned();
     let parsed = parse_command_with_builtin_deferral(args, &cwd, &global_options);
     // Displaced direct built-ins warn only after routing proved the built-in
     // owns the invocation; grouped routes and manifest-routed tasks never do.
@@ -160,8 +161,11 @@ pub fn run_cli(raw_args: Vec<String>) {
     match cmd {
         Command::Version => crate::run_version_command(&context, legacy_direct_warning.as_ref()),
         Command::Help(topic) => {
-            let legacy_note =
-                crate::cli::legacy_direct::legacy_help_note(first_word.as_deref(), topic);
+            let legacy_note = crate::cli::legacy_direct::legacy_help_note(
+                first_word.as_deref(),
+                second_word.as_deref(),
+                topic,
+            );
             run_help_command(&context, topic, legacy_note.as_deref())
         }
         Command::HelpGroup(group) => run_help_group_command(&context, group),
@@ -170,7 +174,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                 subcommand: GraphSubcommand::Watch { .. },
                 ..
             },
-        ) => run_graph_watch_command(&context, args),
+        ) => run_graph_watch_command(&context, args, legacy_direct_warning.as_ref()),
         command @ (Command::Bundle(_)
         | Command::Changelog(_)
         | Command::Deploy(_)
@@ -217,13 +221,16 @@ pub fn run_and_render_command(
     // `config` and `scan` prove built-in ownership at the runner's manifest
     // selection fallback; open a recording scope around the run so those
     // direct invocations warn exactly when the built-in was selected.
-    let opens_registry_scope = matches!(
-        &command,
+    let registry_scope_task = match &command {
         Command::Task(task)
-            if effigy_cli::command_surface::group_for_child_word(&task.name).is_some()
-    );
-    if opens_registry_scope {
-        crate::cli::legacy_direct::open_registry_scope();
+            if effigy_cli::command_surface::group_for_child_word(&task.name).is_some() =>
+        {
+            Some(task.name.clone())
+        }
+        _ => None,
+    };
+    if let Some(task_name) = registry_scope_task.as_deref() {
+        crate::cli::legacy_direct::open_registry_scope(task_name);
     }
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     if !context.suppress_header {
@@ -235,7 +242,7 @@ pub fn run_and_render_command(
         None
     };
     let outcome = crate::runner::run_command_with_context(command, context.runtime_context);
-    let registry_warnings = if opens_registry_scope {
+    let registry_warnings = if registry_scope_task.is_some() {
         crate::cli::legacy_direct::close_registry_scope()
     } else {
         Vec::new()

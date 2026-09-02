@@ -78,7 +78,15 @@ that the built-in, rather than a manifest selector, owns the invocation.
 
 Human mode writes one line to stderr. It does not alter stdout or exit status.
 JSON mode keeps stdout as one valid `effigy.command.v1` document and adds a
-top-level `warnings` array only when nonempty. Each warning has exactly:
+top-level `warnings` array only when nonempty. Warning recording is bound to
+the original direct child and the top-level execution depth, so nested
+registry fallbacks (including shadowing manifest tasks that invoke `config` or
+`scan` through run-array task references) never warn. The one established
+exception is `graph watch`: its JSON form streams
+`effigy.graph.watch.event.v1` events instead of a command envelope, so the
+displaced direct spelling emits the single warning line on stderr in text and
+JSON-stream modes alike and the grouped route stays silent. Each warning has
+exactly:
 
 ```json
 {

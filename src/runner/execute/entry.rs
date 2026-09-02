@@ -104,6 +104,7 @@ fn run_grouped_builtin_with_preflight_input(
 }
 
 fn run_manifest_task_request_inner(request: TaskExecutionRequest) -> Result<String, RunnerError> {
+    let _depth_guard = crate::cli::legacy_direct::enter_execution_depth();
     let plan = ExecutionDispatchPlan::from_request(request)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let invocation = TaskInvocation {

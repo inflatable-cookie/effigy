@@ -3,9 +3,12 @@
 //! preservation, unknown-child no-execution, JSON success/usage/runtime
 //! warning parity, and legacy-detail help notes.
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
 
@@ -23,6 +26,78 @@ fn assert_no_migration_warning(output: &std::process::Output) {
         !stderr.contains("is deprecated"),
         "unexpected migration warning on stderr: {stderr}"
     );
+}
+/// Run the effigy binary in `root` without a trailing `--repo` (for commands
+/// whose parser rejects trailing flags, e.g. `version`).
+fn run_in_root(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(args)
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy")
+}
+
+/// Spawn a long-running effigy process, collect stdout lines until one
+/// contains `needle`, then kill it. Bounded under 10 seconds. Returns the
+/// collected lines plus the captured stderr.
+fn run_bounded_stream(
+    root: &std::path::Path,
+    args: &[&str],
+    needle: &str,
+) -> (Vec<String>, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(args)
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    let stdout = child.stdout.take().expect("stdout pipe");
+    let (tx, rx) = mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = line.expect("stdout line");
+            if !line.trim().is_empty() && tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut lines = Vec::new();
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(line) => {
+                let matched = line.contains(needle);
+                lines.push(line);
+                if matched {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("no matching stdout line within 10s for {args:?} (needle {needle:?})")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    child.kill().expect("kill effigy");
+    let _ = child.wait();
+    let _ = reader.join();
+    let mut stderr = Vec::new();
+    use std::io::Read;
+    let _ = child
+        .stderr
+        .take()
+        .expect("stderr pipe")
+        .read_to_end(&mut stderr);
+    let stderr = String::from_utf8(stderr).unwrap_or_else(|_| String::new());
+    (lines, stderr)
 }
 
 #[test]
@@ -354,5 +429,207 @@ fn json_help_legacy_payload_keeps_the_note_inside_the_text() {
             .expect("help text")
             .contains("direct command `docs` is deprecated; use `effigy repo docs`"),
         "legacy help payload must carry the migration facts in its text"
+    );
+}
+
+#[test]
+fn nested_registry_fallback_never_warns_through_a_shadowing_manifest_task() {
+    // The repository-owned `scan` task invokes the `config` built-in through
+    // a nested task reference. The direct spelling is shadowed (no warning),
+    // and the nested registry fallback must not leak a `config` warning into
+    // the top-level invocation.
+    let root = temp_workspace("grouped-nested-fallback");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.scan]\nrun = [{ task = \"config\" }]\n",
+    )
+    .expect("write manifest");
+
+    let text = run_cli_command(&root, &["scan"]);
+    assert!(text.status.success(), "nested scan: {text:?}");
+    assert!(
+        stdout_of(&text).contains("effigy.toml Reference"),
+        "nested config built-in should have run: {}",
+        stdout_of(&text)
+    );
+    assert_no_migration_warning(&text);
+
+    let json = run_json_cli_command(&root, &["scan"]);
+    assert!(json.status.success(), "nested scan json: {json:?}");
+    let payload = parse_stdout_json(&json);
+    assert_eq!(payload["ok"], true);
+    assert!(
+        payload.get("warnings").is_none(),
+        "shadowing manifest task must not warn in JSON: {payload}"
+    );
+    assert_no_migration_warning(&json);
+}
+
+#[test]
+fn direct_graph_watch_warns_once_in_text_and_json_stream_modes() {
+    let root = temp_workspace("grouped-graph-watch");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
+
+    // Direct text form: one stderr warning, streamed text on stdout.
+    let (text_lines, text_stderr) = run_bounded_stream(
+        &root,
+        &["graph", "watch", "--debounce-ms", "100"],
+        "graph watch",
+    );
+    assert!(
+        text_lines.iter().any(|line| line.contains("graph watch")),
+        "{text_lines:?}"
+    );
+    assert_eq!(
+        text_stderr
+            .lines()
+            .filter(|line| line.contains("is deprecated"))
+            .count(),
+        1,
+        "direct graph watch must warn once: {text_stderr}"
+    );
+    assert!(
+        text_stderr.contains("direct command `graph` is deprecated; use `effigy repo graph`"),
+        "{text_stderr}"
+    );
+
+    // Direct JSON-stream form: the event stream stays on stdout untouched and
+    // the single warning goes to stderr (no command envelope exists).
+    let (event_lines, stream_stderr) = run_bounded_stream(
+        &root,
+        &["--json", "graph", "watch", "--debounce-ms", "100"],
+        "effigy.graph.watch.event.v1",
+    );
+    let event: Value =
+        serde_json::from_str(event_lines.first().expect("watch event line")).expect("event json");
+    assert_eq!(event["schema"], "effigy.graph.watch.event.v1");
+    assert_eq!(event["payload"]["kind"], "started");
+    assert!(
+        !event_lines
+            .iter()
+            .any(|line| line.contains("effigy.command.v1")),
+        "graph watch must stream events, never a command envelope: {event_lines:?}"
+    );
+    assert_eq!(
+        stream_stderr
+            .lines()
+            .filter(|line| line.contains("is deprecated"))
+            .count(),
+        1,
+        "direct graph watch --json must warn once on stderr: {stream_stderr}"
+    );
+
+    // Grouped route: same stream, no warning in either mode.
+    let (grouped_text, grouped_text_stderr) = run_bounded_stream(
+        &root,
+        &["repo", "graph", "watch", "--debounce-ms", "100"],
+        "graph watch",
+    );
+    assert!(
+        grouped_text.iter().any(|line| line.contains("graph watch")),
+        "{grouped_text:?}"
+    );
+    assert!(
+        !grouped_text_stderr.contains("is deprecated"),
+        "{grouped_text_stderr}"
+    );
+
+    let (grouped_event, grouped_stream_stderr) = run_bounded_stream(
+        &root,
+        &["--json", "repo", "graph", "watch", "--debounce-ms", "100"],
+        "effigy.graph.watch.event.v1",
+    );
+    let event: Value =
+        serde_json::from_str(grouped_event.first().expect("watch event line")).expect("event json");
+    assert_eq!(event["schema"], "effigy.graph.watch.event.v1");
+    assert!(
+        !grouped_stream_stderr.contains("is deprecated"),
+        "{grouped_stream_stderr}"
+    );
+}
+
+#[test]
+fn legacy_version_help_forms_carry_the_migration_note() {
+    let root = temp_workspace("grouped-version-help");
+    let note =
+        "direct command `version` is deprecated; use `effigy admin version`; removal at v1.0";
+
+    // `effigy help version` (help-root legacy detail) carries the note.
+    let via_help = run_cli_command(&root, &["help", "version"]);
+    assert!(via_help.status.success(), "help version: {via_help:?}");
+    assert!(
+        stdout_of(&via_help).contains(note),
+        "{}",
+        stdout_of(&via_help)
+    );
+
+    // `effigy version --help` (direct legacy detail) carries the note.
+    let via_flag = run_in_root(&root, &["version", "--help"]);
+    assert!(via_flag.status.success(), "version --help: {via_flag:?}");
+    assert!(
+        stdout_of(&via_flag).contains(note),
+        "{}",
+        stdout_of(&via_flag)
+    );
+
+    // Canonical grouped detail stays note-free.
+    let grouped = run_in_root(&root, &["admin", "version", "--help"]);
+    assert!(
+        grouped.status.success(),
+        "admin version --help: {grouped:?}"
+    );
+    assert!(
+        !stdout_of(&grouped).contains("is deprecated"),
+        "{}",
+        stdout_of(&grouped)
+    );
+
+    // The `--version` flag stays unchanged and warning-free.
+    let flag = run_in_root(&root, &["--version"]);
+    assert!(flag.status.success(), "--version: {flag:?}");
+    assert!(stdout_of(&flag).starts_with("effigy v"));
+    assert_no_migration_warning(&flag);
+
+    // JSON: the legacy help payload keeps the note inside its text.
+    let json = run_json_cli_command(&root, &["help", "version"]);
+    assert!(json.status.success(), "json help version: {json:?}");
+    let payload = parse_stdout_json(&json);
+    assert_eq!(payload["schema"], "effigy.command.v1");
+    assert_eq!(payload["result"]["topic"], "general");
+    assert!(
+        payload["result"]["text"]
+            .as_str()
+            .expect("help text")
+            .contains(note),
+        "json help version payload must carry the note"
+    );
+
+    let json_flag = run_in_root(&root, &["--json", "version", "--help"]);
+    assert!(
+        json_flag.status.success(),
+        "json version --help: {json_flag:?}"
+    );
+    let payload = parse_stdout_json(&json_flag);
+    assert!(
+        payload["result"]["text"]
+            .as_str()
+            .expect("help text")
+            .contains(note),
+        "json version --help payload must carry the note"
+    );
+
+    let json_grouped = run_in_root(&root, &["--json", "admin", "version", "--help"]);
+    assert!(
+        json_grouped.status.success(),
+        "json admin version --help: {json_grouped:?}"
+    );
+    let payload = parse_stdout_json(&json_grouped);
+    assert!(
+        !payload["result"]["text"]
+            .as_str()
+            .expect("help text")
+            .contains("is deprecated"),
+        "grouped version help payload must stay note-free"
     );
 }
