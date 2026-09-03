@@ -29,7 +29,8 @@ review boundary. Acowtancy's own active lanes remain independent and untouched.
   outcomes and ownership classification
 - the first populated scorecard compares Effigy and Acowtancy without invented
   evidence or universal claims
-- Acowtancy remains byte-for-byte and Git-state unchanged
+- Acowtancy remains at the exact frozen HEAD with unchanged tracked files and
+  Git state
 - only demonstrated generic Effigy starter/guide drift may change
 - evidence names whether another consumer replay is warranted
 
