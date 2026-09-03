@@ -136,6 +136,18 @@ that continuation.
   `docs/qa:docs` and `docs/qa:northstar` routes confirmed without execution or
   repository mutation
 
+## Pre-Dispatch Freeze Repair
+
+The first card `1111` worker stopped before running consumer commands because
+Acowtancy `main` had advanced by three commits to
+`6bcf6c703b776ba76767c4ac1d4fc7880f43034f`. The original discovery SHA remains
+recorded above as historical evidence. The orchestrator inspected the delta:
+it is confined to Acowtancy's Underlay v0.9.7 media-recovery implementation and
+closeout docs, while the Effigy manifest and bounded replay command surface are
+unchanged. Card `1111`, spec `118`, and the worker handoff therefore re-freeze
+the replay at the new clean pushed `main`. No Acowtancy command or mutation ran
+before this repair.
+
 ## Risks
 
 - one consumer must not become a universal compatibility claim

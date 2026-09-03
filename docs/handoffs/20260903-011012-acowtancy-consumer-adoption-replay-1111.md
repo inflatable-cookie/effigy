@@ -135,9 +135,16 @@ Please keep this run inside the named runway:
   conditions, and adversarial review oracle are all fixed.
 - **Decisions and preferences:** Acowtancy was operator-selected. Its current
   `main` was clean at
-  `e42b64b17cae15ed419872ccb9bdfc48861d5214`; it already exposes
+  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`; it already exposes
   `docs/qa:docs` and `docs/qa:northstar`. Keep unknown scorecard dimensions
   unknown. One pilot is not portfolio proof.
+- **Freeze repair:** the first dispatch stopped before running consumer
+  commands because Acowtancy advanced from the discovery SHA
+  `e42b64b17cae15ed419872ccb9bdfc48861d5214`. The orchestrator inspected the
+  three intervening commits, confirmed they do not change the replay command
+  surface, and re-froze current clean pushed `main` at
+  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`. Resume the same worker from its
+  completed preflight; do not restore or mutate the earlier revision.
 - **Open tensions:** the consumer checkout may move or become dirty before
   replay; stop rather than changing it. The retained child-catalog workaround
   remains until Acowtancy-owned downstream revalidation. Current tasks may

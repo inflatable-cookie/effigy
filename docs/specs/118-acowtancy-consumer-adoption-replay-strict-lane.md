@@ -18,7 +18,7 @@ repair only evidence-backed drift owned by Effigy's starter or guidance.
 
 - Acowtancy is the first Theme 3 pilot.
 - Freeze consumer evidence at Acowtancy
-  `e42b64b17cae15ed419872ccb9bdfc48861d5214`.
+  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`.
 - Acowtancy remains read-only. Its active cards, manifests, docs, code, runtime,
   secrets, generated state, and workarounds are outside this lane's write scope.
 - Use Acowtancy's existing root discovery/health/test-plan routes and its

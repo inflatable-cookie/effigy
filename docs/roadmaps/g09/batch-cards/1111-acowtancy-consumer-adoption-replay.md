@@ -18,7 +18,7 @@ turn the result into governed cross-repository evidence.
 
 - record Effigy `main` SHA, built binary identity, Acowtancy repository URL,
   and frozen Acowtancy SHA
-  `e42b64b17cae15ed419872ccb9bdfc48861d5214`
+  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`
 - prove the consumer worktree is clean and exactly at the frozen SHA before and
   after the replay; do not fetch, merge, checkout, reset, clean, or edit there
 - inventory selector ownership, then run only read-only/non-starting surfaces:
