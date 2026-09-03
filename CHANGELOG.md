@@ -48,9 +48,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - Cargo lockfile release sync now authorizes version changes by actual Cargo
-  workspace package identity. A third-party package move is rejected and the
-  pre-prepare tree restored even when that package's new version happens to
-  equal the selected workspace version.
+  workspace package identity and each member's metadata-reported package
+  version, preserving independent versions in mixed-version workspaces. A
+  third-party package move is rejected and the pre-prepare tree restored even
+  when that package's new version matches a workspace member's target version.
 - Child-catalog test-suite task references now keep the originating repository's
   loaded container registry while using the selected child task's cwd. An
   explicit child registry still wins, and direct child invocation keeps normal

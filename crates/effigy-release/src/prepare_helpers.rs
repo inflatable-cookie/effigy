@@ -55,6 +55,7 @@ struct CargoMetadata {
 struct CargoMetadataPackage {
     id: String,
     name: String,
+    version: String,
 }
 
 pub fn render_prepared_changelog_contents(
@@ -179,17 +180,16 @@ pub(super) fn build_sync_mutations(
                     "Cargo.lock is missing and will be created".to_owned()
                 },
                 after_preview: format!(
-                    "Cargo.lock workspace members recorded at {selected_version}"
+                    "Cargo.lock workspace members refreshed after selecting {selected_version}"
                 ),
                 detail_lines: vec![
                     "sync command: cargo update --workspace --quiet".to_owned(),
                     "third-party dependencies are not re-resolved; only workspace member \
                          versions move"
                         .to_owned(),
-                    format!(
-                        "refuses to apply unless Cargo metadata identifies the changed package \
-                         as a workspace member recorded at {selected_version}"
-                    ),
+                    "refuses to apply unless Cargo metadata identifies each changed package as \
+                     a workspace member recorded at that member's own package version"
+                        .to_owned(),
                 ],
                 diff_preview: Vec::new(),
                 apply: FileMutationApply::SyncCargoLock {
@@ -363,9 +363,7 @@ pub fn apply_release_mutations(
                     ))
                 })?;
             }
-            FileMutationApply::SyncCargoLock { workspace_version } => {
-                sync_cargo_lock(root, &mutation.path, workspace_version)?
-            }
+            FileMutationApply::SyncCargoLock { .. } => sync_cargo_lock(root, &mutation.path)?,
         }
     }
     Ok(())
@@ -663,13 +661,9 @@ pub fn compare_release_state_fingerprints(
 /// package identities. Only those source-less package entries have their
 /// version fields normalized before an otherwise exact line-multiset
 /// comparison. A third-party move therefore remains visible even when its new
-/// version happens to equal `workspace_version`. Any surprise restores the
+/// version happens to equal a workspace member's target version. Any surprise restores the
 /// previous lockfile and fails the mutation before a release commit can form.
-fn sync_cargo_lock(
-    root: &Path,
-    lockfile: &Path,
-    workspace_version: &str,
-) -> Result<(), ReleaseError> {
+fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), ReleaseError> {
     let before = match std::fs::read_to_string(lockfile) {
         Ok(contents) => Some(contents),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -684,7 +678,7 @@ fn sync_cargo_lock(
     // Nothing to preserve when the lockfile does not exist yet, so a full
     // resolve is the only option there and is not a regression.
     let workspace_members = if before.is_some() {
-        Some(cargo_workspace_member_names(root)?)
+        Some(cargo_workspace_member_versions(root)?)
     } else {
         None
     };
@@ -737,9 +731,7 @@ fn sync_cargo_lock(
             "existing Cargo.lock sync lost its workspace package identities".to_owned(),
         ));
     };
-    if let Some(reason) =
-        unexpected_lockfile_change(&before, &after, workspace_version, workspace_members)
-    {
+    if let Some(reason) = unexpected_lockfile_change(&before, &after, workspace_members) {
         // Put the lockfile back before failing: the caller's rollback covers
         // planned mutations, and leaving a surprise resolve on disk would
         // outlive this error.
@@ -758,7 +750,7 @@ fn sync_cargo_lock(
     Ok(())
 }
 
-fn cargo_workspace_member_names(root: &Path) -> Result<BTreeSet<String>, ReleaseError> {
+fn cargo_workspace_member_versions(root: &Path) -> Result<BTreeMap<String, String>, ReleaseError> {
     let output = ProcessCommand::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(root)
@@ -784,19 +776,29 @@ fn cargo_workspace_member_names(root: &Path) -> Result<BTreeSet<String>, Release
             "failed to parse cargo metadata before lockfile sync: {error}"
         ))
     })?;
-    let package_names = metadata
+    let mut package_versions = BTreeMap::new();
+    for package in metadata
         .packages
         .into_iter()
         .filter(|package| metadata.workspace_members.contains(&package.id))
-        .map(|package| package.name)
-        .collect::<BTreeSet<_>>();
-    if package_names.len() != metadata.workspace_members.len() {
+    {
+        if package_versions
+            .insert(package.name.clone(), package.version)
+            .is_some()
+        {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "cargo metadata describes more than one workspace member named `{}`",
+                package.name
+            )));
+        }
+    }
+    if package_versions.len() != metadata.workspace_members.len() {
         return Err(ReleaseError::TaskInvocation(
             "cargo metadata did not describe every workspace member before lockfile sync"
                 .to_owned(),
         ));
     }
-    Ok(package_names)
+    Ok(package_versions)
 }
 
 /// Describe every change that is not a workspace version move, if any.
@@ -807,18 +809,13 @@ fn cargo_workspace_member_names(root: &Path) -> Result<BTreeSet<String>, Release
 pub(crate) fn unexpected_lockfile_change(
     before: &str,
     after: &str,
-    workspace_version: &str,
-    workspace_members: &BTreeSet<String>,
+    workspace_members: &BTreeMap<String, String>,
 ) -> Option<String> {
-    let before = match normalize_workspace_lock_versions(before, workspace_members, None) {
+    let before = match normalize_workspace_lock_versions(before, workspace_members, false) {
         Ok(before) => before,
         Err(reason) => return Some(reason),
     };
-    let after = match normalize_workspace_lock_versions(
-        after,
-        workspace_members,
-        Some(workspace_version),
-    ) {
+    let after = match normalize_workspace_lock_versions(after, workspace_members, true) {
         Ok(after) => after,
         Err(reason) => return Some(reason),
     };
@@ -833,7 +830,7 @@ pub(crate) fn unexpected_lockfile_change(
     // A line-multiset comparison rather than a diff: order is irrelevant, and
     // every line appearing on one side and not the other has to be accounted
     // for. Actual workspace-member version fields have already been replaced
-    // with a sentinel, so even a third-party move to `workspace_version`
+    // with a sentinel, so even a third-party move to a workspace target version
     // remains visible here. Blank lines carry no information and would
     // otherwise dominate.
     let mut deltas: BTreeMap<&str, isize> = BTreeMap::new();
@@ -869,8 +866,8 @@ struct NormalizedCargoLock {
 
 fn normalize_workspace_lock_versions(
     lockfile: &str,
-    workspace_members: &BTreeSet<String>,
-    required_version: Option<&str>,
+    workspace_members: &BTreeMap<String, String>,
+    require_expected_versions: bool,
 ) -> Result<NormalizedCargoLock, String> {
     let mut document = lockfile
         .parse::<toml_edit::DocumentMut>()
@@ -889,7 +886,10 @@ fn normalize_workspace_lock_versions(
         else {
             return Err("Cargo.lock contains a package without a string name".to_owned());
         };
-        if package.get("source").is_some() || !workspace_members.contains(&name) {
+        let Some(expected_version) = workspace_members.get(&name) else {
+            continue;
+        };
+        if package.get("source").is_some() {
             continue;
         }
         if !found.insert(name.clone()) {
@@ -901,12 +901,10 @@ fn normalize_workspace_lock_versions(
             .get_mut("version")
             .and_then(toml_edit::Item::as_value_mut)
             .ok_or_else(|| format!("workspace package `{name}` has no version in Cargo.lock"))?;
-        if let Some(required_version) = required_version {
-            if version.as_str() != Some(required_version) {
-                return Err(format!(
-                    "workspace package `{name}` is not recorded at version {required_version} after sync"
-                ));
-            }
+        if require_expected_versions && version.as_str() != Some(expected_version.as_str()) {
+            return Err(format!(
+                "workspace package `{name}` is not recorded at its metadata version {expected_version} after sync"
+            ));
         }
         let decor = version.decor().clone();
         *version = toml_edit::Value::from("__effigy_workspace_version__");
@@ -914,7 +912,8 @@ fn normalize_workspace_lock_versions(
     }
 
     let missing = workspace_members
-        .difference(&found)
+        .keys()
+        .filter(|name| !found.contains(*name))
         .cloned()
         .collect::<Vec<_>>();
     if !missing.is_empty() {

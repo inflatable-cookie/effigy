@@ -171,7 +171,9 @@ Supported `[release]` fields:
     - `Cargo.lock`
       - obtains actual workspace package identities from `cargo metadata`
       - refreshes those member versions without accepting unrelated dependency
-        changes, including a third-party move to the selected workspace version
+        changes, including a third-party move to a workspace member's target
+        version. Mixed-version workspaces retain each member's own
+        metadata-reported package version
     - `package.json`
       - updates the root `version` field to the selected release version while
         preserving file layout
