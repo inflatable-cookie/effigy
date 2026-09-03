@@ -583,6 +583,7 @@ fn restore_mutation_snapshots_puts_the_tree_back() {
 /// The lockfile sync must move workspace versions and nothing else.
 #[test]
 fn unexpected_lockfile_change_distinguishes_workspace_from_third_party() {
+    let workspace_members = BTreeMap::from([("signal-dsp".to_owned(), "0.1.1".to_owned())]);
     let before = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.0\"\n\n\
                   [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n";
 
@@ -590,30 +591,88 @@ fn unexpected_lockfile_change_distinguishes_workspace_from_third_party() {
     let workspace_bump = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
                           [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n";
     assert_eq!(
-        unexpected_lockfile_change(before, workspace_bump, "0.1.1"),
+        unexpected_lockfile_change(before, workspace_bump, &workspace_members),
         None
     );
 
+    // Mixed-version workspaces are valid: each source-less member must match
+    // its own post-mutation metadata version, not one global release target.
+    let mixed_members = BTreeMap::from([
+        ("signal-dsp".to_owned(), "0.1.1".to_owned()),
+        ("independent".to_owned(), "0.3.1".to_owned()),
+    ]);
+    let mixed_before =
+        format!("{before}\n[[package]]\nname = \"independent\"\nversion = \"0.3.1\"\n");
+    let mixed_after =
+        format!("{workspace_bump}\n[[package]]\nname = \"independent\"\nversion = \"0.3.1\"\n");
+    assert_eq!(
+        unexpected_lockfile_change(&mixed_before, &mixed_after, &mixed_members),
+        None
+    );
+    let flattened_after = mixed_after.replacen(
+        "name = \"independent\"\nversion = \"0.3.1\"",
+        "name = \"independent\"\nversion = \"0.1.1\"",
+        1,
+    );
+    assert!(
+        unexpected_lockfile_change(&mixed_before, &flattened_after, &mixed_members)
+            .is_some_and(|reason| reason.contains("metadata version 0.3.1"))
+    );
+
     // What `cargo generate-lockfile` used to do, and what must now be refused:
-    // a third-party crate moving. It is also a `version` line, which is why
-    // checking the added value rather than the line shape is what catches it.
+    // a third-party crate moving. Its package identity keeps the version field
+    // outside the set of authorized workspace-member changes.
     let third_party = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
                        [[package]]\nname = \"rayon\"\nversion = \"1.12.0\"\n";
-    let refused = unexpected_lockfile_change(before, third_party, "0.1.1")
+    let refused = unexpected_lockfile_change(before, third_party, &workspace_members)
         .expect("a third-party bump must be refused");
-    assert!(refused.contains("1.12.0"), "{refused}");
+    assert!(
+        refused.contains("outside actual workspace member"),
+        "{refused}"
+    );
+
+    // The old value-only validator accepted this when the third party happened
+    // to move to the selected workspace version. Package identity, not the
+    // added version literal, must decide which lock entry may change.
+    let same_as_workspace = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
+                             [[package]]\nname = \"rayon\"\nversion = \"0.1.1\"\n";
+    let refused = unexpected_lockfile_change(before, same_as_workspace, &workspace_members)
+        .expect("a third-party move to the workspace version must be refused");
+    assert!(
+        refused.contains("outside actual workspace member"),
+        "{refused}"
+    );
+
+    // Association matters too. A line multiset cannot see two third-party
+    // packages exchanging version values, but neither package is authorized
+    // to change.
+    let swap_before = format!("{before}\n[[package]]\nname = \"other\"\nversion = \"1.12.0\"\n");
+    let swapped = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
+                   [[package]]\nname = \"rayon\"\nversion = \"1.12.0\"\n\n\
+                   [[package]]\nname = \"other\"\nversion = \"1.11.0\"\n";
+    assert!(unexpected_lockfile_change(&swap_before, swapped, &workspace_members).is_some());
 
     // Anything structural -- a package appearing or disappearing -- is refused
     // outright rather than inspected.
     let added_package = "[[package]]\nname = \"signal-dsp\"\nversion = \"0.1.1\"\n\n\
                          [[package]]\nname = \"rayon\"\nversion = \"1.11.0\"\n\n\
                          [[package]]\nname = \"surprise\"\nversion = \"0.1.1\"\n";
-    let refused = unexpected_lockfile_change(before, added_package, "0.1.1")
+    let refused = unexpected_lockfile_change(before, added_package, &workspace_members)
         .expect("a new package must be refused");
-    assert!(refused.contains("surprise"), "{refused}");
+    assert!(
+        refused.contains("outside actual workspace member"),
+        "{refused}"
+    );
 
     // No change at all is fine.
-    assert_eq!(unexpected_lockfile_change(before, before, "0.1.0"), None);
+    assert_eq!(
+        unexpected_lockfile_change(
+            before,
+            before,
+            &BTreeMap::from([("signal-dsp".to_owned(), "0.1.0".to_owned())])
+        ),
+        None
+    );
 }
 
 #[test]

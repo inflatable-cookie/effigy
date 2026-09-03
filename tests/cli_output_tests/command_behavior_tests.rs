@@ -183,6 +183,27 @@ fn cargo_check_quiet(root: &std::path::Path) {
     assert!(output.status.success(), "cargo check failed: {output:?}");
 }
 
+fn run_json_cli_command_with_path(
+    root: &std::path::Path,
+    args: &[&str],
+    path_prefix: &std::path::Path,
+) -> std::process::Output {
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let joined_path = std::env::join_paths(
+        std::iter::once(path_prefix.to_path_buf()).chain(std::env::split_paths(&current_path)),
+    )
+    .expect("join test PATH");
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .args(args)
+        .arg("--repo")
+        .arg(root)
+        .env("NO_COLOR", "1")
+        .env("PATH", joined_path)
+        .output()
+        .expect("run effigy with test PATH")
+}
+
 fn write_demo_manifest_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("demos/receipts")).expect("mkdir demo receipts");
     fs::write(
@@ -5249,6 +5270,174 @@ fn cli_release_prepare_yes_json_mode_syncs_configured_cargo_lock() {
     assert!(cargo_toml.contains("version = \"0.2.5\""));
     assert!(changelog.contains("## [0.2.5] - "));
     assert_ne!(lock_before, lock_after, "Cargo.lock should be regenerated");
+}
+
+#[test]
+fn cli_release_prepare_creates_a_missing_configured_cargo_lock() {
+    let root = temp_workspace("cli-release-prepare-creates-missing-sync-lock");
+    write_cargo_release_prepare_fixture(&root, true);
+    assert!(!root.join("Cargo.lock").exists());
+
+    let output = run_json_cli_command(&root, &["release", "prepare", "--yes"]);
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{parsed}");
+    assert_eq!(parsed["result"]["prepared"], true);
+    assert!(root.join("Cargo.lock").exists());
+    assert!(fs::read_to_string(root.join("Cargo.lock"))
+        .expect("read generated lock")
+        .contains("version = \"0.2.5\""));
+}
+
+#[test]
+fn cli_release_prepare_syncs_mixed_workspace_member_versions() {
+    let root = temp_workspace("cli-release-prepare-syncs-mixed-workspace-versions");
+    write_cargo_release_prepare_fixture(&root, true);
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.3.3\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    write_release_changelog(
+        &root,
+        "Breaking",
+        "Exercise a pre-1.0 minor release",
+        "0.3.3",
+    );
+
+    let lock_before = "version = 4\n\n\
+                       [[package]]\n\
+                       name = \"fixture\"\n\
+                       version = \"0.3.3\"\n\n\
+                       [[package]]\n\
+                       name = \"independent\"\n\
+                       version = \"0.3.1\"\n";
+    let lock_after = lock_before.replacen("version = \"0.3.3\"", "version = \"0.4.0\"", 1);
+    fs::write(root.join("Cargo.lock"), lock_before).expect("write lock");
+    fs::write(root.join("expected.lock"), lock_after).expect("write expected lock");
+
+    let fake_bin = root.join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("mkdir fake bin");
+    let fake_cargo = fake_bin.join("cargo");
+    fs::write(
+        &fake_cargo,
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+           metadata) printf '%s\\n' '{\"packages\":[{\"id\":\"fixture 0.4.0 (path+file:///fixture)\",\"name\":\"fixture\",\"version\":\"0.4.0\"},{\"id\":\"independent 0.3.1 (path+file:///independent)\",\"name\":\"independent\",\"version\":\"0.3.1\"}],\"workspace_members\":[\"fixture 0.4.0 (path+file:///fixture)\",\"independent 0.3.1 (path+file:///independent)\"]}' ;;\n\
+           update) cp expected.lock Cargo.lock ;;\n\
+           *) exit 64 ;;\n\
+         esac\n",
+    )
+    .expect("write fake cargo");
+    let mut permissions = fs::metadata(&fake_cargo)
+        .expect("stat fake cargo")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_cargo, permissions).expect("chmod fake cargo");
+
+    let output = run_json_cli_command_with_path(
+        &root,
+        &["release", "prepare", "--yes", "--version", "0.4.0"],
+        &fake_bin,
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{parsed}");
+    assert_eq!(parsed["result"]["prepared"], true);
+    let lock = fs::read_to_string(root.join("Cargo.lock")).expect("read synced lock");
+    assert!(lock.contains("name = \"fixture\"\nversion = \"0.4.0\""));
+    assert!(lock.contains("name = \"independent\"\nversion = \"0.3.1\""));
+    assert!(root.join(".release-prepared.json").exists());
+}
+
+#[test]
+fn cli_release_prepare_rejects_and_restores_third_party_move_to_workspace_version() {
+    let root = temp_workspace("cli-release-prepare-rejects-third-party-target-version");
+    write_cargo_release_prepare_fixture(&root, true);
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.3.3\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    write_release_changelog(
+        &root,
+        "Breaking",
+        "Exercise a pre-1.0 minor release",
+        "0.3.3",
+    );
+
+    let lock_before = "# This file is automatically @generated by Cargo.\n\
+                       # It is not intended for manual editing.\n\
+                       version = 4\n\n\
+                       [[package]]\n\
+                       name = \"fixture\"\n\
+                       version = \"0.3.3\"\n\n\
+                       [[package]]\n\
+                       name = \"third-party\"\n\
+                       version = \"0.3.9\"\n\
+                       source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\
+                       checksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\n";
+    let hostile_lock = lock_before
+        .replacen("version = \"0.3.3\"", "version = \"0.4.0\"", 1)
+        .replacen("version = \"0.3.9\"", "version = \"0.4.0\"", 1);
+    fs::write(root.join("Cargo.lock"), lock_before).expect("write lock");
+    fs::write(root.join("hostile.lock"), hostile_lock).expect("write hostile lock");
+
+    let fake_bin = root.join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("mkdir fake bin");
+    let fake_cargo = fake_bin.join("cargo");
+    fs::write(
+        &fake_cargo,
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+           metadata) printf '%s\\n' '{\"packages\":[{\"id\":\"fixture 0.4.0 (path+file:///fixture)\",\"name\":\"fixture\",\"version\":\"0.4.0\"}],\"workspace_members\":[\"fixture 0.4.0 (path+file:///fixture)\"]}' ;;\n\
+           update) cp hostile.lock Cargo.lock ;;\n\
+           *) exit 64 ;;\n\
+         esac\n",
+    )
+    .expect("write fake cargo");
+    let mut permissions = fs::metadata(&fake_cargo)
+        .expect("stat fake cargo")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_cargo, permissions).expect("chmod fake cargo");
+
+    let cargo_before = fs::read_to_string(root.join("Cargo.toml")).expect("read cargo before");
+    let changelog_before =
+        fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog before");
+    let output = run_json_cli_command_with_path(
+        &root,
+        &["release", "prepare", "--yes", "--version", "0.4.0"],
+        &fake_bin,
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(!output.status.success(), "hostile lock sync must fail");
+    assert!(
+        parsed["error"]["details"]["blockers"]
+            .as_array()
+            .is_some_and(
+                |blockers| blockers
+                    .iter()
+                    .any(|blocker| blocker.as_str().is_some_and(
+                        |message| message.contains("outside actual workspace member versions")
+                    ))
+            ),
+        "{parsed}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.toml")).expect("read restored cargo"),
+        cargo_before
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("CHANGELOG.md")).expect("read restored changelog"),
+        changelog_before
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.lock")).expect("read restored lock"),
+        lock_before
+    );
+    assert!(!root.join(".release-prepared.json").exists());
 }
 
 #[test]
