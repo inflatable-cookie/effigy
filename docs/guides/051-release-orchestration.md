@@ -169,8 +169,9 @@ Supported `[release]` fields:
   - optional list of extra files Effigy should keep in sync during prepare
   - supported:
     - `Cargo.lock`
-      - refreshes workspace member versions without accepting unrelated
-        dependency changes
+      - obtains actual workspace package identities from `cargo metadata`
+      - refreshes those member versions without accepting unrelated dependency
+        changes, including a third-party move to the selected workspace version
     - `package.json`
       - updates the root `version` field to the selected release version while
         preserving file layout

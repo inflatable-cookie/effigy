@@ -45,6 +45,18 @@ struct RawReleasePreparedFileFingerprint {
     digest: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoMetadataPackage>,
+    workspace_members: BTreeSet<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoMetadataPackage {
+    id: String,
+    name: String,
+}
+
 pub fn render_prepared_changelog_contents(
     parsed: &changelog::Changelog,
     next_version: &semver::Version,
@@ -175,8 +187,8 @@ pub(super) fn build_sync_mutations(
                          versions move"
                         .to_owned(),
                     format!(
-                        "refuses to apply if any other line changes or any version other than \
-                         {selected_version} appears"
+                        "refuses to apply unless Cargo metadata identifies the changed package \
+                         as a workspace member recorded at {selected_version}"
                     ),
                 ],
                 diff_preview: Vec::new(),
@@ -643,14 +655,16 @@ pub fn compare_release_state_fingerprints(
 /// lockfile says another cannot be built with `--locked`, and every `--locked`
 /// gate refuses to run between the bump and the sync.
 ///
-/// `cargo update --workspace` moves only the workspace members' own version
-/// numbers, which is exactly what a version bump requires and nothing more.
+/// `cargo update --workspace` should move only the workspace members' own
+/// version numbers, which is exactly what a version bump requires and nothing
+/// more.
 ///
-/// Verified rather than trusted. Every changed line must be a `version` line,
-/// and every added one must be `workspace_version` -- a third-party bump is
-/// also a version line, so the second check is what actually distinguishes
-/// them. If either fails the previous lockfile is restored and the mutation
-/// fails, so a surprising resolve cannot enter a release commit.
+/// Verified rather than trusted. Cargo metadata supplies the actual workspace
+/// package identities. Only those source-less package entries have their
+/// version fields normalized before an otherwise exact line-multiset
+/// comparison. A third-party move therefore remains visible even when its new
+/// version happens to equal `workspace_version`. Any surprise restores the
+/// previous lockfile and fails the mutation before a release commit can form.
 fn sync_cargo_lock(
     root: &Path,
     lockfile: &Path,
@@ -669,6 +683,11 @@ fn sync_cargo_lock(
 
     // Nothing to preserve when the lockfile does not exist yet, so a full
     // resolve is the only option there and is not a regression.
+    let workspace_members = if before.is_some() {
+        Some(cargo_workspace_member_names(root)?)
+    } else {
+        None
+    };
     let (args, label): (&[&str], &str) = if before.is_some() {
         (
             &["update", "--workspace", "--quiet"],
@@ -713,7 +732,14 @@ fn sync_cargo_lock(
             lockfile.display()
         ))
     })?;
-    if let Some(reason) = unexpected_lockfile_change(&before, &after, workspace_version) {
+    let Some(workspace_members) = workspace_members.as_ref() else {
+        return Err(ReleaseError::TaskInvocation(
+            "existing Cargo.lock sync lost its workspace package identities".to_owned(),
+        ));
+    };
+    if let Some(reason) =
+        unexpected_lockfile_change(&before, &after, workspace_version, workspace_members)
+    {
         // Put the lockfile back before failing: the caller's rollback covers
         // planned mutations, and leaving a surprise resolve on disk would
         // outlive this error.
@@ -732,27 +758,89 @@ fn sync_cargo_lock(
     Ok(())
 }
 
+fn cargo_workspace_member_names(root: &Path) -> Result<BTreeSet<String>, ReleaseError> {
+    let output = ProcessCommand::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to inspect Cargo workspace members before lockfile sync: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = if stderr.is_empty() {
+            "cargo metadata exited unsuccessfully".to_owned()
+        } else {
+            stderr
+        };
+        return Err(ReleaseError::TaskInvocation(format!(
+            "failed to inspect Cargo workspace members before lockfile sync: {detail}"
+        )));
+    }
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse cargo metadata before lockfile sync: {error}"
+        ))
+    })?;
+    let package_names = metadata
+        .packages
+        .into_iter()
+        .filter(|package| metadata.workspace_members.contains(&package.id))
+        .map(|package| package.name)
+        .collect::<BTreeSet<_>>();
+    if package_names.len() != metadata.workspace_members.len() {
+        return Err(ReleaseError::TaskInvocation(
+            "cargo metadata did not describe every workspace member before lockfile sync"
+                .to_owned(),
+        ));
+    }
+    Ok(package_names)
+}
+
 /// Describe every change that is not a workspace version move, if any.
 ///
-/// Reports all offenders rather than the first, because the first by sort order
-/// is usually a structural line like `[[package]]` while the informative one is
-/// the `name = ` beside it. A caller reading this needs to know which crate
-/// moved, not that the file has package headers.
+/// Reports every changed line rather than the first. Actual workspace-member
+/// version fields are normalized by package identity before comparison, so
+/// third-party changes cannot hide behind the selected workspace version.
 pub(crate) fn unexpected_lockfile_change(
     before: &str,
     after: &str,
     workspace_version: &str,
+    workspace_members: &BTreeSet<String>,
 ) -> Option<String> {
-    let expected_added = format!("version = \"{workspace_version}\"");
+    let before = match normalize_workspace_lock_versions(before, workspace_members, None) {
+        Ok(before) => before,
+        Err(reason) => return Some(reason),
+    };
+    let after = match normalize_workspace_lock_versions(
+        after,
+        workspace_members,
+        Some(workspace_version),
+    ) {
+        Ok(after) => after,
+        Err(reason) => return Some(reason),
+    };
+
+    if before.structure != after.structure {
+        return Some(
+            "the sync changed package entries or lock metadata outside actual workspace member versions"
+                .to_owned(),
+        );
+    }
 
     // A line-multiset comparison rather than a diff: order is irrelevant, and
     // every line appearing on one side and not the other has to be accounted
-    // for. Blank lines carry no information and would otherwise dominate.
+    // for. Actual workspace-member version fields have already been replaced
+    // with a sentinel, so even a third-party move to `workspace_version`
+    // remains visible here. Blank lines carry no information and would
+    // otherwise dominate.
     let mut deltas: BTreeMap<&str, isize> = BTreeMap::new();
-    for line in before.lines().filter(|line| !line.trim().is_empty()) {
+    for line in before.text.lines().filter(|line| !line.trim().is_empty()) {
         *deltas.entry(line.trim()).or_default() += 1;
     }
-    for line in after.lines().filter(|line| !line.trim().is_empty()) {
+    for line in after.text.lines().filter(|line| !line.trim().is_empty()) {
         *deltas.entry(line.trim()).or_default() -= 1;
     }
 
@@ -761,16 +849,9 @@ pub(crate) fn unexpected_lockfile_change(
         if *delta == 0 {
             continue;
         }
-        if !line.starts_with("version = \"") {
-            reasons.push(format!("`{line}` is not a version line"));
-        } else if *delta < 0 && *line != expected_added {
-            // Added lines (present in `after`, so a negative delta) must be the
-            // workspace version. Removed lines can be anything: they are the
-            // old workspace versions being replaced.
-            reasons.push(format!(
-                "`{line}` is not the workspace version {workspace_version}"
-            ));
-        }
+        reasons.push(format!(
+            "`{line}` changed outside an actual workspace member version"
+        ));
     }
     if reasons.is_empty() {
         return None;
@@ -779,6 +860,79 @@ pub(crate) fn unexpected_lockfile_change(
         "the sync changed more than the workspace version: {}",
         reasons.join("; ")
     ))
+}
+
+struct NormalizedCargoLock {
+    text: String,
+    structure: toml::Value,
+}
+
+fn normalize_workspace_lock_versions(
+    lockfile: &str,
+    workspace_members: &BTreeSet<String>,
+    required_version: Option<&str>,
+) -> Result<NormalizedCargoLock, String> {
+    let mut document = lockfile
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| format!("Cargo.lock could not be parsed: {error}"))?;
+    let packages = document
+        .get_mut("package")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .ok_or_else(|| "Cargo.lock has no package entries".to_owned())?;
+    let mut found = BTreeSet::new();
+
+    for package in packages.iter_mut() {
+        let Some(name) = package
+            .get("name")
+            .and_then(toml_edit::Item::as_str)
+            .map(str::to_owned)
+        else {
+            return Err("Cargo.lock contains a package without a string name".to_owned());
+        };
+        if package.get("source").is_some() || !workspace_members.contains(&name) {
+            continue;
+        }
+        if !found.insert(name.clone()) {
+            return Err(format!(
+                "Cargo.lock contains more than one source-less package named `{name}`; workspace identity is ambiguous"
+            ));
+        }
+        let version = package
+            .get_mut("version")
+            .and_then(toml_edit::Item::as_value_mut)
+            .ok_or_else(|| format!("workspace package `{name}` has no version in Cargo.lock"))?;
+        if let Some(required_version) = required_version {
+            if version.as_str() != Some(required_version) {
+                return Err(format!(
+                    "workspace package `{name}` is not recorded at version {required_version} after sync"
+                ));
+            }
+        }
+        let decor = version.decor().clone();
+        *version = toml_edit::Value::from("__effigy_workspace_version__");
+        *version.decor_mut() = decor;
+    }
+
+    let missing = workspace_members
+        .difference(&found)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Cargo.lock is missing workspace package entries: {}",
+            missing.join(", ")
+        ));
+    }
+    let text = document.to_string();
+    let mut structure = toml::from_str::<toml::Value>(&text)
+        .map_err(|error| format!("normalized Cargo.lock could not be parsed: {error}"))?;
+    if let Some(packages) = structure
+        .get_mut("package")
+        .and_then(toml::Value::as_array_mut)
+    {
+        packages.sort_by_cached_key(|package| format!("{package:?}"));
+    }
+    Ok(NormalizedCargoLock { text, structure })
 }
 
 fn capture_release_prepared_source_fingerprints(
