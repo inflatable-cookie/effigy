@@ -28,7 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
+  read-only Acowtancy consumer contract replay and first populated comparison
+  scorecard under `g09.003`
 
 Queued strict lanes:
 
@@ -90,6 +92,5 @@ Other planning specs:
 
 ## Next Task
 
-Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
-complete: direct invocation is canonical and help grouping remains. Effigy
+Execute ready card `1111` under `g09.003`. Acowtancy remains read-only; Effigy
 release authority stays separate.

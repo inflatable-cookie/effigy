@@ -27,5 +27,6 @@ execution, override contracts, or replace ready batch cards.
 
 ## Next Task
 
-Run the second governance review on schedule. Reference register row `006` for
+Execute ready card `1111` under `g09.003`, then use its scorecard and ownership
+classification in the next monthly review. Reference register row `006` for
 operating-rhythm ownership.

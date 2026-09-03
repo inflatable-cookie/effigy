@@ -151,7 +151,10 @@ contracted extension surfaces.
 
 The sequencing constraint was satisfied on 2026-09-02: the operator selected
 the breaking-cleanup preview, all `g08` roadmaps were complete, stale strict
-specs were archived, and `g09.001` opened with additive migration only.
+specs were archived, and `g09.001` opened with additive migration only. Live
+use rejected its executable namespaces, so `g09.002` restored direct execution.
+The second governance cycle then selected Theme 3 on 2026-09-03 as `g09.003`,
+with Acowtancy as the frozen first consumer replay.
 
 ## 6. Coarse runway (milestone transitions, not a task queue)
 
@@ -180,6 +183,5 @@ specs were archived, and `g09.001` opened with additive migration only.
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Direct-route removal is no
-longer a planned gate; card `1110` restored canonical direct invocation.
+Execute ready card `1111` under `g09.003`. Direct invocation remains canonical;
 Effigy release remains separately gated.

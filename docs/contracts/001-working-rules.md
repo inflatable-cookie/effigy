@@ -96,7 +96,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-`g09.002` and card `1110` are complete; strict spec `117` is archived. Direct
-built-in invocation is canonical. The next operator checkpoint is the
-2026-09-17 vision governance review. Effigy release and S3 extraction remain
-separately gated.
+The second governance review selected Theme 3. Strict spec `118`, `g09.003`,
+and ready card `1111` govern the frozen Acowtancy consumer replay. Acowtancy is
+read-only; Effigy release and S3 extraction remain separately gated.

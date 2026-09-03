@@ -1,6 +1,6 @@
 # 009 Vision Governance Review Template v1
 
-Status: Draft
+Status: Active
 Owner: Platform Lead
 Purpose: provide a one-page structure for weekly/monthly/release vision governance reviews.
 
@@ -67,9 +67,10 @@ Actions
 
 ## 4. Adoption Status
 
-Integrated into [`docs/logs/README.md`](../../logs/README.md). First review
-logged 2026-08-17.
+Integrated into [`docs/logs/README.md`](../../logs/README.md). Reviews logged
+2026-08-17 and 2026-09-03.
 
 ## Next Task
 
-Run the second governance review by 2026-09-17.
+Run the next monthly governance review by 2026-10-03 using card `1111`
+evidence.

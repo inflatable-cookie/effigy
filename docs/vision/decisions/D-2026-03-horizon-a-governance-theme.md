@@ -24,11 +24,13 @@ Impact
 Controls
 - Mitigation: strict lane `105` with three bounded cards; monthly review cadence from artifact `006`.
 - Reversal Condition: governance surfaces abandoned or a second parallel planning authority emerges outside vision/docs.
-- Exit Plan: second governance review on 2026-09-17; then operator selects next Horizon theme.
+- Exit Plan: completed 2026-09-03; the second governance review selected Theme
+  3 and recorded D-2026-05.
 
 Traceability
 - Related Exception: none
 - Related Risk: VR-04
 - Related Artifacts: [`020-strategic-runway-atlas-v1`](../020-strategic-runway-atlas-v1.md), [`g08.032`](../../roadmaps/g08/032-vision-governance-operationalization.md), [`g09-candidate-themes`](../../roadmaps/backlog/g09-candidate-themes.md)
 
-Review checkpoint: 2026-09-17
+Review checkpoint: completed 2026-09-03; decision remains Stabilized and its
+exit plan is satisfied by D-2026-05.

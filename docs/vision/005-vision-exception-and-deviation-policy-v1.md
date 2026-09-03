@@ -1,6 +1,6 @@
 # 005 Vision Exception and Deviation Policy v1
 
-Status: Draft
+Status: Active
 Owner: Platform + Repo Maintainers
 Purpose: define how teams can temporarily diverge from vision constraints without normalizing drift.
 

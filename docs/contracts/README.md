@@ -285,6 +285,5 @@ exclusive-create boundary.
 
 ## Next Task
 
-Card `1110` and `g09.002` are complete; strict spec `117` is archived. Direct
-invocation is canonical and help grouping remains. Effigy release and S3
-extraction remain separately gated.
+Execute ready card `1111` under `g09.003` and strict spec `118`. Acowtancy stays
+read-only; Effigy release and S3 extraction remain separately gated.

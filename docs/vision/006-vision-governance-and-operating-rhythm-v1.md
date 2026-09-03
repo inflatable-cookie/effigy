@@ -1,6 +1,6 @@
 # 006 Vision Governance and Operating Rhythm v1
 
-Status: Draft
+Status: Active
 Owner: Platform Lead + Maintainers
 Purpose: define the recurring governance cadence that keeps vision constraints active in day-to-day delivery.
 
@@ -67,4 +67,5 @@ Each cadence review should consume:
 
 ## Next Task
 
-Define a compact governance review template that captures metrics, risks, exceptions, and actions in one page.
+Define metric evidence sources and the canonical exception-record location
+before the next monthly cycle, using the completed second review as evidence.

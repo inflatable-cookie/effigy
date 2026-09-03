@@ -63,6 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Run the second governance review by 2026-09-17. Card `1110` and `g09.002` are
-complete: direct invocation is canonical and help grouping remains. Effigy
+Execute ready card `1111` under `g09.003`. The second governance review kept
+Effigy at Stage 2 and selected Acowtancy for the first Theme 3 replay. Effigy
 release remains gated.

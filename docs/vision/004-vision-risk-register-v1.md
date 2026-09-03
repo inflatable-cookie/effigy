@@ -1,6 +1,6 @@
 # 004 Vision Risk Register v1
 
-Status: Draft
+Status: Active
 Owner: Platform + Maintainers
 Purpose: maintain a concise, high-level risk view for threats to Effigy's vision outcomes.
 

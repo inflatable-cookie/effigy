@@ -45,4 +45,5 @@ Traceability
 - Related Risk: VR-04
 - Related Artifacts: [`architecture 024`](../../architecture/024-repository-defined-documentation-graph.md), [`contract 041`](../../contracts/041-documentation-graph-profile-contract.md), [`g08.035`](../../roadmaps/g08/035-repository-defined-documentation-graph.md), [`strict spec 108`](../../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
-Review checkpoint: lane `g08.035` closeout or 2026-09-17, whichever comes first.
+Review checkpoint: reviewed 2026-09-03 after `g08.035` closeout; no reversal
+trigger observed. Keep Open until it has crossed a second governance cycle.

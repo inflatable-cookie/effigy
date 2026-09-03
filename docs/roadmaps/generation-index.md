@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g09
-Updated: 2026-09-02
+Updated: 2026-09-03
 
 ## Generation history
 
@@ -252,13 +252,16 @@ completed the additive executable-namespace preview under strict spec `116`
 (archived); card `1109` is complete. Live use rejected the added execution
 ceremony. [`g09.002`](./g09/002-flat-command-execution.md) restored direct
 canonical execution under archived strict spec `117`; card `1110` is complete.
-No live implementation card remains in `g09`.
+The second governance cycle selected Theme 3 on 2026-09-03.
+[`g09.003`](./g09/003-acowtancy-consumer-adoption-replay.md) is active under
+strict spec `118`; card `1111` is ready for the frozen Acowtancy replay.
 
 ## Strategic runway (Atlas 2026-08-17)
 
 The operator selected the agent-native maintainer theme on 2026-08-29 as the
-narrow `g08.035` documentation-graph extension, then selected Theme 4 on
-2026-09-02 to open `g09` with command-surface compaction.
+narrow `g08.035` documentation-graph extension, selected Theme 4 on 2026-09-02
+for the command-surface preview and rollback, then selected Theme 3 on
+2026-09-03 for current consumer evidence.
 
 Canonical atlas artifact:
 [`docs/vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md)
@@ -278,9 +281,9 @@ Horizon summary:
    research Phase 3 only after B–C discipline.
 
 The documentation-context, help-first, Rhai papercut, catalog-pack publication
-and cutover, no-match benchmark isolation, and Rhai storage create-only lanes
-are closed. The operator selected Theme 4 and opened `g09.001`; release work
-remains separately gated.
+and cutover, no-match benchmark isolation, Rhai storage create-only, and
+command-surface preview/rollback lanes are closed. Theme 3 is active as
+`g09.003`; release work remains separately gated.
 
 ## Research Roadmaps
 
@@ -313,6 +316,5 @@ closeout there first.
 
 ## Next Task
 
-Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
-complete. Do not release Effigy or widen the lane into unrelated feature
-placement.
+Execute ready card `1111` under `g09.003`. Do not mutate Acowtancy, release
+Effigy, or widen the lane into unrelated feature placement.

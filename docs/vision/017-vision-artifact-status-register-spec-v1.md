@@ -1,6 +1,6 @@
 # 017 Vision Artifact Status Register Spec v1
 
-Status: Draft
+Status: Active
 Owner: Docs Owners + Platform Lead
 Purpose: define a compact register format that tracks lifecycle status and ownership for all active vision artifacts.
 

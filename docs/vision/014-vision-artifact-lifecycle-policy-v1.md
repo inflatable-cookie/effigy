@@ -1,6 +1,6 @@
 # 014 Vision Artifact Lifecycle Policy v1
 
-Status: Draft
+Status: Active
 Owner: Platform Lead + Docs Owners
 Purpose: define when strategy-level vision documents should be created, revised, superseded, or archived.
 

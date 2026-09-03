@@ -86,10 +86,12 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/03-010246-vision-governance-review-cycle-2.md`](./2026-09/03-010246-vision-governance-review-cycle-2.md)
 - [`2026-09/02-224606-flat-command-execution-1110.md`](./2026-09/02-224606-flat-command-execution-1110.md)
 - [`2026-09/02-222056-flat-command-execution-planning.md`](./2026-09/02-222056-flat-command-execution-planning.md)
 - [`2026-09/02-205536-command-surface-preview-1109.md`](./2026-09/02-205536-command-surface-preview-1109.md)
 - [`2026-09/02-192316-command-surface-preview-planning.md`](./2026-09/02-192316-command-surface-preview-planning.md)
+- [`2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md)
 - [`2026-09/02-155016-official-catalog-pack-update-1107.md`](./2026-09/02-155016-official-catalog-pack-update-1107.md)
 - [`2026-09/02-144609-catalog-pack-generated-baseline-1106.md`](./2026-09/02-144609-catalog-pack-generated-baseline-1106.md)
 - [`2026-09/02-003915-catalog-pack-first-publication-authority-1105.md`](./2026-09/02-003915-catalog-pack-first-publication-authority-1105.md)
@@ -210,10 +212,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Run the 2026-09-17 vision governance review. Card `1110` closeout is at
-[`02-224606`](./2026-09/02-224606-flat-command-execution-1110.md). Preview
-evidence remains historically accurate at
-[`02-205536`](./2026-09/02-205536-command-surface-preview-1109.md). The
-catalog-pack lane closed earlier at
-[`02-185453`](./2026-09/02-185453-catalog-pack-publication-and-cutover-closeout.md).
-Effigy release remains a separate operator-gated mutation.
+Execute ready card `1111` under `g09.003`. Cycle-two governance evidence is at
+[`03-010246`](./2026-09/03-010246-vision-governance-review-cycle-2.md).
+Acowtancy stays read-only; Effigy release remains a separate operator-gated
+mutation.

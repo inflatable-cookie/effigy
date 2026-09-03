@@ -161,10 +161,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   `1109`); strict spec `116` is archived. Live use rejected executable help
   namespaces, so [`g09.002`](./g09/002-flat-command-execution.md) restored
   direct canonical execution (card `1110`); strict spec `117` is archived.
+  Active [`g09.003`](./g09/003-acowtancy-consumer-adoption-replay.md) carries
+  Theme 3 through strict spec `118`; card `1111` is ready for the frozen,
+  read-only Acowtancy replay and first populated comparison scorecard.
 
 ## Active Strict Lane
 
-No active strict lane. Direct invocation is canonical and help grouping remains.
+Strict spec `118` is active under `g09.003`; card `1111` is ready. Direct
+invocation remains canonical and help grouping remains.
 
 ## Research Program
 
@@ -219,9 +223,8 @@ Before rollover:
 
 ## Next Task
 
-Run the 2026-09-17 vision governance review. Card `1110` and `g09.002` are
-complete. Keep Effigy release execution and S3 extraction behind their named
-gates.
+Execute ready card `1111` under `g09.003`. Keep Acowtancy read-only and Effigy
+release execution and S3 extraction behind their named gates.
 
 ## Historical language boundary
 

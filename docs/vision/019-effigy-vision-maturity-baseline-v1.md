@@ -45,5 +45,6 @@ Promote from stage 2 to stage 3 when:
 
 ## Next Task
 
-Run the second governance review by 2026-09-17 using the first review log as
-baseline evidence.
+Execute card `1111` to populate the first comparison scorecard. Stage 2 remains
+current after the second on-schedule review; metric evidence sources and the
+canonical exception-record location still block Stage 3.

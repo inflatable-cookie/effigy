@@ -1,6 +1,6 @@
 # 018 Vision Decision Record Index Spec v1
 
-Status: Draft
+Status: Active
 Owner: Platform Lead
 Purpose: define how decision records are indexed so strategic tradeoffs are discoverable, sortable, and reviewable.
 

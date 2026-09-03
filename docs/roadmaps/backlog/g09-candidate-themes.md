@@ -1,14 +1,15 @@
 # g09 Candidate Themes (Backlog)
 
-Status: Exploratory
+Status: Theme 3 promoted; Theme 5 remains gated
 Owner: Platform
 Created: 2026-08-17
-Selected: 2026-09-02 — **Theme 4 active as `g09.001`** (strict spec `116`)
+Selected: 2026-09-03 — **Theme 3 active as `g09.003`** (strict spec `118`)
 Source: Northstar Atlas refresh ([`020-strategic-runway-atlas-v1.md`](../../vision/020-strategic-runway-atlas-v1.md))
 
-These are strategic theme options for the next planning era. Theme 2 completed
-as a narrow `g08` extension. Theme 4 is promoted as `g09.001`; themes 3 and 5
-remain unscheduled.
+These are strategic theme options for the current planning era. Theme 2
+completed as a narrow `g08` extension. Theme 4 completed as the `g09.001`
+preview and was rolled back by `g09.002`. Theme 3 is promoted as `g09.003`;
+Theme 5 remains unscheduled and release-gated.
 
 Do not treat this file as an execution queue. Promote exactly one theme (or a
 deliberate `g08` extension) into a numbered roadmap, spec, and ready cards.
@@ -55,6 +56,8 @@ external consumer replay.
 
 ## Theme 3 — Consumer adoption cohort replay
 
+**Status:** active (`g09.003`, ready card `1111`, strict spec `118`)
+
 **Primary tags:** `RELEASE`, `OPERATE`, `CONTRACT`
 
 **Target envelope:** at least one non-fixture consumer repo passes
@@ -73,7 +76,8 @@ fed back into starter templates.
 
 ## Theme 4 — Breaking command-surface and compaction preview
 
-**Status:** complete (`g09.001`, card `1109`, archived strict spec `116`)
+**Status:** complete preview (`g09.001`, card `1109`, archived strict spec
+`116`); executable namespaces removed by `g09.002` / card `1110`
 
 **Primary tags:** `MAINT`, `ROUTE`, `RELEASE`
 
@@ -121,6 +125,5 @@ they remain in the active tree.
 
 ## Next Task
 
-Theme 4 shipped under `g09.001` (card `1109`). Themes 3 and 5 remain
-unscheduled; direct-route removal and release execution remain gated behind
-the `v1.0` consumer-evidence checkpoint.
+Execute ready card `1111` for Theme 3. Theme 4 remains historical and direct
+invocation is canonical. Theme 5 release execution remains separately gated.

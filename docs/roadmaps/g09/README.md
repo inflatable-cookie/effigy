@@ -1,17 +1,18 @@
 # g09 Roadmaps
 
 Status: Active
-Theme: Operator command-surface clarity
+Theme: Operator and consumer contract clarity
 
 ## Purpose
 
-`g09` tests command-surface compaction in live use, then keeps only the part that
-helps: grouped discovery with direct execution.
+`g09` tests operator-facing changes in live use, keeps only what helps, and
+extends the governed contract into current consumer evidence.
 
 ## Roadmaps
 
 - [`001-command-surface-compaction-preview.md`](./001-command-surface-compaction-preview.md)
 - [`002-flat-command-execution.md`](./002-flat-command-execution.md)
+- [`003-acowtancy-consumer-adoption-replay.md`](./003-acowtancy-consumer-adoption-replay.md)
 
 ## Design Posture
 
@@ -20,6 +21,7 @@ helps: grouped discovery with direct execution.
 - task selectors and slash catalog selectors stay deterministic
 - no silent break, removal, release, or consumer rewrite
 - structured machine warnings never contaminate JSON stdout
+- consumer replays preserve repository ownership and exact revision identity
 
 ## Current State
 
@@ -27,7 +29,10 @@ helps: grouped discovery with direct execution.
 [`g09.002`](./002-flat-command-execution.md) are complete historical evidence.
 Direct invocation is canonical; help grouping remains.
 
+[`g09.003`](./003-acowtancy-consumer-adoption-replay.md) is active under strict
+spec `118`. Ready card `1111` owns the frozen, read-only Acowtancy consumer
+contract replay and first populated comparison scorecard.
+
 ## Next Task
 
-Run the 2026-09-17 vision governance review. Effigy release authority stays
-separate.
+Execute ready card `1111`. Effigy release authority stays separate.
