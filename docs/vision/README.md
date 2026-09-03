@@ -63,6 +63,6 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`. The second governance review kept
+Review the card `1111` closeout PR under `g09.003`. The second governance review kept
 Effigy at Stage 2 and selected Acowtancy for the first Theme 3 replay. Effigy
 release remains gated.

@@ -254,7 +254,8 @@ ceremony. [`g09.002`](./g09/002-flat-command-execution.md) restored direct
 canonical execution under archived strict spec `117`; card `1110` is complete.
 The second governance cycle selected Theme 3 on 2026-09-03.
 [`g09.003`](./g09/003-acowtancy-consumer-adoption-replay.md) is active under
-strict spec `118`; card `1111` is ready for the frozen Acowtancy replay.
+strict spec `118`; card `1111` executed the frozen Acowtancy replay and its
+closeout PR awaits orchestrator review.
 
 ## Strategic runway (Atlas 2026-08-17)
 
@@ -316,5 +317,6 @@ closeout there first.
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`. Do not mutate Acowtancy, release
+After the card `1111` PR merges, one planning checkpoint decides cohort
+expansion. Do not mutate Acowtancy, release
 Effigy, or widen the lane into unrelated feature placement.

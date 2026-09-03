@@ -56,7 +56,7 @@ external consumer replay.
 
 ## Theme 3 — Consumer adoption cohort replay
 
-**Status:** active (`g09.003`, ready card `1111`, strict spec `118`)
+**Status:** active (`g09.003`, card `1111` executed with PR in review, strict spec `118`)
 
 **Primary tags:** `RELEASE`, `OPERATE`, `CONTRACT`
 
@@ -125,5 +125,6 @@ they remain in the active tree.
 
 ## Next Task
 
-Execute ready card `1111` for Theme 3. Theme 4 remains historical and direct
+After the card `1111` PR merges, one planning checkpoint decides cohort
+expansion for Theme 3. Theme 4 remains historical and direct
 invocation is canonical. Theme 5 release execution remains separately gated.

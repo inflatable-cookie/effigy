@@ -183,5 +183,6 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`. Direct invocation remains canonical;
+Update Theme 3 posture after the card `1111` PR review: the closeout PR is
+open against `main`. Direct invocation remains canonical;
 Effigy release remains separately gated.

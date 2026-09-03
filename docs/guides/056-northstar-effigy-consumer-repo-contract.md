@@ -103,7 +103,11 @@ scripts should stay package-native; agents and humans should run
 - `effigy tasks`
   - discovery surface for supported repo work
 - `effigy doctor` or `effigy health`
-  - default health/routing surface
+  - default health/routing surface; full doctor executes eligible repo-owned
+    health tasks, so it is not guaranteed read-only
+- `effigy doctor <task>`
+  - doctor explain: the non-executing routing probe that reports how a task
+    resolves (root, catalog, mode) without running anything
 - `effigy test --plan`
   - default test inspection surface
 - `effigy qa`

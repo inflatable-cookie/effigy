@@ -92,5 +92,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`. Acowtancy remains read-only; Effigy
+Card `1111` executed under `g09.003`; its closeout PR awaits orchestrator
+exact-head review. Acowtancy remains read-only; Effigy
 release authority stays separate.

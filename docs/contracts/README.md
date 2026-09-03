@@ -285,5 +285,6 @@ exclusive-create boundary.
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003` and strict spec `118`. Acowtancy stays
+Card `1111` executed under `g09.003` and strict spec `118`; its closeout PR
+awaits orchestrator review. Acowtancy stays
 read-only; Effigy release and S3 extraction remain separately gated.

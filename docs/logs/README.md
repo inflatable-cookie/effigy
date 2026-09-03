@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/03-014518-acowtancy-consumer-replay-1111.md`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md)
 - [`2026-09/03-010246-vision-governance-review-cycle-2.md`](./2026-09/03-010246-vision-governance-review-cycle-2.md)
 - [`2026-09/02-224606-flat-command-execution-1110.md`](./2026-09/02-224606-flat-command-execution-1110.md)
 - [`2026-09/02-222056-flat-command-execution-planning.md`](./2026-09/02-222056-flat-command-execution-planning.md)
@@ -212,7 +213,8 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`. Cycle-two governance evidence is at
-[`03-010246`](./2026-09/03-010246-vision-governance-review-cycle-2.md).
-Acowtancy stays read-only; Effigy release remains a separate operator-gated
-mutation.
+Card `1111` executed its clean frozen Acowtancy replay; evidence is at
+[`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md) and the
+first populated scorecard is under
+[`docs/vision/governance/`](../vision/governance/). Acowtancy stays read-only;
+Effigy release remains a separate operator-gated mutation.

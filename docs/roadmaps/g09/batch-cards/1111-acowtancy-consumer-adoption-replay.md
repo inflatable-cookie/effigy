@@ -4,7 +4,7 @@ Roadmap: [`../003-acowtancy-consumer-adoption-replay.md`](../003-acowtancy-consu
 Spec: [`../../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md`](../../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 Decision: [`D-2026-05`](../../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
 
-Status: Ready
+Status: Complete
 Owner: frozen consumer replay, evidence ownership, comparison scorecard, and
 bounded Effigy starter/guide reconciliation
 Created: 2026-09-03
@@ -94,5 +94,6 @@ meaning rather than documenting a bounded mismatch.
 
 ## Next Task
 
-Run this card in one Effigy worker lane. Return the exact-head PR to the
+Card executed: clean matrix green at frozen `91228893…`, scorecard and
+evidence published, guide `056` reconciled. Return the exact-head PR to the
 orchestrator; do not merge.
