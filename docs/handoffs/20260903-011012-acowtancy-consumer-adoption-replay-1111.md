@@ -90,7 +90,7 @@ Here is the state the worker is inheriting:
   hydrate, start, or apply anything in Acowtancy; do not start containers,
   managed sessions, secrets, state, installs, workflows, or releases
 - **Required validation:** frozen identities and pre/post Acowtancy status;
-  `effigy tasks`; `effigy doctor`; `effigy test --plan`;
+  `effigy tasks`; doctor explain for `docs/qa:docs`; `effigy test --plan`;
   `effigy docs/qa:docs`; `effigy docs/qa:northstar`; scorecard evidence review;
   Effigy `effigy qa:docs`; `git diff --check`; `effigy doctor --json`; focused
   recurrence proof only if a machine-owned starter changes
@@ -135,7 +135,7 @@ Please keep this run inside the named runway:
   conditions, and adversarial review oracle are all fixed.
 - **Decisions and preferences:** Acowtancy was operator-selected. Its current
   `main` was clean at
-  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`; it already exposes
+  `91228893cbc2c6440b115b5aa1ee2fe34064f35b`; it already exposes
   `docs/qa:docs` and `docs/qa:northstar`. Keep unknown scorecard dimensions
   unknown. One pilot is not portfolio proof.
 - **Freeze repair:** the first dispatch stopped before running consumer
@@ -145,6 +145,16 @@ Please keep this run inside the named runway:
   surface, and re-froze current clean pushed `main` at
   `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`. Resume the same worker from its
   completed preflight; do not restore or mutate the earlier revision.
+- **Matrix stop repair:** the first matrix began clean but overlapped an
+  Acowtancy planning write, so none of it is frozen scorecard evidence. That run
+  also proved full doctor executes the repo health bundle and can install into
+  an already-running workspace container. Acowtancy subsequently landed the
+  planning batch and is clean at
+  `91228893cbc2c6440b115b5aa1ee2fe34064f35b`; the manifest and replay command
+  surface are unchanged. Re-run the clean matrix at this SHA, replacing full
+  doctor with doctor explain for `docs/qa:docs`. Preserve the full-doctor result
+  only as disclosed discovery evidence, mark integrated health unavailable,
+  and make the bounded guide `056` correction required by card `1111`.
 - **Open tensions:** the consumer checkout may move or become dirty before
   replay; stop rather than changing it. The retained child-catalog workaround
   remains until Acowtancy-owned downstream revalidation. Current tasks may

@@ -18,12 +18,17 @@ turn the result into governed cross-repository evidence.
 
 - record Effigy `main` SHA, built binary identity, Acowtancy repository URL,
   and frozen Acowtancy SHA
-  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`
+  `91228893cbc2c6440b115b5aa1ee2fe34064f35b`
 - prove the consumer worktree is clean and exactly at the frozen SHA before and
   after the replay; do not fetch, merge, checkout, reset, clean, or edit there
 - inventory selector ownership, then run only read-only/non-starting surfaces:
-  `effigy tasks`, `effigy doctor`, `effigy test --plan`,
-  `effigy docs/qa:docs`, and `effigy docs/qa:northstar`
+  `effigy tasks`, doctor explain for `docs/qa:docs`, `effigy test --plan`,
+  `effigy docs/qa:docs`, and `effigy docs/qa:northstar`; do not rerun full
+  `effigy doctor`
+- preserve the stopped run's full-doctor observation as non-scorecard discovery
+  evidence: doctor executed Acowtancy's health bundle and installed an Effigy
+  binary into an already-running workspace container. Mark integrated health
+  unavailable under this replay's read-only boundary, not passing or failing.
 - capture text or JSON outcomes, exit status, selected root/catalog/task, and
   remediation for every failure; distinguish consumer policy, Effigy behavior,
   environment, and intentional repository variation
@@ -33,9 +38,11 @@ turn the result into governed cross-repository evidence.
 - create a populated scorecard under `docs/vision/governance/` comparing Effigy
   and Acowtancy across `ROUTE`, `CONTRACT`, `OPERATE`, `MAINT`, and `RELEASE`;
   every score needs a direct evidence link and unknowns stay unknown
-- update guide `056`, the Northstar starter, or related Effigy guidance only if
-  the frozen replay proves a generic mismatch; add proportional recurrence
-  proof for any changed machine-owned starter surface
+- update guide `056` to state that full doctor executes eligible repo-owned
+  health tasks and is not guaranteed read-only; keep job-based doctor guidance
+  and distinguish doctor explain as the non-executing routing probe. Change a
+  starter only if the clean replay proves a further generic mismatch, with
+  proportional recurrence proof for any machine-owned surface.
 - write one dated Effigy evidence log mapping the replay and every review-oracle
   row; update card/roadmap/spec/front doors with the honest continuation state
 
@@ -43,8 +50,8 @@ turn the result into governed cross-repository evidence.
 
 - Acowtancy pre/post `git status --porcelain`, `git rev-parse HEAD`, root
   resolution, and selector inventory evidence
-- the five bounded consumer commands named above, run without containers,
-  secrets, installs, state mutation, or managed sessions
+- the five bounded clean-replay surfaces named above, run without full doctor,
+  containers, secrets, installs, state mutation, or managed sessions
 - scorecard evidence-link and no-unsupported-score review
 - focused tests for any changed Effigy starter behavior; otherwise docs-only
   validation
@@ -74,7 +81,8 @@ Reject the PR if:
    replay;
 7. the retained workaround is edited or pronounced obsolete without separate
    Acowtancy-owned downstream revalidation;
-8. the command matrix omits tasks, doctor, test plan, docs QA, or Northstar QA.
+8. the clean command matrix omits tasks, doctor explain, test plan, docs QA, or
+   Northstar QA; or it reruns full doctor after the execution boundary is known.
 
 ## Stop Conditions
 

@@ -148,6 +148,17 @@ unchanged. Card `1111`, spec `118`, and the worker handoff therefore re-freeze
 the replay at the new clean pushed `main`. No Acowtancy command or mutation ran
 before this repair.
 
+The resumed matrix then overlapped an Acowtancy planning write and stopped
+without producing scorecard evidence. It also disproved the plan's assumption
+that full `effigy doctor` is read-only: doctor executed Acowtancy's health task
+and installed an Effigy binary into an already-running workspace container.
+After that planning batch landed, Acowtancy was clean at
+`91228893cbc2c6440b115b5aa1ee2fe34064f35b`; the delta is documentation-only and
+does not change `effigy.toml` or the replay selectors. The replay is re-frozen
+there. Card `1111` now uses doctor explain for clean routing evidence, records
+integrated health as unavailable under the read-only boundary, and requires the
+generic guide `056` correction instead of repeating full doctor.
+
 ## Risks
 
 - one consumer must not become a universal compatibility claim

@@ -18,11 +18,14 @@ repair only evidence-backed drift owned by Effigy's starter or guidance.
 
 - Acowtancy is the first Theme 3 pilot.
 - Freeze consumer evidence at Acowtancy
-  `6bcf6c703b776ba76767c4ac1d4fc7880f43034f`.
+  `91228893cbc2c6440b115b5aa1ee2fe34064f35b`.
 - Acowtancy remains read-only. Its active cards, manifests, docs, code, runtime,
   secrets, generated state, and workarounds are outside this lane's write scope.
-- Use Acowtancy's existing root discovery/health/test-plan routes and its
-  `docs/qa:docs` and `docs/qa:northstar` authority gates. Do not scaffold a
+- Use Acowtancy's existing root discovery, doctor explain, test-plan, and
+  `docs/qa:docs` / `docs/qa:northstar` authority routes. Full `effigy doctor`
+  executes a repo-owned health task and is not part of the clean read-only
+  replay. Record that health evidence is unavailable under this pilot boundary
+  rather than starting or mutating runtime-adjacent state. Do not scaffold a
   second docs spine or substitute Effigy-owned expectations for repository
   policy.
 - Record observed results and classify every mismatch as Effigy-owned,
@@ -63,23 +66,26 @@ Reject the lane if any counterexample survives:
 5. One pilot is presented as universal consumer compatibility evidence.
 6. An Effigy edit widens beyond generic starter/guide reconciliation directly
    proved by the frozen replay.
-7. Root discovery, health, test-plan, docs QA, and Northstar QA results are not
-   all recorded with exit, ownership, and remediation state.
+7. Root discovery, doctor-explain routing, test-plan, docs QA, and Northstar QA
+   results are not all recorded with exit, ownership, and remediation state, or
+   the unavailable full-health result is silently scored as passing.
 8. Acowtancy's retained workaround is removed or declared unnecessary without
    downstream revalidation owned by Acowtancy.
 
 Smallest counterexample set: wrong consumer SHA; dirty consumer before/after;
 one selector resolved to the wrong catalog; one failing gate with no ownership
 classification; one unsupported numeric score; one attempted consumer edit;
-and one generic guidance edit with no frozen-replay evidence.
+one full-doctor rerun despite the proved execution boundary; and one generic
+guidance edit with no frozen-replay evidence.
 
 ## Validation And Evidence
 
-Card `1111` maps every oracle row to named proof. Run the replay without
-starting containers or managed tasks. Capture machine-readable command output
-where available, the pre/post Acowtancy tree state, selector ownership, and the
-scorecard evidence links. Validate any Effigy docs change with `effigy qa:docs`;
-run broader Effigy validation only when the actual diff warrants it.
+Card `1111` maps every oracle row to named proof. Run the replay without full
+doctor, containers, or managed tasks. Capture machine-readable command output
+where available, the pre/post Acowtancy tree state, selector ownership, the
+full-doctor stop-boundary observation, and the scorecard evidence links.
+Validate any Effigy docs change with `effigy qa:docs`; run broader Effigy
+validation only when the actual diff warrants it.
 
 ## Stop Conditions
 
