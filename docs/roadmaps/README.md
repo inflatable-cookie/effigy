@@ -161,16 +161,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   `1109`); strict spec `116` is archived. Live use rejected executable help
   namespaces, so [`g09.002`](./g09/002-flat-command-execution.md) restored
   direct canonical execution (card `1110`); strict spec `117` is archived.
-  Active [`g09.003`](./g09/003-acowtancy-consumer-adoption-replay.md) carries
+  Completed [`g09.003`](./g09/003-acowtancy-consumer-adoption-replay.md) carried
   Theme 3 through strict spec `118`; card `1111` executed the frozen,
   read-only Acowtancy replay and published the first populated comparison
-  scorecard. Its PR awaits orchestrator exact-head review.
+  scorecard. PR `88` merged at `9c05a883`.
 
 ## Active Strict Lane
 
-Strict spec `118` is active under `g09.003`; card `1111` is complete with its
-closeout PR awaiting orchestrator review. Direct
-invocation remains canonical and help grouping remains.
+No strict implementation lane is active. Spec `118`, `g09.003`, and card
+`1111` are complete. Direct invocation remains canonical and help grouping
+remains.
 
 ## Research Program
 
@@ -225,9 +225,9 @@ Before rollover:
 
 ## Next Task
 
-After the card `1111` PR merges, one planning checkpoint decides cohort
-expansion versus a second bounded repair. Keep Acowtancy read-only and Effigy
-release execution and S3 extraction behind their named gates.
+Decide cohort expansion versus a second bounded repair at the next planning
+checkpoint. Keep Acowtancy read-only and Effigy release execution and S3
+extraction behind their named gates.
 
 ## Historical language boundary
 

@@ -285,6 +285,7 @@ exclusive-create boundary.
 
 ## Next Task
 
-Card `1111` executed under `g09.003` and strict spec `118`; its closeout PR
-awaits orchestrator review. Acowtancy stays
-read-only; Effigy release and S3 extraction remain separately gated.
+Card `1111` and `g09.003` are complete; PR `88` merged at `9c05a883`. Decide
+cohort expansion versus a second bounded repair at the next planning
+checkpoint. Acowtancy stays read-only; Effigy release and S3 extraction remain
+separately gated.

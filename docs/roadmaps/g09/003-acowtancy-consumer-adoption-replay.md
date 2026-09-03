@@ -1,6 +1,6 @@
 # g09.003 Acowtancy Consumer Adoption Replay
 
-Status: Active
+Status: Complete
 Created: 2026-09-03
 Spec: [`118`](../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 Decision: [`D-2026-05`](../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
@@ -16,7 +16,7 @@ consumer contract against Acowtancy without taking ownership of Acowtancy work.
 1. [`1111`](./batch-cards/1111-acowtancy-consumer-adoption-replay.md) —
    **Complete**: replay executed clean at frozen `91228893…`; drift
    classified, first populated comparison scorecard published, and the
-   proved guide `056` gap reconciled. PR awaiting orchestrator review.
+   proved guide `056` gap reconciled. PR `88` merged at `9c05a883`.
 
 The lane is serial because replay evidence, ownership classification,
 scorecard interpretation, and any resulting Effigy guidance repair form one
@@ -44,6 +44,6 @@ review boundary. Acowtancy's own active lanes remain independent and untouched.
 
 ## Next Task
 
-After the card `1111` PR merges, decide cohort expansion versus a second
-bounded repair; Acowtancy-owned health and workaround revalidation remain
-outside this roadmap.
+Decide cohort expansion versus a second bounded repair at the next planning
+checkpoint; Acowtancy-owned health and workaround revalidation remain outside
+this roadmap.

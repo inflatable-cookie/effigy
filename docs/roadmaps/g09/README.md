@@ -29,12 +29,11 @@ extends the governed contract into current consumer evidence.
 [`g09.002`](./002-flat-command-execution.md) are complete historical evidence.
 Direct invocation is canonical; help grouping remains.
 
-[`g09.003`](./003-acowtancy-consumer-adoption-replay.md) is active under strict
-spec `118`. Card `1111` executed the frozen, read-only Acowtancy consumer
-contract replay and published the first populated comparison scorecard; its
-PR awaits orchestrator exact-head review.
+[`g09.003`](./003-acowtancy-consumer-adoption-replay.md) is complete under
+strict spec `118`. Card `1111` produced the frozen, read-only Acowtancy replay
+and first populated comparison scorecard; PR `88` merged at `9c05a883`.
 
 ## Next Task
 
-After the card `1111` PR merges, one planning checkpoint decides cohort
-expansion. Effigy release authority stays separate.
+Decide cohort expansion versus a second bounded repair at the next planning
+checkpoint. Effigy release authority stays separate.

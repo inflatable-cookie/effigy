@@ -182,5 +182,5 @@ explicitly.
 
 ## Next Task
 
-Return the exact-head PR to the Effigy orchestrator; do not merge. After
-review, decide cohort expansion versus a second bounded repair.
+PR `88` merged this evidence at `9c05a883`. Decide cohort expansion versus a
+second bounded repair at the next planning checkpoint.

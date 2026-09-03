@@ -183,6 +183,6 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-Update Theme 3 posture after the card `1111` PR review: the closeout PR is
-open against `main`. Direct invocation remains canonical;
-Effigy release remains separately gated.
+Decide cohort expansion versus a second bounded repair for Theme 3 at the next
+planning checkpoint. Direct invocation remains canonical; Effigy release
+remains separately gated.

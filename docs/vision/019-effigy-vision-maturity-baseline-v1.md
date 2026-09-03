@@ -45,7 +45,8 @@ Promote from stage 2 to stage 3 when:
 
 ## Next Task
 
-Update this baseline after the card `1111` PR merges: the first populated
-comparison scorecard now exists under `docs/vision/governance/`. Stage 2
-remains current after the second on-schedule review; metric evidence sources
-and the canonical exception-record location still block Stage 3.
+At the next planning checkpoint, decide cohort expansion and whether this
+baseline needs another bounded evidence pass. The first populated comparison
+scorecard exists under `docs/vision/governance/`; Stage 2 remains current, and
+metric evidence sources plus the canonical exception-record location still
+block Stage 3.

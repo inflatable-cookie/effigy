@@ -1,6 +1,6 @@
 # 118 Acowtancy Consumer Adoption Replay Strict Lane
 
-Status: Active
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-03
 Roadmap: [`g09.003`](../roadmaps/g09/003-acowtancy-consumer-adoption-replay.md)
@@ -97,5 +97,5 @@ permission to fix that repository.
 
 ## Next Task
 
-Card `1111` executed against frozen `91228893…`; the exact-head PR awaits
-orchestrator review and merge.
+PR `88` merged card `1111` at `9c05a883`. Decide cohort expansion versus a
+second bounded repair at the next planning checkpoint.

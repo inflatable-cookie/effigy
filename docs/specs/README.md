@@ -28,9 +28,13 @@ Historical command-reference rule:
 
 Active strict lane:
 
+- none
+
+Recently completed strict lane awaiting planning disposition:
+
 - [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
-  read-only Acowtancy consumer contract replay and first populated comparison
-  scorecard under `g09.003`
+  read-only Acowtancy consumer replay and first comparison scorecard completed
+  under `g09.003`; archive or supersede it after the cohort planning checkpoint
 
 Queued strict lanes:
 
@@ -92,6 +96,6 @@ Other planning specs:
 
 ## Next Task
 
-Card `1111` executed under `g09.003`; its closeout PR awaits orchestrator
-exact-head review. Acowtancy remains read-only; Effigy
-release authority stays separate.
+PR `88` merged card `1111` and completed `g09.003`. Decide cohort expansion
+versus a second bounded repair at the next planning checkpoint. Acowtancy
+remains read-only; Effigy release authority stays separate.

@@ -56,7 +56,7 @@ external consumer replay.
 
 ## Theme 3 — Consumer adoption cohort replay
 
-**Status:** active (`g09.003`, card `1111` executed with PR in review, strict spec `118`)
+**Status:** pilot complete (`g09.003`, card `1111`, PR `88`; cohort decision pending)
 
 **Primary tags:** `RELEASE`, `OPERATE`, `CONTRACT`
 
@@ -125,6 +125,6 @@ they remain in the active tree.
 
 ## Next Task
 
-After the card `1111` PR merges, one planning checkpoint decides cohort
-expansion for Theme 3. Theme 4 remains historical and direct
-invocation is canonical. Theme 5 release execution remains separately gated.
+Decide cohort expansion versus a second bounded repair for Theme 3 at the next
+planning checkpoint. Theme 4 remains historical and direct invocation is
+canonical. Theme 5 release execution remains separately gated.

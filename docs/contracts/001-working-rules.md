@@ -96,7 +96,7 @@ one vague “polish” lane.
 
 ## Next Task
 
-The second governance review selected Theme 3. Strict spec `118`, `g09.003`,
-and card `1111` (executed; closeout PR awaiting orchestrator review) govern
-the frozen Acowtancy consumer replay. Acowtancy is
-read-only; Effigy release and S3 extraction remain separately gated.
+Card `1111` and `g09.003` are complete; PR `88` merged the frozen Acowtancy
+replay and first comparison scorecard at `9c05a883`. The next planning
+checkpoint decides cohort expansion versus a second bounded repair. Acowtancy
+is read-only; Effigy release and S3 extraction remain separately gated.

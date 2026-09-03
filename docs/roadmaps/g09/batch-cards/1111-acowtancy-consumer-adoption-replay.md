@@ -94,6 +94,6 @@ meaning rather than documenting a bounded mismatch.
 
 ## Next Task
 
-Card executed: clean matrix green at frozen `91228893…`, scorecard and
-evidence published, guide `056` reconciled. Return the exact-head PR to the
-orchestrator; do not merge.
+Complete: PR `88` merged the clean frozen replay, scorecard, evidence, and
+guide `056` reconciliation at `9c05a883`. The next planning checkpoint decides
+cohort expansion versus a second bounded repair.
