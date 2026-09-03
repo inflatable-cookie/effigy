@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Consumer-contract guidance now states that full `effigy doctor` executes
+  eligible repo-owned health tasks and is not guaranteed read-only, and
+  documents `effigy doctor <task>` (doctor explain) as the non-executing
+  routing probe that reports root, catalog, and selection mode without
+  running anything. Proven by the Acowtancy consumer replay (card `1111`).
 - `effigy service pack update` resolves the compiled official `stable` channel
   on `ghcr.io/inflatable-cookie/effigy-catalog-pack` to an exact
   `sha256:`-plus-64-lowercase-hex digest with no surrounding whitespace, then
