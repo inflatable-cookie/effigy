@@ -10,6 +10,8 @@ reviewable state.
   status for vision artifacts `001`–`020`
 - [`decision-record-index.md`](./decision-record-index.md) — searchable index
   of strategic decision records
+- [`2026-09-03-effigy-acowtancy-comparison-scorecard.md`](./2026-09-03-effigy-acowtancy-comparison-scorecard.md)
+  — first populated cross-repo comparison scorecard (template `016`)
 
 Decision record bodies live in [`../decisions/`](../decisions/).
 
@@ -27,6 +29,6 @@ execution, override contracts, or replace ready batch cards.
 
 ## Next Task
 
-Execute ready card `1111` under `g09.003`, then use its scorecard and ownership
+Card `1111` executed its clean frozen replay; use the scorecard and ownership
 classification in the next monthly review. Reference register row `006` for
 operating-rhythm ownership.

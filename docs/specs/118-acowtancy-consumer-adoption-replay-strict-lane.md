@@ -97,4 +97,5 @@ permission to fix that repository.
 
 ## Next Task
 
-Execute card `1111` against the frozen Acowtancy revision.
+Card `1111` executed against frozen `91228893…`; the exact-head PR awaits
+orchestrator review and merge.

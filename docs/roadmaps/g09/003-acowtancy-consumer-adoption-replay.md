@@ -14,9 +14,9 @@ consumer contract against Acowtancy without taking ownership of Acowtancy work.
 ## Sequence
 
 1. [`1111`](./batch-cards/1111-acowtancy-consumer-adoption-replay.md) —
-   **Ready**: freeze and run the Acowtancy contract replay, classify drift,
-   publish the first populated comparison scorecard, and reconcile only proven
-   Effigy-owned starter or guide gaps.
+   **Complete**: replay executed clean at frozen `91228893…`; drift
+   classified, first populated comparison scorecard published, and the
+   proved guide `056` gap reconciled. PR awaiting orchestrator review.
 
 The lane is serial because replay evidence, ownership classification,
 scorecard interpretation, and any resulting Effigy guidance repair form one
@@ -43,4 +43,6 @@ review boundary. Acowtancy's own active lanes remain independent and untouched.
 
 ## Next Task
 
-Execute ready card `1111`.
+After the card `1111` PR merges, decide cohort expansion versus a second
+bounded repair; Acowtancy-owned health and workaround revalidation remain
+outside this roadmap.
