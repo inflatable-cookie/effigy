@@ -11,8 +11,10 @@ Scorecard: [`2026-09-03-effigy-acowtancy-comparison-scorecard`](../../vision/gov
 ## Summary
 
 - Clean replay executed at the frozen consumer revision with a non-executing
-  five-surface matrix; every surface exited 0 and the consumer tree stayed
-  byte-for-byte unchanged.
+  five-surface matrix; every surface exited 0 and the consumer checkout
+  stayed at the exact frozen HEAD with unchanged tracked Git state (empty
+  `git status --porcelain`). Whole-tree byte identity was not digested and is
+  not claimed.
 - The stopped first run is preserved below as disclosed discovery evidence and
   is excluded from scorecard scoring. It proved full `effigy doctor` executes
   eligible repo-owned health tasks and is not read-only on a real consumer.
@@ -91,7 +93,9 @@ the working form, and the error message names the fix.
   `git status --porcelain` empty.
 - Writes attributable to replay commands: none. The five clean surfaces are
   non-executing (the batch completed in under three seconds with no
-  compilation), and the post-state check confirms the tree unchanged.
+  compilation), and the post-state check confirms the exact frozen HEAD and
+  unchanged tracked Git state. Ignored, cache, and runtime bytes outside Git
+  tracking were not digested and are not claimed.
 
 ## Selector and Root Ownership
 
@@ -116,11 +120,14 @@ this replay is attributed to the wrong catalog.
 ## Scorecard Rationale
 
 The scorecard uses the `007` stage scale (0–4) per dimension for both
-repositories in the same window. Acowtancy scores rest only on the clean
-matrix; `RELEASE`, risk/exception counts, and movement are **unknown** for
-Acowtancy because the replay did not exercise them. Integrated health is
-unavailable, not a score. One pilot supports no universal claim; the
-scorecard states this explicitly.
+repositories in the same window. Effigy's scores rest on its `019` baseline
+plus in-window facts. Every Acowtancy aggregate and dimension cell is
+**unknown**: `007` advancement rule 1 requires all prior stage criteria, and
+the clean replay deliberately collected no full-doctor, JSON-contract, or
+release-gate evidence, so the green docs/Northstar gates are recorded as
+observations, not stage evidence. Integrated health is unavailable, not a
+score. One pilot supports no universal claim; the scorecard states this
+explicitly.
 
 ## Changed Effigy Surfaces
 
@@ -140,7 +147,7 @@ scorecard states this explicitly.
 | 2 | Acowtancy changed or runtime/stateful work started | Post-state empty porcelain; clean matrix is non-executing; full-doctor discovery (which did touch container/gitignored state) is disclosed and excluded from scoring |
 | 3 | Result attributed without selector/root evidence | Doctor explain trace in the matrix table; selector/root ownership section |
 | 4 | Failure without owner/next action, or mislabeled consumer policy | Stopped-runs section classifies every discovered failure; clean matrix has no failures; health unavailability is explicit |
-| 5 | Score without evidence, unknown scored, universal claim | Scorecard links every score to this log or a named surface; Acowtancy `RELEASE`/risks/movement are unknown; non-universality stated |
+| 5 | Score without evidence, unknown scored, universal claim | Scorecard links every score to this log or a named surface; every Acowtancy aggregate/dimension cell is unknown after review finding 1; non-universality stated |
 | 6 | Effigy edit beyond the smallest generic repair | Only the guide `056` §2 doctor bullets changed; directly required by the proved full-doctor behavior |
 | 7 | Retained workaround edited or pronounced obsolete | Retained-workaround section: unchanged, revalidation still owed by Acowtancy |
 | 8 | Matrix omits a required surface or reruns full doctor | Matrix table contains tasks, doctor explain, test plan, docs QA, Northstar QA; full doctor was not rerun after the boundary was known |

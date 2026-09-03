@@ -16,7 +16,7 @@ Comparison Table
 | Repo | Overall Stage | ROUTE | CONTRACT | OPERATE | MAINT | RELEASE | Active Risks | Active Exceptions | Overdue Exceptions | Recent Movement |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Effigy | 2 | 2 | 2 | 2 | 2 | 2 | 5 | 0 | 0 | up |
-| Acowtancy | 1 | 1 | 1 | 1 | 1 | unknown | unknown | unknown | unknown | unknown |
+| Acowtancy | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown |
 
 - Effigy overall 2 — [`019` baseline](../019-effigy-vision-maturity-baseline-v1.md)
   ("Stage 2 maintained", reviewed 2026-09-03); the per-dimension scores below
@@ -37,31 +37,26 @@ Comparison Table
   retention conventions are active.
 - Effigy RELEASE 2 — release gates and orchestration are first-class
   (guide `051`; tagged `v0.12.1` releases); no bypass pressure in-window.
-- Acowtancy ROUTE 1 — core routing follows documented behavior: doctor explain
-  resolved `docs/qa:docs` to the `docs` catalog via explicit prefix
-  (`selection-status: ok`), nine catalogs inventoried, and the seven-member
-  test plan resolved deterministically (evidence log, clean matrix rows 1–3).
-  Test-covered/monitored routing determinism (stage 2) is not evidenced for
-  the consumer.
-- Acowtancy CONTRACT 1 — contract checks exist and pass: `docs/qa:docs` 5/5,
-  `docs/qa:northstar` 6/6 (matrix rows 4–5) plus repo config guards on the
-  `health`/`validate` bundles. Remediation consistency under failure (stage 2)
-  is unproven in the clean window.
-- Acowtancy OPERATE 1 — core workflows follow documented behavior (workspace
-  AGENTS guidance matched observed behavior). Integrated health is
-  **unavailable** under the replay's read-only boundary (full doctor executes
-  repo-owned health tasks), so operator-actionability evidence stops at
-  stage 1; unavailability is not scored as passing or failing.
-- Acowtancy MAINT 1 — docs-spine maintenance surfaces are active
-  (generation index, triage, status board, guards); consumer scan posture is
-  unknown in the clean window because the only scan observation came from the
-  excluded discovery run.
-- Acowtancy RELEASE unknown — no release surface is in replay scope; the
-  workspace-container exception means the orchestration root carries no
-  changelog/release expectation, and no releasable repo surface was replayed.
-- Acowtancy risks/exceptions/movement unknown — the replay did not read the
-  consumer's governance register, and its product activity (cards `193`–`197`)
-  is not a maturity measurement.
+- Acowtancy — no stage scores. `007` advancement rule 1 requires all prior
+  stage criteria, and the clean replay deliberately collected no full-doctor,
+  JSON-contract, or release-gate evidence, so no Acowtancy aggregate or
+  dimension reaches stage 1 on this window. Observed facts from the clean
+  matrix, recorded without stage claims:
+  - doctor explain resolved `docs/qa:docs` to the `docs` catalog via explicit
+    prefix (`selection-status: ok`), nine catalogs inventoried, seven-member
+    test plan resolved deterministically (evidence log, matrix rows 1–3).
+  - `docs/qa:docs` passed 5/5 and `docs/qa:northstar` 6/6 (matrix rows 4–5).
+  - Integrated health is **unavailable** under the replay's read-only
+    boundary (full doctor executes repo-owned health tasks); unavailability
+    is not scored as passing or failing.
+  - Docs-spine maintenance surfaces are active (generation index, triage,
+    status board, guards); consumer scan posture is unknown in the clean
+    window because the only scan observation came from the excluded discovery
+    run. No release surface was in replay scope (the workspace-container
+    exception puts no changelog/release expectation on the orchestration
+    root). Risks, exceptions, and movement are unmeasured: the replay did not
+    read the consumer's governance register, and its product activity
+    (cards `193`–`197`) is not a maturity measurement.
 
 Priority Actions
 - Repo: Acowtancy
@@ -78,8 +73,10 @@ Interpretation Notes
 
 - One pilot is one pilot: this table makes no universal consumer-compatibility
   claim. Cohort expansion is a separate decision (`D-2026-05`).
-- The Effigy–Acowtancy stage gap is measured against the portable contract as
-  replayed, not against Acowtancy product quality; its green docs/Northstar
-  gates are the direct stage-1 evidence.
-- Unknown cells stay unknown until a window that can observe them without
-  violating the read-only consumer boundary.
+- No Acowtancy stage is asserted: the window supports observations, not a
+  `007` stage claim, because full doctor, JSON-contract, and release-gate
+  criteria were intentionally not exercised. A future window that can observe
+  those criteria without violating the read-only consumer boundary is required
+  before scoring Acowtancy.
+- Unknown cells stay unknown until such a window exists; they are not zeros
+  and not passing marks.

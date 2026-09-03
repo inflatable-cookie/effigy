@@ -30,9 +30,11 @@ extends the governed contract into current consumer evidence.
 Direct invocation is canonical; help grouping remains.
 
 [`g09.003`](./003-acowtancy-consumer-adoption-replay.md) is active under strict
-spec `118`. Ready card `1111` owns the frozen, read-only Acowtancy consumer
-contract replay and first populated comparison scorecard.
+spec `118`. Card `1111` executed the frozen, read-only Acowtancy consumer
+contract replay and published the first populated comparison scorecard; its
+PR awaits orchestrator exact-head review.
 
 ## Next Task
 
-Execute ready card `1111`. Effigy release authority stays separate.
+After the card `1111` PR merges, one planning checkpoint decides cohort
+expansion. Effigy release authority stays separate.
