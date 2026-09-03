@@ -53,13 +53,9 @@ Here is the state the worker is inheriting:
   required by the Completion Protocol
 - **Worker worktree policy:** follow `Completion Protocol`; launcher worktree
   first, named/manual fallback only when required.
-- **Required sibling worktree links:**
-  - `acowtancy`: source `/Users/tom/Dev/projects/acowtancy`; path beside this
-    worktree `/Users/tom/.paseo/worktrees/310mya31/acowtancy`
-  - `underlay`: source `/Users/tom/Dev/projects/underlay`; path beside this
-    worktree `/Users/tom/.paseo/worktrees/310mya31/underlay`
-  - `poodle`: source `/Users/tom/Dev/projects/poodle`; path beside this
-    worktree `/Users/tom/.paseo/worktrees/310mya31/poodle`
+- **Required sibling worktree links:** none. The evidence target is the frozen
+  primary checkout at `/Users/tom/Dev/projects/acowtancy`; access it directly
+  by absolute path and never mutate it.
 - **Active spec lane:** `docs/specs/118-acowtancy-consumer-adoption-replay-strict-lane.md`
 - **Roadmap milestone:** `docs/roadmaps/g09/003-acowtancy-consumer-adoption-replay.md`
 - **Ready cards, in order:**
@@ -155,9 +151,9 @@ Please keep this run inside the named runway:
 
 Run the `Completion Protocol` preflight before broad reads. Then read
 `AGENTS.md`, spec `118`, `g09.003`, card `1111`, and the canonical refs from the
-selected Effigy worktree. Verify all three required sibling links and the frozen
-Acowtancy identity before running any consumer command. Report the matrix before
-deciding whether the evidence permits an Effigy guidance repair.
+selected Effigy worktree. Verify the frozen primary Acowtancy identity before
+running any consumer command. Report the matrix before deciding whether the
+evidence permits an Effigy guidance repair.
 
 ## Completion Protocol
 
@@ -185,11 +181,9 @@ deciding whether the evidence permits an Effigy guidance repair.
    and confirm the relative handoff exists in `HEAD`. Load it with `git show`;
    if the absolute dispatch file differs, stop. The committed `HEAD` copy is
    canonical.
-5. Verify the required `acowtancy`, `underlay`, and `poodle` sibling links.
-   Canonicalize source and destination; require each source directory; create a
-   destination only when absent; reuse only a symlink resolving to the declared
-   source. Stop on a missing source, mismatch, directory, or file. Never delete,
-   replace, overwrite, or skip a listed dependency.
+5. Required sibling links are `none`; skip sibling-link setup. Verify the
+   absolute Acowtancy evidence target exists, is clean, and is exactly at the
+   frozen SHA without changing it.
 6. Read the active milestone, assigned card, `AGENTS.md`, and canonical refs.
 7. Run the repo's cheap orientation checks and record what you actually ran.
 
