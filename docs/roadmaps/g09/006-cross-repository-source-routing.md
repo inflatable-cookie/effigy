@@ -154,5 +154,4 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Execute card `1115`. Chatterbox settles the
-K5 rephrasing with the Northstar Chatterbox in parallel.
+Wait for `1114` to merge, then execute card `1115`.

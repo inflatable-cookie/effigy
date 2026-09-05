@@ -92,7 +92,10 @@ Reject the lane if any counterexample survives:
    existing cases move.
 6. Three shared repositories warm exceed 5 s total on the reference machine.
 7. The evidence log claims speedup or recall without the `rg` comparison
-   table, or carries K5 as written into a recall claim.
+   table; or K5a/K5b are replayed as a synthesised yes/no, Effigy's
+   publication workflow is presented as Underlay's obligation, an absent
+   opt-in is bypassed to answer K5b, or an unavailable source is recorded as
+   a semantic no-match.
 8. A second index, daemon, cache, parallel executor, environment variable,
    or consumer-repository write appears; or the portfolio file accepts globs
    or unknown keys silently.
@@ -110,7 +113,8 @@ enumeration, payload, and runner tests, the three-repository warm timing with
 no concurrent graph process, `effigy qa`, `cargo fmt --all -- --check`,
 `cargo clippy --all-targets -- -D warnings`, and `git diff --check`. Write one
 dated evidence log with the fixture matrix and the manual replay table
-(K1–K5 with K5 pending if unsettled, plus `rg` comparison).
+(K1–K4, K5a, K5b, plus `rg` comparison; K5 wording is fixed in roadmap
+`g09.006`).
 
 ## Stop Conditions
 

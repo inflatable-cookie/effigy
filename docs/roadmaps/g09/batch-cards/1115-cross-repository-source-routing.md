@@ -37,8 +37,14 @@ prove it on fixtures before any portfolio claim.
 7. **Opt-in.** Effigy's `effigy.toml` declares `share = true` and front
    doors; the Northstar init/starter profile emits the block.
 8. **Replay.** With no concurrent graph process, time three shared
-   repositories warm; replay K1–K5 (K5 pending if unsettled) against
-   Northstar, Effigy, Underlay read-only, and record the `rg` comparison.
+   repositories warm; replay K1–K4, K5a ("What does release execute commit,
+   tag, and push?" → Effigy guide `051` execute section) and K5b ("What
+   publication step does Underlay require after release execute?" →
+   Underlay's own release guidance, or a reported no-match if absent)
+   against Northstar, Effigy, Underlay read-only, and record the `rg`
+   comparison. Sections satisfy retrieval; no yes/no synthesis; Effigy's
+   workflow is not Underlay's obligation; no opt-in bypass; an unavailable
+   or excluded source is reported as such, not as a semantic no-match.
 9. **Close.** Guides `079`, `017`, `026`; contract `041` command contract
    and drift trigger; `CHANGELOG.md` `[Unreleased]`; one evidence log.
 
@@ -57,8 +63,8 @@ prove it on fixtures before any portfolio claim.
       unchanged; new cases frozen
 - [ ] three shared repositories warm inside 5 s total on the reference machine
 - [ ] Effigy opts in; the starter profile emits the block; no consumer edited
-- [ ] evidence log holds the fixture matrix and the K1–K5 / `rg` replay table
-      with no speedup or recall claim beyond what it shows
+- [ ] evidence log holds the fixture matrix and the K1–K4, K5a, K5b / `rg`
+      replay table with no speedup or recall claim beyond what it shows
 
 ## Review Oracle
 
@@ -71,7 +77,9 @@ Falsify these counterexamples before PR creation:
    committed.
 5. Single-repository payload or benchmark ranks changed.
 6. Three-repository warm timing exceeds 5 s.
-7. A speedup or recall claim appears without the comparison table.
+7. A speedup or recall claim appears without the comparison table, or K5a/
+   K5b are answered by synthesis, obligation transfer, opt-in bypass, or a
+   false no-match.
 8. A cache, shared index, parallel executor, env var, glob, or consumer
    write appeared.
 
@@ -89,7 +97,7 @@ Falsify these counterexamples before PR creation:
 ## Evidence Requirement
 
 One dated closeout log under `docs/logs/2026-09/` with the fixture status
-matrix, identity samples, the timing, the K1–K5 replay rows with `rg`
+matrix, identity samples, the timing, the K1–K4/K5a/K5b replay rows with `rg`
 comparison (time to usable evidence, source correctness, bytes returned),
 and validation output.
 
