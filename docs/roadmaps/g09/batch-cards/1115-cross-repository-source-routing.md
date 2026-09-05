@@ -4,12 +4,15 @@ Roadmap: [`../006-cross-repository-source-routing.md`](../006-cross-repository-s
 Spec: [`../../../specs/122-cross-repository-source-routing-strict-lane.md`](../../../specs/122-cross-repository-source-routing-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md), [`../../../contracts/037-explicit-catalog-membership-contract.md`](../../../contracts/037-explicit-catalog-membership-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: `[docs_policy.sources]` grammar, portfolio enumeration, `docs context
 --sources` surface, grouped payload and text, source identity, fixtures and
 benchmark freeze, starter opt-in, manual replay
 Created: 2026-09-05
 Queued since: 2026-09-05 operator confirmation; serial after `1114`
+PR: [`93`](https://github.com/inflatable-cookie/effigy/pull/93), merged at
+`931c1b68d980ba5351a60e5fe1038e2f69778b23`; reviewed head
+`28e6795049afaf80cf3afdc21f2dbbcbb8fb777d`
 
 ## Purpose
 
@@ -50,20 +53,20 @@ prove it on fixtures before any portfolio claim.
 
 ## Acceptance
 
-- [ ] a directory with a shared, a not-shared, and a non-repository child
+- [x] a directory with a shared, a not-shared, and a non-repository child
       yields exactly one searched repository and reports the other two
-- [ ] `--only` with an unknown handle reports `disallowed`; a missing
+- [x] `--only` with an unknown handle reports `disallowed`; a missing
       directory reports `missing`; both leave healthy repositories answering
-- [ ] a forced timeout on one fixture repository is reported and the other
+- [x] a forced timeout on one fixture repository is reported and the other
       repository's results are returned; exit 0
-- [ ] every result carries handle, path, span, current HEAD, indexed HEAD,
+- [x] every result carries handle, path, span, current HEAD, indexed HEAD,
       and `content_identity`; a dirty fixture file is `working-tree`
-- [ ] results are grouped per repository in directory order; no merged list
-- [ ] single-repository payload, ranking, and all existing benchmark cases
+- [x] results are grouped per repository in directory order; no merged list
+- [x] single-repository payload, ranking, and all existing benchmark cases
       unchanged; new cases frozen
-- [ ] three shared repositories warm inside 5 s total on the reference machine
-- [ ] Effigy opts in; the starter profile emits the block; no consumer edited
-- [ ] evidence log holds the fixture matrix and the K1–K4, K5a, K5b / `rg`
+- [x] three shared repositories warm inside 5 s total on the reference machine
+- [x] Effigy opts in; the starter profile emits the block; no consumer edited
+- [x] evidence log holds the fixture matrix and the K1–K4, K5a, K5b / `rg`
       replay table with no speedup or recall claim beyond what it shows
 
 ## Review Oracle
@@ -110,5 +113,5 @@ change beyond the frozen flag, grammar, and payload.
 
 ## Next Task
 
-Wait for `1114` to merge; then execute steps 1 to 9 and open the PR at the
-exact reviewed head.
+Card `1115` is complete; PR `93` merged. The runway is empty pending the next
+Chatterbox-promoted direction.

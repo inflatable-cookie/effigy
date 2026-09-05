@@ -1,6 +1,6 @@
 # g09.006 Cross-Repository Source Routing
 
-Status: Ready
+Status: Complete
 Created: 2026-09-05
 Frozen: 2026-09-05 (operator confirmed)
 Spec: [`122`](../../specs/122-cross-repository-source-routing-strict-lane.md)
@@ -98,8 +98,8 @@ refresh at about 10 s, which clears the latency gate. The lane starts after
 
 ## Cards
 
-- [ ] [`1115`](./batch-cards/1115-cross-repository-source-routing.md) —
-  ready; serial prerequisite card `1114` merged
+- [x] [`1115`](./batch-cards/1115-cross-repository-source-routing.md) —
+  complete; PR `93` merged
 
 ## Non-Goals
 
@@ -117,7 +117,8 @@ refresh at about 10 s, which clears the latency gate. The lane starts after
 Published for the coordinator at the promoting commit on `main`.
 
 - **Lane:** card `1115`, roadmap `g09.006`, strict spec `122`. State:
-  ready. **Serial edge:** card `1114` (`g09.007`) has
+  complete; PR `93` merged at `931c1b68`.
+  **Serial edge:** card `1114` (`g09.007`) has
   merged to `main`. Not approved for parallel execution with `1114`.
 - **Prerequisites:** `1114` merged; clean `main`; no other active strict
   lane. The K5 rephrasing (K5a/K5b) is settled in the Frozen Decisions.
@@ -154,4 +155,4 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Wait for `1114` to merge, then execute card `1115`.
+Card `1115` is complete. Await the next Chatterbox-promoted direction.

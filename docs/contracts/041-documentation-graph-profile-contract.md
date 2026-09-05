@@ -118,7 +118,8 @@ directly names historical material may still rank it first.
 
 ```text
 effigy docs context <QUERY> [--max-sections <N>] [--max-bytes <N>]
-                            [--max-hops <N>]
+                            [--max-hops <N>] [--sources <PATH>]
+                            [--only <HANDLE>]
 ```
 
 Standard leading `--repo <PATH>` and `--json` behavior applies.
@@ -136,7 +137,9 @@ Standard leading `--repo <PATH>` and `--json` behavior applies.
 
 Text output is concise evidence suitable for an agent context window. JSON uses
 a versioned `effigy.docs.context.v1` payload inside the standard command
-envelope.
+envelope. With `--sources`, it uses the distinct grouped
+`effigy.docs.context.sources.v1` payload; each repository retains its own
+ranking, authority, currentness, freshness, and identity.
 
 Minimum JSON fields:
 
@@ -218,14 +221,14 @@ retrieval code.
 
 ## Drift Triggers
 
-Update this contract with changes to profile grammar, matching precedence,
+Update this contract with changes to profile grammar, source-routing grammar,
+matching precedence,
 section boundaries, currentness, authority use, query budgets, JSON shape,
 freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Cards `1101` and `1102` are complete. Card `1113` (`g09.005`, spec `120`)
-reproduces and repairs warm and stale-refresh latency inside this contract's
-single refresh path, time-budget seam, and ranking rules; it may add additive
-timeout-detail fields only. Cross-repository routing (`g09.006`) is gated on
-that evidence.
+Cards `1101` and `1102` are complete. Cards `1113` through `1115` completed
+the bounded latency, exact-identifier, and opt-in cross-repository routing
+lanes. The single-repository contract and refresh path remain authoritative;
+cross-repository results are grouped and use the distinct sources payload.

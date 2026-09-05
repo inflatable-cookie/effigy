@@ -26,12 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-Active strict lane:
-
-- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
-  cross-repository source routing over existing local retrieval (`g09.006`,
-  card `1115`)
-
 Recently completed strict lane awaiting planning disposition:
 
 - [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
@@ -39,6 +33,10 @@ Recently completed strict lane awaiting planning disposition:
   under `g09.003`; archive or supersede it after the cohort planning checkpoint
 
 Completed strict lanes:
+
+- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
+  cross-repository source routing over existing local retrieval (`g09.006`,
+  card `1115`), merged in PR `93`
 
 - [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
   exact identifier terms seed and rank the sections that contain them, with
@@ -106,7 +104,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1115` under strict spec `122`. Specs `119`, `120`, and `121`
-are complete or archived. The consumer cohort checkpoint after `g09.003` is deferred by
-operator direction (2026-09-05); Acowtancy remains read-only and Effigy
-release authority stays separate.
+The runway is empty pending the next Chatterbox-promoted direction. Specs
+`119`, `120`, `121`, and `122` are complete or archived. The consumer cohort
+checkpoint after `g09.003` is deferred by operator direction (2026-09-05);
+Acowtancy remains read-only and Effigy release authority stays separate.

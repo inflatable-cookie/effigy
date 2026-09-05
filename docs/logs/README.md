@@ -216,12 +216,13 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Cards `1112`, `1113`, and `1114` are complete; evidence is at
+Cards `1112` through `1115` are complete; evidence is at
 [`05-105500`](./2026-09/05-105500-release-gate-diagnosability-1112.md),
 [`05-113123`](./2026-09/05-113123-docs-context-latency-and-freshness-1113.md),
 and
 [`05-133718`](./2026-09/05-133718-docs-context-exact-identifier-1114.md).
-Card `1115` (cross-repository source routing, spec `122`) remains queued.
+Card `1115` (cross-repository source routing, spec `122`) is complete; its
+evidence is indexed above.
 Card `1111`'s Acowtancy replay evidence is at
 [`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md); the
 cohort checkpoint is deferred by operator direction (2026-09-05). Acowtancy

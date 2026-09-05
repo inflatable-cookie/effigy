@@ -43,10 +43,9 @@ spec `119`; card `1112` merged in PR `90`.
 [`g09.005`](./005-docs-context-latency-and-freshness.md) is complete under
 strict spec `120`; card `1113` merged in PR `91`. Its K4/K5 retrieval
 limitations are re-planned in the canonical triage note.
-[`g09.006`](./006-cross-repository-source-routing.md) is ready under strict
+[`g09.006`](./006-cross-repository-source-routing.md) is complete under strict
 spec `122` (card `1115`, serial after `1114`): opt-in cross-repository source
-routing, grouped per repository with identity; frozen by the operator on
-2026-09-05.
+routing, grouped per repository with identity; PR `93` merged.
 
 [`g09.007`](./007-docs-context-exact-identifier-retrieval.md) is complete under
 strict spec `121`: exact identifier queries seed and rank the sections that
@@ -54,6 +53,6 @@ contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 
 ## Next Task
 
-Execute card `1115`. The
+The runway is empty pending the next Chatterbox-promoted direction. The
 consumer cohort checkpoint remains deferred by operator direction
 (2026-09-05). Effigy release authority stays separate.

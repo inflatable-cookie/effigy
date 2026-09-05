@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy docs context --sources <PATH>` can query explicitly named,
+  repository-opted-in sources sequentially, returning grouped
+  `effigy.docs.context.sources.v1` evidence with per-repository status,
+  provenance, freshness, and content identity. No consumer repository is
+  modified.
 - Release gate runs now persist full per-gate output and a redacted execution
   environment under `.effigy/reports/release/gates/`, with additive JSON paths
   and failure diagnostics that include a bounded output tail.
