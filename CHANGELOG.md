@@ -43,6 +43,24 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Changed
+- `effigy docs context` answers a warm query on this repository roughly three
+  times faster (p50 1935 ms to 602 ms on a current index; 2045 ms to 682 ms
+  with a dirty working tree), and a stale docs-only refresh of 50 Markdown
+  files drops from 12.8 s to 10.2 s under the default budget. The cause was
+  glob recompilation: every documentation-profile compile revalidated kind
+  overlap across every in-scope document, and every scope build asked each
+  document for its kind, rebuilding the same `docs_policy.graph` matchers each
+  time. Each distinct pattern now compiles once per process. Ranking,
+  provenance, budgets, freshness identity, and every default are unchanged; the
+  frozen `perf:docs-context-benchmark` matrix stays green and its results are
+  byte-identical.
+- The shared `effigy.graph.timeout.v1` detail now carries an additive `phase`
+  block naming what the bounded run was doing when the budget expired
+  (`freshness-scan`, `refresh-lock-wait`, `index-walk`, `index-files`,
+  `search-index-rebuild`, `docs-scope`, `docs-rank`, `docs-select`), with
+  `items_done`/`items_total` for the file-proportional phases, plus a matching
+  recovery line. The schema id, schema version, and every existing field are
+  unchanged.
 - `release gates` announces its configured inventory and always emits progress
   on stderr, keeping JSON stdout contract-pure; first-time `.effigy` writers
   use the existing gitignore convention.

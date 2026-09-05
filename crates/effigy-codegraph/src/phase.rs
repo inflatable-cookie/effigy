@@ -142,6 +142,17 @@ pub fn snapshot() -> Option<GraphPhaseSnapshot> {
     })
 }
 
+/// Clear the record so a later read cannot name a phase from earlier work.
+///
+/// A bounded caller calls this before starting an operation: without it, a
+/// bound that expires before the worker reaches graph work would report the
+/// previous command's phase as if it were current.
+pub fn reset() {
+    PHASE.store(0, Ordering::Relaxed);
+    ITEMS_DONE.store(0, Ordering::Relaxed);
+    ITEMS_TOTAL.store(0, Ordering::Relaxed);
+}
+
 /// Every phase name this crate can report, so callers and tests can check a
 /// reported name against the closed set instead of restating it.
 pub const KNOWN_PHASE_NAMES: &[&str] = &[

@@ -80,6 +80,13 @@
 //              rival, rank bound, dimension, or pass criterion changed. The
 //              matrix remains the 11-case freeze at `ff95f6a4c`; only the
 //              history now names that commit.
+//   696200af3  replay for the docs-context latency lane (card `1113`). Not a
+//              freeze: no case, query, expected source, rival, rank bound,
+//              dimension, or pass criterion changed, and the matrix remains the
+//              11-case freeze at `ff95f6a4c`. That commit compiles each
+//              `docs_policy.graph` glob once per process; 11/11 held before and
+//              after, every rank and every retrieved span unchanged, and the
+//              whole run fell from 18833 ms to 12105 ms.
 //
 // Two targets, both required:
 //

@@ -50,6 +50,10 @@ pub(super) fn run_bounded_graph_operation(
     budget: Duration,
     operation: impl Fn() -> Result<String, RunnerError> + Send + Clone + 'static,
 ) -> Result<String, RunnerError> {
+    // Clear any phase left by earlier graph work in this process, so a bound
+    // that expires before the worker starts reports no phase rather than a
+    // previous command's.
+    effigy_codegraph::reset_graph_phase();
     let (sender, receiver) = mpsc::channel();
     let worker_operation = operation.clone();
     let spawned = std::thread::Builder::new()
@@ -119,5 +123,36 @@ fn describe_phase(phase: &effigy_codegraph::GraphPhaseSnapshot) -> String {
             "the bound expired during `{}` after {}ms",
             phase.name, phase.elapsed_ms
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe_phase;
+    use effigy_codegraph::GraphPhaseSnapshot;
+
+    #[test]
+    fn phase_description_reports_progress_only_when_the_phase_counts_items() {
+        let counted = GraphPhaseSnapshot {
+            name: "index-files".to_owned(),
+            elapsed_ms: 4820,
+            items_done: Some(1804),
+            items_total: Some(3940),
+        };
+        assert_eq!(
+            describe_phase(&counted),
+            "the bound expired during `index-files` after 4820ms (1804/3940 files)"
+        );
+
+        let uncounted = GraphPhaseSnapshot {
+            name: "docs-rank".to_owned(),
+            elapsed_ms: 12,
+            items_done: None,
+            items_total: None,
+        };
+        assert_eq!(
+            describe_phase(&uncounted),
+            "the bound expired during `docs-rank` after 12ms"
+        );
     }
 }

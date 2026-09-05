@@ -67,7 +67,8 @@ pub use index::{run_index, status, status_with_refresh, IndexReport};
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// What the graph was doing when a caller's wall-clock bound expired.
 pub use phase::{
-    snapshot as graph_phase_snapshot, GraphPhase, GraphPhaseSnapshot, KNOWN_PHASE_NAMES,
+    reset as reset_graph_phase, snapshot as graph_phase_snapshot, GraphPhase, GraphPhaseSnapshot,
+    KNOWN_PHASE_NAMES,
 };
 /// Query helpers over the stored graph.
 pub use query::{
