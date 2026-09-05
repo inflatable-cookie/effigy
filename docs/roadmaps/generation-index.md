@@ -327,3 +327,12 @@ run environment under `.effigy/reports/release/gates/`, show the failing
 gate's tail in prepare/execute text, and announce the gate inventory on
 stderr. Origin: Swallowtail consumer intake, 2026-09-05. The `g09.003` cohort
 checkpoint is deferred by operator direction on the same date.
+
+[`g09.005`](./g09/005-docs-context-latency-and-freshness.md) is **queued**
+under strict spec `120` (card `1113`, serial after `1112`): reproduce cold,
+stale-incremental, and warm `docs context` behaviour with explicit identity,
+freeze budgets, and repair inside the existing refresh path. Origin: the
+Northstar shared-knowledge retrieval pilot and operator-confirmed direction,
+2026-09-05. [`g09.006`](./g09/006-cross-repository-source-routing.md) is
+**planned** for explicit cross-repository source routing, conditional on
+`g09.005` evidence, with no ready card.

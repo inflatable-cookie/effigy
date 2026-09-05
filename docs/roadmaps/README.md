@@ -168,14 +168,22 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Ready [`g09.004`](./g09/004-release-gate-diagnosability.md) makes a failed
   release gate diagnosable from persisted output and environment records
   under strict spec `119`; card `1112` is ready.
+  Queued [`g09.005`](./g09/005-docs-context-latency-and-freshness.md)
+  reproduces and repairs `docs context` warm and stale latency to frozen
+  budgets under strict spec `120` (card `1113`, serial after `1112`). Planned
+  [`g09.006`](./g09/006-cross-repository-source-routing.md) holds the
+  conditional cross-repository source-routing step with no ready card.
 
 ## Active Strict Lane
 
 Strict spec [`119`](../specs/119-release-gate-diagnosability-strict-lane.md)
 is active for [`g09.004`](./g09/004-release-gate-diagnosability.md). Card
 [`1112`](./g09/batch-cards/1112-release-gate-diagnosability.md) is the ready
-card; its dispatch manifest is in the roadmap. Direct invocation remains
-canonical and help grouping remains.
+card; its dispatch manifest is in the roadmap. Strict spec
+[`120`](../specs/120-docs-context-latency-and-freshness-strict-lane.md) and
+card [`1113`](./g09/batch-cards/1113-docs-context-latency-and-freshness.md)
+are queued serially behind `1112`. Direct invocation remains canonical and
+help grouping remains.
 
 ## Research Program
 
@@ -230,8 +238,8 @@ Before rollover:
 
 ## Next Task
 
-Execute card `1112` (release gate diagnosability). The consumer cohort
-checkpoint is deferred by operator direction on 2026-09-05. Keep Acowtancy
+Execute card `1112` (release gate diagnosability), then card `1113` (docs
+context latency and freshness). The consumer cohort checkpoint is deferred by operator direction on 2026-09-05. Keep Acowtancy
 read-only and Effigy release execution and S3 extraction behind their named
 gates.
 

@@ -218,6 +218,7 @@ Card `1111` executed its clean frozen Acowtancy replay; evidence is at
 first populated scorecard is under
 [`docs/vision/governance/`](../vision/governance/). PR `88` merged at
 `9c05a883`. Card `1112` (release gate diagnosability, strict spec `119`) is
-the ready card; the cohort checkpoint is deferred by operator direction
+the ready card, with card `1113` (docs context latency, spec `120`) queued
+serially behind it; the cohort checkpoint is deferred by operator direction
 (2026-09-05). Acowtancy stays read-only; Effigy release remains a separate
 operator-gated mutation.

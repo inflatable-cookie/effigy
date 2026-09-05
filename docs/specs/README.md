@@ -40,7 +40,9 @@ Recently completed strict lane awaiting planning disposition:
 
 Queued strict lanes:
 
-- none
+- [`120`](./120-docs-context-latency-and-freshness-strict-lane.md) — docs
+  context warm/stale latency reproduced and repaired to frozen budgets
+  (`g09.005`, card `1113`); serial after spec `119`
 
 Archived strict lanes:
 
@@ -98,6 +100,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1112` under strict spec `119`. The consumer cohort checkpoint
-after `g09.003` is deferred by operator direction (2026-09-05); Acowtancy
+Execute card `1112` under strict spec `119`; card `1113` (spec `120`) follows
+serially. The consumer cohort checkpoint after `g09.003` is deferred by operator direction (2026-09-05); Acowtancy
 remains read-only and Effigy release authority stays separate.

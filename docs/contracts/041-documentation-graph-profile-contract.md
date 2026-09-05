@@ -224,6 +224,8 @@ freshness identity, or Northstar runtime independence.
 
 ## Next Task
 
-Cards `1101` and `1102` are complete. Preserve one refresh path, one shared
-time-budget seam, and one ranking implementation; return the active planning
-frontier to catalog-pack publication under contract `043`.
+Cards `1101` and `1102` are complete. Card `1113` (`g09.005`, spec `120`)
+reproduces and repairs warm and stale-refresh latency inside this contract's
+single refresh path, time-budget seam, and ranking rules; it may add additive
+timeout-detail fields only. Cross-repository routing (`g09.006`) is gated on
+that evidence.

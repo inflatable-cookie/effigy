@@ -14,6 +14,8 @@ extends the governed contract into current consumer evidence.
 - [`002-flat-command-execution.md`](./002-flat-command-execution.md)
 - [`003-acowtancy-consumer-adoption-replay.md`](./003-acowtancy-consumer-adoption-replay.md)
 - [`004-release-gate-diagnosability.md`](./004-release-gate-diagnosability.md)
+- [`005-docs-context-latency-and-freshness.md`](./005-docs-context-latency-and-freshness.md)
+- [`006-cross-repository-source-routing.md`](./006-cross-repository-source-routing.md)
 
 ## Design Posture
 
@@ -38,7 +40,13 @@ and first populated comparison scorecard; PR `88` merged at `9c05a883`.
 `119`: persist release gate output and environment, show the failing tail,
 announce the gate inventory. Card `1112` is the ready card.
 
+[`g09.005`](./005-docs-context-latency-and-freshness.md) is queued under
+strict spec `120` (card `1113`, serial after `1112`): reproduce and repair
+`docs context` warm and stale latency to frozen budgets.
+[`g09.006`](./006-cross-repository-source-routing.md) is planned and gated on
+that evidence; it has no ready card.
+
 ## Next Task
 
-Execute card `1112`. The consumer cohort checkpoint is deferred by operator
+Execute card `1112`, then card `1113`. The consumer cohort checkpoint is deferred by operator
 direction (2026-09-05). Effigy release authority stays separate.
