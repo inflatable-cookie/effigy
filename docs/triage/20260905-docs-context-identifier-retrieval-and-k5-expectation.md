@@ -25,8 +25,8 @@ of 32 for the phrase at PR `91` head.
 
 ## Next Task
 
-Settle with the Northstar Chatterbox before `g09.006` freezes its replay
-set: rephrase K5 into an evidence-shaped query using the guide's own words
+Settle with the Northstar Chatterbox before card `1115` reaches its manual
+replay step (the card records K5 as pending if unsettled): rephrase K5 into an evidence-shaped query using the guide's own words
 about publication, or split it into a tool-behaviour question and a
 consumer-obligation question. Do not carry the phrase as written into any
 recall claim.

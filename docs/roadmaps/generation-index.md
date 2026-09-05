@@ -344,3 +344,10 @@ and `120` are archived. Warm `docs context` on Effigy fell from ~10 s to
 **ready** under strict spec `121` (card `1114`): exact identifier queries
 seed and rank the sections that contain them, frozen in the benchmark.
 Operator confirmed 2026-09-05.
+
+[`g09.006`](./g09/006-cross-repository-source-routing.md) is **queued** under
+strict spec `122` (card `1115`, serial after `1114`): `docs context
+--sources` routes one query across repositories that opted in via
+`[docs_policy.sources] share = true` under directories named in a portfolio
+file, grouped per repository with commit identity and per-repository
+statuses. Frozen by the operator on 2026-09-05.

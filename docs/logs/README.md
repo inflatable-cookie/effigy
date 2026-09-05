@@ -219,7 +219,8 @@ Cards `1112` and `1113` are complete; evidence is at
 [`05-105500`](./2026-09/05-105500-release-gate-diagnosability-1112.md) and
 [`05-113123`](./2026-09/05-113123-docs-context-latency-and-freshness-1113.md).
 Card `1114` (docs context exact identifier retrieval, strict spec `121`) is
-the ready card. Card `1111`'s Acowtancy replay evidence is at
+the ready card, with card `1115` (cross-repository source routing, spec
+`122`) queued serially behind it. Card `1111`'s Acowtancy replay evidence is at
 [`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md); the
 cohort checkpoint is deferred by operator direction (2026-09-05). Acowtancy
 stays read-only; Effigy release remains a separate operator-gated mutation.
