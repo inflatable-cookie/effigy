@@ -99,3 +99,34 @@ pub(crate) fn update_index_stamp(
         _ => store.delete_metadata(GIT_INDEXED_HEAD_KEY),
     }
 }
+
+/// Repository-relative paths with any working-tree change (tracked or
+/// untracked), or `None` when git cannot answer.
+///
+/// `None` is not "clean": callers treat it as "identity unknown" and must not
+/// label any excerpt as committed bytes.
+pub(crate) fn dirty_paths(repo_root: &Path) -> Option<std::collections::BTreeSet<String>> {
+    let output = Command::new("git")
+        .arg("status")
+        .arg("--porcelain")
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let mut paths = std::collections::BTreeSet::new();
+    for line in stdout.lines() {
+        // `XY <path>`, or `XY <old> -> <new>` for a rename. An unparsable
+        // line makes the whole answer unknown rather than partly wrong.
+        let rest = line.get(3..)?;
+        for part in rest.split(" -> ") {
+            let part = part.trim().trim_matches('"');
+            if !part.is_empty() {
+                paths.insert(part.to_owned());
+            }
+        }
+    }
+    Some(paths)
+}

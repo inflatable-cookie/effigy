@@ -639,6 +639,10 @@ pub enum DocsSubcommand {
         max_sections: Option<usize>,
         max_bytes: Option<usize>,
         max_hops: Option<usize>,
+        /// Portfolio file (or directory) naming where opted-in repositories live.
+        sources: Option<PathBuf>,
+        /// Repeatable handle filter applied to the enumerated repositories.
+        only: Vec<String>,
     },
 }
 

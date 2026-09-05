@@ -1,0 +1,15 @@
+# Shared baseline fixture repository: opted in, with no `[docs_policy.graph]`
+# profile at all. Baseline Markdown scoping must still answer a portfolio query.
+
+[catalog]
+alias = "baseline-notes"
+
+[manifest]
+minimum_effigy_version = "0.7.0"
+
+[tasks]
+ping = "printf ok"
+
+[docs_policy.sources]
+share = true
+front_doors = ["notes/README.md"]

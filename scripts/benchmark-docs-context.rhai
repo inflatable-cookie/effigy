@@ -87,12 +87,21 @@
 //              `docs_policy.graph` glob once per process; 11/11 held before and
 //              after, every rank and every retrieved span unchanged, and the
 //              whole run fell from 18833 ms to 12105 ms.
-//   this file  seventh freeze. Two exact-identifier cases added:
+//   f3d0a0f6d  seventh freeze. Two exact-identifier cases added:
 //              `effigy-exact-identifier` (`catalog_tasks` → guide `026`,
 //              rank ≤ 3) and `generic-exact-identifier` (fixture identifier
 //              `snorkel_grommet` with a split-word-dense rival). Existing
 //              eleven cases and their rank bounds are unchanged. Current
 //              matrix: 13 cases.
+//   this file  eighth freeze. A third target, `portfolio-routing`, is added for
+//              cross-repository source routing (roadmap `g09.006`, spec `122`).
+//              It is a separate target with its own case shape because the
+//              payload is `effigy.docs.context.sources.v1`, whose blocks are
+//              grouped per repository and never ranked against each other. The
+//              thirteen single-repository cases, their queries, expected
+//              sources, rivals, rank bounds, and pass criteria are untouched,
+//              and the two existing targets still run first. Current matrix:
+//              13 single-repository cases + 9 portfolio cases.
 //
 // Two targets, both required:
 //
@@ -102,6 +111,14 @@
 //                     semantics.
 //   effigy-live       this repository, using the `[docs_policy.graph]` profile
 //                     committed in `docs/effigy.docs.toml`.
+//
+// A third target, `portfolio-routing`, runs after those two. It materialises
+// `tests/fixtures/docs-context-benchmark/portfolio` into a scratch directory,
+// turns three of its children into real git checkouts, and mutates that copy to
+// reach the states committed bytes cannot hold (a dirty file, a duplicate
+// single-valued field). Every value it asserts - the status of each child, the
+// grouping, the identity of each excerpt, and the exit rule - is declared in
+// `portfolio_cases` below before the binary is run.
 //
 // Pass criteria, per case `expect`:
 //
@@ -673,6 +690,411 @@ for target in targets {
         report_path: report_path,
     });
 }
+
+
+// ---- Portfolio routing target -----------------------------------------------
+//
+// Frozen, like every case above: the expected statuses, identities, and exit
+// codes are written here and committed before the run. The fixture is copied
+// rather than queried in place because three of the states under test - a git
+// checkout, a dirty file, and a duplicate single-valued field - cannot exist in
+// a clean committed tree.
+
+fn portfolio_scratch_setup(fixture_root, report_dir) {
+    let source = path::join(fixture_root, "portfolio");
+    let scratch = path::join(report_dir, "portfolio-scratch");
+    fs::remove(scratch);
+    fs::create_dir(scratch);
+    run_check("copy portfolio fixture", "cp", ["-R", text([source, "/."]), scratch]);
+    let repos = path::join(scratch, "repos");
+    for repo_name in ["shared-atlas", "baseline-notes", "private-vault"] {
+        let repo_path = path::join(repos, repo_name);
+        run_check(text(["git init ", repo_path]), "git", ["-C", repo_path, "init", "-q"]);
+        run_check(
+            text(["git config ", repo_path]),
+            "git",
+            ["-C", repo_path, "config", "user.email", "fixture@example.invalid"],
+        );
+        run_check(
+            text(["git config ", repo_path]),
+            "git",
+            ["-C", repo_path, "config", "user.name", "Effigy Fixture"],
+        );
+        run_check(text(["git add ", repo_path]), "git", ["-C", repo_path, "add", "-A"]);
+        run_check(
+            text(["git commit ", repo_path]),
+            "git",
+            ["-C", repo_path, "commit", "-qm", "portfolio fixture"],
+        );
+    }
+    scratch
+}
+
+fn run_portfolio(bin_path, portfolio_path, query, extra_args, timeout_ms) {
+    let program = bin_path.to_string();
+    let process_args = [];
+    if timeout_ms != () {
+        program = "env";
+        process_args.push(text(["EFFIGY_GRAPH_TIMEOUT_MS=", timeout_ms]));
+        process_args.push(bin_path.to_string());
+    }
+    process_args.push("--json");
+    process_args.push("docs");
+    process_args.push("context");
+    process_args.push(query.to_string());
+    for extra in extra_args {
+        process_args.push(extra.to_string());
+    }
+    process_args.push("--sources");
+    process_args.push(portfolio_path.to_string());
+
+    let result = process::run(program, process_args);
+    let envelope = json::parse(result["stdout"].to_string());
+    let payload = if result["success"] {
+        envelope["result"]
+    } else {
+        json::parse(envelope["error"]["message"].to_string())
+    };
+    #{ success: result["success"], payload: payload }
+}
+
+fn portfolio_statuses(payload) {
+    let out = [];
+    for repository in payload["repositories"] {
+        out.push(text([repository["handle"], "=", repository["status"]]));
+    }
+    out
+}
+
+fn portfolio_result_keys(payload) {
+    let out = [];
+    for repository in payload["repositories"] {
+        for entry in repository["results"] {
+            out.push(text([repository["handle"], "/", entry["path"]]));
+        }
+    }
+    out
+}
+
+fn portfolio_identity(payload, handle, wanted) {
+    for repository in payload["repositories"] {
+        if repository["handle"].to_string() != handle.to_string() {
+            continue;
+        }
+        for entry in repository["results"] {
+            if entry["path"].to_string() == wanted.to_string() {
+                return entry["content_identity"].to_string();
+            }
+        }
+    }
+    ()
+}
+
+fn expect_statuses(expected, actual) {
+    let failures = [];
+    if expected.len() != actual.len() {
+        failures.push(text([
+            "expected ", expected.len(), " repository block(s), got ", actual.len(),
+            " (", actual, ")",
+        ]));
+        return failures;
+    }
+    let index = 0;
+    while index < expected.len() {
+        if expected[index].to_string() != actual[index].to_string() {
+            failures.push(text([
+                "block ", index, ": expected `", expected[index],
+                "`, got `", actual[index], "`",
+            ]));
+        }
+        index += 1;
+    }
+    failures
+}
+
+fn expect_exit(expected_success, actual_success) {
+    let failures = [];
+    if expected_success != actual_success {
+        failures.push(text([
+            "expected success=", expected_success, ", got success=", actual_success,
+        ]));
+    }
+    failures
+}
+
+fn portfolio_case(id, dimension, detail, failures) {
+    #{
+        id: id,
+        dimension: dimension,
+        detail: detail,
+        passed: failures.is_empty(),
+        failures: failures,
+    }
+}
+
+// Frozen expectations. `clean`, `dirty`, `duplicate-field`, and `timeout` name
+// the fixture state each case runs in; the loop below reaches them in order and
+// never goes back, so every state is entered exactly once.
+let portfolio_clean_statuses = [
+    "baseline-notes=ok",
+    "loose-notes=invalid",
+    "private-vault=not-shared",
+    "shared-atlas=ok",
+    "absent-directory=missing",
+];
+let portfolio_charter = "atlas/charters/tolerance-ledger.md";
+let portfolio_notice = "atlas/notices/tolerance-ledger-withdrawn.md";
+let portfolio_query = "tolerance ledger";
+let portfolio_no_match_query = "quokka marmalade trombone";
+
+let portfolio_scratch = portfolio_scratch_setup(fixture_root, report_dir);
+let portfolio_path = path::join(portfolio_scratch, "portfolio.toml");
+let portfolio_charter_path =
+    path::join(path::join(path::join(portfolio_scratch, "repos"), "shared-atlas"), portfolio_charter);
+let portfolio_results = [];
+
+log("[info] docs-context benchmark portfolio-routing :: clean state");
+let clean = run_portfolio(bin_path, portfolio_path, portfolio_query, [], ());
+let clean_statuses = portfolio_statuses(clean["payload"]);
+let clean_keys = portfolio_result_keys(clean["payload"]);
+
+// 1. two-sided membership: one shared child answers, every other child is
+//    reported with its own status, and nothing un-opted-in is searched.
+let membership_failures = expect_statuses(portfolio_clean_statuses, clean_statuses);
+for failure in expect_exit(true, clean["success"]) {
+    membership_failures.push(failure);
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-membership", "two-sided-membership", text([clean_statuses]), membership_failures,
+));
+
+// 2. negative control: no result may come from a repository that never opted
+//    in, from a skipped container, or from a hidden child.
+let leak_failures = [];
+let forbidden_owners = [
+    "private-vault/", "loose-notes/", "decoy-checkout/", "hidden-annex/",
+];
+for key in clean_keys {
+    for prefix in forbidden_owners {
+        if key.to_string().starts_with(prefix.to_string()) {
+            leak_failures.push(text([
+                "un-opted-in or skipped source leaked into the report: ", key,
+            ]));
+        }
+    }
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-negative-control", "no-leak", text([clean_keys.len(), " result(s)"]), leak_failures,
+));
+
+// 3. grouping: the same term is retrieved in both shared repositories, each
+//    block ranks from 1, and no merged list exists.
+let grouping_failures = [];
+let shared_hit = false;
+let baseline_hit = false;
+for repository in clean["payload"]["repositories"] {
+    if repository["results"].is_empty() {
+        continue;
+    }
+    if repository["results"][0]["rank"] != 1 {
+        grouping_failures.push(text([
+            "block `", repository["handle"], "` starts at rank ",
+            repository["results"][0]["rank"], ", not 1",
+        ]));
+    }
+    if repository["handle"].to_string() == "shared-atlas" {
+        shared_hit = true;
+    }
+    if repository["handle"].to_string() == "baseline-notes" {
+        baseline_hit = true;
+    }
+}
+if !shared_hit {
+    grouping_failures.push("`shared-atlas` returned no section for the shared term");
+}
+if !baseline_hit {
+    grouping_failures.push("`baseline-notes` returned no section for the shared term");
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-grouping", "grouped-not-merged",
+    text([clean_keys]), grouping_failures,
+));
+
+// 4. identity: every result carries a span and every repository that answered
+//    carries both HEADs; a clean checkout reports committed bytes.
+let identity_failures = [];
+for repository in clean["payload"]["repositories"] {
+    if repository["results"].is_empty() {
+        continue;
+    }
+    if repository["current_head"] == () {
+        identity_failures.push(text(["block `", repository["handle"], "` has no current HEAD"]));
+    }
+    if repository["indexed_head"] == () {
+        identity_failures.push(text(["block `", repository["handle"], "` has no indexed HEAD"]));
+    }
+    for entry in repository["results"] {
+        if entry["content_identity"].to_string() != "committed" {
+            identity_failures.push(text([
+                "clean checkout reported `", entry["path"],
+                "` as ", entry["content_identity"],
+            ]));
+        }
+        if entry["span"]["end"]["byte"] <= entry["span"]["start"]["byte"] {
+            identity_failures.push(text(["result `", entry["path"], "` has no span"]));
+        }
+    }
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-identity", "source-identity", "committed", identity_failures,
+));
+
+// 5. `--only`: a known handle answers, an unknown one is `disallowed`, and the
+//    call still exits 0.
+log("[info] docs-context benchmark portfolio-routing :: only");
+let only = run_portfolio(
+    bin_path, portfolio_path, portfolio_query,
+    ["--only", "shared-atlas", "--only", "no-such-repo"], (),
+);
+let only_statuses = portfolio_statuses(only["payload"]);
+let only_failures = expect_statuses(
+    ["shared-atlas=ok", "no-such-repo=disallowed"], only_statuses,
+);
+for failure in expect_exit(true, only["success"]) {
+    only_failures.push(failure);
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-only-disallowed", "disallowed", text([only_statuses]), only_failures,
+));
+
+// 6. a no-match query is a successful empty report per repository, never a
+//    fallback to arbitrary files.
+log("[info] docs-context benchmark portfolio-routing :: empty");
+let empty = run_portfolio(bin_path, portfolio_path, portfolio_no_match_query, [], ());
+let empty_statuses = portfolio_statuses(empty["payload"]);
+let empty_failures = expect_statuses(
+    [
+        "baseline-notes=empty",
+        "loose-notes=invalid",
+        "private-vault=not-shared",
+        "shared-atlas=empty",
+        "absent-directory=missing",
+    ],
+    empty_statuses,
+);
+for failure in expect_exit(true, empty["success"]) {
+    empty_failures.push(failure);
+}
+if !portfolio_result_keys(empty["payload"]).is_empty() {
+    empty_failures.push("no-match query returned sections");
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-empty", "no-match", text([empty_statuses]), empty_failures,
+));
+
+// 7. a dirty file is never labelled as committed bytes, and its neighbours in
+//    the same repository still are.
+log("[info] docs-context benchmark portfolio-routing :: working tree");
+fs::append_file(
+    portfolio_charter_path,
+    "\nAn uncommitted amendment to the reconciliation window.\n",
+);
+let dirty = run_portfolio(bin_path, portfolio_path, portfolio_query, [], ());
+let dirty_failures = expect_statuses(portfolio_clean_statuses, portfolio_statuses(dirty["payload"]));
+let dirty_identity = portfolio_identity(dirty["payload"], "shared-atlas", portfolio_charter);
+let clean_neighbour = portfolio_identity(dirty["payload"], "shared-atlas", portfolio_notice);
+if dirty_identity.to_string() != "working-tree" {
+    dirty_failures.push(text([
+        "dirty file reported as ", dirty_identity, ", not working-tree",
+    ]));
+}
+if clean_neighbour != () && clean_neighbour.to_string() != "committed" {
+    dirty_failures.push(text([
+        "unchanged neighbour reported as ", clean_neighbour, ", not committed",
+    ]));
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-working-tree", "source-identity",
+    text([dirty_identity, "/", clean_neighbour]), dirty_failures,
+));
+
+// 8. a repository whose index carries failed paths answers as `stale`, keeps
+//    its sections, and never blocks the healthy repository beside it.
+log("[info] docs-context benchmark portfolio-routing :: stale");
+fs::append_file(portfolio_charter_path, "\nState: live\n");
+let stale = run_portfolio(bin_path, portfolio_path, portfolio_query, [], ());
+let stale_failures = expect_statuses(
+    [
+        "baseline-notes=ok",
+        "loose-notes=invalid",
+        "private-vault=not-shared",
+        "shared-atlas=stale",
+        "absent-directory=missing",
+    ],
+    portfolio_statuses(stale["payload"]),
+);
+for failure in expect_exit(true, stale["success"]) {
+    stale_failures.push(failure);
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-stale", "degraded-index",
+    text([portfolio_statuses(stale["payload"])]), stale_failures,
+));
+
+// 9. when no repository answers, the call fails and still lists every status.
+log("[info] docs-context benchmark portfolio-routing :: timeout");
+let timed_out = run_portfolio(bin_path, portfolio_path, portfolio_query, [], 1);
+let timeout_failures = expect_statuses(
+    [
+        "baseline-notes=timeout",
+        "loose-notes=invalid",
+        "private-vault=not-shared",
+        "shared-atlas=timeout",
+        "absent-directory=missing",
+    ],
+    portfolio_statuses(timed_out["payload"]),
+);
+for failure in expect_exit(false, timed_out["success"]) {
+    timeout_failures.push(failure);
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-timeout", "timeout",
+    text([portfolio_statuses(timed_out["payload"])]), timeout_failures,
+));
+
+for case_result in portfolio_results {
+    if case_result["passed"] {
+        continue;
+    }
+    for failure in case_result["failures"] {
+        failed_cases.push(text(["portfolio-routing/", case_result["id"], ": ", failure]));
+    }
+}
+
+let portfolio_lines = [
+    "# portfolio-routing",
+    "",
+    text(["portfolio: ", portfolio_path]),
+    "",
+    "| case | dimension | observed | result |",
+    "| --- | --- | --- | --- |",
+];
+for case_result in portfolio_results {
+    let outcome = if case_result["passed"] { "pass" } else { "FAIL" };
+    portfolio_lines.push(text([
+        "| `", case_result["id"], "` | ", case_result["dimension"],
+        " | `", case_result["detail"], "` | ", outcome, " |",
+    ]));
+}
+let portfolio_report_path = path::join(report_dir, "portfolio-routing.md");
+fs::write_lines(portfolio_report_path, portfolio_lines);
+index_lines.push(text(["- portfolio-routing: ", portfolio_report_path]));
+summary_targets.push(#{
+    label: "portfolio-routing",
+    repo: portfolio_scratch,
+    cases: portfolio_results,
+    report_path: portfolio_report_path,
+});
 
 let index_path = path::join(report_dir, "README.md");
 fs::write_lines(index_path, index_lines);

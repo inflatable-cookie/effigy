@@ -234,11 +234,29 @@ where
     let mut max_sections: Option<usize> = None;
     let mut max_bytes: Option<usize> = None;
     let mut max_hops: Option<usize> = None;
+    let mut sources: Option<PathBuf> = None;
+    let mut only: Vec<String> = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--sources" => {
+                sources = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--sources".to_owned(),
+                    },
+                )?));
+            }
+            "--only" => {
+                only.push(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--only".to_owned(),
+                    },
+                )?);
+            }
             "--max-sections" => max_sections = Some(parse_budget(&mut args, "--max-sections")?),
             "--max-bytes" => max_bytes = Some(parse_budget(&mut args, "--max-bytes")?),
             "--max-hops" => max_hops = Some(parse_budget(&mut args, "--max-hops")?),
@@ -263,6 +281,8 @@ where
             max_sections,
             max_bytes,
             max_hops,
+            sources,
+            only,
         },
         repo_override,
         output_json,

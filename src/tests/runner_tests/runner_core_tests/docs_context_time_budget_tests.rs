@@ -35,6 +35,8 @@ fn docs_context_command(root: &std::path::Path, query: &str, output_json: bool) 
             max_sections: None,
             max_bytes: None,
             max_hops: None,
+            sources: None,
+            only: Vec::new(),
         },
         repo_override: Some(root.to_path_buf()),
         output_json,

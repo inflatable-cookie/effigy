@@ -1,0 +1,40 @@
+# Shared, profiled fixture repository.
+#
+# Vocabulary is arbitrary on purpose: cross-repository routing must carry no
+# repository-specific semantics of its own.
+
+[catalog]
+alias = "shared-atlas"
+
+[manifest]
+minimum_effigy_version = "0.7.0"
+
+[tasks]
+ping = "printf ok"
+
+[docs_policy.graph]
+roots = ["atlas", "README.md"]
+
+[docs_policy.graph.fields.state]
+labels = ["State"]
+cardinality = "one"
+
+[docs_policy.graph.currentness]
+field = "state"
+current = ["live"]
+historical = ["retired"]
+
+[docs_policy.graph.kinds.charter]
+include = ["atlas/charters/*.md"]
+authority = 100
+default-currentness = "current"
+
+[docs_policy.graph.kinds.notice]
+include = ["atlas/notices/*.md"]
+authority = 10
+default-currentness = "historical"
+
+[docs_policy.sources]
+share = true
+front_doors = ["README.md", "atlas/charters/tolerance-ledger.md"]
+skill_roots = [".agents/skills"]

@@ -562,7 +562,7 @@ fn docs_help_documents_the_bounded_context_surface() {
     assert!(output.status.success(), "{output:?}");
     let rendered = stdout(&output);
     assert!(rendered.contains(
-        "effigy docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]"
+        "effigy docs context <QUERY> [--repo <PATH>] [--sources <PATH>] [--only <HANDLE>]... [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]"
     ));
     assert!(rendered.contains("default 8, maximum 32"));
     assert!(rendered.contains("default 24000, maximum 100000"));
@@ -587,6 +587,7 @@ const GOVERNED_RUNTIME_DIRS: &[&str] = &[
 /// has to be named file by file.
 const GOVERNED_RUNTIME_FILES: &[&str] = &[
     "crates/effigy-manifest/src/config_sections/docs_policy.rs",
+    "crates/effigy-manifest/src/portfolio.rs",
     "crates/effigy-codegraph/src/docs_profile.rs",
     "src/runner/docs_command/context.rs",
 ];
@@ -609,6 +610,8 @@ const EXPECTED_GOVERNED_DIR_FILES: &[&str] = &[
     "crates/effigy-codegraph/src/docs_context/payload.rs",
     "crates/effigy-codegraph/src/docs_context/rank.rs",
     "crates/effigy-codegraph/src/docs_context/scope.rs",
+    "crates/effigy-codegraph/src/docs_context/sources.rs",
+    "crates/effigy-codegraph/src/docs_context/sources_payload.rs",
     "crates/effigy-codegraph/src/language/markdown/extract.rs",
     "crates/effigy-codegraph/src/language/markdown/mod.rs",
     "crates/effigy-codegraph/src/language/markdown/paths.rs",

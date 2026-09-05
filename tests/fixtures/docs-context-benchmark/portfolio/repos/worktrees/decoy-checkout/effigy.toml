@@ -1,0 +1,8 @@
+# Opted in, and still never considered: `worktrees` is a skipped container name,
+# so enumeration never descends into it.
+
+[catalog]
+alias = "decoy-checkout"
+
+[docs_policy.sources]
+share = true

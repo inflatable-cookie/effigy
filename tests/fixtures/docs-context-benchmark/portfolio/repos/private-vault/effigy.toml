@@ -1,0 +1,11 @@
+# Present, indexable, and deliberately never shared: no `[docs_policy.sources]`
+# table at all. A portfolio must report it and must not search it.
+
+[catalog]
+alias = "private-vault"
+
+[manifest]
+minimum_effigy_version = "0.7.0"
+
+[tasks]
+ping = "printf ok"

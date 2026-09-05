@@ -50,6 +50,19 @@ pub(super) fn run_bounded_graph_operation(
     budget: Duration,
     operation: impl Fn() -> Result<String, RunnerError> + Send + Clone + 'static,
 ) -> Result<String, RunnerError> {
+    run_bounded_graph_value(repo_root, command, budget, operation)
+}
+
+/// Same bound, for an operation that yields a typed value instead of rendered
+/// output. Cross-repository routing needs the per-repository payload back so a
+/// timeout on one neighbour can be reported next to another's results; sharing
+/// this function keeps that inside the one timeout model.
+pub(super) fn run_bounded_graph_value<T: Send + 'static>(
+    repo_root: &Path,
+    command: &'static str,
+    budget: Duration,
+    operation: impl Fn() -> Result<T, RunnerError> + Send + Clone + 'static,
+) -> Result<T, RunnerError> {
     // Clear any phase left by earlier graph work in this process, so a bound
     // that expires before the worker starts reports no phase rather than a
     // previous command's.

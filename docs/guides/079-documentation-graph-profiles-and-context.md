@@ -206,6 +206,81 @@ consequences are worth knowing before you tune a query:
   traversed result that fits the byte budget. Remaining slots follow the normal
   deterministic rank order. A one-section query remains lexical-only.
 
+## Routing Across Repositories
+
+One question often belongs to several checkouts at once. `--sources` asks all
+of them in a single call and returns the answers grouped by repository:
+
+```bash
+effigy docs context "release gate policy" --sources ~/Dev/projects/portfolio.toml
+effigy docs context "release gate policy" --sources ~/Dev/projects --only effigy
+effigy --json docs context "release gate policy" --sources portfolio.toml
+```
+
+Membership is two-sided, and both halves are committed text. The portfolio file
+names where to look:
+
+```toml
+# portfolio.toml - paths are relative to this file
+[portfolio]
+directories = ["."]
+```
+
+Each repository decides for itself whether it wants to be found:
+
+```toml
+# that repository's own effigy.toml
+[docs_policy.sources]
+share = true
+front_doors = ["docs/README.md", "AGENTS.md"]
+skill_roots = [".agents/skills"]
+```
+
+A child joins only if it is a git checkout, has an `effigy.toml`, and declares
+`share = true`. Enumeration is one level deep per named directory; it never
+descends further, never follows a symlink out of the directory, and never
+considers a hidden directory or one named `.paseo`, `worktrees`,
+`node_modules`, or `target`. The handle is the directory name, and `--only`
+selects on it. Passing a directory to `--sources` is the same as a portfolio
+naming that one directory. There are no globs and no unknown keys: both files
+fail to parse rather than quietly widening.
+
+Each repository is answered through the same single-repository retrieval, with
+its own graph, lock, freshness, and full section and byte budget. Execution is
+sequential and there is no shared index or cache. Results stay in their own
+block, ranked from 1 within it: rankings are never merged and one repository's
+authority is never compared with another's, because authority is repository
+policy and two repositories do not share one policy.
+
+### Statuses
+
+Every repository the portfolio can reach appears in the report, healthy or not,
+and every non-`ok` status carries a next step.
+
+| status | meaning |
+| --- | --- |
+| `ok` | answered with at least one section |
+| `empty` | answered, and nothing in it matched |
+| `stale` | answered from an index that is behind or carries failed paths |
+| `timeout` | did not answer inside `EFFIGY_GRAPH_TIMEOUT_MS` |
+| `not-shared` | present, and never opted in |
+| `missing` | the named directory or checkout is absent |
+| `invalid` | not a checkout, or its manifest could not be read |
+| `disallowed` | an `--only` handle that resolved to nothing |
+
+The call exits 0 when at least one repository is `ok` or `empty`, so a
+degraded neighbour never hides a healthy one. It fails only when none answered,
+and the failure still lists every status. A missing or unparsable portfolio
+file is a usage error: a caller that named a portfolio wants that portfolio.
+
+### Source identity
+
+Every repository block carries the checkout's current HEAD and the HEAD its
+index was built from, and every result carries `content_identity`: `committed`
+when the file matches HEAD, `working-tree` otherwise. Identity is never
+optimistic — if git cannot answer, or the index carries no clean stamp, the
+excerpt is reported as working-tree content rather than as committed bytes.
+
 ## Freshness
 
 The documentation graph shares the code graph database, lock, health, and lazy
@@ -230,6 +305,13 @@ named historical source is not retrieved, an unrelated high-authority document
 enters a report, or a fixture no-match query returns anything. Empty-result
 cases run only against fixture corpora; a live-target empty case is rejected
 before the matrix executes.
+
+A third target replays cross-repository routing over
+`tests/fixtures/docs-context-benchmark/portfolio`, with a frozen case for every
+status, for grouping, for source identity, and for both exit rules. It copies
+the fixture into the report directory and turns three children into real git
+checkouts, because a dirty file and a duplicate single-valued field cannot
+exist in a clean committed tree.
 
 The corpus, expected sources, and pass criteria are frozen in
 `scripts/benchmark-docs-context.rhai` and committed before each run, with the

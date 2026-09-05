@@ -20,6 +20,8 @@ use crate::storage::GraphStore;
 mod payload;
 mod rank;
 mod scope;
+mod sources;
+mod sources_payload;
 
 pub use payload::{
     DocsContextBudgetSetPayload, DocsContextBudgetsPayload, DocsContextDiagnosticPayload,
@@ -28,6 +30,14 @@ pub use payload::{
     DocsContextResultPayload, DocsContextTermPayload, DocsContextTruncationPayload,
     DEFAULT_MAX_BYTES, DEFAULT_MAX_HOPS, DEFAULT_MAX_SECTIONS, DOCS_CONTEXT_SCHEMA,
     DOCS_CONTEXT_SCHEMA_VERSION, MAX_MAX_BYTES, MAX_MAX_HOPS, MAX_MAX_SECTIONS,
+};
+
+pub use sources::{docs_context_sources, SourceQueryOutcome};
+pub use sources_payload::{
+    DocsContextRepositoryPayload, DocsContextSourceResultPayload, DocsContextSourcesPayload,
+    CONTENT_IDENTITY_COMMITTED, CONTENT_IDENTITY_WORKING_TREE, DOCS_CONTEXT_SOURCES_SCHEMA,
+    DOCS_CONTEXT_SOURCES_SCHEMA_VERSION, STATUS_DISALLOWED, STATUS_EMPTY, STATUS_INVALID,
+    STATUS_MISSING, STATUS_NOT_SHARED, STATUS_OK, STATUS_STALE, STATUS_TIMEOUT,
 };
 
 use rank::Candidate;

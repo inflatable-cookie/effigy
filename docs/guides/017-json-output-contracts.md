@@ -142,6 +142,8 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.graph.context.v1`
 - `effigy.graph.explore.v1`
 - `effigy.graph.affected.v1`
+- `effigy.docs.context.v1`
+- `effigy.docs.context.sources.v1`
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
 - `effigy.deploy.plan.v1`

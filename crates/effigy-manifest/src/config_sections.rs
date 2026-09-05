@@ -48,7 +48,7 @@ pub use docs_policy::{
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
     ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicyIndexConfig,
-    ManifestDocsPolicyNextActionConfig,
+    ManifestDocsPolicyNextActionConfig, ManifestDocsPolicySourcesConfig,
 };
 pub use release::{ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails};
 pub use secrets::{

@@ -194,6 +194,12 @@ pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static
         "labels = [\"Related\", \"See also\"]",
         "headings = [\"Related\"]",
         "",
+        "[docs_policy.sources]",
+        "# Opt this repository in to `docs context --sources` routing from a portfolio.",
+        "share = false",
+        "front_doors = [\"docs/README.md\", \"AGENTS.md\"]",
+        "skill_roots = [\".agents/skills\"]",
+        "",
     ]
 }
 

@@ -13,12 +13,57 @@ pub struct ManifestDocsPolicyConfig {
     pub next_actions: BTreeMap<String, ManifestDocsPolicyNextActionConfig>,
     #[serde(default)]
     pub graph: Option<ManifestDocsPolicyGraphConfig>,
+    #[serde(default)]
+    pub sources: Option<ManifestDocsPolicySourcesConfig>,
 }
 
 impl ManifestDocsPolicyConfig {
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
         if let Some(graph) = &self.graph {
             graph.validate(manifest_path)?;
+        }
+        if let Some(sources) = &self.sources {
+            sources.validate(manifest_path)?;
+        }
+        Ok(())
+    }
+}
+
+/// Repository-owned cross-repository sharing declaration (`[docs_policy.sources]`).
+///
+/// This is the repository's own half of two-sided membership: a portfolio file
+/// names where to look, and this table says the repository wants to be found.
+/// Absent table means the repository is never searched from another checkout.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub struct ManifestDocsPolicySourcesConfig {
+    /// Opt in to cross-repository routing. Absent or `false` is `not-shared`.
+    #[serde(default)]
+    pub share: bool,
+    /// Repository-relative files an agent should read first.
+    #[serde(default, alias = "front_doors")]
+    pub front_doors: Vec<String>,
+    /// Repository-relative directories holding agent skills.
+    #[serde(default, alias = "skill_roots")]
+    pub skill_roots: Vec<String>,
+}
+
+impl ManifestDocsPolicySourcesConfig {
+    pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
+        for (index, front_door) in self.front_doors.iter().enumerate() {
+            validate_repo_relative_path(
+                manifest_path,
+                &format!("docs_policy.sources.front_doors[{index}]"),
+                front_door,
+            )?;
+        }
+        for (index, skill_root) in self.skill_roots.iter().enumerate() {
+            validate_repo_relative_path(
+                manifest_path,
+                &format!("docs_policy.sources.skill_roots[{index}]"),
+                skill_root,
+            )?;
         }
         Ok(())
     }

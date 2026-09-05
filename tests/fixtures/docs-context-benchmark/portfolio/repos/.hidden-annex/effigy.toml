@@ -1,0 +1,7 @@
+# Opted in, and still never considered: hidden directories are skipped.
+
+[catalog]
+alias = "hidden-annex"
+
+[docs_policy.sources]
+share = true
