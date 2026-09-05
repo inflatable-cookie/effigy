@@ -1,72 +1,151 @@
 # g09.006 Cross-Repository Source Routing
 
-Status: Planned (conditional on `g09.005` evidence; no ready card)
+Status: Queued (serial after `g09.007`)
 Created: 2026-09-05
-Depends on: [`g09.005`](./005-docs-context-latency-and-freshness.md)
-Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
+Frozen: 2026-09-05 (operator confirmed)
+Spec: [`122`](../../specs/122-cross-repository-source-routing-strict-lane.md)
+Card: [`1115`](./batch-cards/1115-cross-repository-source-routing.md)
+Depends on: [`g09.005`](./005-docs-context-latency-and-freshness.md) (complete),
+[`g09.007`](./007-docs-context-exact-identifier-retrieval.md) (serial edge)
+Contracts: [`041`](../../contracts/041-documentation-graph-profile-contract.md),
+[`037`](../../contracts/037-explicit-catalog-membership-contract.md) (membership posture)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
 Origin: Northstar shared-knowledge retrieval pilot,
 `northstar/docs/triage/20260905-093742-shared-knowledge-retrieval-pilot.md`;
-operator-confirmed direction relayed by the Northstar Chatterbox, 2026-09-05
+operator-confirmed direction relayed by the Northstar Chatterbox, 2026-09-05;
+membership model revised by the operator on 2026-09-05
 
 ## Purpose
 
-Let an agent ask one question across an explicitly named set of local
-repositories and get back exact sections with per-repository provenance,
-using Effigy's existing repository-local retrieval underneath. Centralise
-discovery, not copies of decisions.
+Let an agent ask one question across the local repositories that have opted
+in, and get back exact sections grouped by repository with per-repository
+provenance and identity, using Effigy's existing repository-local retrieval
+underneath. Centralise discovery, not copies of decisions.
 
 ## Gate
 
-This roadmap compiles into a strict spec and ready card only after `g09.005`
-closes with measured warm and stale budgets that make a multi-repository call
-plausible inside an agent-sized budget. If `g09.005` shows that per-repository
-retrieval cannot meet its budget, this roadmap is re-planned, not started.
+`g09.005` measured warm retrieval at about 600 ms per repository and stale
+refresh at about 10 s, which clears the latency gate. The lane starts after
+`g09.007` merges so identifier queries work before any recall is measured.
 
-## Fixed Direction (operator-confirmed)
+## Frozen Decisions (operator confirmed 2026-09-05)
 
-- A source directory names allowed repositories, their documentation and
-  skill roots, and canonical front doors. No implicit crawling of the
-  projects directory; a repository absent from the directory is out of scope
-  and reported as disallowed, not searched.
-- Results retain repository identity, path, exact span, and commit or
-  dirty-content identity. A working-tree excerpt is never labelled as exact
-  commit bytes.
-- Authority and currentness stay repository-declared. Per-repository authority
-  weights are not compared as one global score; a repository with no profile
-  reports unknown currentness and zero authority.
-- Partial unavailability (missing checkout, stale or locked graph, timeout)
-  is reported for that repository and must not block healthy repositories.
-- Thin routing over existing local retrieval: no new index, daemon, MCP
-  server, embeddings, hosted service, or artifact cache.
-- No agent may promote retrieved content into another project's authority.
+- **Caller surface:** `effigy docs context <QUERY> --sources <PATH>` with the
+  standard leading `--repo` and `--json`, the existing budget flags, and an
+  optional repeatable `--only <HANDLE>`. `--sources` names a portfolio file
+  or a directory. JSON uses a distinct `effigy.docs.context.sources.v1`
+  payload; the single-repository `effigy.docs.context.v1` shape is untouched.
+- **Two-sided membership, no crawling.** The portfolio file names where to
+  look; each repository declares that it wants to be found:
 
-## To Freeze Before a Ready Card
+  ```toml
+  # portfolio file (Northstar may commit one; anyone may keep a local one)
+  [portfolio]
+  directories = ["."]      # relative to this file; immediate children only
+  ```
 
-- the caller surface (command shape, directory file location and grammar,
-  `--json` payload id) and how it composes existing `docs context` budgets
-- per-call latency and output budgets across N repositories, and the
-  per-repository sub-budget derived from `g09.005` measurements
-- partial-failure semantics and the exact per-repository status vocabulary
-- access scope: how a directory entry is validated, what a disallowed or
-  missing repository returns
-- the replay protocol: the pilot's five frozen questions plus the required
-  negative controls (missing source, retired versus current authority, same
-  term in different repositories, dirty or stale checkout, disallowed
-  repository, no relevant answer), each compared against ordinary source
-  search for time to usable evidence, source correctness, and bytes returned
+  ```toml
+  # each project's effigy.toml (portable, committed)
+  [docs_policy.sources]
+  share = true
+  front_doors = ["docs/README.md", "AGENTS.md"]
+  skill_roots = [".agents/skills"]
+  ```
 
-No speedup or recall claim is made before that replay is measured.
+  Roots come from the repository's own `[docs_policy.graph].roots`, else
+  baseline Markdown. Enumeration is one level deep per named directory. A
+  child joins only if it is a git checkout, has `effigy.toml`, and declares
+  `share = true`. The handle is the directory name. Hidden directories and
+  worktree containers are never considered. Passing a directory to
+  `--sources` is equivalent to a file naming that one directory.
+- **Execution:** sequential per repository, each with its own graph, lock,
+  freshness, and `EFFIGY_GRAPH_TIMEOUT_MS` budget; each repository receives
+  the full requested section and byte budget. Parallel execution is deferred
+  until a measurement says sequential is too slow.
+- **Output:** results grouped per repository in directory order, never
+  merged into one ranked list; authority and currentness stay
+  repository-declared and are not compared across repositories. Each block
+  carries the handle, status, freshness, front doors, and results.
+- **Per-repository status vocabulary:** `ok`, `empty`, `stale` (results may
+  be behind), `timeout`, `not-shared` (present, no opt-in), `missing`
+  (directory or checkout absent), `invalid` (bad manifest or entry),
+  `disallowed` (`--only` handle resolves to nothing). The call exits 0 when
+  at least one repository is `ok` or `empty`; it fails only when none is.
+  Every non-ok repository carries a next step.
+- **Source identity** per result, additive: handle, current HEAD, indexed
+  HEAD, and whether the file matches HEAD or is working-tree content. A
+  working-tree excerpt is never labelled as committed bytes.
+- **Replay protocol:** automated proof on two fixture repositories plus a
+  fixture portfolio file covering every status and every negative control
+  (missing source, retired versus current, same term in two repositories,
+  dirty checkout, not-shared, disallowed, no answer), joined to the benchmark.
+  The pilot's five questions, with K5 rephrased with the Northstar Chatterbox
+  first, are replayed by hand against Northstar, Effigy, and Underlay and
+  compared with plain `rg` on time to usable evidence, source correctness,
+  and bytes returned; that table lives in the evidence log. No speedup or
+  recall claim before it exists.
+- **Latency acceptance:** three shared repositories warm inside 5 s total on
+  the reference machine.
+
+## Cards
+
+- [ ] [`1115`](./batch-cards/1115-cross-repository-source-routing.md) —
+  queued; ready when card `1114` merges
 
 ## Non-Goals
 
 - central authoritative memory copies, embeddings, MCP server, hosted
   knowledge service, separate index or daemon, artifact caching
+- recursive discovery, globs, or scanning anything not named and opted in
+- merged cross-repository ranking or a global authority scale
 - agent notification or coordination changes
 - release or workflow mutation; writes to any consumer repository
 - Northstar documentation authority or lifecycle doctrine (Northstar owns it)
+- autonomous promotion of retrieved content into any project's authority
+
+## Dispatch Manifest
+
+Published for the coordinator at the promoting commit on `main`.
+
+- **Lane:** card `1115`, roadmap `g09.006`, strict spec `122`. State:
+  queued. **Serial edge:** starts only after card `1114` (`g09.007`) has
+  merged to `main`. Not approved for parallel execution with `1114`.
+- **Prerequisites:** `1114` merged; clean `main`; no other active strict
+  lane. The manual portfolio replay additionally needs the K5 rephrasing
+  settled in triage; if it is not settled when the worker reaches that step,
+  replay K1 to K4 and record K5 as pending, do not block the PR.
+  **Completion:** PR merged with evidence log, card, roadmap, spec, guides,
+  benchmark freeze, starter/init profile addition, and changelog closed out.
+- **Owned mutable paths:** `crates/effigy-codegraph/src/docs_context/**`,
+  `crates/effigy-manifest/src/**` (`[docs_policy.sources]` grammar),
+  `crates/effigy-cli/src/**` (flag parsing and help for `docs context`),
+  `src/runner/docs_command/**`, `scripts/benchmark-docs-context.rhai`,
+  `tests/fixtures/docs-context-benchmark/**` (two fixture repositories and a
+  portfolio file), tests under those crates and `src/tests/**`,
+  `docs/guides/079-documentation-graph-profiles-and-context.md`,
+  `docs/guides/017-json-output-contracts.md`,
+  `docs/guides/026-json-payload-examples.md`, the Northstar init/starter
+  profile assets that emit `[docs_policy.graph]` (add the `sources` block),
+  and this repository's own `effigy.toml` (opt in).
+  **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
+  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1115`,
+  spec `122`, contract `041` (command contract and drift trigger for the new
+  flag and grammar), `docs/specs/README.md`, `docs/roadmaps/README.md`,
+  `docs/roadmaps/g09/README.md`.
+- **Concurrency:** no approved siblings. Serial after `1114`.
+- **Worker capability class:** frontier-capable implementation worker; the
+  lane spans manifest grammar, a new payload, fixture design, and a measured
+  replay.
+- **Acceptance evidence and review oracle:** card `1115` acceptance and spec
+  `122` whole-lane oracle; fixture benchmark with the new freeze, focused
+  tests, the three-repository warm timing, `effigy qa`, fmt, clippy,
+  `git diff --check`; one dated evidence log with the replay table.
+- **Stop conditions and escalation owner:** spec `122` stop conditions.
+  Planning questions escalate to the coordinator, then Chatterbox. Any
+  change to contract `041` semantics beyond the frozen grammar and flag
+  escalates to Chatterbox before code.
 
 ## Next Task
 
-Wait for `g09.005` closeout evidence. Then Chatterbox freezes the items above
-into a strict spec and one ready card, or re-plans.
+Wait for `1114` to merge, then execute card `1115`. Chatterbox settles the
+K5 rephrasing with the Northstar Chatterbox in parallel.

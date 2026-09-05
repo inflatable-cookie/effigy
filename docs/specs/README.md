@@ -40,7 +40,9 @@ Recently completed strict lane awaiting planning disposition:
 
 Queued strict lanes:
 
-- none
+- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
+  cross-repository source routing over existing local retrieval (`g09.006`,
+  card `1115`); serial after spec `121`
 
 Archived strict lanes:
 
@@ -104,7 +106,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1114` under strict spec `121`. Specs `119` and `120` are
-archived. The consumer cohort checkpoint after `g09.003` is deferred by
+Execute card `1114` under strict spec `121`; card `1115` (spec `122`) follows
+serially. Specs `119` and `120` are archived. The consumer cohort checkpoint after `g09.003` is deferred by
 operator direction (2026-09-05); Acowtancy remains read-only and Effigy
 release authority stays separate.

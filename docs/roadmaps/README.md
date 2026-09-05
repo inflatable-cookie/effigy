@@ -173,17 +173,21 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   `1113` merged in PR `91` and spec `120` is archived.
   Ready [`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md)
   makes exact identifier queries find their containing section under strict
-  spec `121`; card `1114` is ready. Planned
-  [`g09.006`](./g09/006-cross-repository-source-routing.md) holds the
-  conditional cross-repository source-routing step with no ready card.
+  spec `121`; card `1114` is ready. Queued
+  [`g09.006`](./g09/006-cross-repository-source-routing.md) routes one
+  query across opted-in repositories under named directories, grouped per
+  repository with identity, under strict spec `122` (card `1115`, serial
+  after `1114`).
 
 ## Active Strict Lane
 
 Strict spec [`121`](../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 is active for [`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md).
 Card [`1114`](./g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
-is the ready card; its dispatch manifest is in the roadmap. Specs `119` and
-`120` are archived. Direct invocation remains canonical and help grouping
+is the ready card; its dispatch manifest is in the roadmap. Strict spec
+[`122`](../specs/122-cross-repository-source-routing-strict-lane.md) and card
+[`1115`](./g09/batch-cards/1115-cross-repository-source-routing.md) are queued
+serially behind `1114`. Specs `119` and `120` are archived. Direct invocation remains canonical and help grouping
 remains.
 
 ## Research Program
@@ -239,8 +243,8 @@ Before rollover:
 
 ## Next Task
 
-Execute card `1114` (docs context exact identifier retrieval). Then
-Chatterbox freezes `g09.006` with the operator. The consumer cohort
+Execute card `1114` (docs context exact identifier retrieval), then card
+`1115` (cross-repository source routing). The consumer cohort
 checkpoint is deferred by operator direction on 2026-09-05. Keep Acowtancy
 read-only and Effigy release execution and S3 extraction behind their named
 gates.
