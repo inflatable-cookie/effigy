@@ -336,3 +336,11 @@ Northstar shared-knowledge retrieval pilot and operator-confirmed direction,
 2026-09-05. [`g09.006`](./g09/006-cross-repository-source-routing.md) is
 **planned** for explicit cross-repository source routing, conditional on
 `g09.005` evidence, with no ready card.
+
+`g09.004` (PR `90`) and `g09.005` (PR `91`) are **complete**; specs `119`
+and `120` are archived. Warm `docs context` on Effigy fell from ~10 s to
+~600 ms and stale refresh to ~10 s.
+[`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md) is
+**ready** under strict spec `121` (card `1114`): exact identifier queries
+seed and rank the sections that contain them, frozen in the benchmark.
+Operator confirmed 2026-09-05.

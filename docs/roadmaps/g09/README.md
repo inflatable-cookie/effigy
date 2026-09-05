@@ -16,6 +16,7 @@ extends the governed contract into current consumer evidence.
 - [`004-release-gate-diagnosability.md`](./004-release-gate-diagnosability.md)
 - [`005-docs-context-latency-and-freshness.md`](./005-docs-context-latency-and-freshness.md)
 - [`006-cross-repository-source-routing.md`](./006-cross-repository-source-routing.md)
+- [`007-docs-context-exact-identifier-retrieval.md`](./007-docs-context-exact-identifier-retrieval.md)
 
 ## Design Posture
 
@@ -45,8 +46,13 @@ limitations are re-planned in the canonical triage note.
 [`g09.006`](./006-cross-repository-source-routing.md) is planned and gated on
 that evidence; it has no ready card.
 
+[`g09.007`](./007-docs-context-exact-identifier-retrieval.md) is ready under
+strict spec `121`: exact identifier queries seed and rank the sections that
+contain them, frozen in the benchmark. Card `1114` is the ready card.
+
 ## Next Task
 
-The g09.005 evidence is complete. Chatterbox decides whether the g09.006
-evidence gate is unlocked; the consumer cohort checkpoint remains deferred by
-operator direction (2026-09-05). Effigy release authority stays separate.
+Execute card `1114`. The `g09.005` latency evidence clears the `g09.006`
+gate; Chatterbox freezes `g09.006` with the operator after `1114`. The
+consumer cohort checkpoint remains deferred by operator direction
+(2026-09-05). Effigy release authority stays separate.

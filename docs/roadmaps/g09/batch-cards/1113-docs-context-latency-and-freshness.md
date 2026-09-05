@@ -1,7 +1,7 @@
 # 1113 - Docs Context Latency and Freshness
 
 Roadmap: [`../005-docs-context-latency-and-freshness.md`](../005-docs-context-latency-and-freshness.md)
-Spec: [`../../../specs/120-docs-context-latency-and-freshness-strict-lane.md`](../../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
+Spec: [`../../../specs/archive/120-docs-context-latency-and-freshness-strict-lane.md`](../../../specs/archive/120-docs-context-latency-and-freshness-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 
 Status: Complete

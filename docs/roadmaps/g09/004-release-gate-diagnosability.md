@@ -2,7 +2,7 @@
 
 Status: Complete
 Created: 2026-09-05
-Spec: [`119`](../../specs/119-release-gate-diagnosability-strict-lane.md)
+Spec: [`119`](../../specs/archive/119-release-gate-diagnosability-strict-lane.md)
 Card: [`1112`](./batch-cards/1112-release-gate-diagnosability.md)
 Contracts: [`035`](../../contracts/035-release-tag-identity-contract.md),
 [`039`](../../contracts/039-pre-release-ci-proof-contract.md)

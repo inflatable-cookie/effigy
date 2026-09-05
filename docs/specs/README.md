@@ -28,9 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`119`](./119-release-gate-diagnosability-strict-lane.md) — persist
-  release gate output and environment, surface the failing tail, announce the
-  gate inventory (`g09.004`, card `1112`)
+- [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
+  exact identifier terms seed and rank the sections that contain them, with
+  two frozen benchmark cases (`g09.007`, card `1114`)
 
 Recently completed strict lane awaiting planning disposition:
 
@@ -40,12 +40,16 @@ Recently completed strict lane awaiting planning disposition:
 
 Queued strict lanes:
 
-- [`120`](./120-docs-context-latency-and-freshness-strict-lane.md) — docs
-  context warm/stale latency reproduced and repaired to frozen budgets
-  (`g09.005`, card `1113`); serial after spec `119`
+- none
 
 Archived strict lanes:
 
+- [`120`](./archive/120-docs-context-latency-and-freshness-strict-lane.md) —
+  docs context warm/stale latency reproduced and repaired to frozen budgets
+  (completed with card `1113` under `g09.005`, PR `91`)
+- [`119`](./archive/119-release-gate-diagnosability-strict-lane.md) —
+  persisted release gate output and environment, failing tail, gate inventory
+  (completed with card `1112` under `g09.004`, PR `90`)
 - [`117`](./archive/117-flat-command-execution-strict-lane.md) —
   restored canonical direct invocation while keeping grouped help (completed
   with card `1110` under `g09.002`)
@@ -100,7 +104,7 @@ Other planning specs:
 
 ## Next Task
 
-Cards `1112` and `1113` are complete under strict specs `119` and `120`.
-Chatterbox decides whether the g09.005 evidence unlocks g09.006. The consumer
-cohort checkpoint remains deferred by operator direction (2026-09-05);
-Acowtancy remains read-only and Effigy release authority stays separate.
+Execute card `1114` under strict spec `121`. Specs `119` and `120` are
+archived. The consumer cohort checkpoint after `g09.003` is deferred by
+operator direction (2026-09-05); Acowtancy remains read-only and Effigy
+release authority stays separate.

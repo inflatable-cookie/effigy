@@ -2,7 +2,7 @@
 
 Status: Complete
 Created: 2026-09-05
-Spec: [`120`](../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
+Spec: [`120`](../../specs/archive/120-docs-context-latency-and-freshness-strict-lane.md)
 Card: [`1113`](./batch-cards/1113-docs-context-latency-and-freshness.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)

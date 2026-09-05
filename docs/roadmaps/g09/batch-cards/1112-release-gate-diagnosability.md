@@ -1,7 +1,7 @@
 # 1112 - Release Gate Diagnosability
 
 Roadmap: [`../004-release-gate-diagnosability.md`](../004-release-gate-diagnosability.md)
-Spec: [`../../../specs/119-release-gate-diagnosability-strict-lane.md`](../../../specs/119-release-gate-diagnosability-strict-lane.md)
+Spec: [`../../../specs/archive/119-release-gate-diagnosability-strict-lane.md`](../../../specs/archive/119-release-gate-diagnosability-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/039-pre-release-ci-proof-contract.md`](../../../contracts/039-pre-release-ci-proof-contract.md)
 
 Status: Complete

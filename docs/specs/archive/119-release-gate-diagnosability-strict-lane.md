@@ -3,12 +3,12 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
-Roadmap: [`g09.004`](../roadmaps/g09/004-release-gate-diagnosability.md)
-Ready card: [`1112`](../roadmaps/g09/batch-cards/1112-release-gate-diagnosability.md)
-Contracts: [`035`](../contracts/035-release-tag-identity-contract.md),
-[`039`](../contracts/039-pre-release-ci-proof-contract.md)
-Guides: [`051`](../guides/051-release-orchestration.md),
-[`017`](../guides/017-json-output-contracts.md)
+Roadmap: [`g09.004`](../../roadmaps/g09/004-release-gate-diagnosability.md)
+Ready card: [`1112`](../../roadmaps/g09/batch-cards/1112-release-gate-diagnosability.md)
+Contracts: [`035`](../../contracts/035-release-tag-identity-contract.md),
+[`039`](../../contracts/039-pre-release-ci-proof-contract.md)
+Guides: [`051`](../../guides/051-release-orchestration.md),
+[`017`](../../guides/017-json-output-contracts.md)
 Source: consumer intake from Swallowtail (2026-09-05); two authorized
 `release prepare --check-gates` attempts failed the `floor` gate with only
 `gate floor failed` and an exit code retained.
