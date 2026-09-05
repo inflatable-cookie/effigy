@@ -4,10 +4,11 @@ Roadmap: [`../007-docs-context-exact-identifier-retrieval.md`](../007-docs-conte
 Spec: [`../../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md`](../../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: docs-context query terms, lexical seeding and scoring, benchmark matrix
 Created: 2026-09-05
 Ready since: 2026-09-05 operator confirmation
+Completed: 2026-09-05; PR `92`; reviewed implementation head `29831fc04`
 
 ## Purpose
 
@@ -34,16 +35,16 @@ it, and freeze that behaviour in the benchmark.
 
 ## Acceptance
 
-- [ ] `effigy docs context "catalog_tasks" --max-sections 3` on Effigy
+- [x] `effigy docs context "catalog_tasks" --max-sections 3` on Effigy
       returns the guide `026` section containing the literal in the top 3
       with a match reason naming `catalog_tasks`
-- [ ] new fixture identifier case passes with its rival ranked below
-- [ ] all eleven pre-existing benchmark cases keep their ranks; freeze
+- [x] new fixture identifier case passes with its rival ranked below
+- [x] all eleven pre-existing benchmark cases keep their ranks; freeze
       history updated
-- [ ] `graph` does not match `graphql`; the exact term does not match a
+- [x] `graph` does not match `graphql`; the exact term does not match a
       longer identifier containing it
-- [ ] warm Effigy query succeeds under `EFFIGY_GRAPH_TIMEOUT_MS=5000`
-- [ ] no FTS tokenizer, storage, schema id, budget, freshness, traversal,
+- [x] warm Effigy query succeeds under `EFFIGY_GRAPH_TIMEOUT_MS=5000`
+- [x] no FTS tokenizer, storage, schema id, budget, freshness, traversal,
       currentness, or authority change
 
 ## Review Oracle
@@ -83,4 +84,7 @@ true for identifiers.
 
 ## Next Task
 
-Open the PR at the exact reviewed head.
+PR `92` closeout is on this branch. Independent exact-head review of the
+closeout commit, then orchestrator merge. K4 is closed; K5 remains in
+[`20260905-docs-context-identifier-retrieval-and-k5-expectation`](../../../triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md).
+Evidence: [`05-133718`](../../../logs/2026-09/05-133718-docs-context-exact-identifier-1114.md).
