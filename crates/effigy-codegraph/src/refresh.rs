@@ -25,6 +25,7 @@ use crate::index::{
     graph_freshness_payload, run_index_unlocked, stale_paths_for_repo, IndexReport,
 };
 use crate::json::GraphFreshnessPayload;
+use crate::phase::{self, GraphPhase};
 use crate::storage::GraphStore;
 
 /// How long a query waits for an in-flight refresh before serving current
@@ -60,12 +61,19 @@ impl RefreshLock {
         wait_ms: u64,
     ) -> Result<Option<Self>, CodeGraphError> {
         let deadline = Instant::now() + Duration::from_millis(wait_ms);
+        let mut waited = false;
         loop {
             if let Some(lock) = Self::try_acquire(repo_root)? {
                 return Ok(Some(lock));
             }
             if Instant::now() >= deadline {
                 return Ok(None);
+            }
+            if !waited {
+                // Only a real wait is worth reporting: an uncontended acquire
+                // must not overwrite the phase the caller is actually in.
+                phase::enter(GraphPhase::RefreshLockWait);
+                waited = true;
             }
             std::thread::sleep(Duration::from_millis(LOCK_POLL_MS));
         }
@@ -148,6 +156,7 @@ pub(crate) fn ensure_fresh_with_wait_and_progress(
     in_flight_wait_ms: u64,
     mut progress: impl FnMut(RefreshPending),
 ) -> Result<RefreshOutcome, CodeGraphError> {
+    phase::enter(GraphPhase::FreshnessScan);
     let counts = store.counts()?;
     if counts.files == 0 {
         progress(RefreshPending::Cold);

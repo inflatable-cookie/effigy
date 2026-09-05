@@ -38,6 +38,7 @@ pub mod json;
 mod language;
 pub mod model;
 pub mod paths;
+pub mod phase;
 pub mod query;
 pub mod refresh;
 mod registry;
@@ -64,6 +65,11 @@ pub use ids::{ExtractorId, GraphId};
 pub use index::{run_index, status, status_with_refresh, IndexReport};
 /// Render graph payloads into the public JSON contract.
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
+/// What the graph was doing when a caller's wall-clock bound expired.
+pub use phase::{
+    reset as reset_graph_phase, snapshot as graph_phase_snapshot, GraphPhase, GraphPhaseSnapshot,
+    KNOWN_PHASE_NAMES,
+};
 /// Query helpers over the stored graph.
 pub use query::{
     affected, callees, callers, context, explore, files as query_files, impact, node,

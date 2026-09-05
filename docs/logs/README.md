@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/05-113123-docs-context-latency-and-freshness-1113.md`](./2026-09/05-113123-docs-context-latency-and-freshness-1113.md)
 - [`2026-09/05-105500-release-gate-diagnosability-1112.md`](./2026-09/05-105500-release-gate-diagnosability-1112.md)
 - [`2026-09/03-014518-acowtancy-consumer-replay-1111.md`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md)
 - [`2026-09/03-010246-vision-governance-review-cycle-2.md`](./2026-09/03-010246-vision-governance-review-cycle-2.md)

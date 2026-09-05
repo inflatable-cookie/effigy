@@ -12,6 +12,7 @@ use crate::model::{
     Confidence, DiagnosticRecord, DiagnosticSeverity, ExtractorRecord, IndexRunRecord, Provenance,
     GRAPH_STORAGE_SCHEMA_VERSION,
 };
+use crate::phase::{self, GraphPhase};
 use crate::registry::ExtractorRegistry;
 use crate::storage::{FileScanStateRecord, GraphStore};
 use crate::support::{file_record_from_source, sha256_hex};
@@ -54,6 +55,7 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     let profile_changed = stored_fingerprint.as_deref() != Some(current_fingerprint.as_str());
     let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_extractors = extractor_version_map(registry.all());
+    phase::enter(GraphPhase::IndexWalk);
     let scan_entries = crate::walk::scan_repo_files(repo_root)?;
     let mut current_states = BTreeMap::new();
     for extractor in registry.all() {
@@ -64,7 +66,9 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     let mut indexed_paths = BTreeSet::new();
     let mut skipped_paths = Vec::new();
 
+    phase::enter_with_total(GraphPhase::IndexFiles, scan_entries.len());
     for entry in &scan_entries {
+        phase::item_done();
         indexed_paths.insert(entry.relative_path.clone());
         let Some(extractor) = registry.for_path(&entry.relative_path) else {
             skipped_paths.push(entry.relative_path.clone());
@@ -215,6 +219,7 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     store.save_index_run(&run)?;
     store.save_metadata(DOCS_PROFILE_FINGERPRINT_KEY, &current_fingerprint)?;
     if graph_changed {
+        phase::enter(GraphPhase::SearchIndexRebuild);
         store.refresh_search_index()?;
     }
     crate::git::update_index_stamp(repo_root, &store)?;
@@ -310,6 +315,7 @@ pub(crate) fn stale_paths_for_repo(
     repo_root: &Path,
     store: &GraphStore,
 ) -> Result<Vec<String>, CodeGraphError> {
+    phase::enter(GraphPhase::FreshnessScan);
     let profile_state = load_docs_profile_state(repo_root)?;
     let file_states = store.file_scan_state_map()?;
     let current_entries = crate::walk::scan_repo_files(repo_root)?;

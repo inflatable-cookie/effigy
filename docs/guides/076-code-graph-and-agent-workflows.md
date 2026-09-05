@@ -94,6 +94,40 @@ Graph data queries have a 120000ms wall-clock budget by default. Set
 disables the bound. Explicit `graph index` and `graph watch` commands are
 unbounded.
 
+### Read a timeout
+
+A bound that expires returns the `effigy.graph.timeout.v1` detail. Alongside
+the health snapshot and recovery guidance it carries a `phase` block naming
+what the run was doing when the bound expired, so a timeout is diagnosable
+without re-running under a larger budget:
+
+```json
+"phase": {
+  "name": "index-files",
+  "elapsed_ms": 4820,
+  "items_done": 1804,
+  "items_total": 3940
+}
+```
+
+| Phase | What was running |
+| --- | --- |
+| `freshness-scan` | deciding whether the stored index still matches the tree |
+| `refresh-lock-wait` | waiting for another process to finish refreshing |
+| `index-walk` | enumerating repository files for a rebuild |
+| `index-files` | extracting and storing per-file graph records |
+| `search-index-rebuild` | rebuilding the shared full-text search table |
+| `docs-scope` | loading the documents a `docs context` query may see |
+| `docs-rank` | scoring and traversing candidates |
+| `docs-select` | applying section and byte budgets |
+
+`items_done` and `items_total` are present only for phases that count files;
+both are `null` otherwise. `phase` is absent when the run never reached graph
+work. A `refresh-lock-wait` or `index-*` phase means the budget was spent on a
+rebuild, so `effigy graph index --json` once will pay that cost separately; a
+`docs-*` phase means the index was already current and the query itself needs
+the larger budget.
+
 ### Check freshness
 
 ```sh
