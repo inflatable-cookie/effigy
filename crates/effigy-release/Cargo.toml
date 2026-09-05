@@ -8,6 +8,7 @@ description = "Release configuration and gate execution contracts for Effigy"
 
 [dependencies]
 effigy-changelog = { path = "../effigy-changelog" }
+effigy-core = { path = "../effigy-core" }
 effigy-manifest = { path = "../effigy-manifest" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 globset = "0.4"

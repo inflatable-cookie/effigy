@@ -98,9 +98,15 @@ fn reports_dir(root: &Path) -> PathBuf {
     root.join(RELEASE_GATE_REPORTS_DIR)
 }
 
-fn write_gate_environment(root: &Path) -> Result<PathBuf, std::io::Error> {
+fn prepare_reports_dir(root: &Path) -> Result<PathBuf, std::io::Error> {
+    effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(root)?;
     let dir = reports_dir(root);
     std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn write_gate_environment(root: &Path) -> Result<PathBuf, std::io::Error> {
+    let dir = prepare_reports_dir(root)?;
     let path = dir.join(ENVIRONMENT_FILE_NAME);
     let record = redacted_environment_record(&resolved_shell(), root, std::env::vars());
     let rendered = serde_json::to_string_pretty(&record).unwrap_or_else(|_| "{}".to_owned());
@@ -113,8 +119,7 @@ fn write_gate_log(
     result: &GateResult,
     started_at: &str,
 ) -> Result<PathBuf, std::io::Error> {
-    let dir = reports_dir(root);
-    std::fs::create_dir_all(&dir)?;
+    let dir = prepare_reports_dir(root)?;
     let path = dir.join(format!("{}.log", sanitize_gate_file_stem(&result.name)));
     let exit_code = result
         .exit_code

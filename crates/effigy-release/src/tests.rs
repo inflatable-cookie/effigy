@@ -2,13 +2,14 @@ use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
     apply_release_mutations, build_release_prepare_plan, collect_release_gate_run,
     compare_release_state_fingerprints, execute_release_prepare, format_release_tag, gate_blockers,
-    git_create_tag, is_release_state_file, load_release_config, load_release_context,
-    load_release_prepared_state, normalized_expected_files, render_release_gate_run_json,
-    render_release_gate_run_text, render_release_prepare_plan_text, render_release_prepared_text,
-    restore_mutation_snapshots, run_release_gates, snapshot_mutation_paths, test_support,
-    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
-    FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints, ResolvedGate, ResolvedVersionSource, VersionFileKind,
+    git_create_tag, git_modified_files, is_release_state_file, load_release_config,
+    load_release_context, load_release_prepared_state, normalized_expected_files,
+    render_release_gate_run_json, render_release_gate_run_text, render_release_prepare_plan_text,
+    render_release_prepared_text, restore_mutation_snapshots, run_release_gates,
+    snapshot_mutation_paths, test_support, validate_planned_release_version,
+    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
+    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
+    ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -813,6 +814,44 @@ fn failing_and_passing_gates_persist_logs_and_redacted_environment() {
         1
     );
     assert!(!passed_text.contains("stdout:"), "{passed_text}");
+}
+
+#[test]
+fn gate_persist_ignores_effigy_so_execute_plan_does_not_see_artifacts() {
+    let root = temp_repo("gate-ignore");
+    let status = Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(&root)
+        .status()
+        .expect("git init");
+    assert!(status.success());
+    fs::write(root.join("README.md"), "fixture\n").expect("readme");
+    assert!(!root.join(".gitignore").exists());
+
+    let pass = shell_gate("ok", "printf pass-ok");
+    let report = run_release_gates(&root, &[pass], true);
+    assert!(report.results[0].passed);
+    assert!(report.results[0].log_path.is_some());
+    assert!(report.environment_path.is_some());
+    assert!(root.join(".effigy/reports/release/gates/ok.log").is_file());
+    assert!(root
+        .join(".effigy/reports/release/gates/environment.json")
+        .is_file());
+    assert!(fs::read_to_string(root.join(".gitignore"))
+        .expect("gitignore")
+        .lines()
+        .any(|line| line.trim() == ".effigy" || line.trim() == ".effigy/"));
+
+    let modified = git_modified_files(&root).expect("git status");
+    let unexpected_effigy = modified
+        .iter()
+        .filter(|path| path == &".effigy" || path.starts_with(".effigy/"))
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_effigy.is_empty(),
+        "untracked .effigy artifacts would fail release execute --plan: {unexpected_effigy:?}"
+    );
 }
 
 #[test]

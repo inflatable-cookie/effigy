@@ -404,7 +404,9 @@ Gate behavior:
 - can be invoked directly with `effigy release gates`
 - writes `.effigy/reports/release/gates/<gate-name>.log` for every executed
   gate and `.effigy/reports/release/gates/environment.json` once per run
-  (latest run wins)
+  (latest run wins). Before writing, it invokes the existing `.effigy`
+  gitignore helper so those artifacts are not untracked working-tree
+  changes.
 - redacts captured environment values whose names contain `TOKEN`, `SECRET`,
   `KEY`, `PASSWORD`, or `CREDENTIAL`
 - announces `configured gates (N): <names>` on stderr before the first gate
