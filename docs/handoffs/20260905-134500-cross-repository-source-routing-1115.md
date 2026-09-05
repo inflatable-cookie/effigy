@@ -6,7 +6,7 @@ status: ready-to-launch
 lane: g09.006
 card: 1115
 spec: 122
-base_commit: bbb6f31f53bf22787fb3966e7aa31e25e87ff91f
+base_commit: 417a2ee65ad3a2793e7e6bfd30a0990c6b83c74a
 branch: worker/g09-006-cross-repository-source-routing-1115
 workspace: pending
 ---
