@@ -3,10 +3,10 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-03
-Roadmap: [`g09.003`](../roadmaps/g09/003-acowtancy-consumer-adoption-replay.md)
-Decision: [`D-2026-05`](../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
-Consumer contract: [`guide 056`](../guides/056-northstar-effigy-consumer-repo-contract.md)
-Ready card: [`1111`](../roadmaps/g09/batch-cards/1111-acowtancy-consumer-adoption-replay.md)
+Roadmap: [`g09.003`](../../roadmaps/g09/003-acowtancy-consumer-adoption-replay.md)
+Decision: [`D-2026-05`](../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
+Consumer contract: [`guide 056`](../../guides/056-northstar-effigy-consumer-repo-contract.md)
+Ready card: [`1111`](../../roadmaps/g09/batch-cards/1111-acowtancy-consumer-adoption-replay.md)
 
 ## Outcome
 

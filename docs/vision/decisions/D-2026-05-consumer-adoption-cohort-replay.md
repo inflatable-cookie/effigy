@@ -51,7 +51,7 @@ Traceability
   [`016`](../016-cross-repo-rollout-comparison-scorecard-template-v1.md),
   [`guide 056`](../../guides/056-northstar-effigy-consumer-repo-contract.md),
   [`g09.003`](../../roadmaps/g09/003-acowtancy-consumer-adoption-replay.md),
-  [`strict spec 118`](../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
+  [`strict spec 118`](../../specs/archive/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 
 Review checkpoint: card `1111` closeout or the next monthly governance review,
 whichever comes first.

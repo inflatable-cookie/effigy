@@ -4,7 +4,7 @@ Status: complete
 Created: 2026-09-03
 Roadmap: g09.003
 Card: [`1111`](../../roadmaps/g09/batch-cards/1111-acowtancy-consumer-adoption-replay.md)
-Spec: [`118`](../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
+Spec: [`118`](../../specs/archive/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 Decision: [`D-2026-05`](../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
 Scorecard: [`2026-09-03-effigy-acowtancy-comparison-scorecard`](../../vision/governance/2026-09-03-effigy-acowtancy-comparison-scorecard.md)
 

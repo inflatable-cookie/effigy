@@ -226,66 +226,48 @@ new reusable-core work.
 
 ## Retained Contract Posture
 
-Keep both the machine contracts and the active working-rules contract aligned
-to the real validation commands and live execution posture, and use
-`002-production-deployment-model.md` as the active provider-neutral deploy
-model anchor, and treat `003-underlay-deployment-derivation.md`,
-`004-underlay-reference-deploy-model-example.md`,
-`007-render-export-contract.md`, `008-railway-export-contract.md`, and
-`010-decodelabs-production-strategy.md` as retained historical or example
-evidence rather than current reusable-core anchors, while keeping
-`005-container-runtime-contract.md` as the contract anchor for the `g03.004`
-to `g03.006` runtime-hardening lane, `006-compose-backend-compatibility.md`
-as the backend capability matrix for `g03.006`,
-`009-execution-surface-convergence.md` as the convergence contract, and
-`011-runtime-context-contract.md` as the `g03.030` context contract,
-`012-container-manager-contract.md` as the `g03.031` manager contract, and
-`013-task-execution-request-contract.md` as the `g03.032` execution request
-contract, `014-artifact-substrate-contract.md` as the `g03.036` artifact
-substrate contract, and `015-runtime-operation-pipeline-contract.md` as the
-`g04` runtime operation pipeline contract, and
-`016-state-stack-and-layered-seed-framework-contract.md` as the `g04.019`
-state-stack framework contract, and
-`017-task-status-record-and-active-run-model-contract.md` as the `g04.020`
-task-status record contract, and
-`018-task-status-query-surface-and-read-model-contract.md` as the `g04.021`
-task-status query contract, and
-`019-deployment-transaction-system-contract.md` as the `g04.027` to `g04.032`
-deployment transaction contract, and
-`020-remote-bundle-sources-git-and-oci-delivery-contract.md` as the `g04.022`
-remote bundle-source contract, and
-`021-docs-check-subcommand-consolidation-contract.md` as the `g04.023`
-docs-check consolidation contract, and
-`022-command-reference-completeness-and-flag-consistency-contract.md` as the
-`g04.024` command-reference and repo-targeting contract, and
-`023-container-command-decomposition-contract.md` as the `g04.025`
-container-command decomposition contract, and
-`024-shared-dispatcher-and-exec-collapse-contract.md` as the `g04.026`
-shared dispatcher and exec collapse contract, `029-deploy-domain-boundary-contract.md`
-as the `g04.037` deploy domain boundary contract, and
-`030-low-risk-deduplication-contract.md` as the `g04.038` low-risk
-deduplication contract, `031-artifact-and-crate-boundary-contract.md` as the
-`g04.039` artifact and crate-boundary contract, and
-`032-secret-and-local-config-management-contract.md` as the active `g05.001`
-secret and local configuration contract, and
-`037-explicit-catalog-membership-contract.md` as the explicit catalog
-membership boundary, `038-unified-test-orchestration-contract.md` as the
-active v0.11 test authority and plan-safety boundary, and
-`039-pre-release-ci-proof-contract.md` as the exact-candidate hosted CI
-release boundary, and `040-bun-committed-dependency-pinning-contract.md` as the
-implemented committed Bun override boundary distinct from machine-local
-linking, and `041-documentation-graph-profile-contract.md` as the active
-repository-defined documentation graph and bounded retrieval boundary, and
-`042-external-skill-task-runner-contract.md` as the explicit external task
-source and consumer runtime target boundary, and
-`043-feature-placement-and-surface-migration-contract.md` as the semantic core,
-grouped-command preview, provider/asset placement, and migration-gate boundary,
-and `044-rhai-storage-create-only-contract.md` as the retained Rhai storage
-exclusive-create boundary.
+Keep the machine contracts and the active working-rules contract aligned to
+the real validation commands and live execution posture. Each contract's
+role:
+
+| Contract | Role |
+| --- | --- |
+| `001` | active strict execution rules for the product lane |
+| `002` | active provider-neutral deploy model anchor |
+| `003`, `004`, `007`, `008`, `010` | retained historical or example evidence; not reusable-core anchors |
+| `005` | container runtime anchor (`g03.004`–`g03.006`) |
+| `006` | backend capability matrix (`g03.006`) |
+| `009` | execution surface convergence |
+| `011` | runtime context (`g03.030`) |
+| `012` | container manager (`g03.031`) |
+| `013` | task execution request (`g03.032`) |
+| `014` | artifact substrate (`g03.036`) |
+| `015` | runtime operation pipeline (`g04`) |
+| `016` | state-stack and layered seed framework (`g04.019`) |
+| `017` | task-status record and active-run model (`g04.020`) |
+| `018` | task-status query surface and read model (`g04.021`) |
+| `019` | deployment transaction system (`g04.027`–`g04.032`) |
+| `020` | remote bundle sources, git and OCI delivery (`g04.022`) |
+| `021` | docs-check subcommand consolidation (`g04.023`) |
+| `022` | command-reference completeness and repo targeting (`g04.024`) |
+| `023` | container command decomposition (`g04.025`) |
+| `024` | shared dispatcher and exec collapse (`g04.026`) |
+| `029` | deploy domain boundary (`g04.037`) |
+| `030` | low-risk deduplication (`g04.038`) |
+| `031` | artifact and crate boundary (`g04.039`) |
+| `032` | active secret and local configuration management (`g05.001`) |
+| `037` | explicit catalog membership boundary |
+| `038` | active v0.11 test authority and plan-safety boundary |
+| `039` | exact-candidate hosted CI release boundary |
+| `040` | committed Bun override boundary, distinct from machine-local linking |
+| `041` | repository-defined documentation graph, bounded retrieval, and opt-in cross-repository source routing |
+| `042` | explicit external task source and consumer runtime target boundary |
+| `043` | semantic core, grouped-command preview, provider/asset placement, migration gates |
+| `044` | retained Rhai storage exclusive-create boundary |
 
 ## Next Task
 
-Card `1111` and `g09.003` are complete; PR `88` merged at `9c05a883`. Decide
-cohort expansion versus a second bounded repair at the next planning
-checkpoint. Acowtancy stays read-only; Effigy release and S3 extraction remain
-separately gated.
+All `g09` lanes through `g09.007` are complete; contract `041` now carries
+`docs context --sources`. The consumer cohort and maturity checkpoint is
+deferred by operator direction (2026-09-05). Acowtancy stays read-only;
+Effigy release and S3 extraction remain separately gated.

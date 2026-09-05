@@ -230,6 +230,6 @@ This roadmap is complete when:
 
 ## Reference Documents
 
-- Handoff: `docs/handoffs/varlock-integration-implementation.md`
+- Handoff: `varlock-integration-implementation` (deleted at closeout; git history)
 - Research: `docs/research/value-tracks/16-secure-secrets-management.md`
 - @env-spec RFC: https://github.com/dmno-dev/varlock/discussions/17

@@ -26,12 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-Recently completed strict lane awaiting planning disposition:
-
-- [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
-  read-only Acowtancy consumer replay and first comparison scorecard completed
-  under `g09.003`; archive or supersede it after the cohort planning checkpoint
-
 Completed strict lanes:
 
 - [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in

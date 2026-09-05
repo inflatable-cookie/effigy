@@ -482,7 +482,7 @@ Acceptance:
 
 Wave 3 is complete and the Effigy-side consumer-adoption boundary is now
 closed. Use the external sweep handoff in
-[`docs/handoffs/g01-029-consumer-adoption-sweep.md`](../../handoffs/g01-029-consumer-adoption-sweep.md)
+`g01-029-consumer-adoption-sweep` handoff (deleted at closeout; git history)
 for any follow-up repo cohort check, and only reopen Effigy-side product work
 if that sweep shows repeated pain the current skill/template layer cannot
 cover.

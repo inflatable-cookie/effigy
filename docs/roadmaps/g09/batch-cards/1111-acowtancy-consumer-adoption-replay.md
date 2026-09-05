@@ -1,7 +1,7 @@
 # 1111 - Acowtancy Consumer Adoption Replay
 
 Roadmap: [`../003-acowtancy-consumer-adoption-replay.md`](../003-acowtancy-consumer-adoption-replay.md)
-Spec: [`../../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md`](../../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
+Spec: [`../../../specs/archive/118-acowtancy-consumer-adoption-replay-strict-lane.md`](../../../specs/archive/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 Decision: [`D-2026-05`](../../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
 
 Status: Complete

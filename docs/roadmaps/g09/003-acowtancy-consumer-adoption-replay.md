@@ -2,7 +2,7 @@
 
 Status: Complete
 Created: 2026-09-03
-Spec: [`118`](../../specs/118-acowtancy-consumer-adoption-replay-strict-lane.md)
+Spec: [`118`](../../specs/archive/118-acowtancy-consumer-adoption-replay-strict-lane.md)
 Decision: [`D-2026-05`](../../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
 Consumer contract: [`guide 056`](../../guides/056-northstar-effigy-consumer-repo-contract.md)
 

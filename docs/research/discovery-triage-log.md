@@ -192,7 +192,8 @@ Staging area for signals from secondary channels awaiting promotion to the resea
 
 **New deliverables:**
 - Translation memo: `translation-memos/016c-varlock-integration.md`
-- Implementation handoff: `docs/handoffs/varlock-integration-implementation.md`
+- Implementation handoff: `varlock-integration-implementation` (handoff deleted at
+  closeout; see git history before 2026-09-05)
 
 **Status:** Research complete, ready for implementation
 

@@ -26,6 +26,9 @@ strict lanes without wading through closed history.
 
 ## Recently archived strict lanes
 
+- [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
+  read-only Acowtancy consumer replay and first comparison scorecard
+  (completed with card `1111` under `g09.003`, PR `88`; archived 2026-09-05)
 - [`120`](./120-docs-context-latency-and-freshness-strict-lane.md) —
   docs context warm/stale latency reproduced and repaired to frozen budgets
   (completed with card `1113` under `g09.005`, PR `91`)

@@ -54,6 +54,8 @@ When a batch closes:
    active lane or ready card
 4. write one evidence log with validation actually run
 5. leave one explicit `Next Task` in the highest-authority active surface
+6. delete the lane's dispatch handoff under `docs/handoffs/`; git history is
+   its record, and a merged lane's handoff is not documentation
 
 A completed card must never remain advertised as the current ready card.
 
