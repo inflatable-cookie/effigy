@@ -43,17 +43,17 @@ spec `119`; card `1112` merged in PR `90`.
 [`g09.005`](./005-docs-context-latency-and-freshness.md) is complete under
 strict spec `120`; card `1113` merged in PR `91`. Its K4/K5 retrieval
 limitations are re-planned in the canonical triage note.
-[`g09.006`](./006-cross-repository-source-routing.md) is queued under strict
+[`g09.006`](./006-cross-repository-source-routing.md) is ready under strict
 spec `122` (card `1115`, serial after `1114`): opt-in cross-repository source
 routing, grouped per repository with identity; frozen by the operator on
 2026-09-05.
 
-[`g09.007`](./007-docs-context-exact-identifier-retrieval.md) is ready under
+[`g09.007`](./007-docs-context-exact-identifier-retrieval.md) is complete under
 strict spec `121`: exact identifier queries seed and rank the sections that
-contain them, frozen in the benchmark. Card `1114` is the ready card.
+contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 
 ## Next Task
 
-Execute card `1114`, then card `1115`. The
+Execute card `1115`. The
 consumer cohort checkpoint remains deferred by operator direction
 (2026-09-05). Effigy release authority stays separate.

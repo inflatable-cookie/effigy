@@ -1,6 +1,6 @@
 # g09.007 Docs Context Exact Identifier Retrieval
 
-Status: Ready
+Status: Complete
 Created: 2026-09-05
 Spec: [`121`](../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 Card: [`1114`](./batch-cards/1114-docs-context-exact-identifier-retrieval.md)
@@ -43,7 +43,7 @@ and `g09.006` cannot claim recall while this stands.
 
 ## Cards
 
-- [ ] [`1114`](./batch-cards/1114-docs-context-exact-identifier-retrieval.md) — ready
+- [x] [`1114`](./batch-cards/1114-docs-context-exact-identifier-retrieval.md) — complete; PR `92` merged
 
 ## Acceptance
 
@@ -67,7 +67,8 @@ and `g09.006` cannot claim recall while this stands.
 
 Published for the coordinator at the promoting commit on `main`.
 
-- **Lane:** card `1114`, roadmap `g09.007`, strict spec `121`. State: ready.
+- **Lane:** card `1114`, roadmap `g09.007`, strict spec `121`. State: complete;
+  PR `92` merged at `79a8ff5e`.
 - **Prerequisites:** clean `main` at or after the promoting commit; no other
   active strict lane. **Completion:** PR merged with evidence log, card,
   roadmap, spec, guide, benchmark freeze, and changelog closed out.
@@ -94,5 +95,5 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Execute card `1114`. On closeout, Chatterbox resumes the `g09.006` freeze
-conversation with the operator.
+Card `1114` is complete. Execute the queued serial card `1115` after this
+merge.

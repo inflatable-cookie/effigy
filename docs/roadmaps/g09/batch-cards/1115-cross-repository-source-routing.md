@@ -4,7 +4,7 @@ Roadmap: [`../006-cross-repository-source-routing.md`](../006-cross-repository-s
 Spec: [`../../../specs/122-cross-repository-source-routing-strict-lane.md`](../../../specs/122-cross-repository-source-routing-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md), [`../../../contracts/037-explicit-catalog-membership-contract.md`](../../../contracts/037-explicit-catalog-membership-contract.md)
 
-Status: Queued (ready when card `1114` merges)
+Status: Ready
 Owner: `[docs_policy.sources]` grammar, portfolio enumeration, `docs context
 --sources` surface, grouped payload and text, source identity, fixtures and
 benchmark freeze, starter opt-in, manual replay

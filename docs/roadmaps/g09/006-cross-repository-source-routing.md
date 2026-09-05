@@ -1,6 +1,6 @@
 # g09.006 Cross-Repository Source Routing
 
-Status: Queued (serial after `g09.007`)
+Status: Ready
 Created: 2026-09-05
 Frozen: 2026-09-05 (operator confirmed)
 Spec: [`122`](../../specs/122-cross-repository-source-routing-strict-lane.md)
@@ -90,7 +90,7 @@ refresh at about 10 s, which clears the latency gate. The lane starts after
 ## Cards
 
 - [ ] [`1115`](./batch-cards/1115-cross-repository-source-routing.md) —
-  queued; ready when card `1114` merges
+  ready; serial prerequisite card `1114` merged
 
 ## Non-Goals
 
@@ -108,7 +108,7 @@ refresh at about 10 s, which clears the latency gate. The lane starts after
 Published for the coordinator at the promoting commit on `main`.
 
 - **Lane:** card `1115`, roadmap `g09.006`, strict spec `122`. State:
-  queued. **Serial edge:** starts only after card `1114` (`g09.007`) has
+  ready. **Serial edge:** card `1114` (`g09.007`) has
   merged to `main`. Not approved for parallel execution with `1114`.
 - **Prerequisites:** `1114` merged; clean `main`; no other active strict
   lane. The manual portfolio replay additionally needs the K5 rephrasing
@@ -147,5 +147,5 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Wait for `1114` to merge, then execute card `1115`. Chatterbox settles the
+Execute card `1115`. Chatterbox settles the
 K5 rephrasing with the Northstar Chatterbox in parallel.

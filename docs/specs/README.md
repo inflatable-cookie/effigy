@@ -28,9 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
-  exact identifier terms seed and rank the sections that contain them, with
-  two frozen benchmark cases (`g09.007`, card `1114`)
+- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
+  cross-repository source routing over existing local retrieval (`g09.006`,
+  card `1115`)
 
 Recently completed strict lane awaiting planning disposition:
 
@@ -38,11 +38,11 @@ Recently completed strict lane awaiting planning disposition:
   read-only Acowtancy consumer replay and first comparison scorecard completed
   under `g09.003`; archive or supersede it after the cohort planning checkpoint
 
-Queued strict lanes:
+Completed strict lanes:
 
-- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
-  cross-repository source routing over existing local retrieval (`g09.006`,
-  card `1115`); serial after spec `121`
+- [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
+  exact identifier terms seed and rank the sections that contain them, with
+  two frozen benchmark cases (`g09.007`, card `1114`)
 
 Archived strict lanes:
 
@@ -106,7 +106,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1114` under strict spec `121`; card `1115` (spec `122`) follows
-serially. Specs `119` and `120` are archived. The consumer cohort checkpoint after `g09.003` is deferred by
+Execute card `1115` under strict spec `122`. Specs `119`, `120`, and `121`
+are complete or archived. The consumer cohort checkpoint after `g09.003` is deferred by
 operator direction (2026-09-05); Acowtancy remains read-only and Effigy
 release authority stays separate.
