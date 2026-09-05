@@ -3,7 +3,7 @@
 Status: complete
 Created: 2026-09-05
 Roadmap: [`g09.005`](../../roadmaps/g09/005-docs-context-latency-and-freshness.md)
-Spec: [`120`](../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
+Spec: [`120`](../../specs/archive/120-docs-context-latency-and-freshness-strict-lane.md)
 Batch: docs-context-latency-and-freshness-1113
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 

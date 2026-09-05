@@ -46,7 +46,7 @@ Here is the state the worker is inheriting:
 - **Worktree creation command:** Paseo `create_workspace`; `isolation: worktree`, `mode: branch-off`, `baseBranch: origin/main`
 - **Worker worktree policy:** follow `Completion Protocol`; launcher worktree first, named/manual fallback only when required.
 - **Required sibling worktree links:** `none`
-- **Active spec lane:** [`docs/specs/119-release-gate-diagnosability-strict-lane.md`](../specs/119-release-gate-diagnosability-strict-lane.md)
+- **Active spec lane:** [`docs/specs/archive/119-release-gate-diagnosability-strict-lane.md`](../specs/archive/119-release-gate-diagnosability-strict-lane.md)
 - **Roadmap milestone:** [`docs/roadmaps/g09/004-release-gate-diagnosability.md`](../roadmaps/g09/004-release-gate-diagnosability.md)
 - **Ready cards, in order:** [`docs/roadmaps/g09/batch-cards/1112-release-gate-diagnosability.md`](../roadmaps/g09/batch-cards/1112-release-gate-diagnosability.md)
 - **Allowed runway:** execute card `1112` only
