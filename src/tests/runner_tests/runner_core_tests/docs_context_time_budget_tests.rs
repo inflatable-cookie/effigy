@@ -180,6 +180,52 @@ fn invalid_budget_usage_errors_win_over_a_tiny_bound() {
 }
 
 #[test]
+fn timeout_detail_names_the_phase_the_bound_expired_in() {
+    let root = docs_graph_fixture("docs-timeout-phase-detail");
+    let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);
+
+    let error = run_command(docs_context_command(&root, "contracts", false))
+        .expect_err("cold refresh must fail inside the tiny bound");
+    let rendered = error
+        .rendered_output()
+        .expect("timeout must carry rendered detail")
+        .to_owned();
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json detail");
+
+    // The phase block is additive: the frozen schema identity and every
+    // pre-existing field stay exactly as they were.
+    assert_eq!(parsed["schema"], TIMEOUT_SCHEMA);
+    assert_eq!(parsed["schema_version"], 1);
+    assert!(parsed["health"].is_object());
+
+    let phase = parsed["phase"]
+        .as_object()
+        .expect("a bounded run that reached graph work must name its phase");
+    let name = phase["name"].as_str().expect("phase name");
+    assert!(
+        effigy_codegraph::KNOWN_PHASE_NAMES.contains(&name),
+        "unknown phase name in timeout detail: {name}"
+    );
+    assert!(phase["elapsed_ms"].is_u64(), "phase detail: {phase:?}");
+    assert!(phase.contains_key("items_done"));
+    assert!(phase.contains_key("items_total"));
+
+    let next = parsed["next"].as_array().expect("recovery guidance");
+    assert!(
+        next.iter().any(|step| step
+            .as_str()
+            .is_some_and(|text| text.contains(name) && text.contains("bound expired"))),
+        "recovery guidance must name the phase in text too: {next:?}"
+    );
+    assert!(
+        next.iter().any(|step| step
+            .as_str()
+            .is_some_and(|text| text.contains("graph status"))),
+        "pre-existing recovery guidance must survive: {next:?}"
+    );
+}
+
+#[test]
 fn graph_search_timeout_behavior_is_unchanged() {
     let root = docs_graph_fixture("graph-search-tiny-bound");
     let _env = EnvGuard::set_many(&[("EFFIGY_GRAPH_TIMEOUT_MS", Some(TINY_BOUND_MS.to_owned()))]);

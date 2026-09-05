@@ -2,6 +2,7 @@ use super::*;
 
 use std::time::Duration;
 
+use crate::docs_context::DocsContextRequest;
 use crate::refresh::{
     ensure_fresh_with_wait_and_progress, run_index_exclusive_with_wait, RefreshLock,
 };
@@ -207,4 +208,39 @@ fn status_stays_report_only_when_queries_auto_refresh() {
         .matches
         .iter()
         .any(|entry| entry.name.as_deref() == Some("later_symbol")));
+}
+
+#[test]
+fn refresh_and_query_record_a_readable_graph_phase() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("docs")).expect("mkdir docs");
+    for index in 0..4 {
+        fs::write(
+            temp.path().join(format!("docs/topic-{index}.md")),
+            format!("# Topic {index}\n\nThe release notes cover topic {index}.\n"),
+        )
+        .expect("write doc");
+    }
+
+    run_index(temp.path()).expect("index");
+    crate::docs_context(temp.path(), "release", DocsContextRequest::default())
+        .expect("docs context");
+
+    // The recorder is process-global on purpose: a bounded caller reads it
+    // from the reporting thread while the graph worker is still running. So
+    // this asserts the shape a timeout reports, not an exact interleaving.
+    let snapshot = crate::phase::snapshot().expect("graph work records a phase");
+    assert!(
+        crate::phase::KNOWN_PHASE_NAMES.contains(&snapshot.name.as_str()),
+        "unknown phase name: {}",
+        snapshot.name
+    );
+    match (snapshot.items_done, snapshot.items_total) {
+        (Some(done), Some(total)) => assert!(
+            done <= total,
+            "progress must never exceed its own total: {done}/{total}"
+        ),
+        (None, None) => {}
+        other => panic!("progress must report both bounds or neither: {other:?}"),
+    }
 }

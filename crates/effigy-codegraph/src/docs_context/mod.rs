@@ -13,6 +13,7 @@ use crate::docs_profile::{load_docs_profile_state, CompiledDocsProfile, DocsProf
 use crate::error::CodeGraphError;
 use crate::json::GraphFreshnessPayload;
 use crate::model::{DiagnosticSeverity, SourceSpan};
+use crate::phase::{self, GraphPhase};
 use crate::refresh::RefreshPending;
 use crate::storage::GraphStore;
 
@@ -89,10 +90,13 @@ pub fn docs_context_with_progress(
 
     let store = GraphStore::open(repo_root)?;
     let freshness = ensure_freshness(repo_root, &store, progress)?;
+    phase::enter(GraphPhase::DocsScope);
     let profile_state = load_docs_profile_state(repo_root)?;
     let scope = collect_scope(&store, &profile_state)?;
 
+    phase::enter(GraphPhase::DocsRank);
     let ranked = rank::rank(repo_root, &store, &scope, query, applied.max_hops)?;
+    phase::enter(GraphPhase::DocsSelect);
     let deduplicated = deduplicate(&scope, ranked.candidates);
     let selection = select(repo_root, &scope, &ranked.contents, &deduplicated, applied);
 

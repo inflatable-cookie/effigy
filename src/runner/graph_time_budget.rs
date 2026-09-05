@@ -76,6 +76,18 @@ pub(super) fn run_bounded_graph_operation(
 fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> RunnerError {
     let timeout_ms = budget.as_millis().min(u128::from(u64::MAX)) as u64;
     let health = effigy_codegraph::health(repo_root);
+    // Additive diagnostics: the detached worker keeps running, so its current
+    // phase is still readable here. Absent when nothing was recorded, so the
+    // field never claims knowledge the runtime does not have.
+    let phase = effigy_codegraph::graph_phase_snapshot();
+    let mut next = vec![
+        "run `effigy graph status --json` to inspect index freshness".to_owned(),
+        format!("raise the budget with `{GRAPH_TIMEOUT_ENV}=<ms>` (0 disables it)"),
+        "run `effigy graph index --json` once to pay the cold build separately".to_owned(),
+    ];
+    if let Some(phase) = phase.as_ref() {
+        next.insert(0, describe_phase(phase));
+    }
     let rendered = serde_json::json!({
         "schema": "effigy.graph.timeout.v1",
         "schema_version": 1,
@@ -84,16 +96,28 @@ fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> Run
         "timeout_ms": timeout_ms,
         "timeout_env": GRAPH_TIMEOUT_ENV,
         "health": health,
-        "next": [
-            "run `effigy graph status --json` to inspect index freshness",
-            format!("raise the budget with `{GRAPH_TIMEOUT_ENV}=<ms>` (0 disables it)"),
-            "run `effigy graph index --json` once to pay the cold build separately",
-        ],
+        "phase": phase,
+        "next": next,
     })
     .to_string();
     RunnerError::GraphOperationTimeout {
         command: command.to_owned(),
         timeout_ms,
         rendered,
+    }
+}
+
+/// One human-readable line naming what the bounded run was doing, so a text
+/// reader gets the same answer the additive `phase` field carries.
+fn describe_phase(phase: &effigy_codegraph::GraphPhaseSnapshot) -> String {
+    match (phase.items_done, phase.items_total) {
+        (Some(done), Some(total)) => format!(
+            "the bound expired during `{}` after {}ms ({done}/{total} files)",
+            phase.name, phase.elapsed_ms
+        ),
+        _ => format!(
+            "the bound expired during `{}` after {}ms",
+            phase.name, phase.elapsed_ms
+        ),
     }
 }

@@ -359,6 +359,43 @@ fn compile_glob(pattern: &str) -> Result<globset::GlobMatcher, globset::Error> {
         .compile_matcher())
 }
 
+/// Compiled matchers for the patterns this process has already seen.
+///
+/// A profile has a handful of distinct kind globs but they are matched once
+/// per in-scope document per kind, on every profile compile and every scope
+/// build. Compiling the same pattern for each of those comparisons made glob
+/// compilation the dominant cost of a warm `docs context` query. The cache is
+/// keyed by the normalized pattern, so it holds exactly the same verdicts the
+/// uncached path produced — including the "invalid pattern never matches"
+/// verdict, cached as `None`.
+fn glob_cache() -> &'static std::sync::RwLock<BTreeMap<String, Option<globset::GlobMatcher>>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::RwLock<BTreeMap<String, Option<globset::GlobMatcher>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::RwLock::new(BTreeMap::new()))
+}
+
+/// Match `path` against an already-normalized `pattern`, compiling each
+/// distinct pattern at most once per process.
+fn normalized_glob_matches(pattern: &str, path: &str) -> bool {
+    let cache = glob_cache();
+    if let Ok(read) = cache.read() {
+        if let Some(matcher) = read.get(pattern) {
+            return matcher
+                .as_ref()
+                .is_some_and(|matcher| matcher.is_match(path));
+        }
+    }
+    let compiled = compile_glob(pattern).ok();
+    let matched = compiled
+        .as_ref()
+        .is_some_and(|matcher| matcher.is_match(path));
+    if let Ok(mut write) = cache.write() {
+        write.insert(pattern.to_owned(), compiled);
+    }
+    matched
+}
+
 fn compare_keys(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -372,9 +409,7 @@ fn normalize_compare(value: &str) -> String {
 
 pub(crate) fn glob_matches(pattern: &str, path: &str) -> bool {
     let normalized = normalize_docs_path(pattern);
-    compile_glob(&normalized)
-        .map(|matcher| matcher.is_match(path))
-        .unwrap_or(false)
+    normalized_glob_matches(&normalized, path)
 }
 
 #[cfg(test)]
@@ -399,6 +434,20 @@ mod tests {
         assert!(!glob_matches("setup*guide.md", "setup-guide-extra.md"));
         assert!(glob_matches("setup?guide.md", "setup-guide.md"));
         assert!(!glob_matches("setup?guide.md", "setup--guide.md"));
+    }
+
+    #[test]
+    fn cached_glob_matchers_stay_pattern_keyed_across_repeated_paths() {
+        // The compiled-matcher cache is keyed by pattern, so a second call
+        // with a different path must not inherit the first path's verdict.
+        assert!(glob_matches("docs/guides/*.md", "docs/guides/one.md"));
+        assert!(!glob_matches("docs/guides/*.md", "docs/specs/one.md"));
+        assert!(glob_matches("docs/guides/*.md", "docs/guides/two.md"));
+
+        // An uncompilable pattern caches its "never matches" verdict and keeps
+        // returning it rather than erroring or matching.
+        assert!(!glob_matches("docs/[unclosed.md", "docs/one.md"));
+        assert!(!glob_matches("docs/[unclosed.md", "docs/[unclosed.md"));
     }
 
     #[test]
