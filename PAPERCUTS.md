@@ -453,4 +453,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Fix: `effigy doctor` (or the manifest parse error itself) should say when
   the running binary's build SHA is older than the repository's own
   manifest-grammar requirement, and point at the local-install refresh task.
+- Workaround: `cargo run --bin effigy -- bootstrap:local` (the installed
+  binary cannot run the task that would replace it). Hit twice on 2026-09-05,
+  once by the operator.
 - Surface: local-install route, manifest parsing error text, `doctor`.
