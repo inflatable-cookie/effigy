@@ -59,7 +59,8 @@ generation's `README.md`, its roadmap files, and the archived logs.
   `g09.005` brought warm `docs context` from ~10 s to ~600 ms; `g09.007`
   fixed exact-identifier retrieval; `g09.006` added opt-in cross-repository
   source routing. All seven are complete. Open decisions: the consumer
-  cohort/maturity checkpoint (deferred by the operator on 2026-09-05) and the
+  release-prepare keep-on-failure question (consumer maturity was settled on
+2026-09-05: `007` section 6 adoption posture) and the
   release-prepare keep-on-failure question, both in `docs/triage/`.
 
 ## Rollover history

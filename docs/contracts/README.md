@@ -268,6 +268,7 @@ role:
 ## Next Task
 
 All `g09` lanes through `g09.007` are complete; contract `041` now carries
-`docs context --sources`. The consumer cohort and maturity checkpoint is
-deferred by operator direction (2026-09-05). Acowtancy stays read-only;
+`docs context --sources`. Consumers are tracked on the `007` section 6
+adoption posture (operator decision 2026-09-05); cohort expansion is
+unscheduled. Acowtancy stays read-only;
 Effigy release and S3 extraction remain separately gated.

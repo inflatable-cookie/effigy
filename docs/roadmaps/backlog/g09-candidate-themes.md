@@ -56,7 +56,7 @@ external consumer replay.
 
 ## Theme 3 — Consumer adoption cohort replay
 
-**Status:** pilot complete (`g09.003`, card `1111`, PR `88`; cohort decision pending)
+**Status:** pilot complete (`g09.003`, card `1111`, PR `88`); consumers tracked on the `007` section 6 adoption posture (2026-09-05); cohort expansion unscheduled
 
 **Primary tags:** `RELEASE`, `OPERATE`, `CONTRACT`
 
@@ -125,7 +125,7 @@ they remain in the active tree.
 
 ## Next Task
 
-The Theme 3 cohort decision is deferred by operator direction (2026-09-05);
-`g09.004` release gate diagnosability runs first. Theme 4 remains historical
+Theme 3's maturity question is settled (`007` section 6); expand the cohort
+only when a consumer asks or retrieval evidence motivates it. Theme 4 remains historical
 and direct invocation is
 canonical. Theme 5 release execution remains separately gated.

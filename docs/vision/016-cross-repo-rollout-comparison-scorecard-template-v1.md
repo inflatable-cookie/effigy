@@ -12,12 +12,19 @@ Purpose: provide a consistent format for comparing vision adoption posture acros
 
 ## 2. Comparison Dimensions
 
-Score each repository on:
+Score each **platform repository** on:
 
 1. Maturity stage per vision tag (`007`, `010`).
 2. Active strategic risks (`004`).
 3. Exception burden and expiry pressure (`005`).
 4. Recent movement against SLO/target envelopes (`003`).
+
+Record each **consumer repository** on the adoption posture from `007`
+section 6 instead of a stage: one row with `ROUTE`, `DOCS`, `NORTHSTAR`,
+`PARITY`, and `RETRIEVAL` as `pass`, `fail`, `unavailable`, or `n/a`, an
+overall posture of `aligned`, `drifted`, or `unobserved`, and the frozen
+consumer revision. Consumer rows carry no stage, risk count, or exception
+count, and are never compared with platform rows on one scale.
 
 ## 3. Scorecard Template
 
@@ -57,4 +64,6 @@ Priority Actions
 
 ## Next Task
 
-Create the first populated cross-repo scorecard draft for Effigy-adjacent repositories using currently available maturity and exception signals.
+Publish the next scorecard with Acowtancy on the adoption-posture row format
+from `007` section 6; the 2026-09-03 scorecard's unknown stage cells are
+superseded by that format, not by new stage claims.

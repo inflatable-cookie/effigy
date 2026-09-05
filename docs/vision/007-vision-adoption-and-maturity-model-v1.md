@@ -64,6 +64,38 @@ Use these dimensions to determine stage per repository:
 2. Use stage snapshots in quarterly planning and release retrospectives.
 3. Use stage regression as an escalation signal for governance reviews.
 
+## 6. Scope: Platform Repositories Versus Consumers
+
+Decision (operator, 2026-09-05): the stage model in sections 2 to 4 applies to
+platform repositories that own releases, metrics, and governance, such as
+Effigy itself. It does not apply to consumer repositories that adopt Effigy
+through the Northstar consumer contract (guide `056`).
+
+Consumers are tracked on an **adoption posture**, not a stage. A posture is
+the observable result of a read-only replay against a frozen consumer
+revision. Each check is `pass`, `fail`, `unavailable` (cannot be observed
+without mutating the consumer, for example full `doctor`), or `n/a` (the
+consumer has no such surface, for example release gates on a
+workspace-container root):
+
+1. `ROUTE`: root resolves; `effigy tasks`, doctor explain, and
+   `effigy test --plan` resolve deterministically.
+2. `DOCS`: the consumer's own docs QA gate passes.
+3. `NORTHSTAR`: the consumer's `qa:northstar` gate passes.
+4. `PARITY`: `AGENTS.md`, `effigy.toml`, and `docs_policy` match guide `056`
+   and the current starter, with drift classified as Effigy-owned or
+   consumer-owned.
+5. `RETRIEVAL`: the consumer opts in to cross-repository source routing
+   (`[docs_policy.sources] share = true`) so its documentation is reachable
+   read-only.
+
+Overall posture: `aligned` when every observable check passes, `drifted`
+when any check fails, `unobserved` when no clean window exists. `unavailable`
+and `n/a` never count as pass or fail. Stage numbers are never assigned to a
+consumer, and a consumer row never asserts a universal compatibility claim.
+
 ## Next Task
 
-Create a repository scorecard template that maps each maturity dimension to observable evidence and stage thresholds.
+Update the consumer row of the next comparison scorecard (`016`) to the
+adoption posture format at the next governance review; Effigy's own stage
+review continues under `019`.

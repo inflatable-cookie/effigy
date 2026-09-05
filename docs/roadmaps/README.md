@@ -166,8 +166,9 @@ Before rollover:
 ## Next Task
 
 Execute card `1114` (docs context exact identifier retrieval), then card
-`1115` (cross-repository source routing). The consumer cohort
-checkpoint is deferred by operator direction on 2026-09-05. Keep Acowtancy
+`1115` (cross-repository source routing). The consumer maturity
+question is settled (`007` section 6, 2026-09-05); cohort expansion is
+unscheduled. Keep Acowtancy
 read-only and Effigy release execution and S3 extraction behind their named
 gates.
 

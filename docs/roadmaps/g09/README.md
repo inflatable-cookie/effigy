@@ -54,5 +54,5 @@ contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 ## Next Task
 
 The runway is empty pending the next Chatterbox-promoted direction. The
-consumer cohort checkpoint remains deferred by operator direction
-(2026-09-05). Effigy release authority stays separate.
+consumer maturity question is settled (`007` section 6 adoption posture,
+2026-09-05); cohort expansion is unscheduled. Effigy release authority stays separate.

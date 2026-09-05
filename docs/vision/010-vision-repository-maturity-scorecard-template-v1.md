@@ -64,4 +64,6 @@ Promotion Plan
 
 ## Next Task
 
-Create an initial scorecard for Effigy itself using current docs, checks, and release evidence as baseline inputs.
+Update Effigy's `019` scorecard with this template at the next stage review;
+platform repositories only, since consumers use the adoption posture in `007`
+section 6.

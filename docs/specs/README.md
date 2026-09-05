@@ -49,6 +49,6 @@ Other planning specs:
 ## Next Task
 
 The runway is empty pending the next Chatterbox-promoted direction. Specs
-`119`, `120`, `121`, and `122` are complete or archived. The consumer cohort
-checkpoint after `g09.003` is deferred by operator direction (2026-09-05);
+`119`, `120`, `121`, and `122` are complete or archived. The consumer maturity
+question after `g09.003` is settled (`007` section 6, 2026-09-05);
 Acowtancy remains read-only and Effigy release authority stays separate.

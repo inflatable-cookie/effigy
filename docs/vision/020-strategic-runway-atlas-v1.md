@@ -184,5 +184,7 @@ with Acowtancy as the frozen first consumer replay.
 ## Next Task
 
 Execute `g09.004` release gate diagnosability (card `1112`) first; the Theme 3
-cohort checkpoint is deferred by operator direction (2026-09-05). Direct
+cohort question is settled: consumers are tracked on the `007` section 6
+adoption posture, and cohort expansion is unscheduled until a consumer asks
+or `docs context --sources` evidence motivates it (2026-09-05). Direct
 invocation remains canonical; Effigy release remains separately gated.

@@ -45,9 +45,9 @@ Promote from stage 2 to stage 3 when:
 
 ## Next Task
 
-Execute `g09.004` first; the cohort-expansion and maturity-model repair
-checkpoint is deferred by operator direction (2026-09-05; triage
-`20260904-130553`) and reopens after that lane ships. Stage 2 stays current.
+Execute the next quarterly stage review under this baseline; Stage 2 stays
+current. Consumers are no longer staged (`007` section 6, operator decision
+2026-09-05), so consumer evidence does not move this baseline.
 The first populated comparison scorecard exists under
 `docs/vision/governance/`; metric evidence sources plus the canonical
 exception-record location still block Stage 3.
