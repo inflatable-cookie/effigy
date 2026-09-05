@@ -402,6 +402,20 @@ Gate behavior:
 - stops on first failure
 - surfaces captured output for failed gates
 - can be invoked directly with `effigy release gates`
+- writes `.effigy/reports/release/gates/<gate-name>.log` for every executed
+  gate and `.effigy/reports/release/gates/environment.json` once per run
+  (latest run wins). Before writing, it invokes the existing `.effigy`
+  gitignore helper so those artifacts are not untracked working-tree
+  changes.
+- redacts captured environment values whose names contain `TOKEN`, `SECRET`,
+  `KEY`, `PASSWORD`, or `CREDENTIAL`
+- announces `configured gates (N): <names>` on stderr before the first gate
+  starts, then one progress line per gate, even when stderr is not a terminal
+
+After a failed gate, look at that gate's log first. Prepare and execute text
+also print the last 20 lines of combined stdout/stderr plus the log path.
+`--json` adds optional `log_path` per gate result and `environment_path` for
+the run; those fields do not change schema ids.
 
 Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. This
 is a repository policy gate, not a provider assumption in the generic release

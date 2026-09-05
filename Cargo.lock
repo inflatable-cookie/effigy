@@ -1141,6 +1141,7 @@ version = "0.12.1"
 dependencies = [
  "chrono",
  "effigy-changelog",
+ "effigy-core",
  "effigy-manifest",
  "globset",
  "semver",

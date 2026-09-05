@@ -1,12 +1,15 @@
 use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
-    apply_release_mutations, build_release_prepare_plan, compare_release_state_fingerprints,
-    format_release_tag, gate_blockers, git_create_tag, is_release_state_file, load_release_config,
+    apply_release_mutations, build_release_prepare_plan, collect_release_gate_run,
+    compare_release_state_fingerprints, execute_release_prepare, format_release_tag, gate_blockers,
+    git_create_tag, git_modified_files, is_release_state_file, load_release_config,
     load_release_context, load_release_prepared_state, normalized_expected_files,
-    restore_mutation_snapshots, snapshot_mutation_paths, test_support,
-    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
-    FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints,
+    render_release_gate_run_json, render_release_gate_run_text, render_release_prepare_plan_text,
+    render_release_prepared_text, restore_mutation_snapshots, run_release_gates,
+    snapshot_mutation_paths, test_support, validate_planned_release_version,
+    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
+    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
+    ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -464,6 +467,7 @@ fn gate_helpers_return_expected_defaults() {
         stderr: String::new(),
         launch_error: None,
         duration_ms: 12,
+        log_path: None,
     }]);
     assert_eq!(blockers, vec!["gate `qa` failed".to_owned()]);
     assert_eq!(GateExecutionReport::empty().results.len(), 0);
@@ -737,4 +741,234 @@ fn snapshot_mutation_paths_reads_unique_paths() {
             .cloned(),
         Some(b"0.2.9\n".to_vec())
     );
+}
+
+fn shell_gate(name: &str, command: &str) -> ResolvedGate {
+    ResolvedGate {
+        name: name.to_owned(),
+        command: command.to_owned(),
+        description: None,
+    }
+}
+
+#[test]
+fn failing_and_passing_gates_persist_logs_and_redacted_environment() {
+    let root = temp_repo("gate-persist");
+    std::env::set_var("CARGO_REGISTRY_TOKEN", "super-secret-token");
+    let fail = shell_gate(
+        "floor",
+        "printf 'stdout-line\\n'; printf 'stderr-line\\n' >&2; exit 3",
+    );
+    let pass = shell_gate("ok", "printf pass-ok");
+
+    let failed_report = run_release_gates(&root, &[fail], true);
+    assert_eq!(failed_report.results.len(), 1);
+    assert!(!failed_report.results[0].passed);
+    let fail_log = failed_report.results[0]
+        .log_path
+        .as_ref()
+        .expect("failed gate log");
+    let fail_log_contents = fs::read_to_string(fail_log).expect("read fail log");
+    assert!(
+        fail_log_contents.contains("stdout-line"),
+        "{fail_log_contents}"
+    );
+    assert!(
+        fail_log_contents.contains("stderr-line"),
+        "{fail_log_contents}"
+    );
+    assert!(
+        fail_log_contents.contains("exit_code: 3"),
+        "{fail_log_contents}"
+    );
+
+    let passed_report = run_release_gates(&root, &[pass], true);
+    assert!(passed_report.results[0].passed);
+    let pass_log = passed_report.results[0]
+        .log_path
+        .as_ref()
+        .expect("passed gate log");
+    let pass_log_contents = fs::read_to_string(pass_log).expect("read pass log");
+    assert!(pass_log_contents.contains("pass-ok"), "{pass_log_contents}");
+
+    let environment_path = passed_report
+        .environment_path
+        .as_ref()
+        .expect("environment.json");
+    let environment = fs::read_to_string(environment_path).expect("read environment");
+    assert!(
+        environment.contains("\"CARGO_REGISTRY_TOKEN\": \"<redacted>\""),
+        "{environment}"
+    );
+    assert!(!environment.contains("super-secret-token"), "{environment}");
+    assert!(environment.contains("\"shell\""), "{environment}");
+    assert!(environment.contains("\"cwd\""), "{environment}");
+
+    let passed_text =
+        render_release_gate_run_text(&collect_release_gate_run(root.clone(), 1, passed_report));
+    assert_eq!(
+        passed_text
+            .lines()
+            .filter(|line| line.contains("ok: pass") || line.contains("] ok: pass"))
+            .count(),
+        1
+    );
+    assert!(!passed_text.contains("stdout:"), "{passed_text}");
+}
+
+#[test]
+fn gate_persist_ignores_effigy_so_execute_plan_does_not_see_artifacts() {
+    let root = temp_repo("gate-ignore");
+    let status = Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(&root)
+        .status()
+        .expect("git init");
+    assert!(status.success());
+    fs::write(root.join("README.md"), "fixture\n").expect("readme");
+    assert!(!root.join(".gitignore").exists());
+
+    let pass = shell_gate("ok", "printf pass-ok");
+    let report = run_release_gates(&root, &[pass], true);
+    assert!(report.results[0].passed);
+    assert!(report.results[0].log_path.is_some());
+    assert!(report.environment_path.is_some());
+    assert!(root.join(".effigy/reports/release/gates/ok.log").is_file());
+    assert!(root
+        .join(".effigy/reports/release/gates/environment.json")
+        .is_file());
+    assert!(fs::read_to_string(root.join(".gitignore"))
+        .expect("gitignore")
+        .lines()
+        .any(|line| line.trim() == ".effigy" || line.trim() == ".effigy/"));
+
+    let modified = git_modified_files(&root).expect("git status");
+    let unexpected_effigy = modified
+        .iter()
+        .filter(|path| path == &".effigy" || path.starts_with(".effigy/"))
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_effigy.is_empty(),
+        "untracked .effigy artifacts would fail release execute --plan: {unexpected_effigy:?}"
+    );
+}
+
+#[test]
+fn prepare_text_shows_failed_gate_tail_and_log_path() {
+    let mut stdout_lines = Vec::new();
+    for index in 1..=21 {
+        stdout_lines.push(format!("line-{index:02}"));
+    }
+    let gate = GateResult {
+        name: "floor".to_owned(),
+        description: None,
+        command: "printf fail".to_owned(),
+        passed: false,
+        exit_code: Some(9),
+        stdout: stdout_lines.join("\n"),
+        stderr: String::new(),
+        launch_error: None,
+        duration_ms: 4,
+        log_path: Some(PathBuf::from(".effigy/reports/release/gates/floor.log")),
+    };
+    let plan = super::ReleasePreparePlan {
+        repo_root: PathBuf::from("/tmp/fixture"),
+        current_version: semver::Version::new(0, 1, 0),
+        version_source: ResolvedVersionSource {
+            path: PathBuf::from("VERSION"),
+            kind: VersionFileKind::PlainText,
+            field_path: None,
+        },
+        suggested_version: Some(semver::Version::new(0, 1, 1)),
+        planned_version: Some(semver::Version::new(0, 1, 1)),
+        suggested_tag: Some("v0.1.1".to_owned()),
+        tag: Some("v0.1.1".to_owned()),
+        version_override_used: false,
+        release_date: "2026-09-05".to_owned(),
+        gates_checked: true,
+        configured_gate_count: 1,
+        gate_results: vec![gate],
+        environment_path: Some(PathBuf::from(
+            ".effigy/reports/release/gates/environment.json",
+        )),
+        blockers: vec!["gate `floor` failed".to_owned()],
+        mutations: Vec::new(),
+        ready: false,
+    };
+    let rendered = render_release_prepare_plan_text(&plan);
+    assert!(!rendered.contains("line-01"), "{rendered}");
+    assert!(rendered.contains("line-02"), "{rendered}");
+    assert!(rendered.contains("line-21"), "{rendered}");
+    assert!(
+        rendered.contains("log: .effigy/reports/release/gates/floor.log"),
+        "{rendered}"
+    );
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| line.contains("floor: fail"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn gate_json_adds_optional_paths_without_changing_schema_id() {
+    let root = temp_repo("gate-json");
+    let report = run_release_gates(&root, &[shell_gate("smoke", "printf smoke-ok")], true);
+    let json = render_release_gate_run_json(&collect_release_gate_run(root.clone(), 1, report));
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(parsed["schema"], "effigy.release.gates.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert!(parsed["environment_path"].as_str().is_some());
+    assert!(parsed["results"][0]["log_path"].as_str().is_some());
+    assert_eq!(parsed["results"][0]["passed"], true);
+}
+
+#[test]
+fn prepare_rolls_back_on_gate_failure_and_keeps_prepared_no() {
+    let root = write_initial_release_repo("prepare-gate-fail", false);
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n[release.gates.floor]\ncommand = \"printf floor-fail >&2; exit 4\"\n",
+    )
+    .expect("manifest");
+    let prepared =
+        execute_release_prepare(root.clone(), ".release-prepared.json", true, None, |_| {})
+            .expect("prepare");
+    assert!(!prepared.prepared);
+    assert_eq!(
+        fs::read_to_string(root.join("VERSION")).expect("version"),
+        "0.1.0\n"
+    );
+    assert!(!root.join(".release-prepared.json").exists());
+    let rendered = render_release_prepared_text(&prepared);
+    assert!(rendered.contains("Prepared: no"), "{rendered}");
+    assert!(rendered.contains("floor-fail"), "{rendered}");
+    assert!(
+        rendered.contains("log: ") && rendered.contains("floor.log"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn redacted_environment_record_masks_token_like_keys() {
+    let record = super::gate_reports::redacted_environment_record(
+        "/bin/zsh",
+        &PathBuf::from("/repo"),
+        [
+            ("PATH".to_owned(), "/bin".to_owned()),
+            ("HOME".to_owned(), "/home/dev".to_owned()),
+            ("CARGO_HOME".to_owned(), "/cargo".to_owned()),
+            ("CARGO_REGISTRY_TOKEN".to_owned(), "secret".to_owned()),
+            ("IGNORED".to_owned(), "nope".to_owned()),
+        ],
+    );
+    assert_eq!(record["shell"], "/bin/zsh");
+    assert_eq!(record["cwd"], "/repo");
+    assert_eq!(record["PATH"], "/bin");
+    assert_eq!(record["CARGO_HOME"], "/cargo");
+    assert_eq!(record["CARGO_REGISTRY_TOKEN"], "<redacted>");
+    assert!(record.get("IGNORED").is_none());
 }

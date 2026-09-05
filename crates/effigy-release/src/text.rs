@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::gate_reports::failed_gate_tail_lines;
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
@@ -160,6 +161,14 @@ fn append_gate_status_lines(
                     "    {}: {} ({}; {}ms)",
                     gate.name, outcome, detail, gate.duration_ms
                 ));
+                if !gate.passed {
+                    for line in failed_gate_tail_lines(gate) {
+                        lines.push(format!("      {line}"));
+                    }
+                    if let Some(log_path) = &gate.log_path {
+                        lines.push(format!("      log: {}", log_path.display()));
+                    }
+                }
             }
         }
     } else if configured_gate_count == 0 {
@@ -851,6 +860,9 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
                 }
                 if !gate.stderr.is_empty() {
                     lines.push(format!("    stderr: {}", gate.stderr));
+                }
+                if let Some(log_path) = &gate.log_path {
+                    lines.push(format!("    log: {}", log_path.display()));
                 }
             }
         }

@@ -6,3 +6,5 @@ mod json_mode_tests;
 mod parse_tests;
 #[path = "lib_tests_shared.rs"]
 mod prelude;
+#[path = "lib_tests_release_gate_json_tests.rs"]
+mod release_gate_json_tests;

@@ -1,4 +1,3 @@
-use std::io::IsTerminal;
 use std::path::Path;
 
 use effigy_core::resolver::ResolvedTarget;
@@ -141,6 +140,16 @@ pub(super) fn run_standalone_release_gates(
     resolved: &ResolvedTarget,
 ) -> Result<ReleaseGateRun, RunnerError> {
     let config = load_release_config(&resolved.resolved_root)?;
+    let names = config
+        .gates
+        .iter()
+        .map(|gate| gate.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    emit_release_progress_line(&format!(
+        "configured gates ({}): {names}",
+        config.gates.len()
+    ));
     if !config.gates.is_empty() {
         emit_release_progress_line("running standalone release gates");
     }
@@ -212,12 +221,6 @@ pub(super) fn resolve_verify_install_repo_url(
     Ok(effigy_release::normalize_verify_install_repo_url(&detected))
 }
 
-fn release_progress_enabled() -> bool {
-    std::io::stderr().is_terminal()
-}
-
 pub(super) fn emit_release_progress_line(message: &str) {
-    if release_progress_enabled() {
-        eprintln!("[release] {message}");
-    }
+    eprintln!("[release] {message}");
 }
