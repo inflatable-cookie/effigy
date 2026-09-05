@@ -36,17 +36,17 @@ Direct invocation is canonical; help grouping remains.
 strict spec `118`. Card `1111` produced the frozen, read-only Acowtancy replay
 and first populated comparison scorecard; PR `88` merged at `9c05a883`.
 
-[`g09.004`](./004-release-gate-diagnosability.md) is ready under strict spec
-`119`: persist release gate output and environment, show the failing tail,
-announce the gate inventory. Card `1112` is the ready card.
+[`g09.004`](./004-release-gate-diagnosability.md) is complete under strict
+spec `119`; card `1112` merged in PR `90`.
 
-[`g09.005`](./005-docs-context-latency-and-freshness.md) is queued under
-strict spec `120` (card `1113`, serial after `1112`): reproduce and repair
-`docs context` warm and stale latency to frozen budgets.
+[`g09.005`](./005-docs-context-latency-and-freshness.md) is complete under
+strict spec `120`; card `1113` merged in PR `91`. Its K4/K5 retrieval
+limitations are re-planned in the canonical triage note.
 [`g09.006`](./006-cross-repository-source-routing.md) is planned and gated on
 that evidence; it has no ready card.
 
 ## Next Task
 
-Execute card `1112`, then card `1113`. The consumer cohort checkpoint is deferred by operator
-direction (2026-09-05). Effigy release authority stays separate.
+The g09.005 evidence is complete. Chatterbox decides whether the g09.006
+evidence gate is unlocked; the consumer cohort checkpoint remains deferred by
+operator direction (2026-09-05). Effigy release authority stays separate.

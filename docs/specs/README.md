@@ -100,6 +100,7 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1112` under strict spec `119`; card `1113` (spec `120`) follows
-serially. The consumer cohort checkpoint after `g09.003` is deferred by operator direction (2026-09-05); Acowtancy
-remains read-only and Effigy release authority stays separate.
+Cards `1112` and `1113` are complete under strict specs `119` and `120`.
+Chatterbox decides whether the g09.005 evidence unlocks g09.006. The consumer
+cohort checkpoint remains deferred by operator direction (2026-09-05);
+Acowtancy remains read-only and Effigy release authority stays separate.

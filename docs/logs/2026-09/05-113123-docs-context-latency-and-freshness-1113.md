@@ -317,14 +317,16 @@ never name a phase left by an earlier command in the same process.
 | Benchmark red or its matrix edited | falsified: green, `git diff` on the script is empty |
 | Provenance, freshness identity, lock, health snapshot, or bounded-failure envelope changed or bypassed | falsified: replay rows byte-identical; the timeout block is additive |
 | A default budget raised, or a new index/daemon/flag | falsified: no default, flag, or environment variable changed |
-| K4/K5 replay returns a wrong or fabricated source; no-match returns a result | falsified: every row is a real Effigy section with exact span; no-match empty. The separate expected-source gap is recorded above as an open planning finding |
+| K4/K5 replay returns a wrong or fabricated source; no-match returns a result | falsified: every row is a real Effigy section with exact span; no-match empty. The separate K4/K5 limitation is recorded in [`20260905-docs-context-identifier-retrieval-and-k5-expectation`](../../triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md) |
 | Cold `graph index` regresses beyond 10% | falsified: 147662 ms against a 182388 ms baseline, 19% faster |
 
 ## Reserved Surfaces
 
 Card `1113`, roadmap `g09.005`, spec `120`, contract `041`,
 `docs/specs/README.md`, `docs/roadmaps/README.md`, and `docs/roadmaps/g09/README.md`
-are left untouched for the coordinator to reconcile after merge.
+were reconciled after merge. Chatterbox aligned card and roadmap acceptance to
+spec `120` oracle row 7 at `ec0ac0e12`; the K4/K5 limitation is recorded in
+[`20260905-docs-context-identifier-retrieval-and-k5-expectation`](../../triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md).
 
 One exception: `docs/logs/README.md` carries the index link for this file,
 because `effigy qa` runs `docs check index` and fails on an unlinked log. That

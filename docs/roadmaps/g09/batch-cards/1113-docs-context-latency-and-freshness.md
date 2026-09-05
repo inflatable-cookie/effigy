@@ -4,12 +4,13 @@ Roadmap: [`../005-docs-context-latency-and-freshness.md`](../005-docs-context-la
 Spec: [`../../../specs/120-docs-context-latency-and-freshness-strict-lane.md`](../../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: graph freshness scan, lazy refresh, search-index rebuild, docs-context
 query path, graph time-budget diagnostics
 Created: 2026-09-05
 Queued since: 2026-09-05 operator-confirmed direction relayed by the Northstar
 Chatterbox; serial prerequisite `1112` merged at `f1732c87`
+Completed: 2026-09-05; PR `91` merged at `c111f883`
 
 ## Purpose
 
@@ -106,4 +107,5 @@ target enough that the frozen budgets need re-planning.
 
 ## Next Task
 
-Execute steps 1 to 5 and open the PR at the exact reviewed head.
+PR `91` was opened at exact reviewed head `d8b9b36d` and merged at `c111f883`.
+K4/K5 retrieval limitations are recorded in the canonical triage note.

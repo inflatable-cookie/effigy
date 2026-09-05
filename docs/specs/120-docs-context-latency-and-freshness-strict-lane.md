@@ -1,6 +1,6 @@
 # 120 Docs Context Latency and Freshness Strict Lane
 
-Status: Active
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
 Roadmap: [`g09.005`](../roadmaps/g09/005-docs-context-latency-and-freshness.md)
@@ -110,4 +110,6 @@ target; or if the fix needs a schema id bump.
 
 ## Next Task
 
-Execute card `1113`.
+Card `1113` complete. PR `91` merged at `c111f883`; evidence is recorded in
+the dated closeout log and the K4/K5 limitation is recorded in the canonical
+triage note.
