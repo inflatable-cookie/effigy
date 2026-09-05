@@ -1,6 +1,6 @@
 # g09.005 Docs Context Latency and Freshness
 
-Status: Queued (serial after `g09.004`)
+Status: Ready
 Created: 2026-09-05
 Spec: [`120`](../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
 Card: [`1113`](./batch-cards/1113-docs-context-latency-and-freshness.md)
@@ -75,8 +75,7 @@ running under the lock when the next query arrives.
 
 ## Cards
 
-- [ ] [`1113`](./batch-cards/1113-docs-context-latency-and-freshness.md) —
-  queued; becomes ready when card `1112` merges
+- [ ] [`1113`](./batch-cards/1113-docs-context-latency-and-freshness.md) — ready
 
 ## Acceptance
 
@@ -134,6 +133,5 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Wait for `1112` to merge, then execute card `1113`. On closeout, Chatterbox
-decides whether the evidence unlocks
+Execute card `1113`. On closeout, Chatterbox decides whether the evidence unlocks
 [`g09.006`](./006-cross-repository-source-routing.md).

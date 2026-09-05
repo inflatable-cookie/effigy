@@ -1,6 +1,6 @@
 # g09.004 Release Gate Diagnosability
 
-Status: Ready
+Status: Complete
 Created: 2026-09-05
 Spec: [`119`](../../specs/119-release-gate-diagnosability-strict-lane.md)
 Card: [`1112`](./batch-cards/1112-release-gate-diagnosability.md)
@@ -33,7 +33,7 @@ Effigy's own releases have the same blind spot.
 
 ## Cards
 
-- [ ] [`1112`](./batch-cards/1112-release-gate-diagnosability.md) — ready
+- [x] [`1112`](./batch-cards/1112-release-gate-diagnosability.md) — complete; PR `90` merged at `f1732c87`
 
 ## Acceptance
 
@@ -80,5 +80,5 @@ Published for the coordinator at the promoting commit on `main`.
 
 ## Next Task
 
-Execute card `1112`. After merge, notify the Swallowtail Chatterbox that the
-fix is on `main` for local-install adoption.
+Card `1112` is complete. PR `90` merged at `f1732c87`. Notify the Swallowtail
+Chatterbox that the fix is on `main` for local-install adoption.

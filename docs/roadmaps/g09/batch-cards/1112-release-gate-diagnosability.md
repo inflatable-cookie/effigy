@@ -4,10 +4,11 @@ Roadmap: [`../004-release-gate-diagnosability.md`](../004-release-gate-diagnosab
 Spec: [`../../../specs/119-release-gate-diagnosability-strict-lane.md`](../../../specs/119-release-gate-diagnosability-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/039-pre-release-ci-proof-contract.md`](../../../contracts/039-pre-release-ci-proof-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: release gate runner, release text/JSON renders, release progress seam
 Created: 2026-09-05
 Ready since: 2026-09-05 operator direction
+Completed: 2026-09-05; PR `90` merged at `f1732c87`
 
 ## Purpose
 
@@ -39,20 +40,20 @@ failure can be diagnosed without rerunning it.
 
 ## Acceptance
 
-- [ ] a fixture repo with a failing shell gate, run under captured stderr,
+- [x] a fixture repo with a failing shell gate, run under captured stderr,
       leaves `<gate>.log` with full stdout and stderr and `environment.json`
-- [ ] a passing gate also leaves its log; passed gates render as one line
-- [ ] prepare text on gate failure shows the failing gate's tail (20 lines
+- [x] a passing gate also leaves its log; passed gates render as one line
+- [x] prepare text on gate failure shows the failing gate's tail (20 lines
       max) and its log path, and still reports `Prepared: no` with every
       mutation restored
-- [ ] `environment.json` records shell, cwd, `PATH`, `HOME`, `CARGO_*`,
+- [x] `environment.json` records shell, cwd, `PATH`, `HOME`, `CARGO_*`,
       `RUSTUP_*`, `RUSTFLAGS`; a `CARGO_REGISTRY_TOKEN` set in the test
       environment appears as `<redacted>`
-- [ ] `release gates` under captured stderr emits the inventory line before
+- [x] `release gates` under captured stderr emits the inventory line before
       any gate runs and one progress line per gate
-- [ ] `--json` for gates, status, prepare, and execute remain valid envelopes
+- [x] `--json` for gates, status, prepare, and execute remain valid envelopes
       with unchanged schema ids; new fields are present and optional
-- [ ] no new flag, env var, gate kind, or non-rollback path
+- [x] no new flag, env var, gate kind, or non-rollback path
 
 ## Review Oracle
 
@@ -93,5 +94,6 @@ outside `.effigy/reports/release/`.
 
 ## Next Task
 
-Open the PR at the exact reviewed head. After merge, the coordinator notifies
-Chatterbox; Chatterbox tells the Swallowtail Chatterbox the fix is on `main`.
+PR `90` was opened at exact reviewed head `4a149cc3` and merged at `f1732c87`.
+The coordinator notifies Chatterbox; Chatterbox tells the Swallowtail
+Chatterbox the fix is on `main`.

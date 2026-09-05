@@ -1,6 +1,6 @@
 # 120 Docs Context Latency and Freshness Strict Lane
 
-Status: Queued (serial after spec `119`)
+Status: Active
 Owner: Effigy orchestrator
 Created: 2026-09-05
 Roadmap: [`g09.005`](../roadmaps/g09/005-docs-context-latency-and-freshness.md)
@@ -110,4 +110,4 @@ target; or if the fix needs a schema id bump.
 
 ## Next Task
 
-Queued behind spec `119`. Execute card `1113` once card `1112` has merged.
+Execute card `1113`.

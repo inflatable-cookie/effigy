@@ -1,6 +1,6 @@
 # 119 Release Gate Diagnosability Strict Lane
 
-Status: Active
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
 Roadmap: [`g09.004`](../roadmaps/g09/004-release-gate-diagnosability.md)
@@ -105,4 +105,5 @@ persistence outside `.effigy/reports/release/`.
 
 ## Next Task
 
-Execute card `1112`.
+Card `1112` complete. PR `90` merged at `f1732c87`; evidence is recorded in
+the dated closeout log.

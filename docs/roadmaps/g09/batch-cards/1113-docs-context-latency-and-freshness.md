@@ -4,12 +4,12 @@ Roadmap: [`../005-docs-context-latency-and-freshness.md`](../005-docs-context-la
 Spec: [`../../../specs/120-docs-context-latency-and-freshness-strict-lane.md`](../../../specs/120-docs-context-latency-and-freshness-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 
-Status: Queued (ready when card `1112` merges)
+Status: Ready
 Owner: graph freshness scan, lazy refresh, search-index rebuild, docs-context
 query path, graph time-budget diagnostics
 Created: 2026-09-05
 Queued since: 2026-09-05 operator-confirmed direction relayed by the Northstar
-Chatterbox; serial after `1112`
+Chatterbox; serial prerequisite `1112` merged at `f1732c87`
 
 ## Purpose
 
@@ -99,5 +99,4 @@ target enough that the frozen budgets need re-planning.
 
 ## Next Task
 
-Wait for `1112` to merge; then execute steps 1 to 5 and open the PR at the
-exact reviewed head.
+Execute steps 1 to 5 and open the PR at the exact reviewed head.

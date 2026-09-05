@@ -86,6 +86,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/05-105500-release-gate-diagnosability-1112.md`](./2026-09/05-105500-release-gate-diagnosability-1112.md)
 - [`2026-09/03-014518-acowtancy-consumer-replay-1111.md`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md)
 - [`2026-09/03-010246-vision-governance-review-cycle-2.md`](./2026-09/03-010246-vision-governance-review-cycle-2.md)
 - [`2026-09/02-224606-flat-command-execution-1110.md`](./2026-09/02-224606-flat-command-execution-1110.md)
@@ -213,7 +214,8 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Card `1111` executed its clean frozen Acowtancy replay; evidence is at
+Card `1112` is complete; evidence is at
+[`2026-09/05-105500-release-gate-diagnosability-1112.md`](./2026-09/05-105500-release-gate-diagnosability-1112.md). Card `1113` is now the active ready lane. Card `1111` executed its clean frozen Acowtancy replay; evidence is at
 [`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md) and the
 first populated scorecard is under
 [`docs/vision/governance/`](../vision/governance/). PR `88` merged at

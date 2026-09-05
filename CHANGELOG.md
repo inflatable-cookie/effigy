@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Release gate runs now persist full per-gate output and a redacted execution
+  environment under `.effigy/reports/release/gates/`, with additive JSON paths
+  and failure diagnostics that include a bounded output tail.
 - Consumer-contract guidance now states that full `effigy doctor` executes
   eligible repo-owned health tasks and is not guaranteed read-only, and
   documents `effigy doctor <task>` (doctor explain) as the non-executing
@@ -40,6 +43,9 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Changed
+- `release gates` announces its configured inventory and always emits progress
+  on stderr, keeping JSON stdout contract-pure; first-time `.effigy` writers
+  use the existing gitignore convention.
 - Direct built-in invocation is canonical again. The executable `local`,
   `repo`, `deliver`, `extend`, and `admin` namespace aliases and their
   migration warnings are removed. Help grouping and `effigy help <group>`
