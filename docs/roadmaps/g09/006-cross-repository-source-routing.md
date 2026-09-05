@@ -79,11 +79,20 @@ refresh at about 10 s, which clears the latency gate. The lane starts after
   fixture portfolio file covering every status and every negative control
   (missing source, retired versus current, same term in two repositories,
   dirty checkout, not-shared, disallowed, no answer), joined to the benchmark.
-  The pilot's five questions, with K5 rephrased with the Northstar Chatterbox
-  first, are replayed by hand against Northstar, Effigy, and Underlay and
-  compared with plain `rg` on time to usable evidence, source correctness,
-  and bytes returned; that table lives in the evidence log. No speedup or
-  recall claim before it exists.
+  The pilot's questions K1–K4, K5a, and K5b are replayed by hand against
+  Northstar, Effigy, and Underlay and compared with plain `rg` on time to
+  usable evidence, source correctness, and bytes returned; that table lives
+  in the evidence log. No speedup or recall claim before it exists.
+  K5 is replayed as two evidence-shaped questions settled with the Northstar
+  Chatterbox on 2026-09-05: **K5a** (tool behaviour) "What does release execute
+  commit, tag, and push?" expecting Effigy guide `051`'s execute section; **K5b**
+  (consumer obligation) "What publication step does Underlay require after
+  release execute?" expecting Underlay's own release guidance, or a reported
+  no-match if absent. Returning the relevant sections satisfies retrieval; no
+  synthesised yes/no answer is required, Effigy's binary-publication workflow
+  is never treated as Underlay's obligation, K5b stays inside the two-sided
+  membership (no bypass of an absent opt-in), and an unavailable or excluded
+  source is reported as such, not as a semantic no-match.
 - **Latency acceptance:** three shared repositories warm inside 5 s total on
   the reference machine.
 
@@ -111,9 +120,7 @@ Published for the coordinator at the promoting commit on `main`.
   ready. **Serial edge:** card `1114` (`g09.007`) has
   merged to `main`. Not approved for parallel execution with `1114`.
 - **Prerequisites:** `1114` merged; clean `main`; no other active strict
-  lane. The manual portfolio replay additionally needs the K5 rephrasing
-  settled in triage; if it is not settled when the worker reaches that step,
-  replay K1 to K4 and record K5 as pending, do not block the PR.
+  lane. The K5 rephrasing (K5a/K5b) is settled in the Frozen Decisions.
   **Completion:** PR merged with evidence log, card, roadmap, spec, guides,
   benchmark freeze, starter/init profile addition, and changelog closed out.
 - **Owned mutable paths:** `crates/effigy-codegraph/src/docs_context/**`,
