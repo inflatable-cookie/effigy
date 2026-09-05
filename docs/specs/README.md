@@ -28,7 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`119`](./119-release-gate-diagnosability-strict-lane.md) — persist
+  release gate output and environment, surface the failing tail, announce the
+  gate inventory (`g09.004`, card `1112`)
 
 Recently completed strict lane awaiting planning disposition:
 
@@ -96,6 +98,6 @@ Other planning specs:
 
 ## Next Task
 
-PR `88` merged card `1111` and completed `g09.003`. Decide cohort expansion
-versus a second bounded repair at the next planning checkpoint. Acowtancy
-remains read-only; Effigy release authority stays separate.
+Execute card `1112` under strict spec `119`. The consumer cohort checkpoint
+after `g09.003` is deferred by operator direction (2026-09-05); Acowtancy
+remains read-only and Effigy release authority stays separate.

@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g09
-Updated: 2026-09-03
+Updated: 2026-09-05
 
 ## Generation history
 
@@ -320,3 +320,10 @@ closeout there first.
 Decide cohort expansion versus a second bounded repair at the next planning
 checkpoint. Do not mutate Acowtancy, release Effigy, or widen the lane into
 unrelated feature placement.
+
+[`g09.004`](./g09/004-release-gate-diagnosability.md) is **ready** under
+strict spec `119` (card `1112`): persist release gate stdout/stderr and the
+run environment under `.effigy/reports/release/gates/`, show the failing
+gate's tail in prepare/execute text, and announce the gate inventory on
+stderr. Origin: Swallowtail consumer intake, 2026-09-05. The `g09.003` cohort
+checkpoint is deferred by operator direction on the same date.

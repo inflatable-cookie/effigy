@@ -45,8 +45,9 @@ Promote from stage 2 to stage 3 when:
 
 ## Next Task
 
-At the next planning checkpoint, decide cohort expansion and whether this
-baseline needs another bounded evidence pass. The first populated comparison
-scorecard exists under `docs/vision/governance/`; Stage 2 remains current, and
-metric evidence sources plus the canonical exception-record location still
-block Stage 3.
+Execute `g09.004` first; the cohort-expansion and maturity-model repair
+checkpoint is deferred by operator direction (2026-09-05; triage
+`20260904-130553`) and reopens after that lane ships. Stage 2 stays current.
+The first populated comparison scorecard exists under
+`docs/vision/governance/`; metric evidence sources plus the canonical
+exception-record location still block Stage 3.

@@ -165,12 +165,17 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Theme 3 through strict spec `118`; card `1111` executed the frozen,
   read-only Acowtancy replay and published the first populated comparison
   scorecard. PR `88` merged at `9c05a883`.
+  Ready [`g09.004`](./g09/004-release-gate-diagnosability.md) makes a failed
+  release gate diagnosable from persisted output and environment records
+  under strict spec `119`; card `1112` is ready.
 
 ## Active Strict Lane
 
-No strict implementation lane is active. Spec `118`, `g09.003`, and card
-`1111` are complete. Direct invocation remains canonical and help grouping
-remains.
+Strict spec [`119`](../specs/119-release-gate-diagnosability-strict-lane.md)
+is active for [`g09.004`](./g09/004-release-gate-diagnosability.md). Card
+[`1112`](./g09/batch-cards/1112-release-gate-diagnosability.md) is the ready
+card; its dispatch manifest is in the roadmap. Direct invocation remains
+canonical and help grouping remains.
 
 ## Research Program
 
@@ -225,9 +230,10 @@ Before rollover:
 
 ## Next Task
 
-Decide cohort expansion versus a second bounded repair at the next planning
-checkpoint. Keep Acowtancy read-only and Effigy release execution and S3
-extraction behind their named gates.
+Execute card `1112` (release gate diagnosability). The consumer cohort
+checkpoint is deferred by operator direction on 2026-09-05. Keep Acowtancy
+read-only and Effigy release execution and S3 extraction behind their named
+gates.
 
 ## Historical language boundary
 

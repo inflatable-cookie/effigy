@@ -183,6 +183,6 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-Decide cohort expansion versus a second bounded repair for Theme 3 at the next
-planning checkpoint. Direct invocation remains canonical; Effigy release
-remains separately gated.
+Execute `g09.004` release gate diagnosability (card `1112`) first; the Theme 3
+cohort checkpoint is deferred by operator direction (2026-09-05). Direct
+invocation remains canonical; Effigy release remains separately gated.

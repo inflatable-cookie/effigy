@@ -217,6 +217,7 @@ Card `1111` executed its clean frozen Acowtancy replay; evidence is at
 [`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md) and the
 first populated scorecard is under
 [`docs/vision/governance/`](../vision/governance/). PR `88` merged at
-`9c05a883`. Decide cohort expansion versus a second bounded repair at the next
-planning checkpoint. Acowtancy stays read-only; Effigy release remains a
-separate operator-gated mutation.
+`9c05a883`. Card `1112` (release gate diagnosability, strict spec `119`) is
+the ready card; the cohort checkpoint is deferred by operator direction
+(2026-09-05). Acowtancy stays read-only; Effigy release remains a separate
+operator-gated mutation.

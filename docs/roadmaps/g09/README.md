@@ -13,6 +13,7 @@ extends the governed contract into current consumer evidence.
 - [`001-command-surface-compaction-preview.md`](./001-command-surface-compaction-preview.md)
 - [`002-flat-command-execution.md`](./002-flat-command-execution.md)
 - [`003-acowtancy-consumer-adoption-replay.md`](./003-acowtancy-consumer-adoption-replay.md)
+- [`004-release-gate-diagnosability.md`](./004-release-gate-diagnosability.md)
 
 ## Design Posture
 
@@ -33,7 +34,11 @@ Direct invocation is canonical; help grouping remains.
 strict spec `118`. Card `1111` produced the frozen, read-only Acowtancy replay
 and first populated comparison scorecard; PR `88` merged at `9c05a883`.
 
+[`g09.004`](./004-release-gate-diagnosability.md) is ready under strict spec
+`119`: persist release gate output and environment, show the failing tail,
+announce the gate inventory. Card `1112` is the ready card.
+
 ## Next Task
 
-Decide cohort expansion versus a second bounded repair at the next planning
-checkpoint. Effigy release authority stays separate.
+Execute card `1112`. The consumer cohort checkpoint is deferred by operator
+direction (2026-09-05). Effigy release authority stays separate.

@@ -125,6 +125,7 @@ they remain in the active tree.
 
 ## Next Task
 
-Decide cohort expansion versus a second bounded repair for Theme 3 at the next
-planning checkpoint. Theme 4 remains historical and direct invocation is
+The Theme 3 cohort decision is deferred by operator direction (2026-09-05);
+`g09.004` release gate diagnosability runs first. Theme 4 remains historical
+and direct invocation is
 canonical. Theme 5 release execution remains separately gated.

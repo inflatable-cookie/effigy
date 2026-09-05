@@ -1,6 +1,7 @@
 # Consumer Maturity Scoring Checkpoint
 
-Status: open — awaiting operator decision
+Status: deferred — operator direction 2026-09-05: not important right now;
+`g09.004` release gate diagnosability runs first
 Created: 2026-09-04
 Owner: chatterbox
 Decision: [`D-2026-05`](../vision/decisions/D-2026-05-consumer-adoption-cohort-replay.md)
@@ -73,6 +74,7 @@ the decisive question is the first Unknown above.
 
 ## Next Task
 
-Operator decides which option (or reframes). On confirmation, chatterbox
+Deferred. Reopen with the operator after `g09.004` ships. Operator then
+decides which option (or reframes). On confirmation, chatterbox
 promotes: vision artifact amendments and/or a new `g09.004` roadmap, strict
 spec, ready card, and dispatch manifest; then prunes this note.
