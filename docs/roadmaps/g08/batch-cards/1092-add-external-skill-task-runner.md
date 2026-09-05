@@ -58,7 +58,7 @@ the consuming repository remains the runtime target.
 
 ## Evidence
 
-[`2026-08-31 external skill task runner closeout`](../../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)
+[`2026-08-31 external skill task runner closeout`](../../../logs/archive/2026-08/31-162015-external-skill-task-runner-closeout.md)
 
 ## Review Oracle
 

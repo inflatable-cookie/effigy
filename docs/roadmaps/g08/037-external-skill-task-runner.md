@@ -64,4 +64,4 @@ Card `1089` closed on 2026-08-31.
 
 ## Evidence
 
-[`2026-08-31 external skill task runner closeout`](../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)
+[`2026-08-31 external skill task runner closeout`](../../logs/archive/2026-08/31-162015-external-skill-task-runner-closeout.md)

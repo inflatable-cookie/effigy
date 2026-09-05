@@ -62,9 +62,9 @@ without a valid consumer lockfile.
 
 ## Evidence
 
-- [`11-234531-bun-pin-consumer-proof-and-closeout.md`](../../logs/2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
-- [`12-090342-bun-pin-lockfile-fallback-planning.md`](../../logs/2026-08/12-090342-bun-pin-lockfile-fallback-planning.md)
-- [`12-094017-bun-pin-lockfile-fallback-closeout.md`](../../logs/2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
+- [`11-234531-bun-pin-consumer-proof-and-closeout.md`](../../logs/archive/2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
+- [`12-090342-bun-pin-lockfile-fallback-planning.md`](../../logs/archive/2026-08/12-090342-bun-pin-lockfile-fallback-planning.md)
+- [`12-094017-bun-pin-lockfile-fallback-closeout.md`](../../logs/archive/2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
 
 ## Next Task
 

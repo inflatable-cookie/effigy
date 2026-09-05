@@ -44,7 +44,7 @@ unchanged.
 
 ## Evidence
 
-- [`2026-08/18-112147-doctor-secrets-schema-parity-closeout.md`](../../logs/2026-08/18-112147-doctor-secrets-schema-parity-closeout.md)
+- [`2026-08/18-112147-doctor-secrets-schema-parity-closeout.md`](../../logs/archive/2026-08/18-112147-doctor-secrets-schema-parity-closeout.md)
 
 ## Next Task
 

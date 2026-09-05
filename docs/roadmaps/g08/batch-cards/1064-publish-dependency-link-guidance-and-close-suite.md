@@ -51,7 +51,7 @@ closeout surfaces only.
 ## Evidence
 
 - [`Local dependency linking guide`](../../../guides/077-local-dependency-linking.md)
-- [`Dependency linking suite closeout`](../../../logs/2026-08/05-231121-dependency-linking-suite-closeout.md)
+- [`Dependency linking suite closeout`](../../../logs/archive/2026-08/05-231121-dependency-linking-suite-closeout.md)
 - Cargo proof: [`1062`](./1062-prove-signal-links-across-flat-and-nested-consumers.md)
 - Bun proof: [`1063`](./1063-prove-bun-closure-drift-and-repair.md)
 

@@ -75,7 +75,7 @@ safe transform requires normalizing foreign TOML.
 
 ## Evidence
 
-- [`../../../logs/2026-08/05-165735-cargo-full-closure-planning.md`](../../../logs/2026-08/05-165735-cargo-full-closure-planning.md)
+- [`../../../logs/archive/2026-08/05-165735-cargo-full-closure-planning.md`](../../../logs/archive/2026-08/05-165735-cargo-full-closure-planning.md)
 
 ## Next Task
 

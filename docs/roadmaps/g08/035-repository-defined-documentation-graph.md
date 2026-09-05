@@ -31,9 +31,9 @@ Northstar files or skills.
       guidance, benchmark retrieval, validate, and close the lane
 
 Card `1089` closed on 2026-08-31 with evidence
-[`31-181957-documentation-context-1089.md`](../../logs/2026-08/31-181957-documentation-context-1089.md).
+[`31-181957-documentation-context-1089.md`](../../logs/archive/2026-08/31-181957-documentation-context-1089.md).
 Card `1090` closed on 2026-08-31 with evidence
-[`31-213000-northstar-profile-proof-1090.md`](../../logs/2026-08/31-213000-northstar-profile-proof-1090.md),
+[`31-213000-northstar-profile-proof-1090.md`](../../logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md),
 which closed this milestone.
 
 ## Owner And Seam

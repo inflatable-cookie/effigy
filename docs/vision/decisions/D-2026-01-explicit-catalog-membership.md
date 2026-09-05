@@ -28,6 +28,6 @@ Controls
 Traceability
 - Related Exception: none
 - Related Risk: VR-01
-- Related Artifacts: [`g08.028`](../../roadmaps/g08/028-explicit-catalog-membership.md), [`10-105636-explicit-catalog-membership-closeout.md`](../../logs/2026-08/10-105636-explicit-catalog-membership-closeout.md)
+- Related Artifacts: [`g08.028`](../../roadmaps/g08/028-explicit-catalog-membership.md), [`10-105636-explicit-catalog-membership-closeout.md`](../../logs/archive/2026-08/10-105636-explicit-catalog-membership-closeout.md)
 
 Review checkpoint: completed 2026-09-03; decision remains Stabilized.

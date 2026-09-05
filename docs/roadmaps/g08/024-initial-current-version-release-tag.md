@@ -46,7 +46,7 @@ version or skipping release orchestration.
 
 ## Evidence
 
-- [`Initial current-version release tag closeout`](../../logs/2026-08/06-111534-initial-current-version-release-tag.md)
+- [`Initial current-version release tag closeout`](../../logs/archive/2026-08/06-111534-initial-current-version-release-tag.md)
 - [`Release orchestration guide`](../../guides/051-release-orchestration.md)
 
 ## Next Task

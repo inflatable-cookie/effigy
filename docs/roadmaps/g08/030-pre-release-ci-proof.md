@@ -41,7 +41,7 @@ precondition for Effigy's release preparation and execution protocol.
 
 ## Evidence
 
-- [`11-182709-pre-release-ci-proof-closeout.md`](../../logs/2026-08/11-182709-pre-release-ci-proof-closeout.md)
+- [`11-182709-pre-release-ci-proof-closeout.md`](../../logs/archive/2026-08/11-182709-pre-release-ci-proof-closeout.md)
 
 ## Next Task
 

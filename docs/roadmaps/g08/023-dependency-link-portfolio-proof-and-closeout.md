@@ -66,9 +66,9 @@ operator guidance, and close the `g08.018` suite with reproducible evidence.
 
 ## Evidence
 
-- [`Signal Cargo portfolio proof`](../../logs/2026-08/05-225229-signal-cargo-portfolio-proof.md)
-- [`Bun closure drift and repair proof`](../../logs/2026-08/05-230446-bun-closure-drift-repair-proof.md)
-- [`Dependency linking suite closeout`](../../logs/2026-08/05-231121-dependency-linking-suite-closeout.md)
+- [`Signal Cargo portfolio proof`](../../logs/archive/2026-08/05-225229-signal-cargo-portfolio-proof.md)
+- [`Bun closure drift and repair proof`](../../logs/archive/2026-08/05-230446-bun-closure-drift-repair-proof.md)
+- [`Dependency linking suite closeout`](../../logs/archive/2026-08/05-231121-dependency-linking-suite-closeout.md)
 - [`Operator guide`](../../guides/077-local-dependency-linking.md)
 
 ## Validation

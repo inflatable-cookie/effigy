@@ -77,7 +77,7 @@ drift.
 
 ## Evidence
 
-Closeout log: [`30-174452-documentation-instruction-help-parity-closeout.md`](../../../logs/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
+Closeout log: [`30-174452-documentation-instruction-help-parity-closeout.md`](../../../logs/archive/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
 
 ## Validation
 

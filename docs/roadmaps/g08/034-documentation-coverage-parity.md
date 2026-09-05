@@ -52,8 +52,8 @@ meaning to make documentation easier.
 
 ## Evidence
 
-- Planning: [`2026-08/21-224918-documentation-coverage-parity-planning.md`](../../logs/2026-08/21-224918-documentation-coverage-parity-planning.md)
-- Closeout: [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
+- Planning: [`2026-08/21-224918-documentation-coverage-parity-planning.md`](../../logs/archive/2026-08/21-224918-documentation-coverage-parity-planning.md)
+- Closeout: [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/archive/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Next Task
 

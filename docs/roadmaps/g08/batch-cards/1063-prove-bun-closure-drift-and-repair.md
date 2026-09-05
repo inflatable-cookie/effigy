@@ -51,7 +51,7 @@ fixtures.
 
 ## Evidence
 
-- [`Bun closure, drift, and repair proof`](../../../logs/2026-08/05-230446-bun-closure-drift-repair-proof.md)
+- [`Bun closure, drift, and repair proof`](../../../logs/archive/2026-08/05-230446-bun-closure-drift-repair-proof.md)
 - Bun `1.3.14` linked the direct `@effigy-proof/protocol` package and
   transitive `@effigy-proof/core` package through explicit `--no-save`
 - a real `bun install` produced a one-of-two partial closure; status and doctor

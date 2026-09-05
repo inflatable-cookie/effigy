@@ -47,11 +47,11 @@ then close the strict lane without overstating what prose checks can prove.
 
 ## Evidence Requirement
 
-Close with one dated log under `docs/logs/2026-08/` and link it from both cards
+Close with one dated log under `docs/logs/archive/2026-08/` and link it from both cards
 and the roadmap.
 
 Evidence:
-[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
+[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/archive/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Stop Conditions
 

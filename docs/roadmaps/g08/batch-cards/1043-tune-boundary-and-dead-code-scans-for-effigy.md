@@ -41,7 +41,7 @@ Make graph-aware scan results actionable for Effigy's own maintenance queue.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-215614-boundary-dead-code-self-adoption.md`](../../../logs/2026-06/04-215614-boundary-dead-code-self-adoption.md)
+- [`../../../logs/archive/2026-06/04-215614-boundary-dead-code-self-adoption.md`](../../../logs/archive/2026-06/04-215614-boundary-dead-code-self-adoption.md)
 
 ## Next Task
 

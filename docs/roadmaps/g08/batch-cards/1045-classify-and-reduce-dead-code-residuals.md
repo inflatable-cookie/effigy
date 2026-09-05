@@ -53,7 +53,7 @@ one more graph false-positive class and classifying the rest.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-223151-dead-code-test-scope-filter.md`](../../../logs/2026-06/04-223151-dead-code-test-scope-filter.md)
+- [`../../../logs/archive/2026-06/04-223151-dead-code-test-scope-filter.md`](../../../logs/archive/2026-06/04-223151-dead-code-test-scope-filter.md)
 
 ## Next Task
 

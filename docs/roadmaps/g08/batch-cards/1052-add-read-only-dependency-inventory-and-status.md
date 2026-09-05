@@ -62,7 +62,7 @@ portfolio repos or machine-global Bun state.
 
 ## Evidence
 
-- [`../../../logs/2026-08/05-162005-read-only-dependency-inventory-status.md`](../../../logs/2026-08/05-162005-read-only-dependency-inventory-status.md)
+- [`../../../logs/archive/2026-08/05-162005-read-only-dependency-inventory-status.md`](../../../logs/archive/2026-08/05-162005-read-only-dependency-inventory-status.md)
 
 ## Stop Conditions
 

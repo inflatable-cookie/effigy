@@ -35,7 +35,7 @@ drift without rewriting parser or runner dispatch.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-210225-command-surface-descriptor-seam.md`](../../../logs/2026-06/04-210225-command-surface-descriptor-seam.md)
+- [`../../../logs/archive/2026-06/04-210225-command-surface-descriptor-seam.md`](../../../logs/archive/2026-06/04-210225-command-surface-descriptor-seam.md)
 
 ## Validation
 

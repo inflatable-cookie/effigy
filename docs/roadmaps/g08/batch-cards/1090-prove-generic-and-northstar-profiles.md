@@ -12,9 +12,9 @@ Owner: cross-repo proof, starter adoption, and lane closeout
 Created: 2026-08-29
 Ready after: card `1089` closeout proves the public query contract
 Ready since: 2026-08-31, on card `1089` evidence
-[`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md)
+[`../../../logs/archive/2026-08/31-181957-documentation-context-1089.md`](../../../logs/archive/2026-08/31-181957-documentation-context-1089.md)
 Completed: 2026-08-31
-Evidence: [`../../../logs/2026-08/31-213000-northstar-profile-proof-1090.md`](../../../logs/2026-08/31-213000-northstar-profile-proof-1090.md)
+Evidence: [`../../../logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md`](../../../logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md)
 
 ## Purpose
 

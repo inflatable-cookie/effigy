@@ -54,7 +54,7 @@ positive classes and deleting confirmed dead artifacts.
 
 ## Evidence
 
-- Implementation: [`../../../logs/2026-06/04-233355-dead-code-final-burn-down.md`](../../../logs/2026-06/04-233355-dead-code-final-burn-down.md)
+- Implementation: [`../../../logs/archive/2026-06/04-233355-dead-code-final-burn-down.md`](../../../logs/archive/2026-06/04-233355-dead-code-final-burn-down.md)
 
 ## Next Task
 

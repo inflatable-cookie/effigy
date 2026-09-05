@@ -81,7 +81,7 @@ secrets under forced unlock, workspace ownership diagnosis, and non-console
 
 ## Evidence
 
-- [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
+- [`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../logs/archive/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Stop Conditions
 

@@ -64,7 +64,7 @@ Close with one dated log containing the exact disposable topology, commands,
 package closure, type-check result, untouched-repo proof, full validation, and
 archive/front-door updates.
 
-Evidence: [`11-234531-bun-pin-consumer-proof-and-closeout.md`](../../../logs/2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
+Evidence: [`11-234531-bun-pin-consumer-proof-and-closeout.md`](../../../logs/archive/2026-08/11-234531-bun-pin-consumer-proof-and-closeout.md)
 
 ## Stop Conditions
 

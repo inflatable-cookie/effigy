@@ -77,7 +77,7 @@ or the CLI must reconstruct manager policy outside `effigy-deps`.
 
 ## Evidence
 
-- [`../../../logs/2026-08/05-172006-cargo-link-apply-verification.md`](../../../logs/2026-08/05-172006-cargo-link-apply-verification.md)
+- [`../../../logs/archive/2026-08/05-172006-cargo-link-apply-verification.md`](../../../logs/archive/2026-08/05-172006-cargo-link-apply-verification.md)
 
 ## Next Task
 

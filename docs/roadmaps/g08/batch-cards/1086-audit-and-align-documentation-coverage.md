@@ -61,7 +61,7 @@ Carry the matrix and exact changed-surface list into the card `1087` closeout
 log. Do not claim whole-repo coverage from a keyword search alone.
 
 Evidence:
-[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/2026-08/21-230738-documentation-coverage-parity-closeout.md)
+[`2026-08/21-230738-documentation-coverage-parity-closeout.md`](../../../logs/archive/2026-08/21-230738-documentation-coverage-parity-closeout.md)
 
 ## Stop Conditions
 

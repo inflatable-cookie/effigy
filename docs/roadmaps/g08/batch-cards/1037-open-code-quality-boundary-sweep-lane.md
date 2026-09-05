@@ -40,7 +40,7 @@ card without changing behavior.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md`](../../../logs/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md)
+- [`../../../logs/archive/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md`](../../../logs/archive/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md)
 
 ## Validation
 

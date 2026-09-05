@@ -57,8 +57,8 @@ weakening normal private function reporting.
 
 ## Evidence
 
-- Planning: [`../../../logs/2026-06/04-230026-dead-code-descriptor-root-planning.md`](../../../logs/2026-06/04-230026-dead-code-descriptor-root-planning.md)
-- Implementation: [`../../../logs/2026-06/04-230651-dead-code-descriptor-root-precision.md`](../../../logs/2026-06/04-230651-dead-code-descriptor-root-precision.md)
+- Planning: [`../../../logs/archive/2026-06/04-230026-dead-code-descriptor-root-planning.md`](../../../logs/archive/2026-06/04-230026-dead-code-descriptor-root-planning.md)
+- Implementation: [`../../../logs/archive/2026-06/04-230651-dead-code-descriptor-root-precision.md`](../../../logs/archive/2026-06/04-230651-dead-code-descriptor-root-precision.md)
 
 ## Next Task
 

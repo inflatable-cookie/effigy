@@ -64,7 +64,7 @@ Close with one dated log containing grammar, root-resolution, overlap, text/JSON
 schema-selection, and regression evidence.
 
 Evidence:
-[`11-232228-bun-pin-cli-json-and-interlocks.md`](../../../logs/2026-08/11-232228-bun-pin-cli-json-and-interlocks.md)
+[`11-232228-bun-pin-cli-json-and-interlocks.md`](../../../logs/archive/2026-08/11-232228-bun-pin-cli-json-and-interlocks.md)
 
 ## Stop Conditions
 

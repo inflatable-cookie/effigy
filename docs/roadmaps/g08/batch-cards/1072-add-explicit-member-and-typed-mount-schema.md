@@ -61,7 +61,7 @@ but does not switch membership policy until card `1073`.
 ## Evidence
 
 See
-[`2026-08/10-095639-explicit-catalog-schema-foundation.md`](../../../logs/2026-08/10-095639-explicit-catalog-schema-foundation.md).
+[`2026-08/10-095639-explicit-catalog-schema-foundation.md`](../../../logs/archive/2026-08/10-095639-explicit-catalog-schema-foundation.md).
 
 ## Stop Conditions
 

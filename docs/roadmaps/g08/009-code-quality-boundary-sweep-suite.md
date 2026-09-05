@@ -100,20 +100,20 @@ safe duplication without changing public behavior.
 
 ## Evidence
 
-- [`../../logs/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md`](../../logs/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md)
-- [`../../logs/2026-06/04-210225-command-surface-descriptor-seam.md`](../../logs/2026-06/04-210225-command-surface-descriptor-seam.md)
-- [`../../logs/2026-06/04-210845-rhai-feature-descriptor-seam.md`](../../logs/2026-06/04-210845-rhai-feature-descriptor-seam.md)
-- [`../../logs/2026-06/04-212126-container-up-phase-boundary-cleanup.md`](../../logs/2026-06/04-212126-container-up-phase-boundary-cleanup.md)
-- [`../../logs/2026-06/04-214009-repo-marker-root-rule-convergence.md`](../../logs/2026-06/04-214009-repo-marker-root-rule-convergence.md)
-- [`../../logs/2026-06/04-214831-selected-duplicate-block-follow-through.md`](../../logs/2026-06/04-214831-selected-duplicate-block-follow-through.md)
-- [`../../logs/2026-06/04-215614-boundary-dead-code-self-adoption.md`](../../logs/2026-06/04-215614-boundary-dead-code-self-adoption.md)
-- [`../../logs/2026-06/04-221542-dead-code-scan-rust-signal-correction.md`](../../logs/2026-06/04-221542-dead-code-scan-rust-signal-correction.md)
-- [`../../logs/2026-06/04-223151-dead-code-test-scope-filter.md`](../../logs/2026-06/04-223151-dead-code-test-scope-filter.md)
-- [`../../logs/2026-06/04-225805-dead-code-trait-surface-precision.md`](../../logs/2026-06/04-225805-dead-code-trait-surface-precision.md)
-- [`../../logs/2026-06/04-230651-dead-code-descriptor-root-precision.md`](../../logs/2026-06/04-230651-dead-code-descriptor-root-precision.md)
-- [`../../logs/2026-06/04-231646-dead-code-data-shape-root-precision.md`](../../logs/2026-06/04-231646-dead-code-data-shape-root-precision.md)
-- [`../../logs/2026-06/04-232355-dead-code-rust-impl-call-precision.md`](../../logs/2026-06/04-232355-dead-code-rust-impl-call-precision.md)
-- [`../../logs/2026-06/04-233355-dead-code-final-burn-down.md`](../../logs/2026-06/04-233355-dead-code-final-burn-down.md)
+- [`../../logs/archive/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md`](../../logs/archive/2026-06/04-204300-code-quality-boundary-sweep-lane-opened.md)
+- [`../../logs/archive/2026-06/04-210225-command-surface-descriptor-seam.md`](../../logs/archive/2026-06/04-210225-command-surface-descriptor-seam.md)
+- [`../../logs/archive/2026-06/04-210845-rhai-feature-descriptor-seam.md`](../../logs/archive/2026-06/04-210845-rhai-feature-descriptor-seam.md)
+- [`../../logs/archive/2026-06/04-212126-container-up-phase-boundary-cleanup.md`](../../logs/archive/2026-06/04-212126-container-up-phase-boundary-cleanup.md)
+- [`../../logs/archive/2026-06/04-214009-repo-marker-root-rule-convergence.md`](../../logs/archive/2026-06/04-214009-repo-marker-root-rule-convergence.md)
+- [`../../logs/archive/2026-06/04-214831-selected-duplicate-block-follow-through.md`](../../logs/archive/2026-06/04-214831-selected-duplicate-block-follow-through.md)
+- [`../../logs/archive/2026-06/04-215614-boundary-dead-code-self-adoption.md`](../../logs/archive/2026-06/04-215614-boundary-dead-code-self-adoption.md)
+- [`../../logs/archive/2026-06/04-221542-dead-code-scan-rust-signal-correction.md`](../../logs/archive/2026-06/04-221542-dead-code-scan-rust-signal-correction.md)
+- [`../../logs/archive/2026-06/04-223151-dead-code-test-scope-filter.md`](../../logs/archive/2026-06/04-223151-dead-code-test-scope-filter.md)
+- [`../../logs/archive/2026-06/04-225805-dead-code-trait-surface-precision.md`](../../logs/archive/2026-06/04-225805-dead-code-trait-surface-precision.md)
+- [`../../logs/archive/2026-06/04-230651-dead-code-descriptor-root-precision.md`](../../logs/archive/2026-06/04-230651-dead-code-descriptor-root-precision.md)
+- [`../../logs/archive/2026-06/04-231646-dead-code-data-shape-root-precision.md`](../../logs/archive/2026-06/04-231646-dead-code-data-shape-root-precision.md)
+- [`../../logs/archive/2026-06/04-232355-dead-code-rust-impl-call-precision.md`](../../logs/archive/2026-06/04-232355-dead-code-rust-impl-call-precision.md)
+- [`../../logs/archive/2026-06/04-233355-dead-code-final-burn-down.md`](../../logs/archive/2026-06/04-233355-dead-code-final-burn-down.md)
 
 ## Current Evidence Baseline
 

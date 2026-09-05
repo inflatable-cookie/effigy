@@ -52,7 +52,7 @@ rows.
 - [x] governance front door exists at `docs/vision/governance/README.md`
 - [x] register and index link from `docs/vision/README.md`
 - [x] three decision records seeded with reversal conditions
-- [x] one governance review log in `docs/logs/2026-08/`
+- [x] one governance review log in `docs/logs/archive/2026-08/`
 - [x] active specs tree no longer carries completed lanes `097`–`100`
 - [x] `effigy qa:docs:vision` passes
 

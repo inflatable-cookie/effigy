@@ -84,8 +84,8 @@ not rewrite targets.
 
 ## Evidence
 
-- Planning: [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](../../logs/2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
-- Closeout: [`2026-08/30-174452-documentation-instruction-help-parity-closeout.md`](../../logs/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
+- Planning: [`2026-08/30-164636-documentation-instruction-help-refresh-planning.md`](../../logs/archive/2026-08/30-164636-documentation-instruction-help-refresh-planning.md)
+- Closeout: [`2026-08/30-174452-documentation-instruction-help-parity-closeout.md`](../../logs/archive/2026-08/30-174452-documentation-instruction-help-parity-closeout.md)
 
 ## Stop Conditions
 

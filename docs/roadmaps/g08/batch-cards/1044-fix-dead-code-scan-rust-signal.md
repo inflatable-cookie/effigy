@@ -42,7 +42,7 @@ suppression.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-221542-dead-code-scan-rust-signal-correction.md`](../../../logs/2026-06/04-221542-dead-code-scan-rust-signal-correction.md)
+- [`../../../logs/archive/2026-06/04-221542-dead-code-scan-rust-signal-correction.md`](../../../logs/archive/2026-06/04-221542-dead-code-scan-rust-signal-correction.md)
 
 ## Next Task
 

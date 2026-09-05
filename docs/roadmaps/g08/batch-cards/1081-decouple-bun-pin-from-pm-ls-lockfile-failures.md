@@ -95,7 +95,7 @@ Close with one dated log containing the Bun failure, fixture matrix, fallback
 warning, five-consumer proof, cp-front control, untouched-file proof, dependency
 choice, and full validation results.
 
-Evidence: [`12-094017-bun-pin-lockfile-fallback-closeout.md`](../../../logs/2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
+Evidence: [`12-094017-bun-pin-lockfile-fallback-closeout.md`](../../../logs/archive/2026-08/12-094017-bun-pin-lockfile-fallback-closeout.md)
 
 ## Stop Conditions
 

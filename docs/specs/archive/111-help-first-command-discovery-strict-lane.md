@@ -7,7 +7,7 @@ Roadmap: [`g08.038`](../../roadmaps/g08/038-help-first-command-discovery.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Completed card: [`1093`](../../roadmaps/g08/batch-cards/1093-add-help-first-command-discovery.md)
-Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
+Evidence: [`2026-08-31 closeout`](../../logs/archive/2026-08/31-233000-help-first-command-discovery-1093.md)
 
 ## Outcome
 

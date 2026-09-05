@@ -45,4 +45,4 @@ evidence, or coupling the generic release crate to GitHub.
 ## Next Task
 
 Lane complete. Evidence:
-[`11-182709-pre-release-ci-proof-closeout.md`](../../../logs/2026-08/11-182709-pre-release-ci-proof-closeout.md).
+[`11-182709-pre-release-ci-proof-closeout.md`](../../../logs/archive/2026-08/11-182709-pre-release-ci-proof-closeout.md).

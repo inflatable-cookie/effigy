@@ -199,7 +199,7 @@ JSON, docs, and closeout.
 
 1. Falsify all six contract-042 review-oracle cases and run every validation
    named in the card and `Current State`.
-2. Write one dated execution log under `docs/logs/2026-08/` with the
+2. Write one dated execution log under `docs/logs/archive/2026-08/` with the
    source/target matrix, oracle proofs, no-side-effect failures, JSON proof,
    Northstar smoke or absence, exact test counts, and full-QA results.
 3. Mark card `1092`, roadmap `g08.037`, and strict spec `110` complete. Archive

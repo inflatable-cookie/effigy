@@ -57,8 +57,8 @@ ability to find genuinely unused private methods.
 
 ## Evidence
 
-- Planning: [`../../../logs/2026-06/04-225013-dead-code-trait-surface-planning.md`](../../../logs/2026-06/04-225013-dead-code-trait-surface-planning.md)
-- Implementation: [`../../../logs/2026-06/04-225805-dead-code-trait-surface-precision.md`](../../../logs/2026-06/04-225805-dead-code-trait-surface-precision.md)
+- Planning: [`../../../logs/archive/2026-06/04-225013-dead-code-trait-surface-planning.md`](../../../logs/archive/2026-06/04-225013-dead-code-trait-surface-planning.md)
+- Implementation: [`../../../logs/archive/2026-06/04-225805-dead-code-trait-surface-precision.md`](../../../logs/archive/2026-06/04-225805-dead-code-trait-surface-precision.md)
 
 ## Next Task
 

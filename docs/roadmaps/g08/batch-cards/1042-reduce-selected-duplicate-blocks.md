@@ -39,7 +39,7 @@ scope into broad cleanup.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-214831-selected-duplicate-block-follow-through.md`](../../../logs/2026-06/04-214831-selected-duplicate-block-follow-through.md)
+- [`../../../logs/archive/2026-06/04-214831-selected-duplicate-block-follow-through.md`](../../../logs/archive/2026-06/04-214831-selected-duplicate-block-follow-through.md)
 
 ## Next Task
 

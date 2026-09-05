@@ -92,7 +92,7 @@ Here is the state the worker is inheriting:
   `/Users/tom/Dev/projects/effigy/docs/guides/037-documentation-contribution-playbook.md`;
   `/Users/tom/Dev/projects/effigy/docs/roadmaps/g08/034-documentation-coverage-parity.md`;
   `/Users/tom/Dev/projects/effigy/docs/specs/archive/107-documentation-coverage-parity.md`;
-  `/Users/tom/Dev/projects/effigy/docs/logs/2026-08/21-230738-documentation-coverage-parity-closeout.md`.
+  `/Users/tom/Dev/projects/effigy/docs/logs/archive/2026-08/21-230738-documentation-coverage-parity-closeout.md`.
   Read their tracked counterparts from the selected worker worktree.
 - **Model capability profile:** capable coding model with high reasoning; the
   run is broad in evidence but bounded to public documentation and discovery.
@@ -281,7 +281,7 @@ whether anything needs a planning decision.
 ### When card 1091 is complete
 
 1. Run the final validation named in `Current State` and card `1091`.
-2. Write one dated execution log under `docs/logs/2026-08/` containing the full
+2. Write one dated execution log under `docs/logs/archive/2026-08/` containing the full
    feature matrix, general-scan before/after counts and dispositions,
    changed-file validation-gap analysis, Northstar AGENTS review metrics and
    findings, rendered help/config proof, changed surfaces, guard decisions,

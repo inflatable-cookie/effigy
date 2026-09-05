@@ -68,7 +68,7 @@ Close with one dated log containing the focused test counts, manifest fixtures,
 lockfile byte proof, affected analysis, and exact next-card transition.
 
 Evidence:
-[`11-224711-bun-pin-domain-foundation.md`](../../../logs/2026-08/11-224711-bun-pin-domain-foundation.md)
+[`11-224711-bun-pin-domain-foundation.md`](../../../logs/archive/2026-08/11-224711-bun-pin-domain-foundation.md)
 
 ## Stop Conditions
 

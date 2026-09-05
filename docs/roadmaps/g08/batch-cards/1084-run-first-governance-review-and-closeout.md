@@ -15,7 +15,7 @@ specs, and close lane `105`.
 
 ## Work
 
-- publish governance review log under `docs/logs/2026-08/`
+- publish governance review log under `docs/logs/archive/2026-08/`
 - add governance review cadence note to `docs/logs/README.md`
 - archive completed strict specs `097`, `099`, `100`, and `105`
 - refresh planning front doors; ensure no stale ready card remains
@@ -38,7 +38,7 @@ specs, and close lane `105`.
 Close with one dated log containing validation commands and lane closeout state.
 
 Evidence:
-[`17-153000-vision-governance-operationalization-closeout.md`](../../../logs/2026-08/17-153000-vision-governance-operationalization-closeout.md)
+[`17-153000-vision-governance-operationalization-closeout.md`](../../../logs/archive/2026-08/17-153000-vision-governance-operationalization-closeout.md)
 
 ## Stop Conditions
 

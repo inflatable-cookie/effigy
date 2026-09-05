@@ -60,7 +60,7 @@ state without adding new membership semantics.
 ## Evidence
 
 Recorded in
-[`2026-08/10-105636-explicit-catalog-membership-closeout.md`](../../../logs/2026-08/10-105636-explicit-catalog-membership-closeout.md).
+[`2026-08/10-105636-explicit-catalog-membership-closeout.md`](../../../logs/archive/2026-08/10-105636-explicit-catalog-membership-closeout.md).
 
 ## Stop Conditions
 

@@ -229,7 +229,7 @@ branch, push again, and report back. Requested changes are: none at dispatch.
 The operator must explicitly authorise any merge.
 
 - **Closeout refs:** cards `1086` and `1087`, roadmap `g08.034`, strict spec
-  `107` and its archive destination, `docs/logs/2026-08/`,
+  `107` and its archive destination, `docs/logs/archive/2026-08/`,
   `docs/logs/README.md`, `docs/roadmaps/README.md`,
   `docs/roadmaps/generation-index.md`, `docs/roadmaps/g08/README.md`, and
   `docs/specs/README.md`.

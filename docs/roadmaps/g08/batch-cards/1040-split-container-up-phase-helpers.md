@@ -40,7 +40,7 @@ helpers without changing behavior.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-212126-container-up-phase-boundary-cleanup.md`](../../../logs/2026-06/04-212126-container-up-phase-boundary-cleanup.md)
+- [`../../../logs/archive/2026-06/04-212126-container-up-phase-boundary-cleanup.md`](../../../logs/archive/2026-06/04-212126-container-up-phase-boundary-cleanup.md)
 
 ## Next Task
 

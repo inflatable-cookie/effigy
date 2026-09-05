@@ -60,7 +60,7 @@ tasks, test, demo, execution, and status surfaces consume that result.
 ## Evidence
 
 See
-[`2026-08/10-101827-explicit-catalog-routing-cutover.md`](../../../logs/2026-08/10-101827-explicit-catalog-routing-cutover.md).
+[`2026-08/10-101827-explicit-catalog-routing-cutover.md`](../../../logs/archive/2026-08/10-101827-explicit-catalog-routing-cutover.md).
 
 ## Stop Conditions
 

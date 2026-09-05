@@ -2,7 +2,7 @@
 
 Status: open
 Created: 2026-09-01
-Owner: orchestrator
+Owner: chatterbox (reassigned 2026-09-05 docs cleanup; orchestrator does not own triage)
 Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
 
@@ -40,6 +40,8 @@ acquisition decisions moved into architecture `026`, contract `043`, and the
 
 ## Next Task
 
-These questions remain open and unscheduled. Card `1099` repaired the retained
+These questions remain open and unscheduled. Next check: the first Bovine
+Accelerator consumer evidence that the media-upload replacement is live, or
+the next `g09` planning checkpoint, whichever comes first. Card `1099` repaired the retained
 surface but supplied no consumer-replacement proof. Do not promote an S3 or
 extension lane until that downstream evidence exists.

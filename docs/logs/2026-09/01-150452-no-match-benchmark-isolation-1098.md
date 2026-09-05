@@ -37,7 +37,7 @@ Review follow-up: PR 72 comment `5495348333`
    makes that proof depend on live profile roots — falsified by committed
    `generic-no-match` remaining the sole `expect: "empty"` case, fixture query
    unchanged, and the live run returning 0 results / 0 context bytes while
-   those terms remain in `docs/logs/2026-08/31-213000-northstar-profile-proof-1090.md`.
+   those terms remain in `docs/logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md`.
 3. An unrelated live authority or historical case changes query, expected
    source, rival, rank bound, dimension, or pass criterion — falsified by
    `docs_context_benchmark_preserves_live_authority_and_historical_cases`

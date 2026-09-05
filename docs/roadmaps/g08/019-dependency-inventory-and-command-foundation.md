@@ -71,9 +71,9 @@ Completed: 2026-08-05
 
 ## Evidence
 
-- [`../../logs/2026-08/05-155727-dependency-domain-state-foundation.md`](../../logs/2026-08/05-155727-dependency-domain-state-foundation.md)
-- [`../../logs/2026-08/05-162005-read-only-dependency-inventory-status.md`](../../logs/2026-08/05-162005-read-only-dependency-inventory-status.md)
-- [`../../logs/2026-08/05-163456-deps-cli-json-foundation-closeout.md`](../../logs/2026-08/05-163456-deps-cli-json-foundation-closeout.md)
+- [`../../logs/archive/2026-08/05-155727-dependency-domain-state-foundation.md`](../../logs/archive/2026-08/05-155727-dependency-domain-state-foundation.md)
+- [`../../logs/archive/2026-08/05-162005-read-only-dependency-inventory-status.md`](../../logs/archive/2026-08/05-162005-read-only-dependency-inventory-status.md)
+- [`../../logs/archive/2026-08/05-163456-deps-cli-json-foundation-closeout.md`](../../logs/archive/2026-08/05-163456-deps-cli-json-foundation-closeout.md)
 
 ## Validation
 

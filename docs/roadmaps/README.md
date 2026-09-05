@@ -64,98 +64,20 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   agent-adoption follow-through focused on cross-repo freshness trust,
   behavioral query ranking, edit-target packets, benchmark proof, and agent
   guidance.
-- `g08` is closed. Milestones `g08.001` through
-  [`g08.009`](./g08/009-code-quality-boundary-sweep-suite.md) are complete: the
-  first tranche covered graph-aware scan intelligence (preserving deterministic
-  filesystem scans, adding optional graph enrichment, and graph-native scans for
-  boundaries, isolated code, hotspots, and validation gaps); the follow-up
-  tranche covered the code-quality boundary sweep (descriptor convergence,
-  container bring-up cleanup, repo-marker convergence, duplicate-block
-  follow-through, boundary/dead-code self-adoption, and the dead-code burn-down
-  to 0 findings). The current
-  [`g08.010`](./g08/010-security-and-posture-hardening-suite.md) tranche
-  remediates the 2026-06-10 security and posture assessment across discovery
-  correctness, supply-chain gates, daemon panic-safety, secret egress, gateway
-  trust, and docs compaction. Milestones `g08.016` and `g08.017` are also
-  complete. The completed
-  [`g08.018`](./g08/018-local-dependency-management-suite.md) suite added the
-  shared `effigy deps` foundation, Cargo and Bun local links, doctor hygiene,
-  and portfolio proof through `g08.023`. The bounded
-  [`g08.024`](./g08/024-initial-current-version-release-tag.md) follow-up lets
-  an explicitly configured new repository tag its already-declared first
-  version without weakening later monotonic releases.
-  [`g08.025`](./g08/025-annotated-release-tag-integrity.md) now repairs the
-  release tag object boundary exposed by a real Swallowtail candidate.
-  The completed [`g08.026`](./g08/026-patch-release-lane-hardening.md) lane removes
-  a persistent loopback test-state leak, settles prepared-source drift policy,
-  and proves the `0.9.1` candidate.
-  The completed [`g08.027`](./g08/027-papercuts-discovery-and-capture.md) lane adds
-  rootless project/portfolio papercut discovery and safe single-project capture.
-  The completed [`g08.028`](./g08/028-explicit-catalog-membership.md) lane replaces
-  ambient descendant discovery with root-owned catalog membership under
-  contract `037`.
-  Completed [`g08.029`](./g08/029-unified-test-orchestration-v011.md) makes
-  `[test]` the sole v0.11 test authority under contract `038`.
-  Completed [`g08.030`](./g08/030-pre-release-ci-proof.md) requires a green
-  hosted CI run for the exact candidate source SHA before release work under
-  contract `039`.
-  Completed [`g08.031`](./g08/031-bun-committed-dependency-pinning.md) delivers
-  the separate committed Bun override workflow and pin-only text-lockfile
-  fallback under contract `040`; cards `1078` through `1081` are complete.
-  Completed [`g08.032`](./g08/032-vision-governance-operationalization.md)
-  operationalizes vision governance registers and the first review cycle under
-  archived strict spec `105`; cards `1082` through `1084` are complete.
-  Completed [`g08.034`](./g08/034-documentation-coverage-parity.md) audits
-  current public behavior against active user, agent, built-in, and generated
-  docs under archived strict spec `107`; cards `1086` and `1087` are complete.
-  Completed [`g08.035`](./g08/035-repository-defined-documentation-graph.md)
-  implements repository-owned documentation graph profiles and bounded context
-  retrieval under archived strict spec `108`; cards `1088`, `1089`, and `1090`
-  are complete.
-  Completed [`g08.036`](./g08/036-documentation-instruction-and-help-parity-refresh.md)
-  refreshed scan, agent-instruction, feature-documentation, generated-reference,
-  and shipped-help parity under archived strict spec `109`; card `1091` is
-  complete.
-  Completed [`g08.037`](./g08/037-external-skill-task-runner.md) adds explicit
-  installed-skill task execution with the consuming repository retained as the
-  runtime target; card `1092` is complete and strict spec `110` is archived.
-  Completed [`g08.038`](./g08/038-help-first-command-discovery.md) groups
-  command discovery under the six operator-job topics without adding execution
-  aliases; card `1093` is complete and strict spec `111` is archived.
-  Completed [`g08.039`](./g08/039-rhai-profile-independent-limits-papercut.md)
-  makes Rhai expression-depth parsing profile-independent while preserving
-  release limits; card `1094` is complete and strict spec `112` is archived.
-  Completed [`g08.040`](./g08/040-catalog-pack-acquisition-prototype.md) proves
-  explicit installed catalog-pack acquisition and recovery while retaining the
-  permanent compiled baseline; card `1095` is complete and strict spec `113` is
-  archived.
-  Completed [`g08.041`](./g08/041-catalog-fragment-listing-papercut.md) corrected
-  bundled fragment inventory so `service list` reports only `service.toml`
-  parents while filesystem/pack directory listing stays unchanged; card `1096`
-  is complete.
-  Completed [`g08.042`](./g08/042-markdown-frontmatter-extraction-papercut.md)
-  keeps leading YAML frontmatter out of Markdown section inventory while
-  preserving metadata and exact spans; card `1097` is complete.
-  Completed [`g08.043`](./g08/043-docs-context-no-match-benchmark-isolation-papercut.md)
-  isolates empty-result benchmark proof from Effigy's live documentation
-  corpus; card `1098` is complete.
-  Completed [`g08.044`](./g08/044-rhai-storage-create-only.md) adds atomic
-  create-if-absent behavior to the retained Rhai storage surface; card `1099`
-  is complete and strict spec `114` is archived.
-  Completed [`g08.045`](./g08/045-child-catalog-suite-registry-papercut.md)
-  preserves an ancestor container registry during child-catalog suite task-ref
-  expansion; card `1100` is complete under contract `038`.
-  Completed [`g08.046`](./g08/046-docs-context-time-budget-papercut.md) shares
-  the graph time budget and progress boundary with cold docs-context refresh;
-  card `1101` is complete under contract `041`.
-  Completed [`g08.047`](./g08/047-docs-context-traversal-budget-papercut.md)
-  reserves bounded result capacity for typed-relation traversal; card `1102`
-  is complete under contract `041`.
-  Completed [`g08.048`](./g08/048-catalog-pack-publication-and-cutover.md)
-  externalized and published the official catalog pack, cut over the generated
-  baseline, exposed safe update, and installed generated-only proposal
-  automation under archived strict spec `115`; cards `1103` through `1108` are
-  complete.
+- `g08` is closed through
+  [`g08.048`](./g08/048-catalog-pack-publication-and-cutover.md). It covered
+  graph-aware scan intelligence, the code-quality boundary sweep and dead-code
+  burn-down, the 2026-06-10 security and posture hardening suite, local
+  dependency management (`effigy deps`), release-tag integrity and patch-lane
+  hardening, papercuts discovery, explicit catalog membership (contract `037`),
+  unified test orchestration (contract `038`), pre-release CI proof (contract
+  `039`), committed Bun pinning (contract `040`), vision governance
+  operationalization, documentation coverage and parity refreshes, the
+  repository-defined documentation graph (contract `041`), the external skill
+  task runner, help-first command discovery, a run of bounded papercut repairs,
+  and catalog-pack acquisition, publication, and cutover. Per-milestone detail
+  lives in [`g08/README.md`](./g08/README.md) and the archived logs.
+- `g09` is the active generation.
   Completed [`g09.001`](./g09/001-command-surface-compaction-preview.md)
   shipped the operator-approved additive command-surface preview (card
   `1109`); strict spec `116` is archived. Live use rejected executable help

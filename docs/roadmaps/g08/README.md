@@ -337,7 +337,7 @@ same day: the Northstar ontology is now committed starter configuration copied
 into this repository's own manifest, repository neutrality and installed-skill
 independence are proved end to end, and `perf:docs-context-benchmark` replays a
 predeclared retrieval corpus. Evidence:
-[`31-213000-northstar-profile-proof-1090.md`](../../logs/2026-08/31-213000-northstar-profile-proof-1090.md).
+[`31-213000-northstar-profile-proof-1090.md`](../../logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md).
 
 `g08.036` is complete under archived strict spec `109`. Card `1091` delivered
 the serial documentation, instruction, help, scan-evidence, and closeout batch.

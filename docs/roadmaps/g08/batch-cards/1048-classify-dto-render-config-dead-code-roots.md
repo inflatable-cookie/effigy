@@ -56,8 +56,8 @@ without hiding ordinary private structs, enums, or helper functions.
 
 ## Evidence
 
-- Planning: [`../../../logs/2026-06/04-230940-dead-code-data-shape-root-planning.md`](../../../logs/2026-06/04-230940-dead-code-data-shape-root-planning.md)
-- Implementation: [`../../../logs/2026-06/04-231646-dead-code-data-shape-root-precision.md`](../../../logs/2026-06/04-231646-dead-code-data-shape-root-precision.md)
+- Planning: [`../../../logs/archive/2026-06/04-230940-dead-code-data-shape-root-planning.md`](../../../logs/archive/2026-06/04-230940-dead-code-data-shape-root-planning.md)
+- Implementation: [`../../../logs/archive/2026-06/04-231646-dead-code-data-shape-root-precision.md`](../../../logs/archive/2026-06/04-231646-dead-code-data-shape-root-precision.md)
 
 ## Next Task
 

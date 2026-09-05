@@ -48,7 +48,7 @@ its consumers and operator runbooks approve.
 
 ## Evidence
 
-- [`Annotated release tag integrity closeout`](../../logs/2026-08/06-120729-annotated-release-tag-integrity.md)
+- [`Annotated release tag integrity closeout`](../../logs/archive/2026-08/06-120729-annotated-release-tag-integrity.md)
 - [`Release orchestration guide`](../../guides/051-release-orchestration.md)
 
 ## Next Task

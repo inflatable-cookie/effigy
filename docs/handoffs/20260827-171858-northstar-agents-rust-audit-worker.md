@@ -104,7 +104,7 @@ Please keep this run inside the two ordered audits:
   the discovered Cargo repository, and apply only `review_required` repair plans
   accepted by the recorder.
 - **In scope, closeout:** one consolidated evidence log under
-  `docs/logs/2026-08/` and its log-index entry, plus changelog text only when a
+  `docs/logs/archive/2026-08/` and its log-index entry, plus changelog text only when a
   user-facing Rust repair warrants it.
 - **Out of scope:** applying phase-one AGENTS optimization recommendations;
   product feature work; architecture replacement; breaking API or compatibility
@@ -232,7 +232,7 @@ the complete unit assessment and an authorized repair plan.
 
 1. Finalize the Rust audit and retain its deterministic report/evidence in the
    repository Git metadata. Write one consolidated tracked evidence log under
-   `docs/logs/2026-08/` with the AGENTS audit outcome, Rust audit ID/catalogue
+   `docs/logs/archive/2026-08/` with the AGENTS audit outcome, Rust audit ID/catalogue
    hash, findings/dispositions, repair waves, setup changes, preservation proof,
    validation, limitations, and `## Vision Target Delta`; add it to
    `docs/logs/README.md`.

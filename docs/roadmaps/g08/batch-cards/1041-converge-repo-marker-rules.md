@@ -40,7 +40,7 @@ root-marker predicates.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-214009-repo-marker-root-rule-convergence.md`](../../../logs/2026-06/04-214009-repo-marker-root-rule-convergence.md)
+- [`../../../logs/archive/2026-06/04-214009-repo-marker-root-rule-convergence.md`](../../../logs/archive/2026-06/04-214009-repo-marker-root-rule-convergence.md)
 
 ## Next Task
 

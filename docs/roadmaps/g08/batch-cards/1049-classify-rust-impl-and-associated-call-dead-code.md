@@ -58,8 +58,8 @@ associated/self call forms that the dead-code scan does not yet credit.
 
 ## Evidence
 
-- Planning: [`../../../logs/2026-06/04-232018-dead-code-rust-impl-call-planning.md`](../../../logs/2026-06/04-232018-dead-code-rust-impl-call-planning.md)
-- Implementation: [`../../../logs/2026-06/04-232355-dead-code-rust-impl-call-precision.md`](../../../logs/2026-06/04-232355-dead-code-rust-impl-call-precision.md)
+- Planning: [`../../../logs/archive/2026-06/04-232018-dead-code-rust-impl-call-planning.md`](../../../logs/archive/2026-06/04-232018-dead-code-rust-impl-call-planning.md)
+- Implementation: [`../../../logs/archive/2026-06/04-232355-dead-code-rust-impl-call-precision.md`](../../../logs/archive/2026-06/04-232355-dead-code-rust-impl-call-precision.md)
 
 ## Next Task
 

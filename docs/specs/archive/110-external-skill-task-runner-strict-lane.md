@@ -7,7 +7,7 @@ Roadmap: [`g08.037`](../../roadmaps/g08/037-external-skill-task-runner.md)
 Architecture: [`025`](../../architecture/025-external-skill-task-execution.md)
 Contract: [`042`](../../contracts/042-external-skill-task-runner-contract.md)
 Completed card: [`1092`](../../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md)
-Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-162015-external-skill-task-runner-closeout.md)
+Evidence: [`2026-08-31 closeout`](../../logs/archive/2026-08/31-162015-external-skill-task-runner-closeout.md)
 
 ## Outcome
 

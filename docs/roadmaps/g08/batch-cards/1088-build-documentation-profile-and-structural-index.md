@@ -70,7 +70,7 @@ or Northstar-specific defaults in this card.
 Close with one dated log containing fixture cases, test counts, profile
 fingerprint proof, exact-span examples, affected analysis, and the explicit
 readiness transition for card `1089`. Evidence:
-[`30-004016-documentation-graph-1088.md`](../../../logs/2026-08/30-004016-documentation-graph-1088.md).
+[`30-004016-documentation-graph-1088.md`](../../../logs/archive/2026-08/30-004016-documentation-graph-1088.md).
 
 ## Stop Conditions
 

@@ -246,7 +246,7 @@ not above it, on query
 | `effigy-architecture-authority` | architecture | `repository defined documentation graph architecture` | `docs/architecture/024-repository-defined-documentation-graph.md` | 1 | current | 90 | - | 23989 | pass |
 | `effigy-direct-historical-guide` | historical-decision | `docs consistency sweep and changelog` | `docs/guides/archive/032-docs-consistency-sweep-and-changelog.md` | 1 | historical | 10 | - | 23885 | pass |
 | `effigy-next-task` | next-task | `active strict lane spec set` | `docs/specs/README.md` | 1 | current | 85 | - | 14132 | pass |
-| `effigy-historical-decision` | historical-decision | `bounded documentation context query card 1089 closeout evidence` | `docs/logs/2026-08/31-181957-documentation-context-1089.md` | 3 | historical | 30 | - | 23986 | pass |
+| `effigy-historical-decision` | historical-decision | `bounded documentation context query card 1089 closeout evidence` | `docs/logs/archive/2026-08/31-181957-documentation-context-1089.md` | 3 | historical | 30 | - | 23986 | pass |
 | `effigy-no-match` | no-match | *(two nonsense terms; see the script)* | - | - | - | - | - | 0 | pass |
 
 Both tables were regenerated after the closeout edits in this branch, so the

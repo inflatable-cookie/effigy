@@ -68,7 +68,7 @@ non-mutating until the manager milestones.
 
 ## Evidence
 
-- [`../../../logs/2026-08/05-163456-deps-cli-json-foundation-closeout.md`](../../../logs/2026-08/05-163456-deps-cli-json-foundation-closeout.md)
+- [`../../../logs/archive/2026-08/05-163456-deps-cli-json-foundation-closeout.md`](../../../logs/archive/2026-08/05-163456-deps-cli-json-foundation-closeout.md)
 
 ## Next Task
 

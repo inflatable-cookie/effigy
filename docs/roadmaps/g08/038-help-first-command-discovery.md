@@ -3,7 +3,7 @@
 Status: Complete
 Created: 2026-08-31
 Completed: 2026-08-31
-Evidence: [`2026-08-31 closeout`](../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
+Evidence: [`2026-08-31 closeout`](../../logs/archive/2026-08/31-233000-help-first-command-discovery-1093.md)
 Spec: [`111`](../../specs/archive/111-help-first-command-discovery-strict-lane.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)

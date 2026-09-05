@@ -11,7 +11,7 @@ Owner: CLI command inventory, help parser/rendering, and public documentation
 Created: 2026-08-31
 Ready since: 2026-08-31 operator approval of help-first scope and exact topics
 Completed: 2026-08-31
-Evidence: [`2026-08-31 closeout`](../../../logs/2026-08/31-233000-help-first-command-discovery-1093.md)
+Evidence: [`2026-08-31 closeout`](../../../logs/archive/2026-08/31-233000-help-first-command-discovery-1093.md)
 
 ## Purpose
 

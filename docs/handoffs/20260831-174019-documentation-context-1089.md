@@ -44,7 +44,7 @@ remote inference, or repository-specific runtime logic.
 - **Worker mode:** implementation worker dispatched by the orchestrator; this
   handoff activates the worker-only worktree preflight.
 - **Foundation:** card `1088` is complete. Its evidence is
-  `docs/logs/2026-08/30-004016-documentation-graph-1088.md`.
+  `docs/logs/archive/2026-08/30-004016-documentation-graph-1088.md`.
 - **Worker branch:** intended `worker/g08-035-docs-context-1089`; accept the
   launcher's clean non-`main` branch when one is supplied.
 - **Worker worktree:** intended
@@ -228,7 +228,7 @@ acceptance items, risks, and blockers.
 ### When card 1089 is complete
 
 1. Run the final validation named in `Current State` and card `1089`.
-2. Write one dated execution log under `docs/logs/2026-08/` covering retrieval
+2. Write one dated execution log under `docs/logs/archive/2026-08/` covering retrieval
    cases, exact ordering and provenance, no-match behavior, direct historical
    retrieval, authority/currentness ties, relation traversal, each budget,
    baseline mode, freshness, and exact test/check results.

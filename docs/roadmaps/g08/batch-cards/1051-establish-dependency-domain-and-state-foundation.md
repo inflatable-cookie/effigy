@@ -78,7 +78,7 @@ depend on `effigy-cli`, `effigy-doctor`, or root-runner modules.
 
 ## Evidence
 
-- [`../../../logs/2026-08/05-155727-dependency-domain-state-foundation.md`](../../../logs/2026-08/05-155727-dependency-domain-state-foundation.md)
+- [`../../../logs/archive/2026-08/05-155727-dependency-domain-state-foundation.md`](../../../logs/archive/2026-08/05-155727-dependency-domain-state-foundation.md)
 
 ## Stop Conditions
 

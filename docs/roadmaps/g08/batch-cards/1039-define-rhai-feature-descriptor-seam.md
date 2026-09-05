@@ -35,7 +35,7 @@ reviewable descriptor layer.
 
 ## Evidence
 
-- [`../../../logs/2026-06/04-210845-rhai-feature-descriptor-seam.md`](../../../logs/2026-06/04-210845-rhai-feature-descriptor-seam.md)
+- [`../../../logs/archive/2026-06/04-210845-rhai-feature-descriptor-seam.md`](../../../logs/archive/2026-06/04-210845-rhai-feature-descriptor-seam.md)
 
 ## Validation
 

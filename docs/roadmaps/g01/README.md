@@ -31,6 +31,7 @@ Recently completed milestones:
 - [`022-research-phase-3-scale-and-integration.md`](./022-research-phase-3-scale-and-integration.md) (complete)
 - [`023-builtin-test-suite-lifecycle-and-env.md`](./023-builtin-test-suite-lifecycle-and-env.md) (complete)
 - [`024-release-pipeline-validation-and-consumer-ci.md`](./024-release-pipeline-validation-and-consumer-ci.md) (complete)
+- [`026-changelog-library-and-northstar-profile.md`](./026-changelog-library-and-northstar-profile.md) (complete)
 - [`027-release-orchestration-system.md`](./027-release-orchestration-system.md) (complete)
 - [`029-northstar-effigy-consumer-adoption-kit.md`](./029-northstar-effigy-consumer-adoption-kit.md) (complete)
 

@@ -39,9 +39,9 @@ runtime behavior to an agent framework.
 
 Cards `1088`, `1089`, `1090`, `1091`, and the temporary external skill-task lane
 card `1092` are complete. Card `1089` closed on 2026-08-31 with evidence
-[`31-181957-documentation-context-1089.md`](../../logs/2026-08/31-181957-documentation-context-1089.md).
+[`31-181957-documentation-context-1089.md`](../../logs/archive/2026-08/31-181957-documentation-context-1089.md).
 Card `1090` closed on 2026-08-31 with evidence
-[`31-213000-northstar-profile-proof-1090.md`](../../logs/2026-08/31-213000-northstar-profile-proof-1090.md),
+[`31-213000-northstar-profile-proof-1090.md`](../../logs/archive/2026-08/31-213000-northstar-profile-proof-1090.md),
 which closed this lane.
 
 ## Owner And Seam

@@ -14,7 +14,7 @@ Ready after: card `1088` closeout proves stable structural records and card
 `1091` closes the overlapping documentation/help maintenance lane
 Resumed: external skill-runner card `1092` closed with evidence on 2026-08-31
 Completed: 2026-08-31
-Evidence: [`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md)
+Evidence: [`../../../logs/archive/2026-08/31-181957-documentation-context-1089.md`](../../../logs/archive/2026-08/31-181957-documentation-context-1089.md)
 
 ## Purpose
 
@@ -78,7 +78,7 @@ Shipped `effigy docs context <QUERY> [--max-sections N] [--max-bytes N]
 envelope. Relevance gates inclusion; currentness and authority only order
 already-relevant results. Evidence, fixture cases, exact provenance, and budget
 proofs are in
-[`../../../logs/2026-08/31-181957-documentation-context-1089.md`](../../../logs/2026-08/31-181957-documentation-context-1089.md).
+[`../../../logs/archive/2026-08/31-181957-documentation-context-1089.md`](../../../logs/archive/2026-08/31-181957-documentation-context-1089.md).
 
 ## Next Task
 

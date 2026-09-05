@@ -58,7 +58,7 @@ removes the now-empty catalog-cache command surface.
 ## Evidence
 
 Recorded in
-[`2026-08/10-104558-delete-discovery-and-align-diagnostics.md`](../../../logs/2026-08/10-104558-delete-discovery-and-align-diagnostics.md).
+[`2026-08/10-104558-delete-discovery-and-align-diagnostics.md`](../../../logs/archive/2026-08/10-104558-delete-discovery-and-align-diagnostics.md).
 
 ## Stop Conditions
 
