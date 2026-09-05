@@ -440,14 +440,26 @@ mod tests {
     fn cached_glob_matchers_stay_pattern_keyed_across_repeated_paths() {
         // The compiled-matcher cache is keyed by pattern, so a second call
         // with a different path must not inherit the first path's verdict.
-        assert!(glob_matches("docs/guides/*.md", "docs/guides/one.md"));
-        assert!(!glob_matches("docs/guides/*.md", "docs/specs/one.md"));
-        assert!(glob_matches("docs/guides/*.md", "docs/guides/two.md"));
+        assert!(glob_matches(
+            "handbook/playbooks/*.md",
+            "handbook/playbooks/one.md"
+        ));
+        assert!(!glob_matches(
+            "handbook/playbooks/*.md",
+            "handbook/bulletins/one.md"
+        ));
+        assert!(glob_matches(
+            "handbook/playbooks/*.md",
+            "handbook/playbooks/two.md"
+        ));
 
         // An uncompilable pattern caches its "never matches" verdict and keeps
         // returning it rather than erroring or matching.
-        assert!(!glob_matches("docs/[unclosed.md", "docs/one.md"));
-        assert!(!glob_matches("docs/[unclosed.md", "docs/[unclosed.md"));
+        assert!(!glob_matches("handbook/[unclosed.md", "handbook/one.md"));
+        assert!(!glob_matches(
+            "handbook/[unclosed.md",
+            "handbook/[unclosed.md"
+        ));
     }
 
     #[test]

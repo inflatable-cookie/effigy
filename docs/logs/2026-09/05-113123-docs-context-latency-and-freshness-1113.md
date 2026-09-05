@@ -33,8 +33,8 @@ Identity shared by every row unless stated otherwise.
 | Checkout | `/Users/tom/.paseo/worktrees/310mya31/g09-005-docs-context-latency-1113` (worker worktree of `effigy`) |
 | Before binary | `v0.12.1+local.7f75092`, release profile, built from the lane base |
 | Before source SHA | `7f75092d669c3281a674fdf2a3f6097b67d3b523` |
-| After binary | `v0.12.1+local.696200a`, release profile |
-| After source SHA | `696200af3` (this lane's repair) |
+| After binary | release profile built from `5da38abcb` (reported as `v0.12.1+local.696200a` before this branch was rebased onto `5805d7c4b`; the tree is identical) |
+| After source SHA | `5da38abcb` (this lane's repair) |
 | Query | `docs context "catalog_tasks" --max-sections 3 --max-bytes 6000` |
 | Concurrent graph process | none; `pgrep` showed no `effigy graph` process and no holder of `.effigy/graph/refresh.lock` for the duration |
 | Timing | wall/user/sys measured per process via `resource.getrusage(RUSAGE_CHILDREN)` deltas |
@@ -157,7 +157,7 @@ refresh path, lock, health snapshot, and typed timeout.
   phase, and reports JSON null when the bound expired before graph work began.
   Schema id, schema version, and every existing field are unchanged.
 
-Diff: 11 files (5 source, 3 test, 3 documentation).
+Diff against the lane base: 15 files, +843 / -10 (6 source, 3 test, 6 documentation and evidence).
 
 Deliberately not repaired, because no reproduced row shows them missing a
 frozen budget: the whole-corpus `graph_search` rebuild on any change (4.3 s of
@@ -182,6 +182,13 @@ attributed above and is a candidate for a future lane.
 
 Every frozen budget holds, on both targets, with margin.
 
+The warm rows above were taken at `5da38abcb`. Re-verified at the branch head
+after the diagnostics follow-up: p50 647 ms over seven runs
+(625/627/644/647/650/654 ms plus one 1840 ms first run), load 8.1. The first
+query after a full reindex costs noticeably more than the settled figure
+because the 245 MB store is not in the page cache yet; the settled figure is
+the one the budget is about.
+
 ### Fixture benchmark cases, warm, 5000 ms
 
 | Case query | Wall |
@@ -198,10 +205,11 @@ Every frozen budget holds, on both targets, with margin.
 (`git diff --stat HEAD -- scripts/benchmark-docs-context.rhai` is empty):
 
 - before: `all predeclared docs-context expectations held`, 18833 ms
-- after: `all predeclared docs-context expectations held`, 12105 ms
+- after: `all predeclared docs-context expectations held`, 12105 ms at
+  `5da38abcb` and 11830 ms at the branch head
 
 The freeze history in `scripts/benchmark-docs-context.rhai` names this run as a
-replay at `696200af3`, not a freeze: no case, query, expected source, rival,
+replay at `5da38abcb`, not a freeze: no case, query, expected source, rival,
 rank bound, dimension, or pass criterion changed. The matrix remains the
 11-case freeze at `ff95f6a4c`.
 
@@ -280,7 +288,8 @@ Focused tests added:
 
 - `cached_glob_matchers_stay_pattern_keyed_across_repeated_paths` — the cache
   keys on pattern, not on the first path it saw, and caches the invalid-pattern
-  verdict.
+  verdict. Its fixture vocabulary is the neutral handbook corpus, so the
+  documentation-graph runtime neutrality guard stays green.
 - `every_reportable_phase_round_trips_and_is_named` — every reportable phase
   round-trips its code and appears in the closed name set.
 - `refresh_and_query_record_a_readable_graph_phase` — a refresh and a query
@@ -313,6 +322,10 @@ never name a phase left by an earlier command in the same process.
 
 ## Reserved Surfaces
 
-Card `1113`, roadmap `g09.005`, spec `120`, contract `041`, `docs/logs/README.md`,
+Card `1113`, roadmap `g09.005`, spec `120`, contract `041`,
 `docs/specs/README.md`, `docs/roadmaps/README.md`, and `docs/roadmaps/g09/README.md`
 are left untouched for the coordinator to reconcile after merge.
+
+One exception: `docs/logs/README.md` carries the index link for this file,
+because `effigy qa` runs `docs check index` and fails on an unlinked log. That
+is the only edit to a reserved closeout surface, and it is one line.

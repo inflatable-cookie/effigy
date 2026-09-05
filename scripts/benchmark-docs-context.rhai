@@ -80,7 +80,7 @@
 //              rival, rank bound, dimension, or pass criterion changed. The
 //              matrix remains the 11-case freeze at `ff95f6a4c`; only the
 //              history now names that commit.
-//   696200af3  replay for the docs-context latency lane (card `1113`). Not a
+//   5da38abcb  replay for the docs-context latency lane (card `1113`). Not a
 //              freeze: no case, query, expected source, rival, rank bound,
 //              dimension, or pass criterion changed, and the matrix remains the
 //              11-case freeze at `ff95f6a4c`. That commit compiles each
