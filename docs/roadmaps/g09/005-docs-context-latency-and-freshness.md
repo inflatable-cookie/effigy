@@ -86,9 +86,12 @@ running under the lock when the next query arrives.
 - `perf:docs-context-benchmark` stays green with an unchanged frozen matrix
 - provenance, freshness identity, locking, unknown authority/currentness, and
   the bounded-failure contract are unchanged
-- the pilot's five questions replayed against Effigy-local sources return the
-  expected Effigy sources where they exist locally (K4, K5) and report no
-  match, not fabricated results, where they do not
+- the pilot's K4 and K5 questions replayed against Effigy-local sources
+  return no fabricated or wrong-repository source, and the no-match control
+  returns an empty report (spec `120` oracle row 7). Expected-source recall
+  for K4/K5 was removed from this lane by Chatterbox ruling on 2026-09-05:
+  K4 exposes an exact-identifier tokenisation defect under contract `041`,
+  and K5's expectation requires inference. Both are re-planned separately.
 
 ## Non-Goals
 

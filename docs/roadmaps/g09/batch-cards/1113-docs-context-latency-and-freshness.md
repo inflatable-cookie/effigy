@@ -53,8 +53,15 @@ with the repair chosen from reproduced evidence.
 - [ ] cold `graph index` within 10 % of the lane's own baseline
 - [ ] timeout detail keeps schema `effigy.graph.timeout.v1`; any new fields
       are additive and documented
-- [ ] K4 and K5 local replays return the expected Effigy sources with exact
-      path/span; the no-match control returns an empty report
+- [ ] K4 and K5 local replays return no fabricated or wrong-repository
+      source and the no-match control returns an empty report (spec `120`
+      oracle row 7). Known limitation recorded 2026-09-05 by Chatterbox
+      ruling: K4 misses guide `026` because exact snake_case identifiers are
+      tokenised into common words (a contract `041` retrieval defect outside
+      this lane's scope, which forbids ranking changes); K5's expected
+      "GitHub Release" phrase is absent from guide `051`, so that expectation
+      needs inference and is a pilot expectation defect. Both are re-planned
+      in triage `20260905-docs-context-identifier-retrieval-and-k5-expectation`.
 - [ ] no second index, daemon, new flag/env var, default-budget change, or
       contract `041` semantic change
 
