@@ -3668,6 +3668,193 @@ truncation state and carries its own reason. This block comes from the same
 The matching `next` entry is
 `raise \`--max-hops\` to traverse further typed relations`.
 
+### Cross-Repository Documentation Context (`effigy.docs.context.sources.v1`)
+
+`effigy docs context <QUERY> --sources <PATH>` routes one query across the
+repositories that declared `[docs_policy.sources] share = true` under the
+directories a portfolio file names. Results stay grouped per repository and are
+never merged into one ranked list, so each block ranks from 1 and no
+repository's authority is compared with another's. The single-repository
+`effigy.docs.context.v1` shape above is untouched.
+
+This is one real run of
+`effigy --json docs context "tolerance ledger" --sources portfolio.toml --max-sections 2`
+against `tests/fixtures/docs-context-benchmark/portfolio`. Result bodies are
+elided with `...` where they repeat the single-repository shape; every result
+carries the fields listed above plus `content_identity`.
+
+```json
+{
+  "schema": "effigy.docs.context.sources.v1",
+  "schema_version": 1,
+  "query": "tolerance ledger",
+  "portfolio_path": "/workspace/portfolio/portfolio.toml",
+  "directories": ["repos", "absent-directory"],
+  "only": [],
+  "budgets": {
+    "requested": { "max_sections": 2, "max_bytes": null, "max_hops": null },
+    "applied": { "max_sections": 2, "max_bytes": 24000, "max_hops": 1 },
+    "defaults": { "max_sections": 8, "max_bytes": 24000, "max_hops": 1 },
+    "maximum": { "max_sections": 32, "max_bytes": 100000, "max_hops": 3 }
+  },
+  "repositories": [
+    {
+      "handle": "baseline-notes",
+      "path": "/workspace/portfolio/repos/baseline-notes",
+      "directory": "repos",
+      "status": "ok",
+      "next_step": null,
+      "current_head": "d48acf952e8671f656943c2959d3440fedf03e12",
+      "indexed_head": "d48acf952e8671f656943c2959d3440fedf03e12",
+      "freshness": {
+        "state": "ready",
+        "summary": "graph index is current",
+        "usable": true,
+        "stale": false,
+        "stale_path_count": 0,
+        "failed_path_count": 0,
+        "stale_paths": []
+      },
+      "profile_state": "baseline",
+      "front_doors": ["notes/README.md"],
+      "skill_roots": [],
+      "results": [
+        {
+          "rank": 1,
+          "path": "notes/README.md",
+          "heading": "Tolerance ledger intake",
+          "anchor": "tolerance-ledger-intake",
+          "section_kind": "heading-h2",
+          "document_kind": "document",
+          "authority": 0,
+          "currentness": "unknown",
+          "span": {
+            "start": { "line": 3, "column": 0, "byte": 18 },
+            "end": { "line": 8, "column": 0, "byte": 253 }
+          },
+          "bytes": 235,
+          "content_identity": "committed",
+          "relevance": 90
+        }
+      ]
+    },
+    {
+      "handle": "loose-notes",
+      "path": "/workspace/portfolio/repos/loose-notes",
+      "directory": "repos",
+      "status": "invalid",
+      "next_step": "`/workspace/portfolio/repos/loose-notes` is not a git checkout; cross-repository routing reports commit identity, so it cannot search it",
+      "current_head": null,
+      "indexed_head": null,
+      "freshness": null,
+      "profile_state": null,
+      "front_doors": [],
+      "skill_roots": [],
+      "results": []
+    },
+    {
+      "handle": "private-vault",
+      "path": "/workspace/portfolio/repos/private-vault",
+      "directory": "repos",
+      "status": "not-shared",
+      "next_step": "`/workspace/portfolio/repos/private-vault/effigy.toml` does not declare `[docs_policy.sources]`; add `share = true` there to let it be found",
+      "current_head": null,
+      "indexed_head": null,
+      "freshness": null,
+      "profile_state": null,
+      "front_doors": [],
+      "skill_roots": [],
+      "results": []
+    },
+    {
+      "handle": "shared-atlas",
+      "path": "/workspace/portfolio/repos/shared-atlas",
+      "directory": "repos",
+      "status": "ok",
+      "next_step": null,
+      "current_head": "a3b08c268dd3204a37da7ae47338e59c9034abab",
+      "indexed_head": "a3b08c268dd3204a37da7ae47338e59c9034abab",
+      "freshness": {
+        "state": "ready",
+        "summary": "graph index is current",
+        "usable": true,
+        "stale": false,
+        "stale_path_count": 0,
+        "failed_path_count": 0,
+        "stale_paths": []
+      },
+      "profile_state": "configured",
+      "front_doors": ["README.md", "atlas/charters/tolerance-ledger.md"],
+      "skill_roots": [".agents/skills"],
+      "results": [
+        {
+          "rank": 1,
+          "path": "atlas/charters/tolerance-ledger.md",
+          "heading": "Tolerance ledger charter",
+          "anchor": "tolerance-ledger-charter",
+          "section_kind": "heading-h1",
+          "document_kind": "charter",
+          "authority": 100,
+          "currentness": "current",
+          "span": {
+            "start": { "line": 1, "column": 0, "byte": 0 },
+            "end": { "line": 14, "column": 0, "byte": 321 }
+          },
+          "bytes": 321,
+          "content_identity": "committed",
+          "relevance": 108
+        }
+      ]
+    },
+    {
+      "handle": "absent-directory",
+      "path": "/workspace/portfolio/absent-directory",
+      "directory": "absent-directory",
+      "status": "missing",
+      "next_step": "portfolio directory `/workspace/portfolio/absent-directory` is absent; create it, or drop it from the portfolio file",
+      "current_head": null,
+      "indexed_head": null,
+      "freshness": null,
+      "profile_state": null,
+      "front_doors": [],
+      "skill_roots": [],
+      "results": []
+    }
+  ],
+  "next": [
+    "`/workspace/portfolio/repos/loose-notes` is not a git checkout; cross-repository routing reports commit identity, so it cannot search it",
+    "`/workspace/portfolio/repos/private-vault/effigy.toml` does not declare `[docs_policy.sources]`; add `share = true` there to let it be found",
+    "portfolio directory `/workspace/portfolio/absent-directory` is absent; create it, or drop it from the portfolio file"
+  ]
+}
+```
+
+The call exits 0 because at least one repository is `ok` or `empty`. When every
+repository is non-ok the command fails, and the same payload — with every
+status still listed — is carried in the standard envelope's `error.message`.
+
+An excerpt read from an edited file reports its identity honestly:
+
+```json
+{
+  "path": "atlas/charters/tolerance-ledger.md",
+  "content_identity": "working-tree"
+}
+```
+
+An `--only` handle that resolves to nothing is reported rather than ignored:
+
+```json
+{
+  "handle": "no-such-repo",
+  "path": null,
+  "directory": null,
+  "status": "disallowed",
+  "next_step": "`--only no-such-repo` matched no directory named by `/workspace/portfolio/portfolio.toml`; run without `--only` to list the handles this portfolio can reach",
+  "results": []
+}
+```
+
 ## Notes
 
 - Field sets can grow with new optional keys while retaining schema compatibility.

@@ -13,12 +13,14 @@ pub mod config_sections;
 pub mod execution_binding;
 mod loaded_catalog;
 mod manifest_section;
+pub mod portfolio;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;
 pub mod user_config;
 
 pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
+pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
     inspect_bundle_source, sync_bundle_source, BundleInputSpec, BundleInputType,
@@ -29,14 +31,14 @@ pub use composition::{
     ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
-    ManifestBootstrapConfig, ManifestBootstrapRun, ManifestBootstrapStart,
-    ManifestBootstrapStartEntry, ManifestBootstrapStartTable, ManifestBootstrapSubmodulesPolicy,
-    ManifestBundleBase, ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
-    ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
-    ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
-    ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
-    ManifestContainerHostMountTable, ManifestContainerHostProcess,
-    ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
+    load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBootstrapRun,
+    ManifestBootstrapStart, ManifestBootstrapStartEntry, ManifestBootstrapStartTable,
+    ManifestBootstrapSubmodulesPolicy, ManifestBundleBase, ManifestBundleConfig,
+    ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
+    ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
+    ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
+    ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
+    ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
@@ -46,14 +48,15 @@ pub use config_sections::{
     ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
     ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
-    ManifestDocsPolicyGraphRelationConfig, ManifestEnvSchemaConfig,
-    ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
-    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
-    ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend,
-    ManifestSecretsConfig, ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy,
-    ManifestSecretsVaultConfig, ManifestSecretsVaultIdentity, ManifestShellConfig,
-    ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
-    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
+    ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
+    ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
+    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
+    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
+    ManifestSecretsUnlockPolicy, ManifestSecretsVaultConfig, ManifestSecretsVaultIdentity,
+    ManifestShellConfig, ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountTable,
+    ManifestSystemsConfig, ManifestTaskDefaultsConfig, ManifestWorkspaceConfig,
+    ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,

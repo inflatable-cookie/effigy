@@ -85,12 +85,16 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
             max_sections,
             max_bytes,
             max_hops,
+            sources,
+            only,
         } => context::run_context(
             &repo_root,
             &query,
             max_sections,
             max_bytes,
             max_hops,
+            sources,
+            only,
             args.output_json,
         ),
     }

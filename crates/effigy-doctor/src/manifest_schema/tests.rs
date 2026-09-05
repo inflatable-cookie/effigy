@@ -199,6 +199,46 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
 }
 
 #[test]
+fn validate_manifest_schema_checks_the_docs_policy_sources_membership_block() {
+    let manifest: Value = toml::from_str(
+        r#"
+[docs_policy.sources]
+share = true
+front_doors = ["docs/README.md"]
+skill_roots = [".agents/skills"]
+"#,
+    )
+    .expect("parse manifest");
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings.is_empty(),
+        "expected the membership block to validate, got: {:?}",
+        sink.findings
+    );
+
+    // Membership is read from these committed bytes alone, so a typo here is
+    // silent at query time: the repository just reports `not-shared`. The
+    // schema check is where it has to be caught.
+    let typo: Value = toml::from_str(
+        r#"
+[docs_policy.sources]
+share = "yes"
+front_door = ["docs/README.md"]
+"#,
+    )
+    .expect("parse manifest");
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("effigy.toml"), &typo, &mut sink);
+    assert_eq!(
+        sink.findings.len(),
+        2,
+        "expected a finding for the non-boolean share and the unknown key, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_secret_root_and_required_task_mode() {
     let manifest: Value = toml::from_str(
         r#"

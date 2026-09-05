@@ -1,0 +1,7 @@
+# Portfolio file: names where to look, never what may answer.
+#
+# `absent-directory` is deliberate. A named directory that does not exist is
+# reported as one `missing` repository block with a next step; it must not stop
+# the healthy directory beside it from answering.
+[portfolio]
+directories = ["repos", "absent-directory"]

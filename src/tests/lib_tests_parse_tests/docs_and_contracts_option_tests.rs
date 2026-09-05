@@ -414,6 +414,8 @@ fn parse_docs_context_with_budgets_and_repo_override() {
                 max_sections: Some(4),
                 max_bytes: Some(8000),
                 max_hops: Some(2),
+                sources: None,
+                only: Vec::new(),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -438,11 +440,61 @@ fn parse_docs_context_defaults_budgets_to_none() {
                 max_sections: None,
                 max_bytes: None,
                 max_hops: None,
+                sources: None,
+                only: Vec::new(),
             },
             repo_override: None,
             output_json: false,
         })
     );
+}
+
+#[test]
+fn parse_docs_context_accepts_a_portfolio_and_repeated_only_handles() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "context".to_owned(),
+        "release gates".to_owned(),
+        "--sources".to_owned(),
+        "/tmp/portfolio.toml".to_owned(),
+        "--only".to_owned(),
+        "effigy".to_owned(),
+        "--only".to_owned(),
+        "northstar".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::Context {
+                query: "release gates".to_owned(),
+                max_sections: None,
+                max_bytes: None,
+                max_hops: None,
+                sources: Some(PathBuf::from("/tmp/portfolio.toml")),
+                only: vec!["effigy".to_owned(), "northstar".to_owned()],
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_docs_context_requires_values_for_sources_and_only() {
+    for flag in ["--sources", "--only"] {
+        let missing = parse_command(vec![
+            "docs".to_owned(),
+            "context".to_owned(),
+            "release gates".to_owned(),
+            flag.to_owned(),
+        ]);
+        assert!(
+            missing.is_err(),
+            "`{flag}` without a value must be a usage error"
+        );
+    }
 }
 
 #[test]

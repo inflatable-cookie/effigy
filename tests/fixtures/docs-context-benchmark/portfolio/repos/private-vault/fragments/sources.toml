@@ -1,0 +1,4 @@
+# An include that claims membership. It is not the committed root manifest, so
+# it grants nothing.
+[docs_policy.sources]
+share = true

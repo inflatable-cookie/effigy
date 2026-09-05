@@ -9,6 +9,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "docs",
     notices: &[
         "Run reusable markdown/documentation validation checks without dropping into shell scripts.",
+        "`docs context --sources` routes one query across the repositories that declare `[docs_policy.sources] share = true` under the named directories, grouped per repository and never merged into one ranked list.",
         "`docs context` retrieves bounded exact documentation sections with provenance from the shared graph; it returns source evidence, never a generated summary.",
         "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
     ],
@@ -23,7 +24,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]",
         "effigy docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]",
         "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
-        "effigy docs context <QUERY> [--repo <PATH>] [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]",
+        "effigy docs context <QUERY> [--repo <PATH>] [--sources <PATH>] [--only <HANDLE>]... [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]",
         "effigy --json docs check links [--repo <PATH>] [<FILE>...]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -97,6 +98,14 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
             "--max-hops <N>",
             "Cap `docs context` typed-relation traversal depth (default 1, maximum 3)",
         ),
+        (
+            "--sources <PATH>",
+            "Route `docs context` across a `[portfolio]` file (or a directory) naming where opted-in repositories live",
+        ),
+        (
+            "--only <HANDLE>",
+            "Restrict `--sources` routing to named repository handles; repeatable",
+        ),
     ],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable validation payloads"),
@@ -105,6 +114,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     examples: &[
         "effigy docs check links README.md docs/guides/README.md",
         "effigy docs check json-examples",
+        "effigy docs context \"documentation graph profile contract\" --sources ~/Dev/projects/portfolio.toml --json",
         "effigy docs check headings docs/guides/024-ci-and-automation-recipes.md --require-heading \"## Vision Alignment\"",
         "effigy docs check paths README.md docs/README.md docs/vision/README.md",
         "effigy docs check contains docs/logs/README.md --require \"Vision Target Delta\"",

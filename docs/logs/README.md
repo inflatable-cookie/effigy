@@ -226,3 +226,5 @@ Card `1111`'s Acowtancy replay evidence is at
 [`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md); the
 cohort checkpoint is deferred by operator direction (2026-09-05). Acowtancy
 stays read-only; Effigy release remains a separate operator-gated mutation.
+
+- [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
