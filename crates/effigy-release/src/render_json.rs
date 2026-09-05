@@ -77,6 +77,10 @@ fn render_pretty<T: Serialize>(payload: &T, fallback: &str) -> String {
     serde_json::to_string_pretty(payload).unwrap_or_else(|_| fallback.to_owned())
 }
 
+fn optional_path(path: &Option<std::path::PathBuf>) -> Option<String> {
+    path.as_ref().map(|value| value.display().to_string())
+}
+
 #[derive(Serialize)]
 struct VersionSourcePayload {
     file: String,
@@ -164,6 +168,8 @@ struct GateResultPayload {
     stderr: String,
     launch_error: Option<String>,
     duration_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_path: Option<String>,
 }
 
 impl From<&GateResult> for GateResultPayload {
@@ -178,6 +184,7 @@ impl From<&GateResult> for GateResultPayload {
             stderr: gate.stderr.clone(),
             launch_error: gate.launch_error.clone(),
             duration_ms: gate.duration_ms,
+            log_path: optional_path(&gate.log_path),
         }
     }
 }
@@ -248,6 +255,8 @@ struct ReleaseStatusPayload {
     next_version: Option<String>,
     tag: Option<String>,
     gates: ReleaseGatesPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment_path: Option<String>,
     blockers: Vec<String>,
 }
 
@@ -283,6 +292,7 @@ impl From<&ReleaseStatus> for ReleaseStatusPayload {
                     .map(GateResultPayload::from)
                     .collect(),
             },
+            environment_path: optional_path(&status.environment_path),
             blockers: status.blockers.clone(),
         }
     }
@@ -299,6 +309,8 @@ struct ReleaseGateRunPayload {
     stopped_early: bool,
     total_duration_ms: u128,
     results: Vec<GateResultPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment_path: Option<String>,
     blockers: Vec<String>,
 }
 
@@ -318,6 +330,7 @@ impl From<&ReleaseGateRun> for ReleaseGateRunPayload {
                 .iter()
                 .map(GateResultPayload::from)
                 .collect(),
+            environment_path: optional_path(&run.environment_path),
             blockers: run.blockers.clone(),
         }
     }
@@ -381,6 +394,8 @@ struct ReleasePreparePlanPayload {
     version_override_used: bool,
     release_date: String,
     gates: ReleaseGatesPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment_path: Option<String>,
     mutations: Vec<FileMutationPlanPayload>,
     blockers: Vec<String>,
 }
@@ -410,6 +425,7 @@ impl From<&ReleasePreparePlan> for ReleasePreparePlanPayload {
                     .map(GateResultPayload::from)
                     .collect(),
             },
+            environment_path: optional_path(&plan.environment_path),
             mutations: plan
                 .mutations
                 .iter()
@@ -440,6 +456,8 @@ struct ReleaseSimulationPayload {
     state_file_exists: bool,
     state_file_written: bool,
     gates: SimulationGatesPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment_path: Option<String>,
     mutations: Vec<FileMutationPlanPayload>,
     blockers: Vec<String>,
 }
@@ -478,6 +496,7 @@ impl From<&ReleaseSimulation> for ReleaseSimulationPayload {
                     .map(GateResultPayload::from)
                     .collect(),
             },
+            environment_path: optional_path(&simulation.environment_path),
             mutations: simulation
                 .mutations
                 .iter()
@@ -504,6 +523,8 @@ struct ReleasePreparedPayload {
     state_file: String,
     state_file_written: bool,
     gates: ReleaseGatesPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment_path: Option<String>,
     files_modified: Vec<String>,
     blockers: Vec<String>,
 }
@@ -533,6 +554,7 @@ impl From<&ReleasePrepared> for ReleasePreparedPayload {
                     .map(GateResultPayload::from)
                     .collect(),
             },
+            environment_path: optional_path(&result.environment_path),
             files_modified: result
                 .files_modified
                 .iter()

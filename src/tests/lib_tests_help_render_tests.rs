@@ -437,6 +437,8 @@ fn render_release_help_shows_status_and_gate_options() {
     assert!(rendered.contains("source fingerprints"));
     assert!(rendered.contains("branch drift, HEAD movement, and prepared-file content drift"));
     assert!(rendered.contains("`gates`, `reprepare`, and `discard` shortcuts"));
+    assert!(rendered.contains(".effigy/reports/release/gates/"));
+    assert!(rendered.contains("last 20 lines"));
     assert!(!rendered.contains("simulate remain roadmap work"));
 }
 

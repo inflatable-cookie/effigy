@@ -29,6 +29,7 @@ pub struct GateResult {
     pub stderr: String,
     pub launch_error: Option<String>,
     pub duration_ms: u128,
+    pub log_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,7 @@ pub struct GateExecutionReport {
     pub results: Vec<GateResult>,
     pub stopped_early: bool,
     pub total_duration_ms: u128,
+    pub environment_path: Option<PathBuf>,
 }
 
 impl GateExecutionReport {
@@ -44,6 +46,7 @@ impl GateExecutionReport {
             results: Vec::new(),
             stopped_early: false,
             total_duration_ms: 0,
+            environment_path: None,
         }
     }
 }
@@ -64,6 +67,7 @@ pub struct ReleaseStatus {
     pub gates_checked: bool,
     pub configured_gate_count: usize,
     pub gate_results: Vec<GateResult>,
+    pub environment_path: Option<PathBuf>,
     pub blockers: Vec<String>,
     pub ready: bool,
 }
@@ -76,6 +80,7 @@ pub struct ReleaseGateRun {
     pub stopped_early: bool,
     pub total_duration_ms: u128,
     pub gate_results: Vec<GateResult>,
+    pub environment_path: Option<PathBuf>,
     pub blockers: Vec<String>,
     pub passed: bool,
 }
@@ -146,6 +151,7 @@ pub struct ReleasePreparePlan {
     pub gates_checked: bool,
     pub configured_gate_count: usize,
     pub gate_results: Vec<GateResult>,
+    pub environment_path: Option<PathBuf>,
     pub blockers: Vec<String>,
     pub mutations: Vec<FileMutationPlan>,
     pub ready: bool,
@@ -165,6 +171,7 @@ pub struct ReleasePrepared {
     pub gates_checked: bool,
     pub configured_gate_count: usize,
     pub gate_results: Vec<GateResult>,
+    pub environment_path: Option<PathBuf>,
     pub files_modified: Vec<PathBuf>,
     pub blockers: Vec<String>,
     pub prepared: bool,
@@ -191,6 +198,7 @@ pub struct ReleaseSimulation {
     pub stopped_early: bool,
     pub total_duration_ms: u128,
     pub gate_results: Vec<GateResult>,
+    pub environment_path: Option<PathBuf>,
     pub mutations: Vec<FileMutationPlan>,
     pub blockers: Vec<String>,
     pub ready: bool,

@@ -431,6 +431,7 @@ fn review_menu_renderers_show_review_markers() {
             gates_checked: true,
             configured_gate_count: 1,
             gate_results: Vec::new(),
+            environment_path: None,
             blockers: Vec::new(),
             mutations: Vec::new(),
             ready: true,

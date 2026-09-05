@@ -1,3 +1,4 @@
+mod gate_reports;
 mod git;
 mod model;
 mod prepare_helpers;
@@ -447,6 +448,7 @@ where
     F: FnMut(&str),
 {
     let started = Instant::now();
+    let environment_path = gate_reports::persist_gate_run_environment(root);
     let mut results = Vec::with_capacity(gates.len());
     let mut stopped_early = false;
 
@@ -471,6 +473,7 @@ where
         results,
         stopped_early,
         total_duration_ms: started.elapsed().as_millis(),
+        environment_path,
     }
 }
 
@@ -487,15 +490,17 @@ pub fn collect_release_gate_run(
         stopped_early: report.stopped_early,
         total_duration_ms: report.total_duration_ms,
         gate_results: report.results,
+        environment_path: report.environment_path,
         blockers: blockers.clone(),
         passed: blockers.is_empty(),
     }
 }
 
 pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned());
+    let shell = gate_reports::resolved_shell();
+    let started_at = gate_reports::capture_started_at();
     let started = Instant::now();
-    match ProcessCommand::new(&shell)
+    let mut result = match ProcessCommand::new(&shell)
         .arg("-lc")
         .arg(&gate.command)
         .current_dir(root)
@@ -511,6 +516,7 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             launch_error: None,
             duration_ms: started.elapsed().as_millis(),
+            log_path: None,
         },
         Err(error) => GateResult {
             name: gate.name.clone(),
@@ -522,8 +528,11 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             stderr: String::new(),
             launch_error: Some(error.to_string()),
             duration_ms: started.elapsed().as_millis(),
+            log_path: None,
         },
-    }
+    };
+    result.log_path = gate_reports::persist_gate_result_log(root, &result, &started_at);
+    result
 }
 
 pub fn load_release_context(root: &Path) -> Result<ReleaseContext, ReleaseError> {
@@ -658,6 +667,7 @@ pub fn collect_release_status(
         gates_checked: check_gates,
         configured_gate_count: context.config.gates.len(),
         gate_results: gate_report.results,
+        environment_path: gate_report.environment_path,
         blockers: blockers.clone(),
         ready: blockers.is_empty(),
     }
@@ -694,6 +704,7 @@ pub fn build_release_prepare_plan(
             gates_checked: check_gates,
             configured_gate_count: context.config.gates.len(),
             gate_results: gate_report.results,
+            environment_path: gate_report.environment_path,
             blockers: blockers.clone(),
             mutations,
             ready: false,
@@ -814,6 +825,7 @@ pub fn build_release_prepare_plan(
         gates_checked: check_gates,
         configured_gate_count: context.config.gates.len(),
         gate_results: gate_report.results,
+        environment_path: gate_report.environment_path,
         blockers: blockers.clone(),
         mutations,
         ready: blockers.is_empty(),
@@ -858,6 +870,7 @@ pub fn collect_release_simulation(
         stopped_early: gate_report.stopped_early,
         total_duration_ms: gate_report.total_duration_ms,
         gate_results: gate_report.results.clone(),
+        environment_path: gate_report.environment_path.clone(),
         mutations: prepare_plan.mutations,
         blockers: blockers.clone(),
         ready: blockers.is_empty(),
@@ -1119,6 +1132,7 @@ where
             gates_checked: false,
             configured_gate_count: context.config.gates.len(),
             gate_results: Vec::new(),
+            environment_path: None,
             files_modified: planned_files,
             blockers,
             prepared: false,
@@ -1147,6 +1161,7 @@ where
             gates_checked: false,
             configured_gate_count: context.config.gates.len(),
             gate_results: Vec::new(),
+            environment_path: None,
             files_modified,
             blockers,
             prepared: false,
@@ -1184,6 +1199,7 @@ where
             gates_checked: check_gates,
             configured_gate_count: context.config.gates.len(),
             gate_results: gate_report.results,
+            environment_path: gate_report.environment_path,
             files_modified,
             blockers: gate_blockers,
             prepared: false,
@@ -1222,6 +1238,7 @@ where
         gates_checked: check_gates,
         configured_gate_count: context.config.gates.len(),
         gate_results: gate_report.results,
+        environment_path: gate_report.environment_path,
         files_modified,
         blockers: Vec::new(),
         prepared: true,

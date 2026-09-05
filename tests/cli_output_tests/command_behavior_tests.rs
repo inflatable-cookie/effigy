@@ -11,8 +11,8 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
-    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
-    temp_workspace, wait_for_path_exists, write_effigy_release_root_marker,
+    run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
+    run_json_task_success, temp_workspace, wait_for_path_exists, write_effigy_release_root_marker,
     write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
 };
 
@@ -4015,6 +4015,14 @@ fn cli_release_status_json_mode_supports_package_json_and_shell_gates() {
     assert_eq!(parsed["result"]["gates"]["checked"], true);
     assert_eq!(parsed["result"]["gates"]["configured_count"], 1);
     assert_eq!(parsed["result"]["gates"]["results"][0]["passed"], true);
+    assert!(parsed["result"]["gates"]["results"][0]["log_path"]
+        .as_str()
+        .unwrap()
+        .contains(".log"));
+    assert!(parsed["result"]["environment_path"]
+        .as_str()
+        .unwrap()
+        .contains("environment.json"));
     assert!(root.join("node-gate.txt").exists(), "gate should have run");
 }
 
@@ -4068,6 +4076,14 @@ fn cli_release_status_json_mode_surfaces_gate_failures_in_error_details() {
         parsed["error"]["details"]["gates"]["results"][0]["passed"],
         false
     );
+    assert!(
+        parsed["error"]["details"]["gates"]["results"][0]["log_path"]
+            .as_str()
+            .is_some()
+    );
+    assert!(parsed["error"]["details"]["environment_path"]
+        .as_str()
+        .is_some());
 }
 
 #[test]
@@ -4113,6 +4129,21 @@ fn cli_release_gates_json_mode_reports_timed_success() {
     assert!(results[0]["duration_ms"].as_u64().is_some());
     assert_eq!(results[1]["name"], "smoke");
     assert!(results[1]["duration_ms"].as_u64().is_some());
+    assert!(results[0]["log_path"]
+        .as_str()
+        .unwrap()
+        .contains("format.log"));
+    assert!(results[1]["log_path"]
+        .as_str()
+        .unwrap()
+        .contains("smoke.log"));
+    assert!(parsed["result"]["environment_path"]
+        .as_str()
+        .unwrap()
+        .contains("environment.json"));
+    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
+    assert!(!stdout.contains("[release]"), "{stdout}");
+    assert!(!stdout.contains("configured gates"), "{stdout}");
 }
 
 #[test]
@@ -4155,6 +4186,14 @@ fn cli_release_gates_json_mode_stops_after_first_failure() {
     assert_eq!(results[0]["name"], "format");
     assert_eq!(results[0]["passed"], false);
     assert_eq!(results[0]["stderr"], "format-fail");
+    assert!(results[0]["log_path"]
+        .as_str()
+        .unwrap()
+        .contains("format.log"));
+    assert!(parsed["error"]["details"]["environment_path"]
+        .as_str()
+        .unwrap()
+        .contains("environment.json"));
     let blockers = parsed["error"]["details"]["blockers"]
         .as_array()
         .expect("blockers");
@@ -4165,6 +4204,45 @@ fn cli_release_gates_json_mode_stops_after_first_failure() {
         !root.join("gate-second.txt").exists(),
         "second gate should not run after fail-fast stop"
     );
+}
+
+#[test]
+fn cli_release_gates_text_mode_emits_inventory_and_progress_on_stderr() {
+    let root = temp_workspace("cli-release-gates-stderr-inventory");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Tighten release gate checks\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+    )
+    .expect("write changelog");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\n[release.gates]\nformat = \"printf format-ok\"\nsmoke = \"printf smoke-ok >&2\"\n",
+    )
+    .expect("write manifest");
+
+    let output = run_cli_command(&root, &["release", "gates"]);
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(output.status.success(), "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        stderr.contains("configured gates (2): format, smoke"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("[release] running gate `format`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("[release] running gate `smoke`"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("configured gates"), "{stdout}");
+    assert!(!stdout.contains("[release]"), "{stdout}");
 }
 
 #[test]
@@ -6766,6 +6844,11 @@ fn cli_release_prepare_plan_text_mode_includes_remediation_hints_when_blocked() 
         "got: {combined}"
     );
     assert!(combined.contains("effigy release gates"), "got: {combined}");
+    assert!(combined.contains("broken"), "got: {combined}");
+    assert!(
+        combined.contains(".effigy/reports/release/gates/smoke.log"),
+        "got: {combined}"
+    );
 }
 
 #[test]

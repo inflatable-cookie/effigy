@@ -390,6 +390,11 @@ Rule of thumb:
   `binary.display_version` can include local build identity such as
   `+local.<hash>`.
 - New optional fields may be added in `v1` without removing existing keys.
+- Release gate JSON (`effigy.release.gates.v1`, `effigy.release.status.v1`,
+  `effigy.release.prepare.v1`, and the matching plan/simulate payloads) may
+  include additive optional `log_path` on each gate result and
+  `environment_path` for the run. Progress and configured-gate inventory stay
+  on stderr and never on JSON stdout. Schema ids are unchanged.
 - Breaking envelope changes require a new top-level schema/version.
 
 ## Expected Outcome
