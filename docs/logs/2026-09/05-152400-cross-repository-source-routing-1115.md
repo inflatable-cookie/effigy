@@ -72,7 +72,7 @@ enumeration went where it must not; neither appears in any report.
 
 Review of PR `93` at `343f888b5` found that classification loaded each child's
 *composed* manifest. That was a real defect against oracle rows 1 and 8, and it
-is fixed at `<NEWHEAD>`:
+is fixed at `5218fd340`:
 
 - an uncommitted `effigy.local.toml` overlay saying `share = true` would have
   granted membership on text the repository never committed

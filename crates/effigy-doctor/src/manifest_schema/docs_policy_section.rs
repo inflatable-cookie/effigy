@@ -3,8 +3,9 @@ use toml::Value;
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys};
 use super::values::{
-    validate_optional_enum_string_field, validate_optional_integer_field,
-    validate_optional_non_empty_string_field, validate_optional_string_array_field,
+    validate_optional_boolean_field, validate_optional_enum_string_field,
+    validate_optional_integer_field, validate_optional_non_empty_string_field,
+    validate_optional_string_array_field,
 };
 
 pub(super) fn validate_docs_policy_section(
@@ -15,7 +16,7 @@ pub(super) fn validate_docs_policy_section(
         context,
         "docs_policy",
         docs_policy,
-        "expected table with optional keys: indexes, next_actions, graph",
+        "expected table with optional keys: indexes, next_actions, graph, sources",
     ) else {
         return;
     };
@@ -24,7 +25,13 @@ pub(super) fn validate_docs_policy_section(
         context,
         "docs_policy",
         docs_policy_table,
-        &["indexes", "next_actions", "next-actions", "graph"],
+        &[
+            "indexes",
+            "next_actions",
+            "next-actions",
+            "graph",
+            "sources",
+        ],
     );
 
     if let Some(indexes) = docs_policy_table.get("indexes") {
@@ -39,6 +46,58 @@ pub(super) fn validate_docs_policy_section(
     if let Some(graph) = docs_policy_table.get("graph") {
         validate_docs_policy_graph(context, graph);
     }
+    if let Some(sources) = docs_policy_table.get("sources") {
+        validate_docs_policy_sources(context, sources);
+    }
+}
+
+/// `[docs_policy.sources]` is the repository's own half of cross-repository
+/// membership. It is read from these committed bytes alone, so the schema check
+/// is the only place a typo in it gets caught before a portfolio silently
+/// reports the repository as not shared.
+fn validate_docs_policy_sources(context: &mut SchemaContext<'_, '_>, sources: &Value) {
+    let Some(sources_table) = require_table(
+        context,
+        "docs_policy.sources",
+        sources,
+        "expected table with keys: share, front_doors, skill_roots",
+    ) else {
+        return;
+    };
+
+    validate_allowed_keys(
+        context,
+        "docs_policy.sources",
+        sources_table,
+        &[
+            "share",
+            "front_doors",
+            "front-doors",
+            "skill_roots",
+            "skill-roots",
+        ],
+    );
+    validate_optional_boolean_field(
+        context,
+        sources_table.get("share"),
+        "docs_policy.sources.share",
+    );
+    validate_optional_string_array_field(
+        context,
+        sources_table
+            .get("front_doors")
+            .or_else(|| sources_table.get("front-doors")),
+        "docs_policy.sources.front_doors",
+        "expected array of repository-relative file paths",
+    );
+    validate_optional_string_array_field(
+        context,
+        sources_table
+            .get("skill_roots")
+            .or_else(|| sources_table.get("skill-roots")),
+        "docs_policy.sources.skill_roots",
+        "expected array of repository-relative directory paths",
+    );
 }
 
 fn validate_docs_policy_indexes(context: &mut SchemaContext<'_, '_>, indexes: &Value) {
