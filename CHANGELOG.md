@@ -71,6 +71,12 @@ During v0.x, MINOR bumps may include breaking changes.
   warning. Former namespace words return to ordinary selector routing.
 
 ### Fixed
+- `effigy docs context` now keeps identifier-shaped query tokens
+  (`catalog_tasks`, `foo::bar`) whole alongside their split words and ranks
+  exact whole-term containment above split-word density. `catalog_tasks`
+  retrieves the guide `026` section that contains that literal; `graph` still
+  does not match `graphql`. Candidate recall still uses the shared FTS index.
+  Proven by card `1114`.
 - Cargo lockfile release sync now authorizes version changes by actual Cargo
   workspace package identity and each member's metadata-reported package
   version, preserving independent versions in mixed-version workspaces. A
