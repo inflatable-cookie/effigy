@@ -1,6 +1,6 @@
 # 122 Cross-Repository Source Routing Strict Lane
 
-Status: Queued (serial after spec `121`)
+Status: Active
 Owner: Effigy orchestrator
 Created: 2026-09-05
 Roadmap: [`g09.006`](../roadmaps/g09/006-cross-repository-source-routing.md)
@@ -122,4 +122,4 @@ and payload named here.
 
 ## Next Task
 
-Queued behind spec `121`. Execute card `1115` once card `1114` has merged.
+Card `1114` and spec `121` are complete. Execute card `1115`.

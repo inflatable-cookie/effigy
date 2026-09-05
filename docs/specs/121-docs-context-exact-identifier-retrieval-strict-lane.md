@@ -1,10 +1,10 @@
 # 121 Docs Context Exact Identifier Retrieval Strict Lane
 
-Status: Active
+Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
 Roadmap: [`g09.007`](../roadmaps/g09/007-docs-context-exact-identifier-retrieval.md)
-Ready card: [`1114`](../roadmaps/g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
+Completed card: [`1114`](../roadmaps/g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
 Guide: [`079`](../guides/079-documentation-graph-profiles-and-context.md)
 
@@ -90,4 +90,4 @@ beyond making retrieval rule 2 true for identifiers.
 
 ## Next Task
 
-Execute card `1114`.
+Card `1114` completed in PR `92`; the lane is closed.
