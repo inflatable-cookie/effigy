@@ -1,11 +1,23 @@
-# Present, indexable, and deliberately never shared: no `[docs_policy.sources]`
-# table at all. A portfolio must report it and must not search it.
+# Present, indexable, and deliberately never shared.
+#
+# It also declares a git bundle and ships a local overlay and an include that
+# both say `share = true`. Classification must read the committed bytes of this
+# file alone: the bundle must never be cloned or cached into this checkout, and
+# neither the overlay nor the include may grant membership. The bundle URL is
+# unreachable on purpose - resolving it would fail or spend a network clone, and
+# doing neither is the proof.
 
 [catalog]
 alias = "private-vault"
 
 [manifest]
 minimum_effigy_version = "0.7.0"
+include = ["fragments/sources.toml"]
+
+[bundle.base]
+type = "git"
+url = "https://example.invalid/never-clone-me.git"
+ref = "main"
 
 [tasks]
 ping = "printf ok"

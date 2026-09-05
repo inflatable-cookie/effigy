@@ -6,9 +6,7 @@ use toml::Value;
 
 use super::TaskManifest;
 use crate::bundles::apply_bundle_defaults;
-use crate::config_sections::{
-    ManifestBundleConfig, ManifestDocsPolicyGraphConfig, ManifestDocsPolicySourcesConfig,
-};
+use crate::config_sections::{ManifestBundleConfig, ManifestDocsPolicyGraphConfig};
 use crate::manifest_section::{
     resolve_include_path, validate_minimum_effigy_version, ManifestIncludeEntry,
     ManifestSectionConfig,
@@ -121,40 +119,6 @@ pub fn load_docs_policy_graph_config(
             })?;
     graph.validate(manifest_path)?;
     Ok(Some(graph))
-}
-
-/// Load only `[docs_policy.sources]` from a composed manifest.
-///
-/// Cross-repository routing reads a *neighbour* repository's manifest, so it
-/// must not depend on that repository's tasks, containers, or bundles being
-/// loadable by this Effigy version. Composing just this table keeps a shared
-/// repository readable even when the rest of its manifest is newer.
-pub fn load_docs_policy_sources_config(
-    manifest_path: &Path,
-) -> Result<Option<ManifestDocsPolicySourcesConfig>, ManifestError> {
-    if !manifest_path.is_file() {
-        return Ok(None);
-    }
-    let mut session = CompositionSession::default();
-    let mut composed = load_composed_value(manifest_path, &mut session)?;
-    apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
-    let Some(sources_value) = composed
-        .value
-        .get("docs_policy")
-        .and_then(|docs_policy| docs_policy.get("sources"))
-    else {
-        return Ok(None);
-    };
-    let sources: ManifestDocsPolicySourcesConfig =
-        sources_value
-            .clone()
-            .try_into()
-            .map_err(|error| ManifestError::Parse {
-                path: manifest_path.to_path_buf(),
-                error,
-            })?;
-    sources.validate(manifest_path)?;
-    Ok(Some(sources))
 }
 
 pub fn load_task_manifest_with_inspection(

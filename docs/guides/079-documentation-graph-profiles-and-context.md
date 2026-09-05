@@ -237,7 +237,15 @@ skill_roots = [".agents/skills"]
 ```
 
 A child joins only if it is a git checkout, has an `effigy.toml`, and declares
-`share = true`. Enumeration is one level deep per named directory; it never
+`share = true` **in that file**. Membership is read from the committed bytes of
+the child's own root manifest and nothing else: no include, no
+`effigy.local.toml` overlay, no bundle default. Classification runs on
+repositories that never opted in, so it must not compose them — composing would
+let an uncommitted overlay grant membership, and would clone and cache a
+declared bundle into a checkout the caller has no business writing to. A
+repository that keeps the table only in an include is reported as `not-shared`,
+and the next step names the file to move it to. Once a repository has opted in,
+querying it uses its full manifest as usual. Enumeration is one level deep per named directory; it never
 descends further, never follows a symlink out of the directory, and never
 considers a hidden directory or one named `.paseo`, `worktrees`,
 `node_modules`, or `target`. The handle is the directory name, and `--only`

@@ -12,7 +12,7 @@ committed bytes here stay clean, so the fixture is readable as evidence.
 | --- | --- | --- |
 | `repos/shared-atlas` | `ok` | git checkout, `[docs_policy.graph]` profile, `share = true` |
 | `repos/baseline-notes` | `ok` | git checkout, no profile (baseline Markdown), `share = true` |
-| `repos/private-vault` | `not-shared` | git checkout with a manifest that never opts in |
+| `repos/private-vault` | `not-shared` | git checkout that never opts in, and that also carries a git bundle, an include, and a local overlay which all claim `share = true` |
 | `repos/loose-notes` | `invalid` | a directory, not a checkout |
 | `repos/worktrees/decoy-checkout` | never considered | `worktrees` is a skipped container name |
 | `repos/.hidden-annex` | never considered | hidden directory |
@@ -21,3 +21,8 @@ committed bytes here stay clean, so the fixture is readable as evidence.
 `shared-atlas` and `baseline-notes` both carry the term `tolerance ledger`, so
 one query reaches both and proves the two blocks stay separate instead of
 merging into one ranked list.
+
+`private-vault` is the membership-boundary control. Membership is read from the
+committed bytes of a child's own `effigy.toml` and nothing else, so its bundle
+is never cloned or cached into the checkout, and neither its include nor its
+overlay can make it searchable. Its bundle URL is unreachable on purpose.

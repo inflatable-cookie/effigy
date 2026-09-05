@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
-    load_docs_policy_sources_config, load_portfolio, ManifestDocsPolicySourcesConfig, Portfolio,
+    load_committed_docs_policy_sources, load_portfolio, ManifestDocsPolicySourcesConfig, Portfolio,
     TASK_MANIFEST_FILE,
 };
 
@@ -241,13 +241,19 @@ fn classify(path: &Path) -> Membership {
             path.display()
         ));
     }
-    match load_docs_policy_sources_config(&manifest_path) {
+    // Committed bytes of the child's own `effigy.toml`, and nothing else. This
+    // runs on repositories that never opted in, so it must not read their
+    // uncommitted overlay, follow their includes, or resolve their bundle —
+    // any of which would let a neighbour be written to, or be searched on the
+    // strength of text it never committed. Composition is reserved for a
+    // repository that has already said yes, when it is queried.
+    match load_committed_docs_policy_sources(path) {
         Err(error) => Membership::Invalid(format!(
             "`{}` could not be read: {error}",
             manifest_path.display()
         )),
         Ok(None) => Membership::NotShared(format!(
-            "`{}` does not declare `[docs_policy.sources]`; add `share = true` there to let it be found",
+            "`{}` does not declare `[docs_policy.sources]`; add `share = true` there (in this file, not an include) to let it be found",
             manifest_path.display()
         )),
         Ok(Some(sources)) if !sources.share => Membership::NotShared(format!(

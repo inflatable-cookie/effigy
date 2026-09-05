@@ -19,7 +19,7 @@ unchanged single-repository entry point. No second index, daemon, cache,
 parallel executor, environment variable, or consumer-repository write.
 
 Three real-size shared repositories answer warm in 1.894 s, inside the 5 s
-gate. The frozen benchmark grew from 13 to 22 cases; the 13 existing
+gate. The frozen benchmark grew from 13 to 23 cases; the 13 existing
 single-repository cases are unedited and green. The K1–K4 replay is recorded
 below with its `rg` comparison and its misses. K5 remains **pending**: the
 triage that would rephrase it is still open, so it carries no recall claim.
@@ -55,6 +55,7 @@ benchmark case; all nine pass.
 | --- | --- | --- | --- |
 | `portfolio-membership` | clean | `baseline-notes=ok`, `loose-notes=invalid`, `private-vault=not-shared`, `shared-atlas=ok`, `absent-directory=missing` | 0 |
 | `portfolio-negative-control` | clean | 3 results, none from `private-vault`, `loose-notes`, `worktrees/decoy-checkout`, or `.hidden-annex` | 0 |
+| `portfolio-membership-boundary` | clean | `private-vault=not-shared`, no `.effigy` written into it | 0 |
 | `portfolio-grouping` | clean | `baseline-notes/notes/README.md`, `shared-atlas/atlas/charters/tolerance-ledger.md`, `shared-atlas/atlas/notices/tolerance-ledger-withdrawn.md`; each block ranks from 1 | 0 |
 | `portfolio-identity` | clean | every answered block carries both HEADs; every result carries a span and `committed` | 0 |
 | `portfolio-only-disallowed` | clean | `shared-atlas=ok`, `no-such-repo=disallowed` | 0 |
@@ -66,6 +67,37 @@ benchmark case; all nine pass.
 `worktrees/decoy-checkout` and `.hidden-annex` are opted-in repositories placed
 inside a skipped container and a hidden directory. Retrieving either would mean
 enumeration went where it must not; neither appears in any report.
+
+### Membership is decided from committed bytes only
+
+Review of PR `93` at `343f888b5` found that classification loaded each child's
+*composed* manifest. That was a real defect against oracle rows 1 and 8, and it
+is fixed at `<NEWHEAD>`:
+
+- an uncommitted `effigy.local.toml` overlay saying `share = true` would have
+  granted membership on text the repository never committed
+- a declared `[bundle.base] type = "git"` would have been resolved during
+  classification, cloning into `<neighbour>/.effigy/cache/bundles/git/...` — a
+  write into a repository that never opted in
+
+Both were reproduced before the fix. Composing the fixture's manifest directly
+still shows the hazard the fix removes:
+
+```text
+$ effigy tasks --repo <copy-of-private-vault>
+[error] strict manifest parse failed ...: git clone --no-checkout
+  https://example.invalid/never-clone-me.git
+  <copy-of-private-vault>/.effigy/cache/bundles/git/f3538197.../main failed
+```
+
+Classification now reads the committed bytes of the child's own `effigy.toml`
+and nothing else. `private-vault` carries a git bundle, an include, and a local
+overlay that all claim `share = true`; frozen case
+`portfolio-membership-boundary` asserts it reports `not-shared`, returns no
+section, and has no `.effigy` after the run. Effigy's own opt-in moved from the
+included `docs/effigy.docs.toml` to the root `effigy.toml` for the same reason,
+and is still honoured. Composition remains in place for a repository that has
+already opted in, when it is queried.
 
 ### Degradation that does not hide a healthy repository
 
@@ -190,7 +222,7 @@ which is why it reports `not-shared` here too.
 
 ## Benchmark
 
-`effigy perf:docs-context-benchmark` (eighth freeze, 22 cases): all hold.
+`effigy perf:docs-context-benchmark` (ninth freeze, 23 cases): all hold.
 
 | Case | Rank | Rival rank | Result |
 | --- | --- | --- | --- |
@@ -222,19 +254,19 @@ already records as expected for `effigy-live` rows; the frozen bound is rank
 
 | Spec `122` counterexample | Proof |
 | --- | --- |
-| 1. searched without `share = true`, or descended below immediate children, or followed a symlink out | `only_opted_in_children_are_searched_and_the_others_are_reported`, `enumeration_stays_one_level_deep_and_skips_container_directories`, `a_symlinked_child_leaving_the_named_directory_is_out_of_scope`; benchmark `portfolio-membership`, `portfolio-negative-control` |
+| 1. searched without `share = true`, or descended below immediate children, or followed a symlink out | `only_opted_in_children_are_searched_and_the_others_are_reported`, `enumeration_stays_one_level_deep_and_skips_container_directories`, `a_symlinked_child_leaving_the_named_directory_is_out_of_scope`, `an_opt_in_that_lives_only_in_an_include_does_not_grant_membership`; benchmark `portfolio-membership`, `portfolio-negative-control`, `portfolio-membership-boundary` |
 | 2. results merged, or authority compared across repositories | `results_stay_grouped_per_repository_with_declared_membership_metadata`; benchmark `portfolio-grouping`; end-to-end `sources_routing_answers_opted_in_repositories_and_reports_the_rest` |
 | 3. a degraded repository blocked or hid a healthy one | `one_repository_timing_out_never_hides_another_repository_answering`, `a_missing_directory_is_reported_without_silencing_a_healthy_one`, `a_degraded_index_reports_stale_and_a_no_match_reports_empty`; benchmark `portfolio-stale`, `portfolio-membership` |
 | 4. a result lacks identity, or working-tree content labelled committed | `content_identity_never_claims_committed_bytes_without_git_evidence`, `a_working_tree_excerpt_is_never_labelled_as_committed_bytes`; benchmark `portfolio-identity`, `portfolio-working-tree` |
 | 5. single-repository payload or ranking changed, or existing benchmark cases moved | `effigy.docs.context.v1` untouched; existing 13 cases unedited and green (table above) |
 | 6. three shared repositories warm exceed 5 s | 1.894–1.969 s, measured above |
 | 7. speedup or recall claim without the `rg` table, or K5 carried into a recall claim | replay section above; K5 recorded pending, `rg` comparison published with its bias stated |
-| 8. second index, daemon, cache, parallel executor, environment variable, or consumer write; portfolio accepting globs or unknown keys | no new module opens a second store or spawns a parallel executor; the per-repository bound reuses `run_bounded_graph_value` in the one timeout model; `unknown_keys_globs_and_escapes_are_rejected`, `a_missing_or_unparsable_portfolio_is_a_usage_error` |
+| 8. second index, daemon, cache, parallel executor, environment variable, or consumer write; portfolio accepting globs or unknown keys | no new module opens a second store or spawns a parallel executor; the per-repository bound reuses `run_bounded_graph_value` in the one timeout model; `unknown_keys_globs_and_escapes_are_rejected`, `a_missing_or_unparsable_portfolio_is_a_usage_error`; classification writes nothing into a neighbour — `a_not_shared_neighbour_with_a_bundle_and_an_overlay_is_never_cloned_written_or_searched`, `membership_comes_from_the_root_manifest_not_an_overlay_or_an_include`, benchmark `portfolio-membership-boundary` |
 
 ## Validation
 
 - `cargo test --workspace` — green
-- `effigy perf:docs-context-benchmark` — 22/22
+- `effigy perf:docs-context-benchmark` — 23/23
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `git diff --check` — clean

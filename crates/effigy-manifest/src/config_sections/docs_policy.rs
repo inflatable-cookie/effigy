@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
+use effigy_core::repo_markers::TASK_MANIFEST_FILE;
+
 use crate::ManifestError;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
@@ -47,6 +49,53 @@ pub struct ManifestDocsPolicySourcesConfig {
     /// Repository-relative directories holding agent skills.
     #[serde(default, alias = "skill_roots")]
     pub skill_roots: Vec<String>,
+}
+
+/// Read a repository's `[docs_policy.sources]` declaration from the committed
+/// bytes of its own `effigy.toml`, with no side effects at all.
+///
+/// Deliberately not the composed manifest path. Cross-repository routing calls
+/// this on *neighbour* checkouts, including ones that never opted in, so it
+/// must not read an uncommitted `effigy.local.toml` overlay, follow includes,
+/// apply bundle defaults, or clone and cache a git bundle into a repository the
+/// caller has no business writing to. Membership is a boundary: it is decided
+/// by text that repository committed, at a path anyone can audit, or not at
+/// all.
+///
+/// A repository that keeps the table only in an included fragment is reported
+/// as not shared. That is the safe direction to be wrong in, and the next step
+/// on that status names the file to add it to.
+pub fn load_committed_docs_policy_sources(
+    repo_root: &Path,
+) -> Result<Option<ManifestDocsPolicySourcesConfig>, ManifestError> {
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let source = std::fs::read_to_string(&manifest_path).map_err(|error| ManifestError::Read {
+        path: manifest_path.clone(),
+        error,
+    })?;
+    let document: toml::Value = toml::from_str(&source).map_err(|error| ManifestError::Parse {
+        path: manifest_path.clone(),
+        error,
+    })?;
+    let Some(sources_value) = document
+        .get("docs_policy")
+        .and_then(|docs_policy| docs_policy.get("sources"))
+    else {
+        return Ok(None);
+    };
+    let sources: ManifestDocsPolicySourcesConfig =
+        sources_value
+            .clone()
+            .try_into()
+            .map_err(|error| ManifestError::Parse {
+                path: manifest_path.clone(),
+                error,
+            })?;
+    sources.validate(&manifest_path)?;
+    Ok(Some(sources))
 }
 
 impl ManifestDocsPolicySourcesConfig {
@@ -441,5 +490,93 @@ fn graph_error(manifest_path: &Path, detail: impl Into<String>) -> ManifestError
     ManifestError::Compose {
         path: manifest_path.to_path_buf(),
         detail: detail.into(),
+    }
+}
+
+#[cfg(test)]
+mod committed_sources_tests {
+    use super::*;
+
+    fn temp_repo(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-committed-sources-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        root
+    }
+
+    const SHARED: &str = "[docs_policy.sources]\nshare = true\n";
+
+    #[test]
+    fn membership_comes_from_the_root_manifest_not_an_overlay_or_an_include() {
+        let root = temp_repo("overlay");
+        std::fs::write(
+            root.join(crate::TASK_MANIFEST_FILE),
+            "[catalog]\nalias = \"neighbour\"\n\n[manifest]\ninclude = [\"fragments/sources.toml\"]\n",
+        )
+        .expect("write manifest");
+        std::fs::create_dir_all(root.join("fragments")).expect("mkdir fragments");
+        std::fs::write(root.join("fragments/sources.toml"), SHARED).expect("write fragment");
+        std::fs::write(root.join("effigy.local.toml"), SHARED).expect("write overlay");
+
+        // The composed loader honours the uncommitted overlay; that is correct
+        // for a repository loading itself and wrong for classifying a
+        // neighbour, which is why membership does not use it.
+        assert!(
+            crate::composition::load_docs_policy_graph_config(
+                &root.join(crate::TASK_MANIFEST_FILE)
+            )
+            .is_ok(),
+            "composed load is the contrast case, not the subject"
+        );
+
+        assert_eq!(
+            load_committed_docs_policy_sources(&root).expect("read"),
+            None,
+            "neither an include nor an overlay may grant membership"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_committed_root_declaration_is_read_with_its_typed_lists() {
+        let root = temp_repo("committed");
+        std::fs::write(
+            root.join(crate::TASK_MANIFEST_FILE),
+            "[docs_policy.sources]\nshare = true\nfront_doors = [\"docs/README.md\"]\nskill_roots = [\".agents/skills\"]\n",
+        )
+        .expect("write manifest");
+        let sources = load_committed_docs_policy_sources(&root)
+            .expect("read")
+            .expect("declared");
+        assert!(sources.share);
+        assert_eq!(sources.front_doors, vec!["docs/README.md".to_owned()]);
+        assert_eq!(sources.skill_roots, vec![".agents/skills".to_owned()]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unknown_keys_and_escaping_paths_are_rejected() {
+        let root = temp_repo("reject");
+        let manifest = root.join(crate::TASK_MANIFEST_FILE);
+        std::fs::write(
+            &manifest,
+            "[docs_policy.sources]\nshare = true\ndepth = 2\n",
+        )
+        .expect("write");
+        assert!(load_committed_docs_policy_sources(&root).is_err());
+
+        std::fs::write(
+            &manifest,
+            "[docs_policy.sources]\nshare = true\nfront_doors = [\"../elsewhere.md\"]\n",
+        )
+        .expect("write");
+        assert!(load_committed_docs_policy_sources(&root).is_err());
+        std::fs::remove_dir_all(&root).ok();
     }
 }

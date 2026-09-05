@@ -1,0 +1,4 @@
+# An uncommitted-style overlay that claims membership. Membership is never read
+# from an overlay, so this grants nothing either.
+[docs_policy.sources]
+share = true

@@ -218,6 +218,129 @@ fn only_opted_in_children_are_searched_and_the_others_are_reported() {
     assert!(payload.answered());
 }
 
+/// A neighbour that never opted in declares a git bundle and carries a local
+/// overlay that would flip `share = true`. Classifying it must read only its
+/// committed `effigy.toml`: no clone, no cache written into its checkout, no
+/// overlay honoured, and no query.
+///
+/// The bundle URL is unreachable on purpose. Resolving it would either fail the
+/// whole call or spend a network clone; doing neither is the proof.
+#[test]
+fn a_not_shared_neighbour_with_a_bundle_and_an_overlay_is_never_cloned_written_or_searched() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repos = temp.path().join("repos");
+    checkout(&repos, "shared-atlas", Some(SHARED_MANIFEST));
+
+    let vault = repos.join("private-vault");
+    fs::create_dir_all(vault.join(".git")).expect("create .git");
+    write(
+        &vault.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "private-vault"
+
+[bundle.base]
+type = "git"
+url = "https://example.invalid/never-clone-me.git"
+ref = "main"
+
+[manifest]
+include = ["fragments/sources.toml"]
+"#,
+    );
+    // Both of these say `share = true`. Neither is the committed root manifest,
+    // so neither may be read.
+    write(&vault.join("fragments/sources.toml"), SHARED_MANIFEST);
+    write(&vault.join("effigy.local.toml"), SHARED_MANIFEST);
+    write(&vault.join("README.md"), "# vault\n");
+
+    let portfolio = portfolio_file(temp.path(), "\"repos\"");
+    let mut searched = Vec::new();
+    let payload = docs_context_sources(
+        &portfolio,
+        "tolerance",
+        DocsContextRequest::default(),
+        &[],
+        |repo_root| {
+            searched.push(repo_root.to_path_buf());
+            SourceQueryOutcome::Answered(Box::new(answered_payload(repo_root)))
+        },
+    )
+    .expect("routing");
+
+    assert_eq!(
+        statuses(&payload),
+        vec![
+            ("private-vault".to_owned(), STATUS_NOT_SHARED.to_owned()),
+            ("shared-atlas".to_owned(), STATUS_OK.to_owned()),
+        ]
+    );
+    assert_eq!(searched, vec![repos.join("shared-atlas")]);
+    // Nothing was written into the neighbour: the bundle cache would land in
+    // `<checkout>/.effigy/cache/bundles/git`.
+    assert!(
+        !vault.join(".effigy").exists(),
+        "classification wrote into a repository that never opted in"
+    );
+    let mut entries = std::fs::read_dir(&vault)
+        .expect("read vault")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    assert_eq!(
+        entries,
+        vec![
+            ".git".to_owned(),
+            "README.md".to_owned(),
+            "effigy.local.toml".to_owned(),
+            "effigy.toml".to_owned(),
+            "fragments".to_owned(),
+        ]
+    );
+}
+
+/// The same rule in the other direction: a repository that keeps the table only
+/// in an include is reported as not shared rather than searched on text its
+/// root manifest never committed.
+#[test]
+fn an_opt_in_that_lives_only_in_an_include_does_not_grant_membership() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repos = temp.path().join("repos");
+    let split = repos.join("split-manifest");
+    fs::create_dir_all(split.join(".git")).expect("create .git");
+    write(
+        &split.join("effigy.toml"),
+        "[catalog]\nalias = \"split\"\n\n[manifest]\ninclude = [\"fragments/sources.toml\"]\n",
+    );
+    write(&split.join("fragments/sources.toml"), SHARED_MANIFEST);
+
+    let portfolio = portfolio_file(temp.path(), "\"repos\"");
+    let payload = docs_context_sources(
+        &portfolio,
+        "tolerance",
+        DocsContextRequest::default(),
+        &[],
+        |repo_root| SourceQueryOutcome::Answered(Box::new(answered_payload(repo_root))),
+    )
+    .expect("routing");
+
+    assert_eq!(
+        statuses(&payload),
+        vec![("split-manifest".to_owned(), STATUS_NOT_SHARED.to_owned())]
+    );
+    assert!(payload.repositories[0]
+        .next_step
+        .as_deref()
+        .expect("next step")
+        .contains("not an include"));
+}
+
 #[test]
 fn enumeration_stays_one_level_deep_and_skips_container_directories() {
     let temp = tempfile::tempdir().expect("tempdir");

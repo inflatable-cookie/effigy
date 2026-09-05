@@ -43,6 +43,7 @@ pub use distribution::{
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
     ManifestDistributionPreflightConfig, ManifestDistributionPublishConfig,
 };
+pub use docs_policy::load_committed_docs_policy_sources;
 pub use docs_policy::{
     ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,

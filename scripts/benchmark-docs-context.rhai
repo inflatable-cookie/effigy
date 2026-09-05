@@ -102,6 +102,14 @@
 //              sources, rivals, rank bounds, and pass criteria are untouched,
 //              and the two existing targets still run first. Current matrix:
 //              13 single-repository cases + 9 portfolio cases.
+//   this file  ninth freeze. `portfolio-membership-boundary` added after
+//              review of PR `93`: `private-vault` now also declares a git
+//              bundle, an include, and a local overlay that all claim
+//              `share = true`, and the case asserts none of them grants
+//              membership and that nothing was cloned or cached into that
+//              checkout. No existing case, query, expected source, rival,
+//              rank bound, or pass criterion changed. Current matrix: 13
+//              single-repository cases + 10 portfolio cases.
 //
 // Two targets, both required:
 //
@@ -707,6 +715,12 @@ fn portfolio_scratch_setup(fixture_root, report_dir) {
     fs::create_dir(scratch);
     run_check("copy portfolio fixture", "cp", ["-R", text([source, "/."]), scratch]);
     let repos = path::join(scratch, "repos");
+    // Scrub any `.effigy` the source tree happens to be carrying, so the
+    // membership-boundary case measures what this run did and not what some
+    // earlier local command left behind.
+    for repo_name in ["shared-atlas", "baseline-notes", "private-vault", "loose-notes"] {
+        fs::remove(path::join(path::join(repos, repo_name), ".effigy"));
+    }
     for repo_name in ["shared-atlas", "baseline-notes", "private-vault"] {
         let repo_path = path::join(repos, repo_name);
         run_check(text(["git init ", repo_path]), "git", ["-C", repo_path, "init", "-q"]);
@@ -887,7 +901,39 @@ portfolio_results.push(portfolio_case(
     "portfolio-negative-control", "no-leak", text([clean_keys.len(), " result(s)"]), leak_failures,
 ));
 
-// 3. grouping: the same term is retrieved in both shared repositories, each
+// 3. membership boundary: a child that never opted in carries a git bundle, an
+//    include, and a local overlay that all claim `share = true`. None of them
+//    may grant membership, and classifying it must not write into it - the
+//    bundle cache would land in `<checkout>/.effigy`.
+let vault_path = path::join(path::join(portfolio_scratch, "repos"), "private-vault");
+let boundary_failures = [];
+if fs::exists(path::join(vault_path, ".effigy")) {
+    boundary_failures.push(
+        "classification wrote `.effigy` into a repository that never opted in",
+    );
+}
+for key in clean_keys {
+    if key.to_string().starts_with("private-vault/") {
+        boundary_failures.push(text(["never-opted-in source was searched: ", key]));
+    }
+}
+let vault_status = ();
+for repository in clean["payload"]["repositories"] {
+    if repository["handle"].to_string() == "private-vault" {
+        vault_status = repository["status"].to_string();
+    }
+}
+if vault_status != "not-shared" {
+    boundary_failures.push(text([
+        "`private-vault` reported ", vault_status, ", not not-shared",
+    ]));
+}
+portfolio_results.push(portfolio_case(
+    "portfolio-membership-boundary", "committed-membership",
+    text(["private-vault=", vault_status]), boundary_failures,
+));
+
+// 4. grouping: the same term is retrieved in both shared repositories, each
 //    block ranks from 1, and no merged list exists.
 let grouping_failures = [];
 let shared_hit = false;
@@ -920,7 +966,7 @@ portfolio_results.push(portfolio_case(
     text([clean_keys]), grouping_failures,
 ));
 
-// 4. identity: every result carries a span and every repository that answered
+// 5. identity: every result carries a span and every repository that answered
 //    carries both HEADs; a clean checkout reports committed bytes.
 let identity_failures = [];
 for repository in clean["payload"]["repositories"] {
@@ -949,7 +995,7 @@ portfolio_results.push(portfolio_case(
     "portfolio-identity", "source-identity", "committed", identity_failures,
 ));
 
-// 5. `--only`: a known handle answers, an unknown one is `disallowed`, and the
+// 6. `--only`: a known handle answers, an unknown one is `disallowed`, and the
 //    call still exits 0.
 log("[info] docs-context benchmark portfolio-routing :: only");
 let only = run_portfolio(
@@ -967,7 +1013,7 @@ portfolio_results.push(portfolio_case(
     "portfolio-only-disallowed", "disallowed", text([only_statuses]), only_failures,
 ));
 
-// 6. a no-match query is a successful empty report per repository, never a
+// 7. a no-match query is a successful empty report per repository, never a
 //    fallback to arbitrary files.
 log("[info] docs-context benchmark portfolio-routing :: empty");
 let empty = run_portfolio(bin_path, portfolio_path, portfolio_no_match_query, [], ());
@@ -992,7 +1038,7 @@ portfolio_results.push(portfolio_case(
     "portfolio-empty", "no-match", text([empty_statuses]), empty_failures,
 ));
 
-// 7. a dirty file is never labelled as committed bytes, and its neighbours in
+// 8. a dirty file is never labelled as committed bytes, and its neighbours in
 //    the same repository still are.
 log("[info] docs-context benchmark portfolio-routing :: working tree");
 fs::append_file(
@@ -1018,7 +1064,7 @@ portfolio_results.push(portfolio_case(
     text([dirty_identity, "/", clean_neighbour]), dirty_failures,
 ));
 
-// 8. a repository whose index carries failed paths answers as `stale`, keeps
+// 9. a repository whose index carries failed paths answers as `stale`, keeps
 //    its sections, and never blocks the healthy repository beside it.
 log("[info] docs-context benchmark portfolio-routing :: stale");
 fs::append_file(portfolio_charter_path, "\nState: live\n");
@@ -1041,7 +1087,7 @@ portfolio_results.push(portfolio_case(
     text([portfolio_statuses(stale["payload"])]), stale_failures,
 ));
 
-// 9. when no repository answers, the call fails and still lists every status.
+// 10. when no repository answers, the call fails and still lists every status.
 log("[info] docs-context benchmark portfolio-routing :: timeout");
 let timed_out = run_portfolio(bin_path, portfolio_path, portfolio_query, [], 1);
 let timeout_failures = expect_statuses(

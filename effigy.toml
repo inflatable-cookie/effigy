@@ -12,6 +12,23 @@ include = [
   "config/release.toml",
 ]
 
+# ---- Cross-repository source sharing -----------------------------------------
+# Effigy's own half of two-sided membership for `effigy docs context --sources`
+# (roadmap `g09.006`, spec `122`). A portfolio file names directories to look
+# in; this table is how this repository says it wants to be found there.
+#
+# It lives in this root manifest on purpose. Membership is read from the
+# committed bytes of `effigy.toml` alone - no include, no `effigy.local.toml`
+# overlay, no bundle default - so that a neighbour classifying this checkout
+# never has to compose it, and so anyone can audit the decision by reading one
+# file. Nothing is crawled and no repository is read without its own
+# `share = true`.
+
+[docs_policy.sources]
+share = true
+front_doors = ["docs/README.md", "AGENTS.md", "README.md"]
+skill_roots = [".agents/skills"]
+
 [bootstrap]
 submodules = "recursive"
 setup = ["bootstrap:local"]
