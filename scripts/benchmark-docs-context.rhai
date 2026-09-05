@@ -87,6 +87,12 @@
 //              `docs_policy.graph` glob once per process; 11/11 held before and
 //              after, every rank and every retrieved span unchanged, and the
 //              whole run fell from 18833 ms to 12105 ms.
+//   this file  seventh freeze. Two exact-identifier cases added:
+//              `effigy-exact-identifier` (`catalog_tasks` → guide `026`,
+//              rank ≤ 3) and `generic-exact-identifier` (fixture identifier
+//              `snorkel_grommet` with a split-word-dense rival). Existing
+//              eleven cases and their rank bounds are unchanged. Current
+//              matrix: 13 cases.
 //
 // Two targets, both required:
 //
@@ -192,6 +198,16 @@ let targets = [
                 expected_relation: "follow-up",
                 max_rank: 12,
             },
+            #{
+                id: "generic-exact-identifier",
+                dimension: "exact-identifier",
+                expect: "live-authority",
+                query: "snorkel_grommet",
+                extra_args: [],
+                expected_path: "handbook/playbooks/coil-alignment.md",
+                rival_path: "handbook/playbooks/snorkel-station.md",
+                max_rank: 3,
+            },
         ],
     },
     #{
@@ -253,6 +269,15 @@ let targets = [
                 extra_args: [],
                 expected_path: "docs/logs/2026-08/31-181957-documentation-context-1089.md",
                 max_rank: 8,
+            },
+            #{
+                id: "effigy-exact-identifier",
+                dimension: "exact-identifier",
+                expect: "live-authority",
+                query: "catalog_tasks",
+                extra_args: ["--max-sections", "3"],
+                expected_path: "docs/guides/026-json-payload-examples.md",
+                max_rank: 3,
             },
         ],
     },

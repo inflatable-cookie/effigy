@@ -526,6 +526,61 @@ fn corpus_weighting_still_drops_a_term_when_other_terms_carry_evidence() {
 }
 
 #[test]
+fn exact_identifier_outranks_split_word_density() {
+    let temp = profiled_repo();
+    fs::write(
+        temp.path().join("handbook/playbooks/coil-alignment.md"),
+        "# Coil alignment\n\nState: live\n\n## Latch pin\n\nThe coil alignment uses the snorkel_grommet latch pin before seating.\n",
+    )
+    .expect("write exact identifier document");
+    fs::write(
+        temp.path().join("handbook/playbooks/snorkel-station.md"),
+        "# Snorkel station drill\n\nState: live\n\n## Station inventory\n\nThe snorkel station stores a spare grommet beside every hook.\nAnother grommet sits in the snorkel tray. The drill counts every snorkel\nand every grommet on the rack. A snorkel_grommet_v2 prototype stays out of scope.\n",
+    )
+    .expect("write split-word rival");
+
+    let payload = query(temp.path(), "snorkel_grommet");
+    let terms = payload
+        .terms
+        .iter()
+        .map(|term| term.term.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(terms, vec!["snorkel", "grommet", "snorkel_grommet"]);
+
+    let first = &payload.results[0];
+    assert_eq!(first.path, "handbook/playbooks/coil-alignment.md");
+    assert!(
+        first
+            .match_reasons
+            .iter()
+            .any(|reason| reason.contains("`snorkel_grommet`")),
+        "match reason must name the exact term: {:?}",
+        first.match_reasons
+    );
+
+    let rival = payload
+        .results
+        .iter()
+        .find(|result| result.path == "handbook/playbooks/snorkel-station.md");
+    if let Some(rival) = rival {
+        assert!(
+            rival.rank > first.rank,
+            "split-word rival must rank below the exact identifier: exact {} rival {}",
+            first.rank,
+            rival.rank
+        );
+        assert!(
+            !rival
+                .match_reasons
+                .iter()
+                .any(|reason| reason.contains("`snorkel_grommet`")),
+            "a longer identifier must not count as the exact term: {:?}",
+            rival.match_reasons
+        );
+    }
+}
+
+#[test]
 fn traversed_results_attribute_inherited_lexical_evidence_to_the_seed() {
     let temp = profiled_repo();
     let payload = bounded_query(

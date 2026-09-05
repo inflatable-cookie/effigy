@@ -71,25 +71,98 @@ pub(super) struct QueryTerm {
 }
 
 /// Split a free-text query into repository-neutral comparison terms.
+///
+/// Identifier-shaped tokens (`catalog_tasks`, `foo::bar`) are kept whole in
+/// addition to their alphanumeric split words, so ranking can credit the
+/// exact term without changing how the shared FTS index tokenises source.
 pub(super) fn query_terms(query: &str) -> Vec<String> {
     let mut long = Vec::new();
     let mut short = Vec::new();
     let mut seen = BTreeSet::new();
     for raw in query.split(|ch: char| !ch.is_alphanumeric()) {
-        let term = raw.to_ascii_lowercase();
-        if term.is_empty() || !seen.insert(term.clone()) {
-            continue;
-        }
-        if term.chars().count() >= 2 {
-            long.push(term);
-        } else {
-            short.push(term);
-        }
+        push_query_term(raw.to_ascii_lowercase(), &mut long, &mut short, &mut seen);
+    }
+    for ident in identifier_terms(query) {
+        push_query_term(ident, &mut long, &mut short, &mut seen);
     }
     if long.is_empty() {
         return short;
     }
     long
+}
+
+fn push_query_term(
+    term: String,
+    long: &mut Vec<String>,
+    short: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) {
+    if term.is_empty() || !seen.insert(term.clone()) {
+        return;
+    }
+    if term.chars().count() >= 2 {
+        long.push(term);
+    } else {
+        short.push(term);
+    }
+}
+
+/// Raw tokens that join alphanumeric runs with `_`, `-`, `.`, `::`, or `/`.
+fn identifier_terms(query: &str) -> Vec<String> {
+    let chars: Vec<char> = query.to_ascii_lowercase().chars().collect();
+    let mut terms = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if !chars[index].is_alphanumeric() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        while index < chars.len() && chars[index].is_alphanumeric() {
+            index += 1;
+        }
+        let mut saw_connector = false;
+        while let Some(connector) = connector_len(&chars[index..]) {
+            let after = index + connector;
+            if after >= chars.len() || !chars[after].is_alphanumeric() {
+                break;
+            }
+            saw_connector = true;
+            index = after + 1;
+            while index < chars.len() && chars[index].is_alphanumeric() {
+                index += 1;
+            }
+        }
+        if saw_connector {
+            terms.push(chars[start..index].iter().collect());
+        }
+    }
+    terms
+}
+
+fn connector_len(chars: &[char]) -> Option<usize> {
+    match chars {
+        [':', ':', ..] => Some(2),
+        ['_' | '-' | '.' | '/', ..] => Some(1),
+        _ => None,
+    }
+}
+
+fn is_identifier_term(term: &str) -> bool {
+    identifier_terms(term).iter().any(|found| found == term)
+}
+
+/// Exact identifier weight must exceed the sum of every split-word location a
+/// rival can hit (heading, body, path, field), or split-word density still wins.
+fn exact_identifier_weight(terms: &[String]) -> i64 {
+    let split = terms
+        .iter()
+        .filter(|term| !is_identifier_term(term))
+        .count()
+        .max(1);
+    let per_term = WEIGHT_HEADING_TERM + WEIGHT_BODY_TERM + WEIGHT_PATH_TERM + WEIGHT_FIELD_TERM;
+    per_term * split as i64 + 1
 }
 
 pub(super) fn rank(
@@ -203,7 +276,7 @@ fn term_hits(
         for (path, document) in &scope.documents {
             if metadata_values(document)
                 .iter()
-                .any(|value| contains_term(value, term))
+                .any(|value| term_matches(value, term))
             {
                 entry.insert(path.clone());
             }
@@ -244,22 +317,32 @@ fn score_lexical(
         let lowered = content.to_ascii_lowercase();
         let path_lower = path.to_ascii_lowercase();
 
+        let exact_weight = exact_identifier_weight(terms);
         let mut document_score = 0i64;
         let mut document_reasons = Vec::new();
         for term in terms {
-            if contains_term(&path_lower, term) {
-                document_score += WEIGHT_PATH_TERM;
-                document_reasons.push(format!("path contains `{term}`"));
-            }
+            credit_term(
+                &path_lower,
+                term,
+                WEIGHT_PATH_TERM,
+                exact_weight,
+                format!("path contains `{term}`"),
+                &mut document_score,
+                &mut document_reasons,
+            );
         }
         for fact in &document.facts {
             let value = fact.value.to_ascii_lowercase();
             for term in terms {
-                if contains_term(&value, term) {
-                    document_score += WEIGHT_FIELD_TERM;
-                    document_reasons
-                        .push(format!("field `{}` value contains `{term}`", fact.field));
-                }
+                credit_term(
+                    &value,
+                    term,
+                    WEIGHT_FIELD_TERM,
+                    exact_weight,
+                    format!("field `{}` value contains `{term}`", fact.field),
+                    &mut document_score,
+                    &mut document_reasons,
+                );
             }
         }
 
@@ -363,17 +446,56 @@ fn score_section(
             reasons.push(format!("section text contains phrase `{phrase}`"));
         }
     }
+    let exact_weight = exact_identifier_weight(terms);
     for term in terms {
-        if contains_term(heading_lower, term) {
-            score += WEIGHT_HEADING_TERM;
-            reasons.push(format!("heading contains `{term}`"));
-        }
-        if contains_term(body_lower, term) {
-            score += WEIGHT_BODY_TERM;
-            reasons.push(format!("section text contains `{term}`"));
-        }
+        credit_term(
+            heading_lower,
+            term,
+            WEIGHT_HEADING_TERM,
+            exact_weight,
+            format!("heading contains `{term}`"),
+            &mut score,
+            &mut reasons,
+        );
+        credit_term(
+            body_lower,
+            term,
+            WEIGHT_BODY_TERM,
+            exact_weight,
+            format!("section text contains `{term}`"),
+            &mut score,
+            &mut reasons,
+        );
     }
     SectionScore { score, reasons }
+}
+
+fn credit_term(
+    haystack_lower: &str,
+    term: &str,
+    ordinary_weight: i64,
+    exact_weight: i64,
+    reason: String,
+    score: &mut i64,
+    reasons: &mut Vec<String>,
+) {
+    if !term_matches(haystack_lower, term) {
+        return;
+    }
+    *score += if is_identifier_term(term) {
+        exact_weight
+    } else {
+        ordinary_weight
+    };
+    reasons.push(reason);
+}
+
+fn term_matches(haystack_lower: &str, term: &str) -> bool {
+    if is_identifier_term(term) {
+        contains_identifier_term(haystack_lower, term)
+    } else {
+        contains_term(haystack_lower, term)
+    }
 }
 
 fn leading_section(document: &ScopedDocument) -> (String, Option<usize>) {
@@ -553,6 +675,20 @@ fn slice_span(content: &str, start: u32, end: u32) -> &str {
 
 /// Whole-term containment, so `graph` does not match `graphql`.
 pub(super) fn contains_term(haystack_lower: &str, term: &str) -> bool {
+    contains_bounded(haystack_lower, term, |byte| byte.is_ascii_alphanumeric())
+}
+
+/// Identifier connectors are part of the token, so `catalog_tasks` does not
+/// match `catalog_tasks_v2`.
+fn contains_identifier_term(haystack_lower: &str, term: &str) -> bool {
+    contains_bounded(haystack_lower, term, is_identifier_char)
+}
+
+fn is_identifier_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
+}
+
+fn contains_bounded(haystack_lower: &str, term: &str, part_of_token: fn(u8) -> bool) -> bool {
     if term.is_empty() || term.len() > haystack_lower.len() {
         return false;
     }
@@ -561,8 +697,8 @@ pub(super) fn contains_term(haystack_lower: &str, term: &str) -> bool {
     while let Some(found) = haystack_lower[offset..].find(term) {
         let start = offset + found;
         let end = start + term.len();
-        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        let before_ok = start == 0 || !part_of_token(bytes[start - 1]);
+        let after_ok = end == bytes.len() || !part_of_token(bytes[end]);
         if before_ok && after_ok {
             return true;
         }
@@ -572,4 +708,59 @@ pub(super) fn contains_term(haystack_lower: &str, term: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn query_terms_keep_identifier_tokens_alongside_split_words() {
+        assert_eq!(
+            query_terms("catalog_tasks"),
+            vec![
+                "catalog".to_owned(),
+                "tasks".to_owned(),
+                "catalog_tasks".to_owned()
+            ]
+        );
+        assert_eq!(
+            query_terms("foo::bar"),
+            vec!["foo".to_owned(), "bar".to_owned(), "foo::bar".to_owned()]
+        );
+        assert_eq!(
+            query_terms("path/to_file.rs"),
+            vec![
+                "path".to_owned(),
+                "to".to_owned(),
+                "file".to_owned(),
+                "rs".to_owned(),
+                "path/to_file.rs".to_owned()
+            ]
+        );
+        assert_eq!(query_terms("graph"), vec!["graph".to_owned()]);
+    }
+
+    #[test]
+    fn graph_does_not_match_graphql() {
+        assert!(contains_term("the graph command", "graph"));
+        assert!(!contains_term("the graphql api", "graph"));
+        assert!(!contains_term("graphql", "graph"));
+    }
+
+    #[test]
+    fn exact_identifier_does_not_match_a_longer_identifier() {
+        assert!(contains_identifier_term(
+            "the catalog_tasks field",
+            "catalog_tasks"
+        ));
+        assert!(!contains_identifier_term(
+            "catalog_tasks_v2",
+            "catalog_tasks"
+        ));
+        assert!(!contains_identifier_term(
+            "the catalog_tasks_v2 field",
+            "catalog_tasks"
+        ));
+    }
 }

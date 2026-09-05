@@ -141,6 +141,9 @@ effigy docs context "next task" --max-sections 4
 
 # 6. what did we decide before, and why
 effigy docs context "bounded documentation context query closeout evidence"
+
+# 7. which section names this identifier
+effigy docs context "catalog_tasks"
 ```
 
 Shapes 3, 4, and 5 are different questions and stay separate. **Current roadmap**
@@ -189,6 +192,15 @@ consequences are worth knowing before you tune a query:
   a ranking optimization only: if the weighted terms seed nothing, every term is
   re-enabled and seeding runs again, so it can never erase a query's only
   evidence. Name the thing you want, not the category it belongs to.
+- **Exact identifiers stay whole.** A query token that joins alphanumeric runs
+  with `_`, `-`, `.`, `::`, or `/` is kept as an exact term alongside its split
+  words. Ranking credits whole-term containment of that identifier in section
+  text, heading, path, or fields above split-word matches, and the match reason
+  names the exact term. `catalog_tasks` therefore retrieves the section that
+  contains that literal; `graph` still does not match `graphql`, and
+  `catalog_tasks` does not match `catalog_tasks_v2`. Candidate recall still uses
+  the shared full-text index with the split words; there is no second index and
+  no tokenizer change.
 - **Traversal remains reachable.** With at least two section slots, retrieval
   keeps the best lexical result first and reserves one slot for the best whole
   traversed result that fits the byte budget. Remaining slots follow the normal
@@ -236,6 +248,6 @@ freeze history recorded in the file. Reports land under
 ## Next Step
 
 Adopt a profile in one consumer repository, run
-`effigy docs context` against the five example query shapes above, and tune the
+`effigy docs context` against the example query shapes above, and tune the
 kind authority weights until the answers you expect lead. Keep the vocabulary
 yours.
