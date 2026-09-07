@@ -153,16 +153,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Cards `1112` through `1115` are complete; evidence is at
-[`05-105500`](./2026-09/05-105500-release-gate-diagnosability-1112.md),
-[`05-113123`](./2026-09/05-113123-docs-context-latency-and-freshness-1113.md),
-and
-[`05-133718`](./2026-09/05-133718-docs-context-exact-identifier-1114.md).
-Card `1115` (cross-repository source routing, spec `122`) is complete; its
-evidence is indexed above.
-Card `1111`'s Acowtancy replay evidence is at
-[`03-014518`](./2026-09/03-014518-acowtancy-consumer-replay-1111.md); the
-consumer maturity question is settled (`007` section 6, 2026-09-05). Acowtancy
-stays read-only; Effigy release remains a separate operator-gated mutation.
-
-- [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
+Card `1116` (`g09.008`, Cargo link version transition, strict spec `123`) is
+active on branch `fix/cargo-version-transition-link`. Cards `1112`–`1115`
+are complete with evidence under `2026-09/`. Acowtancy stays read-only;
+Effigy release remains a separate operator-gated mutation.

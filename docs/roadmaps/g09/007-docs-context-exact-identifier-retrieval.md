@@ -2,7 +2,7 @@
 
 Status: Complete
 Created: 2026-09-05
-Spec: [`121`](../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
+Spec: [`121`](../../specs/archive/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 Card: [`1114`](./batch-cards/1114-docs-context-exact-identifier-retrieval.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Guide: [`079`](../../guides/079-documentation-graph-profiles-and-context.md)

@@ -26,15 +26,15 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-Completed strict lanes:
+Active strict lane:
 
-- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
-  cross-repository source routing over existing local retrieval (`g09.006`,
-  card `1115`), merged in PR `93`
+- [`123`](./123-cargo-link-version-transition-strict-lane.md) — Cargo link
+  across a local version bump with transactional lock rollback (`g09.008`,
+  card `1116`)
 
-- [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
-  exact identifier terms seed and rank the sections that contain them, with
-  two frozen benchmark cases (`g09.007`, card `1114`)
+Queued strict lanes:
+
+- none
 
 Archived strict lanes:
 
@@ -48,7 +48,6 @@ Other planning specs:
 
 ## Next Task
 
-The runway is empty pending the next Chatterbox-promoted direction. Specs
-`119`, `120`, `121`, and `122` are complete or archived. The consumer maturity
-question after `g09.003` is settled (`007` section 6, 2026-09-05);
-Acowtancy remains read-only and Effigy release authority stays separate.
+Execute card `1116` under strict spec `123`. Specs `118` through `122` are
+archived. Acowtancy remains read-only and Effigy release authority stays
+separate.

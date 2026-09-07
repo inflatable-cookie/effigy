@@ -3,13 +3,13 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
-Roadmap: [`g09.006`](../roadmaps/g09/006-cross-repository-source-routing.md)
-Completed card: [`1115`](../roadmaps/g09/batch-cards/1115-cross-repository-source-routing.md)
-Contracts: [`041`](../contracts/041-documentation-graph-profile-contract.md),
-[`037`](../contracts/037-explicit-catalog-membership-contract.md)
-Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
-Guides: [`079`](../guides/079-documentation-graph-profiles-and-context.md),
-[`017`](../guides/017-json-output-contracts.md)
+Roadmap: [`g09.006`](../../roadmaps/g09/006-cross-repository-source-routing.md)
+Completed card: [`1115`](../../roadmaps/g09/batch-cards/1115-cross-repository-source-routing.md)
+Contracts: [`041`](../../contracts/041-documentation-graph-profile-contract.md),
+[`037`](../../contracts/037-explicit-catalog-membership-contract.md)
+Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
+Guides: [`079`](../../guides/079-documentation-graph-profiles-and-context.md),
+[`017`](../../guides/017-json-output-contracts.md)
 
 ## Outcome
 

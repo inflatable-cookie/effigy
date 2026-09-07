@@ -3,7 +3,7 @@
 Status: complete
 Created: 2026-09-05
 Roadmap: [`g09.007`](../../roadmaps/g09/007-docs-context-exact-identifier-retrieval.md)
-Spec: [`121`](../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
+Spec: [`121`](../../specs/archive/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 Batch: docs-context-exact-identifier-retrieval-1114
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 PR: [`92`](https://github.com/inflatable-cookie/effigy/pull/92)

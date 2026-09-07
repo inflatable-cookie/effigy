@@ -3,7 +3,7 @@
 Status: Complete
 Created: 2026-09-05
 Frozen: 2026-09-05 (operator confirmed)
-Spec: [`122`](../../specs/122-cross-repository-source-routing-strict-lane.md)
+Spec: [`122`](../../specs/archive/122-cross-repository-source-routing-strict-lane.md)
 Card: [`1115`](./batch-cards/1115-cross-repository-source-routing.md)
 Depends on: [`g09.005`](./005-docs-context-latency-and-freshness.md) (complete),
 [`g09.007`](./007-docs-context-exact-identifier-retrieval.md) (serial edge)

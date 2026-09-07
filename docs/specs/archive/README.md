@@ -26,6 +26,12 @@ strict lanes without wading through closed history.
 
 ## Recently archived strict lanes
 
+- [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
+  cross-repository source routing (completed with card `1115` under
+  `g09.006`, PR `93`; archived 2026-09-07)
+- [`121`](./121-docs-context-exact-identifier-retrieval-strict-lane.md) —
+  exact identifier retrieval (completed with card `1114` under `g09.007`,
+  PR `92`; archived 2026-09-07)
 - [`118`](./118-acowtancy-consumer-adoption-replay-strict-lane.md) — frozen,
   read-only Acowtancy consumer replay and first comparison scorecard
   (completed with card `1111` under `g09.003`, PR `88`; archived 2026-09-05)

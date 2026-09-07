@@ -1,7 +1,7 @@
 # 1114 - Docs Context Exact Identifier Retrieval
 
 Roadmap: [`../007-docs-context-exact-identifier-retrieval.md`](../007-docs-context-exact-identifier-retrieval.md)
-Spec: [`../../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md`](../../../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
+Spec: [`../../../specs/archive/121-docs-context-exact-identifier-retrieval-strict-lane.md`](../../../specs/archive/121-docs-context-exact-identifier-retrieval-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md)
 
 Status: Complete

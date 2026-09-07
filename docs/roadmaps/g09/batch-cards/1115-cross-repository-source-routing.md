@@ -1,7 +1,7 @@
 # 1115 - Cross-Repository Source Routing
 
 Roadmap: [`../006-cross-repository-source-routing.md`](../006-cross-repository-source-routing.md)
-Spec: [`../../../specs/122-cross-repository-source-routing-strict-lane.md`](../../../specs/122-cross-repository-source-routing-strict-lane.md)
+Spec: [`../../../specs/archive/122-cross-repository-source-routing-strict-lane.md`](../../../specs/archive/122-cross-repository-source-routing-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/041-documentation-graph-profile-contract.md`](../../../contracts/041-documentation-graph-profile-contract.md), [`../../../contracts/037-explicit-catalog-membership-contract.md`](../../../contracts/037-explicit-catalog-membership-contract.md)
 
 Status: Complete

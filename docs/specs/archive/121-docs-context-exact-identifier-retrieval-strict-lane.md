@@ -3,10 +3,10 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
-Roadmap: [`g09.007`](../roadmaps/g09/007-docs-context-exact-identifier-retrieval.md)
-Completed card: [`1114`](../roadmaps/g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
-Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
-Guide: [`079`](../guides/079-documentation-graph-profiles-and-context.md)
+Roadmap: [`g09.007`](../../roadmaps/g09/007-docs-context-exact-identifier-retrieval.md)
+Completed card: [`1114`](../../roadmaps/g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
+Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
+Guide: [`079`](../../guides/079-documentation-graph-profiles-and-context.md)
 
 ## Outcome
 

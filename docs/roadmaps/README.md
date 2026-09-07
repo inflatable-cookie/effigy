@@ -103,14 +103,11 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Strict spec [`121`](../specs/121-docs-context-exact-identifier-retrieval-strict-lane.md)
-is active for [`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md).
-Card [`1114`](./g09/batch-cards/1114-docs-context-exact-identifier-retrieval.md)
-is the ready card; its dispatch manifest is in the roadmap. Strict spec
-[`122`](../specs/122-cross-repository-source-routing-strict-lane.md) and card
-[`1115`](./g09/batch-cards/1115-cross-repository-source-routing.md) are queued
-serially behind `1114`. Specs `119` and `120` are archived. Direct invocation remains canonical and help grouping
-remains.
+Strict spec [`123`](../specs/123-cargo-link-version-transition-strict-lane.md)
+is active for [`g09.008`](./g09/008-cargo-link-version-transition.md); card
+[`1116`](./g09/batch-cards/1116-cargo-link-version-transition.md) is running
+on branch `fix/cargo-version-transition-link`. Direct invocation remains
+canonical and help grouping remains.
 
 ## Research Program
 
@@ -165,10 +162,7 @@ Before rollover:
 
 ## Next Task
 
-Execute card `1114` (docs context exact identifier retrieval), then card
-`1115` (cross-repository source routing). The consumer maturity
-question is settled (`007` section 6, 2026-09-05); cohort expansion is
-unscheduled. Keep Acowtancy
+Execute card `1116` (Cargo link version transition). Keep Acowtancy
 read-only and Effigy release execution and S3 extraction behind their named
 gates.
 

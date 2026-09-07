@@ -17,6 +17,7 @@ extends the governed contract into current consumer evidence.
 - [`005-docs-context-latency-and-freshness.md`](./005-docs-context-latency-and-freshness.md)
 - [`006-cross-repository-source-routing.md`](./006-cross-repository-source-routing.md)
 - [`007-docs-context-exact-identifier-retrieval.md`](./007-docs-context-exact-identifier-retrieval.md)
+- [`008-cargo-link-version-transition.md`](./008-cargo-link-version-transition.md)
 
 ## Design Posture
 
@@ -53,6 +54,5 @@ contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 
 ## Next Task
 
-The runway is empty pending the next Chatterbox-promoted direction. The
-consumer maturity question is settled (`007` section 6 adoption posture,
-2026-09-05); cohort expansion is unscheduled. Effigy release authority stays separate.
+Execute card `1116` (`g09.008`, Cargo link version transition), dispatched
+2026-09-07 on operator authorisation. Effigy release authority stays separate.

@@ -71,3 +71,8 @@ generation's `README.md`, its roadmap files, and the archived logs.
 - `g08` → `g09`: opened 2026-09-02 after the Northstar Atlas refresh
   ([`../vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md))
   and the operator's Theme 4 selection.
+
+[`g09.008`](./g09/008-cargo-link-version-transition.md) is **active** under
+strict spec `123` (card `1116`): `deps link cargo` across a local version
+bump with targeted lock refresh and transactional lock rollback. Origin:
+Swallowtail request for Bovine Desktop, operator-authorised 2026-09-07.

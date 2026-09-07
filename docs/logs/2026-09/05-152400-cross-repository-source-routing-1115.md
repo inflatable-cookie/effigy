@@ -3,7 +3,7 @@
 Status: complete
 Created: 2026-09-05
 Roadmap: [`g09.006`](../../roadmaps/g09/006-cross-repository-source-routing.md)
-Spec: [`122`](../../specs/122-cross-repository-source-routing-strict-lane.md)
+Spec: [`122`](../../specs/archive/122-cross-repository-source-routing-strict-lane.md)
 Batch: cross-repository-source-routing-1115
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Predecessor: [`05-133718`](./05-133718-docs-context-exact-identifier-1114.md)
