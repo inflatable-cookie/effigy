@@ -88,6 +88,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
 - [`2026-09/05-151227-docs-compaction-sweep.md`](./2026-09/05-151227-docs-compaction-sweep.md)
 - [`2026-09/05-133718-docs-context-exact-identifier-1114.md`](./2026-09/05-133718-docs-context-exact-identifier-1114.md)
 - [`2026-09/05-113123-docs-context-latency-and-freshness-1113.md`](./2026-09/05-113123-docs-context-latency-and-freshness-1113.md)
