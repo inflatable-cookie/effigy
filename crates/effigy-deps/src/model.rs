@@ -104,6 +104,9 @@ pub enum MatchDisposition {
 pub struct CargoPackageInventory {
     pub id: String,
     pub name: String,
+    /// Absent on the synthetic inventories planning builds to match names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     pub manifest_path: PathBuf,
     pub source: Option<CommittedSource>,
 }
@@ -273,6 +276,8 @@ pub struct CargoDependencyPlan {
     pub desired: Option<DesiredDependencyLink>,
     pub operation: DependencyLinkPlan,
     pub expected_resolutions: Vec<CargoExpectedResolution>,
+    #[serde(default)]
+    pub version_transitions: Vec<CargoVersionTransition>,
     pub affected_lockfiles: Vec<PathBuf>,
     pub lockfile_guard_packages: Vec<String>,
     pub remaining_linked_packages: Vec<String>,
@@ -559,6 +564,16 @@ pub struct CargoExpectedResolution {
     pub package: String,
     pub committed_source: CommittedSource,
     pub local_path: PathBuf,
+}
+
+/// A matched package whose local version differs from the one the consumer
+/// lockfile pins. Cargo will not apply a `[patch]` across that gap on its own.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CargoVersionTransition {
+    pub consumer_root: PathBuf,
+    pub package: String,
+    pub locked_version: String,
+    pub local_version: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

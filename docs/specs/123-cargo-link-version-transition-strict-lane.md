@@ -1,6 +1,6 @@
 # 123 Cargo Link Version Transition Strict Lane
 
-Status: Active
+Status: Satisfied (2026-09-07); PR open for coordinator review
 Owner: Effigy orchestrator
 Created: 2026-09-07
 Roadmap: [`g09.008`](../roadmaps/g09/008-cargo-link-version-transition.md)
@@ -61,4 +61,6 @@ contract `034` change beyond the two lines above.
 
 ## Next Task
 
-Execute card `1116`.
+Card `1116` is executed and its evidence log
+[`07-162725-cargo-link-version-transition-1116`](../logs/2026-09/07-162725-cargo-link-version-transition-1116.md)
+answers every oracle row. The coordinator reviews and merges.

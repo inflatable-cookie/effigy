@@ -103,11 +103,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-Strict spec [`123`](../specs/123-cargo-link-version-transition-strict-lane.md)
-is active for [`g09.008`](./g09/008-cargo-link-version-transition.md); card
-[`1116`](./g09/batch-cards/1116-cargo-link-version-transition.md) is running
-on branch `fix/cargo-version-transition-link`. Direct invocation remains
-canonical and help grouping remains.
+None running. Strict spec
+[`123`](../specs/123-cargo-link-version-transition-strict-lane.md) is
+satisfied for [`g09.008`](./g09/008-cargo-link-version-transition.md); card
+[`1116`](./g09/batch-cards/1116-cargo-link-version-transition.md) is complete
+with evidence and its PR is open on branch
+`fix/cargo-version-transition-link` for coordinator review. Direct invocation
+remains canonical and help grouping remains.
 
 ## Research Program
 
@@ -162,9 +164,9 @@ Before rollover:
 
 ## Next Task
 
-Execute card `1116` (Cargo link version transition). Keep Acowtancy
-read-only and Effigy release execution and S3 extraction behind their named
-gates.
+Review and merge card `1116` (Cargo link version transition), then pick the
+next lane. Keep Acowtancy read-only and Effigy release execution and S3
+extraction behind their named gates.
 
 ## Historical language boundary
 

@@ -88,6 +88,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/07-162725-cargo-link-version-transition-1116.md`](./2026-09/07-162725-cargo-link-version-transition-1116.md)
 - [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
 - [`2026-09/05-151227-docs-compaction-sweep.md`](./2026-09/05-151227-docs-compaction-sweep.md)
 - [`2026-09/05-133718-docs-context-exact-identifier-1114.md`](./2026-09/05-133718-docs-context-exact-identifier-1114.md)
@@ -155,6 +156,7 @@ Batch: <batch-slug>
 ## Next Task
 
 Card `1116` (`g09.008`, Cargo link version transition, strict spec `123`) is
-active on branch `fix/cargo-version-transition-link`. Cards `1112`–`1115`
-are complete with evidence under `2026-09/`. Acowtancy stays read-only;
-Effigy release remains a separate operator-gated mutation.
+complete with evidence under `2026-09/`, pending coordinator review and merge
+of branch `fix/cargo-version-transition-link`. Cards `1112`–`1115` are also
+complete. Acowtancy stays read-only; Effigy release remains a separate
+operator-gated mutation.

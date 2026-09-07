@@ -4,7 +4,7 @@ Roadmap: [`../008-cargo-link-version-transition.md`](../008-cargo-link-version-t
 Spec: [`../../../specs/123-cargo-link-version-transition-strict-lane.md`](../../../specs/123-cargo-link-version-transition-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/034-local-dependency-linking-contract.md`](../../../contracts/034-local-dependency-linking-contract.md)
 
-Status: Active
+Status: Complete (2026-09-07)
 Owner: Cargo link plan, apply transaction, verification, rollback
 Created: 2026-09-07
 Active since: 2026-09-07 operator-authorised handoff
@@ -32,13 +32,13 @@ completely when it fails.
 
 ## Acceptance
 
-- [ ] transition fixture links every matched package from the local path;
+- [x] transition fixture links every matched package from the local path;
       no `[[patch.unused]]`
-- [ ] forced verification failure restores config and every affected
+- [x] forced verification failure restores config and every affected
       `Cargo.lock` byte-for-byte
-- [ ] unrelated lockfiles and unlinked packages' entries unchanged
-- [ ] unlink still returns byte-for-byte; dirty-lock refusal unchanged
-- [ ] contract `034` and guide `077` record the transition case
+- [x] unrelated lockfiles and unlinked packages' entries unchanged
+- [x] unlink still returns byte-for-byte; dirty-lock refusal unchanged
+- [x] contract `034` and guide `077` record the transition case
 
 ## Review Oracle
 
@@ -63,6 +63,12 @@ to proof, with the fixture output before and after.
 
 Per spec `123`.
 
+## Evidence
+
+[`07-162725-cargo-link-version-transition-1116`](../../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md) maps every oracle row
+and acceptance line to proof, with the fixture output before and after.
+
 ## Next Task
 
-Open the PR at the exact validated head; the coordinator reviews and merges.
+The PR is open at the validated head on `fix/cargo-version-transition-link`;
+the coordinator reviews and merges.

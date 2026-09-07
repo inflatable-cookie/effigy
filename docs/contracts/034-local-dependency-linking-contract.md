@@ -151,6 +151,16 @@ Unix.
   those desired links; refuse unrelated lock changes before writing.
 - Link warns that Cargo verification/builds may rewrite lock entries to path
   sources.
+- A matched package whose local version differs from the version the consumer
+  lockfile pins is a version transition. Planning detects it per package from
+  locked metadata and records it in the plan and report. Link refreshes exactly
+  those packages, in only the workspaces that pin them, after the patch is
+  written and before verification; that refresh is link-owned drift. A patch
+  Cargo still leaves under `[[patch.unused]]` is a verification failure naming
+  the package, never a silent git resolution.
+- Every affected lockfile is part of the link transaction. It is snapshotted
+  before the first write, and a failed apply, refresh, or verification restores
+  it byte-for-byte alongside the config and ignore-file changes.
 - Post-link verification, status, and unlink inspect only the persisted
   consumer workspace roots. A repo-root patch must not cause unrelated nested
   workspace lockfiles to be resolved as an observation side effect.

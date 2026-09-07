@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -50,6 +51,7 @@ pub fn apply_cargo_link_plan(
     if !plan.lockfile_guard_packages.is_empty() && !plan.affected_lockfiles.is_empty() {
         validate_owned_lockfile_drift(&plan, process)?;
     }
+    let lockfiles = capture_lockfile_baselines(&plan)?;
     let ledger_path = RepoLinkStateStore::for_checkout(&plan.operation.key.consumer_repo)
         .path()
         .to_path_buf();
@@ -69,7 +71,7 @@ pub fn apply_cargo_link_plan(
     let mut applied = Vec::new();
     for change in &physical_changes {
         if let Err(error) = apply_exact_change(change) {
-            let rollback = rollback_physical_changes(&plan, &applied);
+            let rollback = rollback_link_changes(&plan, &applied, &lockfiles);
             return Ok(CargoLinkOperationReport {
                 plan,
                 outcome: CargoLinkOutcome::ApplyFailed,
@@ -85,6 +87,20 @@ pub fn apply_cargo_link_plan(
         applied.push(change.clone());
     }
 
+    if let Err(error) = refresh_linked_lock_entries(&plan, process) {
+        let rollback = rollback_link_changes(&plan, &applied, &lockfiles);
+        return Ok(CargoLinkOperationReport {
+            plan,
+            outcome: CargoLinkOutcome::VerificationFailed,
+            applied_files: applied.iter().map(|change| change.target.clone()).collect(),
+            verification: not_run_verification(),
+            rollback,
+            errors: vec![format!(
+                "failed to refresh the locked linked packages before verification: {error}"
+            )],
+        });
+    }
+
     let verification = verify_cargo_link(&plan, process);
     if verification.status != VerificationStatus::Passed {
         let errors = verification
@@ -92,7 +108,7 @@ pub fn apply_cargo_link_plan(
             .iter()
             .filter_map(|evidence| evidence.message.clone())
             .collect();
-        let rollback = rollback_physical_changes(&plan, &applied);
+        let rollback = rollback_link_changes(&plan, &applied, &lockfiles);
         return Ok(CargoLinkOperationReport {
             plan,
             outcome: CargoLinkOutcome::VerificationFailed,
@@ -105,7 +121,7 @@ pub fn apply_cargo_link_plan(
 
     for change in ledger_changes {
         if let Err(error) = apply_exact_change(&change) {
-            let rollback = rollback_physical_changes(&plan, &applied);
+            let rollback = rollback_link_changes(&plan, &applied, &lockfiles);
             return Ok(CargoLinkOperationReport {
                 plan,
                 outcome: CargoLinkOutcome::ApplyFailed,
@@ -126,6 +142,120 @@ pub fn apply_cargo_link_plan(
         rollback: CargoLinkRollback::not_required(),
         errors: Vec::new(),
     })
+}
+
+/// A lockfile as it stood before Effigy touched the workspace.
+struct LockfileBaseline {
+    path: PathBuf,
+    contents: Option<String>,
+}
+
+/// Every lockfile the link can move: one per persisted consumer workspace root,
+/// plus the tracked lockfiles the plan already guards.
+fn linked_lockfiles(plan: &CargoDependencyPlan) -> Vec<PathBuf> {
+    let mut paths = plan
+        .desired
+        .as_ref()
+        .map(|desired| {
+            desired
+                .consumer_roots
+                .iter()
+                .map(|root| root.canonical_path.join("Cargo.lock"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    paths.extend(plan.affected_lockfiles.iter().cloned());
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn capture_lockfile_baselines(
+    plan: &CargoDependencyPlan,
+) -> Result<Vec<LockfileBaseline>, DepsError> {
+    linked_lockfiles(plan)
+        .into_iter()
+        .map(|path| {
+            let contents = read_optional_string(&path)?;
+            Ok(LockfileBaseline { path, contents })
+        })
+        .collect()
+}
+
+/// Unlock the packages the plan found in a version transition, so Cargo can
+/// apply their patch entries.
+///
+/// A `[patch]` entry carrying a different version from the one `Cargo.lock`
+/// pins is not applied: Cargo keeps the locked package and records the entry
+/// under `[[patch.unused]]`, so metadata verification never sees the local
+/// path. Only unlocking the package lets the resolver reconsider it. The plan
+/// names exactly the transitioned packages, so the update touches nothing the
+/// link does not own and a same-version link refreshes nothing at all.
+fn refresh_linked_lock_entries(
+    plan: &CargoDependencyPlan,
+    process: &impl ReadOnlyProcess,
+) -> Result<(), DepsError> {
+    let mut by_root: BTreeMap<&Path, BTreeSet<&str>> = BTreeMap::new();
+    for transition in &plan.version_transitions {
+        by_root
+            .entry(transition.consumer_root.as_path())
+            .or_default()
+            .insert(transition.package.as_str());
+    }
+    for (consumer_root, packages) in by_root {
+        let mut args = vec![
+            "update".to_owned(),
+            "--manifest-path".to_owned(),
+            consumer_root.join("Cargo.toml").display().to_string(),
+        ];
+        for package in packages {
+            args.push("--package".to_owned());
+            args.push(package.to_owned());
+        }
+        process.run(&ProcessRequest {
+            program: "cargo".to_owned(),
+            args,
+            cwd: plan.operation.key.consumer_repo.clone(),
+        })?;
+    }
+    Ok(())
+}
+
+/// Linked packages Cargo parked under `[[patch.unused]]` instead of applying.
+///
+/// Cargo reports an unapplied patch as a build warning and a lockfile entry,
+/// not an error, so without this the closure silently keeps resolving from Git
+/// and the only symptom is a path that failed to appear.
+fn unused_patch_packages(
+    plan: &CargoDependencyPlan,
+    consumer_root: &Path,
+) -> Result<BTreeSet<String>, DepsError> {
+    let linked = plan
+        .expected_resolutions
+        .iter()
+        .filter(|expected| expected.consumer_root == consumer_root)
+        .map(|expected| expected.package.as_str())
+        .collect::<BTreeSet<_>>();
+    let path = consumer_root.join("Cargo.lock");
+    let Some(raw) = read_optional_string(&path)? else {
+        return Ok(BTreeSet::new());
+    };
+    let value: toml::Value = toml::from_str(&raw).map_err(|error| {
+        DepsError::invalid(&path, format!("failed to parse Cargo.lock: {error}"))
+    })?;
+    Ok(value
+        .get("patch")
+        .and_then(|patch| patch.get("unused"))
+        .and_then(toml::Value::as_array)
+        .map(|unused| {
+            unused
+                .iter()
+                .filter_map(|package| package.get("name").and_then(toml::Value::as_str))
+                .filter(|name| linked.contains(name))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 fn verify_cargo_link(
@@ -169,6 +299,15 @@ fn verify_cargo_link(
         }
     };
 
+    let mut unused_patches: BTreeMap<&Path, BTreeSet<String>> = BTreeMap::new();
+    for expected in &plan.expected_resolutions {
+        unused_patches
+            .entry(expected.consumer_root.as_path())
+            .or_insert_with(|| {
+                unused_patch_packages(plan, &expected.consumer_root).unwrap_or_default()
+            });
+    }
+
     let mut evidence = Vec::new();
     for expected in &plan.expected_resolutions {
         let Some(workspace) = workspaces
@@ -200,16 +339,28 @@ fn verify_cargo_link(
         });
         let observed = observed_sources(&candidates);
         let Some(local) = local else {
+            let unused = unused_patches
+                .get(expected.consumer_root.as_path())
+                .is_some_and(|unused| unused.contains(&expected.package));
             evidence.push(VerificationEvidence {
                 package: expected.package.clone(),
                 consumer_root: Some(expected.consumer_root.clone()),
                 committed_sources: vec![expected.committed_source.clone()],
                 expected_source: expected.local_path.display().to_string(),
                 observed_source: observed,
-                methods: vec!["cargo-metadata".to_owned()],
-                message: Some(
-                    "Cargo metadata did not resolve the planned canonical local path".to_owned(),
-                ),
+                methods: if unused {
+                    vec!["cargo-metadata".to_owned(), "cargo-lock-patch".to_owned()]
+                } else {
+                    vec!["cargo-metadata".to_owned()]
+                },
+                message: Some(if unused {
+                    format!(
+                        "Cargo left the `{}` patch unapplied as `[[patch.unused]]` and kept the committed source",
+                        expected.package
+                    )
+                } else {
+                    "Cargo metadata did not resolve the planned canonical local path".to_owned()
+                }),
             });
             continue;
         };
@@ -307,6 +458,7 @@ fn planned_library(plan: &CargoDependencyPlan) -> CargoLibraryInventory {
             .map(|package| CargoPackageInventory {
                 id: format!("planned:{}", package.name),
                 name: package.name.clone(),
+                version: None,
                 manifest_path: package.local_path.join("Cargo.toml"),
                 source: None,
             })
@@ -346,6 +498,39 @@ pub(crate) fn apply_exact_change(change: &PlannedChange) -> Result<(), DepsError
         return Err(stale_change(change));
     }
     write_optional(&change.target, change.after.as_deref())
+}
+
+/// Restore the whole link transaction: every lockfile Cargo moved, then the
+/// files Effigy wrote. A failed verification has to leave the exact baseline
+/// behind, and the resolver rewrites lockfiles that no `PlannedChange` covers.
+fn rollback_link_changes(
+    plan: &CargoDependencyPlan,
+    applied: &[PlannedChange],
+    lockfiles: &[LockfileBaseline],
+) -> CargoLinkRollback {
+    let mut report = CargoLinkRollback::not_required();
+    for baseline in lockfiles {
+        let current = match read_optional_string(&baseline.path) {
+            Ok(current) => current,
+            Err(error) => {
+                report.failures.push(error.to_string());
+                continue;
+            }
+        };
+        if current == baseline.contents {
+            continue;
+        }
+        report.attempted = true;
+        match write_optional(&baseline.path, baseline.contents.as_deref()) {
+            Ok(()) => report.restored.push(baseline.path.clone()),
+            Err(error) => report.failures.push(error.to_string()),
+        }
+    }
+    let physical = rollback_physical_changes(plan, applied);
+    report.attempted |= physical.attempted;
+    report.restored.extend(physical.restored);
+    report.failures.extend(physical.failures);
+    report
 }
 
 pub(crate) fn rollback_physical_changes(

@@ -28,9 +28,9 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`123`](./123-cargo-link-version-transition-strict-lane.md) — Cargo link
-  across a local version bump with transactional lock rollback (`g09.008`,
-  card `1116`)
+- none; [`123`](./123-cargo-link-version-transition-strict-lane.md) is
+  satisfied and awaiting coordinator review and merge (`g09.008`, card
+  `1116`)
 
 Queued strict lanes:
 
@@ -48,6 +48,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1116` under strict spec `123`. Specs `118` through `122` are
-archived. Acowtancy remains read-only and Effigy release authority stays
-separate.
+Card `1116` is complete under strict spec `123`; the coordinator reviews and
+merges, then archives `123`. Specs `118` through `122` are archived.
+Acowtancy remains read-only and Effigy release authority stays separate.

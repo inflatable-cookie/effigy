@@ -76,6 +76,17 @@ During v0.x, MINOR bumps may include breaking changes.
   warning. Former namespace words return to ordinary selector routing.
 
 ### Fixed
+- `effigy deps link cargo` now links across a package version transition.
+  Pointing a consumer whose `Cargo.lock` pins a released Git tag at a local
+  candidate carrying a different version previously left Cargo holding the
+  locked packages, recorded the patch entries under `[[patch.unused]]`, and
+  failed verification. Planning now detects the transition per package and
+  reports it, and link refreshes exactly those packages before verifying; a
+  same-version link refreshes nothing. A patch Cargo still leaves unapplied is
+  a verification failure that names the package instead of a silent Git
+  resolution. Every affected lockfile is also part of the transaction, so a
+  failed apply, refresh, or verification restores each one byte-for-byte
+  instead of leaving lock residue behind.
 - `effigy docs context` now keeps identifier-shaped query tokens
   (`catalog_tasks`, `foo::bar`) whole alongside their split words and ranks
   exact whole-term containment above split-word density. `catalog_tasks`

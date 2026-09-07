@@ -13,6 +13,8 @@ use crate::{
 };
 
 const SOURCE: &str = "https://example.test/signal.git";
+const LOCKED_VERSION: &str = "0.1.0";
+const LOCAL_VERSION: &str = "0.1.0";
 
 #[derive(Default)]
 struct FixtureObserver;
@@ -73,12 +75,14 @@ impl ReadOnlyProcess for FixtureProcess {
                 {
                     "id": consumer_id,
                     "name": "consumer",
+                    "version": "0.1.0",
                     "manifest_path": root.join("Cargo.toml"),
                     "source": null
                 },
                 {
                     "id": local_id,
                     "name": "signal-core",
+                    "version": LOCAL_VERSION,
                     "manifest_path": self.local_path.join("Cargo.toml"),
                     "source": null
                 }
@@ -134,6 +138,7 @@ fn fixture(
         packages: vec![CargoPackageInventory {
             id: "local-signal-core".to_owned(),
             name: "signal-core".to_owned(),
+            version: Some(LOCAL_VERSION.to_owned()),
             manifest_path: library_path.join("Cargo.toml"),
             source: None,
         }],
@@ -150,6 +155,7 @@ fn fixture(
             let package = CargoPackageInventory {
                 id: format!("git-signal-core-{}", root.display()),
                 name: "signal-core".to_owned(),
+                version: Some(LOCKED_VERSION.to_owned()),
                 manifest_path: PathBuf::from("/cargo/git/signal-core/Cargo.toml"),
                 source: Some(CommittedSource {
                     kind: CommittedSourceKind::Git,
@@ -359,5 +365,27 @@ fn expected_resolution_set_retains_exact_source_and_workspace_pairs() {
             .map(|expected| expected.committed_source.identity.as_str())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([SOURCE, "ssh://git@example.test/signal.git"])
+    );
+}
+
+#[test]
+fn matched_versions_record_no_transition_and_run_no_lock_refresh() {
+    let (repo_temp, _library_temp, library, workspaces) = fixture(true);
+    let repo = fs::canonicalize(repo_temp.path()).unwrap();
+    let plan = plan_cargo_link(&repo, &library, &workspaces, false, &FixtureObserver).unwrap();
+    assert!(plan.version_transitions.is_empty());
+    let process = process_for(&library, &workspaces, false);
+
+    let report = apply_cargo_link_plan(plan, &process).unwrap();
+
+    assert_eq!(report.outcome, CargoLinkOutcome::Applied);
+    assert!(
+        !process
+            .requests
+            .borrow()
+            .iter()
+            .any(|request| request.args.first().map(String::as_str) == Some("update")),
+        "a same-version link must not touch any lockfile: {:#?}",
+        process.requests.borrow()
     );
 }

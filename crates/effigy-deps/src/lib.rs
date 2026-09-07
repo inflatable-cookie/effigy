@@ -50,13 +50,13 @@ pub use model::{
     BunUnlinkOutcome, BunUnlinkRollback, CargoDependencyPlan, CargoExpectedResolution,
     CargoLibraryInventory, CargoLinkOperationReport, CargoLinkOutcome, CargoLinkOwnership,
     CargoLinkRollback, CargoLockfileEvidence, CargoLockfileState, CargoPackageInventory,
-    CargoPackageMatch, CargoUnlinkOperationReport, CargoUnlinkOutcome, CargoWorkspaceInventory,
-    CommittedLocalLink, CommittedLocalMechanism, CommittedSource, CommittedSourceKind,
-    ConsumerRoot, DependencyDepth, DependencyHealthSeverity, DependencyLinkKey, DependencyLinkPlan,
-    DependencyLinkReport, DependencyPackage, DependencyStatusReport, DependencyVerification,
-    DesiredDependencyLink, DriftReason, LinkMechanism, MatchDisposition, ObservedDependencyLink,
-    ObservedState, PackageManager, PlanAction, PlannedChange, PlannedChangeAction,
-    VerificationEvidence, VerificationStatus,
+    CargoPackageMatch, CargoUnlinkOperationReport, CargoUnlinkOutcome, CargoVersionTransition,
+    CargoWorkspaceInventory, CommittedLocalLink, CommittedLocalMechanism, CommittedSource,
+    CommittedSourceKind, ConsumerRoot, DependencyDepth, DependencyHealthSeverity,
+    DependencyLinkKey, DependencyLinkPlan, DependencyLinkReport, DependencyPackage,
+    DependencyStatusReport, DependencyVerification, DesiredDependencyLink, DriftReason,
+    LinkMechanism, MatchDisposition, ObservedDependencyLink, ObservedState, PackageManager,
+    PlanAction, PlannedChange, PlannedChangeAction, VerificationEvidence, VerificationStatus,
 };
 pub use process::{ProcessOutput, ProcessRequest, ReadOnlyProcess, StdReadOnlyProcess};
 pub use state::{

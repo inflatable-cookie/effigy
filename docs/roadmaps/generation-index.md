@@ -72,7 +72,11 @@ generation's `README.md`, its roadmap files, and the archived logs.
   ([`../vision/020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md))
   and the operator's Theme 4 selection.
 
-[`g09.008`](./g09/008-cargo-link-version-transition.md) is **active** under
-strict spec `123` (card `1116`): `deps link cargo` across a local version
-bump with targeted lock refresh and transactional lock rollback. Origin:
-Swallowtail request for Bovine Desktop, operator-authorised 2026-09-07.
+[`g09.008`](./g09/008-cargo-link-version-transition.md) is **complete**
+(2026-09-07) under strict spec `123` (card `1116`): `deps link cargo` across a
+local version bump with targeted lock refresh and transactional lock
+rollback. Evidence:
+[`07-162725-cargo-link-version-transition-1116`](../logs/2026-09/07-162725-cargo-link-version-transition-1116.md).
+Its PR is open on `fix/cargo-version-transition-link` for coordinator review
+and merge. Origin: Swallowtail request for Bovine Desktop,
+operator-authorised 2026-09-07.

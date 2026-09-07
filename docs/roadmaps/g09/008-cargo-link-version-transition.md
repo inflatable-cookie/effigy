@@ -1,6 +1,6 @@
 # g09.008 Cargo Link Version Transition
 
-Status: Active (dispatched 2026-09-07 on direct operator authorisation)
+Status: Complete (2026-09-07); PR open for coordinator review and merge
 Created: 2026-09-07
 Spec: [`123`](../../specs/123-cargo-link-version-transition-strict-lane.md)
 Card: [`1116`](./batch-cards/1116-cargo-link-version-transition.md)
@@ -40,7 +40,8 @@ compares the local version with the locked source version.
 
 ## Cards
 
-- [ ] [`1116`](./batch-cards/1116-cargo-link-version-transition.md) — active
+- [x] [`1116`](./batch-cards/1116-cargo-link-version-transition.md) — complete
+      ([evidence](../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md))
 
 ## Acceptance
 
@@ -64,8 +65,9 @@ Published for the coordinator at the promoting commit. This lane was already
 dispatched from the operator-authorised handoff above; the manifest records
 authority and closeout surfaces and does not relaunch anything.
 
-- **Lane:** card `1116`, roadmap `g09.008`, strict spec `123`. State: active
-  on branch `fix/cargo-version-transition-link` (base `729aa89c`).
+- **Lane:** card `1116`, roadmap `g09.008`, strict spec `123`. State: complete
+  on branch `fix/cargo-version-transition-link`; PR open for coordinator
+  review and merge.
 - **Prerequisites:** none further. **Completion:** PR merged with evidence
   log, card, roadmap, spec, contract `034`, guide `077`, changelog, and the
   operator's `PAPERCUTS.md` entry reconciled.
@@ -87,5 +89,6 @@ authority and closeout surfaces and does not relaunch anything.
 
 ## Next Task
 
-Execute card `1116`; on merge, tell the Swallowtail Chatterbox the fix is on
-`main` and delete the handoff per the closeout rule.
+Card `1116` is complete with evidence; the PR is open on
+`fix/cargo-version-transition-link`. On merge, tell the Swallowtail Chatterbox
+the fix is on `main`.

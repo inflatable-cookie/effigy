@@ -54,5 +54,6 @@ contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 
 ## Next Task
 
-Execute card `1116` (`g09.008`, Cargo link version transition), dispatched
-2026-09-07 on operator authorisation. Effigy release authority stays separate.
+Review and merge card `1116` (`g09.008`, Cargo link version transition),
+complete 2026-09-07 with evidence under `docs/logs/2026-09/`. Effigy release
+authority stays separate.

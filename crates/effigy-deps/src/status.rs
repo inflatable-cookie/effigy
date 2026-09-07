@@ -175,6 +175,7 @@ fn inspect_cargo_link(
             .map(|package| CargoPackageInventory {
                 id: package.name.clone(),
                 name: package.name.clone(),
+                version: None,
                 manifest_path: package.local_path.join("Cargo.toml"),
                 source: package.committed_sources.first().cloned(),
             })
@@ -1553,8 +1554,8 @@ mod tests {
         );
         let output = json!({
             "packages": [
-                {"id":"consumer","name":"consumer","manifest_path":manifest,"source":null},
-                {"id":"core","name":"core","manifest_path":package_manifest,"source":null}
+                {"id":"consumer","name":"consumer","version":"0.1.0","manifest_path":manifest,"source":null},
+                {"id":"core","name":"core","version":"0.1.0","manifest_path":package_manifest,"source":null}
             ],
             "workspace_members": ["consumer"],
             "workspace_root": consumer.path(),
@@ -1637,8 +1638,8 @@ mod tests {
         write(&lock_path, current_lock);
         let metadata = json!({
             "packages": [
-                {"id":"consumer","name":"consumer","manifest_path":manifest,"source":null},
-                {"id":"core","name":"core","manifest_path":package_manifest,"source":null}
+                {"id":"consumer","name":"consumer","version":"0.1.0","manifest_path":manifest,"source":null},
+                {"id":"core","name":"core","version":"0.1.0","manifest_path":package_manifest,"source":null}
             ],
             "workspace_members": ["consumer"],
             "workspace_root": consumer.path(),
