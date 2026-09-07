@@ -201,6 +201,17 @@ requires the source table to contain only crates from the requested library and
 every path to resolve into that checkout; mixed or mismatched tables are
 refused.
 
+Linking across a package version bump works. Pointing a consumer pinned to a
+released tag at a local candidate carrying the next version is a version
+transition: Effigy detects it per package, reports it in the plan, and
+refreshes exactly those locked packages before verification, so Cargo applies
+the patch instead of recording `[[patch.unused]]`. Packages outside the link's
+closure stay locked, and a same-version link refreshes nothing. If a patch is
+still left unapplied, verification fails and names the package. If apply,
+refresh, or verification fails, Effigy restores every affected lockfile along
+with its own config and ignore-file changes, so the consumer checkout is left
+exactly as it was.
+
 Cargo verification or a consumer build can rewrite affected `Cargo.lock`
 entries while the patch is active. That is expected local state, but it is a
 do-not-commit condition:

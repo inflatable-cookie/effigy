@@ -390,6 +390,7 @@ fn planned_library(
         .map(|resolution| CargoPackageInventory {
             id: format!("planned:{}", resolution.package),
             name: resolution.package.clone(),
+            version: None,
             manifest_path: resolution.local_path.join("Cargo.toml"),
             source: None,
         })

@@ -55,6 +55,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Closed
 
+### [x] Cargo link cannot cross a local package version bump and leaves lock residue — 2026-09-07
+- Friction: linking Desktop's Git-pinned Swallowtail v0.4.3 dependencies to a local v0.4.4 candidate produced eight `[[patch.unused]]` entries; verification failed because Cargo retained the v0.4.3 Git packages. Effigy's rollback removed its config but did not restore `Cargo.lock`.
+- Impact: pre-release consumer testing cannot prove it is using the candidate, and a failed reversible link leaves the consumer checkout dirty.
+- Fix (2026-09-07): `deps link cargo` refreshes the locked entries of matched
+  packages the affected lockfile still pins to a committed source before
+  verification, and every affected lockfile joins the transactional rollback.
+  Evidence: `crates/effigy-deps/tests/cargo_link.rs`
+  `real_version_transition_links_the_local_candidate_over_the_pinned_release`
+  and `failed_verification_restores_every_affected_lockfile_across_the_version_transition`;
+  contract `docs/contracts/034-local-dependency-linking-contract.md` lockfile safety.
+- Surface: `effigy deps link cargo`; Cargo Git dependency to local source with a package-version transition.
+
 ### [x] Child-catalog suite task refs lose ancestor `[containers]` registry — 2026-09-01
 - Friction: suite task-ref expansion changed cwd to the child catalog and then
   rediscovered the repository there, losing the loaded ancestor container

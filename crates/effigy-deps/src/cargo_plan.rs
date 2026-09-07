@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     canonical_existing_path, CargoDependencyPlan, CargoExpectedResolution, CargoLibraryInventory,
-    CargoLinkOwnership, CargoWorkspaceInventory, CommittedSource, CommittedSourceKind,
-    ConsumerRoot, DependencyLinkKey, DependencyLinkPlan, DependencyPackage, DepsError,
-    DesiredDependencyLink, LinkMechanism, MatchDisposition, PackageManager, PlanAction,
+    CargoLinkOwnership, CargoVersionTransition, CargoWorkspaceInventory, CommittedSource,
+    CommittedSourceKind, ConsumerRoot, DependencyLinkKey, DependencyLinkPlan, DependencyPackage,
+    DepsError, DesiredDependencyLink, LinkMechanism, MatchDisposition, PackageManager, PlanAction,
     PlannedChange, PlannedChangeAction, ProcessRequest, ReadOnlyProcess, RepoLinkState,
     RepoLinkStateStore,
 };
@@ -78,7 +78,7 @@ pub fn plan_cargo_link(
         consumer_repo: repo_root.clone(),
         library_path: library_root.clone(),
     };
-    let (consumer_roots, packages, patch_groups, expected_resolutions) =
+    let (consumer_roots, packages, patch_groups, expected_resolutions, version_transitions) =
         cargo_closure(&repo_root, library, workspaces)?;
     let state_store = RepoLinkStateStore::for_checkout(&repo_root);
     let state = state_store.read()?;
@@ -193,6 +193,7 @@ pub fn plan_cargo_link(
             warnings,
         },
         expected_resolutions,
+        version_transitions,
         affected_lockfiles,
         lockfile_guard_packages,
         remaining_linked_packages: Vec::new(),
@@ -244,6 +245,7 @@ pub fn plan_cargo_unlink(
                 ],
             },
             expected_resolutions: Vec::new(),
+            version_transitions: Vec::new(),
             affected_lockfiles: Vec::new(),
             lockfile_guard_packages: Vec::new(),
             remaining_linked_packages: Vec::new(),
@@ -326,6 +328,7 @@ pub fn plan_cargo_unlink(
             ],
         },
         expected_resolutions,
+        version_transitions: Vec::new(),
         affected_lockfiles,
         lockfile_guard_packages,
         remaining_linked_packages,
@@ -437,6 +440,7 @@ pub(crate) fn plan_adopted_cargo_unlink(
             ],
         },
         expected_resolutions: link_plan.expected_resolutions,
+        version_transitions: Vec::new(),
         affected_lockfiles: link_plan.affected_lockfiles,
         lockfile_guard_packages,
         remaining_linked_packages: Vec::new(),
@@ -488,6 +492,7 @@ type CargoClosure = (
     Vec<DependencyPackage>,
     PatchGroups,
     Vec<CargoExpectedResolution>,
+    Vec<CargoVersionTransition>,
 );
 
 fn cargo_closure(
@@ -496,6 +501,7 @@ fn cargo_closure(
     workspaces: &[CargoWorkspaceInventory],
 ) -> Result<CargoClosure, DepsError> {
     let mut local_packages = BTreeMap::<String, PathBuf>::new();
+    let mut local_versions = BTreeMap::<String, String>::new();
     for package in &library.packages {
         let package_path = package.manifest_path.parent().ok_or_else(|| {
             DepsError::invalid(
@@ -504,6 +510,9 @@ fn cargo_closure(
             )
         })?;
         let package_path = canonical_existing_path(package_path)?;
+        if let Some(version) = package.version.clone() {
+            local_versions.insert(package.name.clone(), version);
+        }
         if let Some(existing) = local_packages.insert(package.name.clone(), package_path.clone()) {
             if existing != package_path {
                 return Err(DepsError::invalid(
@@ -522,6 +531,7 @@ fn cargo_closure(
     let mut package_sources = BTreeMap::<String, BTreeSet<CommittedSource>>::new();
     let mut patch_groups = PatchGroups::new();
     let mut expected_resolutions = BTreeSet::new();
+    let mut version_transitions = BTreeSet::new();
     for workspace in workspaces {
         repo_relative(repo_root, &workspace.root)?;
         let mut workspace_matched = false;
@@ -574,6 +584,19 @@ fn cargo_closure(
                 committed_source: source,
                 local_path: local_path.clone(),
             });
+            if let (Some(locked_version), Some(local_version)) = (
+                candidate.package.version.as_ref(),
+                local_versions.get(&candidate.package.name),
+            ) {
+                if locked_version != local_version {
+                    version_transitions.insert(CargoVersionTransition {
+                        consumer_root: workspace.root.clone(),
+                        package: candidate.package.name.clone(),
+                        locked_version: locked_version.clone(),
+                        local_version: local_version.clone(),
+                    });
+                }
+            }
             workspace_matched = true;
         }
         if workspace_matched {
@@ -621,6 +644,7 @@ fn cargo_closure(
         packages,
         patch_groups,
         expected_resolutions.into_iter().collect(),
+        version_transitions.into_iter().collect(),
     ))
 }
 
@@ -1196,12 +1220,14 @@ mod tests {
                 CargoPackageInventory {
                     id: "local-core".to_owned(),
                     name: "signal-core".to_owned(),
+                    version: Some("0.1.0".to_owned()),
                     manifest_path: core_manifest,
                     source: None,
                 },
                 CargoPackageInventory {
                     id: "local-protocol".to_owned(),
                     name: "signal-protocol".to_owned(),
+                    version: Some("0.1.0".to_owned()),
                     manifest_path: protocol_manifest,
                     source: None,
                 },
@@ -1215,6 +1241,7 @@ mod tests {
             package: CargoPackageInventory {
                 id: format!("remote-{name}"),
                 name: name.to_owned(),
+                version: Some("0.1.0".to_owned()),
                 manifest_path: PathBuf::from(format!("/cargo/git/{name}/Cargo.toml")),
                 source: Some(CommittedSource {
                     kind: CommittedSourceKind::Git,

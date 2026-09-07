@@ -23,6 +23,7 @@ struct Metadata {
 struct MetadataPackage {
     id: String,
     name: String,
+    version: String,
     manifest_path: PathBuf,
     source: Option<String>,
 }
@@ -519,6 +520,7 @@ fn normalize_package(
     CargoPackageInventory {
         id: package.id,
         name: package.name,
+        version: Some(package.version),
         manifest_path: package.manifest_path,
         source,
     }
@@ -697,6 +699,7 @@ mod tests {
         json!({
             "id": id,
             "name": name,
+            "version": "0.1.0",
             "manifest_path": manifest,
             "source": source
         })
@@ -863,12 +866,14 @@ mod tests {
                 CargoPackageInventory {
                     id: "library-core".to_owned(),
                     name: "signal-core".to_owned(),
+                    version: Some("0.1.0".to_owned()),
                     manifest_path: library_core.clone(),
                     source: None,
                 },
                 CargoPackageInventory {
                     id: "library-protocol".to_owned(),
                     name: "signal-protocol".to_owned(),
+                    version: Some("0.1.0".to_owned()),
                     manifest_path: library_protocol,
                     source: None,
                 },
@@ -1004,6 +1009,7 @@ mod tests {
             packages: vec![CargoPackageInventory {
                 id: "library-core".to_owned(),
                 name: "core".to_owned(),
+                version: Some("0.1.0".to_owned()),
                 manifest_path: library_temp.path().join("Cargo.toml"),
                 source: None,
             }],
