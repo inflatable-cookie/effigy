@@ -93,23 +93,25 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   Completed [`g09.005`](./g09/005-docs-context-latency-and-freshness.md)
   repaired `docs context` warm and stale latency to frozen budgets; card
   `1113` merged in PR `91` and spec `120` is archived.
-  Ready [`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md)
-  makes exact identifier queries find their containing section under strict
-  spec `121`; card `1114` is ready. Queued
-  [`g09.006`](./g09/006-cross-repository-source-routing.md) routes one
-  query across opted-in repositories under named directories, grouped per
-  repository with identity, under strict spec `122` (card `1115`, serial
-  after `1114`).
+  Completed [`g09.007`](./g09/007-docs-context-exact-identifier-retrieval.md)
+  makes exact identifier queries find their containing section; card `1114`
+  merged in PR `92`. Completed
+  [`g09.006`](./g09/006-cross-repository-source-routing.md) routes one query
+  across opted-in repositories under named directories, grouped per repository
+  with identity; card `1115` merged in PR `93`. Completed
+  [`g09.008`](./g09/008-cargo-link-version-transition.md) refreshes only
+  affected Cargo packages across local version transitions and restores locks
+  transactionally; card `1116` merged at `7d9c8be`. Ready
+  [`g09.009`](./g09/009-stale-local-install-recovery.md) makes a provably stale
+  repository-local binary explain its source-build recovery; card `1117` is the
+  final `g09` lane.
 
 ## Active Strict Lane
 
-None running. Strict spec
-[`123`](../specs/123-cargo-link-version-transition-strict-lane.md) is
-satisfied for [`g09.008`](./g09/008-cargo-link-version-transition.md); card
-[`1116`](./g09/batch-cards/1116-cargo-link-version-transition.md) is complete
-with evidence and its PR is open on branch
-`fix/cargo-version-transition-link` for coordinator review. Direct invocation
-remains canonical and help grouping remains.
+Strict spec [`124`](../specs/124-stale-local-install-recovery-strict-lane.md)
+is ready for [`g09.009`](./g09/009-stale-local-install-recovery.md); card
+[`1117`](./g09/batch-cards/1117-stale-local-install-recovery.md) is the only
+ready card. Direct invocation remains canonical and help grouping remains.
 
 ## Research Program
 
@@ -164,9 +166,9 @@ Before rollover:
 
 ## Next Task
 
-Review and merge card `1116` (Cargo link version transition), then pick the
-next lane. Keep Acowtancy read-only and Effigy release execution and S3
-extraction behind their named gates.
+Execute card `1117`, then close `g09` and run the operator-requested Northstar
+Refresh. Keep Effigy release execution and S3 extraction behind their named
+gates.
 
 ## Historical language boundary
 

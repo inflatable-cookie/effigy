@@ -18,6 +18,7 @@ extends the governed contract into current consumer evidence.
 - [`006-cross-repository-source-routing.md`](./006-cross-repository-source-routing.md)
 - [`007-docs-context-exact-identifier-retrieval.md`](./007-docs-context-exact-identifier-retrieval.md)
 - [`008-cargo-link-version-transition.md`](./008-cargo-link-version-transition.md)
+- [`009-stale-local-install-recovery.md`](./009-stale-local-install-recovery.md)
 
 ## Design Posture
 
@@ -52,8 +53,16 @@ routing, grouped per repository with identity; PR `93` merged.
 strict spec `121`: exact identifier queries seed and rank the sections that
 contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 
+[`g09.008`](./008-cargo-link-version-transition.md) is complete under archived
+strict spec `123`: targeted Cargo lock refresh and transactional rollback across
+local version transitions. Card `1116` merged at `7d9c8be`.
+
+[`g09.009`](./009-stale-local-install-recovery.md) is ready under strict spec
+`124`. Card `1117` is the final `g09` lane and closes the self-hosting recovery
+gap before the generation closeout.
+
 ## Next Task
 
-Review and merge card `1116` (`g09.008`, Cargo link version transition),
-complete 2026-09-07 with evidence under `docs/logs/2026-09/`. Effigy release
-authority stays separate.
+Execute card `1117`. After merge, close `g09` with no active spec, ready card,
+or dispatch handoff, then return to Chatterbox for Northstar Refresh. Effigy
+release authority stays separate.

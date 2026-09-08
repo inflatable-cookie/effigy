@@ -3,7 +3,7 @@
 Status: complete
 Created: 2026-09-07
 Roadmap: [`g09.008`](../../roadmaps/g09/008-cargo-link-version-transition.md)
-Spec: [`123`](../../specs/123-cargo-link-version-transition-strict-lane.md)
+Spec: [`123`](../../specs/archive/123-cargo-link-version-transition-strict-lane.md)
 Card: [`1116`](../../roadmaps/g09/batch-cards/1116-cargo-link-version-transition.md)
 Contract: [`034`](../../contracts/034-local-dependency-linking-contract.md)
 Guide: [`077`](../../guides/077-local-dependency-linking.md)
@@ -155,5 +155,5 @@ plan; required keys are unchanged and the JSON contract check passes.
 
 ## Next Task
 
-Coordinator reviews and merges the PR, then tells the Swallowtail Chatterbox
-the fix is on `main`.
+Merged to `main` at `7d9c8be` after independent exact-head review. Card `1117`
+is the final `g09` lane.

@@ -1,7 +1,7 @@
 # 1116 - Cargo Link Version Transition
 
 Roadmap: [`../008-cargo-link-version-transition.md`](../008-cargo-link-version-transition.md)
-Spec: [`../../../specs/123-cargo-link-version-transition-strict-lane.md`](../../../specs/123-cargo-link-version-transition-strict-lane.md)
+Spec: [`../../../specs/archive/123-cargo-link-version-transition-strict-lane.md`](../../../specs/archive/123-cargo-link-version-transition-strict-lane.md)
 Contracts: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md), [`../../../contracts/034-local-dependency-linking-contract.md`](../../../contracts/034-local-dependency-linking-contract.md)
 
 Status: Complete (2026-09-07)
@@ -10,6 +10,7 @@ Created: 2026-09-07
 Active since: 2026-09-07 operator-authorised handoff
 (`docs/handoffs/20260907-cargo-version-transition-link.md`), branch
 `fix/cargo-version-transition-link`, base `729aa89c`
+Merged: 2026-09-07 at `7d9c8be`
 
 ## Purpose
 
@@ -70,5 +71,4 @@ and acceptance line to proof, with the fixture output before and after.
 
 ## Next Task
 
-The PR is open at the validated head on `fix/cargo-version-transition-link`;
-the coordinator reviews and merges.
+Merged at `7d9c8be`. Card `1117` is the final `g09` lane.

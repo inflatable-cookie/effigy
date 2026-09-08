@@ -98,7 +98,6 @@ one vague “polish” lane.
 
 ## Next Task
 
-Card `1111` and `g09.003` are complete; PR `88` merged the frozen Acowtancy
-replay and first comparison scorecard at `9c05a883`. The next planning
-checkpoint decides cohort expansion versus a second bounded repair. Acowtancy
-is read-only; Effigy release and S3 extraction remain separately gated.
+Execute card `1117`, the final `g09` lane. After its reviewed merge, close the
+generation and run Northstar Refresh. Effigy release and S3 extraction remain
+separately gated.

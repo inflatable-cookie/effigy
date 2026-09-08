@@ -26,6 +26,9 @@ strict lanes without wading through closed history.
 
 ## Recently archived strict lanes
 
+- [`123`](./123-cargo-link-version-transition-strict-lane.md) — targeted Cargo
+  lock refresh and transactional rollback across local version transitions
+  (completed with card `1116` under `g09.008`, merged at `7d9c8be`)
 - [`122`](./122-cross-repository-source-routing-strict-lane.md) — opt-in
   cross-repository source routing (completed with card `1115` under
   `g09.006`, PR `93`; archived 2026-09-07)

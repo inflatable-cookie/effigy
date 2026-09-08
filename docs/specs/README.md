@@ -28,9 +28,8 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none; [`123`](./123-cargo-link-version-transition-strict-lane.md) is
-  satisfied and awaiting coordinator review and merge (`g09.008`, card
-  `1116`)
+- [`124`](./124-stale-local-install-recovery-strict-lane.md) — ready
+  (`g09.009`, card `1117`)
 
 Queued strict lanes:
 
@@ -48,6 +47,6 @@ Other planning specs:
 
 ## Next Task
 
-Card `1116` is complete under strict spec `123`; the coordinator reviews and
-merges, then archives `123`. Specs `118` through `122` are archived.
-Acowtancy remains read-only and Effigy release authority stays separate.
+Execute card `1117`, then archive spec `124`, close `g09`, and return to
+Chatterbox for the operator-requested Northstar Refresh. Specs `118` through
+`123` are archived. Effigy release authority stays separate.

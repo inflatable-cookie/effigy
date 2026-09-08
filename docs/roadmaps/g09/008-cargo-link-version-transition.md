@@ -1,8 +1,8 @@
 # g09.008 Cargo Link Version Transition
 
-Status: Complete (2026-09-07); PR open for coordinator review and merge
+Status: Complete (2026-09-07); merged at `7d9c8be`
 Created: 2026-09-07
-Spec: [`123`](../../specs/123-cargo-link-version-transition-strict-lane.md)
+Spec: [`123`](../../specs/archive/123-cargo-link-version-transition-strict-lane.md)
 Card: [`1116`](./batch-cards/1116-cargo-link-version-transition.md)
 Contract: [`034`](../../contracts/034-local-dependency-linking-contract.md)
 Guide: [`077`](../../guides/077-local-dependency-linking.md)
@@ -65,9 +65,8 @@ Published for the coordinator at the promoting commit. This lane was already
 dispatched from the operator-authorised handoff above; the manifest records
 authority and closeout surfaces and does not relaunch anything.
 
-- **Lane:** card `1116`, roadmap `g09.008`, strict spec `123`. State: complete
-  on branch `fix/cargo-version-transition-link`; PR open for coordinator
-  review and merge.
+- **Lane:** card `1116`, roadmap `g09.008`, strict spec `123`. State: complete;
+  merged to `main` at `7d9c8be` after independent exact-head review.
 - **Prerequisites:** none further. **Completion:** PR merged with evidence
   log, card, roadmap, spec, contract `034`, guide `077`, changelog, and the
   operator's `PAPERCUTS.md` entry reconciled.
@@ -89,6 +88,5 @@ authority and closeout surfaces and does not relaunch anything.
 
 ## Next Task
 
-Card `1116` is complete with evidence; the PR is open on
-`fix/cargo-version-transition-link`. On merge, tell the Swallowtail Chatterbox
-the fix is on `main`.
+Card `1116` is merged at `7d9c8be`. Execute card `1117`, then close `g09` and
+run the operator-requested Northstar project refresh.

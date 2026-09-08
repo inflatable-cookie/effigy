@@ -1,12 +1,12 @@
 # 123 Cargo Link Version Transition Strict Lane
 
-Status: Satisfied (2026-09-07); PR open for coordinator review
+Status: Satisfied (2026-09-07); merged at `7d9c8be`
 Owner: Effigy orchestrator
 Created: 2026-09-07
-Roadmap: [`g09.008`](../roadmaps/g09/008-cargo-link-version-transition.md)
-Ready card: [`1116`](../roadmaps/g09/batch-cards/1116-cargo-link-version-transition.md)
-Contract: [`034`](../contracts/034-local-dependency-linking-contract.md)
-Guide: [`077`](../guides/077-local-dependency-linking.md)
+Roadmap: [`g09.008`](../../roadmaps/g09/008-cargo-link-version-transition.md)
+Ready card: [`1116`](../../roadmaps/g09/batch-cards/1116-cargo-link-version-transition.md)
+Contract: [`034`](../../contracts/034-local-dependency-linking-contract.md)
+Guide: [`077`](../../guides/077-local-dependency-linking.md)
 
 ## Outcome
 
@@ -28,9 +28,9 @@ and on failure leaves config and every affected lockfile exactly at baseline.
   never a silent Git resolution.
 - Contract `034` lockfile-safety gains two lines: transition refresh is
   link-owned drift; a failed link restores affected locks byte-for-byte.
-- Not allowed: global lock rewrite, Bun changes, release or workflow
-  mutation, consumer-repository edits, weakening the dirty-lock refusal or
-  the unlink byte-for-byte rule.
+- Not allowed: global lock rewrite, Bun changes, release or workflow mutation,
+  consumer-repository edits, weakening the dirty-lock refusal or the unlink
+  byte-for-byte rule.
 
 ## Whole-Lane Review Oracle
 
@@ -42,25 +42,23 @@ Reject the lane if any counterexample survives:
    different from baseline.
 3. An unrelated lockfile or an unlinked package's lock entry changes.
 4. Refresh runs wider than the affected packages.
-5. Unlink no longer returns the lock byte-for-byte, or the pre-link
-   dirty-lock refusal weakens.
+5. Unlink no longer returns the lock byte-for-byte, or the pre-link dirty-lock
+   refusal weakens.
 6. Contract `034` or guide `077` does not record the transition case.
 
 ## Validation And Evidence
 
 Card `1116` maps every oracle row to proof: focused deps tests, the real
-transition fixture, the rollback regression, `effigy qa` or targeted QA,
-`cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
-`git diff --check`. One dated evidence log.
+transition fixture, the rollback regression, `effigy qa`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and
+`git diff --check`. Evidence is in
+[`07-162725-cargo-link-version-transition-1116`](../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md).
 
 ## Stop Conditions
 
-Stop and return facts if the fix needs a refresh wider than affected
-packages, a change outside the existing link transaction, a new flag, or a
-contract `034` change beyond the two lines above.
+The completed lane allowed no refresh wider than affected packages, change
+outside the existing link transaction, new flag, or broader contract change.
 
 ## Next Task
 
-Card `1116` is executed and its evidence log
-[`07-162725-cargo-link-version-transition-1116`](../logs/2026-09/07-162725-cargo-link-version-transition-1116.md)
-answers every oracle row. The coordinator reviews and merges.
+Card `1116` merged at `7d9c8be`. Card `1117` is the final `g09` lane.

@@ -155,8 +155,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Card `1116` (`g09.008`, Cargo link version transition, strict spec `123`) is
-complete with evidence under `2026-09/`, pending coordinator review and merge
-of branch `fix/cargo-version-transition-link`. Cards `1112`–`1115` are also
-complete. Acowtancy stays read-only; Effigy release remains a separate
-operator-gated mutation.
+Card `1116` (`g09.008`) merged at `7d9c8be`. Card `1117` (`g09.009`, stale
+local-install recovery, strict spec `124`) is the final ready lane. After its
+evidence and reviewed merge, close `g09` and return to Chatterbox for Northstar
+Refresh. Effigy release remains a separate operator-gated mutation.

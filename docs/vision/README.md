@@ -63,6 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-Decide cohort expansion versus a second bounded repair after completed
-`g09.003`. The second governance review kept Effigy at Stage 2; Effigy release
-remains gated.
+Execute the operator-approved stale local-install recovery as the final `g09`
+lane, close the generation, then run Northstar Refresh before choosing the next
+strategic runway. The second governance review kept Effigy at Stage 2; Effigy
+release remains gated.

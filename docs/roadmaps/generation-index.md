@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g09
-Updated: 2026-09-05 (compacted)
+Updated: 2026-09-08
 
 ## Generation history
 
@@ -58,10 +58,12 @@ generation's `README.md`, its roadmap files, and the archived logs.
   comparison scorecard; `g09.004` made failed release gates diagnosable;
   `g09.005` brought warm `docs context` from ~10 s to ~600 ms; `g09.007`
   fixed exact-identifier retrieval; `g09.006` added opt-in cross-repository
-  source routing. All seven are complete. Open decisions: the consumer
-  release-prepare keep-on-failure question (consumer maturity was settled on
-2026-09-05: `007` section 6 adoption posture) and the
-  release-prepare keep-on-failure question, both in `docs/triage/`.
+  source routing; `g09.008` repaired Cargo local-link version transitions.
+  Those eight lanes are complete. `g09.009` / card `1117` is the final ready
+  lane: diagnose a provably stale repository-local binary at the manifest error
+  boundary, then close the generation. Consumer cohort expansion remains
+  unscheduled under vision artifact `007` section 6; release delegation and
+  keep-on-failure remain parked in `docs/triage/`.
 
 ## Rollover history
 
@@ -77,6 +79,9 @@ generation's `README.md`, its roadmap files, and the archived logs.
 local version bump with targeted lock refresh and transactional lock
 rollback. Evidence:
 [`07-162725-cargo-link-version-transition-1116`](../logs/2026-09/07-162725-cargo-link-version-transition-1116.md).
-Its PR is open on `fix/cargo-version-transition-link` for coordinator review
-and merge. Origin: Swallowtail request for Bovine Desktop,
+It merged at `7d9c8be`. Origin: Swallowtail request for Bovine Desktop,
 operator-authorised 2026-09-07.
+
+[`g09.009`](./g09/009-stale-local-install-recovery.md) is **ready** under
+strict spec `124` (card `1117`). After its reviewed merge, the coordinator
+closes `g09`; Chatterbox then runs the operator-requested Northstar Refresh.
