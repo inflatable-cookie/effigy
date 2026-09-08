@@ -26,6 +26,9 @@ strict lanes without wading through closed history.
 
 ## Recently archived strict lanes
 
+- [`124`](./124-stale-local-install-recovery-strict-lane.md) — provenance-safe
+  stale repository-local install recovery at the manifest error boundary
+  (completed with card `1117` under `g09.009`, PR `95`; archived 2026-09-08)
 - [`123`](./123-cargo-link-version-transition-strict-lane.md) — targeted Cargo
   lock refresh and transactional rollback across local version transitions
   (completed with card `1116` under `g09.008`, merged at `7d9c8be`)

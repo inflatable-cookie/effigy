@@ -28,8 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`124`](./124-stale-local-install-recovery-strict-lane.md) — ready
-  (`g09.009`, card `1117`)
+- none
 
 Queued strict lanes:
 
@@ -47,6 +46,6 @@ Other planning specs:
 
 ## Next Task
 
-Execute card `1117`, then archive spec `124`, close `g09`, and return to
-Chatterbox for the operator-requested Northstar Refresh. Specs `118` through
-`123` are archived. Effigy release authority stays separate.
+Finish the `g09` closeout, then return to Chatterbox for the operator-requested
+Northstar Refresh. Specs `118` through `124` are archived. Effigy release
+authority stays separate.

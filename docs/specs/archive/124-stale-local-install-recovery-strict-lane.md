@@ -1,12 +1,12 @@
 # 124 Stale Local Install Recovery Strict Lane
 
-Status: Ready
+Status: Satisfied (2026-09-08; PR `95`, merge `24e842196`)
 Owner: Effigy manifest error boundary and local build provenance
 Created: 2026-09-08
-Roadmap: [`g09.009`](../roadmaps/g09/009-stale-local-install-recovery.md)
-Ready card: [`1117`](../roadmaps/g09/batch-cards/1117-stale-local-install-recovery.md)
-Guide: [`057`](../guides/057-bootstrap-repo-bringup.md)
-Papercut: [`PAPERCUTS.md`](../../PAPERCUTS.md)
+Roadmap: [`g09.009`](../../roadmaps/g09/009-stale-local-install-recovery.md)
+Ready card: [`1117`](../../roadmaps/g09/batch-cards/1117-stale-local-install-recovery.md)
+Guide: [`057`](../../guides/057-bootstrap-repo-bringup.md)
+Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
 
 ## Outcome
 
@@ -67,5 +67,5 @@ or if the recovery command cannot run from source without the installed binary.
 
 ## Next Task
 
-Execute card `1117`. After merge, archive this spec, close `g09`, delete the
-dispatch handoff, and return to Chatterbox for the requested project refresh.
+Finish the `g09` roadmap, evidence, and dispatch-handoff closeout, then return
+to Chatterbox for the operator-requested Northstar Refresh.
