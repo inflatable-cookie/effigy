@@ -16,6 +16,7 @@ queue_approval: "Operator confirmed Chatterbox's recommendation on 2026-09-08: p
 queue:
   capability: general
   skipPRReview: false
+  notifyOriginOnCloseout: true
 tags: [coordination, handoff, worker, pr, bootstrap, diagnostics, self-hosting]
 ---
 
