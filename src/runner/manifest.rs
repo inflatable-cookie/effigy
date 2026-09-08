@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use effigy_core::build_info::stale_repo_local_install;
 use effigy_manifest::ManifestError;
 use effigy_tasks::{render_task_selector, TaskSelector};
 
@@ -36,7 +37,12 @@ pub(super) fn map_manifest_error(error: ManifestError) -> super::RunnerError {
     match error {
         ManifestError::Read { path, error } => super::RunnerError::TaskManifestRead { path, error },
         ManifestError::Parse { path, error } => {
-            super::RunnerError::TaskManifestParse { path, error }
+            let stale_local_install = stale_repo_local_install(&path).map(Box::new);
+            super::RunnerError::TaskManifestParse {
+                path,
+                error,
+                stale_local_install,
+            }
         }
         ManifestError::Compose { path, detail } => {
             super::RunnerError::TaskManifestCompose { path, detail }

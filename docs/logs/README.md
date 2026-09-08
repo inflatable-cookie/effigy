@@ -88,6 +88,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/08-150412-stale-local-install-recovery-1117.md`](./2026-09/08-150412-stale-local-install-recovery-1117.md)
 - [`2026-09/07-162725-cargo-link-version-transition-1116.md`](./2026-09/07-162725-cargo-link-version-transition-1116.md)
 - [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
 - [`2026-09/05-151227-docs-compaction-sweep.md`](./2026-09/05-151227-docs-compaction-sweep.md)

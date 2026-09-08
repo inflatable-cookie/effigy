@@ -1065,6 +1065,7 @@ fn run_config_raw(repo_root: &Path) -> Result<String, RunnerError> {
         toml::from_str::<toml::Value>(&raw).map_err(|error| RunnerError::TaskManifestParse {
             path: manifest_path.clone(),
             error,
+            stale_local_install: None,
         })?;
     Ok(serde_json::json!({
         "schema": "effigy.rhai.config.raw.v1",

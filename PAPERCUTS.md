@@ -455,17 +455,20 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   failures hint that backtick-only mentions do not count.
 - Surface: `crates/effigy-docs-policy` index check.
 
-### [ ] Stale local-install binary fails `qa:docs` after a manifest grammar change — 2026-09-05
+### [x] Stale local-install binary fails `qa:docs` after a manifest grammar change — 2026-09-05
 - Friction: PR `93` added `[docs_policy.sources]` to `effigy.toml`; the
   `.local-install/bin/effigy` on PATH (built before it) then fails every
   task with `unknown field sources` before docs QA can start. Nothing says
   the binary is behind main.
 - Impact: any agent validating docs on a fresh `main` sees a parse error
   unrelated to its change until it thinks to use `cargo run --bin effigy`.
-- Fix: `effigy doctor` (or the manifest parse error itself) should say when
-  the running binary's build SHA is older than the repository's own
-  manifest-grammar requirement, and point at the local-install refresh task.
+- Fix (2026-09-08): the strict manifest parse error now proves staleness from
+  the recorded `+local.<sha>` identity of the checkout's own
+  `.local-install/bin/effigy`, and when the recorded commit is a strict
+  ancestor of the checkout HEAD it names the installed and current revisions
+  plus the local-install refresh task. Unprovable, current, divergent,
+  release/global, and consumer cases keep the ordinary parse error.
 - Workaround: `cargo run --bin effigy -- bootstrap:local` (the installed
   binary cannot run the task that would replace it). Hit twice on 2026-09-05,
   once by the operator.
-- Surface: local-install route, manifest parsing error text, `doctor`.
+- Surface: local-install route, manifest parsing error text.

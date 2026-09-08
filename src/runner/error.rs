@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use effigy_core::build_info::{stale_repo_local_install, StaleLocalInstall};
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
@@ -91,6 +92,7 @@ pub enum RunnerError {
     TaskManifestParse {
         path: PathBuf,
         error: toml::de::Error,
+        stale_local_install: Option<Box<StaleLocalInstall>>,
     },
     TaskManifestCompose {
         path: PathBuf,
@@ -593,7 +595,14 @@ impl From<ScanError> for RunnerError {
 fn map_manifest_error(error: ManifestError) -> RunnerError {
     match error {
         ManifestError::Read { path, error } => RunnerError::TaskManifestRead { path, error },
-        ManifestError::Parse { path, error } => RunnerError::TaskManifestParse { path, error },
+        ManifestError::Parse { path, error } => {
+            let stale_local_install = stale_repo_local_install(&path).map(Box::new);
+            RunnerError::TaskManifestParse {
+                path,
+                error,
+                stale_local_install,
+            }
+        }
         ManifestError::Compose { path, detail } => {
             RunnerError::TaskManifestCompose { path, detail }
         }
