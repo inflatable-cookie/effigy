@@ -30,18 +30,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   silently.
 - Surface: `effigy graph explore`; worker-mode code-understanding routing.
 
-### [ ] Repository task shadowing makes `docs context` unreachable — 2026-09-01
-- Friction: this repository declares `[tasks.docs]`, so `effigy docs context`
-  follows manifest-selector precedence and passes `context` to the task instead
-  of reaching the built-in documentation query.
-- Impact: the project-local Effigy agent route cannot use its documented
-  authority lookup inside Effigy itself; operators need an undocumented escape
-  or must fall back to direct file search.
-- Possible fix: provide an explicit built-in escape that preserves normal task
-  precedence, or move the query behind a non-shadowed command shape.
-- Surface: deferred built-in routing, repository-intelligence discovery, and
-  the project-local Effigy skill.
-
 ### [ ] Vendored Effigy skills need portfolio-level status and sync — 2026-08-30
 - Friction: 15 consumer repos under one projects directory had stale copies of
   all 10 managed Effigy skill files. The supported updater works one repo at a
@@ -54,6 +42,14 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
 
 ## Closed
+
+### [x] Repository task shadowing makes `docs context` unreachable — 2026-09-08
+- Friction: the repository's old `docs` selector shadowed the built-in
+  documentation query.
+- Fix (verified 2026-09-08): `effigy --json docs context` reached the built-in
+  query from this repository, refreshed the stale graph, and returned a valid
+  `effigy.docs.context.v1` result. The project-local agent route is reachable.
+- Surface: built-in documentation context routing.
 
 ### [x] Cargo link cannot cross a local package version bump and leaves lock residue — 2026-09-07
 - Friction: linking Desktop's Git-pinned Swallowtail v0.4.3 dependencies to a local v0.4.4 candidate produced eight `[[patch.unused]]` entries; verification failed because Cargo retained the v0.4.3 Git packages. Effigy's rollback removed its config but did not restore `Cargo.lock`.

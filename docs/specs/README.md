@@ -46,6 +46,6 @@ Other planning specs:
 
 ## Next Task
 
-Finish the `g09` closeout, then return to Chatterbox for the operator-requested
-Northstar Refresh. Specs `118` through `124` are archived. Effigy release
-authority stays separate.
+No strict lane is active or ready. Specs `118` through `124` are archived.
+Resolve the closed-generation docs lifecycle drift before any operator-led
+strategic runway decision; Effigy release authority stays separate.

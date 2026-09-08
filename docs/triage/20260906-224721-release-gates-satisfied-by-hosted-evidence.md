@@ -77,7 +77,8 @@ once the contract `039` mutation-boundary caveat is documented in guide `051`.
 
 ## Next Task
 
-Operator decides whether to queue a bounded `g09` lane (one card: grammar,
+Operator decides whether to promote a future bounded strict lane: grammar,
 `delegated` outcome, report/JSON fields, guide `051` and contract `039`
-wording, focused tests). On confirmation, Chatterbox promotes and tells the
-Swallowtail Chatterbox the card id.
+wording, and focused tests. Do not reopen `g09`. On confirmation, Chatterbox
+places it in the operator-selected strategic runway and tells the Swallowtail
+Chatterbox the card id.

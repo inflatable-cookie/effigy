@@ -33,5 +33,7 @@ against the exact prepared state.
 
 ## Next Task
 
-Revisit after `g09.004` ships and Swallowtail's next authorized attempt shows
-whether persisted logs were enough. Do not schedule before then.
+`g09.004` shipped the persisted evidence. Keep this remainder unscheduled until
+Swallowtail's next authorized release attempt shows whether those records are
+enough. Reassess from that evidence; do not infer a new lane from the completed
+`g09` generation.

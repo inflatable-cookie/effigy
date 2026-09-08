@@ -85,5 +85,6 @@ operator-authorised 2026-09-07.
 
 [`g09.009`](./g09/009-stale-local-install-recovery.md) is **complete** under
 archived spec `124` (card `1117`);
-PR `95` merged at `24e842196465813f960cea15cadd25d5857731fd`. Chatterbox now
-runs the operator-requested Northstar Refresh.
+PR `95` merged at `24e842196465813f960cea15cadd25d5857731fd`. The 2026-09-08
+Northstar Refresh found no ready execution lane. Closed-generation docs
+lifecycle normalization is next; `g10` remains unopened.

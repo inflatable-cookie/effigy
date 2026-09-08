@@ -109,8 +109,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 No active strict lane. `g09` is closed with spec `124` archived, no ready card,
-and no dispatch handoff. Direct invocation remains canonical and help grouping
-remains.
+and no active dispatch handoff. One queue-required closed handoff record remains
+pending the lifecycle decision captured in
+[`20260908-161956`](../triage/20260908-161956-closed-generation-lifecycle-drift.md).
+Direct invocation remains canonical and help grouping remains.
 
 ## Research Program
 
@@ -165,8 +167,10 @@ Before rollover:
 
 ## Next Task
 
-Return to Chatterbox for the operator-requested Northstar Refresh. Keep Effigy
-release execution and S3 extraction behind their named gates.
+Run Northstar docs normalization over the closed-generation log window and
+queue-handoff retention conflict. Do not open `g10` or infer a ready card from
+the refresh. Keep Effigy release execution and S3 extraction behind their named
+gates.
 
 ## Historical language boundary
 

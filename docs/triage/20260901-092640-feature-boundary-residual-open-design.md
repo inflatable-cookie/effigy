@@ -41,7 +41,8 @@ acquisition decisions moved into architecture `026`, contract `043`, and the
 ## Next Task
 
 These questions remain open and unscheduled. Next check: the first Bovine
-Accelerator consumer evidence that the media-upload replacement is live, or
-the next `g09` planning checkpoint, whichever comes first. Card `1099` repaired the retained
-surface but supplied no consumer-replacement proof. Do not promote an S3 or
-extension lane until that downstream evidence exists.
+Accelerator consumer evidence that the media-upload replacement is live, or the
+next operator-led strategic runway checkpoint, whichever comes first. Card
+`1099` repaired the retained surface but supplied no consumer-replacement
+proof. Do not promote an S3 or extension lane until that downstream evidence
+exists.

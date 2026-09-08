@@ -88,6 +88,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/08-161956-northstar-refresh.md`](./2026-09/08-161956-northstar-refresh.md)
 - [`2026-09/08-150412-stale-local-install-recovery-1117.md`](./2026-09/08-150412-stale-local-install-recovery-1117.md)
 - [`2026-09/07-162725-cargo-link-version-transition-1116.md`](./2026-09/07-162725-cargo-link-version-transition-1116.md)
 - [`2026-09/05-152400-cross-repository-source-routing-1115.md`](./2026-09/05-152400-cross-repository-source-routing-1115.md)
@@ -156,7 +157,7 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Card `1116` (`g09.008`) merged at `7d9c8be`. Card `1117` (`g09.009`, stale
-local-install recovery, strict spec `124`) is the final ready lane. After its
-evidence and reviewed merge, close `g09` and return to Chatterbox for Northstar
-Refresh. Effigy release remains a separate operator-gated mutation.
+`g09` is closed with no ready lane. The `2026-09` window remains here pending
+the closed-generation lifecycle normalization captured in
+`docs/triage/20260908-161956-closed-generation-lifecycle-drift.md`.
+Effigy release remains a separate operator-gated mutation.
