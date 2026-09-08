@@ -1,14 +1,15 @@
 # 1117 - Stale Local Install Recovery
 
 Roadmap: [`../009-stale-local-install-recovery.md`](../009-stale-local-install-recovery.md)
-Spec: [`../../../specs/124-stale-local-install-recovery-strict-lane.md`](../../../specs/124-stale-local-install-recovery-strict-lane.md)
+Spec: [`../../../specs/archive/124-stale-local-install-recovery-strict-lane.md`](../../../specs/archive/124-stale-local-install-recovery-strict-lane.md)
 Contract: [`../../../contracts/001-working-rules.md`](../../../contracts/001-working-rules.md)
 Guide: [`../../../guides/057-bootstrap-repo-bringup.md`](../../../guides/057-bootstrap-repo-bringup.md)
 
-Status: Ready
+Status: Complete (2026-09-08)
 Owner: manifest error rendering and repository-local build provenance
 Created: 2026-09-08
 Queued by: operator-confirmed Chatterbox promotion and `northstar-queue`
+Merged: 2026-09-08; PR `95` at `24e842196465813f960cea15cadd25d5857731fd`
 
 ## Purpose
 
@@ -31,16 +32,16 @@ making manifest parsing permissive.
 
 ## Acceptance
 
-- [ ] reproduced stale self-install emits the exact source-build recovery with
+- [x] reproduced stale self-install emits the exact source-build recovery with
       installed and current revisions
-- [ ] current, unprovable, divergent, global/release, and consumer controls do
+- [x] current, unprovable, divergent, global/release, and consumer controls do
       not claim staleness
-- [ ] original TOML error and non-zero result remain; JSON stdout parses and
+- [x] original TOML error and non-zero result remain; JSON stdout parses and
       stderr/output ownership does not regress
-- [ ] no schema fallback, automatic rebuild, network action, or manifest-key
+- [x] no schema fallback, automatic rebuild, network action, or manifest-key
       special case
-- [ ] guide, papercut, changelog, and evidence agree
-- [ ] coordinator closeout marks `g09` closed and removes live lane debris
+- [x] guide, papercut, changelog, and evidence agree
+- [x] coordinator closeout marks `g09` closed and removes live lane debris
 
 ## Review Oracle
 
@@ -69,5 +70,6 @@ Per spec `124`.
 
 ## Next Task
 
-Open one implementation PR. After accepted review and merge, the queue
-coordinator performs canonical `g09` closeout and returns to Chatterbox.
+PR `95` was accepted and merged at
+`24e842196465813f960cea15cadd25d5857731fd`. The coordinator closeout is
+complete; return to Chatterbox for the operator-requested Northstar Refresh.

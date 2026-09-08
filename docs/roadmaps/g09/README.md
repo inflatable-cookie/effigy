@@ -1,6 +1,6 @@
 # g09 Roadmaps
 
-Status: Active
+Status: Complete (2026-09-08)
 Theme: Operator and consumer contract clarity
 
 ## Purpose
@@ -57,12 +57,13 @@ contain them, frozen in the benchmark. Card `1114` merged in PR `92`.
 strict spec `123`: targeted Cargo lock refresh and transactional rollback across
 local version transitions. Card `1116` merged at `7d9c8be`.
 
-[`g09.009`](./009-stale-local-install-recovery.md) is ready under strict spec
-`124`. Card `1117` is the final `g09` lane and closes the self-hosting recovery
-gap before the generation closeout.
+[`g09.009`](./009-stale-local-install-recovery.md) is complete under archived
+strict spec `124`. Card `1117` merged in PR `95` at
+`24e842196465813f960cea15cadd25d5857731fd`, closing the self-hosting recovery
+gap. All nine `g09` lanes are complete; no active strict spec, ready card, or
+dispatch handoff remains.
 
 ## Next Task
 
-Execute card `1117`. After merge, close `g09` with no active spec, ready card,
-or dispatch handoff, then return to Chatterbox for Northstar Refresh. Effigy
-release authority stays separate.
+`g09` is closed. Return to Chatterbox for the operator-requested Northstar
+Refresh. Effigy release authority stays separate.

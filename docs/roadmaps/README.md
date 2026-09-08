@@ -77,7 +77,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   task runner, help-first command discovery, a run of bounded papercut repairs,
   and catalog-pack acquisition, publication, and cutover. Per-milestone detail
   lives in [`g08/README.md`](./g08/README.md) and the archived logs.
-- `g09` is the active generation.
+- `g09` is closed through `g09.009` (2026-09-08).
   Completed [`g09.001`](./g09/001-command-surface-compaction-preview.md)
   shipped the operator-approved additive command-surface preview (card
   `1109`); strict spec `116` is archived. Live use rejected executable help
@@ -101,17 +101,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   with identity; card `1115` merged in PR `93`. Completed
   [`g09.008`](./g09/008-cargo-link-version-transition.md) refreshes only
   affected Cargo packages across local version transitions and restores locks
-  transactionally; card `1116` merged at `7d9c8be`. Ready
-  [`g09.009`](./g09/009-stale-local-install-recovery.md) makes a provably stale
-  repository-local binary explain its source-build recovery; card `1117` is the
-  final `g09` lane.
+  transactionally; card `1116` merged at `7d9c8be`. Complete
+  [`g09.009`](./g09/009-stale-local-install-recovery.md) made a provably stale
+  repository-local binary explain its source-build recovery; card `1117` is
+  complete in PR `95` at `24e842196465813f960cea15cadd25d5857731fd`.
 
 ## Active Strict Lane
 
-Strict spec [`124`](../specs/124-stale-local-install-recovery-strict-lane.md)
-is ready for [`g09.009`](./g09/009-stale-local-install-recovery.md); card
-[`1117`](./g09/batch-cards/1117-stale-local-install-recovery.md) is the only
-ready card. Direct invocation remains canonical and help grouping remains.
+No active strict lane. `g09` is closed with spec `124` archived, no ready card,
+and no dispatch handoff. Direct invocation remains canonical and help grouping
+remains.
 
 ## Research Program
 
@@ -166,9 +165,8 @@ Before rollover:
 
 ## Next Task
 
-Execute card `1117`, then close `g09` and run the operator-requested Northstar
-Refresh. Keep Effigy release execution and S3 extraction behind their named
-gates.
+Return to Chatterbox for the operator-requested Northstar Refresh. Keep Effigy
+release execution and S3 extraction behind their named gates.
 
 ## Historical language boundary
 

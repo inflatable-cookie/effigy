@@ -52,16 +52,17 @@ generation's `README.md`, its roadmap files, and the archived logs.
   documentation coverage and parity, the repository-defined documentation
   graph, external skill task runner, help-first discovery, and catalog-pack
   acquisition, publication, and cutover.
-- `g09` (active): operator and consumer contract clarity. `g09.001` shipped
+- `g09` (closed, `g09.001`–`g09.009`): operator and consumer contract clarity.
+  `g09.001` shipped
   and `g09.002` rolled back executable command namespaces; `g09.003` replayed
   the consumer contract against a frozen Acowtancy and published the first
   comparison scorecard; `g09.004` made failed release gates diagnosable;
   `g09.005` brought warm `docs context` from ~10 s to ~600 ms; `g09.007`
   fixed exact-identifier retrieval; `g09.006` added opt-in cross-repository
   source routing; `g09.008` repaired Cargo local-link version transitions.
-  Those eight lanes are complete. `g09.009` / card `1117` is the final ready
-  lane: diagnose a provably stale repository-local binary at the manifest error
-  boundary, then close the generation. Consumer cohort expansion remains
+  Those nine lanes are complete. `g09.009` / card `1117` diagnosed a provably
+  stale repository-local binary at the manifest error boundary and closed the
+  generation. Consumer cohort expansion remains
   unscheduled under vision artifact `007` section 6; release delegation and
   keep-on-failure remain parked in `docs/triage/`.
 
@@ -82,6 +83,7 @@ rollback. Evidence:
 It merged at `7d9c8be`. Origin: Swallowtail request for Bovine Desktop,
 operator-authorised 2026-09-07.
 
-[`g09.009`](./g09/009-stale-local-install-recovery.md) is **ready** under
-strict spec `124` (card `1117`). After its reviewed merge, the coordinator
-closes `g09`; Chatterbox then runs the operator-requested Northstar Refresh.
+[`g09.009`](./g09/009-stale-local-install-recovery.md) is **complete** under
+archived spec `124` (card `1117`);
+PR `95` merged at `24e842196465813f960cea15cadd25d5857731fd`. Chatterbox now
+runs the operator-requested Northstar Refresh.

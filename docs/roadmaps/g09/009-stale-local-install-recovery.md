@@ -1,8 +1,8 @@
 # g09.009 Stale Local Install Recovery
 
-Status: Ready
+Status: Complete (2026-09-08); PR `95` merged at `24e842196465813f960cea15cadd25d5857731fd`
 Created: 2026-09-08
-Spec: [`124`](../../specs/124-stale-local-install-recovery-strict-lane.md)
+Spec: [`124`](../../specs/archive/124-stale-local-install-recovery-strict-lane.md)
 Card: [`1117`](./batch-cards/1117-stale-local-install-recovery.md)
 Guide: [`057`](../../guides/057-bootstrap-repo-bringup.md)
 Origin: `PAPERCUTS.md` entry from 2026-09-05; reproduced twice by Chatterbox
@@ -36,7 +36,8 @@ route `cargo run --bin effigy -- bootstrap:local`.
 
 ## Cards
 
-- [ ] [`1117`](./batch-cards/1117-stale-local-install-recovery.md) — ready
+- [x] [`1117`](./batch-cards/1117-stale-local-install-recovery.md) — complete
+      ([evidence](../../logs/2026-09/08-150412-stale-local-install-recovery-1117.md))
 
 ## Acceptance
 
@@ -50,6 +51,19 @@ route `cargo run --bin effigy -- bootstrap:local`.
 - post-merge closeout leaves `g09` closed with no ready card, active spec, or
   dispatch handoff
 
+## Closeout Evidence
+
+- PR `95` merged to `main` at `24e842196465813f960cea15cadd25d5857731fd`.
+- Independent exact-head review was accepted at head
+  `5be2a1248b5862bf6f69d43dbd1dc25e07953224`; the provider review records no
+  blocking findings. Hosted checks and the focused validation listed in the
+  evidence log passed.
+- Spec `124` is archived, the `g09` front doors report no active strict lane,
+  and this dispatch handoff is removed.
+- Deferred non-blocking observations remain recorded in the evidence log:
+  inaccurate test-count wording, a fail-closed transient git re-probe, and
+  `doctor` not rendering the stale note.
+
 ## Non-Goals
 
 - accepting unknown manifest keys, compatibility parsing, or schema downgrade
@@ -59,11 +73,12 @@ route `cargo run --bin effigy -- bootstrap:local`.
 
 ## Dispatch Manifest
 
-- **Lane:** card `1117`, roadmap `g09.009`, strict spec `124`. State: ready.
+- **Lane:** card `1117`, roadmap `g09.009`, strict spec `124`. State: complete;
+  merged in PR `95` at `24e842196465813f960cea15cadd25d5857731fd`.
 - **Prerequisites:** card `1116` merged at `7d9c8be`; clean pushed `main`; no
   active Effigy queue task. **Completion:** implementation PR merged, evidence
-  and docs accepted, then the coordinator closes `g09`, archives spec `124`,
-  deletes the handoff, and leaves the runway empty for Northstar Refresh.
+  and docs accepted. The coordinator closeout archived spec `124`, deleted the
+  handoff, and left the runway empty for Northstar Refresh.
 - **Owned mutable paths:** `crates/effigy-core/src/build_info.rs`,
   `src/runner/manifest.rs`, `src/runner/error.rs`, `src/runner/error/**`, focused
   tests under `src/tests/**` and the directly owned crate tests,
@@ -86,4 +101,5 @@ route `cargo run --bin effigy -- bootstrap:local`.
 
 ## Next Task
 
-Execute card `1117`; then close `g09` and run Northstar Refresh.
+`g09.009` and generation `g09` are closed. Return to Chatterbox for the
+operator-requested Northstar Refresh; do not open `g10` from this closeout.

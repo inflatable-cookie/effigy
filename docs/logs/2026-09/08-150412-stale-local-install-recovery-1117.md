@@ -1,9 +1,10 @@
 # Stale Local Install Recovery 1117
 
-Status: ready-for-review
+Status: complete; PR `95` merged 2026-09-08 at
+`24e842196465813f960cea15cadd25d5857731fd`
 Created: 2026-09-08
 Roadmap: [`g09.009`](../../roadmaps/g09/009-stale-local-install-recovery.md)
-Spec: [`124`](../../specs/124-stale-local-install-recovery-strict-lane.md)
+Spec: [`124`](../../specs/archive/124-stale-local-install-recovery-strict-lane.md)
 Card: [`1117`](../../roadmaps/g09/batch-cards/1117-stale-local-install-recovery.md)
 Papercut: [`PAPERCUTS.md`](../../PAPERCUTS.md)
 Guide: [`057`](../../guides/057-bootstrap-repo-bringup.md)
@@ -177,6 +178,33 @@ test task_manifest_parse_error_with_stale_install_names_recovery ... ok
 - `docs/guides/057-bootstrap-repo-bringup.md`, `PAPERCUTS.md`, `CHANGELOG.md`,
   this log
 
+## Merge and Closeout
+
+PR `95` merged to `main` at
+`24e842196465813f960cea15cadd25d5857731fd` after accepted independent review
+of exact head `5be2a1248b5862bf6f69d43dbd1dc25e07953224`. Review comment
+[`5586873679`](https://github.com/inflatable-cookie/effigy/issues/comments/5586873679)
+carried the approval marker and reported no blocking findings. Hosted checks
+passed, and the focused validation recorded above was independently reproduced
+before merge.
+
+The coordinator closeout archived spec `124`, marked card `1117` and roadmap
+`g09.009` complete, closed `g09` with no ready lane, updated the front doors,
+and removed the dispatch handoff. The next approved pointer is the
+operator-requested Northstar Refresh through Chatterbox; no `g10` work was
+invented.
+
+Deferred non-blocking observations from the accepted review:
+
+- the evidence-log test-count wording is inaccurate in one place;
+- a transient git failure during a post-proof identity recheck can fail closed
+  and suppress an otherwise-proven hint;
+- `doctor` reports the parse failure without rendering the stale note, which is
+  consistent with the chosen parse-error boundary.
+
+These are follow-ups, not acceptance failures. No implementation or policy
+change was made during closeout.
+
 ## Vision Target Delta
 
 - Primary tags: `ROUTE`, `OPERATE`, `MAINT`
@@ -184,13 +212,9 @@ test task_manifest_parse_error_with_stale_install_names_recovery ... ok
   rejecting new manifest grammar before routing) now names both revisions and
   the source-build recovery while strict parsing and consumer behavior stay
   unchanged.
-- Remains open: `g09` closeout (queue coordinator), then the
-  operator-requested Northstar Refresh (Chatterbox).
+- Remains open: the operator-requested Northstar Refresh (Chatterbox).
 
 ## Next Task
 
-Open one implementation PR. After accepted review and merge, the queue
-coordinator performs canonical `g09` closeout: mark roadmap `g09.009` and card
-`1117` complete, archive spec `124`, update the front doors (including
-indexing this log), delete the dispatch handoff, run docs QA, and send
-Chatterbox the final task/merge/closeout commits.
+Return to Chatterbox for the operator-requested Northstar Refresh. The lane,
+generation, and dispatch closeout are complete.
