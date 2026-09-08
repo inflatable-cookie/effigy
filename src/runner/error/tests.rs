@@ -3,6 +3,7 @@ use std::path::Path;
 use super::RunnerError;
 use effigy_containers::exec::ContainerExecError;
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+use effigy_core::build_info::StaleLocalInstall;
 
 #[test]
 fn task_invocation_constructor_preserves_message() {
@@ -279,4 +280,61 @@ fn container_runtime_exec_not_ready_constructor_preserves_runtime_shape() {
     assert!(rendered.contains("-w /workspace-root/demo"));
     assert!(rendered.contains("restarting service `app`"));
     assert!(rendered.contains("--profile effigy"));
+}
+
+#[test]
+fn task_manifest_parse_error_without_stale_install_keeps_exact_message() {
+    let error: toml::de::Error = toml::from_str::<toml::Value>("unknown =").unwrap_err();
+    let expected = format!(
+        "failed to parse {}: {error}",
+        Path::new("/tmp/effigy.toml").display()
+    );
+    let err = RunnerError::TaskManifestParse {
+        path: Path::new("/tmp/effigy.toml").to_path_buf(),
+        error,
+        stale_local_install: None,
+    };
+    assert_eq!(
+        err.to_string(),
+        expected,
+        "no stale hint may change the plain parse error"
+    );
+}
+
+#[test]
+fn task_manifest_parse_error_with_stale_install_names_recovery() {
+    let error: toml::de::Error =
+        toml::from_str::<toml::Value>("[docs_policy]\nsources = [\n").unwrap_err();
+    let stale = StaleLocalInstall {
+        executable: Path::new("/repo/.local-install/bin/effigy").to_path_buf(),
+        repo_root: Path::new("/repo").to_path_buf(),
+        installed_identity: "v0.12.1+local.abc1234".to_owned(),
+        current_identity: "v0.12.1+local.def5678".to_owned(),
+    };
+    let err = RunnerError::TaskManifestParse {
+        path: Path::new("/repo/effigy.toml").to_path_buf(),
+        error,
+        stale_local_install: Some(Box::new(stale)),
+    };
+    let rendered = err.to_string();
+    assert!(
+        rendered.starts_with("failed to parse /repo/effigy.toml:"),
+        "original parse error must stay first: {rendered}"
+    );
+    assert!(
+        rendered.contains("repository-local install is behind this checkout"),
+        "got: {rendered}"
+    );
+    assert!(
+        rendered.contains("/repo/.local-install/bin/effigy records v0.12.1+local.abc1234"),
+        "installed identity must be named: {rendered}"
+    );
+    assert!(
+        rendered.contains("/repo is at v0.12.1+local.def5678"),
+        "current checkout revision must be named: {rendered}"
+    );
+    assert!(
+        rendered.contains("cargo run --bin effigy -- bootstrap:local"),
+        "source-build recovery must be named: {rendered}"
+    );
 }

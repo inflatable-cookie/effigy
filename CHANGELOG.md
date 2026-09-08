@@ -76,6 +76,14 @@ During v0.x, MINOR bumps may include breaking changes.
   warning. Former namespace words return to ordinary selector routing.
 
 ### Fixed
+- A provably stale repository-local install — the checkout's own
+  `.local-install/bin/effigy` whose recorded `+local.<sha>` identity resolves
+  in that checkout as a strict ancestor of its `HEAD` — now fails a strict
+  manifest parse with the original TOML error plus the installed and current
+  revisions and the source-build refresh
+  `cargo run --bin effigy -- bootstrap:local`. Current installs, unprovable or
+  divergent recorded commits, release/global binaries, and consumer
+  repositories keep the ordinary parse error unchanged. Proven by card `1117`.
 - `effigy deps link cargo` now links across a package version transition.
   Pointing a consumer whose `Cargo.lock` pins a released Git tag at a local
   candidate carrying a different version previously left Cargo holding the

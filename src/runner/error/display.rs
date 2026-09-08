@@ -115,8 +115,23 @@ pub(super) fn fmt_runner_error(
         RunnerError::TaskManifestRead { path, error } => {
             write!(f, "{}", failed_to_read_path(path, error))
         }
-        RunnerError::TaskManifestParse { path, error } => {
-            write!(f, "{}", failed_to_parse_path(path, error))
+        RunnerError::TaskManifestParse {
+            path,
+            error,
+            stale_local_install,
+        } => {
+            write!(f, "{}", failed_to_parse_path(path, error))?;
+            if let Some(stale) = stale_local_install.as_deref() {
+                write!(
+                    f,
+                    "\n\nrepository-local install is behind this checkout: {} records {}, but {} is at {}\nrefresh it from the checkout root with: cargo run --bin effigy -- bootstrap:local",
+                    stale.executable.display(),
+                    stale.installed_identity,
+                    stale.repo_root.display(),
+                    stale.current_identity
+                )?;
+            }
+            Ok(())
         }
         RunnerError::TaskManifestCompose { path, detail } => {
             write!(f, "{}", strict_manifest_parse_failed_in_path(path, detail))

@@ -382,6 +382,31 @@ It will:
 That keeps bootstrap predictable and stops it from trampling over unrelated or
 dirty local state.
 
+## Refreshing A Stale Local Install
+
+Repos that self-host Effigy (this repository is one) keep a local install at
+`<checkout>/.local-install/bin/effigy` that `bootstrap:local` builds and stamps
+with the checkout revision at install time. When the checkout moves ahead of
+that install and its manifest gains grammar the installed binary predates,
+every task fails during strict manifest parsing — before `doctor` or any task
+can route — with the raw TOML error and nothing pointing at the real cause.
+
+When the installed binary can prove staleness — it is the failing checkout's
+own `.local-install/bin/effigy`, its recorded `+local.<sha>` identity resolves
+in that checkout, and the recorded commit is a strict ancestor of the checkout
+`HEAD` — the parse error also names the installed identity, the current
+checkout revision, and the refresh command:
+
+```sh
+cargo run --bin effigy -- bootstrap:local
+```
+
+Run that from the checkout root. It builds the current source and atomically
+replaces `.local-install/bin/effigy`, so the next `effigy <task>` invocation
+parses the current manifest. Current installs, unprovable or divergent
+recorded commits, release/global binaries, and consumer repositories keep the
+ordinary parse error with no stale claim.
+
 ## Current Phase
 
 What ships now:
