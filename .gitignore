@@ -28,3 +28,4 @@ target-*/
 # BEGIN EFFIGY LOCAL STATE
 .effigy/
 # END EFFIGY LOCAL STATE
+effigy.local.toml
