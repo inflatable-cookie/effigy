@@ -8,7 +8,7 @@ Owner: `crates/effigy-rhai` storage host surface
 Created: 2026-09-01
 Ready since: 2026-09-01 Bovine consumer collision proof
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md`](../../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md)
+Evidence: [`../../../logs/archive/2026-09/01-182838-rhai-storage-create-only-1099.md`](../../../logs/archive/2026-09/01-182838-rhai-storage-create-only-1099.md)
 
 ## Purpose
 

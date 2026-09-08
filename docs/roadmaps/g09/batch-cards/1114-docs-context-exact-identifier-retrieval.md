@@ -71,7 +71,7 @@ Falsify these counterexamples before PR creation:
 
 ## Evidence Requirement
 
-One dated closeout log under `docs/logs/2026-09/` mapping every oracle row to
+One dated closeout log under `docs/logs/archive/2026-09/` mapping every oracle row to
 exact proof: the `catalog_tasks` result with rank and reason, the benchmark
 table with the freeze commit, boundary tests, the warm timing, and validation.
 
@@ -87,4 +87,4 @@ true for identifiers.
 PR `92` closeout is on this branch. Independent exact-head review of the
 closeout commit, then orchestrator merge. K4 is closed; K5 remains in
 [`20260905-docs-context-identifier-retrieval-and-k5-expectation`](../../../triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md).
-Evidence: [`05-133718`](../../../logs/2026-09/05-133718-docs-context-exact-identifier-1114.md).
+Evidence: [`05-133718`](../../../logs/archive/2026-09/05-133718-docs-context-exact-identifier-1114.md).

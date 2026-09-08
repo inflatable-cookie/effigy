@@ -99,7 +99,7 @@ Falsify these counterexamples before PR creation:
 
 ## Evidence Requirement
 
-One dated closeout log under `docs/logs/2026-09/` with the fixture status
+One dated closeout log under `docs/logs/archive/2026-09/` with the fixture status
 matrix, identity samples, the timing, the K1–K4/K5a/K5b replay rows with `rg`
 comparison (time to usable evidence, source correctness, bytes returned),
 and validation output.

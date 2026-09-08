@@ -60,7 +60,7 @@ turn the result into governed cross-repository evidence.
 
 ## Evidence
 
-Write one log under `docs/logs/2026-09/` containing the frozen identities,
+Write one log under `docs/logs/archive/2026-09/` containing the frozen identities,
 command matrix, failure ownership, pre/post consumer state, retained-workaround
 result, scorecard rationale, changed Effigy surfaces, validation, and next
 cohort recommendation. Do not write evidence into Acowtancy.

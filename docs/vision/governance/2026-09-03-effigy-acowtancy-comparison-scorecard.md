@@ -8,7 +8,7 @@ Window
   [`1111`](../../roadmaps/g09/batch-cards/1111-acowtancy-consumer-adoption-replay.md)
   at consumer SHA `91228893cbc2c6440b115b5aa1ee2fe34064f35b` with Effigy
   `e44da9fd59e4696d4c7868d6c7e528201eb41e24`; command evidence is in log
-  [`03-014518`](../../logs/2026-09/03-014518-acowtancy-consumer-replay-1111.md)
+  [`03-014518`](../../logs/archive/2026-09/03-014518-acowtancy-consumer-replay-1111.md)
   ("the evidence log").
 
 Comparison Table
@@ -23,7 +23,7 @@ Comparison Table
   stay at 2 because no in-window evidence moved any dimension.
 - Effigy ROUTE 2 — deterministic routing is test-covered and monitored:
   suite-selection/routing tests exist (evidence log
-  [`01-173500`](../../logs/2026-09/01-173500-child-catalog-suite-registry-1100.md)
+  [`01-173500`](../../logs/archive/2026-09/01-173500-child-catalog-suite-registry-1100.md)
   validation rows), and in-window orientation `effigy tasks` / `effigy doctor`
   exited 0 with `qa:ci` on the task surface.
 - Effigy CONTRACT 2 — enforced validation bundle (`qa` composing docs QA and

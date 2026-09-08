@@ -9,7 +9,7 @@ Owner: graph command time-budget boundary
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-approved papercut routing
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-184159-docs-context-time-budget-1101.md`](../../../logs/2026-09/01-184159-docs-context-time-budget-1101.md)
+Evidence: [`../../../logs/archive/2026-09/01-184159-docs-context-time-budget-1101.md`](../../../logs/archive/2026-09/01-184159-docs-context-time-budget-1101.md)
 
 ## Purpose
 

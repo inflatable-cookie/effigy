@@ -7,7 +7,7 @@ Card: [`1114`](./batch-cards/1114-docs-context-exact-identifier-retrieval.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Guide: [`079`](../../guides/079-documentation-graph-profiles-and-context.md)
 Origin: card `1113` closeout evidence
-([`05-113123`](../../logs/2026-09/05-113123-docs-context-latency-and-freshness-1113.md)),
+([`05-113123`](../../logs/archive/2026-09/05-113123-docs-context-latency-and-freshness-1113.md)),
 Chatterbox ruling 2026-09-05; operator confirmed 2026-09-05
 
 ## Purpose
@@ -79,7 +79,7 @@ Published for the coordinator at the promoting commit on `main`.
   fixture document if needed), tests under those crates and `src/tests/**`,
   `docs/guides/079-documentation-graph-profiles-and-context.md`.
   **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
-  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1114`,
+  `docs/logs/archive/2026-09/`, `docs/logs/README.md`, this roadmap, card `1114`,
   spec `121`, contract `041` (retrieval rule wording if a drift trigger
   fires), `docs/specs/README.md`, `docs/roadmaps/README.md`,
   `docs/roadmaps/g09/README.md`.

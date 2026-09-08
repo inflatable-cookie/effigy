@@ -9,7 +9,7 @@ Owner: documentation-context result selection
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-approved papercut routing
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md`](../../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md)
+Evidence: [`../../../logs/archive/2026-09/01-172541-docs-context-traversal-budget-1102.md`](../../../logs/archive/2026-09/01-172541-docs-context-traversal-budget-1102.md)
 
 ## Purpose
 

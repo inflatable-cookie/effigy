@@ -57,7 +57,7 @@ packages; (5) unlink or dirty-lock rule weakened; (6) docs not updated.
 
 ## Evidence Requirement
 
-One dated closeout log under `docs/logs/2026-09/` mapping every oracle row
+One dated closeout log under `docs/logs/archive/2026-09/` mapping every oracle row
 to proof, with the fixture output before and after.
 
 ## Stop Conditions
@@ -66,7 +66,7 @@ Per spec `123`.
 
 ## Evidence
 
-[`07-162725-cargo-link-version-transition-1116`](../../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md) maps every oracle row
+[`07-162725-cargo-link-version-transition-1116`](../../../logs/archive/2026-09/07-162725-cargo-link-version-transition-1116.md) maps every oracle row
 and acceptance line to proof, with the fixture output before and after.
 
 ## Next Task

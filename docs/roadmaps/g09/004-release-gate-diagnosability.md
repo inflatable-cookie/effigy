@@ -65,7 +65,7 @@ Published for the coordinator at the promoting commit on `main`.
   `docs/guides/051-release-orchestration.md`,
   `docs/guides/017-json-output-contracts.md`.
   **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
-  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1112`,
+  `docs/logs/archive/2026-09/`, `docs/logs/README.md`, this roadmap, card `1112`,
   spec `119`, `docs/specs/README.md`, `docs/roadmaps/README.md`,
   `docs/roadmaps/g09/README.md`.
 - **Concurrency:** no approved siblings; no serial edges. Single lane.

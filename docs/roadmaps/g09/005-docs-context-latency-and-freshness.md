@@ -119,7 +119,7 @@ Published for the coordinator at the promoting commit on `main`.
   and `src/tests/**`, `docs/guides/079-documentation-graph-profiles-and-context.md`,
   `docs/guides/076-code-graph-and-agent-workflows.md`.
   **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
-  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1113`,
+  `docs/logs/archive/2026-09/`, `docs/logs/README.md`, this roadmap, card `1113`,
   spec `120`, contract `041` (Next Task only unless a drift trigger fires),
   `docs/specs/README.md`, `docs/roadmaps/README.md`, `docs/roadmaps/g09/README.md`.
 - **Concurrency:** no approved siblings. Serial after `1112`.

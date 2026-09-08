@@ -9,7 +9,7 @@ Owner: `effigy-catalog` bundled fragment inventory
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md)
+Evidence: [`../../../logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../../logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md)
 
 ## Purpose
 

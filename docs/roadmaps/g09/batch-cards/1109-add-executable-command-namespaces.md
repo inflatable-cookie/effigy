@@ -10,7 +10,7 @@ Created: 2026-09-02
 Closed: 2026-09-02 — additive preview PR
 [#85](https://github.com/inflatable-cookie/effigy/pull/85) submitted for
 exact-head review; evidence log
-[`02-205536-command-surface-preview-1109.md`](../../../logs/2026-09/02-205536-command-surface-preview-1109.md)
+[`02-205536-command-surface-preview-1109.md`](../../../logs/archive/2026-09/02-205536-command-surface-preview-1109.md)
 
 ## Purpose
 
@@ -53,7 +53,7 @@ Ship the additive grouped-command preview as one coherent public-surface change.
 
 ## Evidence
 
-Write one log under `docs/logs/2026-09/` mapping every acceptance and review
+Write one log under `docs/logs/archive/2026-09/` mapping every acceptance and review
 oracle row to named proof. Record the exact PR head, changed public routes,
 warning schema, collision fixture, validation results, and remaining `v1.0`
 gate. Do not rewrite historical direct-command evidence.

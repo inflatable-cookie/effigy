@@ -29,7 +29,7 @@ ordinary selector routing. Genuine command-owned subcommands stay nested.
   both managed-skill copies teach `effigy <command> ...`
 
 Historical preview records kept as written: `g09.001`, card `1109`, archived
-spec `116`, and evidence `docs/logs/2026-09/02-205536-command-surface-preview-1109.md`.
+spec `116`, and evidence `docs/logs/archive/2026-09/02-205536-command-surface-preview-1109.md`.
 
 ## Review Oracle Mapping (card `1110` / spec `117`)
 

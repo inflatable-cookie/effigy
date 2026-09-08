@@ -10,7 +10,7 @@ Created: 2026-09-01
 Promoted: 2026-09-02 — card `1106` merged at `6271b0ff129d006e47202b1b00def5ea7a395af8`
 Closed: 2026-09-02 — public `service pack update` resolves compiled `stable` to
 the accepted immutable digest and reuses the existing transaction; evidence
-[`02-155016`](../../../logs/2026-09/02-155016-official-catalog-pack-update-1107.md)
+[`02-155016`](../../../logs/archive/2026-09/02-155016-official-catalog-pack-update-1107.md)
 
 ## Purpose
 
@@ -43,7 +43,7 @@ Replace the placeholder official coordinate and expose explicit
 
 ## Evidence
 
-[`02-155016`](../../../logs/2026-09/02-155016-official-catalog-pack-update-1107.md)
+[`02-155016`](../../../logs/archive/2026-09/02-155016-official-catalog-pack-update-1107.md)
 maps every acceptance and review-oracle row to named tests plus the isolated
 live smoke (channel, digest, store before/after success and no-op, network
 silence). Failure atomicity is the runner unit table in that log. No Effigy

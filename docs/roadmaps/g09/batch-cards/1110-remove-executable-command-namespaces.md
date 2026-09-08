@@ -11,7 +11,7 @@ Created: 2026-09-02
 Closed: 2026-09-02 — rollback PR
 [#87](https://github.com/inflatable-cookie/effigy/pull/87) submitted for
 exact-head review; evidence log
-[`02-224606-flat-command-execution-1110.md`](../../../logs/2026-09/02-224606-flat-command-execution-1110.md)
+[`02-224606-flat-command-execution-1110.md`](../../../logs/archive/2026-09/02-224606-flat-command-execution-1110.md)
 
 ## Purpose
 
@@ -58,7 +58,7 @@ agents are taught to work.
 
 ## Evidence
 
-Write one log under `docs/logs/2026-09/` mapping each acceptance and review
+Write one log under `docs/logs/archive/2026-09/` mapping each acceptance and review
 oracle row to named proof. Record the exact PR head, deleted alias/warning
 surfaces, restored selector fixtures, help-group preservation, validation, and
 any remaining shadowing limitation. Do not rewrite historical preview records.

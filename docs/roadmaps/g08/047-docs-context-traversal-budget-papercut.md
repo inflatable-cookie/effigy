@@ -4,7 +4,7 @@ Status: Complete
 Created: 2026-09-01
 Completed: 2026-09-01
 Card: [`1102`](./batch-cards/1102-reserve-docs-context-traversal-slot.md)
-Evidence: [`../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md`](../../logs/2026-09/01-172541-docs-context-traversal-budget-1102.md)
+Evidence: [`../../logs/archive/2026-09/01-172541-docs-context-traversal-budget-1102.md`](../../logs/archive/2026-09/01-172541-docs-context-traversal-budget-1102.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
 

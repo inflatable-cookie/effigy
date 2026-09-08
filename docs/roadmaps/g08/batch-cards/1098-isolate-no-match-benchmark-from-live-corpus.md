@@ -9,7 +9,7 @@ Owner: documentation-context benchmark matrix
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md`](../../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md)
+Evidence: [`../../../logs/archive/2026-09/01-150452-no-match-benchmark-isolation-1098.md`](../../../logs/archive/2026-09/01-150452-no-match-benchmark-isolation-1098.md)
 
 ## Purpose
 

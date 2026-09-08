@@ -81,7 +81,7 @@ Falsify these counterexamples before PR creation:
 
 ## Evidence Requirement
 
-Write one dated closeout log under `docs/logs/2026-09/` mapping every oracle
+Write one dated closeout log under `docs/logs/archive/2026-09/` mapping every oracle
 row to exact proof: the fixture, the on-disk artifacts, the rendered tail, the
 redaction check, the stderr inventory line, and validation output.
 

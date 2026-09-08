@@ -61,11 +61,10 @@ local version transitions. Card `1116` merged at `7d9c8be`.
 strict spec `124`. Card `1117` merged in PR `95` at
 `24e842196465813f960cea15cadd25d5857731fd`, closing the self-hosting recovery
 gap. All nine `g09` lanes are complete; no active strict spec, ready card, or
-active dispatch handoff remains. The queue-required closed handoff record is
-not execution authority.
+dispatch handoff remains.
 
 ## Next Task
 
-`g09` is closed. Run Northstar docs normalization for the closed-generation log
-window and handoff-retention conflict. Do not reopen this generation or infer a
-`g10` lane. Effigy release authority stays separate.
+`g09` is closed. Use Northstar Atlas with the operator before opening a new
+generation or compiling another execution lane. Effigy release authority stays
+separate.

@@ -354,7 +354,7 @@ feature-placement queue to planning.
 `g08.039` is complete under archived strict spec `112`. Card `1094` made Rhai
 expression-depth parsing profile-independent while preserving release limits
 and every unrelated runtime boundary. Evidence:
-[`01-080923-rhai-profile-independent-limits-1094.md`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md).
+[`01-080923-rhai-profile-independent-limits-1094.md`](../../logs/archive/2026-09/01-080923-rhai-profile-independent-limits-1094.md).
 
 `g08.040` is complete under architecture `026`, contract `043`, and archived
 strict spec `113`. Card `1095` landed the in-repository catalog-pack acquisition
@@ -363,27 +363,27 @@ digest-addressed OCI and local installs through one validated transaction,
 visible fallback with a `catalog.pack-health` doctor repair, and deterministic
 rollback/reset. Official publication and concrete-asset cutover remain planning.
 Evidence:
-[`01-095641-catalog-pack-acquisition-prototype-1095.md`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
+[`01-095641-catalog-pack-acquisition-prototype-1095.md`](../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
 `g08.041` is complete. Card `1096` made bundled fragment inventory require a
 first-level `service.toml` without changing filesystem/pack directory listing,
 catalog packs, layers, schemas, or command contracts. Evidence:
-[`01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md).
+[`01-133154-catalog-fragment-listing-1096.md`](../../logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md).
 
 `g08.042` is complete. Card `1097` removed the synthetic heading caused by
 leading YAML frontmatter while preserving profiled metadata, relations, and
 exact source spans. Evidence:
-[`01-135932-markdown-frontmatter-1097.md`](../../logs/2026-09/01-135932-markdown-frontmatter-1097.md).
+[`01-135932-markdown-frontmatter-1097.md`](../../logs/archive/2026-09/01-135932-markdown-frontmatter-1097.md).
 
 `g08.043` is complete. Card `1098` moved the no-match benchmark proof off
 Effigy's live documentation corpus and guards the matrix against reintroducing
 that vocabulary dependency. Evidence:
-[`01-150452-no-match-benchmark-isolation-1098.md`](../../logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md).
+[`01-150452-no-match-benchmark-isolation-1098.md`](../../logs/archive/2026-09/01-150452-no-match-benchmark-isolation-1098.md).
 
 `g08.044` is complete under contract `044`. Card `1099` adds atomic
 create-if-absent behavior to the retained Rhai storage PUT surface after Bovine
 PR 32 proved HEAD then PUT cannot close the collision race. Evidence:
-[`01-182838-rhai-storage-create-only-1099.md`](../../logs/2026-09/01-182838-rhai-storage-create-only-1099.md).
+[`01-182838-rhai-storage-create-only-1099.md`](../../logs/archive/2026-09/01-182838-rhai-storage-create-only-1099.md).
 
 `g08.045` through `g08.047` are complete. Cards `1100` through `1102` shipped
 child-catalog registry preservation, cold docs-context time bounds/progress,

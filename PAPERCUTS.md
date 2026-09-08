@@ -8,7 +8,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
 ### [ ] `docs add-log-index` appends after `## Next Task` instead of under Active logs — 2026-09-02
-- Friction: `effigy docs add-log-index docs/logs/2026-09/02-155016-official-catalog-pack-update-1107.md` reported success and inserted the bullet after the logs README `## Next Task` paragraph, not at the top of `## Active logs`.
+- Friction: `effigy docs add-log-index docs/logs/archive/2026-09/02-155016-official-catalog-pack-update-1107.md` reported success and inserted the bullet after the logs README `## Next Task` paragraph, not at the top of `## Active logs`.
 - Impact: the unique index entry is present for `docs check index` but the front-door list is wrong until a human moves the bullet; workers can ship a drifted Next Task block.
 - Possible fix: insert immediately after the `## Active logs` heading (newest first), and never write below the README `## Next Task` section.
 - Surface: `effigy docs add-log-index`; card closeout log-index step.
@@ -70,7 +70,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Impact: child suites could not inherit the workspace container default.
 - Fix (2026-09-01): card `1100` pins nested host-launched refs to the originating
   repository while preserving the child cwd and child-explicit precedence.
-  Evidence: `docs/logs/2026-09/01-173500-child-catalog-suite-registry-1100.md`.
+  Evidence: `docs/logs/archive/2026-09/01-173500-child-catalog-suite-registry-1100.md`.
 - Surface: test suite task-ref expansion and container registry lookup.
 
 ### [x] `docs context` traversal is unreachable on a large corpus — 2026-09-01
@@ -80,7 +80,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Fix (2026-09-01): card `1102` keeps the best lexical result and, when at
   least two slots exist, reserves one for the best whole traversed result that
   fits. Evidence:
-  `docs/logs/2026-09/01-172541-docs-context-traversal-budget-1102.md`.
+  `docs/logs/archive/2026-09/01-172541-docs-context-traversal-budget-1102.md`.
 - Surface: documentation-context selection and contract `041`.
 
 ### [x] `docs context` has no wall-clock bound on a cold graph — 2026-09-01
@@ -89,7 +89,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Fix (2026-09-01): card `1101` shares the graph time-budget seam, timeout
   payload, health snapshot, and recovery guidance. Cold/stale rebuilds announce
   on stderr; usage validation remains outside the timer. Evidence:
-  `docs/logs/2026-09/01-184159-docs-context-time-budget-1101.md`.
+  `docs/logs/archive/2026-09/01-184159-docs-context-time-budget-1101.md`.
 - Surface: graph time budget, lazy refresh, and docs-context shell.
 
 ### [x] A no-match benchmark case cannot name itself in its own corpus — 2026-08-31
@@ -103,7 +103,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Fix (2026-09-01): card `1098` / roadmap `g08.043` keep empty-result proof on
   the fixture corpus and reject a live-target empty case before the matrix
   runs. Evidence:
-  `docs/logs/2026-09/01-150452-no-match-benchmark-isolation-1098.md`.
+  `docs/logs/archive/2026-09/01-150452-no-match-benchmark-isolation-1098.md`.
 - Surface: `scripts/benchmark-docs-context.rhai`; `docs/effigy.docs.toml` roots.
 
 ### [x] YAML frontmatter is indexed as one setext heading — 2026-08-31
@@ -116,7 +116,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Fix (2026-09-01): card `1097` / roadmap `g08.042` skip headings that start
   inside a complete leading `---` … `---` block; facts, relations, and exact
   spans remain. Evidence:
-  `docs/logs/2026-09/01-135932-markdown-frontmatter-1097.md`.
+  `docs/logs/archive/2026-09/01-135932-markdown-frontmatter-1097.md`.
 - Surface: `crates/effigy-codegraph/src/language/markdown/extract.rs`.
 
 ### [x] `service list` reports non-fragment bundled files as fragments — 2026-09-01
@@ -129,7 +129,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   manifest are ignored. Filesystem override and installed-pack listing remain
   directory-based; sorting and layering are unchanged.
 - Recurrence proof: unit, integration, and CLI text/JSON proofs in
-  `docs/logs/2026-09/01-133154-catalog-fragment-listing-1096.md`.
+  `docs/logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md`.
 - Surface: `crates/effigy-catalog/src/fragment.rs` `list_bundled_fragments`.
 
 ### [x] `effigy-containers` tests read process-global env without the env lock — 2026-09-01
@@ -144,7 +144,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   DNS tests named in PR 69. Production env semantics are unchanged; empty and
   error-before-read tests keep their parallel execution.
 - Recurrence proof: the corrected inventory and repeated focused validation are
-  recorded in `docs/logs/2026-09/01-123424-papercuts-env-lock-audit.md`.
+  recorded in `docs/logs/archive/2026-09/01-123424-papercuts-env-lock-audit.md`.
 - Surface: `crates/effigy-containers/src/{colima/tests.rs,compose/tests.rs,mount_spec.rs,policy_support/generated_compose.rs,runtime/dns.rs}`;
   `crates/effigy-containers/src/tests/{compose,policies,volumes_reports}.rs`;
   shared lock in `crates/effigy-containers/src/lib.rs`.

@@ -61,7 +61,7 @@ the manifest first.
 
 ## Evidence Requirement
 
-One dated log under `docs/logs/2026-09/` names installed/current identities,
+One dated log under `docs/logs/archive/2026-09/` names installed/current identities,
 maps every oracle row, and records exact commands and results.
 
 ## Stop Conditions

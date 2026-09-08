@@ -60,7 +60,7 @@ Falsify these counterexamples before PR creation:
 
 ## Evidence
 
-[`../../../logs/2026-09/01-173500-child-catalog-suite-registry-1100.md`](../../../logs/2026-09/01-173500-child-catalog-suite-registry-1100.md)
+[`../../../logs/archive/2026-09/01-173500-child-catalog-suite-registry-1100.md`](../../../logs/archive/2026-09/01-173500-child-catalog-suite-registry-1100.md)
 
 ## Evidence Requirement
 

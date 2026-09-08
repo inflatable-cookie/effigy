@@ -37,7 +37,8 @@ Batch: northstar-refresh-2026-09-08
 - `20260905-092527`: keep open; persisted gate evidence shipped, but a later
   authorized release attempt must prove whether keep-on-failure is still needed.
 - `20260906-224721`: keep open for an operator decision; do not reopen g09.
-- `20260908-161956`: new open lifecycle normalization decision.
+- `20260908-161956`: captured the lifecycle conflict; resolved by the later
+  closed-generation normalization.
 
 ## Vision Target Delta
 
@@ -69,6 +70,6 @@ Batch: northstar-refresh-2026-09-08
 
 ## Next Task
 
-Run Northstar docs normalization for the bounded lifecycle conflict in
-[`20260908-161956`](../../triage/20260908-161956-closed-generation-lifecycle-drift.md).
+Superseded by the
+[closed-generation lifecycle normalization](./08-173644-closed-generation-lifecycle-normalization.md).
 Do not open `g10` until the operator chooses the next strategic runway.

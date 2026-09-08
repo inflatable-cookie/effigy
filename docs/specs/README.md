@@ -47,5 +47,5 @@ Other planning specs:
 ## Next Task
 
 No strict lane is active or ready. Specs `118` through `124` are archived.
-Resolve the closed-generation docs lifecycle drift before any operator-led
-strategic runway decision; Effigy release authority stays separate.
+Use Northstar Atlas with the operator before compiling another strategic
+runway; Effigy release authority stays separate.

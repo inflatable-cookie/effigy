@@ -9,7 +9,7 @@ Owner: Effigy compiled catalog snapshot and provenance verification
 Created: 2026-09-01
 Closed: 2026-09-02 — cut over the generated snapshot and typed provenance lock
 from the accepted `v1.0.1` artifact; evidence
-[`02-144609`](../../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md);
+[`02-144609`](../../../logs/archive/2026-09/02-144609-catalog-pack-generated-baseline-1106.md);
 merged as `6271b0ff129d006e47202b1b00def5ea7a395af8`
 
 ## Publication Input

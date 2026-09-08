@@ -58,7 +58,7 @@ at `4dd8b8a5`, with the empty-delta provider checkpoint at `ebb813e1`.
 - [`1106`](../../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
   — Complete; Effigy's generated recovery snapshot and provenance lock are cut
   over (evidence
-  [`02-144609`](../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
+  [`02-144609`](../../logs/archive/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
 - [`1107`](../../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
   — Complete; Effigy owns public update resolution and transaction integration.
 - [`1108`](../../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)

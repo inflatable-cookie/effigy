@@ -5,7 +5,7 @@ Created: 2026-09-01
 Roadmap: g08.046
 Card: 1101
 Contract: 041
-Papercut: [`docs context` has no wall-clock bound on a cold graph](../../../PAPERCUTS.md)
+Papercut: [`docs context` has no wall-clock bound on a cold graph](../../../../PAPERCUTS.md)
 
 ## Summary
 

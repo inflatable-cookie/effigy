@@ -79,12 +79,12 @@ generation's `README.md`, its roadmap files, and the archived logs.
 (2026-09-07) under strict spec `123` (card `1116`): `deps link cargo` across a
 local version bump with targeted lock refresh and transactional lock
 rollback. Evidence:
-[`07-162725-cargo-link-version-transition-1116`](../logs/2026-09/07-162725-cargo-link-version-transition-1116.md).
+[`07-162725-cargo-link-version-transition-1116`](../logs/archive/2026-09/07-162725-cargo-link-version-transition-1116.md).
 It merged at `7d9c8be`. Origin: Swallowtail request for Bovine Desktop,
 operator-authorised 2026-09-07.
 
 [`g09.009`](./g09/009-stale-local-install-recovery.md) is **complete** under
 archived spec `124` (card `1117`);
 PR `95` merged at `24e842196465813f960cea15cadd25d5857731fd`. The 2026-09-08
-Northstar Refresh found no ready execution lane. Closed-generation docs
-lifecycle normalization is next; `g10` remains unopened.
+Northstar Refresh and lifecycle normalization found no ready execution lane.
+The next strategic runway remains operator-owned; `g10` is unopened.

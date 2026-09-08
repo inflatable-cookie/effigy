@@ -41,7 +41,7 @@ compares the local version with the locked source version.
 ## Cards
 
 - [x] [`1116`](./batch-cards/1116-cargo-link-version-transition.md) — complete
-      ([evidence](../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md))
+      ([evidence](../../logs/archive/2026-09/07-162725-cargo-link-version-transition-1116.md))
 
 ## Acceptance
 
@@ -74,7 +74,7 @@ authority and closeout surfaces and does not relaunch anything.
   fixtures under `tests/fixtures/**`, `docs/guides/077-local-dependency-linking.md`,
   `PAPERCUTS.md` (the named entry only).
   **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
-  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1116`,
+  `docs/logs/archive/2026-09/`, `docs/logs/README.md`, this roadmap, card `1116`,
   spec `123`, contract `034` lockfile-safety section, `docs/specs/README.md`,
   `docs/roadmaps/README.md`, `docs/roadmaps/g09/README.md`.
 - **Concurrency:** no approved siblings; no serial edges.

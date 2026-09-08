@@ -24,7 +24,7 @@ ceremony, surprise network access, or a second release authority.
 4. [`1106`](./batch-cards/1106-cut-over-generated-catalog-baseline.md) —
    Complete: Effigy's generated baseline and lock cut over from the accepted
    public artifact, with offline and public-artifact drift proof
-   ([`02-144609`](../../logs/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
+   ([`02-144609`](../../logs/archive/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
    Merged as `6271b0ff129d006e47202b1b00def5ea7a395af8`.
 5. [`1107`](./batch-cards/1107-expose-official-catalog-pack-update.md) —
    Complete: safe public update through the immutable official digest.

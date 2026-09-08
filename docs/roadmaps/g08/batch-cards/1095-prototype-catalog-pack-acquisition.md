@@ -10,7 +10,7 @@ Owner: catalog-pack model, installed state, `service` routing, and doctor health
 Created: 2026-09-01
 Ready since: 2026-09-01 operator-confirmed acquisition prototype
 Closed: 2026-09-01
-Evidence: [`2026-09-01 closeout`](../../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
+Evidence: [`2026-09-01 closeout`](../../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 
 ## Purpose
 
@@ -70,7 +70,7 @@ without changing existing catalog-backed usage.
 ## Review Oracle
 
 Falsified. Each row maps to exact tests in the
-[closeout log](../../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
+[closeout log](../../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md).
 
 1. With an empty user-state root and no `oras` on `PATH`, `service list`,
    extraction, and representative compose assembly differ from the current

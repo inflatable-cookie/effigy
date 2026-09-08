@@ -6,7 +6,7 @@ Closed: 2026-09-01
 Roadmap: [`g08.039`](../../roadmaps/g08/039-rhai-profile-independent-limits-papercut.md)
 Card: [`1094`](../../roadmaps/g08/batch-cards/1094-fix-rhai-profile-dependent-expression-limits.md)
 Guide: [`061`](../../guides/061-rhai-script-steps-guide.md)
-Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
+Evidence: [`2026-09-01 closeout`](../../logs/archive/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 
 ## Outcome
 

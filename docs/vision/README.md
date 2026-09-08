@@ -63,7 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-`g09` is closed and the 2026-09-08 Northstar Refresh found no ready execution
-lane. Resolve the closed-generation log and queue-handoff lifecycle drift
-through Northstar docs normalization before choosing the next strategic runway.
-The second governance review keeps Effigy at Stage 2; release remains gated.
+`g09` is closed, its documentation lifecycle is normalized, and no ready
+execution lane remains. Use Northstar Atlas with the operator to choose the next
+strategic runway. The second governance review keeps Effigy at Stage 2; release
+remains gated.

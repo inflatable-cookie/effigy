@@ -3,7 +3,7 @@
 Status: Complete
 Created: 2026-09-01
 Closed: 2026-09-01
-Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
+Evidence: [`2026-09-01 closeout`](../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Spec: [`113`](../../specs/113-catalog-pack-acquisition-prototype-strict-lane.md)

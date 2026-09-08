@@ -9,7 +9,7 @@ Owner: `effigy-codegraph` Markdown structural extraction
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-135932-markdown-frontmatter-1097.md`](../../../logs/2026-09/01-135932-markdown-frontmatter-1097.md)
+Evidence: [`../../../logs/archive/2026-09/01-135932-markdown-frontmatter-1097.md`](../../../logs/archive/2026-09/01-135932-markdown-frontmatter-1097.md)
 
 ## Purpose
 

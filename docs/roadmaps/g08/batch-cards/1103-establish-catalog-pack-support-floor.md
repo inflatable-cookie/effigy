@@ -9,7 +9,7 @@ Owner: Effigy support-policy data and validation
 Created: 2026-09-01
 Ready since: 2026-09-01 operator approval
 Completed: 2026-09-01
-Evidence: [`../../../logs/2026-09/01-202830-catalog-pack-support-floor-1103.md`](../../../logs/2026-09/01-202830-catalog-pack-support-floor-1103.md)
+Evidence: [`../../../logs/archive/2026-09/01-202830-catalog-pack-support-floor-1103.md`](../../../logs/archive/2026-09/01-202830-catalog-pack-support-floor-1103.md)
 
 ## Purpose
 

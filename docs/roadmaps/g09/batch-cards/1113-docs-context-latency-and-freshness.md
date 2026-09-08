@@ -94,7 +94,7 @@ Falsify these counterexamples before PR creation:
 
 ## Evidence Requirement
 
-One dated closeout log under `docs/logs/2026-09/` with the before and after
+One dated closeout log under `docs/logs/archive/2026-09/` with the before and after
 measurement tables (every identity field), phase attribution, the diff
 summary, benchmark output, the K4/K5/no-match replay rows, and validation.
 

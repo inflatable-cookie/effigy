@@ -171,7 +171,7 @@ Repeats the pilot's finding rather than replacing it:
 | K1 | Should I reuse this launcher-provided worktree? | 0.171 s | `docs/logs/archive/2026-08/31-152748-centralize-paseo-worktree-runtime.md`, `docs/roadmaps/archive/g02.md`, `docs/contracts/002-agent-local-paths.md` | 4892 | **no** |
 | K2 | Where is the AGENTS review workflow? | 0.176 s | `skills/northstar/references/modes/agent-instruction-review.md`, `skills/northstar/references/router.md`, `docs/roadmaps/archive/g02.md` | 5874 | **yes**, rank 1 |
 | K3 | Where does a consumer get the batch-card template? | 0.177 s | `bundle-docs/batch-card-relocation-guide.md`, `template-bundle/roadmaps/README.md`, `bundle-docs/sections/08-specs-and-promotion.md` | 5830 | **no** (related, not the named skill-shipped asset) |
-| K4 | Which JSON field lists Effigy tasks? | 0.694 s | `docs/logs/2026-09/05-133718-docs-context-exact-identifier-1114.md`, `docs/guides/026-json-payload-examples.md`, `docs/triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md` | 3382 | **yes**, rank 2 |
+| K4 | Which JSON field lists Effigy tasks? | 0.694 s | `docs/logs/archive/2026-09/05-133718-docs-context-exact-identifier-1114.md`, `docs/guides/026-json-payload-examples.md`, `docs/triage/20260905-docs-context-identifier-retrieval-and-k5-expectation.md` | 3382 | **yes**, rank 2 |
 | K5 | — | — | — | — | **pending** |
 
 Two of four expected sources land in the top three. K1 and K3 miss, and the
@@ -243,7 +243,7 @@ which is why it reports `not-shared` here too.
 Every case, query, expected source, rival, and rank bound is byte-identical to
 the seventh freeze. One observed rank moved: `effigy-exact-identifier` was 1 at
 card `1114` and is 2 here. Diagnosis, verified by running the query directly:
-rank 1 is now `docs/logs/2026-09/05-133718-docs-context-exact-identifier-1114.md`
+rank 1 is now `docs/logs/archive/2026-09/05-133718-docs-context-exact-identifier-1114.md`
 at relevance 81, card `1114`'s own evidence log, which merged after that
 measurement and documents the `catalog_tasks` result. Guide `026` follows at
 relevance 69. This is a live-target corpus change, which the freeze history

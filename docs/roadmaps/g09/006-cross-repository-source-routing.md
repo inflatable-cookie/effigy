@@ -136,7 +136,7 @@ Published for the coordinator at the promoting commit on `main`.
   profile assets that emit `[docs_policy.graph]` (add the `sources` block),
   and this repository's own `effigy.toml` (opt in).
   **Reserved shared closeout surfaces:** `CHANGELOG.md` `[Unreleased]`,
-  `docs/logs/2026-09/`, `docs/logs/README.md`, this roadmap, card `1115`,
+  `docs/logs/archive/2026-09/`, `docs/logs/README.md`, this roadmap, card `1115`,
   spec `122`, contract `041` (command contract and drift trigger for the new
   flag and grammar), `docs/specs/README.md`, `docs/roadmaps/README.md`,
   `docs/roadmaps/g09/README.md`.

@@ -6,7 +6,7 @@ Completed: 2026-09-01
 Card: [`1096`](./batch-cards/1096-fix-catalog-fragment-listing.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
-Evidence: [`../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../logs/2026-09/01-133154-catalog-fragment-listing-1096.md)
+Evidence: [`../../logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md`](../../logs/archive/2026-09/01-133154-catalog-fragment-listing-1096.md)
 
 ## Purpose
 

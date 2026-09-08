@@ -37,7 +37,7 @@ route `cargo run --bin effigy -- bootstrap:local`.
 ## Cards
 
 - [x] [`1117`](./batch-cards/1117-stale-local-install-recovery.md) — complete
-      ([evidence](../../logs/2026-09/08-150412-stale-local-install-recovery-1117.md))
+      ([evidence](../../logs/archive/2026-09/08-150412-stale-local-install-recovery-1117.md))
 
 ## Acceptance
 

@@ -52,7 +52,7 @@ Card `1116` maps every oracle row to proof: focused deps tests, the real
 transition fixture, the rollback regression, `effigy qa`,
 `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and
 `git diff --check`. Evidence is in
-[`07-162725-cargo-link-version-transition-1116`](../../logs/2026-09/07-162725-cargo-link-version-transition-1116.md).
+[`07-162725-cargo-link-version-transition-1116`](../../logs/archive/2026-09/07-162725-cargo-link-version-transition-1116.md).
 
 ## Stop Conditions
 

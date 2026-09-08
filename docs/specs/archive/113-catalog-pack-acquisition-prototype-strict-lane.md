@@ -8,7 +8,7 @@ Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-co
 Roadmap: [`g08.040`](../../roadmaps/g08/040-catalog-pack-acquisition-prototype.md)
 Card: [`1095`](../../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
 Guide: [`067`](../../guides/067-catalog-services-reference.md)
-Evidence: [`2026-09-01 closeout`](../../logs/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
+Evidence: [`2026-09-01 closeout`](../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 
 ## Outcome
 

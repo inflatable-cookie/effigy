@@ -11,7 +11,7 @@ Owner: `effigy-rhai` engine construction and first-party script policy
 Created: 2026-09-01
 Ready since: 2026-09-01 papercut triage on current `main`
 Completed: 2026-09-01
-Evidence: [`2026-09-01 closeout`](../../../logs/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
+Evidence: [`2026-09-01 closeout`](../../../logs/archive/2026-09/01-080923-rhai-profile-independent-limits-1094.md)
 
 ## Purpose
 
