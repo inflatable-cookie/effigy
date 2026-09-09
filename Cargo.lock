@@ -4315,9 +4315,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-language"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
 
 [[package]]
 name = "tree-sitter-php"
@@ -5212,35 +5212,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "swallowtail-adapter-claude-agent"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-codex"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-grok"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-core"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-host-local"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-idioms"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-protocol-acp"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-runtime"
-version = "0.4.4"
