@@ -119,6 +119,20 @@ and plain-text provenance keep naming the former paths without live links:
 - `git diff --check`
   - result: clean
 
+## Merge Outcome
+
+- PR `#103` ("Retire roadmap backlog intake layer"), merged as `24936e81`
+  on 2026-09-09.
+- Accepted review `5603948989`: `ready_to_merge` at `c0e97483`,
+  superseding changes-required reviews `5603781701`/`5603849562`.
+- Remediation in `c0e97483` restored the `qa:northstar:agent-defaults`
+  definition and the `headings` bundle entry (purely additive alongside
+  `qa:northstar:no-backlog`); reworded one starter `AGENTS.md` line off the
+  forbidden `--repo .` literal so a fresh starter repo passes its own
+  emitted check.
+- Transport handoff deleted in the closeout commit; this log is the durable
+  record.
+
 ## Risks
 
 - Archived roll-ups `g02`, `g03`, and `g08` were edited in place to keep live

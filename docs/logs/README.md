@@ -83,7 +83,7 @@ Closed-generation logs live under [`archive/`](./archive/):
 - [`2026-05/`](./archive/2026-05/) — 219 logs
 - [`2026-06/`](./archive/2026-06/) — 20 logs (`g08` opening tranche)
 - [`2026-08/`](./archive/2026-08/) — 46 logs (`g08` close-out tranche)
-- [`2026-09/`](./archive/2026-09/) — 36 logs (`g08` final closeout, `g09`, and flattened-task switchover)
+- [`2026-09/`](./archive/2026-09/) — 37 logs (`g08` final closeout, `g09`, flattened-task switchover, and roadmap-backlog retirement)
 
 Vision rollout history is summarized in `docs/vision/history/README.md`.
 
