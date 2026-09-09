@@ -50,7 +50,7 @@ Owner: `name/team`
 
 ## 3) Versioning and Notes
 
-- [ ] Version bump matches policy (`PATCH` vs `MINOR`) from release contract.
+- [ ] Version bump matches policy (`PATCH` vs `MINOR`) from the release policy in guide `049`.
 - [ ] Planned version reviewed in built-in prepare preview:
   - [ ] `effigy release prepare --plan`
 - [ ] Changelog entry drafted.
@@ -114,7 +114,7 @@ Owner: `name/team`
 
 - [ ] Release approved by owner.
 - [ ] Release announcement sent.
-- [ ] Backlog/roadmap status updated.
+- [ ] Release log and roadmap status updated.
 
 ---
 
@@ -123,8 +123,6 @@ Owner: `name/team`
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
-- [`../roadmaps/backlog/release-contract-v0.md`](../roadmaps/backlog/release-contract-v0.md)
-- [`../roadmaps/backlog/distribution-channels.md`](../roadmaps/backlog/distribution-channels.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 
 ## Next Step

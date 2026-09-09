@@ -130,7 +130,7 @@ required-files = [".github/workflows/release-binaries.yml"]
 
 [distribution.closeout]
 owner = "release"
-related = "docs/roadmaps/backlog/distribution-channels.md"
+related = "docs/guides/049-ci-binary-distribution-and-release-protocol.md"
 next-step = "Review evidence and publish release sign-off notes."
 
 [release]

@@ -66,7 +66,7 @@ Accepted uncertainty (operator-owned):
 
 - whether the next lane is release hardening, governance operationalization,
   agent-adoption proof, or a breaking tidy-up tranche
-- when `g09` rollover is justified versus extending `g08` backlog themes
+- when the next Atlas runway is justified versus extending current triage candidates
 - how aggressively to pursue research Phase 3 (remote execution, plugins,
   telemetry) before Phase 2 DX gaps close
 
@@ -176,15 +176,16 @@ with Acowtancy as the frozen first consumer replay.
 | Outcome | Destination |
 | --- | --- |
 | Strategic horizons and bets | this document (`docs/vision/`) |
-| Candidate `g09` themes awaiting operator pick | [`docs/roadmaps/backlog/g09-candidate-themes.md`](../roadmaps/backlog/g09-candidate-themes.md) |
+| Surviving planning candidates awaiting operator pick | [`docs/triage/`](../triage/README.md): [`20260909-152106-consumer-adoption-cohort-expansion.md`](../triage/20260909-152106-consumer-adoption-cohort-expansion.md) and [`20260909-152107-vendored-effigy-skill-portfolio-sync.md`](../triage/20260909-152107-vendored-effigy-skill-portfolio-sync.md) (both non-authoritative; the former roadmap backlog is retired) |
 | Time-ordered execution | next strict spec + `g08` extension or `g09` README after intent |
 | Governance live data | future populated artifacts under `docs/vision/` + logs |
 | Instruction-surface contract | root `AGENTS.md`, `CLAUDE.md`, `scripts/README.md` |
 
 ## Next Task
 
-Execute `g09.004` release gate diagnosability (card `1112`) first; the Theme 3
-cohort question is settled: consumers are tracked on the `007` section 6
-adoption posture, and cohort expansion is unscheduled until a consumer asks
-or `docs context --sources` evidence motivates it (2026-09-05). Direct
-invocation remains canonical; Effigy release remains separately gated.
+Execute the Atlas runway decision with the operator before any `g10`
+rollover. `g09` is closed with no ready lane: Theme 3's pilot completed as
+`g09.003` and its maturity question is settled on the vision `007` section 6
+adoption posture; cohort expansion is unscheduled until a consumer asks or
+`docs context --sources` evidence motivates it. Effigy release remains
+separately gated.

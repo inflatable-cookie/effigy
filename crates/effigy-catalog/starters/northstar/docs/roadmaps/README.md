@@ -22,10 +22,13 @@ execution record, and “Effigy task” for a command selector.
 - Active generation: none.
 - Approved frontier: none.
 
-## Backlog layout
+## Triage intake
 
-Keep exploratory, unscheduled planning outside the active generation. A backlog
-note becomes executable only after promotion into a ready top-level task.
+Keep exploratory, unscheduled planning in [`../triage/README.md`](../triage/README.md).
+Triage notes are non-authoritative and never executable. A triage note becomes
+executable only after promotion into a ready top-level task. Never keep a
+`docs/roadmaps/backlog/` directory: it is a retired layout and the
+`qa:northstar:no-backlog` check rejects it.
 
 ## Next Task
 

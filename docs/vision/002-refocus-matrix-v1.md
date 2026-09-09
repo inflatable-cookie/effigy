@@ -20,7 +20,7 @@ Purpose: map Effigy's current documentation tracks to blueprint ideals and defin
 | Command/reference guides (`021`-`027`) | OPERATE, CONTRACT | Practical examples and canonical term usage | Add explicit links to blueprint ideals and policy deltas | New scenario expansion before baseline alignment is complete |
 | Roadmap set (`001`-`012`) | MAINT, ROUTE, CONTRACT, OPERATE | Structured goals/non-goals/acceptance format | Add `Vision Alignment`, `Primary Tags`, `Target Envelope`, `Vision Target Delta` | New roadmap creation not mapped to vision targets |
 | Logs (`docs/logs/*`) | CONTRACT, RELEASE, OPERATE | Strong validation command evidence | Standardize "Vision Target Delta" section across log families | Legacy log backfill beyond active release windows |
-| Backlog roadmaps (`roadmaps/backlog/*`) | RELEASE, MAINT | Clear promotion rules and staged planning | Attach target-envelope expectations before promotion | Additional backlog threads not yet tied to blueprint ideals |
+| Triage intake (`docs/triage/*`) | RELEASE, MAINT | Clear promotion rules and staged planning | Attach target-envelope expectations before promotion | Additional triage threads not yet tied to blueprint ideals |
 | Contract index/examples (`docs/contracts`, guides `017`/`026`) | CONTRACT, RELEASE | Canonical envelope and schema indexing | Add explicit contract-governance vision tags and drift checks | Schema expansion without concrete command surfaces |
 
 ## 3. Documentation Realignment Targets
@@ -29,7 +29,7 @@ Purpose: map Effigy's current documentation tracks to blueprint ideals and defin
 2. Every high-traffic guide includes a short "Vision Alignment" section.
 3. Every validation/release log includes a "Vision Target Delta" section.
 4. Contract docs and payload examples include drift-check ownership and update triggers.
-5. Backlog items define promotion criteria in terms of target movement.
+5. Triage notes define promotion criteria in terms of target movement.
 
 ## 4. Realignment Priorities (Recommended)
 

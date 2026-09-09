@@ -46,7 +46,7 @@ validate = [
 "qa:northstar:indexes" = "effigy docs check index --policy-index vision"
 "qa:northstar:next-action" = "effigy docs check next-action --policy vision"
 "qa:northstar:headings" = "effigy docs check headings docs/vision/README.md --require-heading '## Vision Artifacts'"
-"qa:northstar:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'"
+"qa:northstar:no-backlog" = "test ! -e docs/roadmaps/backlog"
 
 "qa:northstar" = [
   { task = "qa:northstar:spine" },
@@ -55,7 +55,7 @@ validate = [
   { task = "qa:northstar:docs-front-door" },
   { task = "qa:northstar:indexes" },
   { task = "qa:northstar:next-action" },
-  { task = "qa:northstar:headings" },
+  { task = "qa:northstar:no-backlog" },
   { task = "qa:northstar:agent-defaults" },
 ]
 

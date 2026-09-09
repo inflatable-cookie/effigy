@@ -131,4 +131,4 @@ Migration steps:
 
 ## Next Step
 
-After CI pinning and wrapper migration are stable, complete Homebrew channel workflow work in backlog phase C and reassess optional wrapper need in phase E.
+After CI pinning and wrapper migration are stable, use [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for current channel workflow detail. The former backlog phase C/E planning is closed.

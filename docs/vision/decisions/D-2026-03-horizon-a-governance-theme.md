@@ -30,7 +30,7 @@ Controls
 Traceability
 - Related Exception: none
 - Related Risk: VR-04
-- Related Artifacts: [`020-strategic-runway-atlas-v1`](../020-strategic-runway-atlas-v1.md), [`g08.032`](../../roadmaps/archive/g08.md), [`g09-candidate-themes`](../../roadmaps/backlog/g09-candidate-themes.md)
+- Related Artifacts: [`020-strategic-runway-atlas-v1`](../020-strategic-runway-atlas-v1.md), [`g08.032`](../../roadmaps/archive/g08.md), former `docs/roadmaps/backlog/g09-candidate-themes.md` (retired 2026-09-09; cohort-expansion remainder lives in `docs/triage/20260909-152106-consumer-adoption-cohort-expansion.md`)
 
 Review checkpoint: completed 2026-09-03; decision remains Stabilized and its
 exit plan is satisfied by D-2026-05.

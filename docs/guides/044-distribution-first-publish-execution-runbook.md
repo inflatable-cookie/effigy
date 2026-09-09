@@ -144,4 +144,4 @@ If any channel fails:
 
 ## Next Step
 
-When a release tag exists, execute this runbook and publish a single acceptance-closeout log that updates remaining criteria in `distribution-channels.md`.
+When a release tag exists, execute this runbook and publish a single acceptance-closeout log. The former `distribution-channels.md` acceptance criteria were promoted through `g03.020` and are closed; do not treat them as open backlog.

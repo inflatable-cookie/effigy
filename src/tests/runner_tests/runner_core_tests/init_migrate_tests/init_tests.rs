@@ -546,6 +546,7 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
             "Created docs/vision/README.md",
             "Created docs/vision/001-product-vision.md",
             "Created docs/roadmaps/README.md",
+            "Created docs/triage/README.md",
             "Created docs/logs/README.md",
             "Created docs/policy/vision-next-task-verbs.txt",
             "Next steps:",
@@ -561,6 +562,10 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
     assert_path_exists(
         &root.join("docs/policy/vision-next-task-verbs.txt"),
         "northstar next-task verb allowlist (nested dirs must be created)",
+    );
+    assert_path_exists(
+        &root.join("docs/triage/README.md"),
+        "northstar triage intake anchor (non-authoritative candidates)",
     );
     // Starter docs_policy wiring + qa:northstar bundle should be present
     // in the emitted manifest.

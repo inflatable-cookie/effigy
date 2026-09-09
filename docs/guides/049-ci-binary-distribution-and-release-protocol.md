@@ -203,10 +203,11 @@ Consumer CI may cache the downloaded binary keyed on version:
 
 ### 6a) Current Policy
 
-Per the release contract (`release-contract-v0.md`):
+Versioning policy for `v0.x` (previously the live release contract):
 - Format: `0.MINOR.PATCH`
-- `PATCH`: bug fixes, no breaking changes
-- `MINOR`: may break, must include migration notes
+- `PATCH`: bug fixes and output polish with no intentional breaking behavior.
+- `MINOR`: may include breaking changes, but must include migration notes.
+- Public references should use exact versions in automation and CI during `v0.x`.
 
 Released-surface rule for deliberate `0.x` minor cuts:
 - keep the previous shipped tag as the compatibility floor until the next
@@ -226,6 +227,19 @@ Supported-boundary rule for `v0.3` messaging:
   plus reusable validation/evidence primitives
 - do not describe the fuller `release proof` path as universally
   generic while it still carries bounded Cargo-centric assumptions
+
+### 6d) Support Window (Early v0.x)
+
+- Maintain the latest `MINOR` line only during early `v0.x`.
+- No long-term support branch until `v1` planning.
+
+### 6e) Promotion Criteria to v1 Planning
+
+Start the `v1` contract planning when all are true:
+
+- distribution channels are stable for at least two release cycles;
+- no major migration pain is reported across active workspaces;
+- the CLI/config surface is mostly additive for one full `MINOR` cycle.
 
 ### 6b) Tagging Rules
 
@@ -424,10 +438,24 @@ Features:
 ## 10) Rollback
 
 If a released binary is broken:
-- Do not delete the GitHub Release or tag
-- Create a new `PATCH` release with the fix
-- Update consumer repos to pin the new version
-- Follow the rollback procedure in `release-contract-v0.md`
+- Do not delete the GitHub Release or tag.
+- Pause new channel publishes.
+- Communicate affected versions and impact.
+- Re-point install guidance to the previous known-good version.
+- Create a new `PATCH` release with the fix.
+- Update consumer repos to pin the new version.
+
+Rollback trigger examples:
+
+- broad task-resolution regression;
+- built-in task routing failures;
+- install/upgrade failures in the primary channel.
+
+Hotfix expectations:
+
+- Use a `PATCH` bump within the same `MINOR` line.
+- Include a focused regression test for the root cause.
+- Add a short checkpoint log under `docs/logs/YYYY-MM/`.
 
 ## Related Guides
 

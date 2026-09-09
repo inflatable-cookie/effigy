@@ -7,8 +7,10 @@ looking for product intent, planning state, or evidence.
 
 - [`vision/`](vision/README.md) — current product vision, long-term outcome,
   strategic constraints, and target envelopes.
-- [`roadmaps/`](roadmaps/README.md) — active generation, task frontier, and backlog
-  layout, organized by generation.
+- [`roadmaps/`](roadmaps/README.md) — active generation and task frontier,
+  organized by generation.
+- [`triage/`](triage/README.md) — non-authoritative intake for unresolved or
+  deferred candidates. Never executable.
 - [`logs/`](logs/README.md) — evidence, decisions, and meaningful batch
   records. Not a chat log.
 

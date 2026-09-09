@@ -297,6 +297,7 @@ mod tests {
             "docs/vision/001-product-vision.md",
             "docs/roadmaps/README.md",
             "docs/roadmaps/templates/task-template.md",
+            "docs/triage/README.md",
             "docs/logs/README.md",
             "docs/policy/vision-next-task-verbs.txt",
         ] {
@@ -357,9 +358,10 @@ mod tests {
             "[docs_policy.graph.relations.next-task]",
             "headings = [\"Next Task\", \"Next task\"]",
             // The template must say, in the emitted bytes, that it is copied
-            // configuration rather than an inherited runtime dependency.
             "COPIED configuration",
             "only runtime authority",
+            "\"qa:northstar:no-backlog\" = \"test ! -e docs/roadmaps/backlog\"",
+            "{ task = \"qa:northstar:no-backlog\" }",
         ] {
             assert!(
                 northstar_manifest.contains(expected),

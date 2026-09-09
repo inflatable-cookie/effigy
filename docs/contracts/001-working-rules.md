@@ -43,7 +43,7 @@ whose ready-state rubric passes. It must name:
 - evidence requirements, continuation, and stop conditions.
 
 If no ready task exists, the project remains in planning. Do not improvise
-execution from a generation summary, backlog item, archived roll-up, spec, log,
+execution from a generation summary, triage note, archived roll-up, spec, log,
 or old handoff.
 
 ## Continue Rule
