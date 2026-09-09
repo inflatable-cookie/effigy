@@ -24,7 +24,7 @@ Route by job, not by startup ritual:
 6. Prefer `effigy <task>` over raw tooling whenever a task covers the path.
 7. Use `effigy --json <command>` when a machine consumer needs the output.
 8. Only use `--repo <PATH>` when intentionally targeting a different repo.
-   Never teach `--repo .` as a default.
+   Never teach an explicit current-directory repo override as a default.
 9. Fall back to raw tools only when Effigy does not cover the path.
 
 ## Default test policy

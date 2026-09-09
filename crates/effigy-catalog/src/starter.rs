@@ -362,6 +362,10 @@ mod tests {
             "only runtime authority",
             "\"qa:northstar:no-backlog\" = \"test ! -e docs/roadmaps/backlog\"",
             "{ task = \"qa:northstar:no-backlog\" }",
+            "\"qa:northstar:agent-defaults\" = \"effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'\"",
+            "{ task = \"qa:northstar:agent-defaults\" }",
+            "{ task = \"qa:northstar:headings\" }",
+            "{ task = \"qa:northstar:next-action\" }",
         ] {
             assert!(
                 northstar_manifest.contains(expected),

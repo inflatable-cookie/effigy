@@ -572,8 +572,11 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
         &[
-            "[docs_policy.indexes.vision]",
-            "[docs_policy.next_actions.vision]",
+            "validate = [",
+            "qa:northstar",
+            "{ task = \"qa:northstar:agent-defaults\" }",
+            "{ task = \"qa:northstar:headings\" }",
+            "{ task = \"qa:northstar:no-backlog\" }",
             "health = [",
             "{ task = \"ping\" }",
             "validate = [",
