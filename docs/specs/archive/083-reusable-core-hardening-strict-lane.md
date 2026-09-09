@@ -1,6 +1,6 @@
 # 083 - Reusable Core Hardening Strict Lane
 
-Roadmap: [`g05.020`](../roadmaps/g05/020-reusable-core-hardening-suite.md)
+Roadmap: [`g05.020`](../../roadmaps/archive/g05.md)
 Contracts:
 - [`025-deploy-provider-package-contract.md`](../contracts/025-deploy-provider-package-contract.md)
 - [`027-state-domain-extraction-contract.md`](../contracts/027-state-domain-extraction-contract.md)

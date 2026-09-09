@@ -25,10 +25,10 @@ Decision record bodies live in [`../decisions/`](../decisions/).
 ## Working Rule
 
 Governance surfaces inform planning and release posture. They do not authorize
-execution, override contracts, or replace ready batch cards.
+execution, override contracts, or replace ready Northstar tasks.
 
 ## Next Task
 
-Card `1111` executed its clean frozen replay; use the scorecard and ownership
-classification in the next monthly review. Reference register row `006` for
-operating-rhythm ownership.
+The g09 consumer-replay task executed its clean frozen replay; use the
+scorecard and ownership classification in the next monthly review. Reference
+register row `006` for operating-rhythm ownership.

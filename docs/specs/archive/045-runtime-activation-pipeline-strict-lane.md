@@ -1,6 +1,6 @@
 # 045 - Runtime Activation Pipeline Strict Lane
 
-Roadmap: [`g04.003`](../roadmaps/g04/003-runtime-activation-pipeline.md)
+Roadmap: [`g04.003`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

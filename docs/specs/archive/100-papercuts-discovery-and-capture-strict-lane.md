@@ -1,6 +1,6 @@
 # 100 Papercuts Discovery And Capture Strict Lane
 
-Roadmap: [`g08.027`](../roadmaps/g08/027-papercuts-discovery-and-capture.md)
+Roadmap: [`g08.027`](../../roadmaps/archive/g08.md)
 Durable authority:
 
 - [`contract/036`](../contracts/036-papercuts-discovery-contract.md)

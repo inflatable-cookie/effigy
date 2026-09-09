@@ -1,6 +1,6 @@
 # 050 - Manager Backed Runtime Read Write Shell Strict Lane
 
-Roadmap: [`g04.008`](../roadmaps/g04/008-manager-backed-runtime-read-write-shell.md)
+Roadmap: [`g04.008`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -101,4 +101,4 @@ operation reports remain compatible, and focused runtime tests pass.
 ## Next Task
 
 Card
-[`562-scaffold-cli-parser-modularisation-lane.md`](./batch-cards/562-scaffold-cli-parser-modularisation-lane.md).
+[`562-scaffold-cli-parser-modularisation-lane.md`](../../roadmaps/archive/g04.md).

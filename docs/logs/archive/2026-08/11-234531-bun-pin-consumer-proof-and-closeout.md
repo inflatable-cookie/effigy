@@ -1,8 +1,8 @@
 # Bun Pin Consumer Proof And Closeout
 
 Date: 2026-08-11
-Roadmap: [`g08.031`](../../roadmaps/g08/031-bun-committed-dependency-pinning.md)
-Card: [`1080`](../../roadmaps/g08/batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md)
+Roadmap: [`g08.031`](../../../roadmaps/archive/g08.md)
+Card: [`1080`](../../../roadmaps/archive/g08.md)
 Contract: [`040`](../../contracts/040-bun-committed-dependency-pinning-contract.md)
 
 ## Vision Target Delta

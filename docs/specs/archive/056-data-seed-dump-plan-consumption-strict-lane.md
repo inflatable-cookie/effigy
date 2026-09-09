@@ -1,6 +1,6 @@
 # 056 - Data Seed Dump Plan Consumption Strict Lane
 
-Roadmap: [`g04.014`](../roadmaps/g04/014-data-seed-dump-plan-consumption.md)
+Roadmap: [`g04.014`](../../roadmaps/archive/g04.md)
 
 Status: Active
 Owner: Platform
@@ -21,7 +21,7 @@ reassembling target, artifact, and command decisions in runner glue.
 
 ## Current Ready Card
 
-[`584-wire-container-data-dump-through-data-dump-plan.md`](./batch-cards/584-wire-container-data-dump-through-data-dump-plan.md)
+[`584-wire-container-data-dump-through-data-dump-plan.md`](../../roadmaps/archive/g04.md)
 
 ## Execution Chain
 
@@ -44,4 +44,4 @@ and the remaining runner code is prompt/render/dispatch glue.
 ## Next Task
 
 Card
-[`584-wire-container-data-dump-through-data-dump-plan.md`](./batch-cards/584-wire-container-data-dump-through-data-dump-plan.md).
+[`584-wire-container-data-dump-through-data-dump-plan.md`](../../roadmaps/archive/g04.md).

@@ -21,8 +21,8 @@ resumes as the active lane.
   - `effigy-distribution`
   - `effigy-release`
 - recorded that the remaining interleaving is accepted as shell/runtime adapter work or later follow-up, not known architecture churn that should keep release closure blocked
-- paused [`g02.010`](../../../roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md)
-- reactivated [`g02.007`](../../../roadmaps/g02/007-distribution-release-and-consumer-rollout.md) and moved [`115`](../../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md) back to ready
+- paused [`g02.010`](../../../roadmaps/archive/g02.md)
+- reactivated [`g02.007`](../../../roadmaps/archive/g02.md) and moved [`115`](../../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md) back to ready
 
 ## Why The Lane Can Pause
 

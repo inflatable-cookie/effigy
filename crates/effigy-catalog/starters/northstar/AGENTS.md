@@ -37,7 +37,8 @@ explicit polyglot and lifecycle-aware routing. Never define `tasks.test`.
 
 - `docs/README.md` names the docs authority for this repo.
 - `docs/vision/README.md` is the product vision index.
-- `docs/roadmaps/README.md` is the active milestone queue.
+- `docs/roadmaps/README.md` names the active generation and approved task
+  frontier.
 - `docs/logs/README.md` is the evidence and decision log.
 
 Do not collapse these three into a single generic planning note.

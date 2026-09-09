@@ -65,4 +65,4 @@ slice.
 
 ## Next Task
 
-Run [`1047-classify-descriptor-and-dispatch-dead-code-roots.md`](../../roadmaps/g08/batch-cards/1047-classify-descriptor-and-dispatch-dead-code-roots.md).
+Run [`1047-classify-descriptor-and-dispatch-dead-code-roots.md`](../../../roadmaps/archive/g08.md).

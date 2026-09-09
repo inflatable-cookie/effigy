@@ -1,14 +1,14 @@
 # 094 - Codebase Leanness And Boundary Hardening Strict Lane
 
-Roadmap: [`g07.056`](../roadmaps/g07/056-codebase-leanness-and-boundary-hardening-suite.md)
+Roadmap: [`g07.056`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.057`](../roadmaps/g07/057-codegraph-language-emitter-deduplication.md)
-- [`g07.058`](../roadmaps/g07/058-codegraph-manifest-query-module-decomposition.md)
-- [`g07.059`](../roadmaps/g07/059-init-setup-module-boundary-cleanup.md)
-- [`g07.060`](../roadmaps/g07/060-json-help-contract-consistency-cleanup.md)
-- [`g07.061`](../roadmaps/g07/061-runner-domain-boundary-and-test-fixture-cleanup.md)
-- [`g07.062`](../roadmaps/g07/062-crate-boundary-rejustification-and-planning-hygiene.md)
-- [`g07.063`](../roadmaps/g07/063-codebase-leanness-closeout.md)
+- [`g07.057`](../../roadmaps/archive/g07.md)
+- [`g07.058`](../../roadmaps/archive/g07.md)
+- [`g07.059`](../../roadmaps/archive/g07.md)
+- [`g07.060`](../../roadmaps/archive/g07.md)
+- [`g07.061`](../../roadmaps/archive/g07.md)
+- [`g07.062`](../../roadmaps/archive/g07.md)
+- [`g07.063`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

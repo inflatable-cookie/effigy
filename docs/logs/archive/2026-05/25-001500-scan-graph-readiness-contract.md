@@ -1,9 +1,9 @@
 # Scan Graph Readiness Contract
 
 Date: 2026-05-25
-Roadmap: [`g08.002`](../roadmaps/g08/002-scan-graph-contract-and-readiness-model.md)
+Roadmap: [`g08.002`](../../../roadmaps/archive/g08.md)
 Strict lane: [`097`](../specs/097-graph-aware-scan-intelligence-strict-lane.md)
-Batch card: [`1030`](../roadmaps/g08/batch-cards/1030-define-scan-graph-readiness-contract.md)
+Batch card: [`1030`](../../../roadmaps/archive/g08.md)
 
 ## What Landed
 

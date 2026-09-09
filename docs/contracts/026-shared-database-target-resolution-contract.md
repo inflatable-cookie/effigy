@@ -1,7 +1,7 @@
 # Shared Database Target Resolution Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/034-shared-database-target-resolution.md`](../roadmaps/g04/034-shared-database-target-resolution.md)
+Roadmap: [`../roadmaps/g04/034-shared-database-target-resolution.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/070-shared-database-target-resolution-strict-lane.md`](../specs/070-shared-database-target-resolution-strict-lane.md)
 Status: Draft
 Owner: Platform

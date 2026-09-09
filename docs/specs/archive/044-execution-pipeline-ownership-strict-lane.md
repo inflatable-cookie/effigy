@@ -1,6 +1,6 @@
 # 044 - Execution Pipeline Ownership Strict Lane
 
-Roadmap: [`g04.002`](../roadmaps/g04/002-execution-pipeline-ownership.md)
+Roadmap: [`g04.002`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -62,4 +62,4 @@ runtime/container ownership, handed to `g04.003`.
 ## Next Task
 
 Card
-[`444-scaffold-runtime-activation-pipeline-lane.md`](./batch-cards/444-scaffold-runtime-activation-pipeline-lane.md).
+[`444-scaffold-runtime-activation-pipeline-lane.md`](../../roadmaps/archive/g04.md).

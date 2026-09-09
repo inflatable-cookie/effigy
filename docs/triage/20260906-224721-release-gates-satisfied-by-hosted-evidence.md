@@ -81,4 +81,4 @@ Operator decides whether to promote a future bounded strict lane: grammar,
 `delegated` outcome, report/JSON fields, guide `051` and contract `039`
 wording, and focused tests. Do not reopen `g09`. On confirmation, Chatterbox
 places it in the operator-selected strategic runway and tells the Swallowtail
-Chatterbox the card id.
+Chatterbox the `gNN.NNN` task ID.

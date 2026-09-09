@@ -1,7 +1,7 @@
 # Graph Agent Adoption Lane Opened
 
 Date: 2026-05-20
-Card: [`1022`](../../../roadmaps/g07/batch-cards/1022-open-graph-agent-adoption-lane.md)
+Card: [`1022`](../../../roadmaps/archive/g07.md)
 Strict lane: [`096`](../../../specs/096-graph-agent-adoption-follow-through-strict-lane.md)
 
 ## Summary

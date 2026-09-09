@@ -1,8 +1,8 @@
 # Route And Entrypoint Edges
 
 Date: 2026-05-18  
-Roadmap: [`g07.040`](../../../roadmaps/g07/040-framework-route-and-entrypoint-edges.md)  
-Batch card: [`989`](../../../roadmaps/g07/batch-cards/989-add-framework-route-entrypoint-edges.md)  
+Roadmap: [`g07.040`](../../../roadmaps/archive/g07.md)
+Batch card: [`989`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

@@ -250,6 +250,6 @@ No product-owned recursive migration scanner is required.
 
 ## Next Task
 
-Roadmap [`g08.028`](../roadmaps/g08/028-explicit-catalog-membership.md) is
+Roadmap [`g08.028`](../roadmaps/archive/g08.md) is
 complete. Await an operator-selected follow-up if this contract needs to
 change.

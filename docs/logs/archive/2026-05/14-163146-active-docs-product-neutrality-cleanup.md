@@ -1,7 +1,7 @@
 # 2026-05-14 16:31:46 - Active Docs Product Neutrality Cleanup
 
-Roadmap: [`g05.020`](../roadmaps/g05/020-reusable-core-hardening-suite.md)  
-Batch card: [`744`](../roadmaps/g05/batch-cards/744-neutralize-active-product-specific-docs.md)  
+Roadmap: [`g05.020`](../../../roadmaps/archive/g05.md)
+Batch card: [`744`](../../../roadmaps/archive/g05.md)
 Strict lane: [`083`](../specs/083-reusable-core-hardening-strict-lane.md)
 
 ## What Changed

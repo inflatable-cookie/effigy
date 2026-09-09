@@ -53,4 +53,4 @@ Batch: external-skill-task-runner-planning
 ## Next Task
 
 Execute ready card
-[`1092`](../../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md).
+[`1092`](../../../roadmaps/archive/g08.md).

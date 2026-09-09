@@ -1,18 +1,18 @@
 # 085 - Code Graph Intelligence Strict Lane
 
-Roadmap: [`g07.001`](../roadmaps/g07/001-code-graph-intelligence-suite.md)
+Roadmap: [`g07.001`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.002`](../roadmaps/g07/002-graph-storage-and-json-contracts.md)
-- [`g07.003`](../roadmaps/g07/003-graph-index-command-and-freshness-model.md)
-- [`g07.004`](../roadmaps/g07/004-first-party-language-extractor-framework.md)
-- [`g07.005`](../roadmaps/g07/005-rust-extractor.md)
-- [`g07.006`](../roadmaps/g07/006-effigy-manifest-toml-and-task-graph-indexer.md)
-- [`g07.007`](../roadmaps/g07/007-markdown-docs-and-anchor-indexer.md)
-- [`g07.008`](../roadmaps/g07/008-php-extractor.md)
-- [`g07.009`](../roadmaps/g07/009-javascript-typescript-extractor.md)
-- [`g07.010`](../roadmaps/g07/010-query-commands.md)
-- [`g07.011`](../roadmaps/g07/011-agent-context-packs.md)
-- [`g07.012`](../roadmaps/g07/012-performance-cache-and-regression-proof.md)
+- [`g07.002`](../../roadmaps/archive/g07.md)
+- [`g07.003`](../../roadmaps/archive/g07.md)
+- [`g07.004`](../../roadmaps/archive/g07.md)
+- [`g07.005`](../../roadmaps/archive/g07.md)
+- [`g07.006`](../../roadmaps/archive/g07.md)
+- [`g07.007`](../../roadmaps/archive/g07.md)
+- [`g07.008`](../../roadmaps/archive/g07.md)
+- [`g07.009`](../../roadmaps/archive/g07.md)
+- [`g07.010`](../../roadmaps/archive/g07.md)
+- [`g07.011`](../../roadmaps/archive/g07.md)
+- [`g07.012`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

@@ -1,6 +1,6 @@
 # 068 - Container Command Decomposition Strict Lane
 
-Roadmap: [`g04.025`](../roadmaps/g04/025-container-command-decomposition.md)
+Roadmap: [`g04.025`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

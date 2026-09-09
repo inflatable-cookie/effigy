@@ -1,8 +1,8 @@
 # Noninteractive Init Actions And Checklist
 
 Date: 2026-05-19  
-Roadmap: [`g07.054`](../../../roadmaps/g07/054-noninteractive-init-action-execution-and-migration-paths.md)  
-Batch card: [`1004`](../../../roadmaps/g07/batch-cards/1004-add-noninteractive-action-execution-and-migration-flows.md)  
+Roadmap: [`g07.054`](../../../roadmaps/archive/g07.md)
+Batch card: [`1004`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

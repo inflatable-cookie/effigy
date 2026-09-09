@@ -206,11 +206,13 @@ At least one vision document should define:
 Should answer:
 
 - generation model
-- active milestone queue
+- active generation or explicit absence
+- approved task frontier or explicit absence
 - backlog layout
 - next roadmap task
 
-At least one active roadmap generation should exist.
+An execution-ready repository should have one active generation. A paused
+repository may explicitly have none while operator intent is unresolved.
 
 ### `docs/logs/README.md`
 
@@ -341,9 +343,10 @@ validate
 
 The starter also emits a `[docs_policy.graph]` block that declares the Northstar
 documentation ontology - contract, architecture, spec, archived spec, vision,
-roadmap, ready card, guide, front door, log, and handoff kinds, with `Status:`
-driving currentness and typed relations for contract, roadmap, spec, card,
-evidence, supersedes, and next task. That block is what makes
+generation roadmap, top-level Northstar task, archived roadmap, guide, front
+door, log, and handoff kinds, with `Status:` driving currentness and typed
+relations for contract, roadmap, spec, task, evidence, supersedes, and next
+task. That block is what makes
 `effigy docs context "<question>"` answer with the governing document rather
 than the first lexical hit.
 
@@ -430,7 +433,7 @@ this order:
 5. `docs/vision/README.md`
 6. first vision document
 7. `docs/roadmaps/README.md`
-8. first roadmap generation README and first active milestone
+8. first roadmap generation README and first active Northstar task
 9. `docs/logs/README.md`
 10. `CHANGELOG.md`
 11. `[docs_policy.graph]` profile, copied from the starter and renamed to the

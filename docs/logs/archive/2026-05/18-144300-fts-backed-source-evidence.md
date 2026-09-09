@@ -1,8 +1,8 @@
 # FTS-Backed Source Evidence
 
 Date: 2026-05-18  
-Roadmap: [`g07.037`](../../../roadmaps/g07/037-fts-backed-source-evidence-and-ranking.md)  
-Batch card: [`986`](../../../roadmaps/g07/batch-cards/986-implement-fts-backed-source-evidence.md)  
+Roadmap: [`g07.037`](../../../roadmaps/archive/g07.md)
+Batch card: [`986`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed
@@ -43,7 +43,7 @@ New regression:
 ## Warm Corpus After Reindex
 
 The active corpus from
-[`codegraph-parity-gold-queries.toml`](../../../roadmaps/g07/codegraph-parity-gold-queries.toml)
+[`codegraph-parity-gold-queries.toml`](../../../roadmaps/archive/g07.md)
 was rerun against the live Effigy repo after `target/debug/effigy graph index`.
 
 | Case | Query | Current top owner | Time | Delta vs `985` baseline |

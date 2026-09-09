@@ -1,6 +1,6 @@
 # 055 - Runtime Activation Route And Plan Authority Strict Lane
 
-Roadmap: [`g04.013`](../roadmaps/g04/013-runtime-activation-route-and-plan-authority.md)
+Roadmap: [`g04.013`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -21,7 +21,7 @@ activation request construction across runner callers.
 
 ## Current Ready Card
 
-[`581-close-runtime-activation-route-authority.md`](./batch-cards/581-close-runtime-activation-route-authority.md)
+[`581-close-runtime-activation-route-authority.md`](../../roadmaps/archive/g04.md)
 
 ## Execution Chain
 
@@ -47,4 +47,4 @@ has a selected consolidation path, and `g04.014` is ready.
 ## Next Task
 
 Card
-[`582-wire-bootstrap-db-seed-through-data-seed-plan.md`](./batch-cards/582-wire-bootstrap-db-seed-through-data-seed-plan.md).
+[`582-wire-bootstrap-db-seed-through-data-seed-plan.md`](../../roadmaps/archive/g04.md).

@@ -3,9 +3,9 @@
 Status: complete; PR `95` merged 2026-09-08 at
 `24e842196465813f960cea15cadd25d5857731fd`
 Created: 2026-09-08
-Roadmap: [`g09.009`](../../roadmaps/g09/009-stale-local-install-recovery.md)
+Roadmap: [`g09.009`](../../../roadmaps/archive/g09.md)
 Spec: [`124`](../../specs/archive/124-stale-local-install-recovery-strict-lane.md)
-Card: [`1117`](../../roadmaps/g09/batch-cards/1117-stale-local-install-recovery.md)
+Card: [`1117`](../../../roadmaps/archive/g09.md)
 Papercut: [`PAPERCUTS.md`](../../PAPERCUTS.md)
 Guide: [`057`](../../guides/057-bootstrap-repo-bringup.md)
 

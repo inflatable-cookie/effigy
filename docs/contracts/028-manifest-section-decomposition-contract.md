@@ -1,7 +1,7 @@
 # Manifest Section Decomposition Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/036-manifest-section-decomposition.md`](../roadmaps/g04/036-manifest-section-decomposition.md)
+Roadmap: [`../roadmaps/g04/036-manifest-section-decomposition.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/072-manifest-section-decomposition-strict-lane.md`](../specs/072-manifest-section-decomposition-strict-lane.md)
 Status: Accepted
 Owner: Platform

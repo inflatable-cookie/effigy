@@ -42,13 +42,7 @@ roadmap and spec files listed below.
 
 ## Governing Refs
 
-- `docs/roadmaps/g02/README.md`
-- `docs/roadmaps/g02/011-service-catalog-and-compose-assembly.md`
-- `docs/roadmaps/g02/012-container-context-and-transparent-execution.md`
-- `docs/roadmaps/g02/013-dev-front-door-and-managed-lifecycle.md`
-- `docs/roadmaps/g02/014-rust-native-gateway.md`
-- `docs/roadmaps/g02/015-persistent-data-and-volume-lifecycle.md`
-- `docs/roadmaps/g02/016-multi-project-coordination.md`
+- `docs/roadmaps/archive/g02.md` (generation roll-up; full source retained in Git)
 - `docs/specs/011-service-catalog-and-compose-assembly-strict-lane.md`
 - `docs/specs/006-colima-container-environment-strict-lane.md` (predecessor)
 - `docs/guides/063-container-system-guide.md` (v1 operator guide)

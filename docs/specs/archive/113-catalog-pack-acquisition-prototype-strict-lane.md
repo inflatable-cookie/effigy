@@ -5,8 +5,8 @@ Created: 2026-09-01
 Closed: 2026-09-01
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
-Roadmap: [`g08.040`](../../roadmaps/g08/040-catalog-pack-acquisition-prototype.md)
-Card: [`1095`](../../roadmaps/g08/batch-cards/1095-prototype-catalog-pack-acquisition.md)
+Roadmap: [`g08.040`](../../roadmaps/archive/g08.md)
+Card: [`1095`](../../roadmaps/archive/g08.md)
 Guide: [`067`](../../guides/067-catalog-services-reference.md)
 Evidence: [`2026-09-01 closeout`](../../logs/archive/2026-09/01-095641-catalog-pack-acquisition-prototype-1095.md)
 

@@ -1,8 +1,8 @@
 # Role-Aware Graph Context Ranking
 
 Date: 2026-05-18  
-Roadmap: [`g07.027`](../../../roadmaps/g07/027-role-aware-context-ranker.md)  
-Batch card: [`972`](../../../roadmaps/g07/batch-cards/972-implement-role-aware-context-ranking.md)  
+Roadmap: [`g07.027`](../../../roadmaps/archive/g07.md)
+Batch card: [`972`](../../../roadmaps/archive/g07.md)
 Strict lane: [`089`](../../../specs/089-graph-navigation-ranking-quality-strict-lane.md)
 
 ## What Changed

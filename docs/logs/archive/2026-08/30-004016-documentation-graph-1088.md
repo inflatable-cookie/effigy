@@ -148,4 +148,4 @@ retrieval over these structural records. Do not implement `1089` in this PR.
 ## Next Task
 
 Execute ready card
-[`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1089`](../../../roadmaps/archive/g08.md).

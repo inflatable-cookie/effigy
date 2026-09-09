@@ -63,4 +63,4 @@ well enough that remaining findings are more likely to be real cleanup.
 
 ## Next Task
 
-Run [`1049-classify-rust-impl-and-associated-call-dead-code.md`](../../roadmaps/g08/batch-cards/1049-classify-rust-impl-and-associated-call-dead-code.md).
+Run [`1049-classify-rust-impl-and-associated-call-dead-code.md`](../../../roadmaps/archive/g08.md).

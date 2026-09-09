@@ -1,7 +1,7 @@
 # Artifact And Crate Boundary Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/039-artifact-and-crate-boundary-rejustification.md`](../roadmaps/g04/039-artifact-and-crate-boundary-rejustification.md)
+Roadmap: [`../roadmaps/g04/039-artifact-and-crate-boundary-rejustification.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/075-artifact-and-crate-boundary-review-strict-lane.md`](../specs/075-artifact-and-crate-boundary-review-strict-lane.md)
 Status: Accepted
 Owner: Platform

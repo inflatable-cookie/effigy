@@ -1,8 +1,8 @@
 # Help Topic Duplicate Reduction
 
 Date: 2026-05-20  
-Roadmap: [`g07.068`](../../../roadmaps/g07/068-high-duplicate-help-fragment-reduction.md)  
-Batch card: [`1018`](../../../roadmaps/g07/batch-cards/1018-trim-high-help-topic-duplicates.md)  
+Roadmap: [`g07.068`](../../../roadmaps/archive/g07.md)
+Batch card: [`1018`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

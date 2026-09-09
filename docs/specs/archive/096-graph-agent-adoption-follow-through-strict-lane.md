@@ -1,13 +1,13 @@
 # 096 - Graph Agent Adoption Follow Through Strict Lane
 
-Roadmap: [`g07.072`](../roadmaps/g07/072-graph-agent-adoption-follow-through-suite.md)
+Roadmap: [`g07.072`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.073`](../roadmaps/g07/073-graph-freshness-trust-and-cross-repo-readiness.md)
-- [`g07.074`](../roadmaps/g07/074-behavioral-query-ranking-and-vocabulary.md)
-- [`g07.075`](../roadmaps/g07/075-edit-target-and-related-test-packets.md)
-- [`g07.076`](../roadmaps/g07/076-cross-repo-agent-usage-benchmark.md)
-- [`g07.077`](../roadmaps/g07/077-agent-skill-and-doc-query-guidance.md)
-- [`g07.078`](../roadmaps/g07/078-graph-agent-adoption-closeout.md)
+- [`g07.073`](../../roadmaps/archive/g07.md)
+- [`g07.074`](../../roadmaps/archive/g07.md)
+- [`g07.075`](../../roadmaps/archive/g07.md)
+- [`g07.076`](../../roadmaps/archive/g07.md)
+- [`g07.077`](../../roadmaps/archive/g07.md)
+- [`g07.078`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

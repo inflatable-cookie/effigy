@@ -2,7 +2,7 @@
 
 Status: Complete
 Owner: documentation and public discovery surfaces
-Roadmap: [`g08.034`](../../roadmaps/g08/034-documentation-coverage-parity.md)
+Roadmap: [`g08.034`](../../roadmaps/archive/g08.md)
 Contracts: [`001`](../../contracts/001-working-rules.md)
 Guides: [`037`](../../guides/037-documentation-contribution-playbook.md),
 [`035`](../../guides/035-guide-ownership-and-update-triggers.md)

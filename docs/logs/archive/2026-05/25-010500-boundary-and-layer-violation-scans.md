@@ -1,9 +1,9 @@
 # Boundary And Layer Violation Scans
 
 Date: 2026-05-25
-Roadmap: [`g08.004`](../roadmaps/g08/004-boundary-and-layer-violation-scans.md)
+Roadmap: [`g08.004`](../../../roadmaps/archive/g08.md)
 Strict lane: [`097`](../specs/097-graph-aware-scan-intelligence-strict-lane.md)
-Batch card: [`1032`](../roadmaps/g08/batch-cards/1032-add-boundary-and-layer-violation-scans.md)
+Batch card: [`1032`](../../../roadmaps/archive/g08.md)
 
 ## What Landed
 

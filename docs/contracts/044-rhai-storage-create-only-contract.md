@@ -4,7 +4,7 @@ Status: active
 Owner: Rhai object-storage mutation boundary
 Created: 2026-09-01
 Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Roadmap: [`g08.044`](../roadmaps/g08/044-rhai-storage-create-only.md)
+Roadmap: [`g08.044`](../roadmaps/archive/g08.md)
 
 ## Purpose
 

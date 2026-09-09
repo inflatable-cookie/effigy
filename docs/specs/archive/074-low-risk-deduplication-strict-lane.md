@@ -1,6 +1,6 @@
 # 074 - Low-Risk Deduplication Strict Lane
 
-Roadmap: [`g04.038`](../roadmaps/g04/038-docs-policy-cli-help-and-test-fixture-deduplication.md)
+Roadmap: [`g04.038`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

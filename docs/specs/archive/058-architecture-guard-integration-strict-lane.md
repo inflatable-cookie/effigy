@@ -1,6 +1,6 @@
 # 058 - Architecture Guard Integration Strict Lane
 
-Roadmap: [`g04.016`](../roadmaps/g04/016-architecture-guard-integration.md)
+Roadmap: [`g04.016`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -20,7 +20,7 @@ an optional side task.
 
 ## Current Ready Card
 
-[`586-wire-architecture-guard-into-validation-aggregators.md`](./batch-cards/586-wire-architecture-guard-into-validation-aggregators.md)
+[`586-wire-architecture-guard-into-validation-aggregators.md`](../../roadmaps/archive/g04.md)
 
 ## Execution Chain
 
@@ -35,4 +35,4 @@ drift and the suppression policy is documented.
 ## Next Task
 
 Card
-[`587-split-effigy-container-ops-module-owners.md`](./batch-cards/587-split-effigy-container-ops-module-owners.md).
+[`587-split-effigy-container-ops-module-owners.md`](../../roadmaps/archive/g04.md).

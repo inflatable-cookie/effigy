@@ -1,8 +1,8 @@
 # Graph Follow-Up Closeout
 
 Date: 2026-05-18  
-Roadmap: [`g07.013`](../roadmaps/g07/013-graph-follow-up-performance-and-fixture-reliability.md)  
-Batch card: [`935`](../roadmaps/g07/batch-cards/935-close-graph-follow-up-proof.md)  
+Roadmap: [`g07.013`](../../../roadmaps/archive/g07.md)
+Batch card: [`935`](../../../roadmaps/archive/g07.md)
 Strict lane: [`086`](../specs/086-graph-follow-up-performance-and-fixture-reliability-strict-lane.md)
 
 ## What Changed

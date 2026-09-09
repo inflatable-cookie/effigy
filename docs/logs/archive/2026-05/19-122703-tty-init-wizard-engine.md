@@ -1,8 +1,8 @@
 # TTY Init Wizard Engine
 
 Date: 2026-05-19  
-Roadmap: [`g07.052`](../../../roadmaps/g07/052-tty-init-wizard-engine-and-prompt-flow.md)  
-Batch card: [`1002`](../../../roadmaps/g07/batch-cards/1002-build-tty-init-wizard-engine.md)  
+Roadmap: [`g07.052`](../../../roadmaps/archive/g07.md)
+Batch card: [`1002`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

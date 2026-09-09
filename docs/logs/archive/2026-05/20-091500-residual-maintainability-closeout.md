@@ -1,8 +1,8 @@
 # Residual Maintainability Closeout
 
 Date: 2026-05-20  
-Roadmap: [`g07.071`](../../../roadmaps/g07/071-residual-maintainability-closeout.md)  
-Batch card: [`1021`](../../../roadmaps/g07/batch-cards/1021-close-residual-maintainability-lane.md)  
+Roadmap: [`g07.071`](../../../roadmaps/archive/g07.md)
+Batch card: [`1021`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

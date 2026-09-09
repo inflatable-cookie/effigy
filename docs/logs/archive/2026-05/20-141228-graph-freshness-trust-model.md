@@ -1,7 +1,7 @@
 # Graph Freshness Trust Model
 
 Date: 2026-05-20
-Card: [`1023`](../../../roadmaps/g07/batch-cards/1023-tighten-graph-freshness-trust-model.md)
+Card: [`1023`](../../../roadmaps/archive/g07.md)
 Strict lane: [`096`](../../../specs/096-graph-agent-adoption-follow-through-strict-lane.md)
 
 ## Summary

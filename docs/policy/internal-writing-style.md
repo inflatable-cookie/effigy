@@ -30,8 +30,8 @@ reply, not for every message:
 ## Apply to
 
 - chat replies about internal work
-- batch cards
-- roadmap milestones
+- Northstar tasks
+- generation roadmaps
 - logs
 - handoffs
 - internal contracts and working rules

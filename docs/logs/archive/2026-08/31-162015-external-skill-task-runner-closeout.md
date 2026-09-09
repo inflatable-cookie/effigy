@@ -128,4 +128,4 @@ the Effigy worker checkout:
 ## Next Task
 
 Execute ready card
-[`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1089`](../../../roadmaps/archive/g08.md).

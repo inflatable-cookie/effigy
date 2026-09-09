@@ -1,6 +1,6 @@
 # 069 - Shared Dispatcher and Exec Collapse Strict Lane
 
-Roadmap: [`g04.026`](../roadmaps/g04/026-shared-dispatcher-and-exec-collapse.md)
+Roadmap: [`g04.026`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

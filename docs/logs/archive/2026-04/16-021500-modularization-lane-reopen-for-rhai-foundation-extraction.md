@@ -13,7 +13,7 @@ active again and Rhai extraction is the next batch.
 
 ## What Changed
 
-- reopened [`g02.010`](../../../roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md)
+- reopened [`g02.010`](../../../roadmaps/archive/g02.md)
 - re-queued [`115`](../../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md)
 - set [`127`](../../../specs/batch-cards/127-implement-effigy-rhai-foundation-extraction.md) as the new ready card
 - recorded Rhai as the next honest seam because `src/runner/script_command.rs`

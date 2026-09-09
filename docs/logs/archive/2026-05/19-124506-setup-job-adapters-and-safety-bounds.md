@@ -1,8 +1,8 @@
 # Setup Job Adapters And Safety Bounds
 
 Date: 2026-05-19  
-Roadmap: [`g07.053`](../../../roadmaps/g07/053-setup-job-adapters-and-mutation-boundaries.md)  
-Batch card: [`1003`](../../../roadmaps/g07/batch-cards/1003-wire-setup-job-adapters-and-safety-bounds.md)  
+Roadmap: [`g07.053`](../../../roadmaps/archive/g07.md)
+Batch card: [`1003`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

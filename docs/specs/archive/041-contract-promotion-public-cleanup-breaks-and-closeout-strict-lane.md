@@ -1,6 +1,6 @@
 # 041 - Contract Promotion Public Cleanup Breaks And Closeout Strict Lane
 
-Roadmap: [`g03.035`](../roadmaps/g03/035-contract-promotion-public-cleanup-breaks-and-closeout.md)
+Roadmap: [`g03.035`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

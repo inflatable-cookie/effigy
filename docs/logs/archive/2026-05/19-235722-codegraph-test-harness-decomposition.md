@@ -1,8 +1,8 @@
 # Codegraph Test Harness Decomposition
 
 Date: 2026-05-19
-Roadmap: [`g07.066`](../../../roadmaps/g07/066-codegraph-test-harness-decomposition.md)
-Batch card: [`1016`](../../../roadmaps/g07/batch-cards/1016-decompose-codegraph-test-harness.md)
+Roadmap: [`g07.066`](../../../roadmaps/archive/g07.md)
+Batch card: [`1016`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

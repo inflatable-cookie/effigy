@@ -88,7 +88,7 @@ Also inspect:
 - src/cli/**
 - crates/*/src/**
 - docs/specs/archive/010-effigy-modularization-and-crate-boundaries-strict-lane.md
-- recent docs/specs/ and docs/roadmaps/g04/ entries
+- recent docs/specs/ entries and the current Northstar roadmap front door
 - docs/contracts/
 - current command/reference guides
 
@@ -280,7 +280,7 @@ Recommended inspection targets:
 - `crates/*/src/**`
 - `docs/specs/archive/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 - latest `docs/specs/0*.md`
-- latest `docs/roadmaps/g04/*.md`
+- `docs/roadmaps/README.md`
 - `docs/contracts/`
 - `docs/guides/025-command-reference-matrix.md`
 - `docs/guides/026-json-payload-examples.md`
@@ -306,7 +306,7 @@ The audit must not:
 
 - edit source files
 - refactor code
-- open implementation roadmaps or batch cards unless explicitly asked after the
+- open a generation or implementation tasks unless explicitly asked after the
   audit
 - run release prepare or release execute
 - modify `.github/workflows/`
@@ -323,7 +323,7 @@ After the audit report is reviewed:
 1. Select the top one to three roadmap candidates.
 2. Promote durable behavior or architecture rules into `docs/contracts/` or
    `docs/architecture/` only when needed.
-3. Create roadmap files or batch cards for selected work.
+3. Create top-level `gNN.NNN` Northstar tasks for selected work.
 4. Keep each implementation batch bounded and independently verifiable.
 5. Validate with targeted tests first, then broader QA once a coherent tranche
    lands.

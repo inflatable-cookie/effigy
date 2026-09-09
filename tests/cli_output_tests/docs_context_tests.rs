@@ -665,16 +665,15 @@ fn governed_directory_files(root: &Path) -> Vec<String> {
 const NORTHSTAR_VOCABULARY: &[&str] = &[
     "northstar",
     "roadmap",
-    "ready-card",
-    "ready card",
-    "batch-card",
-    "batch card",
+    "northstar task",
+    "ready task",
+    "approved frontier",
+    "archived-roadmap",
     "handoff",
     "archived-spec",
     "next-task",
     "next task",
     "strict-ready",
-    "milestone",
     "papercut",
     "docs/contracts",
     "docs/specs",
@@ -811,7 +810,14 @@ fn northstar_starter_profile_is_queryable_from_the_copied_manifest_alone() {
         .iter()
         .map(|kind| kind.as_str().expect("kind token").to_owned())
         .collect();
-    for expected in ["contract", "archived-spec", "roadmap", "ready-card", "log"] {
+    for expected in [
+        "contract",
+        "archived-spec",
+        "roadmap",
+        "task",
+        "archived-roadmap",
+        "log",
+    ] {
         assert!(
             kinds.contains(&expected.to_owned()),
             "copied Northstar profile is missing kind `{expected}`; got {kinds:?}"
@@ -823,7 +829,7 @@ fn northstar_starter_profile_is_queryable_from_the_copied_manifest_alone() {
         .iter()
         .map(|relation| relation.as_str().expect("relation token").to_owned())
         .collect();
-    for expected in ["contract", "roadmap", "evidence", "next-task"] {
+    for expected in ["contract", "roadmap", "task", "evidence", "next-task"] {
         assert!(
             relations.contains(&expected.to_owned()),
             "copied Northstar profile is missing relation `{expected}`; got {relations:?}"

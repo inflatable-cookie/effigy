@@ -2,9 +2,9 @@
 
 Date: 2026-09-02
 Status: Ready for execution
-Roadmap: [`g09.001`](../../roadmaps/g09/001-command-surface-compaction-preview.md)
+Roadmap: [`g09.001`](../../../roadmaps/archive/g09.md)
 Spec: [`116`](../../specs/116-command-surface-compaction-preview-strict-lane.md)
-Card: [`1109`](../../roadmaps/g09/batch-cards/1109-add-executable-command-namespaces.md)
+Card: [`1109`](../../../roadmaps/archive/g09.md)
 
 ## Outcome
 

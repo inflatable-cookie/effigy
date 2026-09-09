@@ -1,14 +1,14 @@
 # CodeGraph Parity Benchmark Baseline
 
 Date: 2026-05-18  
-Roadmap: [`g07.036`](../../../roadmaps/g07/036-parity-benchmark-harness-and-claim-discipline.md)  
-Batch card: [`985`](../../../roadmaps/g07/batch-cards/985-open-codegraph-parity-benchmark-lane.md)  
+Roadmap: [`g07.036`](../../../roadmaps/archive/g07.md)
+Batch card: [`985`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed
 
 - created the machine-readable gold query set:
-  [`codegraph-parity-gold-queries.toml`](../../../roadmaps/g07/codegraph-parity-gold-queries.toml)
+  [`codegraph-parity-gold-queries.toml`](../../../roadmaps/archive/g07.md)
 - pinned the current warm-index baseline for live Effigy repo navigation
 - separated exact-token fallback from graph-navigation measurements
 - reserved deferred fixture-only cases for affected-test and cross-language work

@@ -1,8 +1,8 @@
 # Init Setup Wizard Lane Opened
 
 Date: 2026-05-19  
-Roadmap: [`g07.050`](../../../roadmaps/g07/050-init-setup-wizard-suite.md)  
-Batch card: [`1000`](../../../roadmaps/g07/batch-cards/1000-open-init-setup-wizard-lane.md)  
+Roadmap: [`g07.050`](../../../roadmaps/archive/g07.md)
+Batch card: [`1000`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

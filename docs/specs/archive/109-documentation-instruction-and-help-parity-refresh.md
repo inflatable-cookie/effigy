@@ -2,12 +2,12 @@
 
 Status: Complete
 Owner: active documentation and public discovery surfaces
-Roadmap: [`g08.036`](../../roadmaps/g08/036-documentation-instruction-and-help-parity-refresh.md)
+Roadmap: [`g08.036`](../../roadmaps/archive/g08.md)
 Contracts: [`001`](../../contracts/001-working-rules.md)
 Guides: [`035`](../../guides/035-guide-ownership-and-update-triggers.md),
 [`037`](../../guides/037-documentation-contribution-playbook.md)
-Prior evidence: [`g08.034`](../../roadmaps/g08/034-documentation-coverage-parity.md)
-Completed card: [`1091`](../../roadmaps/g08/batch-cards/1091-audit-and-refresh-documentation-instructions-and-help.md)
+Prior evidence: [`g08.034`](../../roadmaps/archive/g08.md)
+Completed card: [`1091`](../../roadmaps/archive/g08.md)
 
 ## Problem
 
@@ -98,4 +98,4 @@ backed by an explicit matrix.
 ## Next Task
 
 Run the active documentation-graph lane at ready card
-[`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1089`](../../roadmaps/archive/g08.md).

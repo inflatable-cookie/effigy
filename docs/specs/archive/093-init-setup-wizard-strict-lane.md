@@ -1,12 +1,12 @@
 # 093 - Init Setup Wizard Strict Lane
 
-Roadmap: [`g07.050`](../roadmaps/g07/050-init-setup-wizard-suite.md)
+Roadmap: [`g07.050`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.051`](../roadmaps/g07/051-init-context-inventory-and-checklist-contract.md)
-- [`g07.052`](../roadmaps/g07/052-tty-init-wizard-engine-and-prompt-flow.md)
-- [`g07.053`](../roadmaps/g07/053-setup-job-adapters-and-mutation-boundaries.md)
-- [`g07.054`](../roadmaps/g07/054-noninteractive-init-action-execution-and-migration-paths.md)
-- [`g07.055`](../roadmaps/g07/055-init-wizard-proof-docs-and-closeout.md)
+- [`g07.051`](../../roadmaps/archive/g07.md)
+- [`g07.052`](../../roadmaps/archive/g07.md)
+- [`g07.053`](../../roadmaps/archive/g07.md)
+- [`g07.054`](../../roadmaps/archive/g07.md)
+- [`g07.055`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

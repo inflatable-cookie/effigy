@@ -1,6 +1,6 @@
 # 043 - Runtime Architecture Sanity And g04 Rollover Strict Lane
 
-Roadmap: [`g04.001`](../roadmaps/g04/001-runtime-architecture-sanity-audit-and-generation-rollover.md)
+Roadmap: [`g04.001`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

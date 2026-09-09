@@ -1,8 +1,8 @@
 # Python Extractor Slice
 
 Date: 2026-05-18  
-Roadmap: [`g07.039`](../../../roadmaps/g07/039-richer-language-extractor-coverage.md)  
-Batch card: [`988`](../../../roadmaps/g07/batch-cards/988-expand-language-extractor-priority-set.md)  
+Roadmap: [`g07.039`](../../../roadmaps/archive/g07.md)
+Batch card: [`988`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

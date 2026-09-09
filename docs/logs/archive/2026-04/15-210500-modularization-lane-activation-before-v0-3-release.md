@@ -17,7 +17,7 @@ This batch activated `g02.010` for crate-boundary architecture work and left
 ## What Changed
 
 - added `g02.010`:
-  [`010-effigy-modularization-and-crate-boundaries.md`](../../../roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md)
+  [`010-effigy-modularization-and-crate-boundaries.md`](../../../roadmaps/archive/g02.md)
 - added the active strict lane:
   [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](../../../specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md)
 - added the first ready card:

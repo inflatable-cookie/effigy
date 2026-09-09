@@ -1,7 +1,7 @@
 # 2026-05-14 16:29:01 - Provider Source Materialization Convergence
 
-Roadmap: [`g05.020`](../roadmaps/g05/020-reusable-core-hardening-suite.md)  
-Batch card: [`743`](../roadmaps/g05/batch-cards/743-converge-provider-source-materialization.md)  
+Roadmap: [`g05.020`](../../../roadmaps/archive/g05.md)
+Batch card: [`743`](../../../roadmaps/archive/g05.md)
 Strict lane: [`083`](../specs/083-reusable-core-hardening-strict-lane.md)
 
 ## What Changed

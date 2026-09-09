@@ -3,7 +3,7 @@
 Status: active
 Owner: Platform maintainers
 Architecture: [`024`](../architecture/024-repository-defined-documentation-graph.md)
-Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
+Roadmap: [`g08.035`](../roadmaps/archive/g08.md)
 Spec: [`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
 ## Purpose

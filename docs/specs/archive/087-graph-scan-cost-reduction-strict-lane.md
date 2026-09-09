@@ -1,10 +1,10 @@
 # 087 - Graph Scan Cost Reduction Strict Lane
 
-Roadmap: [`g07.017`](../roadmaps/g07/017-graph-scan-cost-reduction-suite.md)
+Roadmap: [`g07.017`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.018`](../roadmaps/g07/018-file-walk-and-scan-metadata-baseline.md)
-- [`g07.019`](../roadmaps/g07/019-safe-scan-metadata-reuse.md)
-- [`g07.020`](../roadmaps/g07/020-scan-cost-closeout-proof.md)
+- [`g07.018`](../../roadmaps/archive/g07.md)
+- [`g07.019`](../../roadmaps/archive/g07.md)
+- [`g07.020`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

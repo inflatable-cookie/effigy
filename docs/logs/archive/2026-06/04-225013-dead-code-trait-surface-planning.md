@@ -68,4 +68,4 @@ remain visible.
 
 ## Next Task
 
-Run [`1046-classify-trait-and-api-surface-dead-code.md`](../../roadmaps/g08/batch-cards/1046-classify-trait-and-api-surface-dead-code.md).
+Run [`1046-classify-trait-and-api-surface-dead-code.md`](../../../roadmaps/archive/g08.md).

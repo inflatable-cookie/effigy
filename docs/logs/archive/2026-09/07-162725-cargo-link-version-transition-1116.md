@@ -2,9 +2,9 @@
 
 Status: complete
 Created: 2026-09-07
-Roadmap: [`g09.008`](../../roadmaps/g09/008-cargo-link-version-transition.md)
+Roadmap: [`g09.008`](../../../roadmaps/archive/g09.md)
 Spec: [`123`](../../specs/archive/123-cargo-link-version-transition-strict-lane.md)
-Card: [`1116`](../../roadmaps/g09/batch-cards/1116-cargo-link-version-transition.md)
+Card: [`1116`](../../../roadmaps/archive/g09.md)
 Contract: [`034`](../../contracts/034-local-dependency-linking-contract.md)
 Guide: [`077`](../../guides/077-local-dependency-linking.md)
 

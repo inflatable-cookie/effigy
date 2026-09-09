@@ -1,6 +1,6 @@
 # 046 - Container Operation Pipeline Strict Lane
 
-Roadmap: [`g04.004`](../roadmaps/g04/004-container-operation-pipeline.md)
+Roadmap: [`g04.004`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

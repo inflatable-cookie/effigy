@@ -1,6 +1,6 @@
 # 052 - Drift Guards And Architecture Proof Matrix Strict Lane
 
-Roadmap: [`g04.010`](../roadmaps/g04/010-drift-guards-and-architecture-proof-matrix.md)
+Roadmap: [`g04.010`](../../roadmaps/archive/g04.md)
 
 Status: Active
 Owner: Platform
@@ -21,7 +21,7 @@ explainable drift guards and a focused proof matrix for critical paths.
 
 ## Current Ready Card
 
-[`572-close-drift-guards-and-handoff-contract-promotion.md`](./batch-cards/572-close-drift-guards-and-handoff-contract-promotion.md)
+[`572-close-drift-guards-and-handoff-contract-promotion.md`](../../roadmaps/archive/g04.md)
 
 ## Execution Chain
 
@@ -161,4 +161,4 @@ documented, and the proof matrix covers the critical runtime/container paths.
 ## Next Task
 
 Card
-[`572-close-drift-guards-and-handoff-contract-promotion.md`](./batch-cards/572-close-drift-guards-and-handoff-contract-promotion.md).
+[`572-close-drift-guards-and-handoff-contract-promotion.md`](../../roadmaps/archive/g04.md).

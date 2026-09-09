@@ -72,10 +72,10 @@ Accepted uncertainty (operator-owned):
 
 ## 4. Horizon model
 
-### Horizon A — Stabilize and choose (now → next ready card)
+### Horizon A — Stabilize and choose (now → next ready task)
 
 Outcome: trustworthy planning surfaces and one operator-selected lane compiled
-into strict specs/cards.
+into a ready Northstar task.
 
 Depends on:
 
@@ -87,7 +87,7 @@ Unlocks: a single honest `g08` extension or a disciplined `g09` open.
 
 Excludes: parallel "small polish" lanes across unrelated seams.
 
-Rollover trigger: operator confirms lane + acceptance; planning compiles cards.
+Rollover trigger: operator confirms lane + acceptance; planning compiles tasks.
 
 ### Horizon B — Governed product operations (next 1–2 generations)
 
@@ -162,8 +162,8 @@ with Acowtancy as the frozen first consumer replay.
    updated Northstar contract (complete in this pass).
 2. **Operator intent checkpoint** — pick one owner: governance registers,
    release candidate, agent-adoption cohort, or breaking cleanup preview.
-3. **Compile next strict lane** — one spec, one roadmap milestone, ready cards
-   with acceptance + validation + stop conditions.
+3. **Compile next strict lane** — one top-level Northstar task with acceptance,
+   validation, and stop conditions; use a supporting spec only when needed.
 4. **Governance operationalization** — first populated status register +
    decision index + governance review cycle.
 5. **Agent adoption proof** — cross-repo benchmark + papercuts-driven fixes

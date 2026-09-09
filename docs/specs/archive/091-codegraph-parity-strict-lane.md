@@ -1,17 +1,17 @@
 # 091 - CodeGraph Parity Strict Lane
 
-Roadmap: [`g07.035`](../roadmaps/g07/035-codegraph-parity-suite.md)
+Roadmap: [`g07.035`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.036`](../roadmaps/g07/036-parity-benchmark-harness-and-claim-discipline.md)
-- [`g07.037`](../roadmaps/g07/037-fts-backed-source-evidence-and-ranking.md)
-- [`g07.038`](../roadmaps/g07/038-traversal-aware-explore-assembly.md)
-- [`g07.039`](../roadmaps/g07/039-richer-language-extractor-coverage.md)
-- [`g07.040`](../roadmaps/g07/040-framework-route-and-entrypoint-edges.md)
-- [`g07.041`](../roadmaps/g07/041-source-section-packets-and-no-reread-workflow.md)
-- [`g07.042`](../roadmaps/g07/042-affected-test-and-impact-workflow.md)
-- [`g07.043`](../roadmaps/g07/043-large-repo-scale-and-storage-hardening.md)
-- [`g07.044`](../roadmaps/g07/044-agent-adoption-and-cli-workflow-polish.md)
-- [`g07.045`](../roadmaps/g07/045-codegraph-parity-closeout.md)
+- [`g07.036`](../../roadmaps/archive/g07.md)
+- [`g07.037`](../../roadmaps/archive/g07.md)
+- [`g07.038`](../../roadmaps/archive/g07.md)
+- [`g07.039`](../../roadmaps/archive/g07.md)
+- [`g07.040`](../../roadmaps/archive/g07.md)
+- [`g07.041`](../../roadmaps/archive/g07.md)
+- [`g07.042`](../../roadmaps/archive/g07.md)
+- [`g07.043`](../../roadmaps/archive/g07.md)
+- [`g07.044`](../../roadmaps/archive/g07.md)
+- [`g07.045`](../../roadmaps/archive/g07.md)
 
 Status: Paused
 Owner: Platform

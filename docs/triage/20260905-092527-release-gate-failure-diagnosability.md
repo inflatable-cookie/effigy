@@ -4,7 +4,7 @@ Status: open — unscheduled remainder
 Created: 2026-09-05
 Owner: chatterbox
 Source: Swallowtail Chatterbox handoff (2026-09-05), request 3 of 4
-Promoted: requests 1, 2, and 4 became [`g09.004`](../roadmaps/g09/004-release-gate-diagnosability.md)
+Promoted: requests 1, 2, and 4 became [`g09.004`](../roadmaps/archive/g09.md)
 / strict spec `119` / card `1112` on 2026-09-05
 
 ## Issue

@@ -32,4 +32,5 @@ trace back to vision.
 
 ## Next Task
 
-Define the first roadmap milestone that realizes part of this vision.
+Define the first top-level `g01.001` Northstar task that realizes part of this
+vision.

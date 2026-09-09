@@ -1,8 +1,8 @@
 # File Walk And Scan Cost Baseline
 
 Date: 2026-05-18  
-Roadmap: [`g07.018`](../roadmaps/g07/018-file-walk-and-scan-metadata-baseline.md)  
-Batch card: [`951`](../roadmaps/g07/batch-cards/951-baseline-file-walk-and-scan-cost.md)  
+Roadmap: [`g07.018`](../../../roadmaps/archive/g07.md)
+Batch card: [`951`](../../../roadmaps/archive/g07.md)
 Strict lane: [`087`](../specs/087-graph-scan-cost-reduction-strict-lane.md)
 
 ## What Changed

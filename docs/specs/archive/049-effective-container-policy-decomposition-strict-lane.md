@@ -1,6 +1,6 @@
 # 049 - Effective Container Policy Decomposition Strict Lane
 
-Roadmap: [`g04.007`](../roadmaps/g04/007-effective-container-policy-decomposition.md)
+Roadmap: [`g04.007`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

@@ -67,4 +67,4 @@ remain bounded to card `1074`.
 ## Next Task
 
 Execute ready card
-[`1074`](../../roadmaps/g08/batch-cards/1074-delete-discovery-and-align-diagnostics.md).
+[`1074`](../../../roadmaps/archive/g08.md).

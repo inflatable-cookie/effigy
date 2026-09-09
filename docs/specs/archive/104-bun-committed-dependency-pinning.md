@@ -7,7 +7,7 @@ Promoted: 2026-08-11
 Completed: 2026-08-11
 Reopened: 2026-08-12
 Follow-up completed: 2026-08-12
-Roadmap: [`g08.031`](../../roadmaps/g08/031-bun-committed-dependency-pinning.md)
+Roadmap: [`g08.031`](../../roadmaps/archive/g08.md)
 Contract: [`040`](../../contracts/040-bun-committed-dependency-pinning-contract.md)
 
 ## Purpose
@@ -48,10 +48,10 @@ Posture: `strict-complete`
 
 Cards:
 
-- [`1078`](../../roadmaps/g08/batch-cards/1078-build-bun-pin-planner-and-manifest-transaction.md) — complete
-- [`1079`](../../roadmaps/g08/batch-cards/1079-wire-bun-pin-cli-json-and-link-interlocks.md) — complete
-- [`1080`](../../roadmaps/g08/batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md) — complete
-- [`1081`](../../roadmaps/g08/batch-cards/1081-decouple-bun-pin-from-pm-ls-lockfile-failures.md) — complete
+- [`1078`](../../roadmaps/archive/g08.md) — complete
+- [`1079`](../../roadmaps/archive/g08.md) — complete
+- [`1080`](../../roadmaps/archive/g08.md) — complete
+- [`1081`](../../roadmaps/archive/g08.md) — complete
 
 ## Stop Conditions Carried Forward
 

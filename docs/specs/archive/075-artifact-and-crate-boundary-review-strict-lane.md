@@ -1,6 +1,6 @@
 # 075 - Artifact And Crate Boundary Review Strict Lane
 
-Roadmap: [`g04.039`](../roadmaps/g04/039-artifact-and-crate-boundary-rejustification.md)
+Roadmap: [`g04.039`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

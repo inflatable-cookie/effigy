@@ -97,4 +97,4 @@ Batch: card-1079-wire-bun-pin-cli-json-and-link-interlocks
 ## Next Task
 
 Execute ready card
-[`1080`](../../roadmaps/g08/batch-cards/1080-prove-bun-pin-consumer-workflow-and-closeout.md).
+[`1080`](../../../roadmaps/archive/g08.md).

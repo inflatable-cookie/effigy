@@ -1,6 +1,6 @@
 # 059 - Planning Crate Decomposition Strict Lane
 
-Roadmap: [`g04.017`](../roadmaps/g04/017-planning-crate-decomposition.md)
+Roadmap: [`g04.017`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

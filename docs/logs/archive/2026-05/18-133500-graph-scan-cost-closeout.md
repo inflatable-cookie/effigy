@@ -1,8 +1,8 @@
 # Graph Scan Cost Closeout
 
 Date: 2026-05-18  
-Roadmap: [`g07.017`](../roadmaps/g07/017-graph-scan-cost-reduction-suite.md)  
-Batch card: [`954`](../roadmaps/g07/batch-cards/954-close-graph-scan-cost-proof.md)  
+Roadmap: [`g07.017`](../../../roadmaps/archive/g07.md)
+Batch card: [`954`](../../../roadmaps/archive/g07.md)
 Strict lane: [`087`](../specs/087-graph-scan-cost-reduction-strict-lane.md)
 
 ## What Changed

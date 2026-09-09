@@ -1,6 +1,6 @@
 # 072 - Manifest Section Decomposition Strict Lane
 
-Roadmap: [`g04.036`](../roadmaps/g04/036-manifest-section-decomposition.md)
+Roadmap: [`g04.036`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

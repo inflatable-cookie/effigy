@@ -1,10 +1,10 @@
 # 092 - CodeGraph Parity Follow Up Strict Lane
 
-Roadmap: [`g07.046`](../roadmaps/g07/046-codegraph-parity-follow-up-suite.md)
+Roadmap: [`g07.046`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.047`](../roadmaps/g07/047-warm-query-latency-and-release-ranking.md)
-- [`g07.048`](../roadmaps/g07/048-fixture-backed-parity-proof.md)
-- [`g07.049`](../roadmaps/g07/049-codegraph-parity-follow-up-closeout.md)
+- [`g07.047`](../../roadmaps/archive/g07.md)
+- [`g07.048`](../../roadmaps/archive/g07.md)
+- [`g07.049`](../../roadmaps/archive/g07.md)
 
 Status: Paused
 Owner: Platform

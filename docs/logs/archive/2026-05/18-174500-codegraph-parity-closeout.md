@@ -1,10 +1,10 @@
 # CodeGraph Parity Closeout
 
 Date: 2026-05-18  
-Roadmap: [`g07.045`](../../../roadmaps/g07/045-codegraph-parity-closeout.md)  
+Roadmap: [`g07.045`](../../../roadmaps/archive/g07.md)
 Batch cards:
-- [`994`](../../../roadmaps/g07/batch-cards/994-run-codegraph-parity-closeout.md)
-- [`995`](../../../roadmaps/g07/batch-cards/995-close-or-rescope-codegraph-parity-lane.md)  
+- [`994`](../../../roadmaps/archive/g07.md)
+- [`995`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## Decision

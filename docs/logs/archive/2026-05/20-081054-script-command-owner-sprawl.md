@@ -1,8 +1,8 @@
 # Script Command Owner Sprawl
 
 Date: 2026-05-20  
-Roadmap: [`g07.067`](../../../roadmaps/g07/067-script-command-boundary-reduction.md)  
-Batch card: [`1017`](../../../roadmaps/g07/batch-cards/1017-reduce-script-command-owner-sprawl.md)  
+Roadmap: [`g07.067`](../../../roadmaps/archive/g07.md)
+Batch card: [`1017`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

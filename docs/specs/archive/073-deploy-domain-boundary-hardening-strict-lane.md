@@ -1,6 +1,6 @@
 # 073 - Deploy Domain Boundary Hardening Strict Lane
 
-Roadmap: [`g04.037`](../roadmaps/g04/037-deploy-domain-boundary-hardening.md)
+Roadmap: [`g04.037`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

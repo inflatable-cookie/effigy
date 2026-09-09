@@ -1,8 +1,8 @@
 # Graph Follow-Up Baseline Inventory
 
 Date: 2026-05-18  
-Roadmap: [`g07.013`](../roadmaps/g07/013-graph-follow-up-performance-and-fixture-reliability.md)  
-Batch card: [`931`](../roadmaps/g07/batch-cards/931-baseline-incremental-query-and-failed-path-inventory.md)  
+Roadmap: [`g07.013`](../../../roadmaps/archive/g07.md)
+Batch card: [`931`](../../../roadmaps/archive/g07.md)
 Strict lane: [`086`](../specs/086-graph-follow-up-performance-and-fixture-reliability-strict-lane.md)
 
 ## What Changed

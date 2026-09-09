@@ -3,8 +3,8 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
-Roadmap: [`g09.005`](../../roadmaps/g09/005-docs-context-latency-and-freshness.md)
-Ready card: [`1113`](../../roadmaps/g09/batch-cards/1113-docs-context-latency-and-freshness.md)
+Roadmap: [`g09.005`](../../roadmaps/archive/g09.md)
+Ready card: [`1113`](../../roadmaps/archive/g09.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
 Guides: [`079`](../../guides/079-documentation-graph-profiles-and-context.md),

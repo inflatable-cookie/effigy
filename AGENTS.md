@@ -8,7 +8,7 @@ Effigy is a Rust-based unified task runner for monorepos. Behavior is
 
 ## Always-loaded boundaries
 
-- Use canonical docs and ready-card surfaces; do not invent parallel planning
+- Use canonical docs and ready Northstar task surfaces; do not invent parallel planning
   authority.
 - Normal-mode agents use the current checkout. Worker mode activates only from
   an orchestrator handoff declaring `handoff_mode: worker-pr-loop`.
@@ -47,14 +47,14 @@ documentation authority (which contract, decision, or lane governs the work);
 
 - `docs/README.md` — docs front door
 - `docs/vision/README.md` — long-horizon direction
-- `docs/roadmaps/README.md` — active milestone queue
+- `docs/roadmaps/README.md` — active generation and approved task frontier
 - `docs/logs/README.md` — evidence log
 - `docs/contracts/001-working-rules.md` — strict execution rules
 - `docs/policy/internal-writing-style.md` — internal writing style
 
 Bare `continue` in the strict lane resolves through the previous `Next Task`.
-Anchor on the current ready batch card when one exists; otherwise stay in
-planning.
+Anchor on the current ready `gNN.NNN` Northstar task when one exists; otherwise
+stay in planning.
 
 During execution, append solvable friction to `PAPERCUTS.md` per the Northstar
 papercuts loop; do not stop the current task to fix papercuts unless already in

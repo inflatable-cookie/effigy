@@ -1,6 +1,6 @@
 # 063 - Task Status Query Surface And Read Model Strict Lane
 
-Roadmap: [`g04.021`](../roadmaps/g04/021-task-status-query-surface-and-read-model.md)
+Roadmap: [`g04.021`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

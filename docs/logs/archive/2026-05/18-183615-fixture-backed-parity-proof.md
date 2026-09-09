@@ -1,8 +1,8 @@
 # Fixture Backed Parity Proof
 
 Date: 2026-05-18  
-Roadmap: [`g07.048`](../../../roadmaps/g07/048-fixture-backed-parity-proof.md)  
-Batch card: [`998`](../../../roadmaps/g07/batch-cards/998-add-fixture-backed-parity-runner.md)  
+Roadmap: [`g07.048`](../../../roadmaps/archive/g07.md)
+Batch card: [`998`](../../../roadmaps/archive/g07.md)
 Strict lane: [`092`](../../../specs/092-codegraph-parity-follow-up-strict-lane.md)
 
 ## What Changed

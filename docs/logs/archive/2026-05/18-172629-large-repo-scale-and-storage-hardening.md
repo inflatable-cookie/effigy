@@ -1,8 +1,8 @@
 # Large Repo Scale And Storage Hardening
 
 Date: 2026-05-18  
-Roadmap: [`g07.043`](../../../roadmaps/g07/043-large-repo-scale-and-storage-hardening.md)  
-Batch card: [`992`](../../../roadmaps/g07/batch-cards/992-harden-large-repo-scale-and-storage.md)  
+Roadmap: [`g07.043`](../../../roadmaps/archive/g07.md)
+Batch card: [`992`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

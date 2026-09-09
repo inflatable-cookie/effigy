@@ -1,6 +1,6 @@
 # 078 - Local Encrypted Vault Strict Lane
 
-Roadmap: [`g05.003`](../roadmaps/g05/003-local-encrypted-vault.md)
+Roadmap: [`g05.003`](../../roadmaps/archive/g05.md)
 Contract: [`032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md)
 
 Status: Complete

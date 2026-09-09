@@ -61,4 +61,4 @@ private structs and enums visible.
 
 ## Next Task
 
-Run [`1048-classify-dto-render-config-dead-code-roots.md`](../../roadmaps/g08/batch-cards/1048-classify-dto-render-config-dead-code-roots.md).
+Run [`1048-classify-dto-render-config-dead-code-roots.md`](../../../roadmaps/archive/g08.md).

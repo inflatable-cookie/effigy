@@ -1,103 +1,97 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-08-30
+Updated: 2026-09-09
 
-This contract defines how Effigy executes active roadmap work under the strict
-Northstar posture.
+This contract defines how Effigy plans and executes Northstar work using the
+generation-plus-task model.
 
 ## Canonical Surfaces
 
-Execution should anchor on these surfaces in order:
+Execution anchors on these surfaces in order:
 
 1. `docs/roadmaps/generation-index.md`
 2. `docs/roadmaps/README.md`
-3. the active generation README
-4. the active roadmap milestone
-5. `docs/specs/README.md`
-6. the active spec and current ready batch card
+3. the active `docs/roadmaps/gNN/README.md`
+4. the active top-level `docs/roadmaps/gNN/NNN-<slug>.md` Northstar task
+5. current architecture and contracts named by that task
+6. `docs/specs/README.md` and any active supporting spec
 7. `docs/logs/README.md`
 
-Historical logs and handoffs may preserve useful evidence, but they must not be
-the only live queue authority.
+Historical roll-ups, specs, logs, handoffs, and queue records preserve evidence.
+They are not live execution authority.
+
+## Planning unit
+
+The sole executable planning unit is a Northstar task at
+`docs/roadmaps/gNN/NNN-<slug>.md`, referenced as `gNN.NNN`.
+
+- The generation README owns the roadmap and approved frontier.
+- Do not create milestone wrappers or nested `batch-cards/`.
+- “Queue task” means a control-plane execution record.
+- “Effigy task” means a command selector.
 
 ## Ready-State Rule
 
-Implementation work should only proceed when a bounded ready batch card exists.
+Implementation proceeds only from a bounded task whose status is `ready` and
+whose ready-state rubric passes. It must name:
 
-A ready card must make these things explicit:
+- owner, outcome, and governing refs;
+- dependencies and dispatch boundaries;
+- ordered work and mutable paths;
+- acceptance/review oracle and validation;
+- evidence requirements, continuation, and stop conditions.
 
-- owner and seam
-- governing roadmap/spec context
-- acceptance criteria
-- validation expectation
-- stop conditions
-
-If there is no ready card, the lane is in planning. Do not improvise execution
-from a roadmap summary or old handoff note.
+If no ready task exists, the project remains in planning. Do not improvise
+execution from a generation summary, backlog item, archived roll-up, spec, log,
+or old handoff.
 
 ## Continue Rule
 
-In a strict Effigy lane, bare `continue` should resolve through the previous
-closeout's `Next Task`.
-
-That `Next Task` should normally point at the current ready batch card. If it
-does not, refresh the active surfaces before more execution continues.
+In a strict Effigy lane, bare `continue` resolves through the previous
+closeout's `Next Task`. That pointer should name the current ready Northstar
+task or a planning route. Repair stale active surfaces before continuing.
 
 ## Closeout Rule
 
-When a batch closes:
+When a Northstar task closes:
 
-1. update the batch card
-2. update the governing roadmap/spec if status or next-step state changed
-3. refresh any front-door or currentness surface that still advertises the
-   active lane or ready card
-4. write one evidence log with validation actually run
-5. leave one explicit `Next Task` in the highest-authority active surface
-6. delete the lane's dispatch handoff under `docs/handoffs/`; git history is
-   its record, and a merged lane's handoff is not documentation
+1. update the task outcome, evidence, and status;
+2. update its generation README and approved frontier;
+3. update any governing spec and stale front-door pointer;
+4. write one evidence log with validation actually run;
+5. leave one explicit `Next Task` in the highest-authority active surface;
+6. delete the completed lane's dispatch handoff under `docs/handoffs/`; Git and
+   Northstar Queue retain that execution record.
 
-A completed card must never remain advertised as the current ready card.
+A completed task must never remain in the approved frontier.
 
 ## Generation Rollover Rule
 
-Treat roadmap generations as substantial sequencing eras, not tiny buckets.
-In a long-running repo, expect roughly 20 to 40 roadmap files in one
-generation before rollover is even worth discussing.
+Generations are substantial sequencing eras, normally 20–50 meaningful tasks.
+Rollover is a full closeout:
 
-Treat rollover as full closeout:
+- every task is closed, superseded, or rehomed;
+- front doors agree the generation is no longer active;
+- open commitments have current homes;
+- stale generation-specific specs are archived or removed;
+- the expanded generation is compacted into a non-procedural roll-up under
+  `docs/roadmaps/archive/` through the lifecycle preservation procedure.
 
-- every roadmap in the old generation must be explicitly closed, paused,
-  superseded, or moved to backlog
-- the roadmap front doors must reflect that closed state before the next
-  generation opens
-- stale specs and batch cards from the closing generation must be archived or
-  removed from `docs/specs/`
-
-If those closeout conditions are not satisfied, repair the current generation
-instead of opening a new one.
+Repair the current generation instead of opening a new one to escape cleanup.
 
 ## Intent Checkpoint Rule
 
-When planning is needed and the next direction is materially ambiguous, stop
-and ask for intent instead of guessing.
+When the next direction is materially ambiguous, stop and ask the operator.
+Do not infer a generation, task, release, or breaking change.
 
-## Batch Scope Rule
+## Scope Rule
 
-Keep work bounded to one honest owner at a time.
-
-For Effigy this usually means one of:
-
-- bootstrap/repo acquisition behavior
-- release/readiness proof
-- consumer-adoption or docs-boundary work
-- a focused built-in or manifest capability
-
-Do not bundle unrelated product work, release chores, and docs cleanups into
-one vague “polish” lane.
+Keep each task bounded to one honest owner and one reviewable outcome. Do not
+bundle unrelated product work, release chores, and docs cleanup into a vague
+polish lane.
 
 ## Next Task
 
-Execute card `1117`, the final `g09` lane. After its reviewed merge, close the
-generation and run Northstar Refresh. Effigy release and S3 extraction remain
-separately gated.
+No generation or ready task is active. Run Northstar Atlas with the operator
+before opening `g10`. Effigy release and S3 retirement remain separately gated.

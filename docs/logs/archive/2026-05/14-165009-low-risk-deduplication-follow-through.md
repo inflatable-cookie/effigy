@@ -1,7 +1,7 @@
 # 2026-05-14 16:50:09 - Low-Risk Deduplication Follow-Through
 
-Roadmap: [`g05.020`](../roadmaps/g05/020-reusable-core-hardening-suite.md)  
-Batch card: [`746`](../roadmaps/g05/batch-cards/746-reduce-high-duplicate-blocks.md)  
+Roadmap: [`g05.020`](../../../roadmaps/archive/g05.md)
+Batch card: [`746`](../../../roadmaps/archive/g05.md)
 Strict lane: [`083`](../specs/083-reusable-core-hardening-strict-lane.md)
 
 ## What Changed

@@ -92,8 +92,8 @@ Two rules catch most first-profile mistakes:
 
 - **Kind globs must not overlap.** One document matches at most one kind, and an
   overlap is a profile error naming the path and both kinds. A single `*` never
-  crosses a path separator, which is what keeps `docs/roadmaps/*/*.md` disjoint
-  from `docs/roadmaps/*/batch-cards/*.md`.
+  crosses a path separator; use explicit generation README, top-level task,
+  archive, and template patterns instead of one broad roadmap glob.
 - **Authority is policy, not relevance.** It orders results that already match
   lexically or over a traversed relation. It can never pull an unrelated
   document into a report.
@@ -147,19 +147,19 @@ effigy docs context "catalog_tasks"
 ```
 
 Shapes 3, 4, and 5 are different questions and stay separate. **Current roadmap**
-names the milestone's own subject matter and returns the milestone file. **Active
+names the generation or task's own subject matter and returns that file. **Active
 lane** asks the planning front door which lane is open. **Next task** targets the
-`Next Task` heading that lanes, roadmaps, and cards all carry.
+`Next Task` heading that lanes, roadmaps, and tasks all carry.
 
 A current-roadmap query answers with whatever the repository's `Status:` values
 say is current — it does not manufacture one. Run against this repository today,
 shape 3 returns `docs/architecture/024-repository-defined-documentation-graph.md`
-at rank 1 and `docs/roadmaps/g08/035-repository-defined-documentation-graph.md`
-at rank 2, and the milestone reads `currentness historical` because `g08.035`
-closed and no milestone has been opened since. That is the honest answer, not a
+at rank 1 and `docs/roadmaps/archive/g08.md` at rank 2. The roll-up reads
+`currentness historical` because `g08.035`
+closed and no generation has been opened since. That is the honest answer, not a
 miss: the architecture document is the live authority on the subject and the
-milestone is finished. On a repository with live work the same shape returns the
-active milestone as `current`, and its completed predecessors rank below it.
+generation is finished. On a repository with live work the same shape returns the
+active task as `current`, and its completed predecessors rank below it.
 
 The same shape in the arbitrary vocabulary of
 `tests/fixtures/docs-context-benchmark/generic-handbook/`, where a live and a

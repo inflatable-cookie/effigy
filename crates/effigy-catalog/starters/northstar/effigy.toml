@@ -165,16 +165,22 @@ authority = 10
 default-currentness = "historical"
 
 [docs_policy.graph.kinds.roadmap]
-include = ["docs/roadmaps/*.md", "docs/roadmaps/*/*.md"]
+include = ["docs/roadmaps/*.md", "docs/roadmaps/g??/README.md"]
 exclude = []
 authority = 70
 default-currentness = "unknown"
 
-[docs_policy.graph.kinds.ready-card]
-include = ["docs/roadmaps/*/batch-cards/*.md"]
+[docs_policy.graph.kinds.task]
+include = ["docs/roadmaps/g??/[0-9][0-9][0-9]-*.md"]
 exclude = []
 authority = 60
 default-currentness = "unknown"
+
+[docs_policy.graph.kinds.archived-roadmap]
+include = ["docs/roadmaps/archive/*.md"]
+exclude = []
+authority = 10
+default-currentness = "historical"
 
 [docs_policy.graph.kinds.guide]
 include = ["docs/guides/*.md"]
@@ -232,8 +238,8 @@ headings = []
 labels = ["Roadmap", "Roadmaps"]
 headings = []
 
-[docs_policy.graph.relations.card]
-labels = ["Card", "Batch card", "Ready card", "Current ready card"]
+[docs_policy.graph.relations.task]
+labels = ["Task", "Northstar task", "Current task", "Ready task", "Completed task"]
 headings = []
 
 [docs_policy.graph.relations.evidence]
@@ -246,7 +252,7 @@ headings = []
 
 [docs_policy.graph.relations.next-task]
 labels = []
-headings = ["Next Task"]
+headings = ["Next Task", "Next task"]
 
 # ---- Release (deferred) ------------------------------------------------------
 # Uncomment and tune once the repo is actually preparing to ship artifacts.

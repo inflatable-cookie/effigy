@@ -1,8 +1,8 @@
 # Manifest Semantic Owner Split
 
 Date: 2026-05-19  
-Roadmap: [`g07.065`](../../../roadmaps/g07/065-manifest-semantic-owner-split.md)  
-Batch card: [`1015`](../../../roadmaps/g07/batch-cards/1015-split-manifest-semantic-ownership.md)  
+Roadmap: [`g07.065`](../../../roadmaps/archive/g07.md)
+Batch card: [`1015`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

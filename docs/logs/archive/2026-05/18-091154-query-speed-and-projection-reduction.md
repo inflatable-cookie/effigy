@@ -1,8 +1,8 @@
 # Query Speed And Projection Reduction
 
 Date: 2026-05-18  
-Roadmap: [`g07.015`](../roadmaps/g07/015-query-speed-and-projection-reduction.md)  
-Batch card: [`933`](../roadmaps/g07/batch-cards/933-reduce-query-latency-and-context-projection-cost.md)  
+Roadmap: [`g07.015`](../../../roadmaps/archive/g07.md)
+Batch card: [`933`](../../../roadmaps/archive/g07.md)
 Strict lane: [`086`](../specs/086-graph-follow-up-performance-and-fixture-reliability-strict-lane.md)
 
 ## What Changed

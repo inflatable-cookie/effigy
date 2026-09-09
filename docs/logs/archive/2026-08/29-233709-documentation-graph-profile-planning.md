@@ -55,4 +55,4 @@ Batch: planning compile
 ## Next Task
 
 Execute ready card
-[`1088`](../../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md).
+[`1088`](../../../roadmaps/archive/g08.md).

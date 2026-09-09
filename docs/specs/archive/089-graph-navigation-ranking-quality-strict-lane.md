@@ -1,11 +1,11 @@
 # 089 - Graph Navigation Ranking Quality Strict Lane
 
-Roadmap: [`g07.025`](../roadmaps/g07/025-graph-context-ranking-quality-suite.md)
+Roadmap: [`g07.025`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.026`](../roadmaps/g07/026-context-ranking-baseline-and-gold-tasks.md)
-- [`g07.027`](../roadmaps/g07/027-role-aware-context-ranker.md)
-- [`g07.028`](../roadmaps/g07/028-search-and-snippet-usefulness.md)
-- [`g07.029`](../roadmaps/g07/029-graph-navigation-quality-closeout.md)
+- [`g07.026`](../../roadmaps/archive/g07.md)
+- [`g07.027`](../../roadmaps/archive/g07.md)
+- [`g07.028`](../../roadmaps/archive/g07.md)
+- [`g07.029`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

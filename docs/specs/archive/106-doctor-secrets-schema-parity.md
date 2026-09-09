@@ -2,7 +2,7 @@
 
 Status: Complete
 Owner: `effigy-doctor` manifest schema validation
-Roadmap: [`g08.033`](../../roadmaps/g08/033-doctor-secrets-schema-parity.md)
+Roadmap: [`g08.033`](../../roadmaps/archive/g08.md)
 Contracts: [`001`](../../contracts/001-working-rules.md),
 [`032`](../../contracts/032-secret-and-local-config-management-contract.md)
 

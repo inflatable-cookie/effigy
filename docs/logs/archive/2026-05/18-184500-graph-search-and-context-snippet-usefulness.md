@@ -1,8 +1,8 @@
 # Graph Search And Context Snippet Usefulness
 
 Date: 2026-05-18  
-Roadmap: [`g07.028`](../../../roadmaps/g07/028-search-and-snippet-usefulness.md)  
-Batch card: [`973`](../../../roadmaps/g07/batch-cards/973-improve-search-and-context-snippets.md)  
+Roadmap: [`g07.028`](../../../roadmaps/archive/g07.md)
+Batch card: [`973`](../../../roadmaps/archive/g07.md)
 Strict lane: [`089`](../../../specs/089-graph-navigation-ranking-quality-strict-lane.md)
 
 ## What Changed

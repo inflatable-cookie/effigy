@@ -1,13 +1,13 @@
 # 099 - Local Dependency Management Strict Lane
 
-Roadmap: [`g08.018`](../roadmaps/g08/018-local-dependency-management-suite.md)
+Roadmap: [`g08.018`](../../roadmaps/archive/g08.md)
 Related planning:
 
-- [`g08.019`](../roadmaps/g08/019-dependency-inventory-and-command-foundation.md)
-- [`g08.020`](../roadmaps/g08/020-cargo-local-dependency-linking.md)
-- [`g08.021`](../roadmaps/g08/021-bun-local-dependency-linking.md)
-- [`g08.022`](../roadmaps/g08/022-dependency-link-doctor-and-hygiene.md)
-- [`g08.023`](../roadmaps/g08/023-dependency-link-portfolio-proof-and-closeout.md)
+- [`g08.019`](../../roadmaps/archive/g08.md)
+- [`g08.020`](../../roadmaps/archive/g08.md)
+- [`g08.021`](../../roadmaps/archive/g08.md)
+- [`g08.022`](../../roadmaps/archive/g08.md)
+- [`g08.023`](../../roadmaps/archive/g08.md)
 
 Durable authority:
 

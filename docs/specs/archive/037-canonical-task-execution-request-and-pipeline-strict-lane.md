@@ -1,6 +1,6 @@
 # 037 - Canonical Task Execution Request And Pipeline Strict Lane
 
-Roadmap: [`g03.032`](../roadmaps/g03/032-canonical-task-execution-request-and-pipeline.md)
+Roadmap: [`g03.032`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

@@ -1,8 +1,8 @@
 # Runner Private Helper Convergence
 
 Date: 2026-05-20  
-Roadmap: [`g07.070`](../../../roadmaps/g07/070-runner-private-fixture-and-helper-convergence.md)  
-Batch card: [`1020`](../../../roadmaps/g07/batch-cards/1020-converge-runner-private-fixtures-and-helpers.md)  
+Roadmap: [`g07.070`](../../../roadmaps/archive/g07.md)
+Batch card: [`1020`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

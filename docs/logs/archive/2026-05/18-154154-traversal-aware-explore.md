@@ -1,8 +1,8 @@
 # Traversal-Aware Explore
 
 Date: 2026-05-18  
-Roadmap: [`g07.038`](../../../roadmaps/g07/038-traversal-aware-explore-assembly.md)  
-Batch card: [`987`](../../../roadmaps/g07/batch-cards/987-implement-traversal-aware-explore.md)  
+Roadmap: [`g07.038`](../../../roadmaps/archive/g07.md)
+Batch card: [`987`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

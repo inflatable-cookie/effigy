@@ -444,5 +444,5 @@ Minimum proof before `g04` closes:
 
 ## Next Task
 
-Start card
-[`515-add-data-target-selection-plan.md`](../specs/batch-cards/515-add-data-target-selection-plan.md).
+This audit's g04 follow-through is complete. Use the current roadmap front door
+for any new planning; do not restart historical task `515`.

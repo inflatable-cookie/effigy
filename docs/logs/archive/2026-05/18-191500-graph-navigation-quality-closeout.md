@@ -1,8 +1,8 @@
 # Graph Navigation Quality Closeout
 
 Date: 2026-05-18  
-Roadmap: [`g07.029`](../../../roadmaps/g07/029-graph-navigation-quality-closeout.md)  
-Batch card: [`974`](../../../roadmaps/g07/batch-cards/974-close-graph-navigation-quality-proof.md)  
+Roadmap: [`g07.029`](../../../roadmaps/archive/g07.md)
+Batch card: [`974`](../../../roadmaps/archive/g07.md)
 Strict lane: [`089`](../../../specs/089-graph-navigation-ranking-quality-strict-lane.md)
 
 ## What Changed

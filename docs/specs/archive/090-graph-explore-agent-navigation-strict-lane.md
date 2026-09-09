@@ -1,11 +1,11 @@
 # 090 - Graph Explore Agent Navigation Strict Lane
 
-Roadmap: [`g07.030`](../roadmaps/g07/030-graph-explore-agent-call-suite.md)
+Roadmap: [`g07.030`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.031`](../roadmaps/g07/031-explore-contract-and-benchmark-baseline.md)
-- [`g07.032`](../roadmaps/g07/032-explore-context-assembly-command.md)
-- [`g07.033`](../roadmaps/g07/033-agent-guidance-and-skill-update.md)
-- [`g07.034`](../roadmaps/g07/034-explore-benchmark-closeout.md)
+- [`g07.031`](../../roadmaps/archive/g07.md)
+- [`g07.032`](../../roadmaps/archive/g07.md)
+- [`g07.033`](../../roadmaps/archive/g07.md)
+- [`g07.034`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

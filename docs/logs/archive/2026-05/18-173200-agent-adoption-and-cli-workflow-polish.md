@@ -1,8 +1,8 @@
 # Agent Adoption And CLI Workflow Polish
 
 Date: 2026-05-18  
-Roadmap: [`g07.044`](../../../roadmaps/g07/044-agent-adoption-and-cli-workflow-polish.md)  
-Batch card: [`993`](../../../roadmaps/g07/batch-cards/993-polish-agent-adoption-and-cli-workflow.md)  
+Roadmap: [`g07.044`](../../../roadmaps/archive/g07.md)
+Batch card: [`993`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

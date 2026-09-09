@@ -5,7 +5,7 @@ Window
 - Criteria: [`007` maturity stages](../007-vision-adoption-and-maturity-model-v1.md);
   template [`016`](../016-cross-repo-rollout-comparison-scorecard-template-v1.md)
 - Evidence window: the frozen Acowtancy replay of card
-  [`1111`](../../roadmaps/g09/batch-cards/1111-acowtancy-consumer-adoption-replay.md)
+  [`1111`](../../roadmaps/archive/g09.md)
   at consumer SHA `91228893cbc2c6440b115b5aa1ee2fe34064f35b` with Effigy
   `e44da9fd59e4696d4c7868d6c7e528201eb41e24`; command evidence is in log
   [`03-014518`](../../logs/archive/2026-09/03-014518-acowtancy-consumer-replay-1111.md)

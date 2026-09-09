@@ -11,8 +11,9 @@ completed as a narrow `g08` extension. Theme 4 completed as the `g09.001`
 preview and was rolled back by `g09.002`. Theme 3 is promoted as `g09.003`;
 Theme 5 remains unscheduled and release-gated.
 
-Do not treat this file as an execution queue. Promote exactly one theme (or a
-deliberate `g08` extension) into a numbered roadmap, spec, and ready cards.
+Do not treat this file as an execution queue. Promote an operator-selected
+theme into one or more dependency-linked top-level Northstar tasks; use a
+supporting spec only when the lane needs tighter provisional grammar.
 
 ## Theme 1 — Vision governance operationalization
 
@@ -67,7 +68,7 @@ fed back into starter templates.
 **Promotion signals:**
 
 - starter `AGENTS.md` / `effigy.toml` / docs_policy parity with guide `056`
-- cohort log linked from [`g01/029`](../g01/029-northstar-effigy-consumer-adoption-kit.md)
+- cohort log linked from [`g01/029`](../archive/g01.md)
   or successor milestone
 
 **Dependencies:** released `qa:northstar` bundle (already shipped).
@@ -114,11 +115,11 @@ unless approved.
 
 ## Promotion rule
 
-Pick one theme (or justify a narrow `g08` extension instead). Planning compiles:
+Pick one theme. Planning compiles:
 
-1. one strict spec
-2. one roadmap milestone in the active generation
-3. ready batch cards with acceptance, validation, and stop conditions
+1. current canonical architecture/contracts;
+2. one or more top-level `gNN.NNN` Northstar tasks in dependency order;
+3. an approved frontier with acceptance, validation, and stop conditions.
 
 Archive stale specs `097`, `099`, and `100` during the same planning sweep if
 they remain in the active tree.

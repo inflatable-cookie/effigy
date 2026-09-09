@@ -1,6 +1,6 @@
 # 081 - Post-Release Reference-Grade Follow-Through Strict Lane
 
-Roadmap: [`g05.008`](../roadmaps/g05/008-post-release-reference-grade-follow-through-suite.md)
+Roadmap: [`g05.008`](../../roadmaps/archive/g05.md)
 Contracts:
 - [`027-state-domain-extraction-contract.md`](../contracts/027-state-domain-extraction-contract.md)
 - [`023-container-command-decomposition-contract.md`](../contracts/023-container-command-decomposition-contract.md)

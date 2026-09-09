@@ -1,9 +1,9 @@
 # Existing Scan Graph Enrichment
 
 Date: 2026-05-25
-Roadmap: [`g08.003`](../roadmaps/g08/003-existing-scan-graph-enrichment.md)
+Roadmap: [`g08.003`](../../../roadmaps/archive/g08.md)
 Strict lane: [`097`](../specs/097-graph-aware-scan-intelligence-strict-lane.md)
-Batch card: [`1031`](../roadmaps/g08/batch-cards/1031-enrich-existing-scans-with-graph-context.md)
+Batch card: [`1031`](../../../roadmaps/archive/g08.md)
 
 ## What Landed
 

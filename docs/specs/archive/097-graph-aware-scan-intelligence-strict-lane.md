@@ -1,14 +1,14 @@
 # 097 - Graph-Aware Scan Intelligence Strict Lane
 
-Roadmap: [`g08.001`](../roadmaps/g08/001-graph-aware-scan-intelligence-suite.md)
+Roadmap: [`g08.001`](../../roadmaps/archive/g08.md)
 Related planning:
-- [`g08.002`](../roadmaps/g08/002-scan-graph-contract-and-readiness-model.md)
-- [`g08.003`](../roadmaps/g08/003-existing-scan-graph-enrichment.md)
-- [`g08.004`](../roadmaps/g08/004-boundary-and-layer-violation-scans.md)
-- [`g08.005`](../roadmaps/g08/005-dead-and-isolated-code-scans.md)
-- [`g08.006`](../roadmaps/g08/006-validation-gap-and-hotspot-scans.md)
-- [`g08.007`](../roadmaps/g08/007-agent-docs-json-and-benchmark-proof.md)
-- [`g08.008`](../roadmaps/g08/008-graph-aware-scan-closeout.md)
+- [`g08.002`](../../roadmaps/archive/g08.md)
+- [`g08.003`](../../roadmaps/archive/g08.md)
+- [`g08.004`](../../roadmaps/archive/g08.md)
+- [`g08.005`](../../roadmaps/archive/g08.md)
+- [`g08.006`](../../roadmaps/archive/g08.md)
+- [`g08.007`](../../roadmaps/archive/g08.md)
+- [`g08.008`](../../roadmaps/archive/g08.md)
 
 Status: Complete
 Owner: Platform

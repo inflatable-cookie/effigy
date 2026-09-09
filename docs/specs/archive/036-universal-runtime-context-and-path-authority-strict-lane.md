@@ -1,6 +1,6 @@
 # 036 - Universal Runtime Context And Path Authority Strict Lane
 
-Roadmap: [`g03.030`](../roadmaps/g03/030-universal-runtime-context-and-path-authority.md)
+Roadmap: [`g03.030`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

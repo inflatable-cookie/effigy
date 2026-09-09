@@ -1,10 +1,10 @@
 # 088 - Graph Watch Mode Strict Lane
 
-Roadmap: [`g07.021`](../roadmaps/g07/021-graph-watch-mode-suite.md)
+Roadmap: [`g07.021`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.022`](../roadmaps/g07/022-watch-backend-and-debounce-rules.md)
-- [`g07.023`](../roadmaps/g07/023-dirty-reconcile-and-overflow-fallback.md)
-- [`g07.024`](../roadmaps/g07/024-graph-watch-closeout-proof.md)
+- [`g07.022`](../../roadmaps/archive/g07.md)
+- [`g07.023`](../../roadmaps/archive/g07.md)
+- [`g07.024`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

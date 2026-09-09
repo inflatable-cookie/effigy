@@ -55,4 +55,4 @@ selector-policy cutover, workflow edit, or release mutation occurred.
 ## Next Task
 
 Execute ready card
-[`1073`](../../roadmaps/g08/batch-cards/1073-cut-routing-over-to-explicit-membership.md).
+[`1073`](../../../roadmaps/archive/g08.md).

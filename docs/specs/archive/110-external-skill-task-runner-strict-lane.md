@@ -3,10 +3,10 @@
 Status: Complete
 Created: 2026-08-31
 Closed: 2026-08-31
-Roadmap: [`g08.037`](../../roadmaps/g08/037-external-skill-task-runner.md)
+Roadmap: [`g08.037`](../../roadmaps/archive/g08.md)
 Architecture: [`025`](../../architecture/025-external-skill-task-execution.md)
 Contract: [`042`](../../contracts/042-external-skill-task-runner-contract.md)
-Completed card: [`1092`](../../roadmaps/g08/batch-cards/1092-add-external-skill-task-runner.md)
+Completed card: [`1092`](../../roadmaps/archive/g08.md)
 Evidence: [`2026-08-31 closeout`](../../logs/archive/2026-08/31-162015-external-skill-task-runner-closeout.md)
 
 ## Outcome
@@ -54,4 +54,4 @@ spec `108` resumed with card `1089` as the single ready task.
 ## Next Task
 
 Execute ready card
-[`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md).
+[`1089`](../../roadmaps/archive/g08.md).

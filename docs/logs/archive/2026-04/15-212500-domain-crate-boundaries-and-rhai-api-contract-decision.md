@@ -14,7 +14,7 @@ It is workspace plus `effigy-core` foundation.
 ## What Changed
 
 - classified the first crate-boundary inventory in
-  [`g02.010`](../../../roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md)
+  [`g02.010`](../../../roadmaps/archive/g02.md)
 - promoted the dependency rules and Rhai adapter posture into the active lane
 - marked
   [`116-decide-domain-crate-boundaries-and-rhai-api-contract.md`](../../../specs/batch-cards/116-decide-domain-crate-boundaries-and-rhai-api-contract.md)

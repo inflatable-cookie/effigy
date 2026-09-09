@@ -1,6 +1,6 @@
 # 038 - Plugin-Ready Container Manager Facade Strict Lane
 
-Roadmap: [`g03.031`](../roadmaps/g03/031-plugin-ready-container-manager-facade.md)
+Roadmap: [`g03.031`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

@@ -1,8 +1,8 @@
 # Incremental Index Short Path
 
 Date: 2026-05-18  
-Roadmap: [`g07.014`](../roadmaps/g07/014-incremental-indexing-and-cache-reuse.md)  
-Batch card: [`932`](../roadmaps/g07/batch-cards/932-implement-incremental-index-short-path.md)  
+Roadmap: [`g07.014`](../../../roadmaps/archive/g07.md)
+Batch card: [`932`](../../../roadmaps/archive/g07.md)
 Strict lane: [`086`](../specs/086-graph-follow-up-performance-and-fixture-reliability-strict-lane.md)
 
 ## What Changed

@@ -1,8 +1,8 @@
 # Graph Context Ranking Baseline
 
 Date: 2026-05-18  
-Roadmap: [`g07.026`](../../../roadmaps/g07/026-context-ranking-baseline-and-gold-tasks.md)  
-Batch card: [`971`](../../../roadmaps/g07/batch-cards/971-baseline-context-ranking-quality.md)  
+Roadmap: [`g07.026`](../../../roadmaps/archive/g07.md)
+Batch card: [`971`](../../../roadmaps/archive/g07.md)
 Strict lane: [`089`](../../../specs/089-graph-navigation-ranking-quality-strict-lane.md)
 
 ## What Changed

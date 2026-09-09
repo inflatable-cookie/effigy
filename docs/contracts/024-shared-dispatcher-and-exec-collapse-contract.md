@@ -1,7 +1,7 @@
 # Shared Dispatcher and Exec Collapse Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/026-shared-dispatcher-and-exec-collapse.md`](../roadmaps/g04/026-shared-dispatcher-and-exec-collapse.md)
+Roadmap: [`../roadmaps/g04/026-shared-dispatcher-and-exec-collapse.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/069-shared-dispatcher-and-exec-collapse-strict-lane.md`](../specs/069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 Status: Draft
 Owner: Platform

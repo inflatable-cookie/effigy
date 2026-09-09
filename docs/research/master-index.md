@@ -9,9 +9,9 @@ Purpose: Navigate from architecture or delivery questions to the most relevant r
 | Delivery area | Primary memo(s) | Value track(s) | Tool dossiers | Primary docs |
 | --- | --- | --- | --- | --- |
 | Manifest and task configuration | 001 | 01-task-configuration-formats | Make, Just, Task | `docs/guides/022-manifest-cookbook.md`, `src/runner/manifest.rs` |
-| Caching | 002 | 02-caching-strategies | Bazel, Turbo, sccache | `docs/roadmaps/g01/020-research-phase-1-core-execution.md` |
+| Caching | 002 | 02-caching-strategies | Bazel, Turbo, sccache | `docs/roadmaps/archive/g01.md` |
 | Watch mode | 003 | 03-watch-mode-and-file-monitoring | cargo-watch, watchexec, entr | `docs/guides/019-watch-init-migrate-foundation.md` |
-| DAG execution and scheduling | 004 | 04-dag-execution-and-scheduling | Make, Bazel, Dagger | `docs/architecture/000-overview.md`, `docs/roadmaps/g01/010-dag-lock-policy-baseline.md` |
+| DAG execution and scheduling | 004 | 04-dag-execution-and-scheduling | Make, Bazel, Dagger | `docs/architecture/000-overview.md`, `docs/roadmaps/archive/g01.md` |
 | Process management and TUI | 005 | 05-process-management-and-tui | cargo, pnpm | `docs/architecture/011-multiprocess-tui-config-contract.md`, `docs/guides/012-dev-process-manager-tui.md` |
 | Shell completions | 006 | 06-shell-completions | git, ripgrep | `src/cli_help/`, `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Error reporting and diagnostics | 007 | 07-error-reporting-and-diagnostics | rustc, ESLint | `docs/guides/023-troubleshooting-and-failure-recipes.md`, `docs/guides/018-doctor-explain-mode.md` |

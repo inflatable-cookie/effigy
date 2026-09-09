@@ -1,14 +1,14 @@
 # 095 - Residual Maintainability Follow Through Strict Lane
 
-Roadmap: [`g07.064`](../roadmaps/g07/064-residual-maintainability-hardening-suite.md)
+Roadmap: [`g07.064`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.065`](../roadmaps/g07/065-manifest-semantic-owner-split.md)
-- [`g07.066`](../roadmaps/g07/066-codegraph-test-harness-decomposition.md)
-- [`g07.067`](../roadmaps/g07/067-script-command-boundary-reduction.md)
-- [`g07.068`](../roadmaps/g07/068-high-duplicate-help-fragment-reduction.md)
-- [`g07.069`](../roadmaps/g07/069-language-emitter-follow-through.md)
-- [`g07.070`](../roadmaps/g07/070-runner-private-fixture-and-helper-convergence.md)
-- [`g07.071`](../roadmaps/g07/071-residual-maintainability-closeout.md)
+- [`g07.065`](../../roadmaps/archive/g07.md)
+- [`g07.066`](../../roadmaps/archive/g07.md)
+- [`g07.067`](../../roadmaps/archive/g07.md)
+- [`g07.068`](../../roadmaps/archive/g07.md)
+- [`g07.069`](../../roadmaps/archive/g07.md)
+- [`g07.070`](../../roadmaps/archive/g07.md)
+- [`g07.071`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

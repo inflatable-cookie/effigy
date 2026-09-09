@@ -1,7 +1,7 @@
 # Graph Navigation Usefulness Assessment
 
 Date: 2026-05-18  
-Roadmap: [`g07.025`](../../../roadmaps/g07/025-graph-context-ranking-quality-suite.md)  
+Roadmap: [`g07.025`](../../../roadmaps/archive/g07.md)
 Strict lane: [`089`](../../../specs/089-graph-navigation-ranking-quality-strict-lane.md)
 
 ## What Changed

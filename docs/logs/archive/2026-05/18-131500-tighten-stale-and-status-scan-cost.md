@@ -1,8 +1,8 @@
 # Tighten Stale And Status Scan Cost
 
 Date: 2026-05-18  
-Roadmap: [`g07.019`](../roadmaps/g07/019-safe-scan-metadata-reuse.md)  
-Batch card: [`953`](../roadmaps/g07/batch-cards/953-tighten-stale-and-status-scan-cost.md)  
+Roadmap: [`g07.019`](../../../roadmaps/archive/g07.md)
+Batch card: [`953`](../../../roadmaps/archive/g07.md)
 Strict lane: [`087`](../specs/087-graph-scan-cost-reduction-strict-lane.md)
 
 ## What Changed

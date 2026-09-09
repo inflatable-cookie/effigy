@@ -1,8 +1,8 @@
 # Codebase Leanness Closeout
 
 Date: 2026-05-19  
-Roadmap: [`g07.063`](../../../roadmaps/g07/063-codebase-leanness-closeout.md)  
-Batch card: [`1013`](../../../roadmaps/g07/batch-cards/1013-close-codebase-leanness-lane.md)  
+Roadmap: [`g07.063`](../../../roadmaps/archive/g07.md)
+Batch card: [`1013`](../../../roadmaps/archive/g07.md)
 Strict lane: [`094`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
 ## What Changed

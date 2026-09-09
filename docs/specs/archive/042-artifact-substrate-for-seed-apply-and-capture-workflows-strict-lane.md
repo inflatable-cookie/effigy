@@ -1,6 +1,6 @@
 # 042 - Artifact Substrate For Seed Apply And Capture Workflows Strict Lane
 
-Roadmap: [`g03.036`](../roadmaps/g03/036-artifact-substrate-for-seed-apply-and-capture-workflows.md)
+Roadmap: [`g03.036`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

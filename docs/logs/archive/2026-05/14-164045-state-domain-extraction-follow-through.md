@@ -1,7 +1,7 @@
 # 2026-05-14 16:40:45 - State Domain Extraction Follow-Through
 
-Roadmap: [`g05.020`](../roadmaps/g05/020-reusable-core-hardening-suite.md)  
-Batch card: [`745`](../roadmaps/g05/batch-cards/745-finish-state-domain-thin-shell-follow-through.md)  
+Roadmap: [`g05.020`](../../../roadmaps/archive/g05.md)
+Batch card: [`745`](../../../roadmaps/archive/g05.md)
 Strict lane: [`083`](../specs/083-reusable-core-hardening-strict-lane.md)
 
 ## What Changed

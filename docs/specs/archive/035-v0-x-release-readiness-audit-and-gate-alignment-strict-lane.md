@@ -1,6 +1,6 @@
 # 035 - v0.x Release Readiness Audit and Gate Alignment Strict Lane
 
-Roadmap: [`g03.029`](../roadmaps/g03/029-v0-x-release-readiness-audit-and-gate-alignment.md)
+Roadmap: [`g03.029`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

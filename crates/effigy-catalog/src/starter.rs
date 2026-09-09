@@ -296,6 +296,7 @@ mod tests {
             "docs/vision/README.md",
             "docs/vision/001-product-vision.md",
             "docs/roadmaps/README.md",
+            "docs/roadmaps/templates/task-template.md",
             "docs/logs/README.md",
             "docs/policy/vision-next-task-verbs.txt",
         ] {
@@ -343,16 +344,18 @@ mod tests {
             "include = [\"docs/specs/archive/*.md\"]",
             "[docs_policy.graph.kinds.vision]",
             "[docs_policy.graph.kinds.roadmap]",
-            "[docs_policy.graph.kinds.ready-card]",
+            "[docs_policy.graph.kinds.task]",
+            "[docs_policy.graph.kinds.archived-roadmap]",
             "[docs_policy.graph.kinds.guide]",
             "[docs_policy.graph.kinds.log]",
             "[docs_policy.graph.kinds.handoff]",
             "[docs_policy.graph.relations.contract]",
             "[docs_policy.graph.relations.roadmap]",
+            "[docs_policy.graph.relations.task]",
             "[docs_policy.graph.relations.evidence]",
             "[docs_policy.graph.relations.supersedes]",
             "[docs_policy.graph.relations.next-task]",
-            "headings = [\"Next Task\"]",
+            "headings = [\"Next Task\", \"Next task\"]",
             // The template must say, in the emitted bytes, that it is copied
             // configuration rather than an inherited runtime dependency.
             "COPIED configuration",

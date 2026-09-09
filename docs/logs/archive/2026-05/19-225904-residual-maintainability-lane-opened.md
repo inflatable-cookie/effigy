@@ -1,8 +1,8 @@
 # Residual Maintainability Lane Opened
 
 Date: 2026-05-19  
-Roadmap: [`g07.064`](../../../roadmaps/g07/064-residual-maintainability-hardening-suite.md)  
-Batch card: [`1014`](../../../roadmaps/g07/batch-cards/1014-open-residual-maintainability-lane.md)  
+Roadmap: [`g07.064`](../../../roadmaps/archive/g07.md)
+Batch card: [`1014`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

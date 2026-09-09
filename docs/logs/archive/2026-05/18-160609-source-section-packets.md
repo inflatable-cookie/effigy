@@ -1,8 +1,8 @@
 # Source Section Packets
 
 Date: 2026-05-18  
-Roadmap: [`g07.041`](../../../roadmaps/g07/041-source-section-packets-and-no-reread-workflow.md)  
-Batch card: [`990`](../../../roadmaps/g07/batch-cards/990-harden-source-section-no-reread-packets.md)  
+Roadmap: [`g07.041`](../../../roadmaps/archive/g07.md)
+Batch card: [`990`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

@@ -1,8 +1,8 @@
 # Language Emitter Duplicate Follow Through
 
 Date: 2026-05-20  
-Roadmap: [`g07.069`](../../../roadmaps/g07/069-language-emitter-follow-through.md)  
-Batch card: [`1019`](../../../roadmaps/g07/batch-cards/1019-follow-through-language-emitter-duplicates.md)  
+Roadmap: [`g07.069`](../../../roadmaps/archive/g07.md)
+Batch card: [`1019`](../../../roadmaps/archive/g07.md)
 Strict lane: [`095`](../../../specs/095-residual-maintainability-follow-through-strict-lane.md)
 
 ## What Changed

@@ -3,8 +3,8 @@
 Status: Satisfied (2026-09-08; PR `95`, merge `24e842196`)
 Owner: Effigy manifest error boundary and local build provenance
 Created: 2026-09-08
-Roadmap: [`g09.009`](../../roadmaps/g09/009-stale-local-install-recovery.md)
-Ready card: [`1117`](../../roadmaps/g09/batch-cards/1117-stale-local-install-recovery.md)
+Roadmap: [`g09.009`](../../roadmaps/archive/g09.md)
+Ready card: [`1117`](../../roadmaps/archive/g09.md)
 Guide: [`057`](../../guides/057-bootstrap-repo-bringup.md)
 Papercut: [`PAPERCUTS.md`](../../../PAPERCUTS.md)
 

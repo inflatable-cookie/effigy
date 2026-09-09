@@ -1,6 +1,6 @@
 # 057 - Container Volume Operation Pipeline Strict Lane
 
-Roadmap: [`g04.015`](../roadmaps/g04/015-container-volume-operation-pipeline.md)
+Roadmap: [`g04.015`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -36,4 +36,4 @@ first-class operation plan and focused tests.
 ## Next Task
 
 Card
-[`586-wire-architecture-guard-into-validation-aggregators.md`](./batch-cards/586-wire-architecture-guard-into-validation-aggregators.md).
+[`586-wire-architecture-guard-into-validation-aggregators.md`](../../roadmaps/archive/g04.md).

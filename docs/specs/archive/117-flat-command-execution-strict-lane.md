@@ -4,10 +4,10 @@ Status: Archived (completed with card `1110` under `g09.002`)
 Owner: Effigy orchestrator
 Created: 2026-09-02
 Closed: 2026-09-02
-Roadmap: [`g09.002`](../../roadmaps/g09/002-flat-command-execution.md)
+Roadmap: [`g09.002`](../../roadmaps/archive/g09.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
-Completed card: [`1110`](../../roadmaps/g09/batch-cards/1110-remove-executable-command-namespaces.md)
+Completed card: [`1110`](../../roadmaps/archive/g09.md)
 
 ## Outcome
 

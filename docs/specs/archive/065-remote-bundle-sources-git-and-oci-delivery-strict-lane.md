@@ -1,6 +1,6 @@
 # 065 - Remote Bundle Sources: Git And OCI Delivery Strict Lane
 
-Roadmap: [`g04.022`](../roadmaps/g04/022-remote-bundle-sources-git-and-oci-delivery.md)
+Roadmap: [`g04.022`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

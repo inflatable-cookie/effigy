@@ -1,6 +1,6 @@
 # 053 - Contract Promotion And g04 Closeout Strict Lane
 
-Roadmap: [`g04.011`](../roadmaps/g04/011-contract-promotion-and-closeout.md)
+Roadmap: [`g04.011`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

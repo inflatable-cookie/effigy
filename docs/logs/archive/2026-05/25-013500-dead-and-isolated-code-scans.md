@@ -1,9 +1,9 @@
 # Dead And Isolated Code Scans
 
 Date: 2026-05-25
-Roadmap: [`g08.005`](../roadmaps/g08/005-dead-and-isolated-code-scans.md)
+Roadmap: [`g08.005`](../../../roadmaps/archive/g08.md)
 Strict lane: [`097`](../specs/097-graph-aware-scan-intelligence-strict-lane.md)
-Batch card: [`1033`](../roadmaps/g08/batch-cards/1033-add-dead-and-isolated-code-scans.md)
+Batch card: [`1033`](../../../roadmaps/archive/g08.md)
 
 ## What Landed
 

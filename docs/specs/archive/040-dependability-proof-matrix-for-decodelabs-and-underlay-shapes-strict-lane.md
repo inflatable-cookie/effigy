@@ -1,6 +1,6 @@
 # 040 - Dependability Proof Matrix For DecodeLabs And Underlay Shapes Strict Lane
 
-Roadmap: [`g03.034`](../roadmaps/g03/034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
+Roadmap: [`g03.034`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

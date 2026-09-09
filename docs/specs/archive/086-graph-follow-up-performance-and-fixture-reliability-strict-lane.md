@@ -1,10 +1,10 @@
 # 086 - Graph Follow-Up Performance And Fixture Reliability Strict Lane
 
-Roadmap: [`g07.013`](../roadmaps/g07/013-graph-follow-up-performance-and-fixture-reliability.md)
+Roadmap: [`g07.013`](../../roadmaps/archive/g07.md)
 Related planning:
-- [`g07.014`](../roadmaps/g07/014-incremental-indexing-and-cache-reuse.md)
-- [`g07.015`](../roadmaps/g07/015-query-speed-and-projection-reduction.md)
-- [`g07.016`](../roadmaps/g07/016-failed-graph-fixture-path-reliability.md)
+- [`g07.014`](../../roadmaps/archive/g07.md)
+- [`g07.015`](../../roadmaps/archive/g07.md)
+- [`g07.016`](../../roadmaps/archive/g07.md)
 
 Status: Complete
 Owner: Platform

@@ -16,7 +16,7 @@ canonical graph data.
 - Added strict lane
   [`085-code-graph-intelligence-strict-lane.md`](../../../specs/085-code-graph-intelligence-strict-lane.md).
 - Added batch cards `900` through `912` under
-  [`docs/roadmaps/g07/batch-cards`](../../../roadmaps/g07/batch-cards/900-open-code-graph-intelligence-lane.md).
+  [`docs/roadmaps/g07/batch-cards`](../../../roadmaps/archive/g07.md).
 - Marked `g07.001` active.
 - Marked `900` complete and `901` ready.
 - Refreshed roadmap and spec front doors.

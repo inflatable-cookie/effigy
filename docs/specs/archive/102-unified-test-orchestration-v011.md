@@ -1,6 +1,6 @@
 # 102 - Unified Test Orchestration v0.11
 
-Roadmap: [`g08.029`](../../roadmaps/g08/029-unified-test-orchestration-v011.md)
+Roadmap: [`g08.029`](../../roadmaps/archive/g08.md)
 Contract: [`038`](../../contracts/038-unified-test-orchestration-contract.md)
 
 Status: Complete
@@ -20,7 +20,7 @@ Posture: `strict-complete`
 
 Completed card:
 
-- [`1076`](../../roadmaps/g08/batch-cards/1076-unify-test-orchestration-for-v011.md)
+- [`1076`](../../roadmaps/archive/g08.md)
 
 ## Settled Decisions
 

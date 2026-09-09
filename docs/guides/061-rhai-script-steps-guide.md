@@ -642,7 +642,7 @@ After this guide, you should be able to:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`../roadmaps/g02/004-rust-native-scripting-surface-contract.md`](../roadmaps/g02/004-rust-native-scripting-surface-contract.md)
+- [`../roadmaps/g02/004-rust-native-scripting-surface-contract.md`](../roadmaps/archive/g02.md)
 
 ## Next Step
 

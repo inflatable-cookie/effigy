@@ -1,6 +1,6 @@
 # 079 - Task Rhai Deploy Secret Injection Strict Lane
 
-Roadmap: [`g05.004`](../roadmaps/g05/004-task-rhai-and-deploy-secret-injection.md)
+Roadmap: [`g05.004`](../../roadmaps/archive/g05.md)
 Contract: [`032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md)
 
 Status: Complete

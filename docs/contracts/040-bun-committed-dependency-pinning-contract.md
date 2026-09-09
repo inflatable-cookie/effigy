@@ -4,7 +4,7 @@ Status: Implemented and validated
 Owner: Platform maintainers
 Architecture: [`023`](../architecture/023-local-dependency-linking-architecture.md)
 Planning source: [`spec 104`](../specs/archive/104-bun-committed-dependency-pinning.md)
-Roadmap: [`g08.031`](../roadmaps/g08/031-bun-committed-dependency-pinning.md)
+Roadmap: [`g08.031`](../roadmaps/archive/g08.md)
 
 ## Purpose
 

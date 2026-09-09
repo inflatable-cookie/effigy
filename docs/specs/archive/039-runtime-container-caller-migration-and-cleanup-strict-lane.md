@@ -1,6 +1,6 @@
 # 039 - Runtime Container Caller Migration And Cleanup Strict Lane
 
-Roadmap: [`g03.033`](../roadmaps/g03/033-runtime-container-caller-migration-and-cleanup.md)
+Roadmap: [`g03.033`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform
@@ -22,7 +22,7 @@ Remove duplicated runtime/container glue now that `EffigyRuntimeContext`,
 
 ## Final Card
 
-[`398-close-runtime-container-caller-migration-and-cleanup.md`](./batch-cards/398-close-runtime-container-caller-migration-and-cleanup.md)
+[`398-close-runtime-container-caller-migration-and-cleanup.md`](../../roadmaps/archive/g03.md)
 
 ## Exit Condition
 

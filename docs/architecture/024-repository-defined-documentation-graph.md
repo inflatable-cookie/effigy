@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-08-31
-Roadmap: [`g08.035`](../roadmaps/g08/035-repository-defined-documentation-graph.md)
+Roadmap: [`g08.035`](../roadmaps/archive/g08.md)
 Contract: [`041`](../contracts/041-documentation-graph-profile-contract.md)
 Spec: [`108`](../specs/archive/108-documentation-graph-profiles-strict-lane.md)
 
@@ -164,8 +164,9 @@ meaning; it is not an enablement switch.
 ## Northstar Adoption Boundary
 
 The Northstar profile may define kinds such as contract, architecture, guide,
-vision, roadmap, ready card, log, handoff, and archived spec, plus relations
-such as contract, roadmap, evidence, supersedes, and next task.
+vision, generation roadmap, top-level Northstar task, archived roadmap, log,
+handoff, and archived spec, plus relations such as contract, roadmap, task,
+evidence, supersedes, and next task.
 
 The profile can originate in the Northstar skill or Effigy's Northstar starter,
 but installation or init must materialize it into the consumer `effigy.toml`.

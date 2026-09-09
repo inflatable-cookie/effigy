@@ -1,6 +1,6 @@
 # 103 - Pre-Release CI Proof
 
-Roadmap: [`g08.030`](../../roadmaps/g08/030-pre-release-ci-proof.md)
+Roadmap: [`g08.030`](../../roadmaps/archive/g08.md)
 Contract: [`039`](../../contracts/039-pre-release-ci-proof-contract.md)
 
 Status: Complete
@@ -19,7 +19,7 @@ Posture: `strict-complete`
 
 Completed card:
 
-- [`1077`](../../roadmaps/g08/batch-cards/1077-enforce-pre-release-ci-proof.md)
+- [`1077`](../../roadmaps/archive/g08.md)
 
 ## Settled Decisions
 

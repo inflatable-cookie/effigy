@@ -1,8 +1,8 @@
 # Warm Query Latency And Release Ranking
 
 Date: 2026-05-18  
-Roadmap: [`g07.047`](../../../roadmaps/g07/047-warm-query-latency-and-release-ranking.md)  
-Batch card: [`997`](../../../roadmaps/g07/batch-cards/997-reduce-warm-query-latency-and-fix-release-ranking.md)  
+Roadmap: [`g07.047`](../../../roadmaps/archive/g07.md)
+Batch card: [`997`](../../../roadmaps/archive/g07.md)
 Strict lane: [`092`](../../../specs/092-codegraph-parity-follow-up-strict-lane.md)
 
 ## What Changed

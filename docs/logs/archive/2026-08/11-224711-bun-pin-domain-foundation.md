@@ -83,4 +83,4 @@ Batch: card-1078-build-bun-pin-planner-and-manifest-transaction
 ## Next Task
 
 Execute ready card
-[`1079`](../../roadmaps/g08/batch-cards/1079-wire-bun-pin-cli-json-and-link-interlocks.md).
+[`1079`](../../../roadmaps/archive/g08.md).

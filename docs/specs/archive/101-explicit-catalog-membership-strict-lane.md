@@ -1,6 +1,6 @@
 # 101 - Explicit Catalog Membership Strict Lane
 
-Roadmap: [`g08.028`](../roadmaps/g08/028-explicit-catalog-membership.md)
+Roadmap: [`g08.028`](../../roadmaps/archive/g08.md)
 
 Durable authority:
 
@@ -28,7 +28,7 @@ Posture: `strict-ready`
 
 Current ready card:
 
-- [`1072`](../roadmaps/g08/batch-cards/1072-add-explicit-member-and-typed-mount-schema.md)
+- [`1072`](../../roadmaps/archive/g08.md)
 
 Implementation must follow the current ready card.
 

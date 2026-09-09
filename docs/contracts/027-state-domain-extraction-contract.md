@@ -1,7 +1,7 @@
 # State Domain Extraction Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/035-state-domain-extraction.md`](../roadmaps/g04/035-state-domain-extraction.md)
+Roadmap: [`../roadmaps/g04/035-state-domain-extraction.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/071-state-domain-extraction-strict-lane.md`](../specs/071-state-domain-extraction-strict-lane.md)
 Status: Draft
 Owner: Platform
@@ -21,7 +21,7 @@ edit.
 
 - no command grammar changes
 - no state manifest/config grammar changes
-- no JSON schema change unless a batch card explicitly scopes it
+- no JSON schema change unless the active Northstar task explicitly scopes it
 - no provider/deploy behavior changes
 - no media/object-store implementation
 - no Example App-specific transformation logic

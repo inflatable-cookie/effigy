@@ -1,8 +1,8 @@
 # Affected Test Impact Workflow
 
 Date: 2026-05-18  
-Roadmap: [`g07.042`](../../../roadmaps/g07/042-affected-test-and-impact-workflow.md)  
-Batch card: [`991`](../../../roadmaps/g07/batch-cards/991-add-affected-test-impact-workflow.md)  
+Roadmap: [`g07.042`](../../../roadmaps/archive/g07.md)
+Batch card: [`991`](../../../roadmaps/archive/g07.md)
 Strict lane: [`091`](../../../specs/091-codegraph-parity-strict-lane.md)
 
 ## What Changed

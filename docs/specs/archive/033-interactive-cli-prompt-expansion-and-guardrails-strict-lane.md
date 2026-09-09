@@ -1,6 +1,6 @@
 # 033 - Interactive CLI Prompt Expansion and Guardrails Strict Lane
 
-Roadmap: [`g03.027`](../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md)
+Roadmap: [`g03.027`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform

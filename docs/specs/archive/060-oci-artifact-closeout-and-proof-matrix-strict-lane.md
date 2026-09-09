@@ -1,6 +1,6 @@
 # 060 - OCI Artifact Closeout And Proof Matrix Strict Lane
 
-Roadmap: [`g04.018`](../roadmaps/g04/018-oci-artifact-closeout-and-proof-matrix.md)
+Roadmap: [`g04.018`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

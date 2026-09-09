@@ -1,8 +1,8 @@
 # Agent Context Packs
 
 Date: 2026-05-18  
-Roadmap: [`g07.011`](../roadmaps/g07/011-agent-context-packs.md)  
-Batch card: [`911`](../roadmaps/g07/batch-cards/911-implement-agent-context-packs.md)  
+Roadmap: [`g07.011`](../../../roadmaps/archive/g07.md)
+Batch card: [`911`](../../../roadmaps/archive/g07.md)
 Strict lane: [`085`](../specs/085-code-graph-intelligence-strict-lane.md)
 
 ## What Changed

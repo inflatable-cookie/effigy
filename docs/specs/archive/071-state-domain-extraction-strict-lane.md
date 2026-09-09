@@ -1,6 +1,6 @@
 # 071 - State Domain Extraction Strict Lane
 
-Roadmap: [`g04.035`](../roadmaps/g04/035-state-domain-extraction.md)
+Roadmap: [`g04.035`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

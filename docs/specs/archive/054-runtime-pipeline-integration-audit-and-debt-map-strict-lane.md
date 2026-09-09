@@ -1,6 +1,6 @@
 # 054 - Runtime Pipeline Integration Audit And Debt Map Strict Lane
 
-Roadmap: [`g04.012`](../roadmaps/g04/012-runtime-pipeline-integration-audit-and-debt-map.md)
+Roadmap: [`g04.012`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -22,7 +22,7 @@ surface.
 
 ## Current Ready Card
 
-[`579-open-runtime-activation-route-authority-lane.md`](./batch-cards/579-open-runtime-activation-route-authority-lane.md)
+[`579-open-runtime-activation-route-authority-lane.md`](../../roadmaps/archive/g04.md)
 
 ## Execution Chain
 
@@ -71,4 +71,4 @@ selected roadmap/card, and the first implementation lane is ready.
 ## Next Task
 
 Card
-[`579-open-runtime-activation-route-authority-lane.md`](./batch-cards/579-open-runtime-activation-route-authority-lane.md).
+[`579-open-runtime-activation-route-authority-lane.md`](../../roadmaps/archive/g04.md).

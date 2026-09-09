@@ -1,7 +1,7 @@
-# Backlog Roadmaps
+# Backlog Planning
 
-Backlog roadmaps are intentionally unnumbered and exploratory.  
-Use this folder for planning threads that are important but not yet scheduled into numbered execution phases.
+Backlog notes are intentionally unnumbered and exploratory. Use this folder for
+planning that matters but is not yet promoted into an active generation.
 
 ## Current Backlog Items
 
@@ -20,7 +20,8 @@ generation as:
 
 ## Promotion Rule
 
-When a backlog item gets an agreed execution window and owner commitment, promote it into a numbered roadmap in the active generation and track progress there.
+When a backlog item gets an agreed execution window and owner commitment,
+promote it into one top-level `gNN.NNN` Northstar task in the active generation.
 
 ## Vision Promotion Criteria
 

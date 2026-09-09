@@ -3,7 +3,7 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-01
-Roadmap: [`g08.048`](../../roadmaps/g08/048-catalog-pack-publication-and-cutover.md)
+Roadmap: [`g08.048`](../../roadmaps/archive/g08.md)
 Architecture: [`026`](../../architecture/026-feature-placement-and-command-surface.md)
 Contract: [`043`](../../contracts/043-feature-placement-and-surface-migration-contract.md)
 Research: [`source map 002`](../../research/source-hubs/002-catalog-pack-publication-source-map-v1.md)
@@ -48,20 +48,20 @@ at `4dd8b8a5`, with the empty-delta provider checkpoint at `ebb813e1`.
 
 ## Cards
 
-- [`1103`](../../roadmaps/g08/batch-cards/1103-establish-catalog-pack-support-floor.md)
+- [`1103`](../../roadmaps/archive/g08.md)
   — Complete; Effigy-owned compatibility authority.
-- [`1104`](../../roadmaps/g08/batch-cards/1104-build-catalog-pack-repository-foundation.md)
+- [`1104`](../../roadmaps/archive/g08.md)
   — Complete; dedicated public repository foundation and no-push rehearsal.
-- [`1105`](../../roadmaps/g08/batch-cards/1105-publish-first-official-catalog-pack.md)
+- [`1105`](../../roadmaps/archive/g08.md)
   — Complete; `v1.0.0` is preserved and public `v1.0.1` plus `stable` resolve
   to the accepted attested digest.
-- [`1106`](../../roadmaps/g08/batch-cards/1106-cut-over-generated-catalog-baseline.md)
+- [`1106`](../../roadmaps/archive/g08.md)
   — Complete; Effigy's generated recovery snapshot and provenance lock are cut
   over (evidence
   [`02-144609`](../../logs/archive/2026-09/02-144609-catalog-pack-generated-baseline-1106.md)).
-- [`1107`](../../roadmaps/g08/batch-cards/1107-expose-official-catalog-pack-update.md)
+- [`1107`](../../roadmaps/archive/g08.md)
   — Complete; Effigy owns public update resolution and transaction integration.
-- [`1108`](../../roadmaps/g08/batch-cards/1108-propose-generated-baseline-updates.md)
+- [`1108`](../../roadmaps/archive/g08.md)
   — Complete; pack repository owns generated-only proposal automation and its
   narrowly scoped App installation.
 

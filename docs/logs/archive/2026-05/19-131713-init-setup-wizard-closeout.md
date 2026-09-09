@@ -1,8 +1,8 @@
 # Init Setup Wizard Closeout
 
 Date: 2026-05-19  
-Roadmap: [`g07.055`](../../../roadmaps/g07/055-init-wizard-proof-docs-and-closeout.md)  
-Batch card: [`1005`](../../../roadmaps/g07/batch-cards/1005-close-init-setup-wizard-lane.md)  
+Roadmap: [`g07.055`](../../../roadmaps/archive/g07.md)
+Batch card: [`1005`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

@@ -1,8 +1,8 @@
 # Init Checklist Contract
 
 Date: 2026-05-19  
-Roadmap: [`g07.051`](../../../roadmaps/g07/051-init-context-inventory-and-checklist-contract.md)  
-Batch card: [`1001`](../../../roadmaps/g07/batch-cards/1001-define-init-context-and-checklist-contract.md)  
+Roadmap: [`g07.051`](../../../roadmaps/archive/g07.md)
+Batch card: [`1001`](../../../roadmaps/archive/g07.md)
 Strict lane: [`093`](../../../specs/093-init-setup-wizard-strict-lane.md)
 
 ## What Changed

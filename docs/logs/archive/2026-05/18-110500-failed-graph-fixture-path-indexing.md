@@ -1,8 +1,8 @@
 # Failed Graph Fixture Path Indexing
 
 Date: 2026-05-18  
-Roadmap: [`g07.016`](../roadmaps/g07/016-failed-graph-fixture-path-reliability.md)  
-Batch card: [`934`](../roadmaps/g07/batch-cards/934-fix-failed-graph-fixture-path-indexing.md)  
+Roadmap: [`g07.016`](../../../roadmaps/archive/g07.md)
+Batch card: [`934`](../../../roadmaps/archive/g07.md)
 Strict lane: [`086`](../specs/086-graph-follow-up-performance-and-fixture-reliability-strict-lane.md)
 
 ## What Changed

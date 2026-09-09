@@ -1,6 +1,6 @@
 # 061 - State Stack And Layered Seed Framework Strict Lane
 
-Roadmap: [`g04.019`](../roadmaps/g04/019-state-stack-and-layered-seed-framework.md)
+Roadmap: [`g04.019`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

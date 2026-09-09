@@ -68,5 +68,4 @@ Promotion signals:
 ## Queue State
 
 Keep the matching `PAPERCUTS.md` entry open until this backlog item is promoted
-or deliberately declined. Do not create a worker or ready card from this file.
-
+or deliberately declined. Do not create a worker or ready task from this file.

@@ -1,28 +1,33 @@
 # Roadmaps
 
-Milestone batches and sequencing for this repo. Organized by
-"generation" — `g01` is the first, and a generation rolls over when
-it is full.
+The generation README owns the roadmap and approved frontier. Each executable
+planning unit is one top-level Northstar task.
 
 ## Generation model
 
-- `g01` is the current generation.
-- New planning work starts in the current generation until rollover is
-  justified.
-- Rollover is a full closeout, not a convenience reset: every roadmap in
-  the generation must be closed, paused, superseded, or rehomed before
-  starting the next.
+- `g01` is the first generation.
+- Put the generation runway and approved frontier in `g01/README.md` when the
+  generation opens.
+- Put each task at `g01/NNN-<slug>.md` and reference it as `g01.NNN`.
+- Start from [`templates/task-template.md`](./templates/task-template.md).
+- Do not create milestone wrappers, nested `batch-cards/`, or dual status
+  authority.
+- Keep using the current generation until a substantial sequencing era closes.
 
-## Active queue
+Use “Northstar task” for the planning unit, “queue task” for a control-plane
+execution record, and “Effigy task” for a command selector.
 
-_(populate with the first milestone once `g01/001-*.md` exists)_
+## Current planning state
+
+- Active generation: none.
+- Approved frontier: none.
 
 ## Backlog layout
 
-Draft roadmaps live under the current generation folder alongside
-active ones. Status is tracked in each roadmap's header.
+Keep exploratory, unscheduled planning outside the active generation. A backlog
+note becomes executable only after promotion into a ready top-level task.
 
 ## Next Task
 
-Write the first roadmap milestone as `g01/001-<short-slug>.md` and link
-it into the active queue above.
+Define the first generation runway, create `g01/README.md`, then copy the task
+template to `g01/001-<short-slug>.md` when the first outcome is ready.

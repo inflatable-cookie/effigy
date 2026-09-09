@@ -1,6 +1,6 @@
 # 082 - Manifest Section Schema Owner Convergence Strict Lane
 
-Roadmap: [`g05.017`](../roadmaps/g05/017-manifest-section-schema-owner-convergence.md)
+Roadmap: [`g05.017`](../../roadmaps/archive/g05.md)
 
 Status: Complete
 Owner: Platform

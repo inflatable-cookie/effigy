@@ -1,6 +1,6 @@
 # 051 - CLI Parser Modularisation For Runtime Surfaces Strict Lane
 
-Roadmap: [`g04.009`](../roadmaps/g04/009-cli-parser-modularisation-for-runtime-surfaces.md)
+Roadmap: [`g04.009`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -113,4 +113,4 @@ or have a documented reason to stay larger, and the next roadmap is selected.
 ## Next Task
 
 Card
-[`568-scaffold-drift-guards-and-proof-matrix-lane.md`](./batch-cards/568-scaffold-drift-guards-and-proof-matrix-lane.md).
+[`568-scaffold-drift-guards-and-proof-matrix-lane.md`](../../roadmaps/archive/g04.md).

@@ -3,8 +3,8 @@
 Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-05
-Roadmap: [`g09.004`](../../roadmaps/g09/004-release-gate-diagnosability.md)
-Ready card: [`1112`](../../roadmaps/g09/batch-cards/1112-release-gate-diagnosability.md)
+Roadmap: [`g09.004`](../../roadmaps/archive/g09.md)
+Ready card: [`1112`](../../roadmaps/archive/g09.md)
 Contracts: [`035`](../../contracts/035-release-tag-identity-contract.md),
 [`039`](../../contracts/039-pre-release-ci-proof-contract.md)
 Guides: [`051`](../../guides/051-release-orchestration.md),

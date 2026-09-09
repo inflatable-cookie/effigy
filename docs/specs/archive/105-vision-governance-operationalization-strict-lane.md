@@ -1,6 +1,6 @@
 # 105 - Vision Governance Operationalization Strict Lane
 
-Roadmap: [`g08.032`](../roadmaps/g08/032-vision-governance-operationalization.md)
+Roadmap: [`g08.032`](../../roadmaps/archive/g08.md)
 Source: Horizon A Theme 1 from
 [`020-strategic-runway-atlas-v1`](../vision/020-strategic-runway-atlas-v1.md)
 Durable authority:

@@ -3,7 +3,7 @@
 Status: Archived
 Archived: 2026-08-31
 Owner: documentation graph and agent retrieval surfaces
-Roadmap: [`g08.035`](../../roadmaps/g08/035-repository-defined-documentation-graph.md)
+Roadmap: [`g08.035`](../../roadmaps/archive/g08.md)
 Architecture: [`024`](../../architecture/024-repository-defined-documentation-graph.md)
 Contract: [`041`](../../contracts/041-documentation-graph-profile-contract.md)
 Current ready card: none; the lane is complete
@@ -27,13 +27,13 @@ runtime behavior to an agent framework.
 
 ## Execution Sequence
 
-1. [`1088`](../../roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md)
+1. [`1088`](../../roadmaps/archive/g08.md)
    adds typed profile grammar, validation, profile freshness, and exact
    Markdown structure/facts.
-2. [`1089`](../../roadmaps/g08/batch-cards/1089-add-bounded-documentation-context-query.md)
+2. [`1089`](../../roadmaps/archive/g08.md)
    adds deterministic retrieval, relation traversal, CLI/help, budgets, and
    JSON.
-3. [`1090`](../../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md)
+3. [`1090`](../../roadmaps/archive/g08.md)
    proves generic and Northstar configurations, publishes adoption guidance,
    runs proportional validation, and closes the lane.
 

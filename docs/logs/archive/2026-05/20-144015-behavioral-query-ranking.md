@@ -1,7 +1,7 @@
 # Behavioral Query Ranking
 
 Date: 2026-05-20
-Card: [`1024`](../../../roadmaps/g07/batch-cards/1024-improve-behavioral-query-ranking.md)
+Card: [`1024`](../../../roadmaps/archive/g07.md)
 Strict lane: [`096`](../../../specs/096-graph-agent-adoption-follow-through-strict-lane.md)
 
 ## Summary

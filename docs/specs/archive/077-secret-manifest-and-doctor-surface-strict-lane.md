@@ -1,8 +1,8 @@
 # 077 - Secret Manifest And Doctor Surface Strict Lane
 
-Roadmap: [`g05.002`](../roadmaps/g05/002-secret-manifest-and-doctor-surface.md)
+Roadmap: [`g05.002`](../../roadmaps/archive/g05.md)
 Contract: [`032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md)
-Audit: [`702-env-config-secret-boundary-audit.md`](../roadmaps/g05/audits/702-env-config-secret-boundary-audit.md)
+Audit: [`702-env-config-secret-boundary-audit.md`](../../roadmaps/archive/g05.md)
 
 Status: Complete
 Owner: Platform

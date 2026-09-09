@@ -1,6 +1,6 @@
 # 034 - Next v0.x Readiness and Roadmap Selection Strict Lane
 
-Roadmap: [`g03.028`](../roadmaps/g03/028-next-v0-x-readiness-and-roadmap-selection.md)
+Roadmap: [`g03.028`](../../roadmaps/archive/g03.md)
 
 Status: Complete
 Owner: Platform
@@ -25,9 +25,9 @@ authority surfaces, promote one concrete next lane if warranted, and close.
 
 ## Evidence Anchors
 
-- [`../roadmaps/g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](../roadmaps/g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md)
-- [`../roadmaps/g03/020-distribution-channel-proof-and-first-publish-closeout.md`](../roadmaps/g03/020-distribution-channel-proof-and-first-publish-closeout.md)
-- [`../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md`](../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md)
+- [`../roadmaps/g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](../../roadmaps/archive/g03.md)
+- [`../roadmaps/g03/020-distribution-channel-proof-and-first-publish-closeout.md`](../../roadmaps/archive/g03.md)
+- [`../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md`](../../roadmaps/archive/g03.md)
 - [`../roadmaps/backlog/README.md`](../roadmaps/backlog/README.md)
 - [`../contracts/README.md`](../contracts/README.md)
 
@@ -42,7 +42,7 @@ records why no ready implementation card should be opened.
 
 ## Next Task
 
-Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../../roadmaps/archive/g03.md).
 
 ## Closeout
 

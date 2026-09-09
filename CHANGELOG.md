@@ -48,6 +48,10 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Changed
+- The bundled Northstar starter now uses the flattened generation-plus-task
+  model: generation READMEs own the approved frontier, executable planning
+  units are top-level `gNN.NNN` tasks, and the documentation graph exposes
+  `task` and `archived-roadmap` kinds instead of nested ready cards.
 - `effigy docs context` answers a warm query on this repository roughly three
   times faster (p50 1935 ms to 602 ms on a current index; 2045 ms to 682 ms
   with a dirty working tree), and a stale docs-only refresh of 50 Markdown

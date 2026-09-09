@@ -1,9 +1,9 @@
 # Graph-Aware Scan Lane Opened
 
 Date: 2026-05-25
-Roadmap: [`g08.001`](../roadmaps/g08/001-graph-aware-scan-intelligence-suite.md)
+Roadmap: [`g08.001`](../../../roadmaps/archive/g08.md)
 Strict lane: [`097`](../specs/097-graph-aware-scan-intelligence-strict-lane.md)
-Batch card: [`1029`](../roadmaps/g08/batch-cards/1029-open-graph-aware-scan-lane.md)
+Batch card: [`1029`](../../../roadmaps/archive/g08.md)
 
 ## Baseline
 

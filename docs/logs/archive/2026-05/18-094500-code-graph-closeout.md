@@ -1,9 +1,9 @@
 # Code Graph Closeout
 
 Date: 2026-05-18  
-Roadmaps: [`g07.001`](../roadmaps/g07/001-code-graph-intelligence-suite.md),
-[`g07.012`](../roadmaps/g07/012-performance-cache-and-regression-proof.md)  
-Batch card: [`912`](../roadmaps/g07/batch-cards/912-close-code-graph-intelligence-proof.md)  
+Roadmaps: [`g07.001`](../../../roadmaps/archive/g07.md),
+[`g07.012`](../../../roadmaps/archive/g07.md)
+Batch card: [`912`](../../../roadmaps/archive/g07.md)
 Strict lane: [`085`](../specs/085-code-graph-intelligence-strict-lane.md)
 
 ## What Changed

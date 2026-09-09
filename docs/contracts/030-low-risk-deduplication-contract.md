@@ -1,7 +1,7 @@
 # Low-Risk Deduplication Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/038-docs-policy-cli-help-and-test-fixture-deduplication.md`](../roadmaps/g04/038-docs-policy-cli-help-and-test-fixture-deduplication.md)
+Roadmap: [`../roadmaps/g04/038-docs-policy-cli-help-and-test-fixture-deduplication.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/074-low-risk-deduplication-strict-lane.md`](../specs/074-low-risk-deduplication-strict-lane.md)
 Status: Accepted
 Owner: Platform

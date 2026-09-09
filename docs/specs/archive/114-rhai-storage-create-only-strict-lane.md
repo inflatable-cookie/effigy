@@ -4,7 +4,7 @@ Status: Complete
 Owner: Effigy orchestrator
 Created: 2026-09-01
 Closed: 2026-09-01
-Roadmap: [`g08.044`](../../roadmaps/g08/044-rhai-storage-create-only.md)
+Roadmap: [`g08.044`](../../roadmaps/archive/g08.md)
 Contract: [`044`](../../contracts/044-rhai-storage-create-only-contract.md)
 Evidence: [`2026-09-01 closeout`](../../logs/archive/2026-09/01-182838-rhai-storage-create-only-1099.md)
 
@@ -31,7 +31,7 @@ does not expose it.
 
 ## Runway
 
-- [`1099`](../roadmaps/g08/batch-cards/1099-add-rhai-storage-create-only.md)
+- [`1099`](../../roadmaps/archive/g08.md)
 
 ## Stop Conditions
 

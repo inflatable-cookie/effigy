@@ -78,4 +78,4 @@ surface changed. Ordinary and legacy mounts still do not imply membership.
 ## Next Task
 
 Execute ready card
-[`1075`](../../roadmaps/g08/batch-cards/1075-prove-migration-and-close-explicit-membership-lane.md).
+[`1075`](../../../roadmaps/archive/g08.md).

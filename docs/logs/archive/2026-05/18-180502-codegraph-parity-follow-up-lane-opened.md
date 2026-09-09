@@ -1,8 +1,8 @@
 # CodeGraph Parity Follow Up Lane Opened
 
 Date: 2026-05-18  
-Roadmap: [`g07.046`](../../../roadmaps/g07/046-codegraph-parity-follow-up-suite.md)  
-Batch card: [`996`](../../../roadmaps/g07/batch-cards/996-open-codegraph-parity-follow-up-lane.md)  
+Roadmap: [`g07.046`](../../../roadmaps/archive/g07.md)
+Batch card: [`996`](../../../roadmaps/archive/g07.md)
 Strict lane: [`092`](../../../specs/092-codegraph-parity-follow-up-strict-lane.md)
 
 ## What Changed

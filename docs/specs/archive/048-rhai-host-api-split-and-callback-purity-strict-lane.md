@@ -1,6 +1,6 @@
 # 048 - Rhai Host API Split And Callback Purity Strict Lane
 
-Roadmap: [`g04.006`](../roadmaps/g04/006-rhai-host-api-split-and-callback-purity.md)
+Roadmap: [`g04.006`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
@@ -52,4 +52,4 @@ helper paths.
 ## Next Task
 
 Roadmap `g04.007` starts with card
-[`529-scaffold-effective-container-policy-decomposition-lane.md`](./batch-cards/529-scaffold-effective-container-policy-decomposition-lane.md).
+[`529-scaffold-effective-container-policy-decomposition-lane.md`](../../roadmaps/archive/g04.md).

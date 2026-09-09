@@ -1,6 +1,6 @@
 # 067 - Command Reference Completeness and Flag Consistency Strict Lane
 
-Roadmap: [`g04.024`](../roadmaps/g04/024-command-reference-completeness-and-flag-consistency.md)
+Roadmap: [`g04.024`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

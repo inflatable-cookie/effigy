@@ -267,9 +267,7 @@ role:
 
 ## Next Task
 
-All `g09` lanes through `g09.009` are complete. Contract `041` carries
-`docs context --sources`; contract `034` and the shipped manifest-error
-boundary carry the final two lanes. Consumers remain on the `007` section 6
-adoption posture (operator decision 2026-09-05), with cohort expansion
-unscheduled. Acowtancy stays read-only. Effigy release and S3 extraction remain
-separately gated.
+No generation or Northstar task is active. Consumers remain on the `007`
+section 6 adoption posture with cohort expansion unscheduled. Use Northstar
+Atlas with the operator before compiling a new task. Acowtancy stays read-only;
+Effigy release and S3 retirement remain separately gated.

@@ -276,4 +276,4 @@ was not implemented here.
 ## Next Task
 
 Execute ready card
-[`1090`](../../roadmaps/g08/batch-cards/1090-prove-generic-and-northstar-profiles.md).
+[`1090`](../../../roadmaps/archive/g08.md).

@@ -219,7 +219,7 @@ After this guide, you should be able to:
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`../roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](../roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
+- [`../roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](../roadmaps/archive/g02.md)
 
 ## Next Step
 

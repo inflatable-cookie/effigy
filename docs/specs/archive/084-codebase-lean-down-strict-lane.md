@@ -1,6 +1,6 @@
 # 084 - Codebase Lean-Down Strict Lane
 
-Roadmap: [`g06.001`](../roadmaps/g06/001-codebase-lean-down-suite.md)
+Roadmap: [`g06.001`](../../roadmaps/archive/g06.md)
 Contracts:
 - [`027-state-domain-extraction-contract.md`](../contracts/027-state-domain-extraction-contract.md)
 - [`030-low-risk-deduplication-contract.md`](../contracts/030-low-risk-deduplication-contract.md)

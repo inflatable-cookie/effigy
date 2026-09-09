@@ -1,6 +1,6 @@
 # 070 - Shared Database Target Resolution Strict Lane
 
-Roadmap: [`g04.034`](../roadmaps/g04/034-shared-database-target-resolution.md)
+Roadmap: [`g04.034`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

@@ -1,6 +1,6 @@
 # 066 - Docs Check Subcommand Consolidation Strict Lane
 
-Roadmap: [`g04.023`](../roadmaps/g04/023-docs-check-subcommand-consolidation.md)
+Roadmap: [`g04.023`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

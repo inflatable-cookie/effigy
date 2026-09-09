@@ -7,7 +7,7 @@ const LIVE_CASE_FRAGMENTS: &[&str] = &[
                 query: "documentation graph profile contract",
                 extra_args: [],
                 expected_path: "docs/contracts/041-documentation-graph-profile-contract.md",
-                rival_path: "docs/logs/2026-08/31-181957-documentation-context-1089.md",
+                rival_path: "docs/logs/archive/2026-08/31-181957-documentation-context-1089.md",
                 max_rank: 3,"#,
     r#"id: "effigy-architecture-authority",
                 dimension: "architecture",
@@ -15,7 +15,7 @@ const LIVE_CASE_FRAGMENTS: &[&str] = &[
                 query: "repository defined documentation graph architecture",
                 extra_args: [],
                 expected_path: "docs/architecture/024-repository-defined-documentation-graph.md",
-                rival_path: "docs/roadmaps/g08/batch-cards/1088-build-documentation-profile-and-structural-index.md",
+                rival_path: "docs/roadmaps/archive/g08.md",
                 max_rank: 3,"#,
     r#"id: "effigy-direct-historical-guide",
                 dimension: "historical-decision",
@@ -37,7 +37,7 @@ const LIVE_CASE_FRAGMENTS: &[&str] = &[
                 expect: "historical-retrieval",
                 query: "bounded documentation context query card 1089 closeout evidence",
                 extra_args: [],
-                expected_path: "docs/logs/2026-08/31-181957-documentation-context-1089.md",
+                expected_path: "docs/logs/archive/2026-08/31-181957-documentation-context-1089.md",
                 max_rank: 8,"#,
 ];
 

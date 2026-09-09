@@ -1,7 +1,7 @@
 # Deploy Domain Boundary Contract
 
 Generation: `g04`
-Roadmap: [`../roadmaps/g04/037-deploy-domain-boundary-hardening.md`](../roadmaps/g04/037-deploy-domain-boundary-hardening.md)
+Roadmap: [`../roadmaps/g04/037-deploy-domain-boundary-hardening.md`](../roadmaps/archive/g04.md)
 Strict lane: [`../specs/073-deploy-domain-boundary-hardening-strict-lane.md`](../specs/073-deploy-domain-boundary-hardening-strict-lane.md)
 Status: Accepted
 Owner: Platform

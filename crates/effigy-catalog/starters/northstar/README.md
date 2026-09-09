@@ -30,7 +30,8 @@ effigy qa               # full validation bundle (repo-defined aggregator)
 
 - [`docs/README.md`](docs/README.md) — docs index and authority
 - [`docs/vision/README.md`](docs/vision/README.md) — current product vision
-- [`docs/roadmaps/README.md`](docs/roadmaps/README.md) — active milestone queue
+- [`docs/roadmaps/README.md`](docs/roadmaps/README.md) — active generation and
+  approved task frontier
 - [`docs/logs/README.md`](docs/logs/README.md) — evidence and decisions
 
 ## Documentation graph

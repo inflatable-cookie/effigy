@@ -1112,16 +1112,16 @@ That post-`212` boundary decision is now made too:
   `new_without_default`) / `effigy qa:docs` / `git diff --check`
   all clean.
 - `247` opens three new cards in one planning batch:
-  [`242-implement-cross-crate-re-export-shim-cleanup.md`](batch-cards/242-implement-cross-crate-re-export-shim-cleanup.md)
+  [`242-implement-cross-crate-re-export-shim-cleanup.md`](../../roadmaps/archive/g02.md)
   (ready — delete the three transitional re-export shims left by
   `239`/`240`/`246` at `src/runner/managed.rs`,
   `src/runner/model/managed.rs`, `src/runner/model/catalog.rs`, plus
   the widget facade block in `crates/effigy-ui/src/lib.rs` inherited
   from `235`; migrate ~50 call sites to real crate paths),
-  [`243-decide-task-routing-core-extraction-shape.md`](batch-cards/243-decide-task-routing-core-extraction-shape.md)
+  [`243-decide-task-routing-core-extraction-shape.md`](../../roadmaps/archive/g02.md)
   (decide — shape pass for routing + scan + locking + deferral,
   Decision section pending coupling review), and
-  [`244-decide-builtin-tasks-extraction-shape.md`](batch-cards/244-decide-builtin-tasks-extraction-shape.md)
+  [`244-decide-builtin-tasks-extraction-shape.md`](../../roadmaps/archive/g02.md)
   (decide — shape pass for the 11 heterogeneous builtin tasks,
   Decision section pending coupling review). The user's framing:
   shim removal is architectural hygiene, not just unblocking — every
@@ -1174,9 +1174,9 @@ That post-`212` boundary decision is now made too:
   two cards — prerequisite for error-boundary + catalog-loading glue
   consolidation, then implement for the crate move. Two new cards
   opened:
-  [`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](batch-cards/245-implement-routing-error-boundary-and-catalog-loading-consolidation.md)
+  [`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](../../roadmaps/archive/g02.md)
   (ready) and
-  [`246-implement-effigy-routing-extraction.md`](batch-cards/246-implement-effigy-routing-extraction.md)
+  [`246-implement-effigy-routing-extraction.md`](../../roadmaps/archive/g02.md)
   (queued behind `245`). Card `244` (built-in tasks decide) stays
   open but gated on the routing extraction landing first — builtin's
   coupling to routing is the largest factor in its own decision.
@@ -1217,15 +1217,15 @@ That post-`212` boundary decision is now made too:
   matching the Job-8 pattern; direct migration, no re-export shim.
   Sweep surfaced six runner-side utility reach-ins plus two inversions
   that must land first, packaged into card
-  [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](batch-cards/248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](../../roadmaps/archive/g02.md)
   (ready, independent of the scan decision). Builtin/scan is thin
   orchestration over `runner/scan/**` (4,928 lines); not a duplicate,
   but a direct dependent — so scan must be its own crate before
   `effigy-builtin` can extract cleanly. That work is split into
-  [`247-decide-effigy-scan-extraction-shape.md`](batch-cards/247-decide-effigy-scan-extraction-shape.md)
+  [`247-decide-effigy-scan-extraction-shape.md`](../../roadmaps/archive/g02.md)
   (ready — decide scope, error boundary, manifest-glue resolution)
   and
-  [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+  [`249-implement-effigy-scan-extraction.md`](../../roadmaps/archive/g02.md)
   (queued behind `247`). The eventual `effigy-builtin` implement card
   opens once `247`, `248`, and `249` are all complete; it is not yet
   drafted.
@@ -1269,7 +1269,7 @@ That post-`212` boundary decision is now made too:
   cosmetic (re-export swap + uniform `task_invocation` rewrite) and
   reviewable as a single commit alongside the crate move. Card
   `247` is complete; card
-  [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+  [`249-implement-effigy-scan-extraction.md`](../../roadmaps/archive/g02.md)
   is now ready and runs the full move in one card. Independent of
   card `248` — either ordering works.
 
@@ -1309,7 +1309,7 @@ That post-`212` boundary decision is now made too:
   `watch`, `cache`, `test`, `tasks`, `doctor`, and help-arm sites —
   none of which `244` recorded. Option A (port-trait inversion prereq)
   chosen to keep card `250` scope mechanical. Drafted card
-  [`251-implement-builtin-runtime-ports-inversion.md`](batch-cards/251-implement-builtin-runtime-ports-inversion.md)
+  [`251-implement-builtin-runtime-ports-inversion.md`](../../roadmaps/archive/g02.md)
   covering:
   (a) `BuiltinRuntimePorts` trait at `src/runner/builtin_ports.rs`
   with 16 methods spanning lock / cache / execute / command-context /

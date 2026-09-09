@@ -1,6 +1,6 @@
 # 062 - Task Status Record And Active Run Model Strict Lane
 
-Roadmap: [`g04.020`](../roadmaps/g04/020-task-status-record-and-active-run-model.md)
+Roadmap: [`g04.020`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform

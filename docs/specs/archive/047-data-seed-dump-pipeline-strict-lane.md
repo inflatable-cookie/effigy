@@ -1,6 +1,6 @@
 # 047 - Data Seed Dump Pipeline Strict Lane
 
-Roadmap: [`g04.005`](../roadmaps/g04/005-data-seed-dump-pipeline.md)
+Roadmap: [`g04.005`](../../roadmaps/archive/g04.md)
 
 Status: Complete
 Owner: Platform
