@@ -28,7 +28,7 @@ Queue execution record. “Effigy task” means a command selector.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
 
-No product execution is authorized from the archived roll-ups, backlog, logs,
+No product execution is authorized from the archived roll-ups, triage notes, logs,
 or closed specs.
 
 ## Generation history
@@ -47,11 +47,12 @@ The roll-ups preserve durable outcomes, current destinations, material
 evidence, retained risks, and succession. Git remains the detailed milestone,
 batch-card, audit, and validation archive.
 
-## Backlog
+## Triage
 
-Deferred planning lives in [`backlog/README.md`](./backlog/README.md). Backlog
-items are not executable. Promotion requires operator intent, current canonical
-refs, an active generation, and a ready top-level Northstar task.
+Unresolved or deferred candidates live in [`../triage/README.md`](../triage/README.md).
+Triage notes are non-authoritative and never executable. Promotion requires
+operator intent, current canonical refs, an active generation, and a ready
+top-level Northstar task.
 
 ## Research program
 

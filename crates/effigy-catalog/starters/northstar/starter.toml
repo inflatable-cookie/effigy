@@ -43,6 +43,9 @@ target = "docs/roadmaps/README.md"
 target = "docs/roadmaps/templates/task-template.md"
 
 [[files]]
+target = "docs/triage/README.md"
+
+[[files]]
 target = "docs/logs/README.md"
 
 [[files]]

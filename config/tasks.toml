@@ -28,6 +28,7 @@
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:index" = "cargo run --bin effigy -- docs check index"
 "qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:docs:backlog-absence" = "test ! -e docs/roadmaps/backlog"
 "qa:docs:vision" = [
   "cargo run --bin effigy -- docs check headings docs/roadmaps/README.md --require-heading '## Current planning state' --require-heading '## Next Task'",
   "cargo run --bin effigy -- docs check headings docs/roadmaps/generation-index.md --require-heading '## Lifecycle state' --require-heading '## Next Task'",
@@ -44,6 +45,7 @@
   { task = "qa:docs:examples" },
   { task = "qa:docs:index" },
   { task = "qa:docs:agent-defaults" },
+  { task = "qa:docs:backlog-absence" },
   { task = "qa:docs:vision" },
 ]
 

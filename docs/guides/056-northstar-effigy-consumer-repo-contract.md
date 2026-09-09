@@ -208,7 +208,7 @@ Should answer:
 - generation model
 - active generation or explicit absence
 - approved task frontier or explicit absence
-- backlog layout
+- triage intake and promotion rule (non-authoritative)
 - next roadmap task
 
 An execution-ready repository should have one active generation. A paused

@@ -40,6 +40,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   repo-local installs, fingerprints the bundled skill version, refuses dirty
   skill trees, and updates only the managed files.
 - Surface: cross-repo skill distribution; `init` / agent adoption maintenance.
+- Triage: `docs/triage/20260909-152107-vendored-effigy-skill-portfolio-sync.md` (open candidate; keep this entry open until promoted or deliberately declined).
 
 ## Closed
 

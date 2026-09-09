@@ -28,7 +28,7 @@ authority surfaces, promote one concrete next lane if warranted, and close.
 - [`../roadmaps/g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](../../roadmaps/archive/g03.md)
 - [`../roadmaps/g03/020-distribution-channel-proof-and-first-publish-closeout.md`](../../roadmaps/archive/g03.md)
 - [`../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md`](../../roadmaps/archive/g03.md)
-- [`../roadmaps/backlog/README.md`](../roadmaps/backlog/README.md)
+- [`roadmaps README`](../../roadmaps/README.md) (the former `backlog/README.md` was retired 2026-09-09; unresolved candidates now live under `docs/triage/`)
 - [`../contracts/README.md`](../contracts/README.md)
 
 ## Current Ready Card

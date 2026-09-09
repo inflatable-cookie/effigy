@@ -78,6 +78,16 @@ During v0.x, MINOR bumps may include breaking changes.
   migration warnings are removed. Help grouping and `effigy help <group>`
   stay as discovery; each built-in runs as `effigy <command> ...` without a
   warning. Former namespace words return to ordinary selector routing.
+- Retired the `docs/roadmaps/backlog/` intake layer. Roadmaps now hold only
+  promoted executable tasks while `docs/triage/` temporarily holds unresolved
+  or deferred candidates with no execution authority; the two surviving
+  candidates (consumer cohort expansion, vendored skill portfolio sync) moved
+  to timestamped triage notes. Guide `049` is self-contained for versioning,
+  rollback, support-window, and v1-planning policy, live references point at
+  current guides and triage notes, and both repo-owned `qa:docs` and the
+  bundled Northstar starter reject a reintroduced `docs/roadmaps/backlog/`
+  through a `test ! -e` absence check. The starter also emits a
+  `docs/triage/README.md` intake anchor.
 
 ### Fixed
 - A provably stale repository-local install — the checkout's own
