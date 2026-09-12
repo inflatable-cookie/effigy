@@ -1980,9 +1980,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.14.0"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -5212,35 +5212,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "swallowtail-adapter-claude-agent"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-codex"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-grok"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-core"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-host-local"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-idioms"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-protocol-acp"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-runtime"
-version = "0.4.4"
