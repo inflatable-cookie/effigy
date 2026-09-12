@@ -7,7 +7,7 @@ publish = false
 description = "Secret vault domain models for Effigy"
 
 [dependencies]
-argon2 = "0.5"
+argon2 = "0.6"
 chacha20poly1305 = "0.11"
 getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
