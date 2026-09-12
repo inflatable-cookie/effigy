@@ -1693,9 +1693,9 @@ dependencies = [
 
 [[package]]
 name = "hickory-server"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "130236ba6abba90da6a7acf7a87b27d862b592c3145dc74bc47bf86d8ff198ec"
+checksum = "586b2c79074ef9e117a44f79ad8f9af16f8a505b7532e6c5e1970d6e65b60f60"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5212,35 +5212,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "swallowtail-adapter-claude-agent"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-codex"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-adapter-grok"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-core"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-host-local"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-idioms"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-protocol-acp"
-version = "0.4.4"
-
-[[patch.unused]]
-name = "swallowtail-runtime"
-version = "0.4.4"
