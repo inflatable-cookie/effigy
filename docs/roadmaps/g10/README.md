@@ -1,6 +1,5 @@
 # g10 — Agent-Native Skill Execution
 
-Status: active
 Opened: 2026-09-13
 Owner: task routing and execution
 
@@ -10,11 +9,6 @@ Make installed agent skills first-class Effigy task sources without weakening
 the explicit source/consumer split or machine-safe output contracts.
 
 ## Approved frontier
-
-- [`g10.001`](./001-named-skill-resolution-and-stdio-passthrough.md) — complete;
-  resolve qualified installed skills by name and add opt-in raw stdio transport.
-- [`g10.002`](./002-adopt-effigy-hosted-lifecycle-hook.md) — complete; adopt the
-  Effigy-hosted Queue lifecycle hook without changing product priority.
 
 No unfinished task is approved. Return to Chatterbox for planning direction.
 
