@@ -89,7 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
-- none — the latest generation is closed and its log window is archived
+- [`2026-09/13-100503-named-skill-resolution-stdio-planning.md`](./2026-09/13-100503-named-skill-resolution-stdio-planning.md)
+  — opened g10 with one ready agent-native skill-execution task
 
 ## Log template
 
@@ -125,6 +126,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-`g09` is closed with no ready lane. Use Northstar Atlas with the operator to
-choose the next strategic runway. Effigy release remains a separate
+Dispatch `g10.001` through Northstar Queue. Return to Chatterbox after its
+closeout; no later task is ready. Effigy release remains a separate
 operator-gated mutation.

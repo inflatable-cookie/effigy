@@ -2,6 +2,7 @@
 
 Status: active
 Created: 2026-08-31
+Updated: 2026-09-13
 
 ## Purpose
 
@@ -14,7 +15,7 @@ the task definition and the runtime target.
 Skill execution carries five distinct paths:
 
 - invocation CWD: where the operator invoked Effigy
-- source manifest: the explicit external `effigy.toml`
+- source manifest: the explicit or named-resolved external `effigy.toml`
 - source root: the directory containing that manifest
 - target root: the consuming repository resolved from invocation CWD or
   `--repo`
@@ -66,7 +67,7 @@ It does not:
 - merge skill tasks into the consumer's normal selector surface
 - inherit consumer task defaults, systems, containers, env schema, or secrets
   declarations
-- scan machine skill locations or resolve a skill by global name
+- scan outside the contracted project/user agent-skill roots
 - admit external catalog members or container-bound skill tasks
 - mutate the consumer manifest to install the skill
 
@@ -91,6 +92,8 @@ injects nothing.
 - `effigy-execution` propagates that source through dispatch and preflight.
 - `src/runner/skill_command.rs` resolves source/target evidence and recursively
   validates the selected skill task graph before execution.
+- CLI entry/output dispatch recognizes passthrough before rendering so the
+  selected child process can own raw stdio and exit status.
 - `src/runner/execute` and `effigy-rhai` preserve the split through commands,
   env/cache paths, nested task references, and script steps; recursive preflight
   rejects managed shapes and canonically escaping scripts before execution.
@@ -99,18 +102,33 @@ injects nothing.
 
 ```text
 effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]
-effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]
+effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]
 ```
 
 A directory resolves exactly `<directory>/effigy.toml`. A file resolves that
 file. Missing, non-file, ambiguous, member-bearing, or non-host-compatible
 sources fail before task execution.
 
+When `skill run` omits `--path`, the qualified selector's first path segment
+selects an agent skill name. Resolution is project-first at
+`<invocation-project>/.agents/skills/<name>`, then unique-global across
+`~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, and
+`~/.cursor/skills`. Canonical paths collapse symlink aliases; distinct global
+matches fail closed. Discovery never follows `--repo` and never merges the
+consumer catalog.
+
+`--stdio passthrough` switches only the process transport. Preflight still
+resolves and validates the isolated task graph first. After launch, the child
+inherits stdin/stdout/stderr and its status becomes Effigy's status. The normal
+renderer and JSON envelope are bypassed. `--json` is rejected with passthrough
+before launch.
+
 ## Trust Posture
 
-`skill run` executes code from an operator-supplied path. Effigy must show the
-canonical source and target before execution in verbose/JSON evidence and must
-never broaden the selected source through ambient discovery.
+`skill run` executes code from an operator-supplied path or contracted installed
+skill name. Normal verbose/JSON output must show the canonical source and
+target. Raw passthrough deliberately emits no Effigy evidence; its explicit
+flag and fail-closed discovery/preflight are the trust boundary.
 
 ## Related Authority
 

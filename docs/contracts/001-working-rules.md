@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-09-09
+Updated: 2026-09-13
 
 This contract defines how Effigy plans and executes Northstar work using the
 generation-plus-task model.
@@ -93,5 +93,5 @@ polish lane.
 
 ## Next Task
 
-No generation or ready task is active. Run Northstar Atlas with the operator
-before opening `g10`. Effigy release and S3 retirement remain separately gated.
+`g10.001` is the sole ready task. Dispatch it through Northstar Queue, then
+return to Chatterbox. Effigy release and S3 retirement remain separately gated.

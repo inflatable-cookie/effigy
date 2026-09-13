@@ -1,6 +1,6 @@
 # 020 Strategic Runway Atlas v1
 
-Status: Draft
+Status: Active
 Owner: Platform + Maintainers
 Purpose: long-horizon strategic runway for Effigy after `g08` closeout, shaped by
 Northstar Atlas on 2026-08-17.
@@ -183,9 +183,7 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-Execute the Atlas runway decision with the operator before any `g10`
-rollover. `g09` is closed with no ready lane: Theme 3's pilot completed as
-`g09.003` and its maturity question is settled on the vision `007` section 6
-adoption posture; cohort expansion is unscheduled until a consumer asks or
-`docs context --sources` evidence motivates it. Effigy release remains
-separately gated.
+The operator selected Horizon C's agent-native skill-execution seam on
+2026-09-13. `g10` is open with `g10.001`: deterministic installed-skill
+resolution plus explicit raw stdio transport. No later g10 task is approved.
+Consumer cohort expansion and Effigy release remain separately gated.

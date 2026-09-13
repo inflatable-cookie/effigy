@@ -3,6 +3,7 @@
 Status: active
 Owner: task routing and execution
 Created: 2026-08-31
+Updated: 2026-09-13
 
 ## Purpose
 
@@ -11,16 +12,19 @@ consuming repository remains Effigy's runtime target.
 
 ## Command Contract
 
-Supported v1 commands:
+Supported commands:
 
 ```text
 effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]
-effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]
+effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]
 ```
 
 Rules:
 
-- `--path` is required and selects only the task-definition source.
+- `--path` remains required for `skill tasks`. It remains the exact, unchanged
+  source override for `skill run` when present.
+- Without `--path`, `skill run` requires a qualified `<skill>/<task>` selector,
+  derives `<skill>`, and resolves that installed agent skill by name.
 - A directory resolves its direct `effigy.toml`; a file resolves itself.
 - Paths are canonicalized before comparison and reporting.
 - `skill tasks` loads and lists the isolated source without needing a consumer.
@@ -29,6 +33,28 @@ Rules:
 - `--repo` never selects the skill source.
 - Task arguments after `--` retain normal Effigy forwarding behavior.
 - Existing selectors and existing `--repo` behavior do not change.
+
+## Named Source Resolution
+
+Named lookup starts from the invocation CWD, never the consumer selected by
+`--repo`. It checks the invocation project's direct `.agents/skills/<skill>`
+directory first, then the user's installed skill roots under the home
+directory: `.agents/skills`, `.codex/skills`, `.claude/skills`, and
+`.cursor/skills`.
+
+- the project-local source wins over every global source
+- a candidate is an agent skill directory with direct `SKILL.md` and
+  `effigy.toml` files
+- canonicalized aliases or symlinks to the same directory count once
+- multiple distinct global matches are ambiguous and fail with candidate paths
+- an authoritative project-local candidate that lacks `effigy.toml` fails; it
+  does not silently fall through to a global copy
+- missing, unqualified, or invalid named sources fail before task execution
+- no registry, network, ancestor walk, consumer catalog, or ambient manifest
+  search participates
+
+The full selector still selects the task. Deriving the skill name does not
+rewrite catalog aliases or task names.
 
 ## Source Contract
 
@@ -41,7 +67,7 @@ The first version accepts one composed root skill catalog.
   before execution and must remain inside the source root; relative, absolute,
   and symlink escapes are rejected
 - `[catalog.members]` is rejected on this surface
-- ambient discovery outside the source root is forbidden
+- ambient discovery outside the contracted named roots is forbidden
 - consumer catalogs never join the skill selector set
 - nested task references resolve only within the loaded skill catalog
 - missing tasks and ambiguous/escaping source paths fail before execution
@@ -104,6 +130,26 @@ the split:
 JSON uses a versioned skill payload. Text and JSON must agree on these facts.
 No output may imply that the source root is the consumer repository.
 
+Normal text and `--json` behavior remain unchanged. Named resolution may add
+source-discovery evidence without changing the command envelope contract.
+
+### Raw stdio passthrough
+
+`--stdio passthrough` is an explicit `skill run` transport mode. It is not JSON
+mode and remains schema-agnostic.
+
+- stdin bytes are inherited by the selected task unchanged
+- the task owns stdout and stderr directly; Effigy adds no header, footer,
+  spinner, envelope, newline, warning, or status text
+- the Effigy process exits with the task's exit status, including non-zero
+  status
+- preflight and launch failures write a useful diagnostic only to stderr, leave
+  stdout empty, and exit non-zero
+- `--json` and `--stdio passthrough` are incompatible in either global or local
+  flag position and fail before task execution
+- all existing source isolation, target routing, graph preflight, and rejected
+  task-shape rules still apply
+
 ## Failure Contract
 
 Fail before task side effects when:
@@ -145,7 +191,19 @@ Smallest adversarial counterexamples:
 6. `--repo` points at a second consumer while invocation CWD is in the first.
    Target and execution CWD use the explicit consumer; invocation evidence keeps
    the first CWD.
+7. A project and global root contain the same named skill. The project source
+   runs even when `--repo` points elsewhere.
+8. Two distinct global roots contain the same named skill. Resolution fails
+   before either task runs; symlink aliases of one source do not create false
+   ambiguity.
+9. A task receives JSON stdin without a trailing newline in passthrough mode.
+   Its stdin, stdout, stderr, and exit status cross the Effigy boundary
+   byte-for-byte, with no Effigy output.
+10. Passthrough preflight failure and passthrough plus `--json` both leave
+    stdout empty and launch no task.
 
-Required proof: parser/help tests, isolated routing fixtures, path-resolution
-tests, nested task/Rhai tests, no-side-effect rejection tests, JSON contract
-validation, and one read-only installed-Northstar skill smoke.
+Required proof: parser/help tests, isolated routing fixtures, named-source
+precedence/ambiguity tests, path-resolution tests, nested task/Rhai tests,
+no-side-effect rejection tests, raw subprocess byte assertions for stdin,
+stdout, stderr, and exit status, JSON contract validation, and one read-only
+installed-skill smoke.

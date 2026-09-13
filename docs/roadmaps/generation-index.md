@@ -1,14 +1,14 @@
 # Roadmap Generation Index
 
-Current generation: none
-Approved frontier: none
-Updated: 2026-09-09
+Current generation: g10
+Approved frontier: g10.001
+Updated: 2026-09-13
 
 ## Lifecycle state
 
-Effigy has no active Northstar generation or executable task. Generations
-`g01` through `g09` are safely closed and compacted. The next strategic runway
-requires an operator-led Northstar Atlas decision; `g10` is unopened.
+Generations `g01` through `g09` are safely closed and compacted. The operator
+selected an agent-native skill-execution runway on 2026-09-13. `g10` is open
+with one ready task and no speculative continuation.
 
 ## Generation history
 
@@ -23,6 +23,7 @@ requires an operator-led Northstar Atlas decision; `g10` is unopened.
 | [`g07`](./archive/g07.md) | archived | native code graph, query quality, setup, and agent adoption |
 | [`g08`](./archive/g08.md) | archived | graph-aware scans, dependencies, release integrity, docs, and catalog packs |
 | [`g09`](./archive/g09.md) | archived | operator/consumer clarity, docs-context proof, and local-link recovery |
+| [`g10`](./g10/README.md) | active | installed agent-skill resolution and machine-transparent task transport |
 
 ## Rollover history
 
@@ -42,5 +43,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Run Northstar Atlas with the operator. A new generation and its first
-`gNN.NNN` task may be created only after that direction is confirmed.
+Dispatch [`g10.001`](./g10/001-named-skill-resolution-and-stdio-passthrough.md)
+through Northstar Queue. Return to Chatterbox when it closes.
