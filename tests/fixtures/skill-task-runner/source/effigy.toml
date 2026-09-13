@@ -42,6 +42,22 @@ enabled = true
 inputs = ["input.txt"]
 outputs = ["out/result.txt"]
 
+[tasks.raw-cat]
+run = "cat"
+run_in = "host"
+
+[tasks.raw-streams]
+run = "printf 'raw-out'; printf 'raw-err' >&2"
+run_in = "host"
+
+[tasks.raw-exit]
+run = "exit 23"
+run_in = "host"
+
+[tasks.raw-marker]
+run = "printf 'ran' > raw-marker.txt"
+run_in = "host"
+
 [tasks.container-bound]
 run = "touch should-not-exist"
 run_in = "container"

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use effigy_cli::{SkillArgs, SkillSubcommand};
+use effigy_cli::{SkillArgs, SkillSubcommand, TaskInvocation};
 use effigy_context::{activate_external_task_source_isolation, TaskSourceContext};
 use effigy_execution::{
     ExecutionEnvironmentPlan, ExecutionOutputMode, ExecutionRuntimePolicy, ExecutionSurface,
@@ -17,45 +17,249 @@ use super::command_context::{active_invocation_cwd, active_runtime_context};
 use super::error::RunnerError;
 use super::execute::render_script_path;
 
+/// Direct file that marks a named directory as an installed agent skill.
+const SKILL_MARKER_FILE: &str = "SKILL.md";
+
+/// Installed user skill roots, in deterministic search order.
+const GLOBAL_SKILL_ROOTS: &[&str] = &[
+    ".agents/skills",
+    ".codex/skills",
+    ".claude/skills",
+    ".cursor/skills",
+];
+
+/// Project-local skill root relative to the invocation project.
+const PROJECT_SKILL_ROOT: &str = ".agents/skills";
+
 pub(in crate::runner) fn run_skill(args: SkillArgs) -> Result<String, RunnerError> {
-    let source = resolve_skill_source(skill_path(&args))?;
-    let catalog = load_isolated_catalog(&source.source_root, &source.manifest_path)?;
+    let output_json = args.output_json;
     match args.subcommand {
-        SkillSubcommand::Tasks { .. } => render_skill_tasks(&source, &catalog, args.output_json),
-        SkillSubcommand::Run { task, .. } => {
-            let selector = effigy_tasks::parse_task_selector(&task.name)
-                .map_err(RunnerError::task_invocation)?;
-            let _selection = select_catalog_and_task(
-                &selector,
-                std::slice::from_ref(&catalog),
-                &source.source_root,
-            )?;
-            validate_host_only_source(&catalog, &selector.task_name)?;
-            run_skill_task(source, catalog.alias.clone(), task, args.output_json)
+        SkillSubcommand::Tasks { path } => {
+            let source = resolve_skill_source(&path)?;
+            let catalog = load_isolated_catalog(&source.source_root, &source.manifest_path)?;
+            render_skill_tasks(&source, &catalog, output_json)
+        }
+        SkillSubcommand::Run { path, task, .. } => {
+            let prepared = prepare_skill_run(path, task)?;
+            run_skill_task(prepared.source, prepared.alias, prepared.task, output_json)
         }
     }
 }
 
-fn skill_path(args: &SkillArgs) -> &Path {
-    match &args.subcommand {
-        SkillSubcommand::Tasks { path } | SkillSubcommand::Run { path, .. } => path,
+/// Run `effigy skill run --stdio passthrough` and report the task's exit
+/// status.
+///
+/// The selected task owns stdin, stdout, stderr, and status. The caller must
+/// not render Effigy output around this result; only preflight/launch failures
+/// produce a diagnostic, and those surface as `Err`.
+pub(in crate::runner) fn run_skill_passthrough(args: SkillArgs) -> Result<i32, RunnerError> {
+    let SkillSubcommand::Run {
+        path, stdio, task, ..
+    } = args.subcommand
+    else {
+        return Err(RunnerError::task_invocation(
+            "`effigy skill tasks` does not support `--stdio passthrough`".to_owned(),
+        ));
+    };
+    if !stdio.is_passthrough() {
+        return Err(RunnerError::task_invocation(
+            "internal passthrough dispatch requires `--stdio passthrough`".to_owned(),
+        ));
     }
+    let prepared = prepare_skill_run(path, task)?;
+    run_skill_task_passthrough(prepared.source, prepared.task)
+}
+
+struct PreparedSkillRun {
+    source: TaskSourceContext,
+    alias: String,
+    task: TaskInvocation,
+}
+
+fn prepare_skill_run(
+    explicit_path: Option<PathBuf>,
+    task: TaskInvocation,
+) -> Result<PreparedSkillRun, RunnerError> {
+    let source = match explicit_path.as_deref() {
+        Some(path) => resolve_skill_source(path)?,
+        None => resolve_named_skill_source(&task.name)?,
+    };
+    let catalog = load_isolated_catalog(&source.source_root, &source.manifest_path)?;
+    let selector =
+        effigy_tasks::parse_task_selector(&task.name).map_err(RunnerError::task_invocation)?;
+    let _selection = select_catalog_and_task(
+        &selector,
+        std::slice::from_ref(&catalog),
+        &source.source_root,
+    )?;
+    validate_host_only_source(&catalog, &selector.task_name)?;
+    Ok(PreparedSkillRun {
+        source,
+        alias: catalog.alias.clone(),
+        task,
+    })
 }
 
 fn resolve_skill_source(raw: &Path) -> Result<TaskSourceContext, RunnerError> {
+    let canonical = canonicalize_source(raw)?;
+    let (source_root, manifest_path) = split_source_root(&canonical)?;
+    Ok(TaskSourceContext::new(
+        source_root.clone(),
+        manifest_path.clone(),
+        vec![
+            format!("operator selected `{}`", raw.display()),
+            format!("canonical source root `{}`", source_root.display()),
+            format!("direct manifest `{}`", manifest_path.display()),
+        ],
+    ))
+}
+
+/// Resolve an installed agent skill from the invocation project, then unique
+/// global install roots. `--repo` never participates.
+fn resolve_named_skill_source(selector: &str) -> Result<TaskSourceContext, RunnerError> {
+    let skill_name = named_skill_segment(selector)?;
     let invocation_cwd = active_invocation_cwd()?;
-    let requested = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        invocation_cwd.join(raw)
+    let project_candidate = invocation_cwd.join(PROJECT_SKILL_ROOT).join(skill_name);
+    if project_candidate.is_dir() {
+        // The invocation project is authoritative: a present directory must be
+        // a complete skill, so it never silently falls through to an installed
+        // global copy.
+        for (marker, hint) in [
+            (
+                SKILL_MARKER_FILE,
+                "add the direct skill marker or pass --path <SKILL_DIR|EFFIGY_TOML>",
+            ),
+            (
+                TASK_MANIFEST_FILE,
+                "add a direct effigy.toml task source or pass --path <SKILL_DIR|EFFIGY_TOML>",
+            ),
+        ] {
+            if !project_candidate.join(marker).is_file() {
+                return Err(RunnerError::task_invocation(format!(
+                    "named skill `{skill_name}` resolved to invocation project `{}` but it has no direct `{marker}`; {hint}",
+                    project_candidate.display()
+                )));
+            }
+        }
+        return named_candidate_source(&project_candidate, "the invocation project");
+    }
+
+    let home = home_dir().ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "named skill `{skill_name}` cannot be resolved because the home directory is unavailable; pass --path <SKILL_DIR|EFFIGY_TOML>"
+        ))
+    })?;
+    let mut candidates = Vec::<PathBuf>::new();
+    for root in GLOBAL_SKILL_ROOTS {
+        let candidate = home.join(root).join(skill_name);
+        if !candidate_has_named_skill_files(&candidate) {
+            continue;
+        }
+        let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "named skill `{skill_name}` candidate `{}` cannot be resolved: {error}",
+                candidate.display()
+            ))
+        })?;
+        if !candidates.contains(&canonical) {
+            candidates.push(canonical);
+        }
+    }
+
+    match candidates.len() {
+        0 => Err(RunnerError::task_invocation(format!(
+            "named skill `{skill_name}` was not found in the invocation project `{}` or under `{}/{{{}}}`; install the skill or pass --path <SKILL_DIR|EFFIGY_TOML>",
+            invocation_cwd.join(PROJECT_SKILL_ROOT).display(),
+            home.display(),
+            GLOBAL_SKILL_ROOTS.join(","),
+        ))),
+        1 => named_candidate_source(&candidates[0], "the installed user skill roots"),
+        _ => {
+            let listing = candidates
+                .iter()
+                .map(|path| format!("- {}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(RunnerError::task_invocation(format!(
+                "named skill `{skill_name}` is ambiguous across distinct global skill roots; remove one or pass --path <SKILL_DIR|EFFIGY_TOML>:\n{listing}"
+            )))
+        }
+    }
+}
+
+fn named_skill_segment(selector: &str) -> Result<&str, RunnerError> {
+    let Some((skill, _)) = selector.split_once('/') else {
+        return Err(RunnerError::task_invocation(format!(
+            "`effigy skill run {selector}` needs `--path <SKILL_DIR|EFFIGY_TOML>` or a qualified `<skill>/<task>` selector naming an installed agent skill"
+        )));
     };
-    let canonical = std::fs::canonicalize(&requested).map_err(|error| {
+    let invalid = skill.is_empty()
+        || skill == "."
+        || skill == ".."
+        || skill.starts_with('-')
+        || skill.contains('\\')
+        || skill.contains(':')
+        || skill.chars().any(char::is_control);
+    if invalid {
+        return Err(RunnerError::task_invocation(format!(
+            "`effigy skill run {selector}` names an invalid skill segment `{skill}`; use one plain installed agent skill directory name"
+        )));
+    }
+    Ok(skill)
+}
+
+fn candidate_has_named_skill_files(candidate: &Path) -> bool {
+    candidate.is_dir()
+        && candidate.join(SKILL_MARKER_FILE).is_file()
+        && candidate.join(TASK_MANIFEST_FILE).is_file()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+fn named_candidate_source(
+    candidate: &Path,
+    origin: &str,
+) -> Result<TaskSourceContext, RunnerError> {
+    let canonical = canonicalize_source(candidate)?;
+    let (source_root, manifest_path) = split_source_root(&canonical)?;
+    Ok(TaskSourceContext::new(
+        source_root.clone(),
+        manifest_path.clone(),
+        vec![
+            format!("named skill resolved from {origin}"),
+            format!("candidate skill root `{}`", candidate.display()),
+            format!("canonical source root `{}`", source_root.display()),
+            format!("direct manifest `{}`", manifest_path.display()),
+        ],
+    ))
+}
+
+fn canonicalize_source(requested: &Path) -> Result<PathBuf, RunnerError> {
+    let invocation_cwd = active_invocation_cwd()?;
+    let requested = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        invocation_cwd.join(requested)
+    };
+    std::fs::canonicalize(&requested).map_err(|error| {
         RunnerError::task_invocation(format!(
             "skill source path `{}` cannot be resolved: {error}; pass a readable skill directory or effigy.toml",
             requested.display()
         ))
-    })?;
-    let (source_root, manifest_path) = if canonical.is_dir() {
+    })
+}
+
+fn split_source_root(canonical: &Path) -> Result<(PathBuf, PathBuf), RunnerError> {
+    if canonical.is_dir() {
         let manifest = canonical.join(TASK_MANIFEST_FILE);
         if !manifest.is_file() {
             return Err(RunnerError::task_invocation(format!(
@@ -63,8 +267,9 @@ fn resolve_skill_source(raw: &Path) -> Result<TaskSourceContext, RunnerError> {
                 canonical.display()
             )));
         }
-        (canonical, manifest)
-    } else if canonical.is_file()
+        return Ok((canonical.to_path_buf(), manifest));
+    }
+    if canonical.is_file()
         && canonical
             .file_name()
             .is_some_and(|name| name == TASK_MANIFEST_FILE)
@@ -75,22 +280,12 @@ fn resolve_skill_source(raw: &Path) -> Result<TaskSourceContext, RunnerError> {
                 canonical.display()
             ))
         })?;
-        (source_root.to_path_buf(), canonical)
-    } else {
-        return Err(RunnerError::task_invocation(format!(
-            "skill source `{}` is not a directory or `{TASK_MANIFEST_FILE}` file; pass one explicit task source",
-            canonical.display()
-        )));
-    };
-    Ok(TaskSourceContext::new(
-        source_root.clone(),
-        manifest_path.clone(),
-        vec![
-            format!("operator selected `{}`", raw.display()),
-            format!("canonical source root `{}`", source_root.display()),
-            format!("direct manifest `{}`", manifest_path.display()),
-        ],
-    ))
+        return Ok((source_root.to_path_buf(), canonical.to_path_buf()));
+    }
+    Err(RunnerError::task_invocation(format!(
+        "skill source `{}` is not a directory or `{TASK_MANIFEST_FILE}` file; pass one explicit task source",
+        canonical.display()
+    )))
 }
 
 fn validate_host_only_source(catalog: &LoadedCatalog, root_task: &str) -> Result<(), RunnerError> {
@@ -389,6 +584,40 @@ fn run_skill_task(
         catalog_alias,
         task.name,
     ))
+}
+
+fn run_skill_task_passthrough(
+    source: TaskSourceContext,
+    task: effigy_cli::TaskInvocation,
+) -> Result<i32, RunnerError> {
+    let runtime_context = active_runtime_context().ok_or_else(|| {
+        RunnerError::task_invocation("skill run requires a captured runtime context".to_owned())
+    })?;
+    if runtime_context.target().resolution_mode == "LossyCwdFallback" {
+        return Err(RunnerError::task_invocation(format!(
+            "skill target could not be resolved from invocation CWD `{}`; run inside a consumer repository or pass --repo <CONSUMER>",
+            runtime_context.invocation_cwd().display()
+        )));
+    }
+    let target_root = runtime_context.command_root().to_path_buf();
+    let source_context = runtime_context.clone().with_task_source(source);
+    // v1 external skill tasks never inherit consumer secrets, so the isolated
+    // source runs with consumer vault resolution switched off for this process
+    // and every child `effigy` process it spawns.
+    let _secret_isolation = activate_external_task_source_isolation();
+    let request = TaskExecutionRequestBuilder::new()
+        .runtime_context(source_context)
+        .task(task.name.clone(), task.args)
+        .surface(ExecutionSurface::DirectCli)
+        .runtime_policy(ExecutionRuntimePolicy::host())
+        .output_mode(ExecutionOutputMode::Passthrough)
+        .environment(ExecutionEnvironmentPlan::default().cwd(target_root))
+        .build()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // The task owns stdout/stderr through inherited descriptors. Effigy must
+    // never render the returned buffer in this mode.
+    super::execute::api::run_manifest_task_request(request)?;
+    Ok(0)
 }
 
 fn source_json(source: &TaskSourceContext) -> Value {

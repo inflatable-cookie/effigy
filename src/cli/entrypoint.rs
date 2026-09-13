@@ -68,6 +68,14 @@ pub fn run_cli(raw_args: Vec<String>) {
             std::process::exit(2);
         }
     };
+    if global_json_mode && matches!(&parsed, Command::Skill(args) if args.stdio_passthrough()) {
+        let mut renderer = PlainRenderer::stderr(output_mode);
+        let _ = renderer.error_block(&MessageBlock::new(
+            "Task failed",
+            "`--json` and `--stdio passthrough` are incompatible: JSON mode lets Effigy own a versioned envelope while passthrough lets the task own raw stdio; choose one".to_owned(),
+        ));
+        std::process::exit(2);
+    }
     let cmd = match apply_global_cli_flags(parsed, &global_options) {
         Ok(cmd) => cmd,
         Err(err) => {
@@ -127,6 +135,24 @@ pub fn run_cli(raw_args: Vec<String>) {
         command_kind,
         command_name: &command_name,
     };
+
+    // Raw stdio passthrough bypasses Effigy's renderer, spinner, and JSON
+    // envelope entirely: the selected task owns stdin/stdout/stderr and status.
+    if matches!(&cmd, Command::Skill(args) if args.stdio_passthrough()) {
+        match crate::runner::run_skill_passthrough_with_context(cmd, context.runtime_context) {
+            Ok(status) => std::process::exit(status),
+            Err(error) => {
+                if let Some(status) = error.task_exit_status() {
+                    // The task already owns stderr; do not add Effigy text.
+                    std::process::exit(status);
+                }
+                let mut err_renderer = PlainRenderer::stderr(output_mode);
+                let _ =
+                    err_renderer.error_block(&MessageBlock::new("Task failed", error.to_string()));
+                std::process::exit(1);
+            }
+        }
+    }
 
     match cmd {
         Command::Version => crate::run_version_command(&context),

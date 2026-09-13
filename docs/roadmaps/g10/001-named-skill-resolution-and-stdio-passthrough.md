@@ -120,6 +120,41 @@ exit status without Effigy-owned output.
 On completion, record outcome, validation run, PR link, reviewed exact head,
 merge commit, and material limits or blockers.
 
+### Implementation (worker PR, pre-merge) — 2026-09-13
+
+- **Outcome reached:** `effigy skill run <skill>/<task>` resolves an installed
+  agent skill without `--path` (invocation project first, then unique global
+  under `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`,
+  `~/.cursor/skills`), and `--stdio passthrough` hands the selected host task
+  raw stdin/stdout/stderr plus its exit status with no Effigy framing.
+  `--path` remains authoritative and `skill tasks` still requires it.
+- **Code:** `crates/effigy-cli` grammar/help/global-flag conflict checks,
+  `crates/effigy-execution` typed passthrough output mode,
+  `src/runner/skill_command.rs` named resolution and the passthrough run path,
+  `src/runner/entrypoints*` passthrough dispatch, and `src/cli/entrypoint.rs`
+  renderer/envelope bypass.
+- **Validation run:** `cargo test` (1499 lib tests plus 323 `cli_output_tests`,
+  all green), `cargo test --test cli_output_tests skill_`,
+  `cargo fmt --all -- --check`,
+  `cargo clippy --all-targets -- -D warnings`, `effigy qa:docs`,
+  `effigy qa:json`, and `git diff --check`.
+- **Adversarial proof added:** non-UTF-8 unterminated stdin round-trips
+  byte-for-byte; distinct raw stdout/stderr; child exit `23`; `--json` plus
+  passthrough rejected in both global and local flag positions before a
+  marker fixture runs; project-local source wins over a global copy; unique
+  global resolves; two distinct globals fail closed with no side effect;
+  symlink aliases collapse to one candidate; an incomplete project-local copy
+  fails closed instead of falling through; `--repo` does not change discovery;
+  named sources keep host-only isolation before side effects.
+- **Friction fixed in lane:** the planning commit's vision `020` `## Next Task`
+  lead verb failed the repository's own `docs check next-action --policy
+  vision`; the sentence now leads with an allowlisted verb and the friction is
+  recorded in `PAPERCUTS.md`.
+- **Limits:** child status crosses exactly for direct and fail-fast sequential
+  host shell steps; a non-fail-fast sequence still reports `1` by existing
+  behavior. No broad CLI error/output rewrite was required. Merge commit and
+  reviewed head are recorded at canonical closeout.
+
 ## Next task
 
 Return to Chatterbox after closeout. Do not compile `g10.002` without operator

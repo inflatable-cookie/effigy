@@ -176,17 +176,25 @@ must own runtime effects:
 ```sh
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check
+effigy skill run northstar/queue:hook --stdio passthrough < payload.json
 effigy skill run --path ~/.agents/skills/northstar northstar/check \
   --repo /path/to/consumer -- --task-argument
 ```
 
-`--path` selects one explicit task source. The current repository, or
-`--repo`, selects the independent consumer target. Skill assets and `{skill}`
+`--path` selects one explicit task source. Without it, a qualified
+`<skill>/<task>` selector derives the skill name and resolves it from the
+invocation project's `.agents/skills/<skill>` first, then from the unique
+installed global root under `~/.agents/skills`, `~/.codex/skills`,
+`~/.claude/skills`, or `~/.cursor/skills`. Project-local wins; distinct global
+matches fail closed; `--repo` never changes discovery. The current repository,
+or `--repo`, selects the independent consumer target. Skill assets and `{skill}`
 stay source-relative; process CWD, `{repo}`, env files, cache paths, and nested
-built-ins use the consumer. V1 is host-only and rejects catalog members,
-container-bound or managed/TUI/concurrent tasks, secrets inheritance, and
-source composition or Rhai assets that canonically escape the selected skill
-root before task side effects.
+built-ins use the consumer. Use `--stdio passthrough` when a machine-to-machine
+caller needs the task's raw stdin/stdout/stderr and exit status instead of
+Effigy's text or JSON envelope; it cannot combine with `--json`. V1 is host-only
+and rejects catalog members, container-bound or managed/TUI/concurrent tasks,
+secrets inheritance, and source composition or Rhai assets that canonically
+escape the selected skill root before task side effects.
 
 Use `--json` to audit canonical source, target, invocation, and execution paths.
 This surface executes code from the path you supply, so inspect unfamiliar

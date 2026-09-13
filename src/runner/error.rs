@@ -378,6 +378,16 @@ impl RunnerError {
     ) -> Self {
         Self::task_invocation(failed_to_render_path(path, error))
     }
+
+    // The task owns raw stdio in passthrough mode; the only exit-status signal
+    // Effigy preserves is the launched child's status.
+    pub fn task_exit_status(&self) -> Option<i32> {
+        match self {
+            RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
+            RunnerError::CommandJsonFailure { .. } => Some(1),
+            _ => None,
+        }
+    }
 }
 
 impl From<TaskError> for RunnerError {

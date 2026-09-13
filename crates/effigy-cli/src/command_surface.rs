@@ -629,6 +629,38 @@ pub fn general_help_entries_for_group(
         .filter(move |entry| entry.group == group)
 }
 
+/// Validate the selector shape required when `effigy skill run` has no
+/// explicit `--path` source override.
+///
+/// Named lookup derives the installed agent skill name from the selector's
+/// first `/`-separated segment, so the selector must be qualified and that
+/// segment must be one plain directory name. Traversal, empty segments, and
+/// separator characters are rejected before any filesystem probing.
+pub fn validate_qualified_named_skill_selector(selector: &str) -> Result<(), String> {
+    let Some((skill, task)) = selector.split_once('/') else {
+        return Err(format!(
+            "`effigy skill run {selector}` needs `--path <SKILL_DIR|EFFIGY_TOML>` or a qualified `<skill>/<task>` selector naming an installed agent skill"
+        ));
+    };
+    if skill.is_empty() || task.is_empty() {
+        return Err(format!(
+            "`effigy skill run {selector}` is not a qualified `<skill>/<task>` selector; name one installed agent skill and its task"
+        ));
+    }
+    let invalid_segment = skill == "."
+        || skill == ".."
+        || skill.starts_with('-')
+        || skill.contains('\\')
+        || skill.contains(':')
+        || skill.chars().any(char::is_control);
+    if invalid_segment {
+        return Err(format!(
+            "`effigy skill run {selector}` names an invalid skill segment `{skill}`; use one plain installed agent skill directory name"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "command_surface/tests.rs"]
 mod tests;

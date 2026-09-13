@@ -119,7 +119,11 @@ Fix:
   or keep those tasks in the consumer repository
 
 Do not replace `--path` with `--repo`. `--path` selects task code; `--repo`
-selects the consumer where runtime effects belong.
+selects the consumer where runtime effects belong. When `--path` is absent, a
+qualified `<skill>/<task>` selector resolves the skill name from the invocation
+project first, then from one unique installed global root; a partial
+project-local directory or two distinct global copies fail closed instead of
+falling through.
 
 ### Symptom: `skill run` cannot resolve a consumer target
 
@@ -131,6 +135,17 @@ effigy skill run --path <SKILL_DIR> <SELECTOR> --repo /path/to/consumer --json
 
 The JSON result should show distinct `source.root` and `target.root` values,
 plus the original `invocation_cwd` and target-owned `execution_cwd`.
+
+### Symptom: `skill run --stdio passthrough` produced no output or a diagnostic
+
+Passthrough is not JSON mode. A preflight or launch failure writes a diagnostic
+to stderr with empty stdout and a non-zero status; a task failure exits with the
+child's own status and adds no Effigy text. If you see an incompatibility error,
+remove `--json` from either its global or local position:
+
+```sh
+effigy skill run <SKILL>/<TASK> --stdio passthrough < payload.json
+```
 
 ### Symptom: `no task catalogs found under ...`
 

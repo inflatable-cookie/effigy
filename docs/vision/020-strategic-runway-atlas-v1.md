@@ -183,7 +183,7 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-The operator selected Horizon C's agent-native skill-execution seam on
-2026-09-13. `g10` is open with `g10.001`: deterministic installed-skill
-resolution plus explicit raw stdio transport. No later g10 task is approved.
-Consumer cohort expansion and Effigy release remain separately gated.
+Execute the operator-selected Horizon C agent-native skill-execution seam.
+`g10` is open with `g10.001`: deterministic installed-skill resolution plus
+explicit raw stdio transport. No later g10 task is approved. Consumer cohort
+expansion and Effigy release remain separately gated.

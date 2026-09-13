@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Planning commits can fail the vision `next-action` gate they depend on — 2026-09-13
+- Friction: the ready-lane planning commit rewrote the `## Next Task` block in `docs/vision/020-strategic-runway-atlas-v1.md` to start with "The operator selected...", so the repository's own `effigy qa:docs` (`docs check next-action --policy vision`) failed until g10.001 changed the lead verb to an allowlisted one.
+- Impact: a lane whose required validation includes `qa:docs` starts red, and workers must edit planning-authored vision prose outside their declared mutable paths to pass.
+- Possible fix: run `effigy qa:docs:vision` (or the next-action check) during ready-state settlement, or accept an operator-attribution lead sentence.
+- Surface: `docs/vision/**` Next Task blocks; `effigy qa:docs:vision`; Northstar ready-state rubric.
+
 ### [ ] `docs add-log-index` appends after `## Next Task` instead of under Active logs — 2026-09-02
 - Friction: `effigy docs add-log-index docs/logs/archive/2026-09/02-155016-official-catalog-pack-update-1107.md` reported success and inserted the bullet after the logs README `## Next Task` paragraph, not at the top of `## Active logs`.
 - Impact: the unique index entry is present for `docs check index` but the front-door list is wrong until a human moves the bullet; workers can ship a drifted Next Task block.

@@ -193,7 +193,7 @@ effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json
 effigy tasks status <SELECTOR> [--repo <PATH>] [--json]
 effigy tasks status --all [--repo <PATH>] [--json]
 effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]
-effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]
+effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]
 effigy deps [--repo <PATH>] [--json]
 effigy deps status [cargo|bun] [--repo <PATH>] [--json]
 effigy papercuts [--all] [--scope <PATH>] [--json]
@@ -394,11 +394,17 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 
 - `tasks --pretty false` is valid only with `--json`
 - `skill --path` selects one isolated task source; it never selects the
-  consumer. `skill run` resolves the consumer from invocation CWD or `--repo`,
-  executes host-only tasks from the consumer root, and rejects members,
-  container/runtime inheritance, managed/TUI/concurrent shapes, manifest
-  secrets, escaping composition, and canonically escaping Rhai assets before
-  task side effects
+  consumer. Without `--path`, `skill run` derives the skill name from a
+  qualified `<skill>/<task>` selector and resolves the invocation project's
+  `.agents/skills/<skill>` first, then the unique installed global root under
+  `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
+  `~/.cursor/skills`; distinct global matches fail closed. `skill run` resolves
+  the consumer from invocation CWD or `--repo`, executes host-only tasks from
+  the consumer root, and rejects members, container/runtime inheritance,
+  managed/TUI/concurrent shapes, manifest secrets, escaping composition, and
+  canonically escaping Rhai assets before task side effects
+- `skill run --stdio passthrough` gives the selected task raw
+  stdin/stdout/stderr and its exit status, and cannot combine with `--json`
 - `docs context` returns source evidence, never a generated summary. Relevance
   gates inclusion, so an unrelated high-authority document cannot enter the
   report; currentness and authority only order results that already match, and
@@ -626,6 +632,7 @@ Installed skill task source with an independent consumer target:
 ```sh
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
+effigy skill run northstar/queue:hook --stdio passthrough < payload.json
 effigy --json skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
 ```
 

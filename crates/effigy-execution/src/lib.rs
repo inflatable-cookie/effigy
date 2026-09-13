@@ -526,6 +526,9 @@ pub enum ExecutionOutputMode {
     Tee,
     Json,
     Interactive,
+    /// The child owns raw stdin/stdout/stderr and the exit status. Callers must
+    /// not render or wrap the execution result.
+    Passthrough,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
