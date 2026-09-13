@@ -1194,10 +1194,43 @@ pub enum SkillSubcommand {
         path: PathBuf,
     },
     Run {
-        path: PathBuf,
+        /// Explicit `--path` source override. When absent, the qualified
+        /// selector's first segment selects an installed agent skill by name.
+        path: Option<PathBuf>,
+        stdio: SkillStdioMode,
         task: TaskInvocation,
         repo_override: Option<PathBuf>,
     },
+}
+
+/// Transport selection for `effigy skill run`.
+///
+/// `Default` keeps Effigy's normal resolution report and JSON envelope.
+/// `Passthrough` hands raw stdin/stdout/stderr and the exit status to the
+/// selected task, so Effigy adds no rendered output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SkillStdioMode {
+    #[default]
+    Default,
+    Passthrough,
+}
+
+impl SkillStdioMode {
+    pub fn is_passthrough(self) -> bool {
+        matches!(self, Self::Passthrough)
+    }
+}
+
+impl SkillArgs {
+    pub fn stdio_passthrough(&self) -> bool {
+        matches!(
+            &self.subcommand,
+            SkillSubcommand::Run {
+                stdio: SkillStdioMode::Passthrough,
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

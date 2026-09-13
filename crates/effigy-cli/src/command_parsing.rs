@@ -34,7 +34,7 @@ use crate::{
     DepsSubcommand, DoctorArgs, HelpGroup, HelpTopic, InternalContainerLeaseReaperArgs,
     InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
     InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
+    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -131,6 +131,7 @@ where
     let mut repo_override = None;
     let mut selector = None;
     let mut output_json = false;
+    let mut stdio = SkillStdioMode::Default;
     let mut passthrough = Vec::new();
     let mut passthrough_mode = false;
     while let Some(arg) = args.next() {
@@ -149,6 +150,19 @@ where
                 })?;
                 path = Some(PathBuf::from(value));
             }
+            "--stdio" if is_run => {
+                let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--stdio".to_owned(),
+                })?;
+                if value != "passthrough" {
+                    return Err(CliParseError::InvalidFlagValue {
+                        flag: "--stdio".to_owned(),
+                        value,
+                        expected: "`passthrough`".to_owned(),
+                    });
+                }
+                stdio = SkillStdioMode::Passthrough;
+            }
             "--repo" if is_run => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Skill)),
@@ -159,35 +173,46 @@ where
         }
     }
 
-    let path = path.ok_or_else(|| {
-        CliParseError::InvalidArguments(format!(
-            "`effigy skill {subcommand}` requires --path <SKILL_DIR|EFFIGY_TOML>"
-        ))
-    })?;
-    let subcommand = if is_run {
-        let selector = selector.ok_or_else(|| {
+    if !is_run {
+        let path = path.ok_or_else(|| {
             CliParseError::InvalidArguments(
-                "`effigy skill run` requires a task selector".to_owned(),
+                "`effigy skill tasks` requires --path <SKILL_DIR|EFFIGY_TOML>".to_owned(),
             )
         })?;
-        SkillSubcommand::Run {
-            path,
-            task: TaskInvocation {
-                name: selector,
-                args: passthrough,
-            },
-            repo_override,
-        }
-    } else {
         if !passthrough.is_empty() {
             return Err(CliParseError::InvalidArguments(
                 "`effigy skill tasks` does not accept task arguments".to_owned(),
             ));
         }
-        SkillSubcommand::Tasks { path }
-    };
+        return Ok(Command::Skill(SkillArgs {
+            subcommand: SkillSubcommand::Tasks { path },
+            output_json,
+        }));
+    }
+
+    if stdio.is_passthrough() && output_json {
+        return Err(CliParseError::InvalidArguments(
+            "`--json` and `--stdio passthrough` are incompatible: JSON mode lets Effigy own a versioned envelope while passthrough lets the task own raw stdio; choose one".to_owned(),
+        ));
+    }
+
+    let selector = selector.ok_or_else(|| {
+        CliParseError::InvalidArguments("`effigy skill run` requires a task selector".to_owned())
+    })?;
+    if path.is_none() {
+        crate::command_surface::validate_qualified_named_skill_selector(&selector)
+            .map_err(CliParseError::InvalidArguments)?;
+    }
     Ok(Command::Skill(SkillArgs {
-        subcommand,
+        subcommand: SkillSubcommand::Run {
+            path,
+            stdio,
+            task: TaskInvocation {
+                name: selector,
+                args: passthrough,
+            },
+            repo_override,
+        },
         output_json,
     }))
 }

@@ -224,6 +224,13 @@ pub fn apply_global_cli_options(
     }
 
     if options.json_mode {
+        if let Command::Skill(args) = &cmd {
+            if args.stdio_passthrough() {
+                return Err(CliParseError::InvalidArguments(
+                    "`--json` and `--stdio passthrough` are incompatible: JSON mode lets Effigy own a versioned envelope while passthrough lets the task own raw stdio; choose one".to_owned(),
+                ));
+            }
+        }
         cmd = apply_global_json_flag(cmd, true);
     }
 

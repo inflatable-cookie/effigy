@@ -9,17 +9,20 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "skill",
     notices: &[
         "Load one explicit skill-owned task catalog without merging it into the consumer repository task surface.",
+        "Without --path, skill run derives the skill name from a qualified <skill>/<task> selector and resolves the invocation project first, then unique-global install roots.",
         "Standard skill tasks run on the host. Managed/TUI/concurrent shapes and escaping Rhai assets are rejected before execution.",
+        "--stdio passthrough gives the task raw stdin/stdout/stderr and exit status. It cannot combine with --json.",
         "The skill supplies task code; the current or --repo repository owns runtime effects.",
     ],
     usage: &[
         "effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]",
-        "effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>] [--json] [-- <ARGS>]",
+        "effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]",
     ],
     leading_common_options: &[],
     options: &[
-        ("--path <PATH>", "Required skill directory or direct effigy.toml task source"),
+        ("--path <PATH>", "Explicit skill directory or direct effigy.toml source; required for `skill tasks` and authoritative for `skill run` when present"),
         ("--repo <CONSUMER>", "Consumer repository target for skill run; defaults to nearest root from invocation CWD"),
+        ("--stdio passthrough", "Hand raw stdin/stdout/stderr and exit status to the selected task; incompatible with --json"),
     ],
     trailing_common_options: &[
         CommonOption::Json("Render versioned skill source/target evidence"),
@@ -27,6 +30,7 @@ const SKILL_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     examples: &[
         "effigy skill tasks --path ~/.agents/skills/northstar",
+        "effigy skill run northstar/queue:hook --stdio passthrough < payload.json",
         "effigy skill run --path ~/.agents/skills/northstar northstar/rust-quality:check",
         "effigy skill run --path /opt/skills/northstar/effigy.toml northstar/setup --repo /work/consumer -- apply",
     ],

@@ -120,7 +120,7 @@ for generic repo orientation.
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
 | Inventory project papercuts | `effigy --json papercuts` or `effigy --json papercuts --scope <PROJECTS_DIR>` |
-| Run an installed skill task | `effigy skill run --path <SKILL> <SELECTOR>` |
+| Run an installed skill task | `effigy skill run [--path <SKILL>] <SKILL>/<TASK>` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
 | Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
 | Apply repo setup | `effigy init` or `effigy init --apply --json` |
@@ -195,13 +195,21 @@ volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 **Installed skill tasks** — use
 `effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML>` to inventory one explicit
 skill catalog, then
-`effigy skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR> [--repo <CONSUMER>]`.
-The skill path supplies task code; invocation CWD or `--repo` supplies the
-consumer target. Do not use `--repo <SKILL>` as a substitute. V1 is host-only,
-does not merge consumer selectors/defaults/config, and rejects members or
-escaping composition/assets, container inheritance, and managed/TUI/concurrent
-shapes before side effects. Add `--json` when the agent needs to verify
-canonical source, target, invocation, and execution paths. Contract:
+`effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]`.
+An explicit `--path` is the authoritative source. Without it, a qualified
+`<skill>/<task>` selector derives the skill name and resolves the invocation
+project's `.agents/skills/<skill>` first, then the unique installed global root
+under `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
+`~/.cursor/skills`; `--repo` never changes discovery, and two distinct global
+matches fail closed. The skill path supplies task code; invocation CWD or
+`--repo` supplies the consumer target. Do not use `--repo <SKILL>` as a
+substitute. V1 is host-only, does not merge consumer
+selectors/defaults/config, and rejects members or escaping composition/assets,
+container inheritance, and managed/TUI/concurrent shapes before side effects.
+Add `--json` when the agent needs to verify canonical source, target,
+invocation, and execution paths. Use `--stdio passthrough` to let the selected
+task own raw stdin/stdout/stderr and exit status for machine-to-machine calls;
+it cannot combine with `--json`. Contract:
 `docs/contracts/042-external-skill-task-runner-contract.md`.
 
 **Documentation context** — `effigy docs context "<question>"` returns bounded

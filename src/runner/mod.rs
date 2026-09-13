@@ -68,7 +68,9 @@ pub(in crate::runner) use demo_command::run_demo;
 pub(in crate::runner) use deploy_command::run_deploy;
 pub(in crate::runner) use deps_command::run_deps;
 pub(in crate::runner) use docs_command::run_docs;
-pub use entrypoints::{resolve_command_root, run_command, run_command_with_context};
+pub use entrypoints::{
+    resolve_command_root, run_command, run_command_with_context, run_skill_passthrough_with_context,
+};
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};
@@ -83,7 +85,7 @@ pub(in crate::runner) use rhai_command::run_rhai;
 pub(in crate::runner) use script_command::run_internal_script_run;
 pub(in crate::runner) use secrets_command::run_secrets;
 pub(in crate::runner) use service_command::run_service;
-pub(in crate::runner) use skill_command::run_skill;
+pub(in crate::runner) use skill_command::{run_skill, run_skill_passthrough};
 pub(in crate::runner) use state_command::run_state;
 pub(in crate::runner) use system_command::{run_system, run_workspace};
 pub(in crate::runner) use tasks_command::run_tasks;

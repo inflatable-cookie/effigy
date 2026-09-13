@@ -122,9 +122,11 @@ fn skill_help_documents_the_explicit_source_and_consumer_split() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("skill run --path <SKILL_DIR|EFFIGY_TOML> <SELECTOR>"),
+        stdout.contains("skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR>"),
         "{stdout}"
     );
+    assert!(stdout.contains("--stdio passthrough"), "{stdout}");
+    assert!(stdout.contains("unique-global"), "{stdout}");
     assert!(stdout.contains("Consumer repository target"), "{stdout}");
     assert!(stdout.contains("host"), "{stdout}");
 }
@@ -1001,4 +1003,456 @@ secrets = "required"
     );
 
     std::fs::remove_dir_all(&root).expect("remove source secret request fixture");
+}
+
+// ---------------------------------------------------------------------------
+// Named skill resolution and raw stdio passthrough (g10.001)
+// ---------------------------------------------------------------------------
+
+use std::io::Write;
+use std::process::Stdio;
+
+fn run_skill_with_home(cwd: &Path, home: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(args)
+        .current_dir(cwd)
+        .env("NO_COLOR", "1")
+        .env("HOME", home)
+        .output()
+        .expect("run skill command with isolated home")
+}
+
+fn run_skill_with_stdio(cwd: &Path, home: Option<&Path>, args: &[&str], stdin: &[u8]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    let mut child = command.spawn().expect("spawn skill command");
+    child
+        .stdin
+        .take()
+        .expect("child stdin")
+        .write_all(stdin)
+        .expect("write child stdin");
+    child.wait_with_output().expect("wait for skill command")
+}
+
+/// Create one installed agent skill directory with a direct SKILL.md and
+/// effigy.toml, returning that directory.
+fn write_named_skill(root: &Path, skill: &str, manifest: &str) -> PathBuf {
+    let dir = root.join(skill);
+    std::fs::create_dir_all(&dir).expect("create named skill dir");
+    std::fs::write(dir.join("SKILL.md"), format!("# {skill}\n")).expect("write SKILL.md");
+    std::fs::write(dir.join("effigy.toml"), manifest).expect("write named skill manifest");
+    dir
+}
+
+fn named_skill_manifest(alias: &str, marker: &str) -> String {
+    format!(
+        "[catalog]\nalias = \"{alias}\"\n\n[tasks.hook]\nrun = \"printf '{marker}'\"\nrun_in = \"host\"\n\n[tasks.marker]\nrun = \"printf ran > named-marker.txt\"\nrun_in = \"host\"\n"
+    )
+}
+
+fn consumer_root(root: &Path, name: &str) -> PathBuf {
+    let consumer = root.join(name);
+    std::fs::create_dir_all(&consumer).expect("create consumer");
+    std::fs::write(
+        consumer.join("effigy.toml"),
+        format!("[catalog]\nalias = \"{name}\"\n"),
+    )
+    .expect("write consumer manifest");
+    consumer
+}
+
+#[test]
+fn skill_named_lookup_prefers_the_invocation_project() {
+    let root = unique_temp_root("named-project-wins");
+    let home = root.join("home");
+    let project = consumer_root(&root, "project");
+    write_named_skill(
+        &home.join(".agents/skills"),
+        "demo",
+        &named_skill_manifest("demo", "global-hook"),
+    );
+    write_named_skill(
+        &project.join(".agents/skills"),
+        "demo",
+        &named_skill_manifest("demo", "project-hook"),
+    );
+
+    let output = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "demo/hook", "--stdio", "passthrough"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"project-hook", "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+
+    // `--repo` selects the runtime target, never the discovery source.
+    let other = consumer_root(&root, "other-consumer");
+    let repointed = run_skill_with_home(
+        &project,
+        &home,
+        &[
+            "skill",
+            "run",
+            "demo/hook",
+            "--repo",
+            other.to_str().expect("utf8 consumer"),
+            "--stdio",
+            "passthrough",
+        ],
+    );
+    assert!(repointed.status.success(), "{repointed:?}");
+    assert_eq!(repointed.stdout, b"project-hook", "{repointed:?}");
+
+    std::fs::remove_dir_all(&root).expect("remove named project fixture");
+}
+
+#[test]
+fn skill_named_lookup_uses_one_unique_global_and_fails_on_distinct_collisions() {
+    let root = unique_temp_root("named-global");
+    let home = root.join("home");
+    let project = consumer_root(&root, "project");
+    write_named_skill(
+        &home.join(".agents/skills"),
+        "demo",
+        &named_skill_manifest("demo", "agents-hook"),
+    );
+
+    let unique = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "demo/hook", "--stdio", "passthrough"],
+    );
+    assert!(unique.status.success(), "{unique:?}");
+    assert_eq!(unique.stdout, b"agents-hook", "{unique:?}");
+
+    write_named_skill(
+        &home.join(".codex/skills"),
+        "demo",
+        &named_skill_manifest("demo", "codex-hook"),
+    );
+    let marker = project.join("named-marker.txt");
+    let ambiguous = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "demo/marker", "--stdio", "passthrough"],
+    );
+    assert!(!ambiguous.status.success(), "{ambiguous:?}");
+    assert!(ambiguous.stdout.is_empty(), "{ambiguous:?}");
+    let stderr = String::from_utf8_lossy(&ambiguous.stderr);
+    assert!(stderr.contains("ambiguous"), "{stderr}");
+    assert!(stderr.contains(".agents/skills/demo"), "{stderr}");
+    assert!(stderr.contains(".codex/skills/demo"), "{stderr}");
+    assert!(!marker.exists(), "ambiguous lookup ran a task");
+
+    std::fs::remove_dir_all(&root).expect("remove named global fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_named_lookup_collapses_symlink_aliases_of_one_skill() {
+    let root = unique_temp_root("named-symlink");
+    let home = root.join("home");
+    let project = consumer_root(&root, "project");
+    let canonical = write_named_skill(
+        &home.join(".agents/skills"),
+        "demo",
+        &named_skill_manifest("demo", "linked-hook"),
+    );
+    let codex_skills = home.join(".codex/skills");
+    std::fs::create_dir_all(&codex_skills).expect("create codex skills root");
+    std::os::unix::fs::symlink(&canonical, codex_skills.join("demo"))
+        .expect("link alias to canonical skill");
+
+    let output = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "demo/hook", "--stdio", "passthrough"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"linked-hook", "{output:?}");
+
+    std::fs::remove_dir_all(&root).expect("remove named symlink fixture");
+}
+
+#[test]
+fn skill_named_lookup_fails_closed_when_the_project_copy_is_incomplete() {
+    let root = unique_temp_root("named-incomplete");
+    let home = root.join("home");
+    let project = consumer_root(&root, "project");
+    write_named_skill(
+        &home.join(".agents/skills"),
+        "demo",
+        &named_skill_manifest("demo", "global-hook"),
+    );
+    let incomplete = project.join(".agents/skills/demo");
+    std::fs::create_dir_all(&incomplete).expect("create incomplete project skill");
+    std::fs::write(incomplete.join("SKILL.md"), "# demo\n").expect("write incomplete marker");
+    let marker = project.join("named-marker.txt");
+
+    let output = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "demo/marker", "--stdio", "passthrough"],
+    );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no direct `effigy.toml`"), "{stderr}");
+    assert!(!marker.exists(), "incomplete project copy fell through");
+
+    std::fs::remove_dir_all(&root).expect("remove incomplete project fixture");
+}
+
+#[test]
+fn skill_named_lookup_missing_skill_fails_before_side_effects() {
+    let root = unique_temp_root("named-missing");
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).expect("create empty home");
+    let project = consumer_root(&root, "project");
+
+    let output = run_skill_with_home(
+        &project,
+        &home,
+        &["skill", "run", "absent/hook", "--stdio", "passthrough"],
+    );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("was not found"), "{stderr}");
+    assert!(!project.join("named-marker.txt").exists());
+
+    std::fs::remove_dir_all(&root).expect("remove missing named fixture");
+}
+
+#[test]
+fn skill_stdio_passthrough_is_byte_exact_and_status_transparent() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let consumer = unique_temp_consumer("passthrough-bytes");
+    let source = source.to_str().expect("utf8 source");
+
+    // Non-UTF-8 stdin with no trailing newline must reach the task and return
+    // unchanged, with no Effigy framing bytes.
+    let payload: &[u8] = &[0x7b, 0xff, 0x00, 0x80, b'}'];
+    let exact = run_skill_with_stdio(
+        &consumer,
+        None,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source,
+            "raw-cat",
+            "--stdio",
+            "passthrough",
+        ],
+        payload,
+    );
+    assert!(exact.status.success(), "{exact:?}");
+    assert_eq!(exact.stdout, payload, "{exact:?}");
+    assert!(exact.stderr.is_empty(), "{exact:?}");
+
+    // Effigy must not own either stream: distinct raw stdout/stderr bytes.
+    let streams = run_skill_with_stdio(
+        &consumer,
+        None,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source,
+            "raw-streams",
+            "--stdio",
+            "passthrough",
+        ],
+        b"",
+    );
+    assert!(streams.status.success(), "{streams:?}");
+    assert_eq!(streams.stdout, b"raw-out", "{streams:?}");
+    assert_eq!(streams.stderr, b"raw-err", "{streams:?}");
+
+    // A child exit status crosses unchanged and adds no Effigy text.
+    let exited = run_skill_with_stdio(
+        &consumer,
+        None,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source,
+            "raw-exit",
+            "--stdio",
+            "passthrough",
+        ],
+        b"",
+    );
+    assert_eq!(exited.status.code(), Some(23), "{exited:?}");
+    assert!(exited.stdout.is_empty(), "{exited:?}");
+    assert!(exited.stderr.is_empty(), "{exited:?}");
+
+    std::fs::remove_dir_all(&consumer).expect("remove passthrough consumer");
+}
+
+#[test]
+fn skill_stdio_passthrough_json_hook_passes_one_raw_object() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let consumer = unique_temp_consumer("passthrough-json");
+    let payload = br#"{"hook":"queue","items":[1,2]}"#;
+    let output = run_skill_with_stdio(
+        &consumer,
+        None,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "raw-cat",
+            "--stdio",
+            "passthrough",
+        ],
+        payload,
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, payload, "{output:?}");
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("boundary stdout is one object");
+    assert_eq!(parsed["hook"], "queue");
+
+    std::fs::remove_dir_all(&consumer).expect("remove passthrough consumer");
+}
+
+#[test]
+fn skill_stdio_passthrough_failures_leave_stdout_empty_and_do_not_run() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let missing_source = fixtures.join("missing-source");
+    let consumer = unique_temp_consumer("passthrough-failures");
+
+    let cases = [
+        (
+            source.to_str().expect("utf8 source").to_owned(),
+            "missing-task",
+            "not defined",
+        ),
+        (
+            source.to_str().expect("utf8 source").to_owned(),
+            "container-bound",
+            "host-only",
+        ),
+        (
+            missing_source.to_str().expect("utf8 missing").to_owned(),
+            "hook",
+            "cannot be resolved",
+        ),
+    ];
+    for (source_arg, selector, expected) in cases {
+        let output = run_skill_with_stdio(
+            &consumer,
+            None,
+            &[
+                "skill",
+                "run",
+                "--path",
+                &source_arg,
+                selector,
+                "--stdio",
+                "passthrough",
+            ],
+            b"",
+        );
+        assert!(!output.status.success(), "{selector}: {output:?}");
+        assert!(output.stdout.is_empty(), "{selector}: {output:?}");
+        assert!(!output.stderr.is_empty(), "{selector}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{selector}: {output:?}"
+        );
+    }
+    assert!(!consumer.join("raw-marker.txt").exists());
+    assert!(!consumer.join("named-marker.txt").exists());
+
+    std::fs::remove_dir_all(&consumer).expect("remove passthrough consumer");
+}
+
+#[test]
+fn skill_stdio_passthrough_rejects_json_in_both_flag_positions_before_execution() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let consumer = unique_temp_consumer("passthrough-json-conflict");
+    let marker = consumer.join("raw-marker.txt");
+    let source = source.to_str().expect("utf8 source");
+    let base = [
+        "skill",
+        "run",
+        "--path",
+        source,
+        "raw-marker",
+        "--stdio",
+        "passthrough",
+    ];
+
+    let mut local: Vec<&str> = base.to_vec();
+    local.push("--json");
+    let local = run_skill_with_stdio(&consumer, None, &local, b"");
+    assert!(!local.status.success(), "{local:?}");
+    assert!(local.stdout.is_empty(), "{local:?}");
+    assert!(!marker.exists(), "local --json reached execution");
+
+    let mut global: Vec<&str> = vec!["--json"];
+    global.extend_from_slice(&base);
+    let global = run_skill_with_stdio(&consumer, None, &global, b"");
+    assert!(!global.status.success(), "{global:?}");
+    assert!(global.stdout.is_empty(), "{global:?}");
+    assert!(!marker.exists(), "global --json reached execution");
+
+    std::fs::remove_dir_all(&consumer).expect("remove passthrough consumer");
+}
+
+#[test]
+fn skill_named_passthrough_keeps_host_only_isolation() {
+    let root = unique_temp_root("named-isolation");
+    let home = root.join("home");
+    let project = consumer_root(&root, "project");
+    write_named_skill(
+        &project.join(".agents/skills"),
+        "container-skill",
+        "[catalog]\nalias = \"container-skill\"\n\n[tasks.run]\nrun = \"printf ran > named-marker.txt\"\nrun_in = \"container\"\n",
+    );
+    let marker = project.join("named-marker.txt");
+
+    let output = run_skill_with_home(
+        &project,
+        &home,
+        &[
+            "skill",
+            "run",
+            "container-skill/run",
+            "--stdio",
+            "passthrough",
+        ],
+    );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("host-only"),
+        "{output:?}"
+    );
+    assert!(
+        !marker.exists(),
+        "named passthrough ran a container-bound task"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove named isolation fixture");
 }

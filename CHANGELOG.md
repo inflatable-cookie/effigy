@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy skill run` can resolve an installed agent skill by name. When
+  `--path` is omitted, the qualified `<skill>/<task>` selector's first segment
+  selects the skill, resolved from the invocation project's
+  `.agents/skills/<skill>` first and then from the unique installed global root
+  under `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
+  `~/.cursor/skills`. Project-local wins, symlink aliases of one directory count
+  once, an incomplete project-local copy and distinct global collisions fail
+  closed before any task side effect, and `--repo` never changes discovery.
+  An explicit `--path` stays authoritative and unchanged.
+- `effigy skill run --stdio passthrough` runs the selected host task with raw
+  stdin/stdout/stderr and its own exit status, adding no Effigy header, footer,
+  spinner, envelope, or newline. Preflight and launch failures keep stdout
+  empty and write one diagnostic to stderr. `--json` is rejected with
+  passthrough in either global or local flag position before execution.
 - `effigy docs context --sources <PATH>` can query explicitly named,
   repository-opted-in sources sequentially, returning grouped
   `effigy.docs.context.sources.v1` evidence with per-repository status,

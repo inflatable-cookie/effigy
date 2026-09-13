@@ -28,6 +28,7 @@ use super::super::run_rhai;
 use super::super::run_secrets;
 use super::super::run_service;
 use super::super::run_skill;
+use super::super::run_skill_passthrough;
 use super::super::run_state;
 use super::super::run_system;
 use super::super::run_tasks;
@@ -50,6 +51,19 @@ pub(super) fn run_command_with_context(
 ) -> Result<String, RunnerError> {
     crate::runner::command_context::with_runtime_context(context, || {
         run_command_with_cwd(cmd, context.invocation_cwd())
+    })
+}
+
+pub(super) fn run_skill_passthrough_with_context(
+    cmd: Command,
+    context: &EffigyRuntimeContext,
+) -> Result<i32, RunnerError> {
+    crate::runner::command_context::with_runtime_context(context, || match cmd {
+        Command::Skill(args) => run_skill_passthrough(args),
+        _ => Err(RunnerError::task_invocation(
+            "internal passthrough dispatch only supports `effigy skill run --stdio passthrough`"
+                .to_owned(),
+        )),
     })
 }
 
