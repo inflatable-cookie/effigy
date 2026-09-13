@@ -267,7 +267,8 @@ role:
 
 ## Next Task
 
-No generation or Northstar task is active. Consumers remain on the `007`
-section 6 adoption posture with cohort expansion unscheduled. Use Northstar
-Atlas with the operator before compiling a new task. Acowtancy stays read-only;
-Effigy release and S3 retirement remain separately gated.
+`g10` remains open with no ready Northstar task after `g10.001` and `g10.002`
+completed. Consumers remain on the `007` section 6 adoption posture with cohort
+expansion unscheduled. Use Northstar Atlas with the operator before compiling a
+new task. Acowtancy stays read-only; Effigy release and S3 retirement remain
+separately gated.

@@ -13,8 +13,10 @@ the explicit source/consumer split or machine-safe output contracts.
 
 - [`g10.001`](./001-named-skill-resolution-and-stdio-passthrough.md) — complete;
   resolve qualified installed skills by name and add opt-in raw stdio transport.
+- [`g10.002`](./002-adopt-effigy-hosted-lifecycle-hook.md) — complete; adopt the
+  Effigy-hosted Queue lifecycle hook without changing product priority.
 
-No later task is approved. Return to Chatterbox for planning direction.
+No unfinished task is approved. Return to Chatterbox for planning direction.
 
 ## Boundaries
 
@@ -27,15 +29,13 @@ No later task is approved. Return to Chatterbox for planning direction.
 ## Queue lifecycle adoption
 
 - [g10.002 Effigy-hosted lifecycle hook](002-adopt-effigy-hosted-lifecycle-hook.md)
-  is an operator-approved, configuration-only maintenance lane. It follows its
-  declared Queue dependencies and may run without changing product priority.
-  Existing next-task text continues to describe product sequencing; this entry
-  authorizes no sibling product work.
+  completed through Queue and published its terminal lifecycle record at
+  revision 8. It changed no product priority and authorizes no sibling work.
 
 ## Next Task
 
-Return to Chatterbox for planning direction. Do not compile `g10.002` without
-operator direction.
+Use Northstar Atlas with the operator before compiling another strategic task.
+Effigy release and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7243b8fdde283ee486097ebd4dd31e4932888e9b87d051b49b9bd067d2c2b6f4 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

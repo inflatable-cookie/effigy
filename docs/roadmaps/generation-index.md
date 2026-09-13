@@ -1,15 +1,15 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: none (g10.001 complete)
+Approved frontier: none (g10.001 and g10.002 complete)
 Updated: 2026-09-13
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open for planning direction; its only task, `g10.001`, is complete and no
-speculative continuation is approved.
+open for planning direction; `g10.001` and the configuration-only `g10.002`
+are complete, and no speculative continuation is approved.
 
 ## Generation history
 
@@ -44,5 +44,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Return to Chatterbox for planning direction. Do not compile `g10.002` without
-operator direction.
+Use Northstar Atlas with the operator before compiling another strategic task.
+No unfinished g10 task is approved.

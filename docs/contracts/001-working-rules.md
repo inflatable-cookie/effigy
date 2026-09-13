@@ -93,5 +93,6 @@ polish lane.
 
 ## Next Task
 
-`g10.001` is the sole ready task. Dispatch it through Northstar Queue, then
-return to Chatterbox. Effigy release and S3 retirement remain separately gated.
+Return to Chatterbox for planning direction. `g10.001` and the configuration-only
+`g10.002` lifecycle adoption task are complete; no Northstar task is ready.
+Effigy release and S3 retirement remain separately gated.

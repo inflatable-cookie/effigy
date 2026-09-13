@@ -93,6 +93,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — opened g10 with one ready agent-native skill-execution task
 - [`2026-09/13-104533-named-skill-resolution-stdio-closeout.md`](./2026-09/13-104533-named-skill-resolution-stdio-closeout.md)
   — closed g10.001 after merge, review, synchronization, and canonical closeout
+- [`2026-09/13-164131-northstar-refresh.md`](./2026-09/13-164131-northstar-refresh.md)
+  — reconciled g10.002 lifecycle completion across current planning front doors
 
 ## Log template
 
