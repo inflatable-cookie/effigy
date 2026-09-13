@@ -30,11 +30,12 @@ No unfinished task is approved. Return to Chatterbox for planning direction.
 
 Use Northstar Atlas with the operator before compiling another strategic task.
 Effigy release and S3 retirement remain separately gated.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7243b8fdde283ee486097ebd4dd31e4932888e9b87d051b49b9bd067d2c2b6f4 -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:6132dfcc569eb21c3e5df9f2eac0fad6ec308178b73101b36c10f744ebe3b835 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
 | Task | Status | Stage | Revision | Record digest |
 | --- | --- | --- | --- | --- |
 | g10.002 | complete | none | 8 | sha256:acc40985e9f1420efa1189899daec76abc3be7d6f143bbc28dac2a8f66dcd833 |
+| g10.003 | complete | none | 8 | sha256:f51ae9d2f79a84dfa1aa970575d37e10442574d5025015bf725258c72f2bd9a5 |
 <!-- northstar:lifecycle:end -->
