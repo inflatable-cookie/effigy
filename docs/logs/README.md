@@ -91,6 +91,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 - [`2026-09/13-100503-named-skill-resolution-stdio-planning.md`](./2026-09/13-100503-named-skill-resolution-stdio-planning.md)
   — opened g10 with one ready agent-native skill-execution task
+- [`2026-09/13-104533-named-skill-resolution-stdio-closeout.md`](./2026-09/13-104533-named-skill-resolution-stdio-closeout.md)
+  — closed g10.001 after merge, review, synchronization, and canonical closeout
 
 ## Log template
 
@@ -126,6 +128,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.001` through Northstar Queue. Return to Chatterbox after its
-closeout; no later task is ready. Effigy release remains a separate
-operator-gated mutation.
+Return to Chatterbox for planning direction; no later task is ready. Effigy
+release remains a separate operator-gated mutation.

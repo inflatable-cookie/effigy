@@ -1,6 +1,6 @@
 # 001 - Named Skill Resolution and Stdio Passthrough
 
-Status: ready
+Status: complete
 Owner: task routing and execution
 Created: 2026-09-13
 Governing refs: `docs/contracts/042-external-skill-task-runner-contract.md`, `docs/architecture/025-external-skill-task-execution.md`
@@ -39,7 +39,7 @@ exit status without Effigy-owned output.
 
 ## Dispatch manifest
 
-- **State:** ready; no parallel siblings
+- **State:** complete; no parallel siblings
 - **Completion:** implementation and docs merged, raw-boundary and regression
   proofs green, canonical closeout complete
 - **Owned mutable paths:** `crates/effigy-cli/src/lib.rs`,
@@ -155,7 +155,30 @@ merge commit, and material limits or blockers.
   behavior. No broad CLI error/output rewrite was required. Merge commit and
   reviewed head are recorded at canonical closeout.
 
+### Canonical closeout — 2026-09-13
+
+- **Merged outcome:** PR [#104](https://github.com/inflatable-cookie/effigy/pull/104)
+  merged into `main` as `189c0a71cf5772dfd3e788f6ab650eadd816466b`. The
+  integration checkout and `origin/main` are synchronized at that commit.
+- **Review:** independent review accepted the exact implementation head
+  `26cf5350676e6d3aa15a3fdc862db222630fa9f5` in PR comment
+  [5652458474](https://github.com/inflatable-cookie/effigy/pull/104#issuecomment-5652458474).
+  All ten acceptance rows were evidenced, with no blocking findings or
+  unresolved review threads.
+- **Validation:** worker and reviewer records report green full and targeted
+  Rust validation, formatting, clippy, documentation, JSON-contract, and diff
+  checks. Closeout reran the focused documentation check and diff check on the
+  synchronized integration checkout; both passed.
+- **Recovered friction:** the first post-merge synchronization attempt stopped
+  on `git ls-tree: fatal: not a tree object`. The recorded merge object was
+  valid and the plugin's single closeout retry synchronized `main`; no failure
+  remains deferred from that incident.
+- **Deferred limits:** non-fail-fast sequential host steps retain their
+  existing exit-status flattening to `1`; the unused passthrough enum variant
+  remains a non-blocking implementation note. Neither changes the accepted
+  task outcome.
+
 ## Next task
 
-Return to Chatterbox after closeout. Do not compile `g10.002` without operator
-direction.
+Return to Chatterbox for planning direction. Do not compile `g10.002` without
+operator direction.

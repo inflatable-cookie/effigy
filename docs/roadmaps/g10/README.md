@@ -11,10 +11,10 @@ the explicit source/consumer split or machine-safe output contracts.
 
 ## Approved frontier
 
-- [`g10.001`](./001-named-skill-resolution-and-stdio-passthrough.md) — ready;
+- [`g10.001`](./001-named-skill-resolution-and-stdio-passthrough.md) — complete;
   resolve qualified installed skills by name and add opt-in raw stdio transport.
 
-No later task is approved. Return to Chatterbox after `g10.001` closes.
+No later task is approved. Return to Chatterbox for planning direction.
 
 ## Boundaries
 
@@ -26,4 +26,5 @@ No later task is approved. Return to Chatterbox after `g10.001` closes.
 
 ## Next Task
 
-Dispatch `g10.001` through Northstar Queue from its committed handoff.
+Return to Chatterbox for planning direction. Do not compile `g10.002` without
+operator direction.

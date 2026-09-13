@@ -22,11 +22,11 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier:
-  [`g10.001`](./g10/001-named-skill-resolution-and-stdio-passthrough.md).
+- Approved frontier: none; [`g10.001`](./g10/001-named-skill-resolution-and-stdio-passthrough.md)
+  is complete.
 - Active strict lane: none.
-- Dispatch handoff:
-  [`20260913-100503-named-skill-resolution-stdio-passthrough.md`](../handoffs/20260913-100503-named-skill-resolution-stdio-passthrough.md).
+- Dispatch handoff: none; the transient g10.001 handoff was deleted after
+  canonical closeout.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
 
@@ -91,9 +91,8 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Dispatch `g10.001` through Northstar Queue. After it closes, return to
-Chatterbox; no later g10 task is approved. Effigy release execution and S3
-retirement remain separately gated.
+Return to Chatterbox for planning direction; no later g10 task is approved.
+Effigy release execution and S3 retirement remain separately gated.
 
 ## Historical language boundary
 
