@@ -92,3 +92,11 @@ installing them directly on your machine.
 - Research: [`research/README.md`](./research/README.md)
 - Vision: [`vision/README.md`](./vision/README.md)
 - Strict planning lane: [`specs/README.md`](./specs/README.md)
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7243b8fdde283ee486097ebd4dd31e4932888e9b87d051b49b9bd067d2c2b6f4 -->
+| Generation | Disposition | Runway state |
+| --- | --- | --- |
+| g10 | open | planning_required |
+| Task | Status | Stage | Revision | Record digest |
+| --- | --- | --- | --- | --- |
+| g10.002 | complete | none | 8 | sha256:acc40985e9f1420efa1189899daec76abc3be7d6f143bbc28dac2a8f66dcd833 |
+<!-- northstar:lifecycle:end -->
