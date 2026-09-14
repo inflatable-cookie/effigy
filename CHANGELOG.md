@@ -170,6 +170,12 @@ During v0.x, MINOR bumps may include breaking changes.
   A checked-in script that parsed under an installed release binary no longer
   fails the documented `cargo run --bin effigy -- <task>` fallback solely
   because of build-profile drift.
+- `effigy docs add-log-index` now inserts a missing log entry as the first item
+  under the `## Active logs` section of `docs/logs/README.md` (newest first),
+  ahead of any current entries and never below a later section such as
+  `## Next Task`. A missing or duplicated `## Active logs` heading is an error
+  that leaves the index file byte-identical. Path normalization, report
+  schemas, and repeat-run idempotence are unchanged.
 
 ### Added
 - `effigy service pack` manages independently versioned catalog packs:

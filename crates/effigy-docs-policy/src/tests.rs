@@ -126,15 +126,63 @@ fn normalize_log_index_relative_path_accepts_docs_logs_prefix() {
 }
 
 #[test]
-fn insert_log_index_entry_places_new_entry_before_archive_marker() {
-    let index = "# Logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Archived Validation Logs\n- older\n";
-    let updated = insert_log_index_entry(
-        index,
-        "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)",
+fn insert_log_index_entry_puts_new_entry_first_in_active_logs() {
+    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch g10.004\n";
+    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
+    let updated = insert_log_index_entry(index, entry).expect("insert");
+    let active = updated.find("## Active logs").expect("active heading");
+    let next = updated.find("## Next Task").expect("next heading");
+    let new = updated
+        .find("2026-03/02-160000-my-log.md")
+        .expect("new entry");
+    let old = updated.find("2026-03/01-000000-old.md").expect("old entry");
+    assert!(active < new, "entry lands inside Active logs");
+    assert!(new < next, "entry stays before Next Task");
+    assert!(new < old, "newest entry stays first");
+    assert_eq!(
+        updated,
+        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch g10.004\n"
     );
-    let marker = updated.find("## Archived Validation Logs").expect("marker");
-    let entry = updated.find("2026-03/02-160000-my-log.md").expect("entry");
-    assert!(entry < marker);
+}
+
+#[test]
+fn insert_log_index_entry_handles_empty_active_logs_before_next_task() {
+    let index = "# Logs\n\n## Active logs\n\n## Next Task\n- dispatch g10.004\n";
+    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
+    let updated = insert_log_index_entry(index, entry).expect("insert");
+    assert_eq!(
+        updated,
+        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n\n## Next Task\n- dispatch g10.004\n"
+    );
+}
+
+#[test]
+fn insert_log_index_entry_rejects_missing_active_logs() {
+    let index = "# Logs\n\n## Archived logs\n- older\n\n## Next Task\n- dispatch\n";
+    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
+    assert!(insert_log_index_entry(index, entry).is_err());
+}
+
+#[test]
+fn insert_log_index_entry_rejects_duplicate_active_logs() {
+    let index = "# Logs\n\n## Active logs\n\n- old\n\n## Active logs\n\n- older\n";
+    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
+    assert!(insert_log_index_entry(index, entry).is_err());
+}
+
+#[test]
+fn insert_log_index_entry_repeat_run_stays_idempotent() {
+    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch\n";
+    let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
+    // Mirror the runner: skip insertion when the exact bullet already exists.
+    let once = insert_log_index_entry(index, entry).expect("first insert");
+    let twice = if once.lines().any(|line| line.trim() == entry) {
+        once.clone()
+    } else {
+        insert_log_index_entry(&once, entry).expect("second insert")
+    };
+    assert_eq!(once, twice);
+    assert_eq!(twice.matches("2026-03/02-160000-my-log.md").count(), 2);
 }
 
 #[test]

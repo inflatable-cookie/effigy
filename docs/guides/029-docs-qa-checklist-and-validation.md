@@ -157,7 +157,7 @@ Behavior:
 - fails when index entries point to non-existent log files
 
 Helper:
-- `effigy docs add-log-index <log-file>` inserts a missing log entry ahead of archived links.
+- `effigy docs add-log-index <log-file>` inserts a missing log entry as the first item under the `## Active logs` section of `docs/logs/README.md` (newest first), never below a later section such as `## Next Task`. A missing or duplicated `## Active logs` heading fails without rewriting the file.
 
 Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section

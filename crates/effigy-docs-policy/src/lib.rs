@@ -417,23 +417,77 @@ pub fn normalize_log_index_relative_path(log_path: &Path) -> Result<String, Docs
     Ok(relative)
 }
 
-pub fn insert_log_index_entry(index_contents: &str, entry: &str) -> String {
-    let marker = "## Archived Validation Logs";
-    if let Some(position) = index_contents.find(marker) {
-        let (before, after) = index_contents.split_at(position);
-        let mut output = String::new();
-        output.push_str(before);
-        output.push_str(entry);
-        output.push_str("\n\n");
-        output.push_str(after);
-        output
-    } else {
-        let mut output = index_contents.trim_end().to_owned();
-        output.push_str("\n\n");
-        output.push_str(entry);
-        output.push('\n');
-        output
+/// Insert a log-index bullet as the first item of the `## Active logs` section.
+///
+/// Newest-first: the entry lands immediately after the heading and its
+/// existing blank-line separator, ahead of any current entries. The next
+/// level-two heading is a hard boundary; the entry never leaks into a later
+/// section such as `## Next Task`.
+///
+/// Fails closed without a partial rewrite when the index has no `## Active
+/// logs` heading or has more than one, so callers leave the file byte-identical.
+pub fn insert_log_index_entry(
+    index_contents: &str,
+    entry: &str,
+) -> Result<String, DocsPolicyError> {
+    const HEADING: &str = "## Active logs";
+    let lines: Vec<&str> = index_contents.split('\n').collect();
+    let mut heading: Option<usize> = None;
+    let mut duplicates = false;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == HEADING {
+            if heading.is_some() {
+                duplicates = true;
+                break;
+            }
+            heading = Some(index);
+        }
     }
+    let Some(heading) = heading else {
+        return Err(DocsPolicyError::Message(
+            "logs index is missing the required `## Active logs` section; refusing to rewrite"
+                .to_owned(),
+        ));
+    };
+    if duplicates {
+        return Err(DocsPolicyError::Message(
+            "logs index has more than one `## Active logs` heading; refusing to rewrite".to_owned(),
+        ));
+    }
+    let mut output = lines[..=heading].join("\n");
+    output.push('\n');
+    // Preserve the existing blank-line separator after the heading, adding one
+    // when the heading is directly followed by content or EOF.
+    let mut cursor = heading + 1;
+    if lines.get(cursor).is_none_or(|line| !line.trim().is_empty()) {
+        output.push('\n');
+    } else {
+        while lines.get(cursor).is_some_and(|line| line.trim().is_empty()) {
+            output.push_str(lines[cursor]);
+            output.push('\n');
+            cursor += 1;
+        }
+    }
+    output.push_str(entry);
+    output.push('\n');
+    // Keep a blank line between the entry and following prose or a heading
+    // (for example `## Next Task` after an empty section). A following list
+    // item needs no separator.
+    if lines
+        .get(cursor)
+        .is_some_and(|line| !line.trim().is_empty() && !is_list_item(line))
+    {
+        output.push('\n');
+    }
+    if cursor < lines.len() {
+        output.push_str(&lines[cursor..].join("\n"));
+    }
+    Ok(output)
+}
+
+fn is_list_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ")
 }
 
 pub fn collect_workflow_check_files(
