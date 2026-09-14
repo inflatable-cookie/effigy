@@ -7325,7 +7325,13 @@ if [ "${1:-}" = "status" ]; then
 fi
 if [ "${1:-}" = "start" ]; then
   if [ -n "${EFFIGY_TEST_COLIMA_START_DELAY_SECS:-}" ]; then
-    sleep "$EFFIGY_TEST_COLIMA_START_DELAY_SECS"
+    sleep "$EFFIGY_TEST_COLIMA_START_DELAY_SECS" &
+    startup_pid=$!
+    kill -0 "$startup_pid"
+    if [ -n "${EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE:-}" ]; then
+      printf "%s\n" "$startup_pid" > "$EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE"
+    fi
+    wait "$startup_pid"
   fi
   : > "$EFFIGY_TEST_COLIMA_STATE_FILE"
   printf "started\n"
@@ -8130,6 +8136,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
+    let colima_startup_active = root.join("colima-startup-active.marker");
     let log_follow = root.join("log-follow.marker");
     let path = format!(
         "{}:{}",
@@ -8148,17 +8155,30 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env(
+            "EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE",
+            &colima_startup_active,
+        )
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .env("EFFIGY_TEST_COLIMA_START_DELAY_SECS", "3")
+        .env("EFFIGY_TEST_COLIMA_START_DELAY_SECS", "15")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn effigy");
 
     wait_for_path_exists(
-        &colima_args,
-        Duration::from_secs(3),
-        "startup colima invocation marker",
+        &colima_startup_active,
+        Duration::from_secs(10),
+        "startup colima child active marker",
+    );
+    let startup_pid = fs::read_to_string(&colima_startup_active)
+        .expect("read startup colima child active marker")
+        .trim()
+        .parse::<u32>()
+        .expect("startup colima child active marker should contain a pid");
+    assert!(
+        startup_pid > 0,
+        "startup colima child pid should be positive"
     );
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(child.id() as i32),

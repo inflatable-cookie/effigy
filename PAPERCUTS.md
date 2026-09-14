@@ -20,11 +20,14 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: `effigy docs add-log-index`; card closeout log-index step.
 - Planning: promoted as ready task [`g10.004`](docs/roadmaps/g10/004-place-log-index-entry-under-active-logs.md) on 2026-09-14; keep open until verified closeout.
 
-### [ ] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
+### [x] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
 - Friction: `effigy::cli_output_tests` `cli_container_attached_session_handles_sigint_during_startup` failed under `effigy qa` and in isolation (twice) while passing under `cargo test --workspace`; it also fails on the clean base with this lane's changes stashed, so it is a pre-existing environment/timing race, not a regression.
 - Impact: full `effigy qa` rounds fail intermittently on a container-attach SIGINT startup race, blocking worker required-validation runs.
 - Possible fix: make the SIGINT-during-startup assertion race-free (wait for the attach/startup handshake before signalling) or mark it for container-availability/timing tolerance.
 - Surface: workspace `cli_output_tests` container attach tests; any worker running `effigy qa`.
+- Fix (2026-09-14): the fixture now starts the controlled delay child before
+  publishing a startup-active marker; the test waits on that marker with a
+  shorter bounded budget and preserves clean interrupt/no-log-follow assertions.
 - Planning: promoted as ready test-only task [`g10.005`](docs/roadmaps/g10/005-stabilize-container-startup-sigint-test.md) on 2026-09-14; keep open until verified closeout.
 
 ### [ ] Vendored Effigy skills need portfolio-level status and sync — 2026-08-30
