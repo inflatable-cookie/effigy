@@ -27,9 +27,7 @@ Queue execution record. “Effigy task” means a command selector.
   [`g10.005`](./g10/005-stabilize-container-startup-sigint-test.md), independent
   ready papercut repairs. `g10.001` through `g10.003` are complete.
 - Active strict lane: none.
-- Dispatch handoffs:
-  [`g10.004`](../handoffs/20260914-082254-place-log-index-entry-under-active-logs.md)
-  and
+- Dispatch handoff:
   [`g10.005`](../handoffs/20260914-082255-stabilize-container-startup-sigint-test.md).
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
