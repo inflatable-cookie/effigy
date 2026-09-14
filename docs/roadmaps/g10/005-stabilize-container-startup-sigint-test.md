@@ -98,6 +98,27 @@ interrupt behavior without relying on equal wall-clock sleep and wait budgets.
 On completion, record outcome, validation run, repeated-run count, PR link,
 reviewed exact head, merge commit, and material limits or blockers.
 
+### Implementation (worker PR, pre-merge) — 2026-09-14
+
+- **Outcome reached:** the fake Colima runtime starts the controlled delay as a
+  child process, verifies it is active, and publishes its PID through a
+  fixture-owned marker. The test waits for that marker with a bounded 10-second
+  budget inside a separate 15-second startup delay before sending SIGINT.
+- **Assertions preserved:** clean attached-session interrupt output remains
+  required, and the test still proves startup stops before `logs --follow`.
+  Production signal and container lifecycle code are unchanged.
+- **Validation run:** ten repeated focused executions passed;
+  `cargo test --test cli_output_tests cli_container_attached_session --
+  --nocapture`, `cargo fmt --all -- --check`,
+  `cargo clippy --all-targets -- -D warnings`, `effigy qa:docs`, and
+  `git diff --check` passed.
+- **PR:** [#108](https://github.com/inflatable-cookie/effigy/pull/108), with
+  implementation commit `92259eb90`; independent review, merge commit, and
+  canonical closeout remain pending.
+- **Limits:** the optional graph-affected diagnostic was stopped after the
+  stale local-install binary exceeded its expected response window; it is
+  unrelated to the required validation and made no repository changes.
+
 ## Next task
 
 Return to Chatterbox after hook-owned closeout. `g10.004` is an independent

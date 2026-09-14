@@ -104,6 +104,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `docs/triage/README.md` intake anchor.
 
 ### Fixed
+- The attached container startup SIGINT CLI test now waits for a fixture-owned
+  marker written after the delayed startup child is active, with separate
+  startup-delay and marker-wait budgets, instead of racing equal three-second
+  deadlines.
 - A provably stale repository-local install — the checkout's own
   `.local-install/bin/effigy` whose recorded `+local.<sha>` identity resolves
   in that checkout as a strict ancestor of its `HEAD` — now fails a strict
