@@ -2582,7 +2582,7 @@ fn cli_docs_add_log_index_json_inserts_missing_entry() {
     fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
     fs::write(
         root.join("docs/logs/README.md"),
-        "# Logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Archived Validation Logs\n- archived\n",
+        "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch g10.004\n",
     )
     .expect("write index");
     fs::write(root.join("docs/logs/2026-03/01-000000-old.md"), "# Old\n").expect("write old");
@@ -2607,11 +2607,56 @@ fn cli_docs_add_log_index_json_inserts_missing_entry() {
     assert_eq!(parsed["result"]["already_indexed"], false);
 
     let updated = fs::read_to_string(root.join("docs/logs/README.md")).expect("read index");
-    let marker = updated.find("## Archived Validation Logs").expect("marker");
+    let active = updated.find("## Active logs").expect("active heading");
+    let next = updated.find("## Next Task").expect("next heading");
     let entry = updated
         .find("2026-03/02-160000-my-log.md")
         .expect("new entry");
-    assert!(entry < marker);
+    let old = updated.find("2026-03/01-000000-old.md").expect("old entry");
+    assert!(active < entry, "entry lands inside Active logs");
+    assert!(entry < next, "entry stays before Next Task");
+    assert!(entry < old, "newest entry stays first");
+
+    let rerun = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "add-log-index",
+            "docs/logs/2026-03/02-160000-my-log.md",
+        ],
+    );
+    assert!(rerun.status.success());
+    assert_eq!(parse_stdout_json(&rerun)["result"]["already_indexed"], true);
+    let rerun_index = fs::read_to_string(root.join("docs/logs/README.md")).expect("read rerun");
+    assert_eq!(rerun_index, updated, "repeat run rewrites nothing");
+}
+
+#[test]
+fn cli_docs_add_log_index_json_fails_closed_without_active_logs() {
+    let root = temp_workspace("docs-add-log-index-no-active");
+    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
+    let original = "# Logs\n\n## Archived logs\n- archived\n\n## Next Task\n- dispatch g10.004\n";
+    fs::write(root.join("docs/logs/README.md"), original).expect("write index");
+    fs::write(
+        root.join("docs/logs/2026-03/02-160000-my-log.md"),
+        "# New\n",
+    )
+    .expect("write new");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "add-log-index",
+            "docs/logs/2026-03/02-160000-my-log.md",
+        ],
+    );
+    assert!(!output.status.success(), "missing section is an error");
+    let untouched = fs::read_to_string(root.join("docs/logs/README.md")).expect("read index");
+    assert_eq!(
+        untouched, original,
+        "failed insert leaves the file byte-identical"
+    );
 }
 
 #[test]

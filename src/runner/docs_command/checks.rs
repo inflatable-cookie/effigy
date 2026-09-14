@@ -270,7 +270,7 @@ pub(super) fn run_add_log_index(
     let already_indexed = original.lines().any(|line| line.trim() == entry);
 
     if !already_indexed {
-        let updated = insert_log_index_entry(&original, &entry);
+        let updated = insert_log_index_entry(&original, &entry).map_err(map_docs_policy_error)?;
         std::fs::write(&index_path, updated.as_bytes())
             .map_err(|err| RunnerError::task_invocation_failed_write(&index_path, err))?;
     }

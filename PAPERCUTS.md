@@ -19,6 +19,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Possible fix: insert immediately after the `## Active logs` heading (newest first), and never write below the README `## Next Task` section.
 - Surface: `effigy docs add-log-index`; card closeout log-index step.
 - Planning: promoted as ready task [`g10.004`](docs/roadmaps/g10/004-place-log-index-entry-under-active-logs.md) on 2026-09-14; keep open until verified closeout.
+- Disposition: repaired by task `g10.004` — the owner helper now targets the exact `## Active logs` section newest-first and fails closed without rewriting when the heading is missing or duplicated. Keep open until verified closeout.
 
 ### [ ] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
 - Friction: `effigy::cli_output_tests` `cli_container_attached_session_handles_sigint_during_startup` failed under `effigy qa` and in isolation (twice) while passing under `cargo test --workspace`; it also fails on the clean base with this lane's changes stashed, so it is a pre-existing environment/timing race, not a regression.
