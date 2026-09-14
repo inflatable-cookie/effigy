@@ -5,12 +5,20 @@ Owner: task routing and execution
 
 ## Generation intent
 
-Make installed agent skills first-class Effigy task sources without weakening
-the explicit source/consumer split or machine-safe output contracts.
+Make installed agent skills first-class Effigy task sources, then carry the
+same agent-operability discipline into bounded reliability repairs without
+weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-No unfinished task is approved. Return to Chatterbox for planning direction.
+- [`g10.004`](./004-place-log-index-entry-under-active-logs.md) — ready; place
+  new log-index entries inside the canonical Active logs section.
+- [`g10.005`](./005-stabilize-container-startup-sigint-test.md) — ready;
+  stabilize the test harness for SIGINT during container startup.
+
+The tasks have no dependency edge and may dispatch concurrently. Their mutable
+implementation scopes do not overlap. Integration front doors and lifecycle
+closeout are shared coordinator/hook surfaces and publish serially.
 
 ## Boundaries
 
@@ -26,10 +34,18 @@ No unfinished task is approved. Return to Chatterbox for planning direction.
   completed through Queue and published its terminal lifecycle record at
   revision 8. It changed no product priority and authorizes no sibling work.
 
+## Papercut intake disposition
+
+- The cold `graph explore` hang entry is closed as stale: current main already
+  applies the shared graph time budget and typed timeout path through commit
+  `6ce994047c54486c2f38e9f33a882565b019ade7`.
+- Vendored skill portfolio sync remains triage-only and is not in this frontier.
+
 ## Next Task
 
-Use Northstar Atlas with the operator before compiling another strategic task.
-Effigy release and S3 retirement remain separately gated.
+Dispatch `g10.004` and `g10.005` independently through their committed
+handoffs. Return to Chatterbox after both close; Effigy release and S3
+retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:6132dfcc569eb21c3e5df9f2eac0fad6ec308178b73101b36c10f744ebe3b835 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

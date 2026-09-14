@@ -18,23 +18,14 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Impact: the unique index entry is present for `docs check index` but the front-door list is wrong until a human moves the bullet; workers can ship a drifted Next Task block.
 - Possible fix: insert immediately after the `## Active logs` heading (newest first), and never write below the README `## Next Task` section.
 - Surface: `effigy docs add-log-index`; card closeout log-index step.
+- Planning: promoted as ready task [`g10.004`](docs/roadmaps/g10/004-place-log-index-entry-under-active-logs.md) on 2026-09-14; keep open until verified closeout.
 
 ### [ ] `cli_container_attached_session_handles_sigint_during_startup` is timing-flaky — 2026-09-02
 - Friction: `effigy::cli_output_tests` `cli_container_attached_session_handles_sigint_during_startup` failed under `effigy qa` and in isolation (twice) while passing under `cargo test --workspace`; it also fails on the clean base with this lane's changes stashed, so it is a pre-existing environment/timing race, not a regression.
 - Impact: full `effigy qa` rounds fail intermittently on a container-attach SIGINT startup race, blocking worker required-validation runs.
 - Possible fix: make the SIGINT-during-startup assertion race-free (wait for the attach/startup handshake before signalling) or mark it for container-availability/timing tolerance.
 - Surface: workspace `cli_output_tests` container attach tests; any worker running `effigy qa`.
-
-### [ ] `graph explore` can hang with no output on a cold worktree — 2026-09-01
-- Friction: `effigy graph explore "<question>" --json` produced no stdout for
-  more than 100s during worker startup on a fresh worktree; the process had to
-  be killed.
-- Impact: the documented code-understanding first command is not fail-fast, so
-  workers fall back to direct search and lose the promised time bound.
-- Possible fix: share the graph time-budget and stderr progress seam with
-  `explore`, or fail quickly when the index is missing instead of blocking
-  silently.
-- Surface: `effigy graph explore`; worker-mode code-understanding routing.
+- Planning: promoted as ready test-only task [`g10.005`](docs/roadmaps/g10/005-stabilize-container-startup-sigint-test.md) on 2026-09-14; keep open until verified closeout.
 
 ### [ ] Vendored Effigy skills need portfolio-level status and sync — 2026-08-30
 - Friction: 15 consumer repos under one projects directory had stale copies of
@@ -49,6 +40,19 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Triage: `docs/triage/20260909-152107-vendored-effigy-skill-portfolio-sync.md` (open candidate; keep this entry open until promoted or deliberately declined).
 
 ## Closed
+
+### [x] `graph explore` can hang with no output on a cold worktree — 2026-09-01
+- Friction: `effigy graph explore "<question>" --json` produced no stdout for
+  more than 100s during worker startup on a fresh worktree; the process had to
+  be killed.
+- Fix (verified 2026-09-14): current main routes `graph explore` and every other
+  graph data query through the shared 120000ms wall-clock budget, returning the
+  typed `effigy.graph.timeout.v1` failure with health and recovery guidance.
+  Commit `6ce994047c54486c2f38e9f33a882565b019ade7` introduced that route on
+  2026-09-01; guide 076 and the graph help surface document it. No duplicate
+  implementation task was promoted.
+- Surface: `src/runner/graph_command.rs`, `src/runner/graph_time_budget.rs`,
+  `docs/guides/076-code-graph-and-agent-workflows.md`.
 
 ### [x] Repository task shadowing makes `docs context` unreachable — 2026-09-08
 - Friction: the repository's old `docs` selector shadowed the built-in

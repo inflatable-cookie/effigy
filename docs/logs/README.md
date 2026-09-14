@@ -95,6 +95,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — closed g10.001 after merge, review, synchronization, and canonical closeout
 - [`2026-09/13-164131-northstar-refresh.md`](./2026-09/13-164131-northstar-refresh.md)
   — reconciled g10.002 lifecycle completion across current planning front doors
+- [`2026-09/14-082254-effigy-papercut-frontier-planning.md`](./2026-09/14-082254-effigy-papercut-frontier-planning.md)
+  — promoted two independent reliability repairs and closed one stale candidate
 
 ## Log template
 
@@ -130,5 +132,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Return to Chatterbox for planning direction; no later task is ready. Effigy
+Dispatch `g10.004` and `g10.005` independently through Northstar Queue. Effigy
 release remains a separate operator-gated mutation.

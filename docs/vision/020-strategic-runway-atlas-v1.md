@@ -183,8 +183,8 @@ with Acowtancy as the frozen first consumer replay.
 
 ## Next Task
 
-Define the next strategic runway with the operator through Northstar Atlas.
-The selected Horizon C agent-native seam shipped through `g10.001`, and the
-configuration-only `g10.002` lifecycle adoption task is complete. `g10` remains
-open with no ready task. Consumer cohort expansion and Effigy release remain
+Execute the operator-promoted bounded reliability tasks `g10.004` and
+`g10.005` through independent Queue dispatch. They extend the shipped Horizon
+C operability seam without selecting another strategic horizon. Consumer
+cohort expansion, vendored skill portfolio sync, and Effigy release remain
 separately gated.

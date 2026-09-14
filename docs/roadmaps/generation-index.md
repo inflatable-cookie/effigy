@@ -1,15 +1,15 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: none (g10.001 and g10.002 complete)
-Updated: 2026-09-13
+Approved frontier: g10.004, g10.005
+Updated: 2026-09-14
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open for planning direction; `g10.001` and the configuration-only `g10.002`
-are complete, and no speculative continuation is approved.
+open; `g10.001` through `g10.003` are complete. The operator promoted two
+independent bounded reliability repairs, `g10.004` and `g10.005`, on 2026-09-14.
 
 ## Generation history
 
@@ -24,7 +24,7 @@ are complete, and no speculative continuation is approved.
 | [`g07`](./archive/g07.md) | archived | native code graph, query quality, setup, and agent adoption |
 | [`g08`](./archive/g08.md) | archived | graph-aware scans, dependencies, release integrity, docs, and catalog packs |
 | [`g09`](./archive/g09.md) | archived | operator/consumer clarity, docs-context proof, and local-link recovery |
-| [`g10`](./g10/README.md) | active | installed agent-skill resolution and machine-transparent task transport |
+| [`g10`](./g10/README.md) | active | agent-native execution and bounded operability repairs |
 
 ## Rollover history
 
@@ -44,5 +44,6 @@ trees without opening another generation.
 
 ## Next Task
 
-Use Northstar Atlas with the operator before compiling another strategic task.
-No unfinished g10 task is approved.
+Dispatch [`g10.004`](./g10/004-place-log-index-entry-under-active-logs.md) and
+[`g10.005`](./g10/005-stabilize-container-startup-sigint-test.md) independently
+through Northstar Queue. No serial task edge exists between them.

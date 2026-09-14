@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-09-13
+Updated: 2026-09-14
 
 This contract defines how Effigy plans and executes Northstar work using the
 generation-plus-task model.
@@ -93,6 +93,7 @@ polish lane.
 
 ## Next Task
 
-Return to Chatterbox for planning direction. `g10.001` and the configuration-only
-`g10.002` lifecycle adoption task are complete; no Northstar task is ready.
-Effigy release and S3 retirement remain separately gated.
+Dispatch the independent ready tasks `g10.004` and `g10.005` through Northstar
+Queue from their committed handoffs. Shared integration and lifecycle closeout
+publish serially; neither task depends on the other. Effigy release and S3
+retirement remain separately gated.
