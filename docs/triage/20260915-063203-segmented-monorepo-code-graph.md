@@ -41,24 +41,38 @@ durable project boundary.
 
 ## Tentative architecture
 
-Prefer independently lazy physical segment indexes. Querying one segment must
-open, refresh, and search only that segment's declared roots.
+Separate two concerns:
+
+- a **segment** is the named indexing and query scope;
+- a **store** is the physical SQLite database and lock boundary.
+
+Every segment is independently lazy whether it uses the default shared store
+or opts into another store. Querying one segment must refresh only that
+segment's declared roots; sharing a database must never imply indexing every
+segment in that database.
 
 - Add repository-owned code-graph configuration, separate from
   `[docs_policy.graph]`, with explicit named segments and repository-relative
   roots/globs.
-- Store each segment beneath `.effigy/graph/segments/<name>/` with its own
-  database, freshness identity, and refresh lock. Do not build a root-wide
-  graph as a prerequisite.
+- Give segments a default shared store so closely related applications can
+  reuse indexed shared packages and retain cross-segment relations.
+- Let a segment opt into a named store. A distinct store produces a separate
+  database, refresh lock, corruption boundary, and disposal boundary. Store
+  names are symbolic identifiers; manifests do not choose arbitrary database
+  paths.
+- Keep freshness and index-run identity per segment even when several segments
+  share one store. Do not build a root-wide graph as a prerequisite.
 - Walk the segment's declared roots directly rather than walking the repository
   and filtering afterward.
-- Shared packages may be declared in more than one segment. Duplicate local
-  indexing is an accepted trade-off for bounded independent refresh and simple
-  deletion/freshness semantics.
+- Shared packages may be declared in more than one segment. A shared store may
+  reuse their records; separate stores accept duplicate local indexing in
+  exchange for isolation.
 - Apply segment scope before FTS ranking, symbol selection, and traversal.
 - Keep repository-relative paths in payloads. Within a segment, edges resolve
-  across all of its declared roots. References outside those roots remain
-  explicit unresolved boundary evidence rather than triggering another index.
+  across all of its declared roots. A shared store may retain known
+  cross-segment edges without admitting sibling results into the query.
+  References into another physical store remain explicit boundary evidence and
+  must not trigger that store's index implicitly.
 - Include segment configuration in freshness identity. A config change must
   invalidate only the affected segment without pretending its old view is
   current.
@@ -69,18 +83,29 @@ open, refresh, and search only that segment's declared roots.
   JSON. Existing single-repository behavior remains compatible when no segment
   configuration exists.
 
-Illustrative grammar only; not operator-confirmed:
+Illustrative grammar; the segment/store distinction is operator-confirmed but
+field spelling is not:
 
 ```toml
 [graph]
 mode = "segmented"
 
-[graph.segments.api]
-roots = ["apps/api", "packages/domain"]
+[graph.segments.farmyard]
+roots = ["apps/farmyard", "packages/cattle-grid"]
 
-[graph.segments.web]
-roots = ["apps/web", "packages/ui", "packages/domain"]
+[graph.segments.dairy]
+roots = ["apps/dairy", "packages/cattle-grid"]
+
+[graph.segments.cream]
+roots = ["apps/cream", "packages/cattle-grid"]
+
+[graph.segments.bovine-desktop]
+roots = ["apps/bovine-desktop"]
+store = "bovine-desktop"
 ```
+
+Farmyard, Dairy, and Cream omit `store` and use the default shared database;
+Bovine Desktop uses its own database. All four still refresh independently.
 
 Illustrative command only; not operator-confirmed:
 
@@ -94,14 +119,17 @@ effigy graph explore --segment api "trace request authorization"
    require `--segment`, use a configured default, or retain whole-repo behavior?
 2. CWD inference: should a query from inside exactly one segment select it
    automatically, with explicit flags overriding inference?
-3. Shared code: should overlapping segment roots be first-class many-to-many
-   declarations, accepting duplicate indexing, and should traversal stop at
-   the selected boundary by default?
+3. Shared code: should overlapping roots in the same store reuse one file
+   record with many-to-many membership, while isolated stores duplicate it?
+   Should traversal stop at the selected segment boundary by default?
 4. Whole-repo escape hatch: use an explicit `--all-segments`, a reserved
    segment name, or the absence of `--segment`?
 5. Source of truth: keep graph segments explicit, derive them from declared
    catalog members, or allow an opt-in catalog shorthand while retaining graph
    ownership?
+6. Documentation context: should `[docs_policy.graph].roots` receive a reserved
+   independently lazy docs segment/store so `docs context` never forces a
+   monorepo-wide code index?
 
 ## Constraints
 
@@ -113,15 +141,17 @@ effigy graph explore --segment api "trace request authorization"
   output.
 - A single-segment command must not walk, fingerprint, lock, open, or require an
   index for any sibling segment.
-- Shared files, cross-segment edges, stale membership, and unknown segment
-  diagnostics need adversarial proof.
+- Shared files, cross-segment and cross-store edges, stale membership, partial
+  shared-store population, and unknown segment/store diagnostics need
+  adversarial proof.
 - Documentation graph semantics remain owned by `[docs_policy.graph]`; code
   segmentation must not silently reinterpret documentation authority.
 
 ## Promotion conditions
 
-- Operator settles root-query default, CWD inference, shared membership, and
-  whole-repo escape behavior.
+- Operator settles root-query default, CWD inference, shared membership,
+  segment/store selection, documentation context, and whole-repo escape
+  behavior.
 - Architecture names the storage/membership/freshness model and its interaction
   with existing path filters and docs context.
 - Contract fixes manifest grammar, CLI selection precedence, JSON additions,
@@ -131,6 +161,7 @@ effigy graph explore --segment api "trace request authorization"
 
 ## Next check
 
-Review independent lazy segment indexes, root/CWD selection, and shared-root
-behavior with the operator. If confirmed, promote current architecture and
-contract changes before compiling ready g10 tasks.
+Review independent lazy segment indexing, opt-in physical stores, root/CWD
+selection, and documentation-context behavior with the operator. If confirmed,
+promote current architecture and contract changes before compiling ready g10
+tasks.
