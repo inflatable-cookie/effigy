@@ -94,7 +94,7 @@ installing them directly on your machine.
 - Research: [`research/README.md`](./research/README.md)
 - Vision: [`vision/README.md`](./vision/README.md)
 - Strict planning lane: [`specs/README.md`](./specs/README.md)
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:aed2437218acc6e08664963694cf53a5d7f837eaff7619cff772b6fa8a185833 -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:f51d5af6f0617f512b47ec1800af2a4dfebc3d96156843d8f24118d25fa363f7 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
@@ -104,4 +104,5 @@ installing them directly on your machine.
 | g10.003 | complete | none | 8 | sha256:f51ae9d2f79a84dfa1aa970575d37e10442574d5025015bf725258c72f2bd9a5 |
 | g10.004 | complete | none | 8 | sha256:493fff197276ab92aab90e09838bed45ba1de970a3a5d11cbc5fa8091e719e5d |
 | g10.005 | complete | none | 8 | sha256:bbdc3e4907f88ceb64be891fff87847854e123e4d552c565080fcda70a4d8881 |
+| g10.007 | complete | none | 8 | sha256:04342987457e1bea973556297a4bef39e1592794e0dd3d52ebcb4457ae915995 |
 <!-- northstar:lifecycle:end -->
