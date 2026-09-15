@@ -450,7 +450,7 @@ Effigy was designed so that AI agents can operate a repo without tribal knowledg
 effigy --json doctor             # Repo health and routing diagnostics
 effigy --json tasks              # Every task, catalog, and description
 effigy --json test --plan        # Resolved test plan without execution
-effigy --json graph explore "<task>"   # Bounded code-understanding packet
+effigy --json graph explore "<task>"   # Bounded code-understanding packet (--catalog <ALIAS> scopes a monorepo catalog)
 effigy <task>                    # Execute supported repo work
 effigy --help                    # Every command and flag, grouped by job
 effigy --json release simulate   # Machine-readable dry-runs
@@ -458,7 +458,7 @@ effigy --json release simulate   # Machine-readable dry-runs
 
 Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
-Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md)
+Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md). In a monorepo, `[catalog.graph] segmented = true` gives each product its own lazy graph scope; `--catalog <ALIAS>` selects one and `--all-catalogs` is the only fan-out.
 
 For agents that want a head start, we ship a skill that teaches Claude Code, OpenAI Codex, Cursor, and 50+ other agents the exact patterns:
 

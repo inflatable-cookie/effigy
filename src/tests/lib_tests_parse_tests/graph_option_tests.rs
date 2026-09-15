@@ -19,6 +19,8 @@ fn parse_graph_status_accepts_repo_and_json_flags() {
             subcommand: GraphSubcommand::Status { refresh: false },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -39,6 +41,8 @@ fn parse_graph_status_accepts_refresh_flag() {
             subcommand: GraphSubcommand::Status { refresh: true },
             repo_override: None,
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -76,6 +80,8 @@ fn parse_graph_context_accumulates_language_and_path_filters() {
             },
             repo_override: None,
             output_json: false,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -110,6 +116,8 @@ fn parse_graph_explore_accepts_context_filters() {
             },
             repo_override: None,
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -135,6 +143,8 @@ fn parse_graph_search_accepts_flags_after_query() {
             },
             repo_override: None,
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -158,6 +168,8 @@ fn parse_graph_watch_accepts_debounce_repo_and_json_flags() {
             subcommand: GraphSubcommand::Watch { debounce_ms: 1000 },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -188,6 +200,8 @@ fn parse_graph_affected_accepts_depth_limit_and_stdin() {
             },
             repo_override: None,
             output_json: true,
+            catalog: None,
+            all_catalogs: false,
         })
     );
 }
@@ -197,4 +211,63 @@ fn parse_graph_help_is_scoped() {
     let command =
         parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");
     assert_eq!(command, Command::Help(HelpTopic::Graph));
+}
+
+#[test]
+fn parse_graph_accepts_catalog_selector_on_any_subcommand() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "explore".to_owned(),
+        "bovine desktop".to_owned(),
+        "--catalog".to_owned(),
+        "bovine-desktop".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    let Command::Graph(graph) = command else {
+        panic!("expected graph command");
+    };
+    assert_eq!(graph.catalog.as_deref(), Some("bovine-desktop"));
+    assert!(!graph.all_catalogs);
+
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "index".to_owned(),
+        "--all-catalogs".to_owned(),
+    ])
+    .expect("parse should succeed");
+    let Command::Graph(graph) = command else {
+        panic!("expected graph command");
+    };
+    assert!(graph.all_catalogs);
+    assert_eq!(graph.catalog, None);
+}
+
+#[test]
+fn parse_graph_rejects_conflicting_or_unsupported_scope_selectors() {
+    let error = parse_command(vec![
+        "graph".to_owned(),
+        "status".to_owned(),
+        "--catalog".to_owned(),
+        "bovine".to_owned(),
+        "--all-catalogs".to_owned(),
+    ])
+    .expect_err("--catalog with --all-catalogs must fail");
+    assert!(error.to_string().contains("cannot be combined"), "{error}");
+
+    let error = parse_command(vec![
+        "graph".to_owned(),
+        "watch".to_owned(),
+        "--all-catalogs".to_owned(),
+    ])
+    .expect_err("watch fan-out must fail");
+    assert!(error.to_string().contains("graph watch"), "{error}");
+
+    let error = parse_command(vec![
+        "graph".to_owned(),
+        "search".to_owned(),
+        "--catalog".to_owned(),
+    ])
+    .expect_err("missing catalog value must fail");
+    assert!(error.to_string().contains("--catalog"), "{error}");
 }

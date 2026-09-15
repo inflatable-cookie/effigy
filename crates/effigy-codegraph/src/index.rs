@@ -14,10 +14,16 @@ use crate::model::{
 };
 use crate::phase::{self, GraphPhase};
 use crate::registry::ExtractorRegistry;
+use crate::scope::GraphScope;
 use crate::storage::{FileScanStateRecord, GraphStore};
 use crate::support::{file_record_from_source, sha256_hex};
 use crate::walk::ScanEntry;
 use crate::GraphId;
+
+/// Metadata key prefix recording the topology fingerprint a scope was indexed
+/// under. Changing a catalog root, alias, segmentation, or independence
+/// invalidates only that scope.
+const SCOPE_CONFIG_KEY_PREFIX: &str = "graph_scope_config";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexReport {
@@ -40,23 +46,39 @@ struct ScanDelta {
     deleted_paths: Vec<String>,
 }
 
+/// Index the repository-owned workspace corpus.
+///
+/// This is the legacy whole-workspace entry point used by documentation
+/// authority and direct crate consumers; `effigy graph` selects catalog scopes
+/// explicitly. A workspace with no segmented catalog sees identical behavior.
 pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
-    crate::refresh::run_index_exclusive(repo_root)
+    run_index_in_scope(&repo_scope(repo_root)?)
 }
 
-pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
+/// Build or refresh one selected graph scope.
+pub fn run_index_in_scope(scope: &GraphScope) -> Result<IndexReport, CodeGraphError> {
+    crate::refresh::run_index_exclusive(scope)
+}
+
+pub(crate) fn run_index_unlocked_in_scope(
+    scope: &GraphScope,
+) -> Result<IndexReport, CodeGraphError> {
+    let repo_root = scope.workspace_root();
     let profile_state = load_docs_profile_state(repo_root)?;
     let current_fingerprint = profile_state.fingerprint();
-    let store = GraphStore::open(repo_root)?;
-    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store)?;
-    let existing_states = store.file_scan_state_map()?;
+    let store = GraphStore::open_for_scope(scope)?;
+    let mut graph_changed = crate::language::markdown::demote_typed_relations(&store, scope)?;
+    let existing_states = store.file_scan_state_map_in_scope(scope)?;
     let stored_extractors = store.extractor_version_map()?;
     let stored_fingerprint = store.metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?;
     let profile_changed = stored_fingerprint.as_deref() != Some(current_fingerprint.as_str());
     let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
     let current_extractors = extractor_version_map(registry.all());
+    let scope_config = scope_config_fingerprint(scope, &current_extractors);
+    let scope_config_key = scope_config_key(scope);
+    let scope_invalidated = scope_config_changed(&store, &scope_config_key, &scope_config)?;
     phase::enter(GraphPhase::IndexWalk);
-    let scan_entries = crate::walk::scan_repo_files(repo_root)?;
+    let scan_entries = crate::walk::scan_repo_files_in_scope(scope)?;
     let mut current_states = BTreeMap::new();
     for extractor in registry.all() {
         let record = extractor.extractor_record();
@@ -74,20 +96,22 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
             skipped_paths.push(entry.relative_path.clone());
             continue;
         };
-        if let Some(existing_state) = existing_states.get(&entry.relative_path) {
-            let extractor_version_matches = current_extractors
-                .get(&entry.language_id)
-                .zip(stored_extractors.get(&entry.language_id))
-                .is_some_and(|(current, stored)| current == stored);
-            let unchanged_metadata = existing_state.language_id == entry.language_id
-                && existing_state.modified_unix_ms == entry.modified_unix_ms
-                && existing_state.byte_size == entry.byte_size;
-            if extractor_version_matches
-                && unchanged_metadata
-                && !profile_requires_markdown_refresh(profile_changed, &entry.language_id)
-            {
-                current_states.insert(entry.relative_path.clone(), existing_state.clone());
-                continue;
+        if !scope_invalidated {
+            if let Some(existing_state) = existing_states.get(&entry.relative_path) {
+                let extractor_version_matches = current_extractors
+                    .get(&entry.language_id)
+                    .zip(stored_extractors.get(&entry.language_id))
+                    .is_some_and(|(current, stored)| current == stored);
+                let unchanged_metadata = existing_state.language_id == entry.language_id
+                    && existing_state.modified_unix_ms == entry.modified_unix_ms
+                    && existing_state.byte_size == entry.byte_size;
+                if extractor_version_matches
+                    && unchanged_metadata
+                    && !profile_requires_markdown_refresh(profile_changed, &entry.language_id)
+                {
+                    current_states.insert(entry.relative_path.clone(), existing_state.clone());
+                    continue;
+                }
             }
         }
 
@@ -109,16 +133,17 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
             modified_unix_ms: entry.modified_unix_ms,
             byte_size: file_record.byte_size,
         };
-        let reuse_existing_graph = existing_states
-            .get(&entry.relative_path)
-            .is_some_and(|state| {
-                state.content_hash == file_state.content_hash
-                    && state.language_id == file_state.language_id
-                    && current_extractors
-                        .get(&entry.language_id)
-                        .zip(stored_extractors.get(&entry.language_id))
-                        .is_some_and(|(current, stored)| current == stored)
-            });
+        let reuse_existing_graph = !scope_invalidated
+            && existing_states
+                .get(&entry.relative_path)
+                .is_some_and(|state| {
+                    state.content_hash == file_state.content_hash
+                        && state.language_id == file_state.language_id
+                        && current_extractors
+                            .get(&entry.language_id)
+                            .zip(stored_extractors.get(&entry.language_id))
+                            .is_some_and(|(current, stored)| current == stored)
+                });
         store.save_file_scan_state(&file_state)?;
         current_states.insert(source.relative_path.clone(), file_state);
         if reuse_existing_graph
@@ -180,6 +205,8 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         })
         .map(|entry| entry.relative_path.clone())
         .collect::<Vec<_>>();
+    // Only paths this scope owns are eligible for deletion: a shared database
+    // must never lose a sibling catalog's records to this scope's refresh.
     let deleted_paths = existing_states
         .keys()
         .filter(|path| !indexed_paths.contains(*path))
@@ -191,7 +218,7 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         store.delete_file_scan_state(path)?;
         graph_changed = true;
     }
-    if crate::language::markdown::resolve_typed_relations(&store)? {
+    if crate::language::markdown::resolve_typed_relations(&store, scope)? {
         graph_changed = true;
     }
     let stale_paths = scan_delta_for_entries(
@@ -200,14 +227,15 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         &current_extractors,
         &scan_entries,
         profile_changed,
+        scope_invalidated,
     )?
     .stale_paths;
 
-    let counts = store.counts()?;
+    let counts = store.counts_in_scope(scope)?;
     let started_at = unix_epoch_millis_string();
     let finished_at = unix_epoch_millis_string();
     let run = IndexRunRecord {
-        id: GraphId::new(format!("run:index:{started_at}"))?,
+        id: GraphId::new(index_run_id(scope, &started_at))?,
         repo_root: repo_root.display().to_string(),
         schema_version: GRAPH_STORAGE_SCHEMA_VERSION,
         started_at,
@@ -218,11 +246,12 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
     };
     store.save_index_run(&run)?;
     store.save_metadata(DOCS_PROFILE_FINGERPRINT_KEY, &current_fingerprint)?;
+    store.save_metadata(&scope_config_key, &scope_config)?;
     if graph_changed {
         phase::enter(GraphPhase::SearchIndexRebuild);
-        store.refresh_search_index()?;
+        store.refresh_search_index_in_scope(scope)?;
     }
-    crate::git::update_index_stamp(repo_root, &store)?;
+    crate::git::update_index_stamp(scope, &store)?;
 
     Ok(IndexReport {
         indexed_files: scan_entries.len(),
@@ -232,8 +261,8 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
         changed_paths,
         deleted_paths,
         skipped_paths,
-        failed_paths: store.failed_diagnostic_paths()?,
-        counts: store.counts()?,
+        failed_paths: store.failed_diagnostic_paths_in_scope(scope)?,
+        counts: store.counts_in_scope(scope)?,
     })
 }
 
@@ -242,9 +271,21 @@ pub(crate) fn run_index_unlocked(repo_root: &Path) -> Result<IndexReport, CodeGr
 /// appended to the reported freshness summary. Report-only by default;
 /// callers opt in.
 pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let outcome = crate::refresh::ensure_fresh(repo_root, &store)?;
-    let mut payload = status(repo_root)?;
+    status_in_scope(&repo_scope(repo_root)?, true)
+}
+
+/// Status for one selected scope. `refresh` opts into the lazy rebuild;
+/// without it the call never mutates graph state.
+pub fn status_in_scope(
+    scope: &GraphScope,
+    refresh: bool,
+) -> Result<GraphStatusPayload, CodeGraphError> {
+    if !refresh {
+        return status_report(scope);
+    }
+    let store = GraphStore::open_for_scope(scope)?;
+    let outcome = crate::refresh::ensure_fresh(scope, &store)?;
+    let mut payload = status_report(scope)?;
     if !outcome.notes.is_empty() {
         payload.freshness.summary = format!(
             "{} ({})",
@@ -256,25 +297,32 @@ pub fn status_with_refresh(repo_root: &Path) -> Result<GraphStatusPayload, CodeG
 }
 
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let profile_state = load_docs_profile_state(repo_root)?;
-    let file_states = store.file_scan_state_map()?;
+    status_report(&repo_scope(repo_root)?)
+}
+
+fn status_report(scope: &GraphScope) -> Result<GraphStatusPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let profile_state = load_docs_profile_state(scope.workspace_root())?;
+    let file_states = store.file_scan_state_map_in_scope(scope)?;
     let registry = ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned());
-    let current_entries = crate::walk::scan_repo_files(repo_root)?;
+    let current_entries = crate::walk::scan_repo_files_in_scope(scope)?;
     let current_extractors = extractor_version_map(registry.all());
     let stored_extractors = store.extractor_version_map()?;
     let profile_changed = store
         .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
         .as_deref()
         != Some(profile_state.fingerprint().as_str());
+    let scope_config = scope_config_fingerprint(scope, &current_extractors);
+    let scope_invalidated = scope_config_changed(&store, &scope_config_key(scope), &scope_config)?;
     let scan_delta = scan_delta_for_entries(
         &file_states,
         &stored_extractors,
         &current_extractors,
         &current_entries,
         profile_changed,
+        scope_invalidated,
     )?;
-    let counts = store.counts()?;
+    let counts = store.counts_in_scope(scope)?;
     let ready = counts.files > 0;
     let extractors = registry
         .all()
@@ -299,7 +347,7 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
             ready,
             store.paths().db_path.is_file(),
             &scan_delta.stale_paths,
-            store.failed_diagnostic_paths()?.len(),
+            store.failed_diagnostic_paths_in_scope(scope)?.len(),
         ),
         stale_paths: scan_delta.stale_paths,
         extractors,
@@ -307,18 +355,18 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
         changed_paths: scan_delta.changed_paths,
         deleted_paths: scan_delta.deleted_paths,
         skipped_paths: Vec::new(),
-        failed_paths: store.failed_diagnostic_paths()?,
+        failed_paths: store.failed_diagnostic_paths_in_scope(scope)?,
     })
 }
 
-pub(crate) fn stale_paths_for_repo(
-    repo_root: &Path,
+pub(crate) fn stale_paths_in_scope(
+    scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<Vec<String>, CodeGraphError> {
     phase::enter(GraphPhase::FreshnessScan);
-    let profile_state = load_docs_profile_state(repo_root)?;
-    let file_states = store.file_scan_state_map()?;
-    let current_entries = crate::walk::scan_repo_files(repo_root)?;
+    let profile_state = load_docs_profile_state(scope.workspace_root())?;
+    let file_states = store.file_scan_state_map_in_scope(scope)?;
+    let current_entries = crate::walk::scan_repo_files_in_scope(scope)?;
     let current_extractors = extractor_version_map(
         ExtractorRegistry::for_docs_profile(profile_state.compiled().cloned()).all(),
     );
@@ -327,14 +375,75 @@ pub(crate) fn stale_paths_for_repo(
         .metadata_value(DOCS_PROFILE_FINGERPRINT_KEY)?
         .as_deref()
         != Some(profile_state.fingerprint().as_str());
+    let scope_config = scope_config_fingerprint(scope, &current_extractors);
+    let scope_invalidated = scope_config_changed(store, &scope_config_key(scope), &scope_config)?;
     Ok(scan_delta_for_entries(
         &file_states,
         &stored_extractors,
         &current_extractors,
         &current_entries,
         profile_changed,
+        scope_invalidated,
     )?
     .stale_paths)
+}
+
+fn repo_scope(repo_root: &Path) -> Result<GraphScope, CodeGraphError> {
+    GraphScope::repo_root(repo_root)
+}
+
+/// Topology identity for one scope: alias, canonical root, segmentation,
+/// independence, prune set, and the extractor versions in play.
+fn scope_config_fingerprint(
+    scope: &GraphScope,
+    current_extractors: &BTreeMap<String, String>,
+) -> String {
+    let mut parts = vec![
+        format!("alias={}", scope.alias()),
+        format!("root={}", scope.relative_root()),
+        format!("segmented={}", scope.segmented()),
+        format!("independent={}", scope.independent()),
+    ];
+    for prune in scope.prune_relative_roots() {
+        parts.push(format!("prune={prune}"));
+    }
+    for (language, version) in current_extractors {
+        parts.push(format!("extractor={language}@{version}"));
+    }
+    parts.join("\n")
+}
+
+/// Whether a scope's recorded topology changed.
+///
+/// A scope that has never recorded a topology fingerprint is not invalidated:
+/// its files are compared normally, which also lets a repository-owned corpus
+/// (for example `docs context`) and the root code scope share file states
+/// without forcing each other into a full re-extraction.
+fn scope_config_changed(
+    store: &GraphStore,
+    key: &str,
+    current: &str,
+) -> Result<bool, CodeGraphError> {
+    Ok(store
+        .metadata_value(key)?
+        .is_some_and(|stored| stored != current))
+}
+
+fn scope_config_key(scope: &GraphScope) -> String {
+    let key = scope.key();
+    if key.is_empty() {
+        SCOPE_CONFIG_KEY_PREFIX.to_owned()
+    } else {
+        format!("{SCOPE_CONFIG_KEY_PREFIX}:{key}")
+    }
+}
+
+fn index_run_id(scope: &GraphScope, started_at: &str) -> String {
+    if scope.relative_root().is_empty() {
+        format!("run:index:{started_at}")
+    } else {
+        format!("run:index:{}:{started_at}", scope.relative_root())
+    }
 }
 
 pub(crate) fn graph_freshness_payload(
@@ -380,6 +489,7 @@ fn scan_delta_for_entries(
     current_extractors: &BTreeMap<String, String>,
     current_entries: &[ScanEntry],
     profile_changed: bool,
+    scope_invalidated: bool,
 ) -> Result<ScanDelta, CodeGraphError> {
     let mut stale = BTreeSet::new();
     let mut new_paths = Vec::new();
@@ -397,6 +507,10 @@ fn scan_delta_for_entries(
                     || state.byte_size != entry.byte_size;
                 if metadata_changed {
                     changed_paths.push(entry.relative_path.clone());
+                }
+                if scope_invalidated {
+                    stale.insert(entry.relative_path.clone());
+                    continue;
                 }
                 let extractor_version_changed = current_extractors
                     .get(&entry.language_id)

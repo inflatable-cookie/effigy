@@ -290,6 +290,8 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
     assert!(rendered.contains("--language <ID>"));
     assert!(rendered.contains("--path <PREFIX>"));
+    assert!(rendered.contains("--catalog <ALIAS>"));
+    assert!(rendered.contains("--all-catalogs"));
     assert!(rendered.contains("Use `graph status` only for a report-only freshness check"));
     assert!(rendered.contains("effigy.graph.watch.event.v1"));
     assert!(rendered.contains("effigy graph context \"trace deploy provider export\""));

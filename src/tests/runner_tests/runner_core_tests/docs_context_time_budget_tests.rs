@@ -252,6 +252,8 @@ fn graph_search_timeout_behavior_is_unchanged() {
         },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect_err("cold graph search must stay bounded");
 
@@ -263,6 +265,8 @@ fn run_graph_index(root: &std::path::Path) {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.to_path_buf()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
 }

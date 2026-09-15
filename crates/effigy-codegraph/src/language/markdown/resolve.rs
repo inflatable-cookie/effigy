@@ -5,14 +5,21 @@ use super::paths::slugify;
 use crate::error::CodeGraphError;
 use crate::extractor::file_graph_id;
 use crate::model::{EdgeRecord, ReferenceRecord};
+use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 use crate::GraphId;
 
 const DOC_REL_KIND: &str = "doc-rel";
 
-pub(crate) fn demote_typed_relations(store: &GraphStore) -> Result<bool, CodeGraphError> {
+/// Demote already-resolved typed relations **inside one scope** so the next
+/// resolution pass can rebuild them. Sibling scopes keep their resolved
+/// relations untouched.
+pub(crate) fn demote_typed_relations(
+    store: &GraphStore,
+    scope: &GraphScope,
+) -> Result<bool, CodeGraphError> {
     let mut changed = false;
-    for mut edge in store.list_edges()? {
+    for mut edge in store.list_edges_in_scope(scope)? {
         if edge.kind != DOC_REL_KIND || edge.to_id.is_none() {
             continue;
         }
@@ -24,7 +31,7 @@ pub(crate) fn demote_typed_relations(store: &GraphStore) -> Result<bool, CodeGra
         store.save_edge(&edge)?;
         changed = true;
     }
-    for mut reference in store.list_references()? {
+    for mut reference in store.list_references_in_scope(scope)? {
         if reference.kind != DOC_REL_KIND || reference.target_id.is_none() {
             continue;
         }
@@ -39,7 +46,16 @@ pub(crate) fn demote_typed_relations(store: &GraphStore) -> Result<bool, CodeGra
     Ok(changed)
 }
 
-pub(crate) fn resolve_typed_relations(store: &GraphStore) -> Result<bool, CodeGraphError> {
+/// Resolve typed relations for one scope.
+///
+/// Live ids are read database-wide but never refreshed: a shared store may
+/// use an already-indexed sibling record to resolve an external relationship,
+/// and an unresolved boundary stays unresolved. Sibling records are never
+/// written and no sibling scope is walked.
+pub(crate) fn resolve_typed_relations(
+    store: &GraphStore,
+    scope: &GraphScope,
+) -> Result<bool, CodeGraphError> {
     let mut live_ids = BTreeSet::new();
     for file in store.list_files()? {
         live_ids.insert(file.id.to_string());
@@ -48,7 +64,7 @@ pub(crate) fn resolve_typed_relations(store: &GraphStore) -> Result<bool, CodeGr
         live_ids.insert(symbol.id.to_string());
     }
     let mut changed = false;
-    for mut edge in store.list_edges()? {
+    for mut edge in store.list_edges_in_scope(scope)? {
         if edge.kind != DOC_REL_KIND {
             continue;
         }
@@ -64,7 +80,7 @@ pub(crate) fn resolve_typed_relations(store: &GraphStore) -> Result<bool, CodeGr
             changed = true;
         }
     }
-    for mut reference in store.list_references()? {
+    for mut reference in store.list_references_in_scope(scope)? {
         if reference.kind != DOC_REL_KIND {
             continue;
         }

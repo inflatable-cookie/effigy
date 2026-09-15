@@ -373,9 +373,19 @@ fn answered_block(
 /// HEAD the local index was built from, when it was built over a clean tree.
 ///
 /// Reported as-is: an index built over uncommitted edits carries no stamp, and
-/// inventing one would let a caller believe an excerpt is committed.
+/// inventing one would let a caller believe an excerpt is committed. The stamp
+/// belongs to the repository-owned documentation corpus scope; a database
+/// indexed before scopes existed still answers from the root key.
 fn indexed_head(repo_root: &Path) -> Option<String> {
     let store = GraphStore::open(repo_root).ok()?;
+    let scope_key = crate::scope::GraphScope::workspace(repo_root)
+        .ok()?
+        .key()
+        .to_owned();
+    let scoped = crate::git::indexed_head_for_scope(&store, &scope_key).ok()?;
+    if scoped.is_some() {
+        return scoped;
+    }
     store
         .metadata_value(crate::git::GIT_INDEXED_HEAD_KEY)
         .ok()?

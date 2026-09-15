@@ -8,14 +8,34 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::CodeGraphError;
+use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 
 /// Metadata key recording the git HEAD the index was built from.
 ///
 /// The stamp is written only when the working tree was clean at index time;
 /// an index built over uncommitted edits carries no stamp, so the gate can
-/// never mistake a dirty-tree snapshot for the committed tree.
+/// never mistake a dirty-tree snapshot for the committed tree. The stamp is
+/// per scope, so a scope that was never indexed cannot borrow another
+/// scope's freshness.
 pub(crate) const GIT_INDEXED_HEAD_KEY: &str = "git_indexed_head";
+
+fn git_indexed_head_key(scope_key: &str) -> String {
+    if scope_key.is_empty() {
+        GIT_INDEXED_HEAD_KEY.to_owned()
+    } else {
+        format!("{GIT_INDEXED_HEAD_KEY}:{scope_key}")
+    }
+}
+
+/// HEAD the index of one scope was built from, or `None` when that scope has
+/// no clean-tree stamp. Absent means "unknown", never "current".
+pub(crate) fn indexed_head_for_scope(
+    store: &GraphStore,
+    scope_key: &str,
+) -> Result<Option<String>, CodeGraphError> {
+    store.metadata_value(&git_indexed_head_key(scope_key))
+}
 
 /// Current `HEAD` of `repo_root`, or `None` when git is unavailable, the repo
 /// has no commits, or HEAD cannot be resolved.
@@ -38,27 +58,54 @@ pub(crate) fn current_head(repo_root: &Path) -> Option<String> {
     }
 }
 
-/// Whether `repo_root` has a clean working tree (no tracked or untracked
-/// changes), ignoring paths the graph walk itself skips (`.effigy/`,
-/// `target/`, `node_modules/`, `vendor/`, `.git/`). Any failure reports
-/// unclean.
-pub(crate) fn working_tree_clean(repo_root: &Path) -> bool {
-    let output = match Command::new("git")
+/// Whether the working tree is clean **inside one scope**.
+///
+/// Git limits the status query to the scope's own pathspec, so a dirty or huge
+/// sibling catalog is never walked while checking this scope's freshness. The
+/// root scope excludes every segmented descendant; a catalog scope includes
+/// only its own root and excludes nested segmented catalogs.
+pub(crate) fn working_tree_clean_for_scope(scope: &GraphScope) -> bool {
+    let mut pathspecs = Vec::new();
+    if scope.is_workspace() {
+        // The repository-owned corpus has no prunes, so git reports the whole
+        // worktree exactly as it did before catalog scopes existed.
+    } else if scope.relative_root().is_empty() {
+        pathspecs.push(".".to_owned());
+    } else {
+        pathspecs.push(scope.relative_root().to_owned());
+    }
+    for prune in scope.prune_relative_roots() {
+        pathspecs.push(format!(":(exclude){prune}"));
+    }
+    porcelain_status_paths(scope.workspace_root(), &pathspecs)
+        .map(|paths| {
+            paths
+                .iter()
+                .all(|path| porcelain_entry_is_walk_skipped(path))
+        })
+        .unwrap_or(false)
+}
+
+/// `git status --porcelain` for the given pathspecs, or `None` when git cannot
+/// answer. An empty pathspec list asks git for the whole worktree.
+fn porcelain_status_paths(repo_root: &Path, pathspecs: &[String]) -> Option<Vec<String>> {
+    let mut command = Command::new("git");
+    command
         .arg("status")
         .arg("--porcelain")
-        .current_dir(repo_root)
-        .output()
-    {
-        Ok(output) => output,
-        Err(_) => return false,
-    };
-    if !output.status.success() {
-        return false;
+        .current_dir(repo_root);
+    if !pathspecs.is_empty() {
+        command.arg("--");
+        for pathspec in pathspecs {
+            command.arg(pathspec);
+        }
     }
-    let Ok(stdout) = String::from_utf8(output.stdout) else {
-        return false;
-    };
-    stdout.lines().all(porcelain_entry_is_walk_skipped)
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    Some(stdout.lines().map(str::to_owned).collect())
 }
 
 /// A porcelain line is irrelevant to graph freshness when its path is one the
@@ -77,26 +124,30 @@ fn porcelain_entry_is_walk_skipped(line: &str) -> bool {
 /// Conservative by construction: every failure mode returns `false`, which
 /// just means "run the scan-state walk" (the behavior before the gate).
 pub(crate) fn git_gate_says_fresh(
-    repo_root: &Path,
+    scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<bool, CodeGraphError> {
-    let Some(indexed_head) = store.metadata_value(GIT_INDEXED_HEAD_KEY)? else {
+    let Some(indexed_head) = store.metadata_value(&git_indexed_head_key(scope.key()))? else {
         return Ok(false);
     };
-    if !working_tree_clean(repo_root) {
+    if !working_tree_clean_for_scope(scope) {
         return Ok(false);
     }
-    Ok(current_head(repo_root).as_deref() == Some(indexed_head.as_str()))
+    Ok(current_head(scope.workspace_root()).as_deref() == Some(indexed_head.as_str()))
 }
 
-/// Record (or clear) the git stamp after an index build.
+/// Record (or clear) the git stamp for one scope after an index build.
 pub(crate) fn update_index_stamp(
-    repo_root: &Path,
+    scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<(), CodeGraphError> {
-    match (current_head(repo_root), working_tree_clean(repo_root)) {
-        (Some(head), true) => store.save_metadata(GIT_INDEXED_HEAD_KEY, &head),
-        _ => store.delete_metadata(GIT_INDEXED_HEAD_KEY),
+    let key = git_indexed_head_key(scope.key());
+    match (
+        current_head(scope.workspace_root()),
+        working_tree_clean_for_scope(scope),
+    ) {
+        (Some(head), true) => store.save_metadata(&key, &head),
+        _ => store.delete_metadata(&key),
     }
 }
 

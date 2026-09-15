@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::CodeGraphError;
 use crate::model::{FileRecord, SourceSpan, SymbolRecord};
+use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 use crate::support::span_from_bytes;
 
@@ -26,6 +27,7 @@ pub(super) struct SourceEvidence {
 
 pub(super) fn indexed_source_matches<'a>(
     store: &GraphStore,
+    scope: &GraphScope,
     tokens: &[String],
     allowed_file_ids: impl IntoIterator<Item = &'a str>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>, CodeGraphError> {
@@ -35,7 +37,7 @@ pub(super) fn indexed_source_matches<'a>(
         .collect::<BTreeSet<_>>();
     let mut matches = BTreeMap::<String, BTreeSet<String>>::new();
     for token in tokens {
-        for hit in store.source_search(token, allowed.len().max(1))? {
+        for hit in store.source_search_in_scope(token, allowed.len().max(1), scope)? {
             if !allowed.contains(hit.file_id.as_str()) {
                 continue;
             }

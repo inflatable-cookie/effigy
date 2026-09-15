@@ -1,7 +1,11 @@
 use std::io::{self, Write};
+use std::path::Path;
 
 use effigy_cli::{GraphArgs, GraphSubcommand};
-use effigy_codegraph::json::{render_json, GraphCommandPayload, GraphWatchEventPayload};
+use effigy_codegraph::json::{
+    render_json, GraphCatalogPayload, GraphCommandPayload, GraphWatchEventPayload,
+};
+use effigy_codegraph::scope::{GraphScope, GraphScopePlan, GraphScopeRequest};
 use effigy_codegraph::{watch_repo, CodeGraphError, GraphWatchEvent, GraphWatchOptions};
 use effigy_ui::{PlainRenderer, Renderer};
 
@@ -11,6 +15,7 @@ pub fn run_graph_watch_command(context: &CliExecutionContext<'_>, args: GraphArg
     let GraphArgs {
         subcommand: GraphSubcommand::Watch { debounce_ms },
         output_json,
+        catalog,
         ..
     } = args
     else {
@@ -22,20 +27,68 @@ pub fn run_graph_watch_command(context: &CliExecutionContext<'_>, args: GraphArg
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
 
-    let repo_root = context.command_root;
+    let repo_root = effigy_routing::owning_workspace_root(context.command_root)
+        .unwrap_or_else(|| context.command_root.to_path_buf());
+    let repo_root = repo_root.as_path();
+    let scope = match resolve_watch_scope(repo_root, catalog.as_deref()) {
+        Ok(scope) => scope,
+        Err(error) => {
+            emit_watch_failure(output_json, repo_root.display().to_string(), error, None);
+            std::process::exit(1);
+        }
+    };
+    let catalog_payload = GraphCatalogPayload::from_scope(&scope);
     let options = GraphWatchOptions { debounce_ms };
-    let result = watch_repo(repo_root, &options, |event| {
+    let result = watch_repo(&scope, &options, |event| {
         emit_watch_event(
             output_json,
             &mut renderer,
             repo_root.display().to_string(),
+            &catalog_payload,
             event,
         )
     });
 
     if let Err(error) = result {
-        emit_watch_failure(output_json, repo_root.display().to_string(), error);
+        emit_watch_failure(
+            output_json,
+            repo_root.display().to_string(),
+            error,
+            Some(catalog_payload),
+        );
         std::process::exit(1);
+    }
+}
+
+/// Watch resolves one catalog scope. `--all-catalogs` is rejected by the
+/// parser, so fan-out never reaches this point.
+fn resolve_watch_scope(
+    repo_root: &Path,
+    catalog: Option<&str>,
+) -> Result<GraphScope, CodeGraphError> {
+    let request = match catalog {
+        Some(alias) => GraphScopeRequest::Catalog(alias.to_owned()),
+        None => GraphScopeRequest::Cwd,
+    };
+    match effigy_routing::load_effective_catalogs(repo_root) {
+        Ok(catalogs) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| repo_root.to_path_buf());
+            match effigy_codegraph::select_scopes(repo_root, &catalogs, &request, &cwd)? {
+                GraphScopePlan::Single(scope) => Ok(scope),
+                GraphScopePlan::FanOut(_) => Err(CodeGraphError::validation(
+                    "`graph watch` watches one catalog at a time",
+                )),
+            }
+        }
+        Err(effigy_routing::RoutingError::TaskCatalogsMissing { .. }) => {
+            if catalog.is_some() {
+                return Err(CodeGraphError::validation(
+                    "catalog selection requires an effective catalog root manifest",
+                ));
+            }
+            GraphScope::repo_root(repo_root)
+        }
+        Err(error) => Err(CodeGraphError::validation(error.to_string())),
     }
 }
 
@@ -43,6 +96,7 @@ fn emit_watch_event(
     json_mode: bool,
     renderer: &mut impl Renderer,
     repo_root: String,
+    catalog: &GraphCatalogPayload,
     event: GraphWatchEvent,
 ) -> Result<(), CodeGraphError> {
     if json_mode {
@@ -51,7 +105,8 @@ fn emit_watch_event(
             "graph watch",
             repo_root,
             event.payload,
-        );
+        )
+        .with_catalog(catalog.clone());
         let rendered = render_json(
             &payload,
             "{\"schema\":\"effigy.graph.watch.event.v1\",\"schema_version\":1}",
@@ -75,9 +130,14 @@ fn emit_watch_event(
     }
 }
 
-fn emit_watch_failure(json_mode: bool, repo_root: String, error: CodeGraphError) {
+fn emit_watch_failure(
+    json_mode: bool,
+    repo_root: String,
+    error: CodeGraphError,
+    catalog: Option<GraphCatalogPayload>,
+) {
     if json_mode {
-        let payload = GraphCommandPayload::new(
+        let mut payload = GraphCommandPayload::new(
             "effigy.graph.watch.event.v1",
             "graph watch",
             repo_root,
@@ -91,6 +151,9 @@ fn emit_watch_failure(json_mode: bool, repo_root: String, error: CodeGraphError)
                 notes: vec![error.to_string()],
             },
         );
+        if let Some(catalog) = catalog {
+            payload = payload.with_catalog(catalog);
+        }
         if let Ok(compact) = serde_json::to_string(&payload) {
             println!("{compact}");
             return;

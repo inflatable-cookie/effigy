@@ -10,12 +10,14 @@ use crate::model::{
 };
 use crate::{
     affected, callers, context, explore, impact, node, query_files, query_search, run_index,
-    status, CodeGraphError, ExtractorId, GraphId, GraphStore, GRAPH_JSON_SCHEMA_VERSION,
+    run_index_in_scope, status, CodeGraphError, ExtractorId, GraphId, GraphStore,
+    GRAPH_JSON_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
 
+mod catalog_scopes;
 mod context_quality;
 mod docs_profile;
 mod git_gate;

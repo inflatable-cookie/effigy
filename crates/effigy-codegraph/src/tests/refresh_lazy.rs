@@ -6,6 +6,11 @@ use crate::docs_context::DocsContextRequest;
 use crate::refresh::{
     ensure_fresh_with_wait_and_progress, run_index_exclusive_with_wait, RefreshLock,
 };
+use crate::scope::GraphScope;
+
+fn repo_scope(root: &Path) -> GraphScope {
+    GraphScope::repo_root(root).expect("repo root scope")
+}
 
 #[test]
 fn query_refreshes_stale_index_on_demand() {
@@ -73,13 +78,13 @@ fn refresh_lock_is_exclusive() {
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(temp.path().join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
 
-    let first = RefreshLock::try_acquire(temp.path()).expect("first acquire");
+    let first = RefreshLock::try_acquire(&repo_scope(temp.path())).expect("first acquire");
     assert!(first.is_some());
-    assert!(RefreshLock::try_acquire(temp.path())
+    assert!(RefreshLock::try_acquire(&repo_scope(temp.path()))
         .expect("second acquire")
         .is_none());
     drop(first);
-    assert!(RefreshLock::try_acquire(temp.path())
+    assert!(RefreshLock::try_acquire(&repo_scope(temp.path()))
         .expect("reacquire")
         .is_some());
 }
@@ -90,10 +95,10 @@ fn explicit_index_refuses_to_run_without_the_refresh_lock() {
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
     fs::write(temp.path().join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
 
-    let _held = RefreshLock::try_acquire(temp.path())
+    let _held = RefreshLock::try_acquire(&repo_scope(temp.path()))
         .expect("hold refresh lock")
         .expect("lock must be free");
-    let error = run_index_exclusive_with_wait(temp.path(), 0)
+    let error = run_index_exclusive_with_wait(&repo_scope(temp.path()), 0)
         .expect_err("explicit index must not bypass a held refresh lock");
 
     assert!(error
@@ -119,13 +124,14 @@ fn query_serves_stale_when_refresh_lock_is_held() {
     )
     .expect("rewrite rust");
 
-    let _held = RefreshLock::try_acquire(temp.path())
+    let _held = RefreshLock::try_acquire(&repo_scope(temp.path()))
         .expect("hold refresh lock")
         .expect("lock must be free");
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome = ensure_fresh_with_wait_and_progress(temp.path(), &store, 250, |_| {})
-        .expect("ensure fresh");
+    let outcome =
+        ensure_fresh_with_wait_and_progress(&repo_scope(temp.path()), &store, 250, |_| {})
+            .expect("ensure fresh");
     assert!(outcome.freshness.stale);
     assert_eq!(outcome.freshness.state, "refresh-recommended");
     assert!(outcome
@@ -150,19 +156,20 @@ fn query_detects_refresh_completed_by_concurrent_process() {
     )
     .expect("rewrite rust");
 
-    let lock_root = temp.path().to_path_buf();
+    let lock_scope = repo_scope(temp.path());
     let handle = std::thread::spawn(move || {
-        let lock = RefreshLock::try_acquire(&lock_root)
+        let lock = RefreshLock::try_acquire(&lock_scope)
             .expect("acquire")
             .expect("lock must be free");
         std::thread::sleep(Duration::from_millis(150));
-        crate::index::run_index_unlocked(&lock_root).expect("concurrent refresh");
+        crate::index::run_index_unlocked_in_scope(&lock_scope).expect("concurrent refresh");
         drop(lock);
     });
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome = ensure_fresh_with_wait_and_progress(temp.path(), &store, 1_000, |_| {})
-        .expect("ensure fresh");
+    let outcome =
+        ensure_fresh_with_wait_and_progress(&repo_scope(temp.path()), &store, 1_000, |_| {})
+            .expect("ensure fresh");
     handle.join().expect("join refresh thread");
 
     assert!(!outcome.freshness.stale);

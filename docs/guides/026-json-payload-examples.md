@@ -579,6 +579,13 @@ Companion references:
   "schema_version": 1,
   "command": "graph status",
   "repo_root": "/workspace/app",
+  "catalog": {
+    "alias": "bovine-desktop",
+    "root": "apps/bovine-desktop",
+    "selection": "explicit",
+    "segmented": true,
+    "independent": true
+  },
   "payload": {
     "ready": true,
     "index_present": true,
@@ -866,6 +873,64 @@ Companion references:
       "failed_paths": []
     },
     "notes": []
+  }
+}
+```
+
+### 9) Graph Fan-Out (`effigy.graph.fanout.v1`)
+
+`--all-catalogs` is the only fan-out. Every scope reports its own complete
+outcome, including failures, and the command exits non-zero if any scope failed.
+
+```json
+{
+  "schema": "effigy.graph.fanout.v1",
+  "schema_version": 1,
+  "command": "graph index",
+  "repo_root": "/workspace/acowtancy",
+  "payload": {
+    "catalogs": [
+      {
+        "catalog": {
+          "alias": "acowtancy",
+          "root": ".",
+          "selection": "root",
+          "segmented": false,
+          "independent": false
+        },
+        "ok": true,
+        "payload": {
+          "indexed_files": 12,
+          "extractor_count": 5,
+          "counts": {
+            "files": 12,
+            "symbols": 44,
+            "edges": 91,
+            "references": 12,
+            "diagnostics": 0,
+            "extractors": 5,
+            "index_runs": 4
+          },
+          "stale_paths": [],
+          "new_paths": [],
+          "changed_paths": [],
+          "deleted_paths": [],
+          "skipped_paths": [],
+          "failed_paths": []
+        }
+      },
+      {
+        "catalog": {
+          "alias": "bovine-desktop",
+          "root": "apps/bovine-desktop",
+          "selection": "root",
+          "segmented": true,
+          "independent": true
+        },
+        "ok": false,
+        "error": "catalog `bovine-desktop` refresh lock remained busy for 10000ms"
+      }
+    ]
   }
 }
 ```

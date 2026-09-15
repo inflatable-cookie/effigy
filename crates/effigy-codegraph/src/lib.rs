@@ -42,6 +42,7 @@ pub mod phase;
 pub mod query;
 pub mod refresh;
 mod registry;
+pub mod scope;
 pub mod storage;
 mod support;
 mod walk;
@@ -62,7 +63,9 @@ pub use health::{health, GraphHealthPayload};
 /// Stable extractor identity for stored graph facts.
 pub use ids::{ExtractorId, GraphId};
 /// Build or refresh the local graph, then inspect freshness and counts.
-pub use index::{run_index, status, status_with_refresh, IndexReport};
+pub use index::{
+    run_index, run_index_in_scope, status, status_in_scope, status_with_refresh, IndexReport,
+};
 /// Render graph payloads into the public JSON contract.
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// What the graph was doing when a caller's wall-clock bound expired.
@@ -71,13 +74,22 @@ pub use phase::{
     KNOWN_PHASE_NAMES,
 };
 /// Query helpers over the stored graph.
+///
+/// The plain names read the repository-owned workspace corpus; the
+/// `*_in_scope` variants read one catalog-derived [`GraphScope`].
 pub use query::{
-    affected, callees, callers, context, explore, files as query_files, impact, node,
-    search as query_search, PreparedAffectedQuery,
+    affected, affected_in_scope, callees, callees_in_scope, callers, callers_in_scope, context,
+    context_in_scope, explore, explore_in_scope, files as query_files, files_in_scope, impact,
+    impact_in_scope, node, node_in_scope, search as query_search, search_in_scope,
+    PreparedAffectedQuery,
 };
 /// Lazy on-query graph refresh (rebuilds stale indexes on demand) and the
 /// progress verdict reported while it runs.
 pub use refresh::{ensure_fresh, RefreshOutcome, RefreshPending};
+/// Catalog-derived graph scopes: selection, pruning, and storage posture.
+pub use scope::{
+    build_scopes, select_scopes, GraphScope, GraphScopePlan, GraphScopeRequest, GraphScopeSelection,
+};
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;
 /// Foreground graph watch surface and typed watch events.

@@ -196,6 +196,64 @@ Use `--path <dotted.path>` when the full composed view is too broad and the real
 question is “where did this one effective value come from?” or “which override
 replaced it?”
 
+### Catalog-Scoped Code Graph
+
+Root manifest: declare members the usual way. Do not repeat graph topology
+here.
+
+```toml
+[catalog]
+alias = "acowtancy"
+
+[catalog.members]
+bovine_desktop = "apps/bovine-desktop"
+farmyard = "apps/farmyard"
+```
+
+Small product catalog (`apps/bovine-desktop/effigy.toml`):
+
+```toml
+[catalog]
+alias = "bovine-desktop"
+
+[catalog.graph]
+segmented = true
+independent = true
+```
+
+Large product catalog sharing the root database:
+
+```toml
+[catalog.graph]
+segmented = true
+```
+
+Rules:
+
+- `segmented = true` makes the catalog an independently lazy graph scope and
+  prunes its root from the parent's scan. A root or parent query never walks a
+  segmented catalog's tree.
+- `independent = true` gives a segmented catalog its own deterministic database
+  and lock under `.effigy/graph/catalogs/<encoded-alias>/`. It means physical
+  storage isolation only; every segmented catalog refreshes independently.
+- `independent = true` without `segmented = true` is rejected at manifest load.
+- `[catalog.graph]` never adds membership, renames a catalog, or grants
+  recursive discovery. Catalog membership and aliases stay the only topology
+  source.
+- V1 segmented roots must resolve beneath the workspace root; an escaping root
+  fails before any index access.
+
+Use it from the CLI:
+
+```sh
+cd apps/bovine-desktop && effigy graph explore "checkout totals" --json
+effigy graph index --catalog bovine-desktop --json
+effigy graph status --all-catalogs --json
+```
+
+A repository with no `[catalog.graph]` keeps the single database, paths, and
+JSON it had before.
+
 ### Demo Registry Foundation
 
 ```toml
