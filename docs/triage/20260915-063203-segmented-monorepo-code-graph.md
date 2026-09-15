@@ -30,128 +30,119 @@ durable project boundary.
 - `GraphStore` records repository-relative paths without segment membership.
 - `context` and `explore` accept transient path-prefix filters after loading
   the global file/symbol/edge sets. Other graph queries remain global.
-- Effigy already has explicit monorepo catalog membership, but task catalogs
-  are not necessarily the same boundary as source ownership.
+- Effigy already has explicit, root-owned monorepo catalog membership and a
+  stable alias on each member manifest. That is the operator-confirmed graph
+  partition boundary; a second segment namespace would duplicate topology.
 - Acowtancy is a 35 GB checkout with independent applications and packages.
   `apps/farmyard` is roughly 23 GB and `apps/bovine-desktop` roughly 6.3 GB;
   focused work in another application currently pays the root graph walk.
 - Operator-confirmed requirement: selecting one segment must not index or
   freshness-scan the whole monorepo. The existing cold root graph times out in
   Acowtancy.
+- Operator-confirmed requirement: each member catalog declares its own graph
+  indexing posture. The root does not repeat catalog roots, segment names, or
+  store assignments in a separate graph map.
 
 ## Tentative architecture
 
-Separate two concerns:
+Use the effective catalog set as the only graph topology:
 
-- a **segment** is the named indexing and query scope;
-- a **store** is the physical SQLite database and lock boundary.
+- A **catalog scope** is the existing catalog alias and catalog-root pair. Do
+  not add graph segment names or repeat roots.
+- Each member's own composed `effigy.toml` may opt that catalog into independent
+  lazy indexing. The root loads this posture while resolving its explicit
+  effective membership.
+- The root manifest still declares `[catalog.members]`; it needs no additional
+  graph topology. A root with no graph posture retains today's single-corpus
+  behavior for compatibility.
+- An independently indexed member is pruned from its parent's scan. Querying
+  the root must therefore never walk, fingerprint, or index that member.
+- Querying from within a member uses existing nearest-catalog resolution.
+  Explicit selection uses the existing catalog alias vocabulary, such as
+  `--catalog bovine-desktop`, rather than a new `--segment` namespace.
+- Every independent catalog scope is lazy. Sharing a database must never imply
+  refreshing every catalog in that database.
+- An independent catalog uses the root-owned shared database by default, with
+  catalog-scoped records, freshness, index-run identity, and query predicates.
+- A catalog may additionally opt into its own physical database and lock. The
+  path is deterministic and root-owned, such as
+  `.effigy/graph/catalogs/<alias>/graph.db`; manifests cannot choose arbitrary
+  paths or name shared stores.
+- Catalogs in the shared database may resolve relationships to already indexed
+  catalogs, but a relationship must not trigger sibling indexing. A separate
+  database surfaces cross-catalog references as unresolved boundary evidence.
+- Apply catalog scope before FTS ranking, symbol selection, and traversal.
+  Keep repository-relative paths in payloads.
+- Include catalog root, alias, and graph posture in freshness identity. A
+  posture change invalidates only the affected catalog view.
+- Index/query every catalog only through an explicit fan-out operation. It is
+  never an implicit prerequisite and reports progress and failure per catalog.
+- Return selected catalog and storage posture in versioned JSON. Existing
+  single-catalog JSON remains compatible.
 
-Every segment is independently lazy whether it uses the default shared store
-or opts into another store. Querying one segment must refresh only that
-segment's declared roots; sharing a database must never imply indexing every
-segment in that database.
-
-- Add repository-owned code-graph configuration, separate from
-  `[docs_policy.graph]`, with explicit named segments and repository-relative
-  roots/globs.
-- Give segments a default shared store so closely related applications can
-  reuse indexed shared packages and retain cross-segment relations.
-- Let a segment opt into a named store. A distinct store produces a separate
-  database, refresh lock, corruption boundary, and disposal boundary. Store
-  names are symbolic identifiers; manifests do not choose arbitrary database
-  paths.
-- Keep freshness and index-run identity per segment even when several segments
-  share one store. Do not build a root-wide graph as a prerequisite.
-- Walk the segment's declared roots directly rather than walking the repository
-  and filtering afterward.
-- Shared packages may be declared in more than one segment. A shared store may
-  reuse their records; separate stores accept duplicate local indexing in
-  exchange for isolation.
-- Apply segment scope before FTS ranking, symbol selection, and traversal.
-- Keep repository-relative paths in payloads. Within a segment, edges resolve
-  across all of its declared roots. A shared store may retain known
-  cross-segment edges without admitting sibling results into the query.
-  References into another physical store remain explicit boundary evidence and
-  must not trigger that store's index implicitly.
-- Include segment configuration in freshness identity. A config change must
-  invalidate only the affected segment without pretending its old view is
-  current.
-- Index/query all segments only through an explicit fan-out operation. It is
-  allowed to be proportionally expensive and must report per-segment progress
-  and failure rather than becoming an implicit prerequisite.
-- Return selected segment and available/derived segment evidence in versioned
-  JSON. Existing single-repository behavior remains compatible when no segment
-  configuration exists.
-
-Illustrative grammar; the segment/store distinction is operator-confirmed but
-field spelling is not:
+Illustrative member grammar; the behavior is operator-confirmed, while exact
+field spelling remains a contract choice:
 
 ```toml
-[graph]
-mode = "segmented"
+# apps/bovine-desktop/effigy.toml
+[catalog]
+alias = "bovine-desktop"
 
-[graph.segments.farmyard]
-roots = ["apps/farmyard", "packages/cattle-grid"]
-
-[graph.segments.dairy]
-roots = ["apps/dairy", "packages/cattle-grid"]
-
-[graph.segments.cream]
-roots = ["apps/cream", "packages/cattle-grid"]
-
-[graph.segments.bovine-desktop]
-roots = ["apps/bovine-desktop"]
-store = "bovine-desktop"
+[catalog.graph]
+segmented = true
+separate_db = true
 ```
 
-Farmyard, Dairy, and Cream omit `store` and use the default shared database;
-Bovine Desktop uses its own database. All four still refresh independently.
+Farmyard, Dairy, and Cream can set only `segmented = true`: each remains an
+independently lazy catalog scope in the shared physical database. Bovine
+Desktop also sets `separate_db = true` for an isolated database. The root only
+contains its existing membership map:
 
-Illustrative command only; not operator-confirmed:
-
-```sh
-effigy graph explore --segment api "trace request authorization"
+```toml
+[catalog.members]
+farmyard = "apps/farmyard"
+dairy = "apps/dairy"
+cream = "apps/cream"
+bovine_desktop = "apps/bovine-desktop"
 ```
 
 ## Product decisions needed
 
-1. Root ambiguity: should a root-level query with multiple segments fail and
-   require `--segment`, use a configured default, or retain whole-repo behavior?
-2. CWD inference: should a query from inside exactly one segment select it
-   automatically, with explicit flags overriding inference?
-3. Shared code: should overlapping roots in the same store reuse one file
-   record with many-to-many membership, while isolated stores duplicate it?
-   Should traversal stop at the selected segment boundary by default?
-4. Whole-repo escape hatch: use an explicit `--all-segments`, a reserved
-   segment name, or the absence of `--segment`?
-5. Source of truth: keep graph segments explicit, derive them from declared
-   catalog members, or allow an opt-in catalog shorthand while retaining graph
-   ownership?
-6. Documentation context: should `[docs_policy.graph].roots` receive a reserved
-   independently lazy docs segment/store so `docs context` never forces a
-   monorepo-wide code index?
+1. Field spelling: use `[catalog.graph]` as the catalog-local indexing posture,
+   or a top-level `[graph]` table in every catalog manifest?
+2. Root query: after independent members are pruned, should a root-level query
+   search only the root corpus, or also query already-current shared-store
+   members without refreshing them?
+3. Explicit fan-out: should the escape hatch be `--all-catalogs`, matching the
+   existing identity model?
+4. Nested membership: the current effective-membership contract does not
+   recursively expand child members. Confirm graph scope follows that same
+   boundary when a child is independently resolved as a root.
+5. Documentation context: should `[docs_policy.graph].roots` remain an
+   independent documentation corpus so `docs context` cannot force code-graph
+   catalog indexing?
 
 ## Constraints
 
 - No separate daemon, remote index, or model-generated partitioning.
-- Do not make task catalogs silently redefine code ownership.
+- Only explicitly declared effective catalogs can become graph scopes. A
+  nested manifest that is not in effective membership remains ordinary source.
 - Preserve exact repository-relative provenance and current JSON compatibility
   for unsegmented repositories.
-- Segment filters must apply before ranking/traversal, not merely trim rendered
+- Catalog scope must apply before ranking/traversal, not merely trim rendered
   output.
-- A single-segment command must not walk, fingerprint, lock, open, or require an
-  index for any sibling segment.
-- Shared files, cross-segment and cross-store edges, stale membership, partial
-  shared-store population, and unknown segment/store diagnostics need
+- A single-catalog command must not walk, fingerprint, lock, open, or require an
+  index for any sibling catalog.
+- Cross-catalog and cross-store edges, stale membership, partial
+  shared-store population, and unknown catalog/storage diagnostics need
   adversarial proof.
 - Documentation graph semantics remain owned by `[docs_policy.graph]`; code
   segmentation must not silently reinterpret documentation authority.
 
 ## Promotion conditions
 
-- Operator settles root-query default, CWD inference, shared membership,
-  segment/store selection, documentation context, and whole-repo escape
-  behavior.
+- Operator settles field spelling, root-query behavior, explicit fan-out,
+  nested membership, and documentation-context behavior.
 - Architecture names the storage/membership/freshness model and its interaction
   with existing path filters and docs context.
 - Contract fixes manifest grammar, CLI selection precedence, JSON additions,
@@ -161,7 +152,5 @@ effigy graph explore --segment api "trace request authorization"
 
 ## Next check
 
-Review independent lazy segment indexing, opt-in physical stores, root/CWD
-selection, and documentation-context behavior with the operator. If confirmed,
-promote current architecture and contract changes before compiling ready g10
-tasks.
+Review the five remaining product decisions. If confirmed, promote architecture
+and contract changes before compiling ready g10 tasks.
