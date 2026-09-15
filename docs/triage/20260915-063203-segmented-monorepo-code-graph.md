@@ -49,22 +49,24 @@ Use the effective catalog set as the only graph topology:
 
 - A **catalog scope** is the existing catalog alias and catalog-root pair. Do
   not add graph segment names or repeat roots.
-- Each member's own composed `effigy.toml` may opt that catalog into independent
+- Each member's own composed `effigy.toml` may opt that catalog into segmented
   lazy indexing. The root loads this posture while resolving its explicit
   effective membership.
 - The root manifest still declares `[catalog.members]`; it needs no additional
   graph topology. A root with no graph posture retains today's single-corpus
   behavior for compatibility.
-- An independently indexed member is pruned from its parent's scan. Querying
+- A segmented member is pruned from its parent's scan. Querying
   the root must therefore never walk, fingerprint, or index that member.
 - Querying from within a member uses existing nearest-catalog resolution.
   Explicit selection uses the existing catalog alias vocabulary, such as
   `--catalog bovine-desktop`, rather than a new `--segment` namespace.
-- Every independent catalog scope is lazy. Sharing a database must never imply
+- Every segmented catalog scope is lazy. Sharing a database must never imply
   refreshing every catalog in that database.
-- An independent catalog uses the root-owned shared database by default, with
+- A segmented catalog uses the root-owned shared database by default, with
   catalog-scoped records, freshness, index-run identity, and query predicates.
-- A catalog may additionally opt into its own physical database and lock. The
+- A catalog may additionally set `independent = true` to use its own physical
+  database and lock. `independent` describes storage isolation, not refresh
+  behavior: segmented catalogs remain independently lazy in either mode. The
   path is deterministic and root-owned, such as
   `.effigy/graph/catalogs/<alias>/graph.db`; manifests cannot choose arbitrary
   paths or name shared stores.
@@ -90,12 +92,12 @@ alias = "bovine-desktop"
 
 [catalog.graph]
 segmented = true
-separate_db = true
+independent = true
 ```
 
 Farmyard, Dairy, and Cream can set only `segmented = true`: each remains an
 independently lazy catalog scope in the shared physical database. Bovine
-Desktop also sets `separate_db = true` for an isolated database. The root only
+Desktop also sets `independent = true` for an isolated database. The root only
 contains its existing membership map:
 
 ```toml
