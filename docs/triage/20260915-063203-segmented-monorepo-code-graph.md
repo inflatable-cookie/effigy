@@ -32,24 +32,39 @@ durable project boundary.
   the global file/symbol/edge sets. Other graph queries remain global.
 - Effigy already has explicit monorepo catalog membership, but task catalogs
   are not necessarily the same boundary as source ownership.
+- Acowtancy is a 35 GB checkout with independent applications and packages.
+  `apps/farmyard` is roughly 23 GB and `apps/bovine-desktop` roughly 6.3 GB;
+  focused work in another application currently pays the root graph walk.
+- Operator-confirmed requirement: selecting one segment must not index or
+  freshness-scan the whole monorepo. The existing cold root graph times out in
+  Acowtancy.
 
 ## Tentative architecture
 
-Prefer one physical graph database with named logical segment membership over
-one database per subproject.
+Prefer independently lazy physical segment indexes. Querying one segment must
+open, refresh, and search only that segment's declared roots.
 
 - Add repository-owned code-graph configuration, separate from
   `[docs_policy.graph]`, with explicit named segments and repository-relative
   roots/globs.
-- Index the union once. Store file-to-segment membership as a many-to-many
-  relation so shared packages can belong to more than one segment.
+- Store each segment beneath `.effigy/graph/segments/<name>/` with its own
+  database, freshness identity, and refresh lock. Do not build a root-wide
+  graph as a prerequisite.
+- Walk the segment's declared roots directly rather than walking the repository
+  and filtering afterward.
+- Shared packages may be declared in more than one segment. Duplicate local
+  indexing is an accepted trade-off for bounded independent refresh and simple
+  deletion/freshness semantics.
 - Apply segment scope before FTS ranking, symbol selection, and traversal.
-- Keep global node identity and cross-segment edges in storage. Default query
-  results stay inside the selected segment; an explicit wider mode may expose
-  boundary crossings.
+- Keep repository-relative paths in payloads. Within a segment, edges resolve
+  across all of its declared roots. References outside those roots remain
+  explicit unresolved boundary evidence rather than triggering another index.
 - Include segment configuration in freshness identity. A config change must
-  reclassify membership deterministically without pretending the old view is
+  invalidate only the affected segment without pretending its old view is
   current.
+- Index/query all segments only through an explicit fan-out operation. It is
+  allowed to be proportionally expensive and must report per-segment progress
+  and failure rather than becoming an implicit prerequisite.
 - Return selected segment and available/derived segment evidence in versioned
   JSON. Existing single-repository behavior remains compatible when no segment
   configuration exists.
@@ -80,7 +95,8 @@ effigy graph explore --segment api "trace request authorization"
 2. CWD inference: should a query from inside exactly one segment select it
    automatically, with explicit flags overriding inference?
 3. Shared code: should overlapping segment roots be first-class many-to-many
-   membership, and should traversal stop at the selected boundary by default?
+   declarations, accepting duplicate indexing, and should traversal stop at
+   the selected boundary by default?
 4. Whole-repo escape hatch: use an explicit `--all-segments`, a reserved
    segment name, or the absence of `--segment`?
 5. Source of truth: keep graph segments explicit, derive them from declared
@@ -95,6 +111,8 @@ effigy graph explore --segment api "trace request authorization"
   for unsegmented repositories.
 - Segment filters must apply before ranking/traversal, not merely trim rendered
   output.
+- A single-segment command must not walk, fingerprint, lock, open, or require an
+  index for any sibling segment.
 - Shared files, cross-segment edges, stale membership, and unknown segment
   diagnostics need adversarial proof.
 - Documentation graph semantics remain owned by `[docs_policy.graph]`; code
@@ -113,6 +131,6 @@ effigy graph explore --segment api "trace request authorization"
 
 ## Next check
 
-Review the recommended logical-segment model with the operator. If confirmed,
-promote current architecture and contract changes before compiling ready g10
-tasks.
+Review independent lazy segment indexes, root/CWD selection, and shared-root
+behavior with the operator. If confirmed, promote current architecture and
+contract changes before compiling ready g10 tasks.
