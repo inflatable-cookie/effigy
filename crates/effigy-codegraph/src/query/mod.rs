@@ -10,6 +10,7 @@ use crate::json::{
     GraphNodePayload, GraphRelatedNodesPayload, GraphSearchMatchPayload, GraphSearchPayload,
 };
 use crate::model::{EdgeRecord, FileRecord, SymbolRecord};
+use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 
 mod profile;
@@ -27,9 +28,17 @@ use traversal::{
 };
 
 pub fn files(repo_root: &Path, limit: Option<usize>) -> Result<GraphFilesPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let mut files = store.list_files()?;
+    files_in_scope(&workspace_scope(repo_root)?, limit)
+}
+
+/// `graph files` inside one selected scope.
+pub fn files_in_scope(
+    scope: &GraphScope,
+    limit: Option<usize>,
+) -> Result<GraphFilesPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let mut files = store.list_files_in_scope(scope)?;
     if let Some(limit) = limit {
         files.truncate(limit);
     }
@@ -41,14 +50,26 @@ pub fn search(
     query: &str,
     limit: Option<usize>,
 ) -> Result<GraphSearchPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
+    search_in_scope(&workspace_scope(repo_root)?, query, limit)
+}
+
+/// `graph search` inside one selected scope.
+///
+/// The scope predicate is applied before ranking and before `LIMIT`, so a
+/// sibling catalog's records can never crowd out the selected scope's hits.
+pub fn search_in_scope(
+    scope: &GraphScope,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<GraphSearchPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
     let limit = limit.unwrap_or(20);
     let matches = store
-        .search(query, limit)?
+        .search_in_scope(query, limit, scope)?
         .into_iter()
         .map(|(record_type, record_id, rank)| {
-            search_match_payload(repo_root, &store, record_type, record_id, rank)
+            search_match_payload(scope.workspace_root(), &store, record_type, record_id, rank)
         })
         .collect();
     Ok(GraphSearchPayload {
@@ -114,12 +135,24 @@ fn search_match_payload(
 }
 
 pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let file = store.find_file_by_id(id)?;
-    let symbol = store.find_symbol_by_id(id)?;
+    node_in_scope(&workspace_scope(repo_root)?, id)
+}
+
+/// `graph node` inside one selected scope.
+///
+/// An id owned by a sibling catalog resolves to an empty node instead of
+/// opening or refreshing that sibling.
+pub fn node_in_scope(scope: &GraphScope, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let file = store
+        .find_file_by_id(id)?
+        .filter(|record| scope.contains_relative(&record.path));
+    let symbol = store
+        .find_symbol_by_id(id)?
+        .filter(|record| scope.contains_relative(&record.provenance.source_path));
     let edges = store
-        .list_edges()?
+        .list_edges_in_scope(scope)?
         .into_iter()
         .filter(|edge| {
             edge.from_id.as_str() == id || edge.to_id.as_ref().is_some_and(|to| to.as_str() == id)
@@ -134,7 +167,7 @@ pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphErr
                 .map(|record| record.file_id.as_str().to_owned())
         });
     let references = store
-        .list_references()?
+        .list_references_in_scope(scope)?
         .into_iter()
         .filter(|reference| {
             reference.file_id.as_str() == file_id.as_deref().unwrap_or_default()
@@ -145,7 +178,7 @@ pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphErr
         })
         .collect();
     let diagnostics = store
-        .list_diagnostics()?
+        .list_diagnostics_in_scope(scope)?
         .into_iter()
         .filter(|diagnostic| {
             diagnostic
@@ -180,16 +213,43 @@ pub fn callees(
     related(repo_root, id, limit, false)
 }
 
+/// `graph callers` inside one selected scope.
+pub fn callers_in_scope(
+    scope: &GraphScope,
+    id: &str,
+    limit: Option<usize>,
+) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
+    related_in_scope(scope, id, limit, true)
+}
+
+/// `graph callees` inside one selected scope.
+pub fn callees_in_scope(
+    scope: &GraphScope,
+    id: &str,
+    limit: Option<usize>,
+) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
+    related_in_scope(scope, id, limit, false)
+}
+
 pub fn impact(
     repo_root: &Path,
     target: &str,
     limit: Option<usize>,
 ) -> Result<GraphImpactPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let files = store.list_files()?;
-    let symbols = store.list_symbols()?;
-    let edges = store.list_edges()?;
+    impact_in_scope(&workspace_scope(repo_root)?, target, limit)
+}
+
+/// `graph impact` inside one selected scope.
+pub fn impact_in_scope(
+    scope: &GraphScope,
+    target: &str,
+    limit: Option<usize>,
+) -> Result<GraphImpactPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let files = store.list_files_in_scope(scope)?;
+    let symbols = store.list_symbols_in_scope(scope)?;
+    let edges = store.list_edges_in_scope(scope)?;
 
     if let Some(file) = files.iter().find(|file| file.path == target) {
         let file_symbols = symbols
@@ -268,11 +328,21 @@ pub fn affected(
     depth: usize,
     limit: Option<usize>,
 ) -> Result<GraphAffectedPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let files = store.list_files()?;
-    let symbols = store.list_symbols()?;
-    let edges = store.list_edges()?;
+    affected_in_scope(&workspace_scope(repo_root)?, changed_paths, depth, limit)
+}
+
+/// `graph affected` inside one selected scope.
+pub fn affected_in_scope(
+    scope: &GraphScope,
+    changed_paths: &[String],
+    depth: usize,
+    limit: Option<usize>,
+) -> Result<GraphAffectedPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let files = store.list_files_in_scope(scope)?;
+    let symbols = store.list_symbols_in_scope(scope)?;
+    let edges = store.list_edges_in_scope(scope)?;
     let limit = limit.unwrap_or(100);
     let depth = depth.max(1);
     PreparedAffectedQuery::new(&files, &symbols, &edges, freshness).run(changed_paths, depth, limit)
@@ -661,13 +731,32 @@ pub fn context(
     languages: &[String],
     paths: &[String],
 ) -> Result<GraphContextPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let files = store.list_files()?;
-    let symbols = store.list_symbols()?;
-    let edges = store.list_edges()?;
+    context_in_scope(
+        &workspace_scope(repo_root)?,
+        request,
+        max_files,
+        max_bytes,
+        languages,
+        paths,
+    )
+}
+
+/// `graph context` inside one selected scope.
+pub fn context_in_scope(
+    scope: &GraphScope,
+    request: &str,
+    max_files: Option<usize>,
+    max_bytes: Option<usize>,
+    languages: &[String],
+    paths: &[String],
+) -> Result<GraphContextPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let files = store.list_files_in_scope(scope)?;
+    let symbols = store.list_symbols_in_scope(scope)?;
+    let edges = store.list_edges_in_scope(scope)?;
     context_from_graph(
-        repo_root,
+        scope,
         &store,
         ContextOptions {
             request,
@@ -700,12 +789,13 @@ struct GraphData<'a> {
 }
 
 fn context_from_graph(
-    repo_root: &Path,
+    scope: &GraphScope,
     store: &GraphStore,
     options: ContextOptions<'_>,
     graph: GraphData<'_>,
     freshness: GraphFreshnessPayload,
 ) -> Result<GraphContextPayload, CodeGraphError> {
+    let repo_root = scope.workspace_root();
     let ContextOptions {
         request,
         max_files,
@@ -764,6 +854,7 @@ fn context_from_graph(
         );
     let indexed_source_matches = indexed_source_matches(
         store,
+        scope,
         tokens,
         filtered_files.iter().map(|file| file.id.as_str()),
     )?;
@@ -1112,15 +1203,35 @@ pub fn explore(
     languages: &[String],
     paths: &[String],
 ) -> Result<GraphExplorePayload, CodeGraphError> {
+    explore_in_scope(
+        &workspace_scope(repo_root)?,
+        request,
+        max_files,
+        max_bytes,
+        languages,
+        paths,
+    )
+}
+
+/// `graph explore` inside one selected scope.
+pub fn explore_in_scope(
+    scope: &GraphScope,
+    request: &str,
+    max_files: Option<usize>,
+    max_bytes: Option<usize>,
+    languages: &[String],
+    paths: &[String],
+) -> Result<GraphExplorePayload, CodeGraphError> {
+    let repo_root = scope.workspace_root();
     let max_files = max_files.unwrap_or(6);
     let max_bytes = max_bytes.unwrap_or(12_288);
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let files = store.list_files()?;
-    let symbols = store.list_symbols()?;
-    let edges = store.list_edges()?;
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let files = store.list_files_in_scope(scope)?;
+    let symbols = store.list_symbols_in_scope(scope)?;
+    let edges = store.list_edges_in_scope(scope)?;
     let context_payload = context_from_graph(
-        repo_root,
+        scope,
         &store,
         ContextOptions {
             request,
@@ -1136,7 +1247,7 @@ pub fn explore(
         },
         freshness.clone(),
     )?;
-    let counts = store.counts()?;
+    let counts = store.counts_in_scope(scope)?;
     let primary = context_payload
         .items
         .iter()
@@ -1421,10 +1532,19 @@ fn related(
     limit: Option<usize>,
     inbound: bool,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store)?;
-    let symbols = store.list_symbols()?;
-    let edges = store.list_edges()?;
+    related_in_scope(&workspace_scope(repo_root)?, id, limit, inbound)
+}
+
+fn related_in_scope(
+    scope: &GraphScope,
+    id: &str,
+    limit: Option<usize>,
+    inbound: bool,
+) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
+    let store = GraphStore::open_for_scope(scope)?;
+    let freshness = ensure_freshness(scope, &store)?;
+    let symbols = store.list_symbols_in_scope(scope)?;
+    let edges = store.list_edges_in_scope(scope)?;
     let target_symbol = symbols
         .iter()
         .find(|symbol| symbol.id.as_str() == id)
@@ -1470,13 +1590,17 @@ fn related(
 }
 
 fn ensure_freshness(
-    repo_root: &Path,
+    scope: &GraphScope,
     store: &GraphStore,
 ) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let outcome = crate::refresh::ensure_fresh(repo_root, store)?;
+    let outcome = crate::refresh::ensure_fresh(scope, store)?;
     let mut payload = outcome.freshness;
     if !outcome.notes.is_empty() {
         payload.summary = format!("{} ({})", payload.summary, outcome.notes.join("; "));
     }
     Ok(payload)
+}
+
+fn workspace_scope(repo_root: &Path) -> Result<GraphScope, CodeGraphError> {
+    GraphScope::repo_root(repo_root)
 }

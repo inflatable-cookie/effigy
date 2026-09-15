@@ -336,6 +336,10 @@ pub struct GraphArgs {
     pub subcommand: GraphSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
+    /// Explicit catalog scope selector (`--catalog <alias>`).
+    pub catalog: Option<String>,
+    /// Explicit fan-out selector (`--all-catalogs`).
+    pub all_catalogs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

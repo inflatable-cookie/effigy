@@ -70,6 +70,11 @@ Graph data queries refresh stale or missing indexes on demand, so start with
 report-only pre-refresh state; use explicit `graph index` for pre-warming or
 cache recovery. Use `rg` for exact tokens and final pre-edit proof.
 
+In a monorepo, a segmented catalog is an independently lazy graph scope.
+Plain `graph` commands use the invocation cwd's catalog or the root scope;
+`--catalog <ALIAS>` selects one explicitly and `--all-catalogs` is the only
+fan-out. JSON payloads name the selected scope under `catalog`.
+
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 
 ## Routing rules

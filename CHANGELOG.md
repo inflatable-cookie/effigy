@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Code-graph catalog scopes. A composed catalog manifest may declare
+  `[catalog.graph] segmented = true` to make that catalog an independently lazy
+  graph scope (pruned from its parent's scan) and `independent = true` to give
+  it a deterministic database and lock under
+  `.effigy/graph/catalogs/<encoded-alias>/`. All `effigy graph` subcommands
+  accept common `--catalog <ALIAS>` and `--all-catalogs` selectors; without
+  `--catalog` the invocation cwd's deepest segmented catalog, or the root
+  scope, is selected. Graph JSON payloads carry additive `catalog.alias`,
+  `catalog.root`, `catalog.selection`, `catalog.segmented`, and
+  `catalog.independent` evidence, and `--all-catalogs` renders
+  `effigy.graph.fanout.v1` with one complete outcome per catalog. A repository
+  with no `[catalog.graph]` keeps its existing database, paths, schemas, and
+  values. `[catalog.graph] independent = true` without `segmented = true` and
+  segmented catalog roots that escape the workspace are rejected before any
+  index access.
 - `effigy skill run` can resolve an installed agent skill by name. When
   `--path` is omitted, the qualified `<skill>/<task>` selector's first segment
   selects the skill, resolved from the invocation project's
@@ -62,6 +77,11 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Changed
+- `effigy docs context` keeps a repository-owned documentation corpus: catalog
+  segmentation no longer removes an explicitly configured documentation root,
+  and refreshing documentation context does not refresh a source catalog. Its
+  provenance stamp is now stored per scope, so it does not reuse or overwrite a
+  code scope's git stamp.
 - The bundled Northstar starter now uses the flattened generation-plus-task
   model: generation READMEs own the approved frontier, executable planning
   units are top-level `gNN.NNN` tasks, and the documentation graph exposes

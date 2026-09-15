@@ -7,6 +7,19 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Graph skill guidance must be edited in two parity-locked copies — 2026-09-15
+- Friction: `.agents/skills/effigy/**` is the owned/authoritative skill surface, but `documentation_coverage_tests::project_local_and_distributed_effigy_skills_have_semantic_parity` requires `skills/effigy/**` to be byte-identical (apart from the local internal metadata block). Documenting a new graph flag means editing an unowned path or failing the parity test.
+- Impact: a worker following owned-path discipline cannot update the authoritative skill doc without a one-sided edit that fails CI.
+- Possible fix: generate the distributed copy from the local copy in one task, or list both copies as owned together in dispatch manifests.
+- Surface: `.agents/skills/effigy/**`, `skills/effigy/**`, `tests/documentation_coverage_tests.rs`.
+
+### [x] `effigy-core` build-info env test races under full-workspace parallelism — 2026-09-15
+- Friction: `cargo test --workspace` failed once at `build_info::tests::active_version_prefers_explicit_env_override` (`left: "v0.3.1+local.abc123"`), while the same test passes in isolation and on repeated `-p effigy-core --lib` runs. Another test in the same process mutates `EFFIGY_*` version env vars concurrently.
+- Impact: full `effigy qa`/workspace rounds can fail intermittently for reasons unrelated to the change under test.
+- Possible fix: serialize env-mutating build-info tests behind a shared lock or use per-test env injection instead of process-global `std::env::set_var`.
+- Surface: `crates/effigy-core/src/build_info.rs` tests; any `cargo test --workspace` round.
+- Disposition: pre-existing race, not introduced by g10.006; recorded for a future test-isolation pass rather than fixed in this lane.
+
 ### [ ] Planning commits can fail the vision `next-action` gate they depend on — 2026-09-13
 - Friction: the ready-lane planning commit rewrote the `## Next Task` block in `docs/vision/020-strategic-runway-atlas-v1.md` to start with "The operator selected...", so the repository's own `effigy qa:docs` (`docs check next-action --policy vision`) failed until g10.001 changed the lead verb to an allowlisted one.
 - Impact: a lane whose required validation includes `qa:docs` starts red, and workers must edit planning-authored vision prose outside their declared mutable paths to pass.

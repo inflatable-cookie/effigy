@@ -94,6 +94,49 @@ Graph data queries have a 120000ms wall-clock budget by default. Set
 disables the bound. Explicit `graph index` and `graph watch` commands are
 unbounded.
 
+### Catalog scopes in a monorepo
+
+Large monorepos cannot treat every product as one mandatory graph corpus.
+Existing catalog membership already owns topology, so an effective member
+declares its indexing posture in its own manifest:
+
+```toml
+[catalog.graph]
+segmented = true
+independent = true
+```
+
+- `segmented = true` makes the catalog an independently lazy scope and prunes
+  its root from the parent's scan. Root and parent queries never walk its tree.
+- `independent = true` gives that segmented catalog a deterministic database
+  and lock under `.effigy/graph/catalogs/<encoded-alias>/`. Shared segmented
+  catalogs keep using `.effigy/graph/graph.db`.
+- `independent = true` without `segmented = true` is rejected at manifest load,
+  and v1 segmented roots must resolve beneath the workspace root.
+
+Selection is deterministic:
+
+```sh
+cd apps/bovine-desktop && effigy graph explore "checkout totals" --json
+effigy graph status --catalog bovine-desktop --json
+effigy graph index --all-catalogs --json
+```
+
+1. `--catalog <ALIAS>` selects one effective segmented catalog.
+2. Without it, the deepest segmented catalog containing the invocation cwd wins.
+3. Otherwise the root scope applies.
+4. `--all-catalogs` is the only fan-out, conflicts with `--catalog`, and renders
+   one complete outcome per catalog.
+
+A shared database keeps each scope's freshness, deletion, and query state
+isolated: reindexing one catalog never deletes or re-ranks a sibling's records.
+An independent store never opens another catalog's database. `--path` filters
+narrow the selected scope and never widen it.
+
+`effigy docs context` keeps its own repository documentation corpus. Catalog
+segmentation does not remove an explicitly configured documentation root, and a
+docs-context refresh does not refresh a source catalog.
+
 ### Read a timeout
 
 A bound that expires returns the `effigy.graph.timeout.v1` detail. Alongside
@@ -676,7 +719,10 @@ Be explicit about the limits:
 - ignored/generated/vendor paths are excluded by default
 - graph queries refresh a stale index before serving, so results track the
   working tree at query time; the cost of that guarantee is the refresh itself
-- the graph walk prunes the current skip list above at any depth
+- the graph walk prunes the current skip list above at any depth, and prunes
+  segmented catalog roots before descent
+- a segmented catalog outside the workspace root is rejected in v1; external
+  catalog graph support is not pre-authorized
 
 ## Related References
 
@@ -686,3 +732,5 @@ Be explicit about the limits:
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md)
 - [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
+- [`../contracts/045-catalog-scoped-code-graph-contract.md`](../contracts/045-catalog-scoped-code-graph-contract.md)
+- [`../architecture/027-catalog-scoped-code-graph.md`](../architecture/027-catalog-scoped-code-graph.md)

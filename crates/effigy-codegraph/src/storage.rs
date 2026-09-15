@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use rusqlite::types::Value;
 use rusqlite::{params, Connection, MappedRows, OptionalExtension};
 
 use crate::error::CodeGraphError;
@@ -10,6 +11,7 @@ use crate::model::{
     SymbolRecord, GRAPH_STORAGE_SCHEMA_VERSION,
 };
 use crate::paths::GraphPaths;
+use crate::scope::GraphScope;
 
 const STORAGE_SCHEMA_KEY: &str = "storage_schema_version";
 const SOURCE_SEARCH_MAX_BYTES: usize = 131_072;
@@ -36,7 +38,19 @@ pub struct SourceSearchMatch {
 
 impl GraphStore {
     pub fn open(repo_root: &Path) -> Result<Self, CodeGraphError> {
-        let paths = GraphPaths::for_repo(repo_root);
+        Self::open_with_paths(GraphPaths::for_repo(repo_root))
+    }
+
+    /// Open the database one scope reads and writes.
+    ///
+    /// Independent catalogs get their own deterministic database and lock;
+    /// every other scope shares the root database and is separated from its
+    /// siblings by path-derived scope predicates.
+    pub fn open_for_scope(scope: &GraphScope) -> Result<Self, CodeGraphError> {
+        Self::open_with_paths(scope.paths())
+    }
+
+    fn open_with_paths(paths: GraphPaths) -> Result<Self, CodeGraphError> {
         std::fs::create_dir_all(&paths.graph_dir)?;
         let connection = Connection::open(&paths.db_path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
@@ -839,6 +853,394 @@ impl GraphStore {
         )?;
         Ok(count.max(0) as usize)
     }
+}
+
+/// Scope-aware reads and writes over the shared or independent database.
+///
+/// Scope membership is derived from canonical repository-relative paths, so a
+/// scope's predicate is stable no matter which scope last refreshed a file.
+/// Every method here applies the scope predicate before ranking, limiting,
+/// counting, or deleting, which is what keeps one catalog's refresh from
+/// deleting, re-ranking, or even reading a sibling's records.
+impl GraphStore {
+    pub(crate) fn list_files_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<FileRecord>, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, "path");
+        let sql = format!(
+            "SELECT id, path, content_hash, language_id, byte_size, status\n             FROM files WHERE {clause} ORDER BY path"
+        );
+        self.query_values(&sql, params, |row| {
+            Ok(FileRecord {
+                id: crate::GraphId::new(row.get::<_, String>(0)?)
+                    .map_err(to_sql_conversion_error)?,
+                path: row.get(1)?,
+                content_hash: row.get(2)?,
+                language_id: row.get(3)?,
+                byte_size: row.get::<_, i64>(4)? as u64,
+                status: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .map_err(to_sql_conversion_error)?,
+            })
+        })
+    }
+
+    pub(crate) fn list_symbols_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<SymbolRecord>, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, "f.path");
+        let sql = format!(
+            "SELECT s.id, s.kind, s.display_name, s.canonical_name, s.file_id, s.span_json, s.provenance_json\n             FROM symbols s JOIN files f ON f.id = s.file_id\n             WHERE {clause} ORDER BY s.canonical_name, s.id"
+        );
+        self.query_values(&sql, params, |row| {
+            Ok(SymbolRecord {
+                id: crate::GraphId::new(row.get::<_, String>(0)?)
+                    .map_err(to_sql_conversion_error)?,
+                kind: row.get(1)?,
+                display_name: row.get(2)?,
+                canonical_name: row.get(3)?,
+                file_id: crate::GraphId::new(row.get::<_, String>(4)?)
+                    .map_err(to_sql_conversion_error)?,
+                span: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .map_err(to_sql_conversion_error)?,
+                provenance: serde_json::from_str(&row.get::<_, String>(6)?)
+                    .map_err(to_sql_conversion_error)?,
+            })
+        })
+    }
+
+    pub(crate) fn list_edges_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<EdgeRecord>, CodeGraphError> {
+        // An edge's owner is a symbol for nested declarations and the file
+        // itself for file-scope relations such as imports, so both id spaces
+        // must be considered. The scope predicate stays on the owning file.
+        let (files_clause, files_params) = scope_path_clause(scope, "path");
+        let (symbols_clause, symbols_params) = scope_path_clause(scope, "f.path");
+        let mut params = files_params;
+        params.extend(symbols_params);
+        let sql = format!(
+            "SELECT e.id, e.kind, e.from_id, e.to_id, e.unresolved_target, e.provenance_json\n             FROM edges e\n             WHERE e.from_id IN (SELECT id FROM files WHERE {files_clause})\n                OR e.from_id IN (SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE {symbols_clause})\n             ORDER BY e.id"
+        );
+        self.query_values(&sql, params, |row| {
+            let to_id: Option<String> = row.get(3)?;
+            Ok(EdgeRecord {
+                id: crate::GraphId::new(row.get::<_, String>(0)?)
+                    .map_err(to_sql_conversion_error)?,
+                kind: row.get(1)?,
+                from_id: crate::GraphId::new(row.get::<_, String>(2)?)
+                    .map_err(to_sql_conversion_error)?,
+                to_id: to_id
+                    .map(crate::GraphId::new)
+                    .transpose()
+                    .map_err(to_sql_conversion_error)?,
+                unresolved_target: row.get(4)?,
+                provenance: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .map_err(to_sql_conversion_error)?,
+            })
+        })
+    }
+
+    pub(crate) fn list_references_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<ReferenceRecord>, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, "f.path");
+        let sql = format!(
+            "SELECT r.id, r.file_id, r.kind, r.target_id, r.unresolved_target, r.span_json, r.provenance_json\n             FROM graph_references r JOIN files f ON f.id = r.file_id\n             WHERE {clause} ORDER BY r.id"
+        );
+        self.query_values(&sql, params, |row| {
+            let target_id: Option<String> = row.get(3)?;
+            Ok(ReferenceRecord {
+                id: crate::GraphId::new(row.get::<_, String>(0)?)
+                    .map_err(to_sql_conversion_error)?,
+                file_id: crate::GraphId::new(row.get::<_, String>(1)?)
+                    .map_err(to_sql_conversion_error)?,
+                kind: row.get(2)?,
+                target_id: target_id
+                    .map(crate::GraphId::new)
+                    .transpose()
+                    .map_err(to_sql_conversion_error)?,
+                unresolved_target: row.get(4)?,
+                span: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .map_err(to_sql_conversion_error)?,
+                provenance: serde_json::from_str(&row.get::<_, String>(6)?)
+                    .map_err(to_sql_conversion_error)?,
+            })
+        })
+    }
+
+    pub(crate) fn list_diagnostics_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<DiagnosticRecord>, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, "f.path");
+        let sql = format!(
+            "SELECT d.id, d.severity, d.message, d.file_id, d.span_json, d.provenance_json\n             FROM diagnostics d JOIN files f ON f.id = d.file_id\n             WHERE {clause} ORDER BY d.id"
+        );
+        self.query_values(&sql, params, |row| {
+            let file_id: Option<String> = row.get(3)?;
+            let span_json: Option<String> = row.get(4)?;
+            Ok(DiagnosticRecord {
+                id: crate::GraphId::new(row.get::<_, String>(0)?)
+                    .map_err(to_sql_conversion_error)?,
+                severity: serde_json::from_str(&row.get::<_, String>(1)?)
+                    .map_err(to_sql_conversion_error)?,
+                message: row.get(2)?,
+                file_id: file_id
+                    .map(crate::GraphId::new)
+                    .transpose()
+                    .map_err(to_sql_conversion_error)?,
+                span: span_json
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()
+                    .map_err(to_sql_conversion_error)?,
+                provenance: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .map_err(to_sql_conversion_error)?,
+            })
+        })
+    }
+
+    pub(crate) fn file_scan_state_map_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<std::collections::BTreeMap<String, FileScanStateRecord>, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, "path");
+        let sql = format!(
+            "SELECT path, content_hash, language_id, modified_unix_ms, byte_size\n             FROM file_scan_state WHERE {clause} ORDER BY path"
+        );
+        let rows = self.query_values(&sql, params, |row| {
+            let modified: String = row.get(3)?;
+            Ok(FileScanStateRecord {
+                path: row.get(0)?,
+                content_hash: row.get(1)?,
+                language_id: row.get(2)?,
+                modified_unix_ms: modified.parse::<u128>().map_err(to_sql_conversion_error)?,
+                byte_size: row.get::<_, i64>(4)? as u64,
+            })
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|record| (record.path.clone(), record))
+            .collect())
+    }
+
+    pub(crate) fn failed_diagnostic_paths_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<Vec<String>, CodeGraphError> {
+        Ok(self
+            .list_diagnostics_in_scope(scope)?
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == crate::model::DiagnosticSeverity::Error)
+            .map(|diagnostic| diagnostic.provenance.source_path)
+            .collect())
+    }
+
+    /// Graph counts limited to one scope. `extractors` and `index_runs` stay
+    /// database-wide audit counts because they never affect scope trust.
+    pub(crate) fn counts_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<GraphCountsPayload, CodeGraphError> {
+        Ok(GraphCountsPayload {
+            files: self.count_scoped("files", "path", scope)?,
+            symbols: self.count_scoped(
+                "symbols s JOIN files f ON f.id = s.file_id",
+                "f.path",
+                scope,
+            )?,
+            edges: self.count_edges_in_scope(scope)?,
+            references: self.count_scoped(
+                "graph_references r JOIN files f ON f.id = r.file_id",
+                "f.path",
+                scope,
+            )?,
+            diagnostics: self.count_scoped(
+                "diagnostics d JOIN files f ON f.id = d.file_id",
+                "f.path",
+                scope,
+            )?,
+            extractors: self.count_rows("extractors")?,
+            index_runs: self.count_rows("index_runs")?,
+        })
+    }
+
+    /// Full-text search restricted to the selected scope before `LIMIT`.
+    pub(crate) fn search_in_scope(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &GraphScope,
+    ) -> Result<Vec<(String, String, Option<f64>)>, CodeGraphError> {
+        let (predicate, predicate_params) = scope_record_predicate(scope);
+        let sql = format!(
+            "SELECT record_type, record_id, bm25(graph_search)\n             FROM graph_search\n             WHERE graph_search MATCH ?\n               AND record_type != 'source'\n               AND ({predicate})\n             ORDER BY bm25(graph_search), record_id\n             LIMIT ?"
+        );
+        let mut params = vec![Value::Text(query.to_owned())];
+        params.extend(predicate_params);
+        params.push(Value::Integer(limit as i64));
+        self.query_values(&sql, params, |row| {
+            Ok((row.get(0)?, row.get(1)?, Some(row.get(2)?)))
+        })
+    }
+
+    pub(crate) fn source_search_in_scope(
+        &self,
+        token: &str,
+        limit: usize,
+        scope: &GraphScope,
+    ) -> Result<Vec<SourceSearchMatch>, CodeGraphError> {
+        let (predicate, predicate_params) = scope_record_predicate(scope);
+        let sql = format!(
+            "SELECT record_id, bm25(graph_search)\n             FROM graph_search\n             WHERE graph_search MATCH ?\n               AND record_type = 'source'\n               AND ({predicate})\n             ORDER BY bm25(graph_search), record_id\n             LIMIT ?"
+        );
+        let mut params = vec![Value::Text(fts_phrase(token))];
+        params.extend(predicate_params);
+        params.push(Value::Integer(limit as i64));
+        self.query_values(&sql, params, |row| {
+            Ok(SourceSearchMatch {
+                file_id: row.get(0)?,
+                rank: Some(row.get(1)?),
+            })
+        })
+    }
+
+    /// Rebuild the search rows this scope owns, leaving sibling rows intact.
+    ///
+    /// Only scoped files are opened for source search text, so refreshing one
+    /// catalog never reads a sibling's bytes.
+    pub(crate) fn refresh_search_index_in_scope(
+        &self,
+        scope: &GraphScope,
+    ) -> Result<(), CodeGraphError> {
+        let (predicate, predicate_params) = scope_record_predicate(scope);
+        let delete_sql = format!("DELETE FROM graph_search WHERE {predicate}");
+        self.connection.execute(
+            &delete_sql,
+            rusqlite::params_from_iter(predicate_params.iter()),
+        )?;
+        for file in self.list_files_in_scope(scope)? {
+            self.connection.execute(
+                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+                params!["file", file.id.as_str(), file.path],
+            )?;
+            if let Some(source_text) = source_search_text(&self.paths.repo_root, &file) {
+                self.connection.execute(
+                    "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+                    params!["source", file.id.as_str(), source_text],
+                )?;
+            }
+        }
+        for symbol in self.list_symbols_in_scope(scope)? {
+            self.connection.execute(
+                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+                params![
+                    "symbol",
+                    symbol.id.as_str(),
+                    format!("{} {}", symbol.display_name, symbol.canonical_name),
+                ],
+            )?;
+        }
+        for diagnostic in self.list_diagnostics_in_scope(scope)? {
+            self.connection.execute(
+                "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+                params!["diagnostic", diagnostic.id.as_str(), diagnostic.message],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn count_edges_in_scope(&self, scope: &GraphScope) -> Result<usize, CodeGraphError> {
+        let (files_clause, files_params) = scope_path_clause(scope, "path");
+        let (symbols_clause, symbols_params) = scope_path_clause(scope, "f.path");
+        let mut params = files_params;
+        params.extend(symbols_params);
+        let sql = format!(
+            "SELECT COUNT(*) FROM edges e\n             WHERE e.from_id IN (SELECT id FROM files WHERE {files_clause})\n                OR e.from_id IN (SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE {symbols_clause})"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let count: i64 =
+            statement.query_row(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?;
+        Ok(count.max(0) as usize)
+    }
+
+    fn count_scoped(
+        &self,
+        from: &str,
+        column: &str,
+        scope: &GraphScope,
+    ) -> Result<usize, CodeGraphError> {
+        let (clause, params) = scope_path_clause(scope, column);
+        let sql = format!("SELECT COUNT(*) FROM {from} WHERE {clause}");
+        let mut statement = self.connection.prepare(&sql)?;
+        let count: i64 =
+            statement.query_row(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?;
+        Ok(count.max(0) as usize)
+    }
+
+    fn query_values<T>(
+        &self,
+        sql: &str,
+        params: Vec<Value>,
+        map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>, CodeGraphError> {
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(params.iter()), map)?;
+        collect_rows(rows)
+    }
+}
+
+fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+/// SQL predicate selecting the repository-relative paths one scope owns.
+fn scope_path_clause(scope: &GraphScope, column: &str) -> (String, Vec<Value>) {
+    let mut clauses = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
+    if !scope.is_workspace() && !scope.relative_root().is_empty() {
+        clauses.push(format!("({column} = ? OR {column} LIKE ? ESCAPE '\\')"));
+        params.push(Value::Text(scope.relative_root().to_owned()));
+        params.push(Value::Text(format!(
+            "{}/%",
+            escape_like(scope.relative_root())
+        )));
+    }
+    for prune in scope.prune_relative_roots() {
+        clauses.push(format!("NOT ({column} = ? OR {column} LIKE ? ESCAPE '\\')"));
+        params.push(Value::Text(prune.clone()));
+        params.push(Value::Text(format!("{}/%", escape_like(prune))));
+    }
+    if clauses.is_empty() {
+        ("1 = 1".to_owned(), params)
+    } else {
+        (clauses.join(" AND "), params)
+    }
+}
+
+/// SQL predicate selecting every search record one scope owns.
+fn scope_record_predicate(scope: &GraphScope) -> (String, Vec<Value>) {
+    let (files_clause, files_params) = scope_path_clause(scope, "path");
+    let (symbols_clause, symbols_params) = scope_path_clause(scope, "f.path");
+    let (diagnostics_clause, diagnostics_params) = scope_path_clause(scope, "f.path");
+    let mut params = Vec::new();
+    params.extend(files_params);
+    params.extend(symbols_params);
+    params.extend(diagnostics_params);
+    let predicate = format!(
+        "record_id IN (SELECT id FROM files WHERE {files_clause})\n          OR record_id IN (SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE {symbols_clause})\n          OR record_id IN (SELECT d.id FROM diagnostics d JOIN files f ON f.id = d.file_id WHERE {diagnostics_clause})"
+    );
+    (predicate, params)
 }
 
 fn collect_rows<T, F>(rows: MappedRows<'_, F>) -> Result<Vec<T>, CodeGraphError>

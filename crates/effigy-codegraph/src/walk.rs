@@ -5,6 +5,7 @@ use std::time::UNIX_EPOCH;
 use ignore::WalkBuilder;
 
 use crate::error::CodeGraphError;
+use crate::scope::GraphScope;
 use crate::support::{language_id_for_path, normalize_rel_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,10 +17,37 @@ pub struct ScanEntry {
     pub byte_size: u64,
 }
 
+/// Walk the whole workspace. Used by documentation-authority checks that must
+/// see every configured root; code-graph scopes use [`scan_repo_files_in_scope`].
 pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphError> {
+    scan_from(repo_root, repo_root, &[])
+}
+
+/// Walk one graph scope.
+///
+/// The walk starts at the scope's catalog root and prunes every segmented
+/// descendant before descent, so selecting one catalog never stats, reads, or
+/// fingerprints a sibling tree. Relative paths stay workspace-relative, so a
+/// shared database keeps one canonical path per file.
+pub(crate) fn scan_repo_files_in_scope(
+    scope: &GraphScope,
+) -> Result<Vec<ScanEntry>, CodeGraphError> {
+    scan_from(
+        scope.workspace_root(),
+        scope.catalog_root(),
+        &scope.prune_absolute_roots(),
+    )
+}
+
+fn scan_from(
+    workspace_root: &Path,
+    walk_root: &Path,
+    prune_roots: &[PathBuf],
+) -> Result<Vec<ScanEntry>, CodeGraphError> {
     let mut entries = Vec::new();
-    let has_git_dir = repo_root.join(".git").exists();
-    let mut walk = WalkBuilder::new(repo_root);
+    let has_git_dir = workspace_root.join(".git").exists();
+    let prune_owned = prune_roots.to_vec();
+    let mut walk = WalkBuilder::new(walk_root);
     walk.hidden(false)
         .ignore(true)
         .git_ignore(true)
@@ -30,22 +58,32 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
         .follow_links(false);
     // Prune skipped directories instead of descending and filtering per file:
     // a single installed `node_modules` tree otherwise dominates every walk,
-    // and every graph query pays for one.
-    walk.filter_entry(|entry| {
-        !entry
+    // and every graph query pays for one. Segmented catalog roots are pruned
+    // the same way: a root query must not enter a catalog it does not own.
+    walk.filter_entry(move |entry| {
+        if !entry
             .file_type()
             .map(|file_type| file_type.is_dir())
             .unwrap_or(false)
-            || entry
-                .file_name()
-                .to_str()
-                .is_none_or(|name| !SKIPPED_DIR_SEGMENTS.contains(&name))
+        {
+            return true;
+        }
+        if prune_owned
+            .iter()
+            .any(|root: &PathBuf| entry.path().starts_with(root))
+        {
+            return false;
+        }
+        entry
+            .file_name()
+            .to_str()
+            .is_none_or(|name| !SKIPPED_DIR_SEGMENTS.contains(&name))
     });
     for entry in walk.build() {
         let entry = entry.map_err(|error| {
             CodeGraphError::validation(format!(
                 "graph walk failed under {}: {error}",
-                repo_root.display()
+                walk_root.display()
             ))
         })?;
         if !entry
@@ -56,7 +94,7 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
             continue;
         }
         let path = entry.path();
-        let rel = path.strip_prefix(repo_root).unwrap_or(path);
+        let rel = path.strip_prefix(workspace_root).unwrap_or(path);
         let relative_path = normalize_rel_path(rel);
         if should_skip_path(&relative_path) {
             continue;

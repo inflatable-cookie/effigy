@@ -101,6 +101,8 @@ fn command_kind_and_name_maps_command_variants() {
         subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: None,
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     });
     let contracts = Command::Contracts(ContractsArgs {
         subcommand: ContractsSubcommand::ValidateSelection {

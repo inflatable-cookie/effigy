@@ -9,12 +9,45 @@ pub(super) fn parse_graph_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
+    // Scope selectors are common to every `graph` subcommand, so they are
+    // pulled off the argument stream before the subcommand parser runs. That
+    // keeps one grammar instead of twelve slightly different ones.
+    let mut positional = Vec::new();
+    let mut catalog = None;
+    let mut all_catalogs = false;
     let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--catalog" => {
+                if catalog.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--catalog` may only be given once".to_owned(),
+                    ));
+                }
+                catalog = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--catalog".to_owned(),
+                    },
+                )?);
+            }
+            "--all-catalogs" => all_catalogs = true,
+            _ => positional.push(arg),
+        }
+    }
+    if catalog.is_some() && all_catalogs {
+        return Err(CliParseError::InvalidArguments(
+            "`--catalog` and `--all-catalogs` cannot be combined; pick one scope or explicit fan-out"
+                .to_owned(),
+        ));
+    }
+
+    let mut args = positional.into_iter();
     let Some(subcmd) = args.next() else {
         return Ok(Command::Help(HelpTopic::Graph));
     };
 
-    match subcmd.as_str() {
+    let mut command = match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Graph)),
         "index" => parse_graph_index(args),
         "status" => parse_graph_status(args),
@@ -29,7 +62,18 @@ where
         "context" => parse_graph_context(args),
         "explore" => parse_graph_explore(args),
         other => Err(unknown_argument(other)),
+    }?;
+    if let Command::Graph(graph) = &mut command {
+        if all_catalogs && matches!(graph.subcommand, GraphSubcommand::Watch { .. }) {
+            return Err(CliParseError::InvalidArguments(
+                "`graph watch` supports `--catalog` but not `--all-catalogs`; run one watcher per catalog"
+                    .to_owned(),
+            ));
+        }
+        graph.catalog = catalog;
+        graph.all_catalogs = all_catalogs;
     }
+    Ok(command)
 }
 
 fn parse_graph_index<I>(args: I) -> Result<Command, CliParseError>
@@ -41,6 +85,8 @@ where
         subcommand: GraphSubcommand::Index,
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -66,6 +112,8 @@ where
         subcommand: GraphSubcommand::Status { refresh },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -93,6 +141,8 @@ where
         subcommand: GraphSubcommand::Watch { debounce_ms },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -127,6 +177,8 @@ where
         subcommand: GraphSubcommand::Search { query, limit },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -152,6 +204,8 @@ where
         subcommand: GraphSubcommand::Files { limit },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -185,6 +239,8 @@ where
         },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -223,6 +279,8 @@ where
         },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -259,6 +317,8 @@ where
         },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -299,6 +359,8 @@ where
         },
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 
@@ -380,6 +442,8 @@ where
         subcommand,
         repo_override,
         output_json,
+        catalog: None,
+        all_catalogs: false,
     }))
 }
 

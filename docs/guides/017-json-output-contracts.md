@@ -142,6 +142,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.graph.context.v1`
 - `effigy.graph.explore.v1`
 - `effigy.graph.affected.v1`
+- `effigy.graph.fanout.v1` (explicit `--all-catalogs` fan-out: one outcome per catalog)
 - `effigy.docs.context.v1`
 - `effigy.docs.context.sources.v1`
 - `deploy.model.v1`
@@ -282,6 +283,18 @@ Consume one JSON object per line. Current event kinds:
   `refresh-recommended`, or `degraded`, reindex with
   `graph status --refresh --json` (or let the next query refresh on demand).
   Path lists (`stale_paths`, `failed_paths`) are supporting detail.
+- In a monorepo, `[catalog.graph]` marks an existing catalog as a graph scope.
+  Every graph command payload carries additive catalog evidence at
+  `catalog.alias`, `catalog.root`, `catalog.selection` (`explicit`, `cwd`, or
+  `root`), `catalog.segmented`, and `catalog.independent`. Single-catalog
+  repositories keep their existing fields and values.
+- `--catalog <ALIAS>` selects exactly one effective segmented catalog,
+  `--all-catalogs` is the only fan-out, and the two cannot be combined. An
+  unknown, folded-only, or escaping alias fails before any refresh without
+  creating graph state.
+- `--all-catalogs` renders `effigy.graph.fanout.v1` with one complete outcome
+  per catalog (`ok`, `error`, and that catalog's own payload), and exits
+  non-zero when any catalog failed instead of reporting partial success.
 - `graph affected --json` narrows validation scope but does not claim exhaustive
   test reachability.
 - `graph explore --json` and `graph context --json` are bounded packets; exact

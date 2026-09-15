@@ -15,6 +15,7 @@ use crate::json::GraphFreshnessPayload;
 use crate::model::{DiagnosticSeverity, SourceSpan};
 use crate::phase::{self, GraphPhase};
 use crate::refresh::RefreshPending;
+use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 
 mod payload;
@@ -225,7 +226,11 @@ fn ensure_freshness(
     store: &GraphStore,
     progress: impl FnMut(RefreshPending),
 ) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let outcome = crate::refresh::ensure_fresh_with_progress(repo_root, store, progress)?;
+    // Documentation context owns its corpus: it indexes the whole repository
+    // corpus and never prunes a configured documentation root or opens an
+    // independent catalog database. Catalog scopes stay untouched.
+    let scope = GraphScope::workspace(repo_root)?;
+    let outcome = crate::refresh::ensure_fresh_with_progress(&scope, store, progress)?;
     let mut freshness = outcome.freshness;
     if !outcome.notes.is_empty() {
         freshness.summary = format!("{} ({})", freshness.summary, outcome.notes.join("; "));

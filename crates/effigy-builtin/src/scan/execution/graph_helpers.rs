@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_codegraph::json::GraphFreshnessPayload;
 use effigy_codegraph::model::{ExtractorCapability, ExtractorRecord, SymbolRecord};
-use effigy_codegraph::{ensure_fresh, GraphId, GraphStore};
+use effigy_codegraph::{ensure_fresh, GraphId, GraphScope, GraphStore};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::BuiltinError;
@@ -173,9 +173,11 @@ pub(super) fn open_fresh_graph_store(
     target_root: &Path,
     scan_label: &str,
 ) -> Result<(GraphStore, GraphFreshnessPayload), BuiltinError> {
-    let store = GraphStore::open(target_root)
+    let scope = GraphScope::repo_root(target_root)
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
-    let outcome = ensure_fresh(target_root, &store)
+    let store = GraphStore::open_for_scope(&scope)
+        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+    let outcome = ensure_fresh(&scope, &store)
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
     if !outcome.freshness.usable || outcome.freshness.stale {
         return Err(BuiltinError::task_invocation(format!(

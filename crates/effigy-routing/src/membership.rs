@@ -212,6 +212,33 @@ pub fn load_isolated_catalog(
     })
 }
 
+/// Find the nearest ancestor workspace that declares `candidate_root` as an
+/// effective catalog.
+///
+/// Root resolution promotes a nested catalog only one level, so a member at
+/// `apps/<name>` still resolves to itself. Catalog-scoped graph selection needs
+/// the owning workspace to know the member's posture, so this walks upward and
+/// asks each ancestor's explicit membership. A root that no ancestor declares
+/// is its own workspace.
+pub fn owning_workspace_root(candidate_root: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(candidate_root).ok()?;
+    let mut current = canonical.parent();
+    while let Some(ancestor) = current {
+        if let Ok(catalogs) = load_effective_catalogs_allow_missing(ancestor) {
+            let owns = catalogs.iter().any(|catalog| {
+                fs::canonicalize(&catalog.catalog_root)
+                    .map(|root| root == canonical)
+                    .unwrap_or(false)
+            });
+            if owns {
+                return Some(ancestor.to_path_buf());
+            }
+        }
+        current = ancestor.parent();
+    }
+    None
+}
+
 pub fn effective_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RoutingError> {
     normalized_catalog_members(workspace_root).map(|(_, members)| {
         members
@@ -463,6 +490,32 @@ mod tests {
             ),
             "api"
         );
+    }
+
+    #[test]
+    fn owning_workspace_root_finds_the_ancestor_that_declares_a_nested_member() {
+        let fixture = temp_root("effigy-routing-owning-root");
+        let workspace = fixture.join("workspace");
+        let member = workspace.join("apps/bovine");
+        fs::create_dir_all(&member).expect("member dir");
+        fs::write(
+            workspace.join("effigy.toml"),
+            "[catalog]\nalias = \"root\"\n\n[catalog.members]\nbovine = \"apps/bovine\"\n",
+        )
+        .expect("root manifest");
+        fs::write(
+            member.join("effigy.toml"),
+            "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true\n",
+        )
+        .expect("member manifest");
+
+        assert_eq!(
+            super::owning_workspace_root(&member),
+            Some(workspace.canonicalize().unwrap())
+        );
+        // The workspace itself is not declared by any ancestor.
+        assert_eq!(super::owning_workspace_root(&workspace), None);
+        let _ = fs::remove_dir_all(fixture);
     }
 
     #[test]

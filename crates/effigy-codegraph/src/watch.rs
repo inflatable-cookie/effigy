@@ -8,15 +8,15 @@
 //!   trustworthy changed-path set
 
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::error::CodeGraphError;
+use crate::index::run_index_in_scope;
 use crate::json::{GraphIndexPayload, GraphWatchEventPayload};
-use crate::run_index;
+use crate::scope::GraphScope;
 use crate::support::normalize_rel_path;
 use crate::walk::should_skip_path;
 
@@ -40,13 +40,15 @@ struct PendingWatchState {
     dirty_notes: BTreeSet<String>,
 }
 
-/// Watch `repo_root` for filesystem changes and emit graph refresh events.
+/// Watch one graph scope for filesystem changes and emit refresh events.
 ///
 /// This is the engine behind `effigy graph watch`. It never detaches, never
 /// mutates hidden background state, and falls back to dirty reconcile mode when
-/// the watcher backend cannot provide a reliable path-level change set.
+/// the watcher backend cannot provide a reliable path-level change set. The
+/// watcher starts at the selected scope root, ignores sibling paths, and
+/// refreshes only the selected scope.
 pub fn watch_repo<F>(
-    repo_root: &Path,
+    scope: &GraphScope,
     options: &GraphWatchOptions,
     mut emit: F,
 ) -> Result<(), CodeGraphError>
@@ -56,7 +58,7 @@ where
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
     let mut watcher = build_watcher(tx)?;
     watcher
-        .watch(repo_root, RecursiveMode::Recursive)
+        .watch(scope.catalog_root(), RecursiveMode::Recursive)
         .map_err(|error| {
             CodeGraphError::validation(format!("graph watch start failed: {error}"))
         })?;
@@ -71,7 +73,7 @@ where
             index: None,
             notes: vec![format!(
                 "watching {} with {}ms debounce",
-                repo_root.display(),
+                scope.catalog_root().display(),
                 options.debounce_ms
             )],
         },
@@ -84,13 +86,7 @@ where
         let event = rx.recv().map_err(|error| {
             CodeGraphError::validation(format!("graph watch channel closed: {error}"))
         })?;
-        collect_watch_event(
-            repo_root,
-            event,
-            options.debounce_ms,
-            &mut pending,
-            &mut emit,
-        )?;
+        collect_watch_event(scope, event, options.debounce_ms, &mut pending, &mut emit)?;
         if pending.is_empty() {
             continue;
         }
@@ -100,7 +96,7 @@ where
             match rx.recv_timeout(remaining) {
                 Ok(event) => {
                     collect_watch_event(
-                        repo_root,
+                        scope,
                         event,
                         options.debounce_ms,
                         &mut pending,
@@ -119,7 +115,7 @@ where
             }
         }
 
-        let payload = flush_watch_batch(repo_root, options.debounce_ms, &mut pending)?;
+        let payload = flush_watch_batch(scope, options.debounce_ms, &mut pending)?;
         emit(GraphWatchEvent { payload })?;
     }
 }
@@ -138,7 +134,7 @@ fn build_watcher(
 }
 
 fn collect_watch_event<F>(
-    repo_root: &Path,
+    scope: &GraphScope,
     event: notify::Result<Event>,
     debounce_ms: u64,
     pending: &mut PendingWatchState,
@@ -155,7 +151,7 @@ where
             let mut saw_repo_relative_path = false;
             let mut added_tracked_path = false;
             for path in event.paths {
-                let relative = match path.strip_prefix(repo_root) {
+                let relative = match path.strip_prefix(scope.workspace_root()) {
                     Ok(rel) => normalize_rel_path(rel),
                     Err(_) => continue,
                 };
@@ -163,7 +159,7 @@ where
                     continue;
                 }
                 saw_repo_relative_path = true;
-                if should_skip_path(&relative) {
+                if should_skip_path(&relative) || !scope.contains_relative(&relative) {
                     continue;
                 }
                 pending.changed_paths.insert(relative);
@@ -209,7 +205,7 @@ where
 }
 
 fn flush_watch_batch(
-    repo_root: &Path,
+    scope: &GraphScope,
     debounce_ms: u64,
     pending: &mut PendingWatchState,
 ) -> Result<GraphWatchEventPayload, CodeGraphError> {
@@ -220,7 +216,7 @@ fn flush_watch_batch(
     pending.dirty_notes.clear();
 
     let started = Instant::now();
-    let report = run_index(repo_root)?;
+    let report = run_index_in_scope(scope)?;
     let changed_paths = merged_changed_paths(&observed_changed_paths, &report.changed_paths);
     Ok(GraphWatchEventPayload {
         kind: if dirty {
@@ -274,16 +270,18 @@ impl PendingWatchState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_index;
     use std::fs;
 
     #[test]
     fn collect_watch_event_marks_dirty_on_backend_error() {
         let root = tempfile::tempdir().expect("tempdir");
+        let scope = GraphScope::workspace(root.path()).expect("workspace scope");
         let mut pending = PendingWatchState::default();
         let mut emitted = Vec::<GraphWatchEventPayload>::new();
         let error = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
 
-        collect_watch_event(root.path(), Err(error), 1000, &mut pending, &mut |event| {
+        collect_watch_event(&scope, Err(error), 1000, &mut pending, &mut |event| {
             emitted.push(event.payload);
             Ok(())
         })
@@ -312,12 +310,13 @@ mod tests {
         run_index(root.path()).expect("initial index");
         fs::remove_file(root.path().join("src/lib.rs")).expect("remove rust");
 
+        let scope = GraphScope::repo_root(root.path()).expect("repo root scope");
         let mut pending = PendingWatchState::default();
         pending
             .dirty_notes
             .insert("watch backend error: synthetic".to_owned());
 
-        let payload = flush_watch_batch(root.path(), 1000, &mut pending).expect("flush");
+        let payload = flush_watch_batch(&scope, 1000, &mut pending).expect("flush");
 
         assert_eq!(payload.kind, "reconcile");
         assert!(payload.dirty);

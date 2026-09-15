@@ -66,6 +66,8 @@ fn graph_index_and_status_json_report_repo_state() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
     let indexed = parse_json_output_with_schema_version(&indexed, "effigy.graph.index.v1", 1);
@@ -84,6 +86,8 @@ fn graph_index_and_status_json_report_repo_state() {
         subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph status should succeed");
     let status = parse_json_output_with_schema_version(&status, "effigy.graph.status.v1", 1);
@@ -113,6 +117,8 @@ fn graph_search_and_context_json_return_ranked_results() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
 
@@ -123,6 +129,8 @@ fn graph_search_and_context_json_return_ranked_results() {
         },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph search should succeed");
     let search = parse_json_output_with_schema_version(&search, "effigy.graph.search.v1", 1);
@@ -149,6 +157,8 @@ fn graph_search_and_context_json_return_ranked_results() {
         },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph context should succeed");
     let context = parse_json_output_with_schema_version(&context, "effigy.graph.context.v1", 1);
@@ -195,6 +205,8 @@ fn graph_search_and_context_json_return_ranked_results() {
         },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph explore should succeed");
     let explore = parse_json_output_with_schema_version(&explore, "effigy.graph.explore.v1", 1);
@@ -243,6 +255,8 @@ fn graph_text_commands_render_useful_summaries() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
 
@@ -253,6 +267,8 @@ fn graph_text_commands_render_useful_summaries() {
         },
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph search should succeed");
     assert!(search.contains("graph search `release`"));
@@ -262,6 +278,8 @@ fn graph_text_commands_render_useful_summaries() {
         subcommand: GraphSubcommand::Files { limit: Some(10) },
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph files should succeed");
     assert!(files.contains("graph files:"));
@@ -277,6 +295,8 @@ fn graph_text_commands_render_useful_summaries() {
         },
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph context should succeed");
     assert!(context.contains("graph context `trace release helper`"));
@@ -293,6 +313,8 @@ fn graph_text_commands_render_useful_summaries() {
         },
         repo_override: Some(root),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph explore should succeed");
     assert!(explore.contains("graph explore `trace release helper`"));
@@ -323,6 +345,8 @@ fn release_graph_smoke() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
 
@@ -335,6 +359,8 @@ fn release_graph_smoke() {
         },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph affected should succeed");
     let json = parse_json_output_with_schema_version(&json, "effigy.graph.affected.v1", 1);
@@ -355,6 +381,8 @@ fn release_graph_smoke() {
         },
         repo_override: Some(root),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph affected text should succeed");
     assert!(text.contains("graph affected:"));
@@ -369,6 +397,8 @@ fn graph_query_text_auto_refreshes_stale_index() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
     fs::write(
@@ -382,6 +412,8 @@ fn graph_query_text_auto_refreshes_stale_index() {
         subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph status should succeed");
     assert!(status.contains("trust: refresh-recommended"));
@@ -394,6 +426,8 @@ fn graph_query_text_auto_refreshes_stale_index() {
         },
         repo_override: Some(root),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph search should succeed");
     assert!(search.contains("graph trust: ready"));
@@ -409,6 +443,8 @@ fn graph_status_json_reports_missing_index_trust_state() {
         subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph status should succeed");
     let status = parse_json_output_with_schema_version(&status, "effigy.graph.status.v1", 1);
@@ -430,6 +466,8 @@ fn graph_status_refresh_flag_remediates_stale_index() {
         subcommand: GraphSubcommand::Index,
         repo_override: Some(root.clone()),
         output_json: false,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph index should succeed");
     fs::write(
@@ -443,6 +481,8 @@ fn graph_status_refresh_flag_remediates_stale_index() {
         subcommand: GraphSubcommand::Status { refresh: false },
         repo_override: Some(root.clone()),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph status should succeed");
     let plain = parse_json_output_with_schema_version(&plain, "effigy.graph.status.v1", 1);
@@ -456,6 +496,8 @@ fn graph_status_refresh_flag_remediates_stale_index() {
         subcommand: GraphSubcommand::Status { refresh: true },
         repo_override: Some(root),
         output_json: true,
+        catalog: None,
+        all_catalogs: false,
     }))
     .expect("graph status --refresh should succeed");
     let refreshed = parse_json_output_with_schema_version(&refreshed, "effigy.graph.status.v1", 1);
