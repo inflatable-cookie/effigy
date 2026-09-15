@@ -27,8 +27,7 @@ Queue execution record. “Effigy task” means a command selector.
   ready dependency-maintenance task. `g10.006` is already dispatched and
   blocked in verification; `g10.001` through `g10.005` are complete.
 - Active strict lane: none.
-- Dispatch handoff:
-  [`g10.007`](../handoffs/20260915-080920-dependency-maintenance-unblock.md).
+- Dispatch handoff: none pending hook closeout.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
 
