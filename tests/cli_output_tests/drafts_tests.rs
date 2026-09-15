@@ -139,6 +139,33 @@ fn flat_invocation_never_falls_through_to_a_draft() {
 }
 
 #[test]
+fn draft_reuses_canonical_lock_and_cache_policy() {
+    let root = temp_workspace("drafts-lock-cache");
+    write_manifest(
+        &root,
+        r#"
+[drafts.cached-smoke]
+created = "2026-09-15"
+purpose = "locked and cached draft reuses canonical policy"
+lock = "drafts-cached-smoke"
+run = "sh -lc 'mkdir -p out; printf run >> runs.log; cp input.txt out/result.txt'"
+cache = { enabled = true, inputs = ["input.txt"], outputs = ["out/result.txt"] }
+"#,
+    );
+    fs::write(root.join("input.txt"), "alpha\n").expect("write cache input");
+
+    let first = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
+    assert!(first.status.success(), "{first:?}");
+    let second = run_effigy(&root, &["draft", "cached-smoke", "--json"]);
+    assert!(second.status.success(), "{second:?}");
+    let payload: Value = parse_stdout_json(&second);
+    assert_eq!(payload["result"]["cached"], true, "{payload}");
+
+    let runs = fs::read_to_string(root.join("runs.log")).expect("read runs log");
+    assert_eq!(runs, "run", "cached second run must not re-execute");
+}
+
+#[test]
 fn draft_status_does_not_leak_into_published_status_inventory() {
     let root = temp_workspace("drafts-status-isolation");
     write_manifest(

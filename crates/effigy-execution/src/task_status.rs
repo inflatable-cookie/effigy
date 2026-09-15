@@ -82,13 +82,26 @@ impl TaskStatusKey {
             TaskSurface::Published => "",
             TaskSurface::Draft => "draft-",
         };
-        let digest = fnv1a64(&[
-            &normalize_path(&identity.repo_root),
-            &normalize_path(&identity.selected_catalog_root),
-            &identity.resolved_selector,
-            identity.resolved_profile.as_deref().unwrap_or(""),
-            identity.surface.as_str(),
-        ]);
+        // Published keys keep the exact pre-draft-surface digest so existing
+        // local status history keeps resolving after an upgrade. The draft
+        // surface adds its discriminator only to draft keys, where the
+        // distinct `draft-` prefix and digest prevent any cross-surface
+        // collision.
+        let digest = match identity.surface {
+            TaskSurface::Published => fnv1a64(&[
+                &normalize_path(&identity.repo_root),
+                &normalize_path(&identity.selected_catalog_root),
+                &identity.resolved_selector,
+                identity.resolved_profile.as_deref().unwrap_or(""),
+            ]),
+            TaskSurface::Draft => fnv1a64(&[
+                &normalize_path(&identity.repo_root),
+                &normalize_path(&identity.selected_catalog_root),
+                &identity.resolved_selector,
+                identity.resolved_profile.as_deref().unwrap_or(""),
+                identity.surface.as_str(),
+            ]),
+        };
         Self(format!(
             "{surface_prefix}{catalog_slug}-{selector_slug}-{digest:016x}"
         ))
@@ -249,6 +262,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{TaskStatusKey, TaskStatusTargetIdentity};
+    use effigy_tasks::TaskSurface;
 
     fn identity(catalog_root: &str) -> TaskStatusTargetIdentity {
         TaskStatusTargetIdentity::new(
@@ -267,6 +281,31 @@ mod tests {
         let two = TaskStatusKey::from_identity(&identity);
         assert_eq!(one, two);
         assert!(one.as_str().starts_with("api-api-test-"));
+    }
+
+    #[test]
+    fn published_status_key_keeps_pre_draft_digest_and_drafts_stay_distinct() {
+        let published = identity("/tmp/repo/api");
+        assert_eq!(
+            TaskStatusKey::from_identity(&published).as_str(),
+            "api-api-test-db64642251fb9063",
+            "published status keys must keep the pre-draft-surface digest so existing history resolves"
+        );
+
+        let draft = TaskStatusTargetIdentity::new_on_surface(
+            TaskSurface::Draft,
+            PathBuf::from("/tmp/repo"),
+            PathBuf::from("/tmp/repo/api"),
+            "api/test",
+            "test",
+            None,
+        );
+        let draft_key = TaskStatusKey::from_identity(&draft);
+        assert!(
+            draft_key.as_str().starts_with("draft-api-api-test-"),
+            "{draft_key}"
+        );
+        assert_ne!(draft_key, TaskStatusKey::from_identity(&published));
     }
 
     #[test]

@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `effigy-core` build-info env test races under full-workspace parallelism — 2026-09-15
+- Friction: the exact-head review of g10.008 observed `build_info::tests::read_active_version_env_trims_and_ignores_empty_values` fail once during a full parallel `cargo test --workspace` run (process-global `EFFIGY_*` version env vars mutated concurrently by `EnvGuard`), while it passes in isolation and under `effigy qa`. `effigy-core` only gained `task_selection.rs` in that lane.
+- Impact: full workspace rounds can fail intermittently for reasons unrelated to the change under test.
+- Possible fix: serialize env-mutating build-info tests behind the shared test lock or inject env per test instead of using process-global `std::env::set_var`.
+- Surface: `crates/effigy-core/src/build_info.rs` tests; any `cargo test --workspace` round.
+
 ### [ ] Draft task bodies duplicate every `[tasks]` field in two places — 2026-09-15
 - Friction: `ManifestDraftTable` in `crates/effigy-manifest/src/draft_defs.rs` re-lists every `ManifestTask` field because serde `flatten` is incompatible with `deny_unknown_fields`, which the strict draft grammar needs. Adding a task runtime field now requires editing both structs plus the `into_manifest_draft` conversion.
 - Impact: a future task field can silently be accepted in `[tasks]` but rejected or dropped in `[drafts]`.
