@@ -104,6 +104,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `docs/triage/README.md` intake anchor.
 
 ### Fixed
+- Committed Cargo resolution now uses patched `rustls 0.23.45` and non-yanked
+  `chacha20 0.10.2`, clearing RUSTSEC-2026-0285 and the yanked-release warning
+  with no `deny.toml` exception and no manifest, requirement, or feature change.
+  Cargo also moved the resolver-required `aws-lc-rs 1.18.1`, `aws-lc-sys
+  0.45.0`, and `rustls-webpki 0.103.15` transitives; full `cargo deny check`
+  passes.
 - The attached container startup SIGINT CLI test now waits for a fixture-owned
   marker written after the delayed startup child is active, with separate
   startup-delay and marker-wait budgets, instead of racing equal three-second
