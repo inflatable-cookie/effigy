@@ -181,6 +181,14 @@ pub fn apply_global_cli_options(
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
             }
+            Command::Drafts(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Draft(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
             Command::Task(task) => {
                 if !runtime_flag_present_before_passthrough(&task.args, "--repo") {
                     task.args.insert(0, repo_override.display().to_string());
@@ -282,6 +290,13 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Uninstall(args) => args.output_json = true,
         Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
+        Command::Drafts(args) => args.output_json = true,
+        Command::Draft(args) => {
+            if !runtime_flag_present_before_passthrough(&args.args, "--json") {
+                args.args.insert(0, "--json".to_owned());
+            }
+            args.output_json = true;
+        }
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
         Command::InternalScriptRun(_) => {}
@@ -324,6 +339,8 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Uninstall(args) => args.output_json,
         Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
+        Command::Drafts(args) => args.output_json,
+        Command::Draft(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,

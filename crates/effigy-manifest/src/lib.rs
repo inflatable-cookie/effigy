@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 mod bundles;
 mod composition;
 pub mod config_sections;
+mod draft_defs;
 pub mod execution_binding;
 mod loaded_catalog;
 mod manifest_section;
@@ -57,6 +58,11 @@ pub use config_sections::{
     ManifestShellConfig, ManifestSystemConfig, ManifestSystemMount, ManifestSystemMountTable,
     ManifestSystemsConfig, ManifestTaskDefaultsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
+};
+use draft_defs::deserialize_drafts;
+pub use draft_defs::{
+    deserialize_drafts as deserialize_draft_definitions, draft_source_map, ManifestDraft,
+    ManifestDraftDate, ManifestDraftLikeDefinition, ManifestDraftTable,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -180,6 +186,10 @@ pub struct TaskManifest {
     pub demos: BTreeMap<String, ManifestDemoConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub tasks: BTreeMap<String, ManifestTask>,
+    /// Lifecycle-labelled provisional definitions. Excluded from every
+    /// published discovery surface; reachable only through `effigy draft`.
+    #[serde(default, deserialize_with = "deserialize_drafts")]
+    pub drafts: BTreeMap<String, ManifestDraft>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -293,6 +303,27 @@ impl TaskManifest {
         }
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;
+        }
+        for (draft_name, draft) in &self.drafts {
+            if self.tasks.contains_key(draft_name) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "`{draft_name}` is declared in both `[tasks]` and `[drafts]`; a published task and a draft cannot share a name in the same effective catalog"
+                    ),
+                });
+            }
+            let _ = draft;
+        }
+        for (task_name, task) in &self.tasks {
+            if let Some(reference) = first_draft_step_reference(task) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "published task `{task_name}` references draft `{reference}`; published tasks cannot depend on disposable drafts (move the step into a draft or publish the target task)"
+                    ),
+                });
+            }
         }
         if let Some(docs_policy) = self.docs_policy.as_ref() {
             docs_policy.validate(manifest_path)?;
@@ -504,6 +535,31 @@ fn validate_target_host_format(
         });
     }
     Ok(())
+}
+
+/// First explicit `{ draft = "..." }` step reference in a published task body,
+/// if any. Published tasks must never depend on disposable drafts.
+fn first_draft_step_reference(task: &ManifestTask) -> Option<String> {
+    fn step_draft(step: &ManifestManagedRunStep) -> Option<String> {
+        match step {
+            ManifestManagedRunStep::Command(_) => None,
+            ManifestManagedRunStep::Step(table) => table.draft.clone(),
+        }
+    }
+
+    let mut references = Vec::new();
+    if let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() {
+        references.extend(steps.iter().filter_map(step_draft));
+    }
+    for entry in &task.concurrent {
+        references.extend(entry.setup.iter().filter_map(step_draft));
+    }
+    for profile in task.profiles.values() {
+        for entry in &profile.concurrent {
+            references.extend(entry.setup.iter().filter_map(step_draft));
+        }
+    }
+    references.into_iter().next()
 }
 
 impl ManifestDefer {

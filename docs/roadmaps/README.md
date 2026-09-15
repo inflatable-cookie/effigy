@@ -26,8 +26,6 @@ Queue execution record. “Effigy task” means a command selector.
   [`g10.008`](./g10/008-published-and-draft-task-surfaces.md), the sole ready
   published/draft task-surface lane. `g10.001` through `g10.007` are complete.
 - Active strict lane: none.
-- Dispatch handoff:
-  [`20260915-170538-published-and-draft-task-surfaces.md`](../handoffs/20260915-170538-published-and-draft-task-surfaces.md).
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
 

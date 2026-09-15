@@ -44,6 +44,7 @@ fn run_manifest_task_with_preflight_input_and_env(
         task: &overridden_task,
         mode: selection.mode,
         evidence: selection.evidence,
+        surface: selection.surface,
     };
 
     if let Some(output) = super::pipeline::managed::run_managed_task(

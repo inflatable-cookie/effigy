@@ -48,6 +48,8 @@ pub enum Command {
     Release(ReleaseArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
+    Drafts(DraftsArgs),
+    Draft(DraftArgs),
     Task(TaskInvocation),
     #[doc(hidden)]
     InternalScriptRun(InternalScriptRunArgs),
@@ -142,6 +144,8 @@ pub enum HelpTopic {
     Init,
     Migrate,
     Uninstall,
+    Drafts,
+    Draft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1184,6 +1188,28 @@ pub struct TasksArgs {
     pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
+}
+
+/// `effigy drafts [FILTER] [--json]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftsArgs {
+    pub repo_override: Option<PathBuf>,
+    pub filter: Option<String>,
+    pub output_json: bool,
+    pub pretty_json: bool,
+}
+
+/// `effigy draft <SELECTOR> [--json] [-- <ARGS>]`.
+///
+/// `args` carries the raw passthrough exactly as the canonical execution
+/// pipeline expects it, so `--json`, `--repo`, and `--` keep normal task-run
+/// semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftArgs {
+    pub repo_override: Option<PathBuf>,
+    pub selector: String,
+    pub args: Vec<String>,
+    pub output_json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

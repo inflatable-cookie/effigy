@@ -14,15 +14,15 @@ use effigy_managed::{
     build_run_sequence_schedule, render_step_command_template, StepEnvAccumulator,
 };
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
-use effigy_routing::resolve_catalog_by_prefix;
-use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task_on_surface};
+use effigy_tasks::{parse_task_reference_invocation, render_task_selector, TaskSurface};
 
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::preflight::ExecutionPreflight;
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{
-    parse_embedded_command, run_embedded_command, run_embedded_task,
+    parse_embedded_command, run_embedded_command, run_embedded_draft, run_embedded_task,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::script_command::execute_repo_rhai_script;
@@ -249,12 +249,14 @@ pub(super) fn step_is_fully_in_process_capable(step: &ManifestManagedRunStep) ->
             match (
                 table.run.as_deref(),
                 table.task.as_deref(),
+                table.draft.as_deref(),
                 table.rhai.as_deref(),
             ) {
-                (Some(_), None, None) => false,
-                (None, Some(task_ref), None) => !task_ref.trim().is_empty(),
-                (None, None, Some(path)) => !path.trim().is_empty(),
-                (None, None, None) => table.env.is_some() || table.env_file.is_some(),
+                (Some(_), None, None, None) => false,
+                (None, Some(task_ref), None, None) => !task_ref.trim().is_empty(),
+                (None, None, Some(draft_ref), None) => !draft_ref.trim().is_empty(),
+                (None, None, None, Some(path)) => !path.trim().is_empty(),
+                (None, None, None, None) => table.env.is_some() || table.env_file.is_some(),
                 _ => false,
             }
         }
@@ -483,6 +485,12 @@ fn run_single_step(
             let output = run_embedded_task(invocation, cwd)?;
             render_nested_output(&output)
         }
+        StepAction::Draft { invocation, cwd } => {
+            ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
+            let _env_guard = ScopedEnvOverride::set(&step.env);
+            let output = run_embedded_draft(invocation, cwd)?;
+            render_nested_output(&output)
+        }
         StepAction::Builtin { command, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
@@ -509,6 +517,10 @@ enum StepAction {
         invocation: TaskInvocation,
         cwd: PathBuf,
     },
+    Draft {
+        invocation: TaskInvocation,
+        cwd: PathBuf,
+    },
     Builtin {
         command: Box<Command>,
         cwd: PathBuf,
@@ -528,6 +540,7 @@ impl StepAction {
         match self {
             Self::Command(_) => "command",
             Self::Task { .. } => "task",
+            Self::Draft { .. } => "draft",
             Self::Builtin { .. } => "builtin task",
             Self::Rhai { .. } => "rhai script",
             Self::Noop => "env-only step",
@@ -563,9 +576,10 @@ fn resolve_step_action(
             match (
                 table.run.as_deref(),
                 table.task.as_deref(),
+                table.draft.as_deref(),
                 table.rhai.as_deref(),
             ) {
-                (Some(run), None, None) => {
+                (Some(run), None, None, None) => {
                     let rendered = render_step_command_template(
                         run,
                         preflight.task_execution_root(&selection.catalog.catalog_root),
@@ -574,8 +588,13 @@ fn resolve_step_action(
                     );
                     Ok(StepAction::Command(render_skill_token(rendered, preflight)))
                 }
-                (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
-                (None, None, Some(path)) => Ok(StepAction::Rhai {
+                (None, Some(task_ref), None, None) => {
+                    resolve_task_step(task_ref, preflight, selection)
+                }
+                (None, None, Some(draft_ref), None) => {
+                    resolve_draft_step(draft_ref, preflight, selection)
+                }
+                (None, None, None, Some(path)) => Ok(StepAction::Rhai {
                     path: PathBuf::from(render_script_path(
                         path,
                         &selection.catalog.catalog_root,
@@ -583,11 +602,11 @@ fn resolve_step_action(
                         preflight.task_source.is_some(),
                     )),
                 }),
-                (None, None, None) if table.env.is_some() || table.env_file.is_some() => {
+                (None, None, None, None) if table.env.is_some() || table.env_file.is_some() => {
                     Ok(StepAction::Noop)
                 }
                 _ => Err(RunnerError::task_invocation(format!(
-                    "task `{}` run step is invalid: define exactly one of `run`, `task`, or `rhai`",
+                    "task `{}` run step is invalid: define exactly one of `run`, `task`, `draft`, or `rhai`",
                     preflight.selector.task_name
                 ))),
             }
@@ -644,6 +663,45 @@ fn resolve_task_step(
     };
     let cwd = preflight.resolved.resolved_root.clone();
     Ok(StepAction::Task { invocation, cwd })
+}
+
+/// Resolve one explicit `{ draft = "..." }` composition step.
+///
+/// Draft-to-draft composition never falls back from an unresolved published
+/// reference. The target is resolved on the draft surface before any side
+/// effect, so a missing or ambiguous draft fails with source-aware diagnostics.
+fn resolve_draft_step(
+    draft_ref: &str,
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<StepAction, RunnerError> {
+    let (mut selector, mut args) =
+        parse_task_reference_invocation(draft_ref).map_err(RunnerError::task_invocation)?;
+    args.extend(preflight.runtime_args_exec.passthrough.clone());
+    if let Some(prefix) = selector.prefix.as_deref() {
+        resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(format!(
+                    "unknown catalog prefix `{prefix}` for draft `{}`",
+                    selector.task_name
+                ))
+            })?;
+    } else {
+        selector.prefix = Some(selection.catalog.alias.clone());
+    }
+    select_catalog_and_task_on_surface(
+        TaskSurface::Draft,
+        &selector,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let invocation = TaskInvocation {
+        name: render_task_selector(&selector),
+        args,
+    };
+    let cwd = preflight.resolved.resolved_root.clone();
+    Ok(StepAction::Draft { invocation, cwd })
 }
 
 pub(in crate::runner) fn render_script_path(
@@ -982,6 +1040,7 @@ mod tests {
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,
+            draft_sources: Default::default(),
         }
     }
 
@@ -1052,6 +1111,7 @@ run = [{ task = "db:migrate" }]
                 .expect("state task exists"),
             mode: CatalogSelectionMode::ExplicitPrefix,
             evidence: vec!["selected catalog via explicit prefix".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
         };
 
         let action = resolve_task_step("db:migrate", &preflight, &selection).expect("resolve step");

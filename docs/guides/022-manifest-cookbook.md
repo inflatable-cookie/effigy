@@ -614,6 +614,77 @@ Lock behavior:
 - managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
 - recover specific collisions with `effigy tasks unlock task:<name>`, `effigy tasks unlock shared:<name>`, or `effigy tasks unlock profile:<task>/<profile>`
 
+## Draft Tasks
+
+Use `[drafts]` for temporary proofs and throwaway environments that still need
+Effigy's real execution, isolation, container, managed-session, and status
+guarantees. Drafts never appear in `effigy tasks`, help task inventories,
+completion task candidates, or default task-status queries.
+
+```toml
+[drafts.provider-smoke]
+created = "2026-09-15"
+expires = "2026-09-29"
+purpose = "Validate temporary provider integration"
+run = [{ task = "build" }, { run = "./scripts/provider-smoke {args}" }]
+```
+
+Rules:
+
+- the full `[drafts.<name>]` table is required; compact string or sequence
+  shorthand is rejected because it cannot carry lifecycle metadata
+- `created` is a strict `YYYY-MM-DD` date; `purpose` must be non-empty;
+  `expires` is optional, strict, and may not precede `created`
+- after the lifecycle fields, the body supports the same runtime fields,
+  profiles, bindings, environment, secrets, managed mode, locks, cache, and
+  argument semantics as `[tasks]`
+- a published task may not contain a `{ draft = "..." }` step; a draft may
+  reference published tasks with `{ task = "..." }` and other drafts only with
+  an explicit `{ draft = "..." }` step
+- a name cannot be declared in both `[tasks]` and `[drafts]` of the same
+  effective catalog
+
+Inventory and execution:
+
+```bash
+effigy drafts
+effigy drafts provider-smoke
+effigy draft provider-smoke -- --verbose
+effigy draft catalog-a/provider-smoke
+```
+
+Expiry is advisory. `effigy drafts` marks an entry `expired` and `effigy doctor`
+reports it with its source, but the draft stays runnable until a human removes
+it or deliberately extends `expires`. Effigy never deletes, edits, disables, or
+silently omits an expired draft.
+
+### Dated Draft Fragments
+
+Keep generated drafts in dated committed fragments and include them explicitly
+with normal composition:
+
+```toml
+[manifest]
+include = ["config/drafts/2026-09-15-provider-smoke.toml"]
+```
+
+```toml
+# config/drafts/2026-09-15-provider-smoke.toml
+[drafts.provider-smoke]
+created = "2026-09-15"
+purpose = "Validate temporary provider integration"
+run = "./scripts/provider-smoke {args}"
+```
+
+`effigy drafts` reports the fragment path as the composed source, so the
+definition and its include edge are removed together. Effigy never discovers a
+draft file implicitly, and an unreferenced file under `config/drafts/` is
+ignored.
+
+Promotion is deliberate: move the definition into `[tasks]` and delete the
+draft entry. There is no boolean that publishes a draft, and `tasks migrate`
+never reclassifies a package script as a draft.
+
 ## Testing and Legacy Interop
 
 ### Built-in Test Fanout and Suite Source of Truth

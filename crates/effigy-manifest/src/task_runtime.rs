@@ -233,6 +233,13 @@ pub struct ManifestManagedRunStepTable {
     pub run: Option<String>,
     #[serde(default)]
     pub task: Option<String>,
+    /// Explicit draft-to-draft composition step.
+    ///
+    /// Resolves only through the draft catalog rules. A published task may
+    /// never contain one; a draft's ordinary `task` step resolves only
+    /// published tasks. See contract `046`.
+    #[serde(default)]
+    pub draft: Option<String>,
     #[serde(default)]
     pub rhai: Option<String>,
     #[serde(default)]
@@ -314,6 +321,7 @@ impl ManifestInlineTaskDefinition {
                 ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
                     run: self.run,
                     task: self.task,
+                    draft: None,
                     rhai: self.rhai,
                     env: None,
                     env_file: None,

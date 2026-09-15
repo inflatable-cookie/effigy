@@ -26,6 +26,7 @@ pub(super) fn validate_top_level_keys(
         "shell",
         "test",
         "tasks",
+        "drafts",
     ];
     for key in table.keys() {
         if !allowed_top.contains(&key.as_str()) {

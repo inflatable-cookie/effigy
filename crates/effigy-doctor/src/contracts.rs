@@ -6,6 +6,7 @@ pub mod check_id {
     pub const MANIFEST_SCHEMA_UNSUPPORTED_VALUE: &str = "manifest.schema.unsupported_value";
     pub const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
+    pub const DRAFT_LIFECYCLE: &str = "drafts.lifecycle";
     pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
     pub const GRAPH_INDEX: &str = "graph.index";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
@@ -22,7 +23,7 @@ pub mod check_id {
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 21] = [
+pub const ALL_CHECK_IDS: [&str; 22] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -30,6 +31,7 @@ pub const ALL_CHECK_IDS: [&str; 21] = [
     check_id::MANIFEST_SCHEMA_UNSUPPORTED_VALUE,
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
+    check_id::DRAFT_LIFECYCLE,
     check_id::DEPENDENCY_LINK_HEALTH,
     check_id::GRAPH_INDEX,
     check_id::SCAN_GOD_FILES,
@@ -66,6 +68,8 @@ pub mod remediation {
         "Update task reference to an existing task selector.";
     pub const REFERENCE_RUNNABLE_TASK: &str =
         "Add a `run` command to the referenced task or reference a runnable task.";
+    pub const REMOVE_OR_EXTEND_EXPIRED_DRAFT: &str =
+        "Remove the expired draft or deliberately extend its `expires` date; Effigy never deletes it for you.";
     pub const SPLIT_GOD_FILES: &str =
         "Split oversized files into smaller modules/components or raise thresholds intentionally.";
     pub const REDUCE_DUPLICATE_BLOCKS: &str =

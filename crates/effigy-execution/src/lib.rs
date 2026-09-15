@@ -510,6 +510,8 @@ pub enum ExecutionSurface {
     RunArray,
     Demo,
     Managed,
+    /// Explicit `effigy draft` selection over the draft surface.
+    Draft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

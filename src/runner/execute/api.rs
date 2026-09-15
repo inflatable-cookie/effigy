@@ -261,6 +261,7 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
         task: &task,
         mode: CatalogSelectionMode::RootShallowest,
         evidence: vec!["inline task".to_owned()],
+        surface: effigy_tasks::TaskSurface::Published,
     };
     let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
     super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)
@@ -296,6 +297,7 @@ mod tests {
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,
+            draft_sources: Default::default(),
         }
     }
 
@@ -339,6 +341,7 @@ run = "cargo test"
                 .expect("child task exists"),
             mode: CatalogSelectionMode::RootShallowest,
             evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
         };
 
         let (default_run_in, systems, containers) = effective_task_binding_inputs(
@@ -403,6 +406,7 @@ run = "cargo test"
                 .expect("child task exists"),
             mode: CatalogSelectionMode::RootShallowest,
             evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
         };
 
         let (default_run_in, _systems, containers) = effective_task_binding_inputs(
@@ -460,6 +464,7 @@ run = "cargo run -p farmyard-db --bin migrate_dev_db"
                 .expect("child task exists"),
             mode: CatalogSelectionMode::ExplicitPrefix,
             evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
         };
 
         let (default_run_in, _systems, containers) = effective_task_binding_inputs(
@@ -513,6 +518,7 @@ run = "cargo test"
                 .expect("child task exists"),
             mode: CatalogSelectionMode::RootShallowest,
             evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
         };
 
         let (_default_run_in, _systems, containers) = effective_task_binding_inputs(

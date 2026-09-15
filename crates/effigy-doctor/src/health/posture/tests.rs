@@ -16,6 +16,7 @@ fn catalog(manifest_body: &str) -> LoadedCatalog {
         defer_run: None,
         deferred_builtins: BTreeSet::new(),
         depth: 0,
+        draft_sources: Default::default(),
     }
 }
 

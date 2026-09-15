@@ -172,12 +172,14 @@ fn render_setup_step_preview(step: &ManifestManagedRunStep) -> String {
             match (
                 table.run.as_deref(),
                 table.task.as_deref(),
+                table.draft.as_deref(),
                 table.rhai.as_deref(),
             ) {
-                (Some(run), None, None) => run.to_owned(),
-                (None, Some(task), None) => format!("task {task}"),
-                (None, None, Some(path)) => format!("rhai {path}"),
-                (None, None, None) => "env-only".to_owned(),
+                (Some(run), None, None, None) => run.to_owned(),
+                (None, Some(task), None, None) => format!("task {task}"),
+                (None, None, Some(draft), None) => format!("draft {draft}"),
+                (None, None, None, Some(path)) => format!("rhai {path}"),
+                (None, None, None, None) => "env-only".to_owned(),
                 _ => "invalid-step".to_owned(),
             }
         }

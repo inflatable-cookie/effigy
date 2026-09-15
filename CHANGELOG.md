@@ -7,6 +7,22 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Published and draft task surfaces. `[tasks]` stays the small published
+  command surface, and a new lifecycle-labelled `[drafts]` table carries
+  provisional proofs and environments without polluting normal discovery.
+  Drafts require the full table form with a strict `created` date, a non-empty
+  `purpose`, and an optional strict `expires` date; compact shorthand is
+  rejected. `effigy drafts [FILTER] [--json]` inventories selector, catalog,
+  purpose, lifecycle, expiry, and composed source, and `effigy draft
+  <SELECTOR> [--json] [-- <ARGS>]` runs one explicitly through the ordinary
+  catalog routing, request, and execution pipeline. Drafts never appear in
+  `effigy tasks`, help task inventories, completion task candidates, routing,
+  or default task-status queries. Published tasks cannot reference drafts;
+  drafts may reference published tasks, and draft-to-draft composition is
+  explicit through `{ draft = "..." }` steps. Expiry is advisory evidence in
+  `effigy drafts` and `effigy doctor`; it never disables, mutates, or deletes a
+  draft. New `effigy.drafts.v1` JSON and additive draft fields on the ordinary
+  task-run payload leave repositories with no `[drafts]` unchanged.
 - Code-graph catalog scopes. A composed catalog manifest may declare
   `[catalog.graph] segmented = true` to make that catalog an independently lazy
   graph scope (pruned from its parent's scan) and `independent = true` to give

@@ -33,6 +33,8 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
         HelpTopic::Init => "init",
         HelpTopic::Migrate => "migrate",
         HelpTopic::Uninstall => "uninstall",
+        HelpTopic::Drafts => "drafts",
+        HelpTopic::Draft => "draft",
     }
 }
 
@@ -67,6 +69,8 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Release(_) => ("release", "release".to_owned()),
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
         Command::Tasks(_) => ("tasks", "tasks".to_owned()),
+        Command::Drafts(_) => ("drafts", "drafts".to_owned()),
+        Command::Draft(args) => ("draft", args.selector.clone()),
         Command::Task(task) => ("task", task.name.clone()),
         Command::InternalGateway(_) => ("task", "__gateway-run".to_owned()),
         Command::InternalScriptRun(_) => ("task", "script run".to_owned()),

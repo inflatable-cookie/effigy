@@ -266,6 +266,28 @@ Deep dive:
 - [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 
+### Keep Temporary Proofs In Drafts
+
+Short-lived proofs and environments should not enlarge the published command
+surface. Put them in `[drafts]` and reach them explicitly:
+
+```sh
+effigy drafts
+effigy drafts provider-smoke
+effigy draft provider-smoke
+effigy draft provider-smoke -- --verbose
+```
+
+`effigy tasks` keeps listing only published commands, while `effigy drafts`
+shows each draft's purpose, created date, optional expiry, lifecycle state, and
+composed source. An expired draft stays runnable and `effigy doctor` reports it
+with its source; remove the entry or deliberately extend `expires` when the
+proof is finished. Promotion is a move into `[tasks]`, never a silent boolean.
+
+Deep dive:
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
+
 ## 7) Make Automation Boring
 
 When humans and tools use the same commands, the machine-facing path should

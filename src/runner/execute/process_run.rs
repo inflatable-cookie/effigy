@@ -27,13 +27,13 @@ fn run_task_process_json(
     let stdout = redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_env);
     let stderr = redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_env);
     let rendered = super::json_payload::render_task_command_json(
-        &context.selector.task_name,
         context.selector,
         context.repo_for_task(),
         context.command(),
         output.status.code(),
         &stdout,
         &stderr,
+        context.selection,
     )?;
     if output.status.success() {
         update_cache(context)?;

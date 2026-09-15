@@ -12,6 +12,8 @@ mod deps_option_tests;
 mod docs_and_contracts_option_tests;
 #[path = "lib_tests_parse_tests/doctor_and_tasks_option_tests.rs"]
 mod doctor_and_tasks_option_tests;
+#[path = "lib_tests_parse_tests/drafts_option_tests.rs"]
+mod drafts_option_tests;
 #[path = "lib_tests_parse_tests/gateway_option_tests.rs"]
 mod gateway_option_tests;
 #[path = "lib_tests_parse_tests/graph_option_tests.rs"]

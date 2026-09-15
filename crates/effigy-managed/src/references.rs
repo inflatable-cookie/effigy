@@ -13,7 +13,7 @@ use super::run_spec::wrap_reference_command_in_cwd;
 use crate::ManagedError;
 use context::{ManagedRefContext, StepRefContext};
 use effigy_manifest::{LoadedCatalog, TaskSelection};
-use parser::{merge_args_rendered, parse_task_ref};
+pub(crate) use parser::{merge_args_rendered, parse_task_ref};
 use resolve::{resolve_reference_run, ResolvedReferenceRun};
 
 #[derive(Clone, Copy)]

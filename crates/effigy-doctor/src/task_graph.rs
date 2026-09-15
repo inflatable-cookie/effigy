@@ -21,6 +21,59 @@ where
     }
 }
 
+/// Walk `{ task = "..." }` steps inside draft bodies.
+///
+/// Draft `task` steps resolve only published tasks, exactly like published
+/// steps do.
+pub(super) fn for_each_manifest_draft_task_reference<F>(manifest: &TaskManifest, mut visit: F)
+where
+    F: FnMut(&str, &str),
+{
+    for (draft_name, draft) in &manifest.drafts {
+        for_each_task_reference(&draft.task, |reference| visit(draft_name, reference));
+    }
+}
+
+/// Walk explicit `{ draft = "..." }` composition steps inside draft bodies.
+pub(super) fn for_each_manifest_draft_reference<F>(manifest: &TaskManifest, mut visit: F)
+where
+    F: FnMut(&str, &str),
+{
+    for (draft_name, draft) in &manifest.drafts {
+        for_each_draft_step_reference(&draft.task, |reference| visit(draft_name, reference));
+    }
+}
+
+fn for_each_draft_step_reference<F>(task: &ManifestTask, mut visit: F)
+where
+    F: FnMut(&str),
+{
+    let mut step_reference = |step: &ManifestManagedRunStep| {
+        if let ManifestManagedRunStep::Step(table) = step {
+            if let Some(reference) = table.draft.as_deref() {
+                visit(reference);
+            }
+        }
+    };
+    if let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() {
+        for step in steps {
+            step_reference(step);
+        }
+    }
+    for entry in &task.concurrent {
+        for step in &entry.setup {
+            step_reference(step);
+        }
+    }
+    for profile in task.profiles.values() {
+        for entry in &profile.concurrent {
+            for step in &entry.setup {
+                step_reference(step);
+            }
+        }
+    }
+}
+
 pub(super) fn for_each_task_command<F>(task: &ManifestTask, visit: &mut F)
 where
     F: FnMut(&str),

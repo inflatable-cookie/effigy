@@ -127,6 +127,30 @@ Effigy resolves in this order:
 
 If a prefix can match both an alias and a relative path, alias wins.
 
+## Draft Surface
+
+Draft definitions live in `[drafts]` and are reachable only through the
+explicit `draft` command:
+
+```bash
+effigy drafts
+effigy drafts provider-smoke
+effigy draft provider-smoke
+effigy draft catalog-a/provider-smoke -- --verbose
+```
+
+`effigy drafts` lists selector, catalog, purpose, created date, optional expiry,
+lifecycle state, and composed source. `effigy draft <SELECTOR>` reuses the same
+precedence above (explicit alias, relative/absolute path, CWD-nearest,
+shallowest) but only over the draft set. Ordinary `effigy <selector>` never
+falls through to a draft, and drafts never appear in `effigy tasks`, help task
+inventories, or completion task candidates.
+
+Published tasks cannot reference drafts. A draft may reference a published task
+with a normal `{ task = "..." }` step and another draft only with an explicit
+`{ draft = "..." }` step, so an unresolved published reference never silently
+resolves to a same-named draft.
+
 ## Relative Prefix Notes
 
 - Relative prefixes are resolved from invocation CWD.

@@ -59,6 +59,7 @@ fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
     ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
         run: Some("printf ok".to_owned()),
         task: None,
+        draft: None,
         rhai: None,
         env: Some(ManifestRunStepEnv::Profile(profile_name.to_owned())),
         env_file: None,
@@ -174,6 +175,7 @@ fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
         defer_run: None,
         deferred_builtins: std::collections::BTreeSet::new(),
         depth: 0,
+        draft_sources: Default::default(),
     }];
     let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     accumulator
@@ -222,6 +224,7 @@ fn apply_from_step_profile_resolution_inherits_ancestor_catalog_env_schema() {
             defer_run: None,
             deferred_builtins: std::collections::BTreeSet::new(),
             depth,
+            draft_sources: Default::default(),
         }
     };
     let catalogs = vec![load(&root, "root", 0), load(&child, "cp-api", 1)];

@@ -1,11 +1,30 @@
 use super::super::surface::COMPLETION_COMMAND_OPTIONS;
 use crate::constants::BUILTIN_TASKS;
 
+/// Direct command surfaces that are not manifest-task built-ins.
+///
+/// `draft`/`drafts` are commands, not tasks, so they never appear in
+/// `effigy tasks` built-in inventory, but shell completion must still expose
+/// them.
+const DIRECT_COMMANDS: &[(&str, &str)] = &[
+    (
+        "drafts",
+        "Inventory lifecycle-labelled draft definitions, expiry state, and composed source",
+    ),
+    (
+        "draft",
+        "Run one explicitly selected lifecycle-labelled draft through the ordinary task pipeline",
+    ),
+];
+
 pub(super) fn command_names() -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 2);
+    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + DIRECT_COMMANDS.len() + 2);
     names.push("help");
     names.push("version");
     for (name, _) in BUILTIN_TASKS {
+        names.push(name);
+    }
+    for (name, _) in DIRECT_COMMANDS {
         names.push(name);
     }
     names
@@ -17,6 +36,7 @@ pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
         ("version", "Print the current Effigy version"),
     ];
     rows.extend(BUILTIN_TASKS.iter().copied());
+    rows.extend(DIRECT_COMMANDS.iter().copied());
     rows
 }
 
@@ -37,6 +57,8 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--help",
             "-h",
         ],
+        "drafts" => &["--repo", "--json", "--pretty", "--help", "-h"],
+        "draft" => &["--repo", "--json", "--help", "-h"],
         "doctor" => &["--repo", "--fix", "--verbose", "--json", "--help", "-h"],
         "deps" => &[
             "status",

@@ -581,6 +581,9 @@ impl From<RoutingError> for RunnerError {
             RoutingError::TaskAmbiguous { name, candidates } => {
                 Self::TaskAmbiguous { name, candidates }
             }
+            RoutingError::DraftNotFound { .. }
+            | RoutingError::DraftNotFoundAny { .. }
+            | RoutingError::DraftAmbiguous { .. } => Self::TaskInvocation(value.to_string()),
             RoutingError::Manifest(error) => map_manifest_error(error),
         }
     }

@@ -53,6 +53,18 @@ pub enum RoutingError {
         name: String,
         candidates: Vec<String>,
     },
+    DraftNotFound {
+        name: String,
+        path: PathBuf,
+    },
+    DraftNotFoundAny {
+        name: String,
+        catalogs: Vec<String>,
+    },
+    DraftAmbiguous {
+        name: String,
+        candidates: Vec<String>,
+    },
     Manifest(ManifestError),
 }
 
@@ -107,6 +119,19 @@ impl std::fmt::Display for RoutingError {
             RoutingError::TaskAmbiguous { name, candidates } => write!(
                 f,
                 "task `{name}` is ambiguous; matched multiple catalogs: {}",
+                candidates.join(", ")
+            ),
+            RoutingError::DraftNotFound { name, path } => {
+                write!(f, "draft `{name}` is not defined in {}", path.display())
+            }
+            RoutingError::DraftNotFoundAny { name, catalogs } => write!(
+                f,
+                "draft `{name}` is not defined in effective catalogs: {}",
+                catalogs.join(", ")
+            ),
+            RoutingError::DraftAmbiguous { name, candidates } => write!(
+                f,
+                "draft `{name}` is ambiguous; matched multiple catalogs: {}",
                 candidates.join(", ")
             ),
             RoutingError::Manifest(error) => write!(f, "{error}"),
