@@ -106,4 +106,7 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     if let Some(tasks) = table.get("tasks") {
         validate_tasks_table(&mut context, tasks);
     }
+    if let Some(drafts) = table.get("drafts") {
+        tasks::validate_drafts_table(&mut context, drafts);
+    }
 }

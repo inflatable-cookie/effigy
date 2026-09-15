@@ -96,6 +96,29 @@ pub fn render_builtin_task_reference_invocation(
     }
 }
 
+/// Render one nested `effigy draft <selector>` invocation.
+///
+/// Draft composition steps reuse the top-level draft command rather than a
+/// second runner, so they keep the ordinary selection, pipeline, and
+/// status guarantees of an explicit draft run.
+pub fn render_builtin_draft_reference_invocation(
+    draft_ref: &str,
+    args_rendered: &str,
+    repo_root: &Path,
+) -> Result<String, ManagedError> {
+    let executable = resolve_internal_effigy_invocation_prefix(repo_root)?;
+    let selector = shell_quote(draft_ref);
+    if args_rendered.is_empty() {
+        Ok(format!(
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} draft {selector}"
+        ))
+    } else {
+        Ok(format!(
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} draft {selector} {args_rendered}"
+        ))
+    }
+}
+
 pub fn wrap_command_with_cwd(cwd: &Path, command: &str) -> String {
     format!(
         "(cd {} && {})",

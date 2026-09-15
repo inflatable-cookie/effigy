@@ -104,6 +104,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.tasks.filtered.v1`
 - `effigy.tasks-status.v1`
 - `effigy.tasks-status-all.v1`
+- `effigy.drafts.v1`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
 - `effigy.deps.unlink.v1`
@@ -174,6 +175,12 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 
+Draft runs reuse `effigy.task.run.v1` unchanged for published payloads. When the
+selected surface is a draft, that payload additionally carries `surface:
+"draft"` and a `surface_identity` object naming the catalog alias, catalog root,
+and composed definition source. Repositories with no `[drafts]` see no new
+fields.
+
 Examples:
 
 ```bash
@@ -182,6 +189,9 @@ effigy --json tasks --task test
 effigy --json tasks --resolve catalog-a/api
 effigy --json tasks status test
 effigy --json tasks status --all
+effigy --json drafts
+effigy --json drafts provider-smoke
+effigy --json draft provider-smoke
 effigy --json doctor
 effigy --json doctor --repo /path/to/workspace catalog-a/build --watch
 effigy --json scan god-files

@@ -1311,6 +1311,7 @@ mod tests {
             defer_run: None,
             deferred_builtins: std::collections::BTreeSet::new(),
             depth,
+            draft_sources: Default::default(),
         }
     }
 

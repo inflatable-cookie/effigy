@@ -23,6 +23,7 @@ pub(crate) fn validate_run_step_table(
         &[
             "run",
             "task",
+            "draft",
             "rhai",
             "env",
             "env_file",
@@ -62,6 +63,11 @@ pub(crate) fn validate_run_step_table(
         context,
         step_table.get("rhai"),
         &format!("{step_path}.rhai"),
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        step_table.get("draft"),
+        &format!("{step_path}.draft"),
     );
     validate_env_table(context, &step_path, step_table.get("env"));
     validate_env_file(context, &step_path, step_table.get("env_file"));

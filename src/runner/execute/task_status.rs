@@ -9,10 +9,17 @@ use effigy_execution::{
     TaskStatusState, TaskStatusTargetIdentity,
 };
 use effigy_runtime::task_status::{task_status_storage_paths, TaskStatusStoragePaths};
-use effigy_tasks::render_task_selector;
+use effigy_tasks::{render_task_selector, TaskSurface};
 
 use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
+
+fn surface_for_execution(surface: &ExecutionSurface) -> TaskSurface {
+    match surface {
+        ExecutionSurface::Draft => TaskSurface::Draft,
+        _ => TaskSurface::Published,
+    }
+}
 
 pub(super) struct TaskStatusTracker {
     repo_root: std::path::PathBuf,
@@ -33,7 +40,8 @@ impl TaskStatusTracker {
         selection_plan: &ExecutionSelectionPlan,
         lock_scopes: Vec<String>,
     ) -> Result<Self, RunnerError> {
-        let identity = TaskStatusTargetIdentity::new(
+        let identity = TaskStatusTargetIdentity::new_on_surface(
+            surface_for_execution(&preflight.execution_surface),
             preflight.resolved.resolved_root.clone(),
             selection_plan.catalog.catalog_root.clone(),
             render_task_selector(&preflight.selector),

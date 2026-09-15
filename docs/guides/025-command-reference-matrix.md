@@ -97,7 +97,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 
 | Topic | Primary commands |
 | --- | --- |
-| `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
+| `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy drafts`, `effigy draft`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
 | `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
 | `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts`, `effigy papercuts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
@@ -128,6 +128,8 @@ through the help route.
 | `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
 | `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
+| `effigy drafts` | Inventory lifecycle-labelled `[drafts]` definitions with purpose, created/expiry, lifecycle state, and composed source; never mutates or expires them | `[FILTER]`, `--repo`, `--json`, `--pretty true\|false` | `effigy.drafts.v1` | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
+| `effigy draft` | Run one explicitly selected draft through ordinary catalog routing, request, and execution; never falls through from published selectors | `<SELECTOR>`, `--repo`, `--json`, `-- <ARGS>` | `effigy.task.run.v1` with additive `surface` / `surface_identity` for drafts | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
 | `effigy skill` | List or execute one explicitly selected, isolated skill task catalog while a separate consumer repo owns runtime effects | `tasks`, `run`, `--path`, `--repo`, `--json`, `-- <ARGS>` | `effigy.skill.tasks.v1`, `effigy.skill.run.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/042-external-skill-task-runner-contract.md`](../contracts/042-external-skill-task-runner-contract.md) |
 | `effigy deps` | Inspect dependency state, manage machine-local Cargo and Bun links, and author committed Bun pins | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `pin bun <PATH> [--dry-run]`; `unpin bun <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1`, `effigy.deps.pin.v1` | [`077-local-dependency-linking.md`](./077-local-dependency-linking.md) |
 | `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md) |

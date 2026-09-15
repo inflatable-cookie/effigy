@@ -4,6 +4,7 @@ use effigy_execution::{ExecutionSurface, TaskExecutionRequestBuilder};
 use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
+use super::super::drafts_command::run_drafts;
 use super::super::run_artifact;
 use super::super::run_bundle;
 use super::super::run_changelog;
@@ -102,6 +103,21 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
         }
         Command::Tasks(args) => run_tasks(args),
+        Command::Drafts(args) => run_drafts(args),
+        Command::Draft(args) => {
+            let runtime_context = crate::runner::command_context::active_runtime_context()
+                .unwrap_or_else(|| {
+                    EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
+                        .expect("runtime context capture should fall back to cwd")
+                });
+            let request = TaskExecutionRequestBuilder::new()
+                .runtime_context(runtime_context)
+                .task(args.selector, args.args)
+                .surface(ExecutionSurface::Draft)
+                .build()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            crate::runner::execute::api::run_manifest_task_request(request)
+        }
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),
         Command::InternalContainerLeaseReaper(args) => run_internal_container_lease_reaper(args),

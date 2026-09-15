@@ -292,13 +292,13 @@ fn run_standard_task_inner(
             let stderr =
                 redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
             let rendered = render::render_task_command_json(
-                &preflight.selector.task_name,
                 &preflight.selector,
                 context.repo_for_task(),
                 context.command(),
                 output.status.code(),
                 &stdout,
                 &stderr,
+                context.selection,
             )?;
             if output.status.success() {
                 if task_activation
@@ -846,13 +846,13 @@ fn run_inline_workspace_standard_task(
         let stderr =
             redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
         let rendered = render::render_task_command_json(
-            &preflight.selector.task_name,
             &preflight.selector,
             context.repo_for_task(),
             context.command(),
             output.status.code(),
             &stdout,
             &stderr,
+            context.selection,
         )?;
         if output.status.success() {
             Ok(rendered)

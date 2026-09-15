@@ -20,8 +20,9 @@ mod sequence;
 pub use sequence::StepEnvAccumulator;
 
 use command::{
-    render_builtin_task_reference_invocation, render_command_template, render_task_command,
-    wrap_command_with_cwd, wrap_command_with_task_env,
+    render_builtin_draft_reference_invocation, render_builtin_task_reference_invocation,
+    render_command_template, render_task_command, wrap_command_with_cwd,
+    wrap_command_with_task_env,
 };
 
 #[derive(Clone, Copy)]
@@ -72,6 +73,14 @@ pub fn render_builtin_reference_invocation(
     repo_root: &Path,
 ) -> Result<String, ManagedError> {
     render_builtin_task_reference_invocation(task_ref, args_rendered, repo_root)
+}
+
+pub fn render_draft_reference_invocation(
+    draft_ref: &str,
+    args_rendered: &str,
+    repo_root: &Path,
+) -> Result<String, ManagedError> {
+    render_builtin_draft_reference_invocation(draft_ref, args_rendered, repo_root)
 }
 
 pub fn render_step_command_template(

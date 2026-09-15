@@ -25,7 +25,10 @@ pub use membership::{
     default_alias, effective_manifest_paths, load_effective_catalogs,
     load_effective_catalogs_allow_missing, load_isolated_catalog, owning_workspace_root,
 };
-pub use selection::{resolve_catalog_by_prefix, select_catalog_and_task};
+pub use selection::{
+    resolve_catalog_by_prefix, select_catalog_and_draft, select_catalog_and_task,
+    select_catalog_and_task_on_surface,
+};
 
 /// String-error adapter for `select_catalog_and_task`, shaped to fit
 /// `effigy_manifest::TaskResolverFn`. Managed task orchestration takes

@@ -25,6 +25,14 @@ pub(super) fn run_task_references_check(context: &DoctorCheckContext<'_>, state:
     references::check_task_references(&context.manifest.parsed_catalogs, state);
 }
 
+pub(super) fn run_draft_lifecycle_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
+    crate::draft_lifecycle::check_draft_lifecycle(
+        &context.manifest.parsed_catalogs,
+        effigy_manifest::ManifestDraftDate::today_local(),
+        state,
+    );
+}
+
 pub(super) fn run_health_task_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
     health::check_health_task(
         context.resolved_root,

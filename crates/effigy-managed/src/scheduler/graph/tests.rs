@@ -11,6 +11,7 @@ fn table_step(id: Option<&str>, depends_on: &[&str]) -> ManifestManagedRunStep {
     ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
         run: Some("printf ok".to_owned()),
         task: None,
+        draft: None,
         rhai: None,
         env: None,
         env_file: None,

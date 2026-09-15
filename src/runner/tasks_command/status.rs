@@ -45,7 +45,8 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
         selection.evidence.clone(),
         selector.task_name.clone(),
     );
-    let identity = TaskStatusTargetIdentity::new(
+    let identity = TaskStatusTargetIdentity::new_on_surface(
+        selection.surface,
         context.resolved.resolved_root.clone(),
         plan.catalog.catalog_root.clone(),
         resolved_selector.clone(),
@@ -164,6 +165,12 @@ fn build_status_inventory_rows(
         else {
             continue;
         };
+        // Default published status inventory must not absorb draft-only
+        // history (for example a deleted draft). Draft surface identity is
+        // isolated by `TaskStatusKey` and skipped here.
+        if identity.surface != effigy_tasks::TaskSurface::Published {
+            continue;
+        }
         if fs_same_path(&identity.repo_root, repo_root) {
             rows.push(build_inventory_row(
                 repo_root,

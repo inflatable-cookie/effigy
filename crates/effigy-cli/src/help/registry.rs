@@ -113,6 +113,14 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_tasks,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Drafts),
+        render: render_drafts,
+    },
+    HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Draft),
+        render: render_draft,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Test),
         render: render_test,
     },
@@ -271,6 +279,14 @@ fn render_doctor(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpR
 
 fn render_tasks(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_tasks_help(renderer)
+}
+
+fn render_drafts(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_drafts_help(renderer)
+}
+
+fn render_draft(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_draft_help(renderer)
 }
 
 fn render_test(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

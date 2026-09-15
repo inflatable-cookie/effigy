@@ -421,6 +421,30 @@ include = [
 ]
 ```
 
+### Published and Draft Task Surfaces
+
+Keep the default command surface small. `[tasks]` is the published interface;
+`[drafts]` holds lifecycle-labelled provisional proofs and environments that
+stay out of `effigy tasks`, help, completion, and default status queries:
+
+```toml
+[drafts.provider-smoke]
+created = "2026-09-15"
+expires = "2026-09-29"
+purpose = "Validate temporary provider integration"
+run = [{ task = "build" }, { run = "./scripts/provider-smoke {args}" }]
+```
+
+```sh
+effigy drafts                 # lifecycle, expiry, and composed source
+effigy draft provider-smoke   # ordinary routing and execution pipeline
+```
+
+Published tasks cannot reference drafts; drafts may reference published tasks,
+and draft-to-draft composition is explicit with `{ draft = "..." }`. Expiry is
+advisory evidence in `effigy drafts` and `effigy doctor`; it never disables,
+mutates, or deletes a draft.
+
 ---
 
 ## Discover the Full Surface

@@ -1106,6 +1106,7 @@ dependencies = [
 name = "effigy-manifest"
 version = "0.12.1"
 dependencies = [
+ "chrono",
  "effigy-artifacts",
  "effigy-core",
  "fs2",

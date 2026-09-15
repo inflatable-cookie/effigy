@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ExecutionSurface;
+use effigy_tasks::TaskSurface;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskStatusTargetIdentity {
@@ -13,10 +14,35 @@ pub struct TaskStatusTargetIdentity {
     pub resolved_task_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_profile: Option<String>,
+    /// Published or draft surface the identity belongs to.
+    ///
+    /// Defaults to `published` so records written before the draft surface
+    /// existed keep resolving as published task history.
+    #[serde(default)]
+    pub surface: TaskSurface,
 }
 
 impl TaskStatusTargetIdentity {
     pub fn new(
+        repo_root: PathBuf,
+        selected_catalog_root: PathBuf,
+        resolved_selector: impl Into<String>,
+        resolved_task_name: impl Into<String>,
+        resolved_profile: Option<String>,
+    ) -> Self {
+        Self::new_on_surface(
+            TaskSurface::Published,
+            repo_root,
+            selected_catalog_root,
+            resolved_selector,
+            resolved_task_name,
+            resolved_profile,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_on_surface(
+        surface: TaskSurface,
         repo_root: PathBuf,
         selected_catalog_root: PathBuf,
         resolved_selector: impl Into<String>,
@@ -29,6 +55,7 @@ impl TaskStatusTargetIdentity {
             resolved_selector: resolved_selector.into(),
             resolved_task_name: resolved_task_name.into(),
             resolved_profile,
+            surface,
         }
     }
 
@@ -51,13 +78,20 @@ impl TaskStatusKey {
             .map(safe_slug)
             .filter(|slug| !slug.is_empty())
             .unwrap_or_else(|| "task".to_owned());
+        let surface_prefix = match identity.surface {
+            TaskSurface::Published => "",
+            TaskSurface::Draft => "draft-",
+        };
         let digest = fnv1a64(&[
             &normalize_path(&identity.repo_root),
             &normalize_path(&identity.selected_catalog_root),
             &identity.resolved_selector,
             identity.resolved_profile.as_deref().unwrap_or(""),
+            identity.surface.as_str(),
         ]);
-        Self(format!("{catalog_slug}-{selector_slug}-{digest:016x}"))
+        Self(format!(
+            "{surface_prefix}{catalog_slug}-{selector_slug}-{digest:016x}"
+        ))
     }
 
     pub fn from_storage_name(value: impl Into<String>) -> Self {

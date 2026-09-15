@@ -38,6 +38,8 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Init,
     HelpTopic::Migrate,
     HelpTopic::Uninstall,
+    HelpTopic::Drafts,
+    HelpTopic::Draft,
 ];
 
 const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
@@ -67,6 +69,8 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("release", HelpTopic::Release),
     ("doctor", HelpTopic::Doctor),
     ("tasks", HelpTopic::Tasks),
+    ("drafts", HelpTopic::Drafts),
+    ("draft", HelpTopic::Draft),
     ("test", HelpTopic::Test),
     ("watch", HelpTopic::Watch),
     ("init", HelpTopic::Init),
@@ -89,6 +93,8 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
             "effigy tasks migrate",
             "effigy tasks unlock",
             "effigy tasks cache",
+            "effigy drafts",
+            "effigy draft",
             "effigy test",
             "effigy watch",
             "effigy doctor",

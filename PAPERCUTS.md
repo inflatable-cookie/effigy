@@ -7,6 +7,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Draft task bodies duplicate every `[tasks]` field in two places — 2026-09-15
+- Friction: `ManifestDraftTable` in `crates/effigy-manifest/src/draft_defs.rs` re-lists every `ManifestTask` field because serde `flatten` is incompatible with `deny_unknown_fields`, which the strict draft grammar needs. Adding a task runtime field now requires editing both structs plus the `into_manifest_draft` conversion.
+- Impact: a future task field can silently be accepted in `[tasks]` but rejected or dropped in `[drafts]`.
+- Possible fix: derive the draft table from `ManifestTask` with a shared field list, or split lifecycle metadata into a nested table so the body can reuse `ManifestTask` directly.
+- Surface: `crates/effigy-manifest/src/task_runtime.rs`, `crates/effigy-manifest/src/draft_defs.rs`.
+
+### [ ] Adding a `LoadedCatalog` field edits many test fixtures — 2026-09-15
+- Friction: `LoadedCatalog` is built with struct literals in seven test helpers across `src/runner/execute/**`, `crates/effigy-managed/**`, `crates/effigy-doctor/**`, and `crates/effigy-codegraph/**`; adding `draft_sources` meant touching every one.
+- Impact: catalog-model changes pay a mechanical fixture tax and are easy to leave half-updated.
+- Possible fix: add a `LoadedCatalog::for_test(...)` constructor or a `Default`-based fixture helper and migrate the literals.
+- Surface: `crates/effigy-manifest/src/loaded_catalog.rs`, test helpers across the workspace.
+
 ### [ ] Graph skill guidance must be edited in two parity-locked copies — 2026-09-15
 - Friction: `.agents/skills/effigy/**` is the owned/authoritative skill surface, but `documentation_coverage_tests::project_local_and_distributed_effigy_skills_have_semantic_parity` requires `skills/effigy/**` to be byte-identical (apart from the local internal metadata block). Documenting a new graph flag means editing an unowned path or failing the parity test.
 - Impact: a worker following owned-path discipline cannot update the authoritative skill doc without a one-sided edit that fails CI.

@@ -1,3 +1,4 @@
+mod drafts;
 mod error;
 mod listing;
 mod parsing;
@@ -8,8 +9,12 @@ mod view;
 
 use std::path::PathBuf;
 
+pub use drafts::{
+    list_drafts, render_draft_listing_json, render_draft_listing_text, DraftProjection,
+    ListDraftsRequest, ListDraftsResult, DRAFTS_SCHEMA,
+};
 pub use effigy_core::resolver::ResolutionMode;
-pub use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
+pub use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector, TaskSurface};
 pub use error::EffigyTasksError;
 pub use listing::{
     list_tasks, render_task_listing_json, render_task_listing_text, ListTasksRequest,

@@ -10,12 +10,12 @@ pub(super) fn render_cache_hit_output(
 ) -> Result<String, RunnerError> {
     if output_json {
         return super::json_payload::render_task_cache_hit_json(
-            &context.selector.task_name,
             context.selector,
             context.repo_for_task(),
             context.command(),
             reason,
             fingerprint,
+            context.selection,
         );
     }
 

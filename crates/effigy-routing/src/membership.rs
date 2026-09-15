@@ -47,6 +47,7 @@ pub fn load_effective_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalo
             .manifest_defined_catalog_alias()
             .map(str::to_owned)
             .unwrap_or_else(|| default_alias(&catalog_root, workspace_root));
+        let draft_sources = effigy_manifest::draft_source_map(&loaded.value_sources);
         let bundle_root = loaded.bundle_root;
         let manifest = loaded.manifest;
 
@@ -71,6 +72,7 @@ pub fn load_effective_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalo
                 .map(|defer| defer.explicitly_deferred_builtins())
                 .unwrap_or_default(),
             manifest,
+            draft_sources,
         });
     }
 
@@ -195,6 +197,7 @@ pub fn load_isolated_catalog(
         .map(str::to_owned)
         .unwrap_or_else(|| default_alias(&canonical_root, &canonical_root));
     let bundle_root = loaded.bundle_root;
+    let draft_sources = effigy_manifest::draft_source_map(&loaded.value_sources);
     let manifest = loaded.manifest;
     Ok(LoadedCatalog {
         alias,
@@ -209,6 +212,7 @@ pub fn load_isolated_catalog(
             .map(|defer| defer.explicitly_deferred_builtins())
             .unwrap_or_default(),
         manifest,
+        draft_sources,
     })
 }
 

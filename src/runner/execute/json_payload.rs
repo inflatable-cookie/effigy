@@ -6,17 +6,18 @@ use serde_json::json;
 use effigy_ui::encode_json;
 
 use crate::runner::error::RunnerError;
+use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;
 
 pub(super) fn render_task_cache_hit_json(
-    task_name: &str,
     selector: &TaskSelector,
     cwd: &std::path::Path,
     command: &str,
     reason: &str,
     fingerprint: &str,
+    selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
-    let mut payload = payload::task_run_payload(task_name, selector, cwd, command, Some(0), "", "");
+    let mut payload = payload::task_run_payload(selector, cwd, command, Some(0), "", "", selection);
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("cached".to_owned(), json!(true));
         obj.insert(
@@ -32,16 +33,16 @@ pub(super) fn render_task_cache_hit_json(
 }
 
 pub(super) fn render_task_command_json(
-    task_name: &str,
     selector: &TaskSelector,
     cwd: &std::path::Path,
     command: &str,
     exit_code: Option<i32>,
     stdout: &str,
     stderr: &str,
+    selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
     let payload =
-        payload::task_run_payload(task_name, selector, cwd, command, exit_code, stdout, stderr);
+        payload::task_run_payload(selector, cwd, command, exit_code, stdout, stderr, selection);
     encode_task_run_json(&payload)
 }
 

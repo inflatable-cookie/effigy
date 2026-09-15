@@ -31,10 +31,11 @@ use crate::command_surface;
 use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, HelpGroup, HelpTopic, InternalContainerLeaseReaperArgs,
-    InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
-    InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
+    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
+    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
+    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, PapercutsArgs, PapercutsSubcommand,
+    RhaiArgs, RhaiSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation,
+    TasksArgs, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -97,6 +98,8 @@ where
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
         "tasks" => parse_tasks(args),
+        "drafts" => parse_drafts(args),
+        "draft" => parse_draft(args),
         "script" => parse_internal_script_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
@@ -1264,6 +1267,98 @@ where
         status_all,
         output_json,
         pretty_json,
+    }))
+}
+
+fn parse_drafts<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut filter: Option<String> = None;
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut pretty_json = true;
+    let mut pretty_seen = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--pretty" => {
+                let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
+                pretty_json = parse_pretty_bool(value)?;
+                pretty_seen = true;
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Drafts)),
+            other if !other.starts_with('-') && filter.is_none() => {
+                filter = Some(other.to_owned());
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if !output_json && pretty_seen {
+        return Err(CliParseError::InvalidArguments(
+            "`--pretty` is only supported together with `--json` for `effigy drafts`".to_owned(),
+        ));
+    }
+
+    Ok(Command::Drafts(DraftsArgs {
+        repo_override,
+        filter,
+        output_json,
+        pretty_json,
+    }))
+}
+
+fn parse_draft<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut selector: Option<String> = None;
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut passthrough: Vec<String> = Vec::new();
+    let mut after_separator = false;
+
+    while let Some(arg) = args.next() {
+        if after_separator {
+            passthrough.push(arg);
+            continue;
+        }
+        match arg.as_str() {
+            "--" => {
+                after_separator = true;
+                passthrough.push(arg);
+            }
+            "--json" => {
+                output_json = true;
+                passthrough.push(arg);
+            }
+            "--repo" => {
+                let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--repo".to_owned(),
+                })?;
+                repo_override = Some(PathBuf::from(&value));
+                passthrough.push(arg);
+                passthrough.push(value);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Draft)),
+            other if !other.starts_with('-') && selector.is_none() => {
+                selector = Some(other.to_owned());
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let selector = selector.ok_or(CliParseError::MissingTaskNameValue)?;
+    Ok(Command::Draft(DraftArgs {
+        repo_override,
+        selector,
+        args: passthrough,
+        output_json,
     }))
 }
 

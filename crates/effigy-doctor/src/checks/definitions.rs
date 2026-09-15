@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::catalog_checks::{
-    run_environment_tools_check, run_health_task_check, run_manifest_conflicts_check,
-    run_task_references_check,
+    run_draft_lifecycle_check, run_environment_tools_check, run_health_task_check,
+    run_manifest_conflicts_check, run_task_references_check,
 };
 use super::graph_checks::run_graph_index_check;
 use super::scan_checks::{
@@ -41,7 +41,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 12] = [
+const DOCTOR_CHECKS: [DoctorCheckDefinition; 13] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         progress_label: None,
@@ -56,6 +56,11 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 12] = [
         name: "task_references",
         progress_label: None,
         run: run_task_references_check,
+    },
+    DoctorCheckDefinition {
+        name: "draft_lifecycle",
+        progress_label: None,
+        run: run_draft_lifecycle_check,
     },
     DoctorCheckDefinition {
         name: "graph_index",

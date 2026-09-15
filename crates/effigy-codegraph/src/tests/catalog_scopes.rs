@@ -42,6 +42,7 @@ fn loaded_catalog(
         defer_run: None,
         deferred_builtins: BTreeSet::new(),
         depth,
+        draft_sources: Default::default(),
     }
 }
 

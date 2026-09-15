@@ -288,6 +288,17 @@ fn index_step_table(
             Confidence::Exact,
         )?;
     }
+    if let Some(draft) = step.draft.as_deref() {
+        push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-step-draft",
+            draft,
+            &format!("{label}:draft"),
+            SemanticOrigin::new(file, extractor_id, extractor_version),
+            Confidence::Exact,
+        )?;
+    }
     if let Some(rhai) = step.rhai.as_deref() {
         push_unresolved_edge(
             sink,
@@ -386,6 +397,17 @@ pub(super) fn index_run_step_raw(
                     "task-step-task",
                     task,
                     &format!("{label}:task"),
+                    SemanticOrigin::new(file, extractor_id, extractor_version),
+                    Confidence::Exact,
+                )?;
+            }
+            if let Some(draft) = table.get("draft").and_then(Value::as_str) {
+                push_unresolved_edge(
+                    sink,
+                    owner_id,
+                    "task-step-draft",
+                    draft,
+                    &format!("{label}:draft"),
                     SemanticOrigin::new(file, extractor_id, extractor_version),
                     Confidence::Exact,
                 )?;

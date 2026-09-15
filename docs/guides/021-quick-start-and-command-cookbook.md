@@ -255,6 +255,18 @@ effigy tasks --resolve app/build
 
 Use these before running unfamiliar tasks.
 
+### Reach temporary proofs without polluting the catalog
+
+```sh
+effigy drafts
+effigy draft provider-smoke
+effigy draft provider-smoke -- --verbose
+```
+
+`[drafts]` entries stay out of `effigy tasks`, help, completion, and default
+status queries. `effigy drafts` reports each draft's purpose, lifecycle, and
+composed source, and `effigy draft` runs one through the ordinary pipeline.
+
 ### Check health and explain what Effigy sees
 
 ```sh

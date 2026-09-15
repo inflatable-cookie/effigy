@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use effigy_manifest::{resolve_task_execution_binding, LoadedCatalog};
-use effigy_routing::select_catalog_and_task;
+use effigy_routing::{select_catalog_and_draft, select_catalog_and_task};
 use effigy_tasks::parse_task_reference_invocation;
 
 use super::task_graph;
@@ -18,6 +18,28 @@ pub(super) fn check_task_references(catalogs: &[LoadedCatalog], state: &mut Doct
                 reference,
             );
         });
+        task_graph::for_each_manifest_draft_task_reference(
+            &catalog.manifest,
+            |draft_name, reference| {
+                checker.validate_task_reference(
+                    &catalog.catalog_root,
+                    &catalog.manifest_path,
+                    draft_name,
+                    reference,
+                );
+            },
+        );
+        task_graph::for_each_manifest_draft_reference(
+            &catalog.manifest,
+            |draft_name, reference| {
+                checker.validate_draft_reference(
+                    &catalog.catalog_root,
+                    &catalog.manifest_path,
+                    draft_name,
+                    reference,
+                );
+            },
+        );
     }
 }
 
@@ -86,6 +108,67 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
                 self.state,
                 manifest_path,
                 task_name,
+                reference,
+            );
+        }
+    }
+
+    /// Validate one explicit `{ draft = "..." }` composition step.
+    ///
+    /// Resolution runs on the draft surface only; an unresolved or ambiguous
+    /// draft is reported with its source manifest so removing a referenced
+    /// draft is actionable.
+    fn validate_draft_reference(
+        &mut self,
+        reference_cwd: &Path,
+        manifest_path: &Path,
+        draft_name: &str,
+        reference: &str,
+    ) {
+        let (selector, _) = match parse_task_reference_invocation(reference) {
+            Ok(value) => value,
+            Err(error) => {
+                task_references::add_invalid_reference_syntax(
+                    self.state,
+                    manifest_path,
+                    draft_name,
+                    reference,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+
+        let selection = match select_catalog_and_draft(&selector, self.catalogs, reference_cwd) {
+            Ok(selection) => selection,
+            Err(error) => {
+                task_references::add_unresolved_reference(
+                    self.state,
+                    manifest_path,
+                    draft_name,
+                    reference,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+
+        let execution_binding = resolve_task_execution_binding(
+            &selection.catalog.manifest,
+            &selector.task_name,
+            selection.task,
+        )
+        .ok()
+        .flatten();
+
+        if selection.task.run.is_none()
+            && selection.task.mode.is_none()
+            && execution_binding.is_none()
+        {
+            task_references::add_non_runnable_reference(
+                self.state,
+                manifest_path,
+                draft_name,
                 reference,
             );
         }
