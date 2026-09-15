@@ -61,7 +61,7 @@ and blocked in verification; `g10.001` through `g10.005` are complete.
 Dispatch `g10.007` through its committed Queue handoff. After its closeout,
 resume the existing g10.006 Queue task and retained worker to rebase and
 revalidate PR #109. Effigy release and S3 retirement remain separately gated.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:f51d5af6f0617f512b47ec1800af2a4dfebc3d96156843d8f24118d25fa363f7 -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:74b7940539f4ed87e62b25a9b35339afeb81b9a2dcbdc6e8ddfcbce9e9abe72c -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
@@ -71,5 +71,6 @@ revalidate PR #109. Effigy release and S3 retirement remain separately gated.
 | g10.003 | complete | none | 8 | sha256:f51ae9d2f79a84dfa1aa970575d37e10442574d5025015bf725258c72f2bd9a5 |
 | g10.004 | complete | none | 8 | sha256:493fff197276ab92aab90e09838bed45ba1de970a3a5d11cbc5fa8091e719e5d |
 | g10.005 | complete | none | 8 | sha256:bbdc3e4907f88ceb64be891fff87847854e123e4d552c565080fcda70a4d8881 |
+| g10.006 | complete | none | 8 | sha256:b0134c685fb320d7a8acdcd4f0db4a6765270c3dd8b8bb61496cad0682e6dc49 |
 | g10.007 | complete | none | 8 | sha256:04342987457e1bea973556297a4bef39e1592794e0dd3d52ebcb4457ae915995 |
 <!-- northstar:lifecycle:end -->
