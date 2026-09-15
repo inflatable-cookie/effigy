@@ -63,7 +63,7 @@ Primary ownership is fixed as follows:
 
 | Topic | Primary commands and shapes |
 | --- | --- |
-| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `watch`, `doctor`, `init` |
+| `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
@@ -74,6 +74,11 @@ These names are help topics, not route prefixes. Canonical detail uses
 `effigy <command> --help`; `effigy help <command>` remains available where
 current deferral permits it. No multi-token
 `effigy help <group> <command>` grammar is required by this contract.
+
+`draft` and `drafts` are additive direct work commands governed by contract
+[`046`](./046-published-and-draft-task-surface-contract.md). They explicitly
+select or inventory provisional task definitions; they do not turn the `work`
+help topic into an executable namespace or change flat published-task routing.
 
 ## Repository-Intelligence Contract
 

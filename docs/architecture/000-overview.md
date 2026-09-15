@@ -1,7 +1,7 @@
 # Effigy Architecture Overview
 
 Status: active
-Updated: 2026-08-29
+Updated: 2026-09-15
 
 Effigy is a Rust CLI task runner with two responsibility layers:
 
@@ -59,6 +59,9 @@ Use these docs intentionally:
 - [027-catalog-scoped-code-graph.md](./027-catalog-scoped-code-graph.md) defines
   catalog-derived graph scopes, lazy segmented indexing, and shared versus
   independent storage
+- [028-published-and-draft-task-surfaces.md](./028-published-and-draft-task-surfaces.md)
+  separates maintained published selectors from lifecycle-labelled provisional
+  drafts without creating a second execution runtime
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
@@ -69,6 +72,9 @@ Use these docs intentionally:
 - [`contract/045`](../contracts/045-catalog-scoped-code-graph-contract.md)
   defines catalog graph grammar, selection, storage, refresh, and query
   isolation
+- [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
+  defines published/draft manifest grammar, discovery, routing, reference
+  direction, expiry evidence, and execution compatibility
 
 For runtime/container behavior rules, prefer the active contracts:
 

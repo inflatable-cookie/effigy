@@ -16,8 +16,9 @@ This folder contains both:
 Active core anchors for the reusable Effigy repo are the provider-neutral and
 domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
 `030`, `031`, `032`, `033`, `034`, `035`, `036`, `037`, `038`, `039`, and
-`040`, plus documentation-graph contract `041` and active external skill-task
-contract `042`, plus feature-placement and surface-migration contract `043`.
+`040`, plus documentation-graph contract `041`, external skill-task contract
+`042`, feature-placement and surface-migration contract `043`, catalog-scoped
+graph contract `045`, and published/draft task-surface contract `046`.
 
 The older product-specific contracts in this folder remain as historical
 evidence and concrete examples. They are not current core ownership anchors for
@@ -218,6 +219,7 @@ new reusable-core work.
 | `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX/source/support/publication/update rules, release/distribution ownership, or S3 consumer migration state | Archived strict spec `115`; focused parity, compatibility, deterministic artifact, offline, provenance, release-safety, docs, JSON, and full Effigy QA during implementation |
 | `044-rhai-storage-create-only-contract.md` | Platform maintainers | Atomic create-if-absent semantics for Rhai object storage, compatibility, collision diagnostics, and redaction | Focused `effigy-rhai` request/collision fixtures plus full Effigy QA |
 | `045-catalog-scoped-code-graph-contract.md` | Product architecture and platform maintainers | Catalog graph grammar, membership interaction, scope selection, graph paths, storage schema, freshness, query predicates, fan-out, docs-context isolation, or JSON evidence | Focused manifest, routing, codegraph, CLI, JSON, watch, timeout, and docs-context proofs plus full Effigy QA |
+| `046-published-and-draft-task-surface-contract.md` | Task manifest, discovery, routing, and execution maintainers | Published/draft grammar, discovery isolation, lifecycle metadata, catalog routing, reference direction, status identity, expiry evidence, or compatibility | Focused manifest, routing, CLI, help/completion, execution, status, doctor, JSON, docs, and full workspace proofs |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -269,10 +271,10 @@ role:
 | `043` | semantic core, grouped-command preview, provider/asset placement, migration gates |
 | `044` | retained Rhai storage exclusive-create boundary |
 | `045` | catalog-scoped code graph selection, refresh, and storage isolation |
+| `046` | published/draft task identity, discovery, lifecycle, and execution boundary |
 
 ## Next Task
 
-Dispatch ready task `g10.007` through its committed Northstar Queue handoff.
-After its maintenance merge, resume retained g10.006 to rebase and revalidate
-PR #109. Acowtancy remains evidence-only until that implementation closes;
-Effigy release and S3 retirement remain separately gated.
+Dispatch ready task `g10.008` through its committed Northstar Queue handoff.
+Tasks `g10.006` and `g10.007` are complete. Local-only drafts, automatic
+pruning, Effigy release, and S3 retirement remain separately gated.

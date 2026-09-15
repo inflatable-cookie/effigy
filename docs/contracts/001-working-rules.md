@@ -93,8 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch the sole ready task `g10.007` through its committed Northstar Queue
-handoff. It is a delivery-order prerequisite, not a mutation of the already-
-dispatched g10.006 Queue task. After maintenance closeout, resume the retained
-g10.006 worker to rebase and revalidate PR #109. Effigy release and S3 retirement
-remain separately gated.
+Dispatch sole ready task `g10.008` through its committed Northstar Queue
+handoff. Tasks `g10.006` and `g10.007` are complete. Machine-local drafts,
+automatic pruning, Effigy release, and S3 retirement remain separately gated.

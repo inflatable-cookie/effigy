@@ -101,6 +101,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — promoted catalog-derived segmented graph indexing and independent storage
 - [`2026-09/15-080920-dependency-maintenance-unblock-planning.md`](./2026-09/15-080920-dependency-maintenance-unblock-planning.md)
   — isolated base Cargo supply-chain repair from the reviewed graph PR
+- [`2026-09/15-170538-published-and-draft-task-planning.md`](./2026-09/15-170538-published-and-draft-task-planning.md)
+  — promoted compatible published and provisional task surfaces
 
 ## Log template
 
@@ -136,5 +138,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.007`, then resume retained g10.006 after maintenance closeout.
-Effigy release remains a separate operator-gated mutation.
+Dispatch `g10.008` through Northstar Queue. Effigy release, local-only drafts,
+and automatic task pruning remain separate operator-owned decisions.

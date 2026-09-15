@@ -11,11 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.007`](./007-refresh-vulnerable-and-yanked-cargo-lock.md) — ready;
-  repair the base Cargo resolution before the retained g10.006 PR resumes.
+- [`g10.008`](./008-published-and-draft-task-surfaces.md) — ready; separate
+  maintained published selectors from lifecycle-labelled provisional drafts.
 
-This is the sole dispatchable frontier task. `g10.006` is already dispatched
-and blocked in verification; `g10.001` through `g10.005` are complete.
+This is the sole dispatchable frontier task. `g10.001` through `g10.007` are
+complete.
 
 ## Boundaries
 
@@ -48,19 +48,27 @@ and blocked in verification; `g10.001` through `g10.005` are complete.
 
 ## Dependency-maintenance prerequisite
 
-- PR #109 implements `g10.006` and has an accepted exact-head review at
-  `5872b72377f252a8ae5586dd22a7f2bfc651e634`.
-- Clean main independently fails cargo-deny on RUSTSEC-2026-0285 in
-  `rustls 0.23.43` and yanked `chacha20 0.10.1`; PR #109 changes none of the
-  dependency-policy files.
-- The operator authorized separate `g10.007`. It lands first without changing
-  g10.006 scope or its frozen Queue dependency list.
+- `g10.007` repaired the base Cargo resolution through PR #110 without widening
+  the retained graph lane.
+- `g10.006` then rebased, revalidated, and merged through PR #109. Both tasks
+  have terminal revision-8 lifecycle records.
+
+## Task-surface intake
+
+- `[tasks]` remains the compatible published repository command interface.
+- Full-table `[drafts]` carries temporary proofs and environments behind
+  explicit inventory and execution commands.
+- Draft expiry is visible cleanup evidence, never automatic deletion or an
+  execution block.
+- Machine-local drafts and pruning remain future decisions, not part of
+  `g10.008`.
 
 ## Next Task
 
-Dispatch `g10.007` through its committed Queue handoff. After its closeout,
-resume the existing g10.006 Queue task and retained worker to rebase and
-revalidate PR #109. Effigy release and S3 retirement remain separately gated.
+Dispatch `g10.008` through its committed Queue handoff. After hook-owned
+closeout, return to Chatterbox for the next planning choice. Effigy release,
+machine-local drafts, automatic pruning, and S3 retirement remain separately
+gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:74b7940539f4ed87e62b25a9b35339afeb81b9a2dcbdc6e8ddfcbce9e9abe72c -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
