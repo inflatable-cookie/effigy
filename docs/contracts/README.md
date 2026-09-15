@@ -272,6 +272,7 @@ role:
 
 ## Next Task
 
-Dispatch ready task `g10.006` through its committed Northstar Queue handoff.
-Acowtancy remains evidence-only until the Effigy implementation closes; Effigy
-release and S3 retirement remain separately gated.
+Dispatch ready task `g10.007` through its committed Northstar Queue handoff.
+After its maintenance merge, resume retained g10.006 to rebase and revalidate
+PR #109. Acowtancy remains evidence-only until that implementation closes;
+Effigy release and S3 retirement remain separately gated.

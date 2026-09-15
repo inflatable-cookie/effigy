@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.006
+Approved frontier: g10.007
 Updated: 2026-09-15
 
 ## Lifecycle state
@@ -9,7 +9,9 @@ Updated: 2026-09-15
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
 open; `g10.001` through `g10.005` are complete. The operator promoted catalog-
-scoped monorepo graph indexing as `g10.006` on 2026-09-15.
+scoped monorepo graph indexing as `g10.006` on 2026-09-15, then promoted
+lockfile-bounded `g10.007` as its base-maintenance prerequisite after PR #109
+was blocked by pre-existing cargo-deny findings.
 
 ## Generation history
 
@@ -44,6 +46,6 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch [`g10.006`](./g10/006-catalog-scoped-code-graph.md) through Northstar
-Queue. Return to Chatterbox after closeout for Acowtancy adoption evidence and
-the next runway decision.
+Dispatch [`g10.007`](./g10/007-refresh-vulnerable-and-yanked-cargo-lock.md)
+through Northstar Queue. After it closes, resume the retained `g10.006` Queue
+task to rebase and revalidate PR #109.

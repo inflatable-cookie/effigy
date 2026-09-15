@@ -47,5 +47,6 @@ Other planning specs:
 ## Next Task
 
 No strict lane is active or ready. Specs `118` through `124` are archived.
-Execute ready task `g10.006` from its architecture and contract; no supporting
-spec is needed. Effigy release authority stays separate.
+Execute ready lockfile-maintenance task `g10.007`; no supporting spec is needed.
+After it closes, retained g10.006 rebases and revalidates PR #109. Effigy release
+authority stays separate.

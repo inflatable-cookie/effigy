@@ -93,7 +93,8 @@ polish lane.
 
 ## Next Task
 
-Dispatch the sole ready task `g10.006` through its committed Northstar Queue
-handoff. Return to Chatterbox after hook-owned closeout for Acowtancy adoption
-evidence and the next runway decision. Effigy release and S3 retirement remain
-separately gated.
+Dispatch the sole ready task `g10.007` through its committed Northstar Queue
+handoff. It is a delivery-order prerequisite, not a mutation of the already-
+dispatched g10.006 Queue task. After maintenance closeout, resume the retained
+g10.006 worker to rebase and revalidate PR #109. Effigy release and S3 retirement
+remain separately gated.

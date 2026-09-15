@@ -11,10 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.006`](./006-catalog-scoped-code-graph.md) — ready; make effective
-  catalogs independently lazy graph scopes with opt-in independent storage.
+- [`g10.007`](./007-refresh-vulnerable-and-yanked-cargo-lock.md) — ready;
+  repair the base Cargo resolution before the retained g10.006 PR resumes.
 
-This is the sole frontier task. `g10.001` through `g10.005` are complete.
+This is the sole dispatchable frontier task. `g10.006` is already dispatched
+and blocked in verification; `g10.001` through `g10.005` are complete.
 
 ## Boundaries
 
@@ -45,11 +46,21 @@ This is the sole frontier task. `g10.001` through `g10.005` are complete.
 - Root queries prune segmented members. One-catalog work never refreshes a
   sibling; whole-workspace fan-out is explicit.
 
+## Dependency-maintenance prerequisite
+
+- PR #109 implements `g10.006` and has an accepted exact-head review at
+  `5872b72377f252a8ae5586dd22a7f2bfc651e634`.
+- Clean main independently fails cargo-deny on RUSTSEC-2026-0285 in
+  `rustls 0.23.43` and yanked `chacha20 0.10.1`; PR #109 changes none of the
+  dependency-policy files.
+- The operator authorized separate `g10.007`. It lands first without changing
+  g10.006 scope or its frozen Queue dependency list.
+
 ## Next Task
 
-Dispatch `g10.006` through its committed Queue handoff. Return to Chatterbox
-after closeout for Acowtancy adoption evidence and the next runway decision.
-Effigy release and S3 retirement remain separately gated.
+Dispatch `g10.007` through its committed Queue handoff. After its closeout,
+resume the existing g10.006 Queue task and retained worker to rebase and
+revalidate PR #109. Effigy release and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:aed2437218acc6e08664963694cf53a5d7f837eaff7619cff772b6fa8a185833 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
