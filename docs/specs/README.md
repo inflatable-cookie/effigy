@@ -47,5 +47,5 @@ Other planning specs:
 ## Next Task
 
 No strict lane is active or ready. Specs `118` through `124` are archived.
-Use Northstar Atlas with the operator before compiling another strategic
-runway; Effigy release authority stays separate.
+Execute ready task `g10.006` from its architecture and contract; no supporting
+spec is needed. Effigy release authority stays separate.

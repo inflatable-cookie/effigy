@@ -56,6 +56,9 @@ Use these docs intentionally:
 - [026-feature-placement-and-command-surface.md](./026-feature-placement-and-command-surface.md)
   defines semantic core ownership, group-first command organization, provider
   placement, catalog-pack constraints, and release/distribution separation
+- [027-catalog-scoped-code-graph.md](./027-catalog-scoped-code-graph.md) defines
+  catalog-derived graph scopes, lazy segmented indexing, and shared versus
+  independent storage
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
@@ -63,6 +66,9 @@ Use these docs intentionally:
   defines isolated skill loading and source/target path semantics
 - [`contract/043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
   defines feature-placement gates and alias-stable migration rules
+- [`contract/045`](../contracts/045-catalog-scoped-code-graph-contract.md)
+  defines catalog graph grammar, selection, storage, refresh, and query
+  isolation
 
 For runtime/container behavior rules, prefer the active contracts:
 

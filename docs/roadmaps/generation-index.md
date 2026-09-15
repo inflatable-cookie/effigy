@@ -1,15 +1,15 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.004, g10.005
-Updated: 2026-09-14
+Approved frontier: g10.006
+Updated: 2026-09-15
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.003` are complete. The operator promoted two
-independent bounded reliability repairs, `g10.004` and `g10.005`, on 2026-09-14.
+open; `g10.001` through `g10.005` are complete. The operator promoted catalog-
+scoped monorepo graph indexing as `g10.006` on 2026-09-15.
 
 ## Generation history
 
@@ -24,7 +24,7 @@ independent bounded reliability repairs, `g10.004` and `g10.005`, on 2026-09-14.
 | [`g07`](./archive/g07.md) | archived | native code graph, query quality, setup, and agent adoption |
 | [`g08`](./archive/g08.md) | archived | graph-aware scans, dependencies, release integrity, docs, and catalog packs |
 | [`g09`](./archive/g09.md) | archived | operator/consumer clarity, docs-context proof, and local-link recovery |
-| [`g10`](./g10/README.md) | active | agent-native execution and bounded operability repairs |
+| [`g10`](./g10/README.md) | active | agent-native execution, bounded operability, and catalog-scoped repository intelligence |
 
 ## Rollover history
 
@@ -44,6 +44,6 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch [`g10.004`](./g10/004-place-log-index-entry-under-active-logs.md) and
-[`g10.005`](./g10/005-stabilize-container-startup-sigint-test.md) independently
-through Northstar Queue. No serial task edge exists between them.
+Dispatch [`g10.006`](./g10/006-catalog-scoped-code-graph.md) through Northstar
+Queue. Return to Chatterbox after closeout for Acowtancy adoption evidence and
+the next runway decision.

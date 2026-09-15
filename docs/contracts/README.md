@@ -169,6 +169,9 @@ new reusable-core work.
   semantic core placement, group-first alias-stable commands, catalog-pack
   simplicity and publication, release/distribution separation, and the S3
   consumer gate.
+- [`045-catalog-scoped-code-graph-contract.md`](./045-catalog-scoped-code-graph-contract.md):
+  catalog-derived graph scopes, manifest posture, deterministic selection,
+  lazy refresh, shared/independent storage, and no-sibling-work guarantees.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -214,6 +217,7 @@ new reusable-core work.
 | `042-external-skill-task-runner-contract.md` | Platform maintainers | Skill source/consumer target separation, isolated task loading, path classes, nested dispatch, rejection boundaries, or JSON evidence | Planning review against `g08.037`; focused CLI, context, manifest, routing, execution, Rhai, JSON, docs, and Northstar-skill proofs |
 | `043-feature-placement-and-surface-migration-contract.md` | Product architecture and platform maintainers | Core placement criteria, command grouping or alias policy, repository-intelligence ownership, catalog-pack UX/source/support/publication/update rules, release/distribution ownership, or S3 consumer migration state | Archived strict spec `115`; focused parity, compatibility, deterministic artifact, offline, provenance, release-safety, docs, JSON, and full Effigy QA during implementation |
 | `044-rhai-storage-create-only-contract.md` | Platform maintainers | Atomic create-if-absent semantics for Rhai object storage, compatibility, collision diagnostics, and redaction | Focused `effigy-rhai` request/collision fixtures plus full Effigy QA |
+| `045-catalog-scoped-code-graph-contract.md` | Product architecture and platform maintainers | Catalog graph grammar, membership interaction, scope selection, graph paths, storage schema, freshness, query predicates, fan-out, docs-context isolation, or JSON evidence | Focused manifest, routing, codegraph, CLI, JSON, watch, timeout, and docs-context proofs plus full Effigy QA |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -264,11 +268,10 @@ role:
 | `042` | explicit external task source and consumer runtime target boundary |
 | `043` | semantic core, grouped-command preview, provider/asset placement, migration gates |
 | `044` | retained Rhai storage exclusive-create boundary |
+| `045` | catalog-scoped code graph selection, refresh, and storage isolation |
 
 ## Next Task
 
-`g10` remains open with no ready Northstar task after `g10.001` and `g10.002`
-completed. Consumers remain on the `007` section 6 adoption posture with cohort
-expansion unscheduled. Use Northstar Atlas with the operator before compiling a
-new task. Acowtancy stays read-only; Effigy release and S3 retirement remain
-separately gated.
+Dispatch ready task `g10.006` through its committed Northstar Queue handoff.
+Acowtancy remains evidence-only until the Effigy implementation closes; Effigy
+release and S3 retirement remain separately gated.

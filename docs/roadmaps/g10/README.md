@@ -11,14 +11,10 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.004`](./004-place-log-index-entry-under-active-logs.md) — ready; place
-  new log-index entries inside the canonical Active logs section.
-- [`g10.005`](./005-stabilize-container-startup-sigint-test.md) — ready;
-  stabilize the test harness for SIGINT during container startup.
+- [`g10.006`](./006-catalog-scoped-code-graph.md) — ready; make effective
+  catalogs independently lazy graph scopes with opt-in independent storage.
 
-The tasks have no dependency edge and may dispatch concurrently. Their mutable
-implementation scopes do not overlap. Integration front doors and lifecycle
-closeout are shared coordinator/hook surfaces and publish serially.
+This is the sole frontier task. `g10.001` through `g10.005` are complete.
 
 ## Boundaries
 
@@ -41,11 +37,19 @@ closeout are shared coordinator/hook surfaces and publish serially.
   `6ce994047c54486c2f38e9f33a882565b019ade7`.
 - Vendored skill portfolio sync remains triage-only and is not in this frontier.
 
+## Monorepo graph intake
+
+- Effective catalog membership and aliases are the only partition topology.
+- Member manifests opt into `[catalog.graph] segmented`; `independent` selects
+  a separate physical database and lock.
+- Root queries prune segmented members. One-catalog work never refreshes a
+  sibling; whole-workspace fan-out is explicit.
+
 ## Next Task
 
-Dispatch `g10.004` and `g10.005` independently through their committed
-handoffs. Return to Chatterbox after both close; Effigy release and S3
-retirement remain separately gated.
+Dispatch `g10.006` through its committed Queue handoff. Return to Chatterbox
+after closeout for Acowtancy adoption evidence and the next runway decision.
+Effigy release and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:aed2437218acc6e08664963694cf53a5d7f837eaff7619cff772b6fa8a185833 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

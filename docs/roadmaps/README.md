@@ -23,11 +23,12 @@ Queue execution record. “Effigy task” means a command selector.
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
 - Approved frontier:
-  [`g10.004`](./g10/004-place-log-index-entry-under-active-logs.md) and
-  [`g10.005`](./g10/005-stabilize-container-startup-sigint-test.md), independent
-  ready papercut repairs. `g10.001` through `g10.003` are complete.
+  [`g10.006`](./g10/006-catalog-scoped-code-graph.md), the sole ready task for
+  catalog-derived segmented graph indexing. `g10.001` through `g10.005` are
+  complete.
 - Active strict lane: none.
-- Dispatch handoff: none pending hook closeout.
+- Dispatch handoff:
+  [`g10.006`](../handoffs/20260915-071120-catalog-scoped-code-graph.md).
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
 
@@ -92,10 +93,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Dispatch `g10.004` and `g10.005` independently through Northstar Queue. Shared
-integration and hook-closeout surfaces publish serially; there is no task
-dependency edge. Effigy release execution and S3 retirement remain separately
-gated.
+Dispatch `g10.006` through Northstar Queue. After hook-owned closeout, return to
+Chatterbox for Acowtancy adoption evidence and the next runway decision. Effigy
+release execution and S3 retirement remain separately gated.
 
 ## Historical language boundary
 

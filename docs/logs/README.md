@@ -97,6 +97,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — reconciled g10.002 lifecycle completion across current planning front doors
 - [`2026-09/14-082254-effigy-papercut-frontier-planning.md`](./2026-09/14-082254-effigy-papercut-frontier-planning.md)
   — promoted two independent reliability repairs and closed one stale candidate
+- [`2026-09/15-071120-catalog-scoped-code-graph-planning.md`](./2026-09/15-071120-catalog-scoped-code-graph-planning.md)
+  — promoted catalog-derived segmented graph indexing and independent storage
 
 ## Log template
 
@@ -132,5 +134,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.004` and `g10.005` independently through Northstar Queue. Effigy
-release remains a separate operator-gated mutation.
+Dispatch `g10.006` through Northstar Queue. Effigy release remains a separate
+operator-gated mutation.
