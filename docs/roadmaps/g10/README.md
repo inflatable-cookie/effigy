@@ -30,6 +30,9 @@ complete.
 - [g10.002 Effigy-hosted lifecycle hook](002-adopt-effigy-hosted-lifecycle-hook.md)
   completed through Queue and published its terminal lifecycle record at
   revision 8. It changed no product priority and authorizes no sibling work.
+- [g10.009 prospective-merge protocol migration](009-prospective-merge-protocol-migration.md)
+  owns the operator-authorized v4 manifest update. It is configuration-only
+  and does not change the g10 product frontier.
 
 ## Papercut intake disposition
 
