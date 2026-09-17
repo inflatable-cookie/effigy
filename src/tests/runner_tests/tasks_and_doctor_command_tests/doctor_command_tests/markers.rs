@@ -18,7 +18,7 @@ critical = ["BLOCKER"]
     )
     .expect("write source");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity attention marker");
 
     assert_doctor_non_zero_contains(
@@ -55,7 +55,7 @@ doctor = false
     )
     .expect("write source");
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.attention-markers", "src/app.ts:1"]);
 }
@@ -69,11 +69,11 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.attention_markers]\nwarning = [\"TODO\"]\nhigh = [\"FIXME\"]\ncritical = [\"BLOCKER\"]\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.attention_markers]\nwarning = [\"TODO\"]\nhigh = [\"FIXME\"]\ncritical = [\"BLOCKER\"]\n",
     );
     fs::write(
         catalog_a.join("src/lib.rs"),
@@ -81,7 +81,7 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
     )
     .expect("write source");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog attention marker");
 
     assert_doctor_non_zero_contains(
@@ -93,7 +93,7 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-attention-markers.md"),
-        &["catalog_a/src/lib.rs:1", "[FIXME]"],
+        &["src/lib.rs:1", "[FIXME]"],
     );
 }
 
@@ -112,7 +112,7 @@ doctor = true
     );
     fs::write(root.join("src/app.ts"), "// eslint-disable\n").expect("write source");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on critical stale suppression");
 
     assert_doctor_non_zero_contains(
@@ -145,7 +145,7 @@ doctor = false
     );
     fs::write(root.join("src/app.ts"), "// eslint-disable\n").expect("write source");
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.stale-suppressions", "src/app.ts:1"]);
 }
@@ -159,11 +159,11 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.stale_suppressions]\nwarning = [\"eslint-disable-next-line\"]\nhigh = [\"#[allow(\"]\ncritical = [\"eslint-disable\"]\ndoctor = true\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.stale_suppressions]\nwarning = [\"eslint-disable-next-line\"]\nhigh = [\"#[allow(\"]\ncritical = [\"eslint-disable\"]\ndoctor = true\n",
     );
     fs::write(
         catalog_a.join("src/lib.rs"),
@@ -171,7 +171,7 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
     )
     .expect("write source");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog stale suppression");
 
     assert_doctor_non_zero_contains(
@@ -183,6 +183,6 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-stale-suppressions.md"),
-        &["catalog_a/src/lib.rs:1", "[#[allow(]"],
+        &["src/lib.rs:1", "[#[allow(]"],
     );
 }

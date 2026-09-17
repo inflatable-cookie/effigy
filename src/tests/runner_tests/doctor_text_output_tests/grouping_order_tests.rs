@@ -1,6 +1,6 @@
 use crate::runner::tests::prelude::{
-    assert_output_contains_all, create_workspace_dir, doctor_nonzero_rendered, fs, run_builtin_err,
-    run_doctor_err_from_cwd, temp_workspace, write_root_manifest,
+    assert_output_contains_all, doctor_nonzero_rendered, run_builtin_err, temp_workspace,
+    write_root_manifest,
 };
 
 #[test]
@@ -35,15 +35,14 @@ run = { task = "missing/task" }
 #[test]
 fn run_doctor_groups_findings_in_severity_first_order() {
     let root = temp_workspace("doctor-severity-order");
-    write_root_manifest(&root, "[catalog]\nalias = \"root\"\nunknown_key = true\n");
+    write_root_manifest(&root, "[tasks.alpha]\nrun = { task = \"missing/task\" }\n");
 
-    let err = run_doctor_err_from_cwd(&root, false);
+    let err = run_builtin_err(root, "doctor", &["--deep"]);
 
     let rendered = doctor_nonzero_rendered(err);
 
     let error_idx = rendered
-        .find("manifest.parse")
-        .or_else(|| rendered.find("manifest.schema.unsupported_key"))
+        .find("tasks.references.resolve")
         .expect("expected error finding");
     let warning_idx = rendered
         .find("health.task.discovery")
@@ -62,15 +61,13 @@ fn run_doctor_groups_findings_in_severity_first_order() {
 #[test]
 fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
     let root = temp_workspace("doctor-same-severity-order");
-    let broken = create_workspace_dir(&root, "broken");
 
     write_root_manifest(
         &root,
-        "[catalog.members]\nbroken = \"broken\"\n\n[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
+        "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n\n[tasks.alpha]\nrun = { task = \"missing/task\" }\n",
     );
-    fs::write(broken.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");
 
-    let err = run_doctor_err_from_cwd(&root, false);
+    let err = run_builtin_err(root, "doctor", &["--deep"]);
 
     let rendered = doctor_nonzero_rendered(err);
 
@@ -78,8 +75,8 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
         .find("health.task.execute")
         .expect("expected health execute error finding");
     let parse_error_idx = rendered
-        .find("manifest.parse")
-        .expect("expected manifest parse error finding");
+        .find("tasks.references.resolve")
+        .expect("expected task reference error finding");
 
     assert!(
         health_error_idx < parse_error_idx,

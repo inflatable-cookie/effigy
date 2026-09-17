@@ -28,6 +28,10 @@ pub(super) fn run_builtin_doctor(
                     output_json: request.output_json,
                     fix: request.fix,
                     verbose: request.verbose,
+                    deep: request.deep,
+                    catalog: request.catalog,
+                    all_catalogs: request.all_catalogs,
+                    refresh: request.refresh,
                     explain: request.explain,
                 })
                 .map(Some)

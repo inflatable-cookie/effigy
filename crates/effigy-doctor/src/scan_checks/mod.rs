@@ -15,7 +15,7 @@ use effigy_scan::{
     StaleSuppressionScanOptions, StaleSuppressionScanResult, StaleSuppressionSeverity,
 };
 
-mod core;
+pub(crate) mod core;
 mod findings;
 mod integration;
 

@@ -7,17 +7,23 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         "doctor",
         &[
             "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
+            "Default doctor is structural-only; `--deep` adds content scans and the selected scope's `health` task.",
             "Explain task resolution with `effigy doctor <task> <args>`.",
             "Also surfaces runtime/backend context when Docker Desktop and Colima coexist.",
             "For running workspaces, reports `container.workspace-ownership` when managed volumes or the Bun install cache contain root-owned paths that conflict with the declared workspace user.",
         ],
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",
+            "effigy doctor --deep [--catalog <ALIAS> | --all-catalogs] [--refresh]",
             "effigy doctor <task> <args> [--json]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
             ("--fix", "Apply safe automatic remediations when available"),
+            ("--deep", "Run content scans and selected-scope health"),
+            ("--catalog <ALIAS>", "Select one effective catalog for deep work"),
+            ("--all-catalogs", "Explicitly fan out deep work across root and members"),
+            ("--refresh", "Bypass deep scan cache reads and replace successful entries"),
             (
                 "--verbose",
                 "Include expanded per-finding detail in text output",
@@ -30,6 +36,8 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             "effigy doctor --repo /path/to/workspace",
             "effigy doctor --fix",
             "effigy doctor --verbose",
+            "effigy doctor --deep",
+            "effigy doctor --deep --catalog api",
             "effigy doctor --verbose  # inspect Docker/Colima backend selection",
             "effigy doctor frontend/build -- --watch",
             "effigy --json doctor --repo /path/to/workspace",

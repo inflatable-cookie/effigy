@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 use super::*;
 
-pub(super) fn candidate_block_count(files: &[DuplicateBlockFile], seed_lines: usize) -> usize {
+pub(crate) fn candidate_block_count(files: &[DuplicateBlockFile], seed_lines: usize) -> usize {
     files
         .iter()
         .map(|file| {
@@ -15,14 +16,23 @@ pub(super) fn candidate_block_count(files: &[DuplicateBlockFile], seed_lines: us
         .sum()
 }
 
-pub(super) fn detect_duplicate_blocks(
+pub(crate) fn detect_duplicate_blocks(
     files: &[DuplicateBlockFile],
     options: &DuplicateBlockScanOptions,
+) -> Result<Vec<DuplicateBlockFinding>, ScanError> {
+    detect_duplicate_blocks_bounded(files, options, None)
+}
+
+pub(crate) fn detect_duplicate_blocks_bounded(
+    files: &[DuplicateBlockFile],
+    options: &DuplicateBlockScanOptions,
+    deadline: Option<Instant>,
 ) -> Result<Vec<DuplicateBlockFinding>, ScanError> {
     let seed_lines = options.thresholds.warn;
     let mut seed_map = BTreeMap::<String, Vec<DuplicateSeed>>::new();
     for (file_index, file) in files.iter().enumerate() {
         for start in 0..=file.lines.len().saturating_sub(seed_lines) {
+            ensure_deadline(deadline)?;
             let fingerprint = fingerprint_normalized_lines(
                 file.lines[start..start + seed_lines]
                     .iter()
@@ -38,6 +48,7 @@ pub(super) fn detect_duplicate_blocks(
     let mut findings = Vec::<DuplicateBlockFinding>::new();
     let mut seen = BTreeSet::<String>::new();
     for seeds in seed_map.into_values() {
+        ensure_deadline(deadline)?;
         if seeds.len() < options.thresholds.min_occurrences {
             continue;
         }
@@ -67,6 +78,15 @@ pub(super) fn detect_duplicate_blocks(
         findings.push(build_duplicate_block_finding(files, block, severity));
     }
     Ok(findings)
+}
+
+fn ensure_deadline(deadline: Option<Instant>) -> Result<(), ScanError> {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(ScanError::invocation(
+            "doctor scan budget exhausted during duplicate evaluation",
+        ));
+    }
+    Ok(())
 }
 
 fn select_distinct_file_occurrences(mut seeds: Vec<DuplicateSeed>) -> Vec<DuplicateSeed> {
@@ -240,9 +260,9 @@ where
     format!("{hash:016x}")
 }
 
-pub(super) struct DuplicateBlockFile {
-    pub(super) path: String,
-    pub(super) lines: Vec<NormalizedCodeLine>,
+pub(crate) struct DuplicateBlockFile {
+    pub(crate) path: String,
+    pub(crate) lines: Vec<NormalizedCodeLine>,
 }
 
 #[derive(Clone, Copy)]

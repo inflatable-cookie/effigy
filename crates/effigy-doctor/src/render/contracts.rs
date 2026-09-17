@@ -24,7 +24,28 @@ pub(super) fn doctor_json_payload(
     json!({
         "schema": "effigy.doctor.v1",
         "schema_version": 1,
-        "ok": report.summary.error == 0,
+        "ok": report.summary.error == 0 && report.complete,
+        "run": {
+            "mode": report.mode.as_str(),
+            "scopes": report.scopes.iter().map(|scope| json!({
+                "alias": scope.alias,
+                "root": scope.root,
+            })).collect::<Vec<_>>(),
+            "budget_ms": report.budget_ms,
+            "elapsed_ms": report.elapsed_ms,
+            "complete": report.complete,
+            "timeout_phase": report.timeout_phase,
+            "checks": report.check_runs.iter().map(|check| json!({
+                "name": check.name,
+                "state": check.state.as_str(),
+                "duration_ms": check.duration_ms,
+            })).collect::<Vec<_>>(),
+            "cache": {
+                "hits": report.cache.hits,
+                "misses": report.cache.misses,
+                "invalid_entries": report.cache.invalid_entries,
+            },
+        },
         "summary": {
             "checks": report.summary.checks,
             "pass": report.summary.pass,

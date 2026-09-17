@@ -20,6 +20,10 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
             output_json: true,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: Some(TaskInvocation {
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
@@ -74,6 +78,10 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
             output_json: true,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: Some(TaskInvocation {
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
@@ -181,6 +189,10 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
             output_json: true,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: Some(TaskInvocation {
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],

@@ -54,7 +54,7 @@ Then run something small and obvious:
 
 ```sh
 effigy test
-effigy doctor --verbose
+effigy doctor
 ```
 
 `dev`, `build`, and similar names are **tasks your manifest defines** (unless
@@ -270,12 +270,16 @@ composed source, and `effigy draft` runs one through the ordinary pipeline.
 ### Check health and explain what Effigy sees
 
 ```sh
-effigy doctor --verbose
+effigy doctor
+effigy doctor --deep
 effigy doctor --repo /path/to/workspace app/build --watch
 ```
 
-Use the second form when you want explain-mode output for a specific task
-and its passthrough args.
+Default doctor is structural-only and bounded to 10 seconds. Use `--deep` for
+enabled content scans plus the selected catalog's `health` task; deep mode is
+bounded to 120 seconds. `EFFIGY_DOCTOR_TIMEOUT_MS` overrides either budget and
+`0` disables it. Use the selector form when you want explain-mode output for a
+specific task and its passthrough args.
 
 ### Standardize tests and watch mode
 

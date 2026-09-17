@@ -83,6 +83,10 @@ fn parse_command_applies_leading_repo_to_doctor() {
             output_json: false,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: None,
         })
     );
@@ -105,6 +109,10 @@ fn parse_command_preserves_command_local_repo_override_over_leading_repo() {
             output_json: false,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: None,
         })
     );

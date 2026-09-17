@@ -1371,10 +1371,26 @@ where
     let mut output_json = false;
     let mut fix = false;
     let mut verbose = false;
+    let mut deep = false;
+    let mut catalog = None;
+    let mut all_catalogs = false;
+    let mut refresh = false;
     let mut explain: Option<TaskInvocation> = None;
+    let mut explain_passthrough = false;
 
     while let Some(arg) = args.next() {
         if let Some(request) = explain.as_mut() {
+            if !explain_passthrough
+                && matches!(
+                    arg.as_str(),
+                    "--deep" | "--catalog" | "--all-catalogs" | "--refresh"
+                )
+            {
+                return Err(CliParseError::InvalidArguments(
+                    "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`".to_owned(),
+                ));
+            }
+            explain_passthrough |= arg == "--";
             request.args.push(arg);
             continue;
         }
@@ -1383,6 +1399,14 @@ where
             "--json" => output_json = true,
             "--fix" => fix = true,
             "--verbose" => verbose = true,
+            "--deep" => deep = true,
+            "--catalog" => {
+                catalog = Some(args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--catalog".to_owned(),
+                })?);
+            }
+            "--all-catalogs" => all_catalogs = true,
+            "--refresh" => refresh = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Doctor)),
             other => {
                 explain = Some(TaskInvocation {
@@ -1393,13 +1417,50 @@ where
         }
     }
 
+    validate_doctor_flags(
+        deep,
+        catalog.as_deref(),
+        all_catalogs,
+        refresh,
+        explain.as_ref(),
+    )?;
+
     Ok(Command::Doctor(DoctorArgs {
         repo_override,
         output_json,
         fix,
         verbose,
+        deep,
+        catalog,
+        all_catalogs,
+        refresh,
         explain,
     }))
+}
+
+fn validate_doctor_flags(
+    deep: bool,
+    catalog: Option<&str>,
+    all_catalogs: bool,
+    refresh: bool,
+    explain: Option<&TaskInvocation>,
+) -> Result<(), CliParseError> {
+    if catalog.is_some() && all_catalogs {
+        return Err(CliParseError::InvalidArguments(
+            "`--catalog` and `--all-catalogs` are mutually exclusive".to_owned(),
+        ));
+    }
+    if !deep && (catalog.is_some() || all_catalogs || refresh) {
+        return Err(CliParseError::InvalidArguments(
+            "`--catalog`, `--all-catalogs`, and `--refresh` require `--deep`".to_owned(),
+        ));
+    }
+    if explain.is_some() && (deep || catalog.is_some() || all_catalogs || refresh) {
+        return Err(CliParseError::InvalidArguments(
+            "doctor explanation mode cannot combine with `--deep`, `--catalog`, `--all-catalogs`, or `--refresh`".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_task_command<I>(name: String, args: I) -> Result<Command, CliParseError>

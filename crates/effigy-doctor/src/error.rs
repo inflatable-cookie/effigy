@@ -31,6 +31,9 @@ pub enum DoctorError {
     Manifest(ManifestError),
     Scan(ScanError),
     Routing(effigy_routing::RoutingError),
+    BudgetExhausted {
+        phase: String,
+    },
 }
 
 impl DoctorError {
@@ -71,6 +74,9 @@ impl std::fmt::Display for DoctorError {
             DoctorError::Manifest(error) => write!(f, "{error}"),
             DoctorError::Scan(error) => write!(f, "{error}"),
             DoctorError::Routing(error) => write!(f, "{error}"),
+            DoctorError::BudgetExhausted { phase } => {
+                write!(f, "doctor budget exhausted during {phase}")
+            }
         }
     }
 }

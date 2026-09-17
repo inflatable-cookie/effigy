@@ -13,6 +13,7 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
     renderer
         .section(text_blocks::DOCTOR_REPORT_HEADING)
         .map_err(map_render_error)?;
+    render_run_summary(&mut renderer, report)?;
     let sections = crate::doctor_finding_sections(report);
     let actionable_sections = sections
         .iter()
@@ -21,13 +22,13 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
                 || section.check_id == crate::check_id::DEPENDENCY_LINK_HEALTH
         })
         .collect::<Vec<&DoctorFindingSection>>();
+    let scan_report_paths =
+        super::scan_reports::sync_scan_detail_reports(&report.resolved_root, &sections)?;
     if actionable_sections.is_empty() {
         renderer
             .notice(NoticeLevel::Success, "No findings.")
             .map_err(map_render_error)?;
     } else {
-        let scan_report_paths =
-            super::scan_reports::sync_scan_detail_reports(&report.resolved_root, &sections)?;
         for section in actionable_sections {
             render_finding_group(
                 &mut renderer,
@@ -54,6 +55,86 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
 
     let out = renderer.into_inner();
     Ok(String::from_utf8_lossy(&out).to_string())
+}
+
+fn render_run_summary(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    report: &DoctorReport,
+) -> Result<(), DoctorError> {
+    let scopes = report
+        .scopes
+        .iter()
+        .map(|scope| format!("{} ({})", scope.alias, scope.root))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut pairs = vec![
+        ("mode".to_owned(), report.mode.as_str().to_owned()),
+        (
+            "scopes".to_owned(),
+            if scopes.is_empty() {
+                "<none>".to_owned()
+            } else {
+                scopes
+            },
+        ),
+        (
+            "budget".to_owned(),
+            report
+                .budget_ms
+                .map(|value| format!("{value}ms"))
+                .unwrap_or_else(|| "unbounded".to_owned()),
+        ),
+        ("elapsed".to_owned(), format!("{}ms", report.elapsed_ms)),
+        ("complete".to_owned(), report.complete.to_string()),
+    ];
+    if let Some(phase) = &report.timeout_phase {
+        pairs.push(("timeout-phase".to_owned(), phase.clone()));
+    }
+    if report.mode == crate::DoctorMode::Deep {
+        pairs.push((
+            "cache".to_owned(),
+            format!(
+                "hits={} misses={} invalid={}",
+                report.cache.hits, report.cache.misses, report.cache.invalid_entries
+            ),
+        ));
+    }
+    let rows = text_blocks::key_values_from_pairs(pairs);
+    text_blocks::render_key_values(renderer, &rows).map_err(map_render_error)?;
+    renderer.text("").map_err(map_render_error)?;
+    renderer
+        .table(&TableSpec::new(
+            vec![
+                "check".to_owned(),
+                "state".to_owned(),
+                "duration".to_owned(),
+            ],
+            report
+                .check_runs
+                .iter()
+                .map(|check| {
+                    vec![
+                        check.name.clone(),
+                        check.state.as_str().to_owned(),
+                        format!("{}ms", check.duration_ms),
+                    ]
+                })
+                .collect(),
+        ))
+        .map_err(map_render_error)?;
+    if let Some(phase) = &report.timeout_phase {
+        renderer
+            .notice(
+                NoticeLevel::Warning,
+                &format!(
+                    "budget exhausted during {phase}; retry with a larger `{}` value or `0` for an explicitly unbounded run",
+                    crate::workflow::DOCTOR_TIMEOUT_ENV
+                ),
+            )
+            .map_err(map_render_error)?;
+    }
+    renderer.text("").map_err(map_render_error)?;
+    Ok(())
 }
 
 fn render_finding_group(
@@ -156,6 +237,14 @@ mod tests {
             fixes: vec![],
             root_evidence: evidence.into_iter().map(str::to_owned).collect(),
             root_warnings: warnings.into_iter().map(str::to_owned).collect(),
+            mode: crate::DoctorMode::Fast,
+            scopes: vec![],
+            budget_ms: None,
+            elapsed_ms: 0,
+            complete: true,
+            timeout_phase: None,
+            check_runs: vec![],
+            cache: crate::DoctorCacheSummary::default(),
         }
     }
 

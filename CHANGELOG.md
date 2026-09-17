@@ -93,6 +93,13 @@ During v0.x, MINOR bumps may include breaking changes.
   preserves the existing unconditional write byte-for-byte.
 
 ### Changed
+- `effigy doctor` is now a bounded structural-only check by default (10
+  seconds). `--deep` explicitly adds enabled content scans and selected-scope
+  `health` under a 120-second overall budget, with `--catalog`,
+  `--all-catalogs`, `--refresh`, and `EFFIGY_DOCTOR_TIMEOUT_MS` controls. Deep
+  scans share one scope walk and an exact atomic cache under
+  `.effigy/doctor/cache/v1/`; doctor text and JSON now expose run scope,
+  budget, completeness, per-check state and timing, and cache counts.
 - `effigy docs context` keeps a repository-owned documentation corpus: catalog
   segmentation no longer removes an explicitly configured documentation root,
   and refreshing documentation context does not refresh a source catalog. Its

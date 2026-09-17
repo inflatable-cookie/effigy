@@ -53,7 +53,7 @@ pub(super) trait WorkflowPhaseHandler {
         resolved_root: &Path,
         manifest: &ManifestSnapshot,
         state: &mut DoctorState,
-    );
+    ) -> Result<(), DoctorError>;
 
     fn finalize_fix_actions(&mut self, state: &mut DoctorState, fix: bool);
 
@@ -82,7 +82,7 @@ pub(super) fn run_workflow_phase_pipeline<H: WorkflowPhaseHandler>(
     handler.emit_root_resolution_finding(&resolved, &mut state);
 
     let manifest = handler.prepare_manifest(&resolved.resolved_root, fix, &mut state)?;
-    handler.run_checks(&resolved.resolved_root, &manifest, &mut state);
+    handler.run_checks(&resolved.resolved_root, &manifest, &mut state)?;
     handler.finalize_fix_actions(&mut state, fix);
     handler.add_manifest_availability_findings(&resolved.resolved_root, &manifest, &mut state);
 

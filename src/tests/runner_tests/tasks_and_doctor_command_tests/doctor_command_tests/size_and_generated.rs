@@ -18,7 +18,7 @@ critical = 20
         .join("\n");
     fs::write(root.join("src/app.ts"), format!("{large_file}\n")).expect("write source");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity god file");
 
     assert_doctor_non_zero_contains(
@@ -55,7 +55,7 @@ doctor = false
         .join("\n");
     fs::write(root.join("src/app.ts"), format!("{large_file}\n")).expect("write source");
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.god-files", "src/app.ts"]);
 }
@@ -74,7 +74,7 @@ critical = 300
     );
     fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity generated asset");
 
     assert_doctor_non_zero_contains(
@@ -107,7 +107,7 @@ doctor = false
     );
     fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.generated-assets", "dist/app.min.js"]);
 }
@@ -121,15 +121,15 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.generated_assets]\nwarn = 100\nhigh = 150\ncritical = 300\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.generated_assets]\nwarn = 100\nhigh = 150\ncritical = 300\n",
     );
     fs::write(catalog_a.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog generated asset");
 
     assert_doctor_non_zero_contains(
@@ -141,7 +141,7 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-generated-assets.md"),
-        &["catalog_a/dist/app.min.js", "180 B"],
+        &["dist/app.min.js", "180 B"],
     );
 }
 
@@ -159,7 +159,7 @@ critical = 300
     );
     fs::write(root.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity generated-in-src file");
 
     assert_doctor_non_zero_contains(
@@ -192,7 +192,7 @@ doctor = false
     );
     fs::write(root.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.generated-in-src", "src/client.generated.ts"]);
 }
@@ -206,15 +206,15 @@ fn run_doctor_reports_generated_in_src_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.generated_in_src]\nwarn = 100\nhigh = 150\ncritical = 300\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.generated_in_src]\nwarn = 100\nhigh = 150\ncritical = 300\n",
     );
     fs::write(catalog_a.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog generated-in-src file");
 
     assert_doctor_non_zero_contains(
@@ -226,6 +226,6 @@ fn run_doctor_reports_generated_in_src_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-generated-in-src.md"),
-        &["catalog_a/src/client.generated.ts", "180 B"],
+        &["src/client.generated.ts", "180 B"],
     );
 }

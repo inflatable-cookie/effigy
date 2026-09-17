@@ -1,20 +1,21 @@
 use super::*;
 
 #[test]
-fn run_doctor_executes_discovered_health_task() {
+fn run_doctor_default_never_executes_discovered_health_task() {
     let root = temp_workspace("doctor-health-delegation");
-    let catalog_a = root.join("catalog_a");
-    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(&root.join("effigy.toml"), "");
-
+    let marker = root.join("health-ran");
     write_manifest(
-        &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n[tasks.health]\nrun = \"printf catalog_a-health-ok\"\n",
+        &root.join("effigy.toml"),
+        &format!(
+            "[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
     );
 
     let out = run_doctor_task(root, &[]).expect("doctor run");
 
     assert_output_contains_all(&out, &["No findings."]);
+    assert!(!marker.exists(), "fast doctor must not execute health");
     assert_output_excludes_all(
         &out,
         &[
@@ -27,6 +28,24 @@ fn run_doctor_executes_discovered_health_task() {
 }
 
 #[test]
+fn run_deep_doctor_executes_discovered_health_task() {
+    let root = temp_workspace("doctor-deep-health-delegation");
+    let marker = root.join("health-ran");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            "[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    );
+
+    let out = run_deep_doctor_task(root, &[]).expect("deep doctor run");
+
+    assert_output_contains_all(&out, &["No findings."]);
+    assert!(marker.exists(), "deep doctor must execute health");
+}
+
+#[test]
 fn run_doctor_reports_error_when_health_task_fails() {
     let root = temp_workspace("doctor-health-failure");
     write_manifest(
@@ -34,7 +53,8 @@ fn run_doctor_reports_error_when_health_task_fails() {
         "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
     );
 
-    let err = run_doctor_task(root, &[]).expect_err("doctor should fail when health task fails");
+    let err =
+        run_deep_doctor_task(root, &[]).expect_err("doctor should fail when health task fails");
     assert_doctor_non_zero_contains(
         err,
         &["health.task.execute", "health task execution failed"],
@@ -42,7 +62,7 @@ fn run_doctor_reports_error_when_health_task_fails() {
 }
 
 #[test]
-fn run_doctor_warns_and_skips_health_task_that_reaches_qa() {
+fn run_deep_doctor_executes_health_task_that_reaches_qa() {
     let root = temp_workspace("doctor-heavy-health-task");
     let marker = root.join("heavy-health-ran");
     write_manifest(
@@ -58,21 +78,46 @@ qa = "printf ran > {}"
         ),
     );
 
-    let out = run_doctor_task(root, &[]).expect("doctor warning should not fail");
+    let out = run_deep_doctor_task(root, &[]).expect("deep doctor should execute health");
 
-    assert_output_contains_all(
-        &out,
-        &[
-            "health.task.posture",
-            "/health -> baseline -> validate -> qa",
-            "Map `health` to a cheap baseline",
-            "keep full validation on `effigy qa`",
-        ],
+    assert_output_excludes_all(&out, &["health.task.posture"]);
+    assert!(marker.exists(), "deep doctor must execute the health task");
+}
+
+#[test]
+fn run_deep_doctor_catalog_selection_isolates_sibling_health() {
+    let root = temp_workspace("doctor-selected-catalog-isolation");
+    let catalog_a = root.join("catalog_a");
+    let catalog_b = root.join("catalog_b");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    fs::create_dir_all(&catalog_b).expect("mkdir catalog_b");
+    let marker_a = root.join("catalog-a-health-ran");
+    let marker_b = root.join("catalog-b-health-ran");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\ncatalog_b = \"catalog_b\"\n",
     );
-    assert!(
-        !marker.exists(),
-        "doctor must not execute the heavy health task"
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        &format!(
+            "[catalog]\nalias = \"catalog_a\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker_a.display()
+        ),
     );
+    write_manifest(
+        &catalog_b.join("effigy.toml"),
+        &format!(
+            "[catalog]\nalias = \"catalog_b\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker_b.display()
+        ),
+    );
+
+    let out =
+        run_deep_doctor_task(root, &["--catalog", "catalog_a"]).expect("selected catalog doctor");
+
+    assert_output_contains_all(&out, &["catalog_a"]);
+    assert!(marker_a.exists(), "selected health must run");
+    assert!(!marker_b.exists(), "sibling health must not run");
 }
 
 #[test]
@@ -186,12 +231,12 @@ critical = 20
     );
     fs::write(root.join("src/app.ts"), "const a = 1;\n".repeat(14)).expect("write source");
 
-    let _ = run_doctor_task(root.clone(), &[]).expect_err("doctor should fail");
+    let _ = run_deep_doctor_task(root.clone(), &[]).expect_err("doctor should fail");
     let report_path = root.join(".effigy/reports/doctor/scan-god-files.md");
     assert!(report_path.exists(), "expected initial scan detail report");
 
     fs::write(root.join("src/app.ts"), "const a = 1;\n").expect("rewrite source");
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed");
 
     assert_output_excludes_all(&out, &["scan.god-files"]);
     assert!(

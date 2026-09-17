@@ -1,10 +1,14 @@
 use crate::error::ScanError;
 
+mod doctor_inventory;
 mod duplicate_blocks;
 mod file_scans;
 mod marker_scans;
 mod workspace;
 
+pub use doctor_inventory::{
+    run_doctor_scan_inventory, DoctorScanInventoryOptions, DoctorScanInventoryResult,
+};
 pub use duplicate_blocks::run_duplicate_block_scan_workspace;
 pub use file_scans::{
     run_comment_ratio_scan_workspace, run_generated_asset_scan_workspace,
