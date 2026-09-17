@@ -1,7 +1,7 @@
 # Effigy Architecture Overview
 
 Status: active
-Updated: 2026-09-15
+Updated: 2026-09-17
 
 Effigy is a Rust CLI task runner with two responsibility layers:
 
@@ -62,6 +62,9 @@ Use these docs intentionally:
 - [028-published-and-draft-task-surfaces.md](./028-published-and-draft-task-surfaces.md)
   separates maintained published selectors from lifecycle-labelled provisional
   drafts without creating a second execution runtime
+- [029-bounded-doctor-and-scan-cache.md](./029-bounded-doctor-and-scan-cache.md)
+  separates fast structural diagnosis from explicit catalog-scoped deep work
+  with one shared inventory, exact incremental cache facts, and deadlines
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
@@ -75,6 +78,9 @@ Use these docs intentionally:
 - [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
   defines published/draft manifest grammar, discovery, routing, reference
   direction, expiry evidence, and execution compatibility
+- [`contract/047`](../contracts/047-bounded-doctor-and-scan-cache-contract.md)
+  defines doctor tiers, catalog scope, budgets, cache trust, cancellation, and
+  incomplete-report evidence
 
 For runtime/container behavior rules, prefer the active contracts:
 

@@ -47,6 +47,6 @@ Other planning specs:
 ## Next Task
 
 No strict lane is active or ready. Specs `118` through `124` are archived.
-Execute ready task-surface task `g10.008`; architecture `028`, contract `046`,
-and its roadmap task contain the complete bounded authority, so no supporting
-spec is needed. Effigy release authority stays separate.
+Execute ready bounded-doctor task `g10.010`; architecture `029`, contract `047`,
+and its roadmap task contain the complete authority, so no supporting spec is
+needed. Effigy release authority stays separate.

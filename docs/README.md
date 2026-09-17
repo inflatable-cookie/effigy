@@ -70,6 +70,8 @@ installing them directly on your machine.
 - [`contracts/045-catalog-scoped-code-graph-contract.md`](./contracts/045-catalog-scoped-code-graph-contract.md) — segmented catalog grammar, selection, and no-sibling-work guarantees
 - [`architecture/028-published-and-draft-task-surfaces.md`](./architecture/028-published-and-draft-task-surfaces.md) — maintained published selectors and provisional draft-task ownership
 - [`contracts/046-published-and-draft-task-surface-contract.md`](./contracts/046-published-and-draft-task-surface-contract.md) — draft grammar, discovery isolation, expiry evidence, and execution compatibility
+- [`architecture/029-bounded-doctor-and-scan-cache.md`](./architecture/029-bounded-doctor-and-scan-cache.md) — fast structural diagnosis and explicit incremental deep checks
+- [`contracts/047-bounded-doctor-and-scan-cache-contract.md`](./contracts/047-bounded-doctor-and-scan-cache-contract.md) — doctor tiers, catalog scope, cache trust, deadlines, and cancellation
 - [`guides/078-papercuts-discovery-and-capture.md`](./guides/078-papercuts-discovery-and-capture.md) — project and sibling-project friction inventory for humans and agents
 - [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md) — copy-paste CI workflows
 - [`guides/050-env-schema-integration.md`](./guides/050-env-schema-integration.md) — `--env-schema` overrides and validation when tasks need typed env

@@ -23,8 +23,8 @@ Queue execution record. “Effigy task” means a command selector.
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
 - Approved frontier:
-  [`g10.008`](./g10/008-published-and-draft-task-surfaces.md), the sole ready
-  published/draft task-surface lane. `g10.001` through `g10.007` are complete.
+  [`g10.010`](./g10/010-bounded-doctor-and-incremental-scans.md), the sole
+  ready bounded-doctor lane. `g10.001` through `g10.009` are complete.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -90,9 +90,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Dispatch `g10.008` through Northstar Queue. After hook-owned closeout, return to
-Chatterbox for the next planning choice. Effigy release execution, machine-local
-drafts, automatic pruning, and S3 retirement remain separately gated.
+Dispatch `g10.010` through Northstar Queue. After hook-owned closeout, return
+to Chatterbox for the next planning choice. Effigy release execution, doctor
+cache pruning, and S3 retirement remain separately gated.
 
 ## Historical language boundary
 

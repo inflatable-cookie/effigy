@@ -1,18 +1,17 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.008
-Updated: 2026-09-15
+Approved frontier: g10.010
+Updated: 2026-09-17
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.007` are complete. The operator promoted catalog-
-scoped monorepo graph indexing as `g10.006` on 2026-09-15, then promoted and
-completed lockfile-bounded `g10.007` as its base-maintenance prerequisite.
-Both are complete. The operator next promoted published and draft task surfaces
-as sole ready task `g10.008`.
+open; `g10.001` through `g10.009` are complete. Catalog-scoped graph indexing,
+its dependency-maintenance prerequisite, published/draft task surfaces, and
+the Queue protocol migration are terminal. The operator promoted bounded
+doctor and incremental catalog-scoped scans as sole ready task `g10.010`.
 
 ## Generation history
 
@@ -47,5 +46,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch [`g10.008`](./g10/008-published-and-draft-task-surfaces.md) through
+Dispatch [`g10.010`](./g10/010-bounded-doctor-and-incremental-scans.md) through
 Northstar Queue. Return to Chatterbox after hook-owned closeout.

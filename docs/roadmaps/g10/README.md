@@ -11,10 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.008`](./008-published-and-draft-task-surfaces.md) — ready; separate
-  maintained published selectors from lifecycle-labelled provisional drafts.
+- [`g10.010`](./010-bounded-doctor-and-incremental-scans.md) — ready; split
+  bounded structural diagnosis from explicit catalog-scoped deep work with a
+  shared inventory and exact incremental cache.
 
-This is the sole dispatchable frontier task. `g10.001` through `g10.007` are
+This is the sole dispatchable frontier task. `g10.001` through `g10.009` are
 complete.
 
 ## Boundaries
@@ -66,12 +67,22 @@ complete.
 - Machine-local drafts and pruning remain future decisions, not part of
   `g10.008`.
 
+## Doctor scalability intake
+
+- Default `doctor` is a 10-second structural tier and never runs content scans
+  or repository `health`.
+- Explicit `doctor --deep` owns catalog-scoped scans and health under a
+  120-second default deadline.
+- One selected scope gets one shared content inventory and exact per-file
+  cache facts. Root work prunes members; whole-catalog fan-out is explicit.
+- Timeout is a non-zero partial report with process-tree cleanup, not silence
+  or warning-only success.
+
 ## Next Task
 
-Dispatch `g10.008` through its committed Queue handoff. After hook-owned
+Dispatch `g10.010` through its committed Queue handoff. After hook-owned
 closeout, return to Chatterbox for the next planning choice. Effigy release,
-machine-local drafts, automatic pruning, and S3 retirement remain separately
-gated.
+doctor cache pruning, and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:ba15e466be4c53314cd58d59343bc00996f04e382afcc5d3ce618c379f16320d -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

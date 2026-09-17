@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch sole ready task `g10.008` through its committed Northstar Queue
-handoff. Tasks `g10.006` and `g10.007` are complete. Machine-local drafts,
-automatic pruning, Effigy release, and S3 retirement remain separately gated.
+Dispatch sole ready task `g10.010` through its committed Northstar Queue
+handoff. Tasks `g10.008` and `g10.009` are complete. Doctor cache pruning,
+Effigy release, and S3 retirement remain separately gated.

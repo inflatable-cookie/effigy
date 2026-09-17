@@ -103,6 +103,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — isolated base Cargo supply-chain repair from the reviewed graph PR
 - [`2026-09/15-170538-published-and-draft-task-planning.md`](./2026-09/15-170538-published-and-draft-task-planning.md)
   — promoted compatible published and provisional task surfaces
+- [`2026-09/17-183923-bounded-doctor-planning.md`](./2026-09/17-183923-bounded-doctor-planning.md)
+  — promoted bounded structural doctor and incremental catalog-scoped deep scans
 
 ## Log template
 
@@ -138,5 +140,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.008` through Northstar Queue. Effigy release, local-only drafts,
-and automatic task pruning remain separate operator-owned decisions.
+Dispatch `g10.010` through Northstar Queue. Effigy release and doctor cache
+pruning remain separate operator-owned decisions.
