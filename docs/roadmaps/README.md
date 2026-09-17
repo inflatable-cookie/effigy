@@ -104,7 +104,7 @@ maintained planning uses generation-plus-task terminology.
 
 Historical evidence may preserve retired wrapper scripts or command spellings.
 Current operator guidance comes from active guides and contracts.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:ba15e466be4c53314cd58d59343bc00996f04e382afcc5d3ce618c379f16320d -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:879301af89bb8492b93de5fd1281f7ae3522d2cfbfcc556235db40ecd9bc742a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
@@ -118,4 +118,5 @@ Current operator guidance comes from active guides and contracts.
 | g10.007 | complete | none | 8 | sha256:04342987457e1bea973556297a4bef39e1592794e0dd3d52ebcb4457ae915995 |
 | g10.008 | complete | none | 8 | sha256:6cfd213603aefd7367edc6d5cdc5eb9dae4b3ff09062defd6fa1cf80c736dc8b |
 | g10.009 | complete | none | 8 | sha256:e9eec1299d0c8d71b4112224a5275f574100b411d9d7e690b937bf01f953a1f7 |
+| g10.010 | complete | none | 8 | sha256:9b534c710ef6277f3996c4a3b0eee36cf128019480fd7e8c1b0b5f2dc710303b |
 <!-- northstar:lifecycle:end -->
