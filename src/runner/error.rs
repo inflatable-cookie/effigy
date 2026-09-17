@@ -684,6 +684,9 @@ impl From<effigy_doctor::DoctorError> for RunnerError {
             D::Manifest(error) => map_manifest_error(error),
             D::Scan(error) => Self::from(error),
             D::Routing(error) => Self::from(error),
+            D::BudgetExhausted { phase } => {
+                Self::TaskInvocation(format!("doctor budget exhausted during {phase}"))
+            }
         }
     }
 }

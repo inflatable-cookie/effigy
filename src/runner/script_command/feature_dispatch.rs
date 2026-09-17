@@ -531,6 +531,10 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
                 fix: bool_option(&options, "fix")?.unwrap_or(false),
                 verbose: bool_option(&options, "verbose")?.unwrap_or(false),
+                deep: bool_option(&options, "deep")?.unwrap_or(false),
+                catalog: string_option(&options, "catalog")?,
+                all_catalogs: bool_option(&options, "all_catalogs")?.unwrap_or(false),
+                refresh: bool_option(&options, "refresh")?.unwrap_or(false),
                 explain: string_option(&options, "explain")?.map(|name| TaskInvocation {
                     name,
                     args: Vec::new(),

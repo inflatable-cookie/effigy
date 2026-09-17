@@ -97,10 +97,12 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
     let root = Path::new("/tmp/doctor-workspace");
     let manifest = empty_manifest_snapshot();
     let ports = StubPorts;
-    let _context = DoctorCheckContext::new(root, &manifest, &ports);
+    let _context = DoctorCheckContext::new(root, &manifest, &ports, None);
 
     let mut visited = Vec::<&str>::new();
-    for_each_check(doctor_check_definitions(), |check| visited.push(check.name));
+    for_each_check(&doctor_check_definitions(), |check| {
+        visited.push(check.name)
+    });
     assert_eq!(
         visited,
         vec![

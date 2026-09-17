@@ -11,6 +11,7 @@
 //! The runner provides `RunnerDoctorPorts` at the runner edge.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use effigy_cli::TaskInvocation;
 use effigy_manifest::{DeferredCommand, LoadedCatalog};
@@ -31,6 +32,15 @@ pub trait DoctorRuntimePorts {
         invocation: &TaskInvocation,
         cwd: PathBuf,
     ) -> Result<String, DoctorError>;
+
+    fn run_manifest_task_bounded(
+        &self,
+        invocation: &TaskInvocation,
+        cwd: PathBuf,
+        _remaining_budget: Option<Duration>,
+    ) -> Result<String, DoctorError> {
+        self.run_manifest_task(invocation, cwd)
+    }
 
     fn select_deferral(
         &self,

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use super::catalog_checks::{
     run_draft_lifecycle_check, run_environment_tools_check, run_health_task_check,
@@ -16,6 +17,7 @@ pub(super) struct DoctorCheckContext<'a> {
     pub(super) resolved_root: &'a Path,
     pub(super) manifest: &'a ManifestSnapshot,
     pub(super) ports: &'a dyn DoctorRuntimePorts,
+    pub(super) deadline: Option<Instant>,
 }
 
 impl<'a> DoctorCheckContext<'a> {
@@ -23,12 +25,19 @@ impl<'a> DoctorCheckContext<'a> {
         resolved_root: &'a Path,
         manifest: &'a ManifestSnapshot,
         ports: &'a dyn DoctorRuntimePorts,
+        deadline: Option<Instant>,
     ) -> Self {
         Self {
             resolved_root,
             manifest,
             ports,
+            deadline,
         }
+    }
+
+    pub(super) fn remaining_budget(&self) -> Option<Duration> {
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 }
 
@@ -41,7 +50,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 13] = [
+const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 5] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         progress_label: None,
@@ -67,6 +76,9 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 13] = [
         progress_label: Some("Doctor check: graph index"),
         run: run_graph_index_check,
     },
+];
+
+const DEEP_CHECKS: [DoctorCheckDefinition; 8] = [
     DoctorCheckDefinition {
         name: "god_files",
         progress_label: Some("Doctor scan: god-files"),
@@ -109,6 +121,19 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 13] = [
     },
 ];
 
-pub(super) fn doctor_check_definitions() -> &'static [DoctorCheckDefinition] {
-    &DOCTOR_CHECKS
+pub(super) fn structural_check_definitions() -> &'static [DoctorCheckDefinition] {
+    &STRUCTURAL_CHECKS
+}
+
+pub(super) fn deep_check_definitions() -> &'static [DoctorCheckDefinition] {
+    &DEEP_CHECKS
+}
+
+#[cfg(test)]
+pub(super) fn doctor_check_definitions() -> Vec<DoctorCheckDefinition> {
+    STRUCTURAL_CHECKS
+        .iter()
+        .chain(DEEP_CHECKS.iter())
+        .copied()
+        .collect()
 }

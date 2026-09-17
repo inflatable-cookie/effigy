@@ -56,12 +56,15 @@ Deep dive:
 ### Health and diagnosis
 
 ```sh
-effigy doctor --verbose
+effigy doctor
+effigy doctor --deep
 effigy doctor --repo /path/to/workspace api/test --watch
 ```
 
-Use `doctor` when a repo feels ambiguous, broken, or inconsistent. Use the
-selector form when you want explain-mode evidence for one specific request.
+Use default `doctor` for bounded structural evidence. Use `--deep` when you
+explicitly want enabled content scans and the selected catalog's `health`
+task. Use the selector form when you want explain-mode evidence for one
+specific request.
 
 Deep dive:
 - [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)

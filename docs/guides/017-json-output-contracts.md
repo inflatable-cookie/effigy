@@ -193,6 +193,7 @@ effigy --json drafts
 effigy --json drafts provider-smoke
 effigy --json draft provider-smoke
 effigy --json doctor
+effigy --json doctor --deep --catalog api
 effigy --json doctor --repo /path/to/workspace catalog-a/build --watch
 effigy --json scan god-files
 effigy --json scan duplicate-blocks

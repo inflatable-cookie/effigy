@@ -16,7 +16,7 @@ doctor = true
     write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
     write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity duplicate block");
 
     assert_doctor_non_zero_contains(
@@ -55,7 +55,7 @@ doctor = false
     write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
     write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.duplicate-blocks", "src/alpha.rs"]);
 }
@@ -69,16 +69,16 @@ fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.duplicate_blocks]\nwarn = 20\nhigh = 40\ncritical = 80\ndoctor = true\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.duplicate_blocks]\nwarn = 20\nhigh = 40\ncritical = 80\ndoctor = true\n",
     );
     write_duplicate_block_file(&catalog_a.join("src/alpha.rs"), "shared", 38);
     write_duplicate_block_file(&catalog_a.join("src/beta.rs"), "shared", 38);
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog duplicate block");
 
     assert_doctor_non_zero_contains(
@@ -90,7 +90,7 @@ fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-duplicate-blocks.md"),
-        &["catalog_a/src/alpha.rs:1-42", "catalog_a/src/beta.rs:1-42"],
+        &["src/alpha.rs:1-42", "src/beta.rs:1-42"],
     );
 }
 
@@ -109,7 +109,7 @@ min_code_lines = 20
     );
     write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity comment ratio finding");
 
     assert_doctor_non_zero_contains(
@@ -143,7 +143,7 @@ doctor = false
     );
     write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
 
-    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+    let out = run_deep_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
 
     assert_output_excludes_all(&out, &["scan.comment-ratio", "src/app.ts"]);
 }
@@ -157,15 +157,15 @@ fn run_doctor_reports_comment_ratio_across_child_catalogs() {
         .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\n[scan.comment_ratio]\nwarn = 1.0\nhigh = 2.0\ncritical = 3.0\nmin_code_lines = 20\n",
+        "[catalog]\nalias = \"root\"\n[catalog.members]\ncatalog_a = \"catalog_a\"\n",
     );
     write_manifest(
         &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n",
+        "[catalog]\nalias = \"catalog_a\"\n[scan.comment_ratio]\nwarn = 1.0\nhigh = 2.0\ncritical = 3.0\nmin_code_lines = 20\n",
     );
     write_comment_ratio_file(&catalog_a.join("src/lib.ts"), 50, 20);
 
-    let err = run_doctor_task(root.clone(), &[])
+    let err = run_deep_doctor_task(root.clone(), &["--all-catalogs"])
         .expect_err("doctor should fail on child-catalog comment ratio finding");
 
     assert_doctor_non_zero_contains(
@@ -177,6 +177,6 @@ fn run_doctor_reports_comment_ratio_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-comment-ratio.md"),
-        &["catalog_a/src/lib.ts", "ratio=2.50"],
+        &["src/lib.ts", "ratio=2.50"],
     );
 }

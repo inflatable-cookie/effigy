@@ -39,5 +39,6 @@ pub(super) fn run_health_task_check(context: &DoctorCheckContext<'_>, state: &mu
         &context.manifest.parsed_catalogs,
         state,
         context.ports,
+        context.remaining_budget(),
     );
 }

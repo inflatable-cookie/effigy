@@ -20,6 +20,10 @@ fn parse_doctor_with_repo_fix_and_json() {
             output_json: true,
             fix: true,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: None,
         })
     );
@@ -36,6 +40,10 @@ fn parse_doctor_with_verbose_flag() {
             output_json: false,
             fix: false,
             verbose: true,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: None,
         })
     );
@@ -57,12 +65,75 @@ fn parse_doctor_with_explain_target_and_args() {
             output_json: false,
             fix: false,
             verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
             explain: Some(TaskInvocation {
                 name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
         })
     );
+}
+
+#[test]
+fn parse_doctor_with_deep_scope_and_refresh() {
+    let cmd = parse_command(vec![
+        "doctor".to_owned(),
+        "--deep".to_owned(),
+        "--catalog".to_owned(),
+        "api".to_owned(),
+        "--refresh".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: false,
+            verbose: false,
+            deep: true,
+            catalog: Some("api".to_owned()),
+            all_catalogs: false,
+            refresh: true,
+            explain: None,
+        })
+    );
+}
+
+#[test]
+fn parse_doctor_rejects_deep_only_flags_without_deep() {
+    let error = parse_command(vec!["doctor".to_owned(), "--all-catalogs".to_owned()])
+        .expect_err("parse should fail");
+    assert!(error.to_string().contains("require `--deep`"));
+}
+
+#[test]
+fn parse_doctor_rejects_catalog_and_all_catalogs_together() {
+    let error = parse_command(vec![
+        "doctor".to_owned(),
+        "--deep".to_owned(),
+        "--catalog".to_owned(),
+        "api".to_owned(),
+        "--all-catalogs".to_owned(),
+    ])
+    .expect_err("parse should fail");
+    assert!(error.to_string().contains("mutually exclusive"));
+}
+
+#[test]
+fn parse_doctor_rejects_deep_flag_after_explain_selector() {
+    let error = parse_command(vec![
+        "doctor".to_owned(),
+        "build".to_owned(),
+        "--deep".to_owned(),
+    ])
+    .expect_err("parse should fail");
+    assert!(error
+        .to_string()
+        .contains("explanation mode cannot combine"));
 }
 
 #[test]

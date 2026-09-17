@@ -3866,6 +3866,7 @@ fn cli_doctor_supports_colorized_output_when_forced() {
     .expect("write manifest");
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("doctor")
+        .arg("--deep")
         .arg("--repo")
         .arg(&root)
         .env("EFFIGY_COLOR", "always")
@@ -3879,6 +3880,41 @@ fn cli_doctor_supports_colorized_output_when_forced() {
     let combined = format!("{stdout}\n{stderr}");
     assert!(combined.contains("health.task.execute"));
     assert!(combined.contains('\u{1b}'));
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_deep_doctor_timeout_terminates_health_process_tree() {
+    let root = temp_workspace("cli-doctor-health-timeout");
+    let marker = root.join("leaked-health-child");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[tasks.health]\nrun = \"sh -lc '(sleep 2; printf leaked > {}) & wait'\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("doctor")
+        .arg("--deep")
+        .arg("--repo")
+        .arg(&root)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
+        .output()
+        .expect("run bounded doctor");
+
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("complete: false"));
+    assert!(rendered.contains("health_task"));
+    std::thread::sleep(std::time::Duration::from_millis(2_200));
+    assert!(!marker.exists(), "timed-out health child survived doctor");
 }
 
 #[test]

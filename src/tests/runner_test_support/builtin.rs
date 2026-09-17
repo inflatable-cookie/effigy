@@ -41,3 +41,10 @@ pub(crate) fn assert_builtin_ok_empty(root: PathBuf, name: &str, args: &[&str]) 
 pub(crate) fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
     run_builtin(root, "doctor", args)
 }
+
+pub(crate) fn run_deep_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    let args = std::iter::once("--deep")
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>();
+    run_builtin(root, "doctor", &args)
+}

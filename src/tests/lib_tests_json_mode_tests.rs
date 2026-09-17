@@ -88,6 +88,10 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
         fix: false,
         verbose: false,
+        deep: false,
+        catalog: None,
+        all_catalogs: false,
+        refresh: false,
         explain: None,
     });
     let cmd_gateway = Command::Gateway(GatewayArgs {
@@ -151,6 +155,10 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
         fix: false,
         verbose: false,
+        deep: false,
+        catalog: None,
+        all_catalogs: false,
+        refresh: false,
         explain: None,
     });
     let gateway_cmd = Command::Gateway(GatewayArgs {

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use effigy_manifest::LoadedCatalog;
 
@@ -9,8 +10,6 @@ use crate::{DoctorError, DoctorRuntimePorts, DoctorState};
 mod invocation;
 #[path = "health/json_output.rs"]
 mod json_output;
-#[path = "health/posture.rs"]
-mod posture;
 #[path = "health/summarize.rs"]
 mod summarize;
 
@@ -19,6 +18,7 @@ pub(crate) fn check_health_task(
     catalogs: &[LoadedCatalog],
     state: &mut DoctorState,
     ports: &dyn DoctorRuntimePorts,
+    remaining_budget: Option<Duration>,
 ) {
     let health_catalogs = catalogs_with_health_task(catalogs);
 
@@ -28,13 +28,7 @@ pub(crate) fn check_health_task(
     }
 
     add_discovery_found_finding(&health_catalogs, state);
-    let heavy_paths = posture::heavy_health_paths(catalogs);
-    if !heavy_paths.is_empty() {
-        HealthFinding::heavy_aggregate(heavy_paths.join("; ")).emit(state);
-        return;
-    }
-
-    match invocation::run_health_task_json(resolved_root, ports) {
+    match invocation::run_health_task_json(resolved_root, ports, remaining_budget) {
         Ok(output) => {
             add_execute_success_finding(&output, state);
         }

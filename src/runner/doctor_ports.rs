@@ -8,8 +8,22 @@
 //! the doctor layer only speaks its own error type.
 
 use std::ffi::OsString;
+#[cfg(not(test))]
+use std::io::Read;
+#[cfg(all(unix, not(test)))]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(not(test))]
+use std::process::Stdio;
+#[cfg(not(test))]
+use std::thread;
+use std::time::Duration;
+#[cfg(not(test))]
+use std::time::Instant;
+
+#[cfg(all(unix, not(test)))]
+use nix::unistd::{setpgid, Pid};
 
 use effigy_cli::TaskInvocation;
 use effigy_containers::{
@@ -51,6 +65,26 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
             .map_err(runner_to_doctor)
     }
 
+    fn run_manifest_task_bounded(
+        &self,
+        invocation: &TaskInvocation,
+        cwd: PathBuf,
+        remaining_budget: Option<Duration>,
+    ) -> Result<String, DoctorError> {
+        #[cfg(test)]
+        {
+            let _ = remaining_budget;
+            self.run_manifest_task(invocation, cwd)
+        }
+        #[cfg(not(test))]
+        {
+            let Some(budget) = remaining_budget else {
+                return self.run_manifest_task(invocation, cwd);
+            };
+            run_manifest_task_subprocess_bounded(invocation, &cwd, budget)
+        }
+    }
+
     fn select_deferral(
         &self,
         selector: &TaskSelector,
@@ -67,6 +101,112 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
     ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
         collect_runtime_diagnostics(resolved_root)
     }
+}
+
+#[cfg(not(test))]
+fn run_manifest_task_subprocess_bounded(
+    invocation: &TaskInvocation,
+    cwd: &Path,
+    budget: Duration,
+) -> Result<String, DoctorError> {
+    if budget.is_zero() {
+        return Err(DoctorError::BudgetExhausted {
+            phase: "health_task".to_owned(),
+        });
+    }
+    let executable = std::env::current_exe().map_err(|error| {
+        DoctorError::task_invocation(format!("failed to resolve Effigy executable: {error}"))
+    })?;
+    let mut command = Command::new(executable);
+    command
+        .arg(&invocation.name)
+        .args(&invocation.args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
+    }
+    let mut child = command.spawn().map_err(|error| {
+        DoctorError::task_invocation(format!("failed to start bounded health task: {error}"))
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| DoctorError::task_invocation("health task stdout was unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| DoctorError::task_invocation("health task stderr was unavailable"))?;
+    let stdout_reader = thread::spawn(move || read_process_stream(stdout));
+    let stderr_reader = thread::spawn(move || read_process_stream(stderr));
+    let deadline = Instant::now() + budget;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            DoctorError::task_invocation(format!("failed to poll bounded health task: {error}"))
+        })? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            effigy_process::terminate_process_tree(child.id(), false);
+            let grace_deadline = Instant::now() + Duration::from_millis(500);
+            loop {
+                if child.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                if Instant::now() >= grace_deadline {
+                    effigy_process::terminate_process_tree(child.id(), true);
+                    let _ = child.wait();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(DoctorError::BudgetExhausted {
+                phase: "health_task".to_owned(),
+            });
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| DoctorError::task_invocation("health task stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| DoctorError::task_invocation("health task stderr reader panicked"))??;
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
+    if status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_owned();
+    if !stdout.trim().is_empty() {
+        Err(DoctorError::CommandJsonFailure { rendered: stdout })
+    } else {
+        Err(DoctorError::task_invocation(format!(
+            "health task failed with {}{}",
+            status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        )))
+    }
+}
+
+#[cfg(not(test))]
+fn read_process_stream(mut stream: impl Read) -> Result<Vec<u8>, DoctorError> {
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).map_err(|error| {
+        DoctorError::task_invocation(format!("failed to read bounded health output: {error}"))
+    })?;
+    Ok(bytes)
 }
 
 fn runner_to_doctor(error: RunnerError) -> DoctorError {

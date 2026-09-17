@@ -88,6 +88,10 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
         fix: false,
         verbose: false,
+        deep: false,
+        catalog: None,
+        all_catalogs: false,
+        refresh: false,
         explain: None,
     });
     let demo = Command::Demo(DemoArgs {

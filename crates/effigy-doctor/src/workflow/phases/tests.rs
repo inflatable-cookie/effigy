@@ -89,8 +89,9 @@ impl WorkflowPhaseHandler for MockWorkflowPhaseHandler {
         _resolved_root: &Path,
         _manifest: &ManifestSnapshot,
         _state: &mut DoctorState,
-    ) {
+    ) -> Result<(), DoctorError> {
         self.record(WorkflowPhase::Checks);
+        Ok(())
     }
 
     fn finalize_fix_actions(&mut self, _state: &mut DoctorState, fix: bool) {

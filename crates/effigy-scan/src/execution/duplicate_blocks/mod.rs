@@ -11,9 +11,12 @@ use super::super::support::{
 };
 use super::{run_workspace_scan, walk_text_scan_files, ScanError, ScanWorkspaceCounts};
 
-mod engine;
+pub(super) mod engine;
 
-use engine::{candidate_block_count, detect_duplicate_blocks, DuplicateBlockFile};
+pub(super) use engine::{
+    candidate_block_count, detect_duplicate_blocks, detect_duplicate_blocks_bounded,
+    DuplicateBlockFile,
+};
 
 pub fn run_duplicate_block_scan_workspace(
     target_root: &Path,
