@@ -498,17 +498,26 @@ pub(crate) fn git_head_file(
     path: &Path,
     process: &impl ReadOnlyProcess,
 ) -> Result<String, DepsError> {
-    let relative = path.strip_prefix(repo_root).map_err(|_| {
+    // `git show HEAD:<path>` is relative to the Git toplevel, not the consumer
+    // root. A nested Cargo workspace (for example `apps/bovine-desktop/src-tauri`)
+    // makes `HEAD:Cargo.lock` miss the real `HEAD:apps/.../Cargo.lock`.
+    let toplevel = process.run(&ProcessRequest {
+        program: "git".to_owned(),
+        args: vec!["rev-parse".to_owned(), "--show-toplevel".to_owned()],
+        cwd: repo_root.to_path_buf(),
+    })?;
+    let git_root = PathBuf::from(toplevel.stdout.trim());
+    let relative = path.strip_prefix(&git_root).map_err(|_| {
         DepsError::invalid(
             path,
-            "tracked Cargo.lock is outside the consumer repository",
+            "tracked Cargo.lock is outside the Git repository",
         )
     })?;
     process
         .run(&ProcessRequest {
             program: "git".to_owned(),
             args: vec!["show".to_owned(), format!("HEAD:{}", relative.display())],
-            cwd: repo_root.to_path_buf(),
+            cwd: git_root,
         })
         .map(|output| output.stdout)
 }

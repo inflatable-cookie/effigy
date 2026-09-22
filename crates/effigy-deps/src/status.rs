@@ -1423,6 +1423,7 @@ mod tests {
                         String::new()
                     }
                 }
+                ("git", Some("rev-parse")) => format!("{}\n", request.cwd.display()),
                 ("git", Some("show")) => request
                     .args
                     .get(1)
