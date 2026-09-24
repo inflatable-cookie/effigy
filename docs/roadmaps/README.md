@@ -90,8 +90,8 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Run queued `g10.016` after the direct-dependency batch reaches terminal
-closeout. Return to planning after the Dependabot backlog is resolved.
+Run the queued Hickory follow-up after the direct-dependency batch reaches
+terminal closeout. Return to planning after the Dependabot backlog is resolved.
 Doctor cache pruning and S3 retirement remain separate decisions.
 
 ## Historical language boundary

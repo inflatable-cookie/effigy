@@ -89,8 +89,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Run queued `g10.016` after the direct-dependency batch reaches terminal
-closeout; then return to planning with the operator. Doctor
+Run the queued Hickory follow-up after the direct-dependency batch reaches
+terminal closeout; then return to planning with the operator. Doctor
 cache pruning and S3 retirement remain separate decisions.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:4bdb9760429347b040d4820f8d9f496b8c7c1ef3926e55cdbae97da0e131a8d9 -->
 | Generation | Disposition | Runway state |
