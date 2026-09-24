@@ -8,7 +8,7 @@
 //! builds an index, caches across repositories, or compares one repository's
 //! authority with another's.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
@@ -84,6 +84,15 @@ pub fn docs_context_sources(
     })?;
 
     let enumerated = enumerate(&portfolio);
+    let mut handles: BTreeMap<&str, &EnumeratedRepository> = BTreeMap::new();
+    for repository in &enumerated {
+        if let Some(previous) = handles.insert(&repository.handle, repository) {
+            return Err(CodeGraphError::validation(format!(
+                "duplicate portfolio handle `{}` in `{}` and `{}`; give the checkout directories distinct names",
+                repository.handle, previous.path.display(), repository.path.display()
+            )));
+        }
+    }
     let requested: Vec<String> = only.iter().map(|handle| handle.trim().to_owned()).collect();
     let selected: Vec<EnumeratedRepository> = if requested.is_empty() {
         enumerated
@@ -174,32 +183,40 @@ fn enumerate(portfolio: &Portfolio) -> Vec<EnumeratedRepository> {
             .get(index)
             .cloned()
             .unwrap_or_else(|| directory.display().to_string());
-        let Ok(entries) = std::fs::read_dir(directory) else {
-            enumerated.push(EnumeratedRepository {
-                handle: handle_for(directory, &declared),
-                path: directory.clone(),
-                directory: declared.clone(),
-                membership: Membership::Missing(format!(
-                    "portfolio directory `{}` is absent; create it, or drop it from the portfolio file",
-                    directory.display()
-                )),
-            });
-            continue;
+        let entries = match std::fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                let detail = if error.kind() == std::io::ErrorKind::NotFound {
+                    format!("portfolio directory `{}` is absent; create it, or drop it from the portfolio file: {error}", directory.display())
+                } else {
+                    format!("portfolio directory `{}` could not be read; fix directory access or remove it from the portfolio file: {error}", directory.display())
+                };
+                let membership = if error.kind() == std::io::ErrorKind::NotFound {
+                    Membership::Missing(detail)
+                } else {
+                    Membership::Invalid(detail)
+                };
+                enumerated.push(EnumeratedRepository {
+                    handle: handle_for(directory, &declared),
+                    path: directory.clone(),
+                    directory: declared.clone(),
+                    membership,
+                });
+                continue;
+            }
         };
 
-        let mut children: Vec<(String, PathBuf)> = Vec::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || SKIPPED_DIRECTORY_NAMES.contains(&name.as_str()) {
-                continue;
-            }
-            let path = entry.path();
-            if !path.is_dir() || escapes_directory(directory, &path) {
-                continue;
-            }
-            children.push((name, path));
-        }
-        children.sort_by(|left, right| left.0.cmp(&right.0));
+        let (children, enumeration_error) = collect_children(
+            directory,
+            entries.map(|entry| {
+                entry.map(|entry| {
+                    (
+                        entry.file_name().to_string_lossy().into_owned(),
+                        entry.path(),
+                    )
+                })
+            }),
+        );
 
         for (name, path) in children {
             let membership = classify(&path);
@@ -210,8 +227,44 @@ fn enumerate(portfolio: &Portfolio) -> Vec<EnumeratedRepository> {
                 membership,
             });
         }
+        if let Some(error) = enumeration_error {
+            enumerated.push(EnumeratedRepository {
+                handle: handle_for(directory, &declared),
+                path: directory.clone(),
+                directory: declared,
+                membership: Membership::Invalid(format!(
+                    "could not finish listing portfolio directory `{}`: {error}; fix directory access and retry before trusting its repository list",
+                    directory.display()
+                )),
+            });
+        }
     }
     enumerated
+}
+
+fn collect_children(
+    directory: &Path,
+    entries: impl Iterator<Item = std::io::Result<(String, PathBuf)>>,
+) -> (Vec<(String, PathBuf)>, Option<std::io::Error>) {
+    let mut children = Vec::new();
+    for entry in entries {
+        let (name, path) = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                children.sort_by(|left: &(String, PathBuf), right| left.0.cmp(&right.0));
+                return (children, Some(error));
+            }
+        };
+        if name.starts_with('.') || SKIPPED_DIRECTORY_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+        if !path.is_dir() || escapes_directory(directory, &path) {
+            continue;
+        }
+        children.push((name, path));
+    }
+    children.sort_by(|left, right| left.0.cmp(&right.0));
+    (children, None)
 }
 
 /// A symlinked child is followed only while it stays inside the directory the
@@ -338,6 +391,7 @@ fn answered_block(
                 .iter()
                 .map(|result| DocsContextSourceResultPayload {
                     content_identity: content_identity(
+                        path,
                         &block.current_head,
                         dirty.as_ref(),
                         &result.path,
@@ -394,12 +448,17 @@ fn indexed_head(repo_root: &Path) -> Option<String> {
 /// A result's bytes are `committed` only when git could answer and the file is
 /// unchanged in the working tree. Every uncertainty reports `working-tree`.
 fn content_identity(
+    repo_root: &Path,
     current_head: &Option<String>,
     dirty: Option<&BTreeSet<String>>,
     path: &str,
 ) -> &'static str {
     match (current_head, dirty) {
-        (Some(_), Some(dirty)) if !dirty.contains(path) => CONTENT_IDENTITY_COMMITTED,
+        (Some(_), Some(dirty))
+            if !dirty.contains(path) && crate::git::path_at_head(repo_root, path) =>
+        {
+            CONTENT_IDENTITY_COMMITTED
+        }
         _ => CONTENT_IDENTITY_WORKING_TREE,
     }
 }
