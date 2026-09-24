@@ -92,7 +92,7 @@ weakening source isolation, machine-safe output, or runtime contracts.
 Run the queued Hickory follow-up after the direct-dependency batch reaches
 terminal closeout; then return to planning with the operator. Doctor
 cache pruning and S3 retirement remain separate decisions.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:4bdb9760429347b040d4820f8d9f496b8c7c1ef3926e55cdbae97da0e131a8d9 -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:a1c633c3ce1224f23ec771461404af6784d776c1071dd9b8aa8ccb99e281a870 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
@@ -111,4 +111,5 @@ cache pruning and S3 retirement remain separate decisions.
 | g10.012 | complete | none | 8 | sha256:77c770dee88cc0c6e080d20ea7b19e6e00f68bbf4f73f8b9bdd4cb6272398ae9 |
 | g10.013 | complete | none | 8 | sha256:1806cd3a5f2835288804585cb0c7541b52f17fe2dedff13d5547046ceb80192e |
 | g10.014 | complete | none | 8 | sha256:63fb0f233fad44d1f74af5cfe3ed024e86a8d3102c9ad0d514f5637f3832a799 |
+| g10.015 | complete | none | 8 | sha256:d62a5206f1c827cff4f835e11b8328ca58893ab96a6b3fef3c7c0ea46ba0399d |
 <!-- northstar:lifecycle:end -->
