@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/24-164500-g10-014-compatible-dependabot-lock.md`](./2026-09/24-164500-g10-014-compatible-dependabot-lock.md)
+  — current-base Cargo.lock refresh for six compatible Dependabot updates
 - [`2026-09/24-162800-dependabot-cargo-frontier.md`](./2026-09/24-162800-dependabot-cargo-frontier.md)
   — promoted ten Dependabot PRs into two serial reviewed Cargo batches
 - [`2026-09/24-152221-effigy-v0-13-0-release-note.md`](./2026-09/24-152221-effigy-v0-13-0-release-note.md)
