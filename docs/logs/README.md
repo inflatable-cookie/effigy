@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/24-190300-g10-016-hickory-follow-up.md`](./2026-09/24-190300-g10-016-hickory-follow-up.md)
+  — Hickory 0.26.3 bounded lockfile replacement covering both retargeted bot PRs
 - [`2026-09/24-173000-g10-015-direct-dependabot-upgrades.md`](./2026-09/24-173000-g10-015-direct-dependabot-upgrades.md)
   — current-base direct Cargo upgrades with vault, graph, and table compatibility proof
 - [`2026-09/24-171000-hickory-retarget-disposition.md`](./2026-09/24-171000-hickory-retarget-disposition.md)
