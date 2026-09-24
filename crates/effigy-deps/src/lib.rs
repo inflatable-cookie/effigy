@@ -58,7 +58,10 @@ pub use model::{
     LinkMechanism, MatchDisposition, ObservedDependencyLink, ObservedState, PackageManager,
     PlanAction, PlannedChange, PlannedChangeAction, VerificationEvidence, VerificationStatus,
 };
-pub use process::{ProcessOutput, ProcessRequest, ReadOnlyProcess, StdReadOnlyProcess};
+pub use process::{
+    is_process_timeout, BoundedReadOnlyProcess, ProcessOutput, ProcessRequest, ReadOnlyProcess,
+    StdReadOnlyProcess,
+};
 pub use state::{
     canonical_existing_path, plan_repo_local_state_ignore, repo_state_root,
     BunRegistrationIndexStore, IgnoreFileChange, LocalStateIgnorePlan, RepoLinkState,

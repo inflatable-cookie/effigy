@@ -1,12 +1,18 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use effigy_deps::{
-    inspect_dependency_status, BunRegistrationIndexStore, DependencyHealthSeverity,
-    DependencyLinkReport, DependencyStatusReport, LinkMechanism, PackageManager,
-    RepoLinkStateStore, StdReadOnlyProcess,
+    inspect_dependency_status, is_process_timeout, BoundedReadOnlyProcess,
+    BunRegistrationIndexStore, DependencyHealthSeverity, DependencyLinkReport,
+    DependencyStatusReport, DepsError, LinkMechanism, PackageManager, ReadOnlyProcess,
+    RepoLinkStateStore,
 };
 
 use crate::{check_id, remediation, DoctorFinding, DoctorSeverity, DoctorState};
+
+/// Phase name recorded when the shared doctor deadline expires inside the
+/// Cargo metadata or Git identity children owned by dependency inspection.
+const DEPENDENCY_HEALTH_PHASE: &str = "dependency_health";
 
 pub fn dependency_health_findings(
     repo_root: &Path,
@@ -19,14 +25,37 @@ pub fn dependency_health_findings(
         .collect()
 }
 
-pub(super) fn run_dependency_health_check(repo_root: &Path, state: &mut DoctorState) {
-    match inspect(repo_root) {
+/// Runs dependency health inside the shared doctor deadline.
+///
+/// Returns `false` when the deadline expired inside (or before) the owned
+/// Cargo metadata and Git identity children, so the caller reports a
+/// non-zero partial result instead of continuing into deep work.
+///
+/// The Cargo and Git children themselves are bounded by the remaining budget
+/// and their process trees are terminated on expiry; the post-inspection
+/// deadline re-check below is only a secondary guard.
+pub(super) fn run_dependency_health_check(
+    repo_root: &Path,
+    state: &mut DoctorState,
+    deadline: Option<Instant>,
+) -> bool {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        state.record_budget_exhausted(DEPENDENCY_HEALTH_PHASE, Duration::ZERO);
+        return false;
+    }
+    let started = Instant::now();
+    let process = BoundedReadOnlyProcess::with_deadline(deadline);
+    match inspect_with(repo_root, &process) {
         Ok(report) => {
             for finding in dependency_health_findings(repo_root, &report) {
                 state.add_finding(finding);
             }
         }
-        Err(error) => state.add_check_error(
+        Err(InspectionFailure::BudgetExhausted) => {
+            state.record_budget_exhausted(DEPENDENCY_HEALTH_PHASE, started.elapsed());
+            return false;
+        }
+        Err(InspectionFailure::Failed(error)) => state.add_check_error(
             check_id::DEPENDENCY_LINK_HEALTH,
             format!(
                 "manager=all; mechanism=all; library=<unknown>; consumer_roots={}; packages=<unknown>; observed=inspection-failed; detail={error}",
@@ -35,20 +64,41 @@ pub(super) fn run_dependency_health_check(repo_root: &Path, state: &mut DoctorSt
             "Repair the machine-local dependency-link state, then run `effigy deps status` and `effigy doctor` again.",
         ),
     }
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        state.record_budget_exhausted(DEPENDENCY_HEALTH_PHASE, started.elapsed());
+        return false;
+    }
+    true
 }
 
-fn inspect(repo_root: &Path) -> Result<DependencyStatusReport, String> {
+enum InspectionFailure {
+    BudgetExhausted,
+    Failed(String),
+}
+
+fn inspect_with(
+    repo_root: &Path,
+    process: &impl ReadOnlyProcess,
+) -> Result<DependencyStatusReport, InspectionFailure> {
     let state = RepoLinkStateStore::for_checkout(repo_root)
         .read()
-        .map_err(|error| error.to_string())?;
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is not set; cannot inspect Bun links".to_owned())?;
+        .map_err(map_inspection_error)?;
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        InspectionFailure::Failed("HOME is not set; cannot inspect Bun links".to_owned())
+    })?;
     let bun_index = BunRegistrationIndexStore::for_home(&home)
         .read()
-        .map_err(|error| error.to_string())?;
-    inspect_dependency_status(repo_root, &home, &state, &bun_index, &StdReadOnlyProcess)
-        .map_err(|error| error.to_string())
+        .map_err(map_inspection_error)?;
+    inspect_dependency_status(repo_root, &home, &state, &bun_index, process)
+        .map_err(map_inspection_error)
+}
+
+fn map_inspection_error(error: DepsError) -> InspectionFailure {
+    if is_process_timeout(&error) {
+        InspectionFailure::BudgetExhausted
+    } else {
+        InspectionFailure::Failed(error.to_string())
+    }
 }
 
 fn link_findings(repo_root: &Path, link: &DependencyLinkReport) -> Vec<DoctorFinding> {
@@ -260,6 +310,28 @@ mod tests {
         assert!(finding.evidence.contains("/consumer/node_modules/svelte"));
         assert!(finding.evidence.contains("/library/node_modules/svelte"));
         assert_eq!(finding.remediation, "hoist/dedupe Svelte");
+    }
+
+    #[test]
+    fn expired_deadline_records_budget_exhausted_without_inspection() {
+        use crate::report::DoctorCheckRunState;
+
+        let mut state = DoctorState::new();
+        let complete = run_dependency_health_check(
+            Path::new("/nonexistent-repo-root"),
+            &mut state,
+            Some(
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(1))
+                    .expect("past deadline"),
+            ),
+        );
+
+        assert!(!complete);
+        assert!(!state.is_complete());
+        let run = state.check_runs.last().expect("budget run recorded");
+        assert_eq!(run.name, "dependency_health");
+        assert_eq!(run.state, DoctorCheckRunState::BudgetExhausted);
     }
 
     #[test]

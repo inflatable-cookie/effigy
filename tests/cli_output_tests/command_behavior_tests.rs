@@ -3917,6 +3917,318 @@ fn cli_deep_doctor_timeout_terminates_health_process_tree() {
     assert!(!marker.exists(), "timed-out health child survived doctor");
 }
 
+fn real_path_binary(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("{name} not found on PATH"))
+}
+
+fn shim_path_value(bin: &std::path::Path) -> std::ffi::OsString {
+    let mut paths = vec![bin.to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    ));
+    std::env::join_paths(paths).expect("join shim PATH")
+}
+
+/// Writes an executable shadow for `name` that stalls only invocations whose
+/// joined argv contains one of `blocked_fragments`. The stall owns a
+/// marker-writing descendant that fires three seconds after the shadow
+/// starts, while a thirty-second foreground sleep keeps the direct child
+/// alive: a bounded caller must return promptly and leave no marker behind.
+fn write_blocking_shim(
+    bin: &std::path::Path,
+    name: &str,
+    real: &std::path::Path,
+    blocked_fragments: &[&str],
+    marker: &std::path::Path,
+) {
+    fs::create_dir_all(bin).expect("mkdir shim bin");
+    let alternatives = blocked_fragments.join("|*");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in\n  *{alternatives}*)\n    (sleep 3; printf leaked > \"{marker}\") &\n    sleep 30\n    exit 0\n    ;;\nesac\nexec \"{real}\" \"$@\"\n",
+        alternatives = alternatives,
+        marker = marker.display(),
+        real = real.display(),
+    );
+    let path = bin.join(name);
+    fs::write(&path, script).expect("write shim");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod shim");
+}
+
+fn write_cargo_link_library(library: &std::path::Path) {
+    for member in ["crates/core", "crates/protocol"] {
+        fs::create_dir_all(library.join(member).join("src")).expect("mkdir member");
+    }
+    fs::write(
+        library.join("Cargo.toml"),
+        "[workspace]\nmembers=['crates/core','crates/protocol']\nresolver='2'\n",
+    )
+    .expect("write library workspace");
+    fs::write(
+        library.join("crates/protocol/Cargo.toml"),
+        "[package]\nname='link-fixture-protocol'\nversion='0.1.0'\nedition='2021'\n",
+    )
+    .expect("write protocol manifest");
+    fs::write(
+        library.join("crates/protocol/src/lib.rs"),
+        "pub fn value() -> u8 { 42 }\n",
+    )
+    .expect("write protocol source");
+    fs::write(
+        library.join("crates/core/Cargo.toml"),
+        "[package]\nname='link-fixture-core'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nlink-fixture-protocol={path='../protocol'}\n",
+    )
+    .expect("write core manifest");
+    fs::write(
+        library.join("crates/core/src/lib.rs"),
+        "pub fn value() -> u8 { link_fixture_protocol::value() }\n",
+    )
+    .expect("write core source");
+    init_git_repo(library);
+    git_commit_all(library, "library fixture");
+    let tag = Command::new("git")
+        .arg("-C")
+        .arg(library)
+        .args(["tag", "v0.1.0"])
+        .output()
+        .expect("git tag");
+    assert!(tag.status.success(), "git tag failed: {tag:?}");
+}
+
+fn write_cargo_link_consumer(consumer: &std::path::Path, library: &std::path::Path) {
+    let canonical = fs::canonicalize(library).expect("canonicalize library");
+    let git_url = format!("file://{}", canonical.display());
+    fs::create_dir_all(consumer.join("src")).expect("mkdir consumer src");
+    fs::write(
+        consumer.join("Cargo.toml"),
+        format!(
+            "[package]\nname='link-fixture-consumer'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nlink-fixture-core={{git='{git_url}',tag='v0.1.0'}}\n"
+        ),
+    )
+    .expect("write consumer manifest");
+    fs::write(
+        consumer.join("src/lib.rs"),
+        "pub fn consumer() -> u8 { link_fixture_core::value() }\n",
+    )
+    .expect("write consumer source");
+    fs::write(
+        consumer.join("effigy.toml"),
+        "[tasks.health]\nrun = \"sh -lc 'exit 0'\"\n",
+    )
+    .expect("write manifest");
+    let lockfile = Command::new("cargo")
+        .args([
+            "generate-lockfile",
+            "--manifest-path",
+            &consumer.join("Cargo.toml").display().to_string(),
+        ])
+        .output()
+        .expect("cargo generate-lockfile");
+    assert!(
+        lockfile.status.success(),
+        "cargo generate-lockfile failed: {lockfile:?}"
+    );
+    init_git_repo(consumer);
+    git_commit_all(consumer, "consumer fixture");
+}
+
+fn link_cargo_library(consumer: &std::path::Path, library: &std::path::Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["deps", "link", "cargo"])
+        .arg(library)
+        .arg("--repo")
+        .arg(consumer)
+        .output()
+        .expect("run deps link");
+    assert!(output.status.success(), "deps link failed: {output:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_fast_doctor_timeout_terminates_cargo_metadata_tree() {
+    let library = temp_workspace("cli-doctor-cargo-library");
+    write_cargo_link_library(&library);
+    let consumer = temp_workspace("cli-doctor-cargo-timeout");
+    write_cargo_link_consumer(&consumer, &library);
+    link_cargo_library(&consumer, &library);
+
+    let real_cargo = real_path_binary("cargo");
+    let marker = consumer.join("leaked-metadata-child");
+    let bin = consumer.join("shim-bin");
+    write_blocking_shim(&bin, "cargo", &real_cargo, &["metadata"], &marker);
+    let path_value = shim_path_value(&bin);
+
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("doctor")
+        .arg("--repo")
+        .arg(&consumer)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
+        .env("PATH", &path_value)
+        .output()
+        .expect("run bounded doctor");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "fast doctor outlived its overall budget by far"
+    );
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("complete: false"));
+    assert!(rendered.contains("dependency_health"));
+
+    let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("doctor")
+        .arg("--json")
+        .arg("--repo")
+        .arg(&consumer)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "1000")
+        .env("PATH", &path_value)
+        .output()
+        .expect("run bounded doctor json");
+    assert!(!json.status.success());
+    let parsed = parse_stdout_json(&json);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    let report = &parsed["error"]["details"];
+    assert_eq!(report["schema"], "effigy.doctor.v1");
+    assert_eq!(report["run"]["complete"], false);
+    assert_eq!(report["run"]["timeout_phase"], "dependency_health");
+    assert!(
+        report["run"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|check| check["name"] == "dependency_health"
+                && check["state"] == "budget-exhausted"),
+        "missing dependency_health budget-exhausted check: {report}"
+    );
+
+    let remaining = Duration::from_secs(6).saturating_sub(started.elapsed());
+    std::thread::sleep(remaining);
+    assert!(
+        !marker.exists(),
+        "timed-out cargo metadata child survived doctor"
+    );
+}
+
+fn assert_no_doctor_cache_generation(root: &std::path::Path) {
+    let cache = root.join(".effigy/doctor");
+    if !cache.exists() {
+        return;
+    }
+    let mut stack = vec![cache];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read doctor cache dir") {
+            let path = entry.expect("cache entry").path();
+            assert_ne!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("generation.json"),
+                "partial doctor cache was published: {}",
+                path.display()
+            );
+            if path.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_deep_doctor_timeout_terminates_git_identity_tree() {
+    let root = temp_workspace("cli-doctor-git-timeout");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"sh -lc 'exit 0'\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("src/lib.rs"), "pub fn deep() {}\n").expect("write source");
+    init_git_repo(&root);
+    git_commit_all(&root, "deep fixture");
+
+    // Block only the inventory identity probes. Structural checks shell out
+    // to `git status --porcelain` (no `=v1`) through the graph freshness
+    // gate, which must keep delegating to the real binary.
+    let real_git = real_path_binary("git");
+    let marker = root.join("leaked-git-child");
+    let bin = root.join("shim-bin");
+    write_blocking_shim(
+        &bin,
+        "git",
+        &real_git,
+        &["ls-files", "--porcelain=v1"],
+        &marker,
+    );
+    let path_value = shim_path_value(&bin);
+
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("doctor")
+        .arg("--deep")
+        .arg("--repo")
+        .arg(&root)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
+        .env("PATH", &path_value)
+        .output()
+        .expect("run bounded deep doctor");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "deep doctor outlived its overall budget by far"
+    );
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("complete: false"));
+    assert!(rendered.contains("scan_inventory"));
+
+    let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("doctor")
+        .arg("--deep")
+        .arg("--json")
+        .arg("--repo")
+        .arg(&root)
+        .env("EFFIGY_DOCTOR_TIMEOUT_MS", "800")
+        .env("PATH", &path_value)
+        .output()
+        .expect("run bounded deep doctor json");
+    assert!(!json.status.success());
+    let parsed = parse_stdout_json(&json);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    let report = &parsed["error"]["details"];
+    assert_eq!(report["schema"], "effigy.doctor.v1");
+    assert_eq!(report["run"]["complete"], false);
+    assert_eq!(report["run"]["timeout_phase"], "scan_inventory");
+    assert!(
+        report["run"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|check| check["name"] == "scan_inventory" && check["state"] == "budget-exhausted"),
+        "missing scan_inventory budget-exhausted check: {report}"
+    );
+    assert_no_doctor_cache_generation(&root);
+
+    let remaining = Duration::from_secs(6).saturating_sub(started.elapsed());
+    std::thread::sleep(remaining);
+    assert!(
+        !marker.exists(),
+        "timed-out git identity child survived doctor"
+    );
+}
+
 #[test]
 fn cli_catalog_task_json_mode_renders_captured_output_payload() {
     let parsed = run_json_task_success("cli-json-task-success", "build", "printf build-ok");

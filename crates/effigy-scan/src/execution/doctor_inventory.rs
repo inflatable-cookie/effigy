@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -155,7 +157,7 @@ pub fn run_doctor_scan_inventory(
     let cache_paths = cache_paths(workspace_root, scope_alias, scope_root);
     let (cached_files, mut invalid_cache_entries, mut warnings) =
         load_cache(&cache_paths.current, &config_identity, refresh);
-    let git_identities = git_identities(scope_root);
+    let git_identities = git_identities(scope_root, deadline)?;
     let mut observations = Vec::new();
     let mut cache_hits = 0usize;
     let mut cache_misses = 0usize;
@@ -637,9 +639,20 @@ fn publish_cache_locked(paths: &CachePaths, generation: &CacheGeneration) -> Res
     result
 }
 
-fn git_identities(scope_root: &Path) -> BTreeMap<String, String> {
-    let tracked = Command::new("git")
-        .args([
+/// Exact Git index identities for clean tracked files, bounded by the shared
+/// doctor deadline.
+///
+/// Each owned `git` child runs in its own process group with the remaining
+/// budget; on expiry the tree is terminated and reaped and a budget-exhausted
+/// error is returned so the caller reports partial evidence without publishing
+/// a partial cache generation. Spawn failures and error exits keep the
+/// historical graceful fallback to content digests.
+fn git_identities(
+    scope_root: &Path,
+    deadline: Option<Instant>,
+) -> Result<BTreeMap<String, String>, ScanError> {
+    let Some(tracked) = run_git_bounded(
+        &[
             "-C",
             &scope_root.display().to_string(),
             "ls-files",
@@ -647,16 +660,17 @@ fn git_identities(scope_root: &Path) -> BTreeMap<String, String> {
             "-z",
             "--",
             ".",
-        ])
-        .output();
-    let Ok(tracked) = tracked else {
-        return BTreeMap::new();
+        ],
+        deadline,
+    )?
+    else {
+        return Ok(BTreeMap::new());
     };
     if !tracked.status.success() {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     }
-    let dirty = dirty_git_paths(scope_root);
-    tracked
+    let dirty = dirty_git_paths(scope_root, deadline)?;
+    Ok(tracked
         .stdout
         .split(|byte| *byte == 0)
         .filter_map(|record| {
@@ -668,12 +682,15 @@ fn git_identities(scope_root: &Path) -> BTreeMap<String, String> {
             let blob = header.split_whitespace().nth(1)?;
             Some((path.to_owned(), format!("git-blob:{blob}")))
         })
-        .collect()
+        .collect::<BTreeMap<String, String>>())
 }
 
-fn dirty_git_paths(scope_root: &Path) -> BTreeSet<String> {
-    let status = Command::new("git")
-        .args([
+fn dirty_git_paths(
+    scope_root: &Path,
+    deadline: Option<Instant>,
+) -> Result<BTreeSet<String>, ScanError> {
+    let Some(status) = run_git_bounded(
+        &[
             "-C",
             &scope_root.display().to_string(),
             "status",
@@ -682,15 +699,16 @@ fn dirty_git_paths(scope_root: &Path) -> BTreeSet<String> {
             "--untracked-files=all",
             "--",
             ".",
-        ])
-        .output();
-    let Ok(status) = status else {
-        return BTreeSet::new();
+        ],
+        deadline,
+    )?
+    else {
+        return Ok(BTreeSet::new());
     };
     if !status.status.success() {
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     }
-    status
+    Ok(status
         .stdout
         .split(|byte| *byte == 0)
         .filter_map(|record| {
@@ -703,8 +721,82 @@ fn dirty_git_paths(scope_root: &Path) -> BTreeSet<String> {
                 None
             }
         })
-        .collect()
+        .collect())
 }
+
+/// Runs one owned `git` child under the shared doctor deadline.
+///
+/// `Ok(None)` preserves the historical graceful fallback when `git` is
+/// missing or exits non-zero. A deadline expiry terminates and reaps the
+/// owned process tree and returns a budget-exhausted [`ScanError`] that the
+/// deep inventory maps to the `scan_inventory` phase without publishing a
+/// partial cache generation.
+fn run_git_bounded(
+    args: &[&str],
+    deadline: Option<Instant>,
+) -> Result<Option<std::process::Output>, ScanError> {
+    let Some(deadline) = deadline else {
+        return Ok(Command::new("git").args(args).output().ok());
+    };
+    if Instant::now() >= deadline {
+        return Err(git_budget_error());
+    }
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
+    }
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return Ok(None),
+    };
+    let pid = child.id();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(Ok(output)) => Ok(Some(output)),
+        Ok(Err(_)) => Ok(None),
+        Err(_) => {
+            terminate_git_tree(pid);
+            // Reaping happens in the waiter thread once the tree is dead; wait
+            // briefly for its output so no zombie outlives this call.
+            let _ = receiver.recv_timeout(std::time::Duration::from_secs(5));
+            Err(git_budget_error())
+        }
+    }
+}
+
+fn git_budget_error() -> ScanError {
+    ScanError::invocation("doctor scan budget exhausted during git identity probe")
+}
+
+#[cfg(unix)]
+fn terminate_git_tree(pid: u32) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    let pid = pid as i32;
+    if pid <= 0 {
+        return;
+    }
+    let _ = kill(Pid::from_raw(-pid), Signal::SIGTERM);
+    let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+    let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+}
+
+#[cfg(not(unix))]
+fn terminate_git_tree(_pid: u32) {}
 
 fn generated_in_src_category(value: &str) -> GeneratedInSrcCategory {
     match value {

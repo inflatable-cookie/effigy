@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Doctor-bounded subprocesses are opt-in per call site — 2026-09-24
+- Friction: `ReadOnlyProcess::run` carries no deadline, so a new dependency-inspection subprocess silently bypasses the doctor budget, and `inspect_cargo_link` mapped an inventory timeout to `cargo-resolution-inspection-failed` instead of propagating it until g10.012 added the `is_process_timeout` early return.
+- Impact: future subprocess call sites can reintroduce unbounded doctor hangs or mistimed phases by default.
+- Possible fix: thread the deadline through the `ReadOnlyProcess` contract (or a doctor-scoped wrapper type) so unbounded execution requires an explicit opt-out, and keep one timeout-propagation helper next to the status inspection arms.
+- Surface: `crates/effigy-deps/src/process.rs`, `crates/effigy-deps/src/status.rs`; `crates/effigy-doctor/src/dependency_health.rs`.
+
 ### [ ] Cold graph indexing exceeds the default agent lookup budget — 2026-09-24
 - Friction: `effigy graph explore` timed out after 120 seconds while indexing this fresh worker checkout (1712 of 2766 files). Exact-symbol `rg` navigation was needed to continue the task.
 - Impact: the documented graph-first code navigation route can fail at worker startup on a cold checkout.

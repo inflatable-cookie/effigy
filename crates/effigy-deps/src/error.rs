@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub enum DepsError {
@@ -47,6 +48,11 @@ pub enum DepsError {
         cwd: PathBuf,
         status: Option<i32>,
         stderr: String,
+    },
+    ProcessTimeout {
+        program: String,
+        cwd: PathBuf,
+        budget: Duration,
     },
 }
 
@@ -163,6 +169,16 @@ impl fmt::Display for DepsError {
                 }
                 Ok(())
             }
+            Self::ProcessTimeout {
+                program,
+                cwd,
+                budget,
+            } => write!(
+                formatter,
+                "`{program}` dependency process timed out in `{}` after {}ms",
+                cwd.display(),
+                budget.as_millis(),
+            )
         }
     }
 }

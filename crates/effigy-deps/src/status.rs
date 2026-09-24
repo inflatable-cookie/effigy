@@ -6,14 +6,14 @@ use crate::bun::{inventory_bun_committed_file_locals, inventory_bun_file_depende
 use crate::cargo::inventory_cargo_committed_path_locals;
 use crate::cargo_unlink::{classify_lockfile, git_head_file};
 use crate::{
-    inspect_bun_peer_resolutions, inventory_cargo_consumer_roots, BunPeerDiagnostic,
-    BunPeerResolutionStatus, BunRegistrationIndex, CargoLibraryInventory, CargoLockfileState,
-    CargoPackageInventory, CargoPlanObserver, CommittedLocalLink, CommittedLocalMechanism,
-    CommittedSource, CommittedSourceKind, ConsumerRoot, DependencyHealthSeverity,
-    DependencyLinkReport, DependencyPackage, DependencyStatusReport, DependencyVerification,
-    DesiredDependencyLink, DriftReason, GitCargoPlanObserver, LinkMechanism,
-    ObservedDependencyLink, ObservedState, PackageManager, ReadOnlyProcess, RepoLinkState,
-    VerificationEvidence, VerificationStatus,
+    inspect_bun_peer_resolutions, inventory_cargo_consumer_roots, is_process_timeout,
+    BunPeerDiagnostic, BunPeerResolutionStatus, BunRegistrationIndex, CargoLibraryInventory,
+    CargoLockfileState, CargoPackageInventory, CargoPlanObserver, CommittedLocalLink,
+    CommittedLocalMechanism, CommittedSource, CommittedSourceKind, ConsumerRoot,
+    DependencyHealthSeverity, DependencyLinkReport, DependencyPackage, DependencyStatusReport,
+    DependencyVerification, DesiredDependencyLink, DriftReason, GitCargoPlanObserver,
+    LinkMechanism, ObservedDependencyLink, ObservedState, PackageManager, ReadOnlyProcess,
+    RepoLinkState, VerificationEvidence, VerificationStatus,
 };
 
 const CARGO_MARKER_PREFIX: &str = "# >>> effigy deps cargo ";
@@ -212,6 +212,9 @@ fn inspect_cargo_link(
         process,
     ) {
         Ok(workspaces) => workspaces,
+        // A shared-deadline expiry is not a diagnosis: propagate it so the
+        // doctor records budget exhaustion instead of an inspection failure.
+        Err(error) if is_process_timeout(&error) => return Err(error),
         Err(error) => {
             drift.push(error_reason(
                 "cargo-resolution-inspection-failed",
