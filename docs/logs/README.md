@@ -90,7 +90,7 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 ## Active logs
 
 - [`2026-09/24-152221-effigy-v0-13-0-release-note.md`](./2026-09/24-152221-effigy-v0-13-0-release-note.md)
-  — draft 0.13.0 release notes, migration guidance, and validation record
+  — 0.13.0 release notes, migration guidance, and publication verification
 - [`2026-09/13-100503-named-skill-resolution-stdio-planning.md`](./2026-09/13-100503-named-skill-resolution-stdio-planning.md)
   — opened g10 with one ready agent-native skill-execution task
 - [`2026-09/13-104533-named-skill-resolution-stdio-closeout.md`](./2026-09/13-104533-named-skill-resolution-stdio-closeout.md)

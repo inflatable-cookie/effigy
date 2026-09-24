@@ -22,7 +22,7 @@ Effigy 0.13.0 brings the unreleased task, graph, documentation, skill, catalog-p
 
 - Primary tags: `ROUTE`, `CONTRACT`, `OPERATE`, `MAINT`, `RELEASE`.
 - Movement: one flat task surface and workspace-wide graph/doc assumptions -> explicit draft lifecycle, catalog-scoped code graphs, committed docs profiles, opt-in cross-repository context, and bounded health. Unreleased local behavior -> a gate-checked 0.13.0 release candidate.
-- Remaining gap: tag, binary publication, and install verification are pending release-note review and final gate checks.
+- Remaining gap: None for the 0.13.0 release. Consumer CI adoption remains the next observation point.
 
 ## Migration Notes
 
@@ -35,6 +35,8 @@ Effigy 0.13.0 brings the unreleased task, graph, documentation, skill, catalog-p
 - Exact candidate `13e86c558ef8c8f7165a52a71b45569c19d2d5f7`: GitHub `ci.yml` workflow-dispatch run [36008949852](https://github.com/inflatable-cookie/effigy/actions/runs/36008949852) passed all jobs.
 - `effigy release gates` passed all seven gates on that candidate before the release-owned file changes.
 - `effigy release gates` passed all seven gates on the prepared 0.13.0 files: exact-candidate CI, format, workspace tests, QA, release build, smoke, and metadata.
+- [Release workflow 36022457909](https://github.com/inflatable-cookie/effigy/actions/runs/36022457909) passed release gates, all four Linux/macOS platform builds, GitHub release creation, and Homebrew tap update.
+- `effigy release verify-install --tag v0.13.0` passed all five checks: install from the Git tag, binary version, task fixture, prefixed built-ins, and JSON help.
 
 ## Rollback Notes
 
@@ -51,4 +53,4 @@ Effigy 0.13.0 brings the unreleased task, graph, documentation, skill, catalog-p
 
 ## Next
 
-Commit the release change, tag `v0.13.0`, publish binaries, and verify installation from the tag.
+Observe consumer CI installing the published `v0.13.0` binaries. Choose the next strategic runway through Northstar planning.

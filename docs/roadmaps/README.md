@@ -89,9 +89,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Review and validate the 0.13.0 release preparation, then follow the release
-protocol for tagging and distribution. Doctor cache pruning and S3 retirement
-remain separate decisions.
+The 0.13.0 release is published and install-verified. Return to Northstar
+planning with the operator to choose the next strategic runway. Doctor cache
+pruning and S3 retirement remain separate decisions.
 
 ## Historical language boundary
 
