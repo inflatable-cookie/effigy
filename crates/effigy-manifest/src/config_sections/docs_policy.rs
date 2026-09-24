@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
+use std::process::Command;
 
 use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 
@@ -69,12 +70,53 @@ pub fn load_committed_docs_policy_sources(
     repo_root: &Path,
 ) -> Result<Option<ManifestDocsPolicySourcesConfig>, ManifestError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
-    if !manifest_path.is_file() {
+    let tree = Command::new("git")
+        .args([
+            "ls-tree",
+            "-z",
+            "--name-only",
+            "HEAD",
+            "--",
+            TASK_MANIFEST_FILE,
+        ])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|error| ManifestError::Read {
+            path: manifest_path.clone(),
+            error,
+        })?;
+    if !tree.status.success() {
+        return Err(ManifestError::Compose {
+            path: manifest_path,
+            detail: format!(
+                "cannot establish committed sharing consent: {}",
+                String::from_utf8_lossy(&tree.stderr).trim()
+            ),
+        });
+    }
+    if tree.stdout.is_empty() {
         return Ok(None);
     }
-    let source = std::fs::read_to_string(&manifest_path).map_err(|error| ManifestError::Read {
+    let output = Command::new("git")
+        .args(["show", "HEAD:effigy.toml"])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|error| ManifestError::Read {
+            path: manifest_path.clone(),
+            error,
+        })?;
+    if !output.status.success() {
+        return Err(ManifestError::Compose {
+            path: manifest_path,
+            detail: format!(
+                "cannot read committed sharing consent: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        });
+    }
+    let source = String::from_utf8(output.stdout).map_err(|error| ManifestError::Compose {
         path: manifest_path.clone(),
-        error,
+        detail: format!("committed sharing consent is not UTF-8: {error}"),
     })?;
     let document: toml::Value = toml::from_str(&source).map_err(|error| ManifestError::Parse {
         path: manifest_path.clone(),
@@ -497,6 +539,23 @@ fn graph_error(manifest_path: &Path, detail: impl Into<String>) -> ManifestError
 mod committed_sources_tests {
     use super::*;
 
+    fn commit(root: &Path) {
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "fixture@example.invalid"],
+            vec!["config", "user.name", "Fixture"],
+            vec!["add", "-A"],
+            vec!["commit", "-qm", "fixture"],
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git");
+            assert!(output.status.success(), "{output:?}");
+        }
+    }
+
     fn temp_repo(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
             "effigy-committed-sources-{name}-{}-{}",
@@ -523,6 +582,7 @@ mod committed_sources_tests {
         std::fs::create_dir_all(root.join("fragments")).expect("mkdir fragments");
         std::fs::write(root.join("fragments/sources.toml"), SHARED).expect("write fragment");
         std::fs::write(root.join("effigy.local.toml"), SHARED).expect("write overlay");
+        commit(&root);
 
         // The composed loader honours the uncommitted overlay; that is correct
         // for a repository loading itself and wrong for classifying a
@@ -551,6 +611,7 @@ mod committed_sources_tests {
             "[docs_policy.sources]\nshare = true\nfront_doors = [\"docs/README.md\"]\nskill_roots = [\".agents/skills\"]\n",
         )
         .expect("write manifest");
+        commit(&root);
         let sources = load_committed_docs_policy_sources(&root)
             .expect("read")
             .expect("declared");
@@ -569,6 +630,7 @@ mod committed_sources_tests {
             "[docs_policy.sources]\nshare = true\ndepth = 2\n",
         )
         .expect("write");
+        commit(&root);
         assert!(load_committed_docs_policy_sources(&root).is_err());
 
         std::fs::write(
@@ -576,7 +638,68 @@ mod committed_sources_tests {
             "[docs_policy.sources]\nshare = true\nfront_doors = [\"../elsewhere.md\"]\n",
         )
         .expect("write");
+        for args in [
+            vec!["add", "effigy.toml"],
+            vec!["commit", "-qm", "escaping path"],
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .expect("git");
+            assert!(output.status.success(), "{output:?}");
+        }
         assert!(load_committed_docs_policy_sources(&root).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn dirty_opt_in_and_opt_out_do_not_change_committed_consent() {
+        let root = temp_repo("dirty-consent");
+        let manifest = root.join(TASK_MANIFEST_FILE);
+        std::fs::write(&manifest, "[docs_policy.sources]\nshare = false\n").expect("write");
+        commit(&root);
+        std::fs::write(&manifest, SHARED).expect("dirty opt in");
+        assert!(
+            !load_committed_docs_policy_sources(&root)
+                .expect("read")
+                .expect("table")
+                .share
+        );
+
+        std::fs::write(&manifest, SHARED).expect("write");
+        let output = Command::new("git")
+            .args(["add", "effigy.toml"])
+            .current_dir(&root)
+            .output()
+            .expect("stage");
+        assert!(output.status.success());
+        let output = Command::new("git")
+            .args(["commit", "-qm", "share"])
+            .current_dir(&root)
+            .output()
+            .expect("commit");
+        assert!(output.status.success());
+        std::fs::write(&manifest, "[docs_policy.sources]\nshare = false\n").expect("dirty opt out");
+        assert!(
+            load_committed_docs_policy_sources(&root)
+                .expect("read")
+                .expect("table")
+                .share
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn uncommitted_manifest_cannot_grant_membership() {
+        let root = temp_repo("uncommitted");
+        std::fs::write(root.join("README.md"), "# fixture\n").expect("write");
+        commit(&root);
+        std::fs::write(root.join(TASK_MANIFEST_FILE), SHARED).expect("write");
+        assert_eq!(
+            load_committed_docs_policy_sources(&root).expect("read"),
+            None
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }
