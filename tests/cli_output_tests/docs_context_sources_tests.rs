@@ -310,6 +310,144 @@ fn a_working_tree_excerpt_is_never_labelled_as_committed_bytes() {
 }
 
 #[test]
+fn dirty_manifest_cannot_opt_in_or_opt_out_of_sources() {
+    let root = unique_portfolio("dirty-consent");
+    let vault = root.join("repos/private-vault");
+    write(&vault.join("effigy.toml"), SHARED_BASELINE);
+    let atlas = root.join("repos/shared-atlas");
+    write(&atlas.join("effigy.toml"), NEVER_SHARED);
+    let output = run_docs(
+        &root,
+        &[
+            "--json",
+            "docs",
+            "context",
+            "tolerance ledger",
+            "--sources",
+            "portfolio.toml",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let report = payload(&output);
+    assert_eq!(report["repositories"][2]["status"], "not-shared");
+    assert_eq!(report["repositories"][3]["status"], "ok");
+    assert!(report["repositories"][2]["results"]
+        .as_array()
+        .expect("results")
+        .is_empty());
+}
+
+#[test]
+fn duplicate_basename_is_a_usage_error_before_query() {
+    let root = unique_portfolio("collision");
+    let duplicate = root.join("other/shared-atlas");
+    write(&duplicate.join("effigy.toml"), SHARED_BASELINE);
+    write(
+        &duplicate.join("README.md"),
+        "# Other\n\nTolerance ledger.\n",
+    );
+    commit(&duplicate);
+    write(
+        &root.join("portfolio.toml"),
+        "[portfolio]\ndirectories = [\"repos\", \"other\"]\n",
+    );
+    let output = run_docs(
+        &root,
+        &[
+            "--json",
+            "docs",
+            "context",
+            "tolerance ledger",
+            "--sources",
+            "portfolio.toml",
+            "--only",
+            "shared-atlas",
+        ],
+    );
+    assert!(!output.status.success(), "{output:?}");
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        rendered.contains("duplicate portfolio handle") && rendered.contains("shared-atlas"),
+        "{rendered}"
+    );
+    assert!(!root.join("other/shared-atlas/.effigy").exists());
+}
+
+#[test]
+fn quoted_and_renamed_paths_have_conservative_source_identity() {
+    let root = unique_portfolio("quoted-identity");
+    let atlas = root.join("repos/shared-atlas");
+    let docs = atlas.join("atlas/charters");
+    write(&docs.join("before-name.md"), "# Tolerance ledger rename\n");
+    write(&docs.join("quo\"té.md"), "# Tolerance ledger quoted\n");
+    git(&atlas, &["add", "-A"]);
+    git(&atlas, &["commit", "-qm", "more docs"]);
+    git(
+        &atlas,
+        &[
+            "mv",
+            "atlas/charters/before-name.md",
+            "atlas/charters/after-name.md",
+        ],
+    );
+    write(
+        &docs.join("quo\"té.md"),
+        "# Tolerance ledger quoted\n\nDirty text.\n",
+    );
+    write(
+        &docs.join("new-untracked.md"),
+        "# Tolerance ledger untracked\n",
+    );
+
+    let output = run_docs(
+        &root,
+        &[
+            "--json",
+            "docs",
+            "context",
+            "tolerance ledger",
+            "--sources",
+            "portfolio.toml",
+            "--only",
+            "shared-atlas",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let report = payload(&output);
+    let results = report["repositories"][0]["results"]
+        .as_array()
+        .expect("results");
+    for name in ["after-name.md", "quo\"té.md", "new-untracked.md"] {
+        let result = results
+            .iter()
+            .find(|result| {
+                result["path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with(name))
+            })
+            .expect("matching result");
+        assert_eq!(
+            result["content_identity"], "working-tree",
+            "{name}: {result}"
+        );
+    }
+    let text = run_docs(
+        &root,
+        &[
+            "docs",
+            "context",
+            "tolerance ledger",
+            "--sources",
+            "portfolio.toml",
+            "--only",
+            "shared-atlas",
+        ],
+    );
+    assert!(text.status.success(), "{text:?}");
+    assert!(String::from_utf8_lossy(&text.stdout).contains("identity: working-tree"));
+}
+
+#[test]
 fn a_no_match_query_is_a_successful_empty_report_per_repository() {
     let root = unique_portfolio("empty");
     let output = run_docs(

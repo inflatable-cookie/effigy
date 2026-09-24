@@ -236,10 +236,12 @@ front_doors = ["docs/README.md", "AGENTS.md"]
 skill_roots = [".agents/skills"]
 ```
 
-A child joins only if it is a git checkout, has an `effigy.toml`, and declares
+A child joins only if it is a git checkout, has a committed root `effigy.toml`
+at `HEAD`, and declares
 `share = true` **in that file**. Membership is read from the committed bytes of
 the child's own root manifest and nothing else: no include, no
-`effigy.local.toml` overlay, no bundle default. Classification runs on
+`effigy.local.toml` overlay, no bundle default. Dirty root-manifest edits cannot
+opt a checkout in or out; commit the change first. Classification runs on
 repositories that never opted in, so it must not compose them — composing would
 let an uncommitted overlay grant membership, and would clone and cache a
 declared bundle into a checkout the caller has no business writing to. A
@@ -250,7 +252,8 @@ descends further, never follows a symlink out of the directory, and never
 considers a hidden directory or one named `.paseo`, `worktrees`,
 `node_modules`, or `target`. The handle is the directory name, and `--only`
 selects on it. Duplicate handles across named directories fail before querying
-any repository; give the checkout directories distinct names. Passing a
+any repository, even with `--only`; give the checkout directories distinct
+names. Passing a
 directory to `--sources` is the same as a portfolio
 naming that one directory. There are no globs and no unknown keys: both files
 fail to parse rather than quietly widening.
@@ -275,7 +278,7 @@ and every non-`ok` status carries a next step.
 | `timeout` | did not answer inside `EFFIGY_GRAPH_TIMEOUT_MS` |
 | `not-shared` | present, and never opted in |
 | `missing` | the named directory or checkout is absent |
-| `invalid` | not a checkout, or its directory or manifest could not be read |
+| `invalid` | not a checkout, or its directory or committed manifest could not be read; directory listing errors carry the I/O reason |
 | `disallowed` | an `--only` handle that resolved to nothing |
 
 The call exits 0 when at least one repository is `ok` or `empty`, so a
@@ -288,8 +291,8 @@ file is a usage error: a caller that named a portfolio wants that portfolio.
 Every repository block carries the checkout's current HEAD and the HEAD its
 index was built from, and every result carries `content_identity`: `committed`
 when the file matches HEAD, `working-tree` otherwise. Identity is never
-optimistic — if git cannot answer, or the index carries no clean stamp, the
-excerpt is reported as working-tree content rather than as committed bytes.
+optimistic — if Git cannot answer, the exact path is absent from `HEAD`, or its
+status is uncertain, the excerpt is reported as working-tree content.
 
 ## Freshness
 

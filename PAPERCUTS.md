@@ -13,6 +13,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Possible fix: make initial indexing incremental or set a cold-start budget that covers this repository, while retaining the bounded failure.
 - Surface: code graph lazy refresh and agent navigation.
 
+### [ ] Documentation graph rejects Markdown paths containing spaces — 2026-09-24
+- Friction: a real Git CLI fixture for docs-source provenance failed during graph indexing with `graph id must not contain whitespace` when a tracked Markdown filename contained a space. Git status parsed the path correctly.
+- Impact: `docs context --sources` cannot return source evidence from such a file.
+- Possible fix: encode path components safely in graph IDs while retaining the original repository-relative path in results.
+- Surface: documentation graph record IDs and Markdown path indexing.
+
 ### [ ] Installed Northstar skill task leaves `{skill}` unexpanded through `--repo` — 2026-09-24
 - Friction: `effigy --repo <installed-northstar-skill> northstar/language:route ...` passed the literal `{skill}/scripts/language-package-lifecycle.ts` to Bun and failed before the Rust audit route. Calling the same local script by absolute path succeeded.
 - Impact: the documented installed-skill language route is unusable through this Effigy invocation.
