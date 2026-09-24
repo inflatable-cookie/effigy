@@ -47,6 +47,6 @@ Other planning specs:
 ## Next Task
 
 No strict spec lane is active. Specs `118` through `124` are archived.
-Resume the held lifecycle closeout; `g10.012` and `g10.013` are active Queue
-roadmap tasks. Reassess 0.13.0 readiness after their closeout.
+Resume the held lifecycle closeout; `g10.012` is the remaining Queue roadmap
+task. Reassess 0.13.0 readiness after its closeout.
 Release mutation stays separate.

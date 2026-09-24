@@ -13,12 +13,9 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 - [`g10.012`](./012-doctor-subprocess-deadlines.md) — bound doctor subprocesses
   to the overall deadline.
-- [`g10.013`](./013-skill-nested-stdio-passthrough.md) — preserve nested skill
-  passthrough bytes and exit status.
 
-`g10.001` through `g10.010` are complete; `g10.011` merged and awaits hook
-closeout. The remaining two tasks are independent pre-0.13.0 repairs. Their
-`CHANGELOG.md` merges must serialize.
+`g10.001` through `g10.011` are complete; `g10.013` merged and awaits hook
+closeout. `g10.012` is the remaining pre-0.13.0 repair.
 
 ## Boundaries
 
@@ -82,8 +79,8 @@ closeout. The remaining two tasks are independent pre-0.13.0 repairs. Their
 
 ## Next Task
 
-Resume the held lifecycle closeout and continue Queue execution of `g10.012`
-and `g10.013`. After their reviewed closeout, return to Chatterbox
+Resume the held lifecycle closeout and continue Queue execution of `g10.012`.
+After its reviewed closeout, return to Chatterbox
 for 0.13.0 readiness. Release mutation, doctor cache pruning, and S3
 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:f0c7071b2baed5eb1131dc6f474750cd0c5d3b811bf62cc3c6d2cba400e0607b -->

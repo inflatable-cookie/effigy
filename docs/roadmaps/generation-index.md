@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.012, g10.013
+Approved frontier: g10.012
 Updated: 2026-09-24
 
 ## Lifecycle state
@@ -13,8 +13,8 @@ its dependency-maintenance prerequisite, published/draft task surfaces, and
 the Queue protocol migration are terminal. Bounded doctor and incremental
 catalog-scoped scans completed through `g10.010`. Three independent
 pre-0.13.0 release repairs were approved as `g10.011` through `g10.013`.
-`g10.011` merged and awaits lifecycle closeout; `g10.012` and `g10.013`
-remain in Queue.
+`g10.011` completed; `g10.013` merged and awaits lifecycle closeout.
+`g10.012` remains in Queue.
 
 ## Generation history
 
@@ -49,5 +49,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Resume the held lifecycle closeout and continue `g10.012` and `g10.013` in
-Queue. Return to Chatterbox for 0.13.0 readiness after reviewed closeout.
+Resume the held lifecycle closeout and continue `g10.012` in Queue. Return to
+Chatterbox for 0.13.0 readiness after reviewed closeout.

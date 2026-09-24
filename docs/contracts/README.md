@@ -284,7 +284,6 @@ role:
 
 ## Next Task
 
-Resume the held lifecycle closeout. Continue the independent `g10.012` and
-`g10.013` Queue repairs, then reassess release readiness after
-reviewed closeout. Cache pruning, release mutation, and S3 retirement remain
-separately gated.
+Resume the held lifecycle closeout. Continue `g10.012` through Queue, then
+reassess release readiness after reviewed closeout. Cache pruning, release
+mutation, and S3 retirement remain separately gated.
