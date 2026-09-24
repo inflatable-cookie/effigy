@@ -49,5 +49,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Finish `g10.011` lifecycle closeout and continue `g10.012` and `g10.013` in
+Resume the held lifecycle closeout and continue `g10.012` and `g10.013` in
 Queue. Return to Chatterbox for 0.13.0 readiness after reviewed closeout.

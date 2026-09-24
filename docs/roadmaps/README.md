@@ -91,8 +91,8 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Finish the `g10.011` lifecycle closeout and continue Queue execution of
-`g10.012` and `g10.013`. After reviewed closeout, recheck 0.13.0 readiness.
+Resume the held lifecycle closeout and continue Queue execution of `g10.012`
+and `g10.013`. After reviewed closeout, recheck 0.13.0 readiness.
 Effigy release execution, doctor cache pruning, and S3 retirement remain
 separately gated.
 

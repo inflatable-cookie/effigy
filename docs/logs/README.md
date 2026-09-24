@@ -148,6 +148,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Finish `g10.011` lifecycle closeout and continue `g10.012` and `g10.013` in
+Resume the held lifecycle closeout and continue `g10.012` and `g10.013` in
 Queue. After reviewed closeout, reassess 0.13.0 readiness. Release mutation
 and doctor cache pruning remain separate operator-owned decisions.

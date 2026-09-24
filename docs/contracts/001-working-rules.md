@@ -93,7 +93,7 @@ polish lane.
 
 ## Next Task
 
-`g10.011` merged and awaits lifecycle closeout. Continue the independent
-`g10.012` and `g10.013` Queue repairs, then reassess release readiness after
+Resume the held lifecycle closeout. Continue the independent `g10.012` and
+`g10.013` Queue repairs, then reassess release readiness after
 reviewed closeout. Doctor cache pruning, release mutation, and S3 retirement
 remain separately gated.

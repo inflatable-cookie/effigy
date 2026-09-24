@@ -82,8 +82,8 @@ closeout. The remaining two tasks are independent pre-0.13.0 repairs. Their
 
 ## Next Task
 
-Finish the `g10.011` lifecycle closeout and continue Queue execution of
-`g10.012` and `g10.013`. After their reviewed closeout, return to Chatterbox
+Resume the held lifecycle closeout and continue Queue execution of `g10.012`
+and `g10.013`. After their reviewed closeout, return to Chatterbox
 for 0.13.0 readiness. Release mutation, doctor cache pruning, and S3
 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:879301af89bb8492b93de5fd1281f7ae3522d2cfbfcc556235db40ecd9bc742a -->
