@@ -10,6 +10,7 @@ use effigy_cli::{Command, TaskInvocation};
 use effigy_core::shell::with_local_node_bin_path;
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::secret::SecretString;
+use effigy_execution::ExecutionOutputMode;
 use effigy_managed::{
     build_run_sequence_schedule, render_step_command_template, StepEnvAccumulator,
 };
@@ -22,7 +23,8 @@ use super::context::ExecutionTaskContext;
 use super::preflight::ExecutionPreflight;
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{
-    parse_embedded_command, run_embedded_command, run_embedded_draft, run_embedded_task,
+    parse_embedded_command, run_embedded_command, run_embedded_draft,
+    run_embedded_draft_with_output_mode, run_embedded_task, run_embedded_task_with_output_mode,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::script_command::execute_repo_rhai_script;
@@ -61,10 +63,16 @@ pub(super) fn maybe_run_in_process_sequence(
         &preflight.runtime_args_exec.passthrough,
     )?;
 
-    if overall_failed {
+    if let Some(code) = overall_failed {
         return Err(RunnerError::TaskCommandFailure {
             command: context.command().to_owned(),
-            code: Some(1),
+            code: Some(
+                if preflight.output_mode == ExecutionOutputMode::Passthrough {
+                    code
+                } else {
+                    1
+                },
+            ),
             stdout: String::new(),
             stderr: String::new(),
         });
@@ -125,10 +133,16 @@ pub(super) fn run_in_process_sequence_steps(
         task_name,
         passthrough,
     )?;
-    if overall_failed {
+    if let Some(code) = overall_failed {
         return Err(RunnerError::TaskCommandFailure {
             command: task_name.to_owned(),
-            code: Some(1),
+            code: Some(
+                if preflight.output_mode == ExecutionOutputMode::Passthrough {
+                    code
+                } else {
+                    1
+                },
+            ),
             stdout: String::new(),
             stderr: String::new(),
         });
@@ -144,7 +158,8 @@ fn run_in_process_sequence_steps_inner(
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
-) -> Result<bool, RunnerError> {
+) -> Result<Option<i32>, RunnerError> {
+    let _output_mode = ScopedOutputMode::set(preflight.output_mode);
     let execution_root = preflight.task_execution_root(&selection.catalog.catalog_root);
     let mut task_env = env_schema_resolved
         .as_ref()
@@ -310,8 +325,8 @@ fn run_scheduled_steps(
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
-) -> Result<bool, RunnerError> {
-    let mut overall_failed = false;
+) -> Result<Option<i32>, RunnerError> {
+    let mut overall_failed = None;
     let max_parallel = dag_max_parallel();
     for level in levels {
         for batch in level.chunks(max_parallel) {
@@ -321,7 +336,7 @@ fn run_scheduled_steps(
             {
                 let batch_failed =
                     run_parallel_shell_batch(batch, planned_steps, execution_root, secret_env)?;
-                overall_failed |= batch_failed;
+                overall_failed = overall_failed.or(batch_failed);
             } else {
                 let batch_failed = run_step_indexes_in_order(
                     batch.iter().copied(),
@@ -332,14 +347,14 @@ fn run_scheduled_steps(
                     task_name,
                     passthrough,
                 )?;
-                overall_failed |= batch_failed;
+                overall_failed = overall_failed.or(batch_failed);
             }
-            if overall_failed
+            if overall_failed.is_some()
                 && batch
                     .iter()
                     .any(|index| planned_steps[*index].policy.fail_fast)
             {
-                return Ok(true);
+                return Ok(overall_failed);
             }
         }
     }
@@ -354,11 +369,11 @@ fn run_step_indexes_in_order<I>(
     secret_env: Option<&[(&str, &SecretString)]>,
     task_name: &str,
     passthrough: &[String],
-) -> Result<bool, RunnerError>
+) -> Result<Option<i32>, RunnerError>
 where
     I: IntoIterator<Item = usize>,
 {
-    let mut overall_failed = false;
+    let mut overall_failed = None;
     for index in indexes {
         let step = &planned_steps[index];
         match run_step_with_retry(
@@ -371,7 +386,9 @@ where
         ) {
             Ok(()) => {}
             Err(error) if step.policy.fail_fast => return Err(error),
-            Err(_) => overall_failed = true,
+            Err(error) => {
+                overall_failed.get_or_insert(error.task_exit_status().unwrap_or(1));
+            }
         }
     }
     Ok(overall_failed)
@@ -382,7 +399,7 @@ fn run_parallel_shell_batch(
     planned_steps: &[StepPlan],
     execution_root: &Path,
     secret_env: Option<&[(&str, &SecretString)]>,
-) -> Result<bool, RunnerError> {
+) -> Result<Option<i32>, RunnerError> {
     let mut handles = Vec::with_capacity(batch.len());
     for index in batch {
         let step = &planned_steps[*index];
@@ -404,7 +421,7 @@ fn run_parallel_shell_batch(
         }));
     }
 
-    let mut overall_failed = false;
+    let mut overall_failed = None;
     let mut first_fail_fast_error = None;
     for (offset, handle) in handles.into_iter().enumerate() {
         let result = handle
@@ -417,7 +434,9 @@ fn run_parallel_shell_batch(
                     first_fail_fast_error = Some(error);
                 }
             }
-            Err(_) => overall_failed = true,
+            Err(error) => {
+                overall_failed.get_or_insert(error.task_exit_status().unwrap_or(1));
+            }
         }
     }
 
@@ -482,13 +501,29 @@ fn run_single_step(
         StepAction::Task { invocation, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = run_embedded_task(invocation, cwd)?;
+            let output = if nested_output_mode() == ExecutionOutputMode::Passthrough {
+                run_embedded_task_with_output_mode(
+                    invocation,
+                    cwd,
+                    ExecutionOutputMode::Passthrough,
+                )?
+            } else {
+                run_embedded_task(invocation, cwd)?
+            };
             render_nested_output(&output)
         }
         StepAction::Draft { invocation, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = run_embedded_draft(invocation, cwd)?;
+            let output = if nested_output_mode() == ExecutionOutputMode::Passthrough {
+                run_embedded_draft_with_output_mode(
+                    invocation,
+                    cwd,
+                    ExecutionOutputMode::Passthrough,
+                )?
+            } else {
+                run_embedded_draft(invocation, cwd)?
+            };
             render_nested_output(&output)
         }
         StepAction::Builtin { command, cwd } => {
@@ -952,17 +987,42 @@ fn ensure_timeout_supported(
 }
 
 fn render_nested_output(output: &str) -> Result<(), RunnerError> {
-    if output.trim().is_empty() {
+    let passthrough = nested_output_mode() == ExecutionOutputMode::Passthrough;
+    if (passthrough && output.is_empty()) || (!passthrough && output.trim().is_empty()) {
         return Ok(());
     }
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(output.as_bytes())
         .map_err(RunnerError::Cwd)?;
-    if !output.ends_with('\n') {
+    if !passthrough && !output.ends_with('\n') {
         stdout.write_all(b"\n").map_err(RunnerError::Cwd)?;
     }
     stdout.flush().map_err(RunnerError::Cwd)
+}
+
+thread_local! {
+    static NESTED_OUTPUT_MODE: std::cell::Cell<ExecutionOutputMode> = const {
+        std::cell::Cell::new(ExecutionOutputMode::Capture)
+    };
+}
+
+fn nested_output_mode() -> ExecutionOutputMode {
+    NESTED_OUTPUT_MODE.with(std::cell::Cell::get)
+}
+
+struct ScopedOutputMode(ExecutionOutputMode);
+
+impl ScopedOutputMode {
+    fn set(mode: ExecutionOutputMode) -> Self {
+        Self(NESTED_OUTPUT_MODE.with(|current| current.replace(mode)))
+    }
+}
+
+impl Drop for ScopedOutputMode {
+    fn drop(&mut self) {
+        NESTED_OUTPUT_MODE.with(|current| current.set(self.0));
+    }
 }
 
 struct ScopedEnvOverride {
@@ -1079,6 +1139,7 @@ run = [{ task = "db:migrate" }]
                 passthrough: Vec::new(),
             },
             output_json: false,
+            output_mode: effigy_execution::ExecutionOutputMode::Capture,
             resolved: ResolvedTarget {
                 resolved_root: PathBuf::from("/workspace-root/acowtancy"),
                 resolution_mode: ResolutionMode::AutoNearest,

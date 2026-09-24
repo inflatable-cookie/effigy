@@ -3,7 +3,7 @@ use std::path::Path;
 use effigy_cli::{
     apply_global_json_flag, parse_command, strip_global_json_flags, Command, TaskInvocation,
 };
-use effigy_execution::ExecutionSurface;
+use effigy_execution::{ExecutionOutputMode, ExecutionSurface};
 
 use super::command_context::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
 use super::error::RunnerError;
@@ -47,6 +47,19 @@ pub(in crate::runner) fn run_embedded_task(
     )
 }
 
+pub(in crate::runner) fn run_embedded_task_with_output_mode(
+    task: &TaskInvocation,
+    cwd: &Path,
+    output_mode: ExecutionOutputMode,
+) -> Result<String, RunnerError> {
+    crate::runner::execute::api::run_manifest_task_with_output_mode(
+        task,
+        cwd.to_path_buf(),
+        ExecutionSurface::RunArray,
+        output_mode,
+    )
+}
+
 /// Run one explicitly selected draft through the canonical pipeline.
 ///
 /// Nested `{ draft = "..." }` steps reuse the same request and pipeline as a
@@ -59,6 +72,19 @@ pub(in crate::runner) fn run_embedded_draft(
         task,
         cwd.to_path_buf(),
         ExecutionSurface::Draft,
+    )
+}
+
+pub(in crate::runner) fn run_embedded_draft_with_output_mode(
+    task: &TaskInvocation,
+    cwd: &Path,
+    output_mode: ExecutionOutputMode,
+) -> Result<String, RunnerError> {
+    crate::runner::execute::api::run_manifest_task_with_output_mode(
+        task,
+        cwd.to_path_buf(),
+        ExecutionSurface::Draft,
+        output_mode,
     )
 }
 
