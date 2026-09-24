@@ -11,11 +11,15 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- None. [`g10.010`](./010-bounded-doctor-and-incremental-scans.md) completed
-  the bounded structural and catalog-scoped deep diagnosis lane.
+- [`g10.011`](./011-cross-repository-docs-source-integrity.md) — committed
+  docs-source consent, provenance, unique handles, and truthful status.
+- [`g10.012`](./012-doctor-subprocess-deadlines.md) — bound doctor subprocesses
+  to the overall deadline.
+- [`g10.013`](./013-skill-nested-stdio-passthrough.md) — preserve nested skill
+  passthrough bytes and exit status.
 
-`g10.001` through `g10.010` are complete. The runway requires a new planning
-choice before dispatch.
+`g10.001` through `g10.010` are complete. The three ready tasks are independent
+pre-0.13.0 release repairs. Their `CHANGELOG.md` merges must serialize.
 
 ## Boundaries
 
@@ -79,8 +83,9 @@ choice before dispatch.
 
 ## Next Task
 
-Return to Chatterbox for the next planning choice. No successor is approved.
-Effigy release, doctor cache pruning, and S3 retirement remain separately gated.
+Dispatch `g10.011`, `g10.012`, and `g10.013` through Queue. After their
+reviewed closeout, return to Chatterbox for 0.13.0 readiness. Release mutation,
+doctor cache pruning, and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:879301af89bb8492b93de5fd1281f7ae3522d2cfbfcc556235db40ecd9bc742a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

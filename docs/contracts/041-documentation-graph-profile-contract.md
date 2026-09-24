@@ -195,6 +195,29 @@ Northstar-specific kind names, paths, statuses, and relations belong in that
 template. They must not appear as fallback rules in generic extraction or
 retrieval code.
 
+## Cross-Repository Source Integrity
+
+When `docs context --sources` enumerates a neighboring checkout, only the
+committed root `effigy.toml` at its `HEAD` can grant
+`[docs_policy.sources] share = true`. A working-tree edit, include, local
+overlay, or bundle default cannot change membership. If committed consent
+cannot be established, the neighbor is not queried. After consent, the
+neighbor's own normal retrieval and freshness rules apply.
+
+The portfolio's repository-directory basename is its handle. Duplicate
+handles across named directories are an invalid portfolio and fail before any
+repository query, with a diagnostic naming the collision. `--only` never
+selects more than one repository for one handle. A missing directory reports
+`missing`; a directory that cannot be read reports `invalid` with the actual
+I/O reason and a useful next step. A failure while enumerating children cannot
+silently turn partial membership into a complete report.
+
+An excerpt is labelled `committed` only with positive Git evidence that its
+exact path is unchanged from `HEAD`. Dirty paths, including Git-quoted names
+and rename endpoints, plus untracked or uncertain paths are labelled as
+working-tree content. Git uncertainty never creates an optimistic committed
+claim.
+
 ## Acceptance
 
 - baseline retrieval works in a repository with Markdown and no docs profile

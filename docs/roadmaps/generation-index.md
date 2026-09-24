@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: none; planning required
+Approved frontier: g10.011, g10.012, g10.013
 Updated: 2026-09-24
 
 ## Lifecycle state
@@ -11,7 +11,8 @@ selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
 open; `g10.001` through `g10.010` are complete. Catalog-scoped graph indexing,
 its dependency-maintenance prerequisite, published/draft task surfaces, and
 the Queue protocol migration are terminal. Bounded doctor and incremental
-catalog-scoped scans completed through `g10.010`. No successor is approved.
+catalog-scoped scans completed through `g10.010`. Three independent
+pre-0.13.0 release repairs are ready as `g10.011` through `g10.013`.
 
 ## Generation history
 
@@ -46,5 +47,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Return to Chatterbox for the next planning choice. No implementation task is
-ready.
+Dispatch `g10.011` through `g10.013` through Queue, then return to Chatterbox
+for 0.13.0 readiness after reviewed closeout.

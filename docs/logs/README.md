@@ -109,6 +109,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — reconciled g10.010 terminal state and indexed two open Acowtancy triage notes
 - [`2026-09/24-124833-release-readiness-audit.md`](./2026-09/24-124833-release-readiness-audit.md)
   — audited unreleased runtime and docs changes; recorded pre-release blockers
+- [`2026-09/24-130018-release-hardening-frontier.md`](./2026-09/24-130018-release-hardening-frontier.md)
+  — promoted four audit findings into three ready pre-0.13.0 repairs
 
 ## Log template
 
@@ -144,6 +146,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-`g10.010` is complete. Return to Chatterbox for the next planning choice.
-Effigy release and doctor cache pruning remain separate operator-owned
-decisions.
+Dispatch `g10.011`, `g10.012`, and `g10.013` through Queue. After reviewed
+closeout, reassess 0.13.0 readiness. Release mutation and doctor cache pruning
+remain separate operator-owned decisions.

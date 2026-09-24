@@ -22,8 +22,10 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: none. `g10.001` through `g10.010` are complete; the
-  generation remains open with planning required.
+- Approved frontier: [`g10.011`](./g10/011-cross-repository-docs-source-integrity.md),
+  [`g10.012`](./g10/012-doctor-subprocess-deadlines.md), and
+  [`g10.013`](./g10/013-skill-nested-stdio-passthrough.md), independent
+  pre-0.13.0 release repairs. `g10.001` through `g10.010` are complete.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -89,9 +91,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Return to Chatterbox for the next planning choice. No implementation task is
-ready. Effigy release execution, doctor cache pruning, and S3 retirement
-remain separately gated.
+Dispatch `g10.011` through `g10.013` through Queue. After reviewed closeout,
+recheck 0.13.0 readiness. Effigy release execution, doctor cache pruning, and
+S3 retirement remain separately gated.
 
 ## Historical language boundary
 

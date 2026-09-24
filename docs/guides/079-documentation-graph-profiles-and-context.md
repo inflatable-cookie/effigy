@@ -249,7 +249,9 @@ querying it uses its full manifest as usual. Enumeration is one level deep per n
 descends further, never follows a symlink out of the directory, and never
 considers a hidden directory or one named `.paseo`, `worktrees`,
 `node_modules`, or `target`. The handle is the directory name, and `--only`
-selects on it. Passing a directory to `--sources` is the same as a portfolio
+selects on it. Duplicate handles across named directories fail before querying
+any repository; give the checkout directories distinct names. Passing a
+directory to `--sources` is the same as a portfolio
 naming that one directory. There are no globs and no unknown keys: both files
 fail to parse rather than quietly widening.
 
@@ -273,7 +275,7 @@ and every non-`ok` status carries a next step.
 | `timeout` | did not answer inside `EFFIGY_GRAPH_TIMEOUT_MS` |
 | `not-shared` | present, and never opted in |
 | `missing` | the named directory or checkout is absent |
-| `invalid` | not a checkout, or its manifest could not be read |
+| `invalid` | not a checkout, or its directory or manifest could not be read |
 | `disallowed` | an `--only` handle that resolved to nothing |
 
 The call exits 0 when at least one repository is `ok` or `empty`, so a

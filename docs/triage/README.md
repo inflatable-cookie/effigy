@@ -39,18 +39,10 @@ top-level task in an active generation, with current canonical refs.
   — host PostgreSQL tooling diagnosis in structural doctor (2026-09-17).
 - [`20260917-230600-per-worktree-container-identity-default.md`](./20260917-230600-per-worktree-container-identity-default.md)
   — safe container identity and teardown for concurrent worktrees (2026-09-17).
-- [`20260924-124610-docs-source-consent-and-provenance.md`](./20260924-124610-docs-source-consent-and-provenance.md)
-  — committed sharing consent and accurate excerpt provenance before release (2026-09-24).
-- [`20260924-124613-docs-source-handle-and-status-identity.md`](./20260924-124613-docs-source-handle-and-status-identity.md)
-  — duplicate source handles and inaccurate missing status (2026-09-24).
-- [`20260924-124611-doctor-deadline-subprocess-coverage.md`](./20260924-124611-doctor-deadline-subprocess-coverage.md)
-  — bounded subprocess work in structural and deep doctor (2026-09-24).
-- [`20260924-124612-skill-stdio-nested-step-output.md`](./20260924-124612-skill-stdio-nested-step-output.md)
-  — raw passthrough bytes across nested skill steps (2026-09-24).
 
 ## Next Task
 
-These notes remain open and unscheduled. Reconcile the release-readiness
-findings with the operator before promoting any repair task. Use Northstar
-Atlas for the later strategic runway; do not promote a note without operator
-direction.
+The remaining notes are open and unscheduled. The four 2026-09-24 release
+findings were promoted to `g10.011` through `g10.013` and removed in the same
+planning batch. Use Northstar Atlas for the later strategic runway; do not
+promote a remaining note without operator direction.

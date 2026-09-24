@@ -46,6 +46,6 @@ Other planning specs:
 
 ## Next Task
 
-No strict lane is active or ready. Specs `118` through `124` are archived.
-`g10.010` is complete; return to Chatterbox for the next planning choice.
-Effigy release authority stays separate.
+No strict spec lane is active. Specs `118` through `124` are archived.
+`g10.011`, `g10.012`, and `g10.013` are ready roadmap tasks; dispatch through
+Queue, then reassess 0.13.0 readiness. Release mutation stays separate.
