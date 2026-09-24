@@ -1,6 +1,5 @@
 # g10.013 — Skill nested stdio passthrough
 
-Status: ready
 Owner: skill task execution maintainers
 Created: 2026-09-24
 Governing refs: architecture `025`, contract `042`, completed task `g10.001`
