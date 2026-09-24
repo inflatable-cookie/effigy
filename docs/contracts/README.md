@@ -284,6 +284,6 @@ role:
 
 ## Next Task
 
-Dispatch ready task `g10.010` through its committed Northstar Queue handoff.
-Tasks `g10.008` and `g10.009` are complete. Cache pruning, Effigy release, and
-S3 retirement remain separately gated.
+`g10.010` is complete. Return to Chatterbox for the next planning choice; no
+task is ready. Cache pruning, Effigy release, and S3 retirement remain
+separately gated.

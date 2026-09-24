@@ -1,17 +1,17 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.010
-Updated: 2026-09-17
+Approved frontier: none; planning required
+Updated: 2026-09-24
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.009` are complete. Catalog-scoped graph indexing,
+open; `g10.001` through `g10.010` are complete. Catalog-scoped graph indexing,
 its dependency-maintenance prerequisite, published/draft task surfaces, and
-the Queue protocol migration are terminal. The operator promoted bounded
-doctor and incremental catalog-scoped scans as sole ready task `g10.010`.
+the Queue protocol migration are terminal. Bounded doctor and incremental
+catalog-scoped scans completed through `g10.010`. No successor is approved.
 
 ## Generation history
 
@@ -46,5 +46,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch [`g10.010`](./g10/010-bounded-doctor-and-incremental-scans.md) through
-Northstar Queue. Return to Chatterbox after hook-owned closeout.
+Return to Chatterbox for the next planning choice. No implementation task is
+ready.

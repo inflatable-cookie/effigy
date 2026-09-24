@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-09-15
+Updated: 2026-09-24
 
 This contract defines how Effigy plans and executes Northstar work using the
 generation-plus-task model.
@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch sole ready task `g10.010` through its committed Northstar Queue
-handoff. Tasks `g10.008` and `g10.009` are complete. Doctor cache pruning,
-Effigy release, and S3 retirement remain separately gated.
+`g10.010` is complete. Return to Chatterbox for the next planning choice; no
+task is ready. Doctor cache pruning, Effigy release, and S3 retirement remain
+separately gated.

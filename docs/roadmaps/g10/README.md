@@ -11,12 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.010`](./010-bounded-doctor-and-incremental-scans.md) — ready; split
-  bounded structural diagnosis from explicit catalog-scoped deep work with a
-  shared inventory and exact incremental cache.
+- None. [`g10.010`](./010-bounded-doctor-and-incremental-scans.md) completed
+  the bounded structural and catalog-scoped deep diagnosis lane.
 
-This is the sole dispatchable frontier task. `g10.001` through `g10.009` are
-complete.
+`g10.001` through `g10.010` are complete. The runway requires a new planning
+choice before dispatch.
 
 ## Boundaries
 
@@ -80,9 +79,8 @@ complete.
 
 ## Next Task
 
-Dispatch `g10.010` through its committed Queue handoff. After hook-owned
-closeout, return to Chatterbox for the next planning choice. Effigy release,
-doctor cache pruning, and S3 retirement remain separately gated.
+Return to Chatterbox for the next planning choice. No successor is approved.
+Effigy release, doctor cache pruning, and S3 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:879301af89bb8492b93de5fd1281f7ae3522d2cfbfcc556235db40ecd9bc742a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

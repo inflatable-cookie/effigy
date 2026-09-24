@@ -1,6 +1,6 @@
 # g10.010 — Bounded doctor and incremental scans
 
-Status: ready
+Status: complete
 Owner: doctor and scan maintainers
 Created: 2026-09-17
 Governing refs: architecture `029`, contract `047`, contracts `037` and `045`
@@ -33,7 +33,8 @@ deadline that fails with useful partial evidence instead of hanging silently.
 
 ## Dispatch manifest
 
-- **State:** ready; sole g10 frontier task.
+- **State:** completed through PR #113 and hook-owned closeout; retained as
+  execution history, not a current dispatch manifest.
 - **Completion:** one reviewed PR implements architecture `029` and contract
   `047`, passes focused adversarial proofs and proportionate workspace QA, and
   records the behavior change under `[Unreleased]`.
@@ -108,11 +109,12 @@ the deterministic fixture. It is evidence, not a required external dependency.
 
 ## Evidence
 
-On completion record the exact PR head and merge commit, cold/warm traversal
-and read counters, default and deep durations, timeout/process cleanup proof,
-cache-corruption proof, catalog-isolation proof, validation commands, and any
-remaining limits.
+PR #113 merged at `1814c28207b194887fb8c99a92d6b95fedeb1673` after
+independent review of head `20b2d3baf1646199ea2c8a2fca0c229086efd3e4`.
+The lifecycle hook published terminal revision 8 at
+`392a449b09b56eb80569277aa3a9c8fdd83d3942` and consumed the worker
+handoff. Queue task `1b8c0629-0955-42d5-9883-739db1796f16` is done.
 
 ## Next task
 
-After hook-owned closeout, return to Chatterbox. No successor is pre-approved.
+Return to Chatterbox. No successor is approved.

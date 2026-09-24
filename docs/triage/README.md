@@ -35,6 +35,10 @@ top-level task in an active generation, with current canonical refs.
   — release-gate keep-on-failure remainder (2026-09-05).
 - [`20260906-224721-release-gates-satisfied-by-hosted-evidence.md`](./20260906-224721-release-gates-satisfied-by-hosted-evidence.md)
   — release gates satisfied by hosted evidence (2026-09-06).
+- [`20260917-212846-host-database-structural-check.md`](./20260917-212846-host-database-structural-check.md)
+  — host PostgreSQL tooling diagnosis in structural doctor (2026-09-17).
+- [`20260917-230600-per-worktree-container-identity-default.md`](./20260917-230600-per-worktree-container-identity-default.md)
+  — safe container identity and teardown for concurrent worktrees (2026-09-17).
 
 ## Next Task
 

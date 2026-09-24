@@ -105,6 +105,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — promoted compatible published and provisional task surfaces
 - [`2026-09/17-183923-bounded-doctor-planning.md`](./2026-09/17-183923-bounded-doctor-planning.md)
   — promoted bounded structural doctor and incremental catalog-scoped deep scans
+- [`2026-09/24-122316-g10-front-door-reconciliation.md`](./2026-09/24-122316-g10-front-door-reconciliation.md)
+  — reconciled g10.010 terminal state and indexed two open Acowtancy triage notes
 
 ## Log template
 
@@ -140,5 +142,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.010` through Northstar Queue. Effigy release and doctor cache
-pruning remain separate operator-owned decisions.
+`g10.010` is complete. Return to Chatterbox for the next planning choice.
+Effigy release and doctor cache pruning remain separate operator-owned
+decisions.
