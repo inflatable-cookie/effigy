@@ -1,6 +1,5 @@
 # g10.006 — Catalog-scoped code graph
 
-Status: ready
 Owner: code graph, manifest, and catalog routing
 Created: 2026-09-15
 Governing refs: `docs/architecture/027-catalog-scoped-code-graph.md`, `docs/contracts/045-catalog-scoped-code-graph-contract.md`, `docs/contracts/037-explicit-catalog-membership-contract.md`, `docs/contracts/041-documentation-graph-profile-contract.md`

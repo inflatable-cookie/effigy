@@ -111,6 +111,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — audited unreleased runtime and docs changes; recorded pre-release blockers
 - [`2026-09/24-130018-release-hardening-frontier.md`](./2026-09/24-130018-release-hardening-frontier.md)
   — promoted four audit findings into three ready pre-0.13.0 repairs
+- [`2026-09/24-133017-g10-011-closeout-currentness-repair.md`](./2026-09/24-133017-g10-011-closeout-currentness-repair.md)
+  — removed planning currentness drift holding g10.011 lifecycle closeout
 
 ## Log template
 
@@ -146,6 +148,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch `g10.011`, `g10.012`, and `g10.013` through Queue. After reviewed
-closeout, reassess 0.13.0 readiness. Release mutation and doctor cache pruning
-remain separate operator-owned decisions.
+Finish `g10.011` lifecycle closeout and continue `g10.012` and `g10.013` in
+Queue. After reviewed closeout, reassess 0.13.0 readiness. Release mutation
+and doctor cache pruning remain separate operator-owned decisions.

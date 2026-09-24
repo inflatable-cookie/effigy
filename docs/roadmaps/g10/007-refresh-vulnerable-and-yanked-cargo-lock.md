@@ -1,6 +1,5 @@
 # g10.007 — Refresh vulnerable and yanked Cargo lock entries
 
-Status: ready
 Owner: Cargo dependency maintenance and supply-chain validation
 Created: 2026-09-15
 Governing refs: `docs/contracts/001-working-rules.md`, `docs/guides/024-ci-and-automation-recipes.md`, `deny.toml`

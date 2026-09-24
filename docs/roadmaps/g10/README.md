@@ -11,15 +11,14 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.011`](./011-cross-repository-docs-source-integrity.md) — committed
-  docs-source consent, provenance, unique handles, and truthful status.
 - [`g10.012`](./012-doctor-subprocess-deadlines.md) — bound doctor subprocesses
   to the overall deadline.
 - [`g10.013`](./013-skill-nested-stdio-passthrough.md) — preserve nested skill
   passthrough bytes and exit status.
 
-`g10.001` through `g10.010` are complete. The three ready tasks are independent
-pre-0.13.0 release repairs. Their `CHANGELOG.md` merges must serialize.
+`g10.001` through `g10.010` are complete; `g10.011` merged and awaits hook
+closeout. The remaining two tasks are independent pre-0.13.0 repairs. Their
+`CHANGELOG.md` merges must serialize.
 
 ## Boundaries
 
@@ -83,9 +82,10 @@ pre-0.13.0 release repairs. Their `CHANGELOG.md` merges must serialize.
 
 ## Next Task
 
-Dispatch `g10.011`, `g10.012`, and `g10.013` through Queue. After their
-reviewed closeout, return to Chatterbox for 0.13.0 readiness. Release mutation,
-doctor cache pruning, and S3 retirement remain separately gated.
+Finish the `g10.011` lifecycle closeout and continue Queue execution of
+`g10.012` and `g10.013`. After their reviewed closeout, return to Chatterbox
+for 0.13.0 readiness. Release mutation, doctor cache pruning, and S3
+retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:879301af89bb8492b93de5fd1281f7ae3522d2cfbfcc556235db40ecd9bc742a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

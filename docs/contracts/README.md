@@ -284,6 +284,7 @@ role:
 
 ## Next Task
 
-`g10.011`, `g10.012`, and `g10.013` are independent ready pre-0.13.0 repairs.
-Dispatch through Queue, then reassess release readiness after reviewed closeout.
-Cache pruning, release mutation, and S3 retirement remain separately gated.
+`g10.011` merged and awaits lifecycle closeout. Continue the independent
+`g10.012` and `g10.013` Queue repairs, then reassess release readiness after
+reviewed closeout. Cache pruning, release mutation, and S3 retirement remain
+separately gated.

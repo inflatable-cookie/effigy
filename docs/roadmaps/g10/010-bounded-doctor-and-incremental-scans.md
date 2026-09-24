@@ -1,6 +1,5 @@
 # g10.010 — Bounded doctor and incremental scans
 
-Status: complete
 Owner: doctor and scan maintainers
 Created: 2026-09-17
 Governing refs: architecture `029`, contract `047`, contracts `037` and `045`
