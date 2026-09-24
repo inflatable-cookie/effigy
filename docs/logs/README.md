@@ -117,6 +117,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — cleared stale next actions holding g10.013 lifecycle closeout
 - [`2026-09/24-141915-g10-012-closeout-currentness-repair.md`](./2026-09/24-141915-g10-012-closeout-currentness-repair.md)
   — cleared the final repair from live next actions for closeout
+- [`2026-09/24-145155-release-gate-graph-cwd-repair.md`](./2026-09/24-145155-release-gate-graph-cwd-repair.md)
+  — repaired captured graph cwd after the release QA drift guard failed
 
 ## Log template
 

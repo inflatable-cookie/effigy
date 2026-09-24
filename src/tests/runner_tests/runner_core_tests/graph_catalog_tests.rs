@@ -1,10 +1,11 @@
 //! Catalog-scoped graph command surface (task g10.006).
 
-use crate::runner::entrypoints::run_command;
+use crate::runner::entrypoints::{run_command, run_command_with_context};
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest,
 };
 use effigy_cli::{Command, GraphArgs, GraphSubcommand};
+use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -126,6 +127,31 @@ fn graph_index_catalog_json_names_the_scope_and_isolates_storage() {
         paths.iter().all(|path| path.starts_with("apps/bovine")),
         "catalog query escaped its scope: {paths:?}"
     );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn graph_cwd_selection_uses_captured_invocation_context() {
+    let root = setup_catalog_fixture("graph-captured-cwd");
+    let context = EffigyRuntimeContext::builder()
+        .cwd_override(Some(root.join("apps/bovine")))
+        .captured_env(CapturedEnv::default())
+        .capture()
+        .expect("capture member invocation");
+    let rendered = run_command_with_context(
+        Command::Graph(graph_args(GraphSubcommand::Index, &root)),
+        &context,
+    )
+    .expect("index selected member");
+    let parsed = parse_json_output_with_schema_version(&rendered, "effigy.graph.index.v1", 1);
+
+    assert_eq!(parsed["catalog"]["alias"], "bovine");
+    assert_eq!(parsed["catalog"]["selection"], "cwd");
+    assert!(root
+        .join(".effigy/graph/catalogs/bovine/graph.db")
+        .is_file());
+    assert!(!root.join(".effigy/graph/graph.db").exists());
 
     let _ = fs::remove_dir_all(&root);
 }

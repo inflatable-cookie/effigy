@@ -293,6 +293,9 @@ During v0.x, MINOR bumps may include breaking changes.
   use stay offline.
 
 ### Fixed
+- `effigy graph` selects the invocation catalog from the captured runtime
+  context, including embedded calls, so a process cwd outside the selected
+  catalog cannot redirect graph indexing or queries.
 - `effigy doctor` now bounds its subprocess work with the selected overall
   deadline. A stalled Cargo metadata or Git identity child spawned during
   dependency health or the deep scan inventory is terminated with its owned

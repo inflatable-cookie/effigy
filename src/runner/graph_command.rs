@@ -14,17 +14,18 @@ use effigy_codegraph::{
     search_in_scope, status_in_scope,
 };
 
-use crate::runner::command_context::resolve_active_repo_root;
+use crate::runner::command_context::resolve_active_command_context;
 
 use super::error::RunnerError;
 
 pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
-    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
+    let context = resolve_active_command_context(args.repo_override.clone())?;
+    let invocation_cwd = context.invocation_cwd;
     // When the invocation resolved to a catalog member rather than the
     // workspace that declares it, use the owning workspace so `[catalog.graph]`
     // posture and cwd selection apply.
-    let repo_root = effigy_routing::owning_workspace_root(&resolved.resolved_root)
-        .unwrap_or(resolved.resolved_root);
+    let repo_root = effigy_routing::owning_workspace_root(&context.resolved.resolved_root)
+        .unwrap_or(context.resolved.resolved_root);
     let args = prepare_args(args)?;
     match super::graph_time_budget::graph_time_budget()
         .filter(|_| subcommand_is_bounded(&args.subcommand))
@@ -33,14 +34,15 @@ pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
             let command = graph_command_label(&args.subcommand);
             let worker_root = repo_root.clone();
             let worker_args = args.clone();
+            let worker_cwd = invocation_cwd.clone();
             super::graph_time_budget::run_bounded_graph_operation(
                 &repo_root,
                 command,
                 budget,
-                move || run_graph_scoped(&worker_root, &worker_args),
+                move || run_graph_scoped(&worker_root, &worker_args, &worker_cwd),
             )
         }
-        None => run_graph_scoped(&repo_root, &args),
+        None => run_graph_scoped(&repo_root, &args, &invocation_cwd),
     }
 }
 
@@ -115,7 +117,11 @@ fn graph_schema(subcommand: &GraphSubcommand) -> &'static str {
 /// Explicit selection failures fail closed before any refresh. A repository
 /// with no effective catalog membership keeps the repository-owned scope, so
 /// graph commands still work outside Effigy monorepos.
-fn resolve_scope_plan(repo_root: &Path, args: &GraphArgs) -> Result<GraphScopePlan, RunnerError> {
+fn resolve_scope_plan(
+    repo_root: &Path,
+    args: &GraphArgs,
+    invocation_cwd: &Path,
+) -> Result<GraphScopePlan, RunnerError> {
     let request = if args.all_catalogs {
         GraphScopeRequest::AllCatalogs
     } else if let Some(alias) = args.catalog.as_ref() {
@@ -125,8 +131,7 @@ fn resolve_scope_plan(repo_root: &Path, args: &GraphArgs) -> Result<GraphScopePl
     };
     match effigy_routing::load_effective_catalogs(repo_root) {
         Ok(catalogs) => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| repo_root.to_path_buf());
-            effigy_codegraph::select_scopes(repo_root, &catalogs, &request, &cwd)
+            effigy_codegraph::select_scopes(repo_root, &catalogs, &request, invocation_cwd)
                 .map_err(map_graph_error)
         }
         Err(effigy_routing::RoutingError::TaskCatalogsMissing { .. }) => {
@@ -147,8 +152,12 @@ fn resolve_scope_plan(repo_root: &Path, args: &GraphArgs) -> Result<GraphScopePl
     }
 }
 
-fn run_graph_scoped(repo_root: &Path, args: &GraphArgs) -> Result<String, RunnerError> {
-    let plan = resolve_scope_plan(repo_root, args)?;
+fn run_graph_scoped(
+    repo_root: &Path,
+    args: &GraphArgs,
+    invocation_cwd: &Path,
+) -> Result<String, RunnerError> {
+    let plan = resolve_scope_plan(repo_root, args, invocation_cwd)?;
     match plan {
         GraphScopePlan::Single(scope) => {
             let output = run_scope_operation(args, &scope)?;
