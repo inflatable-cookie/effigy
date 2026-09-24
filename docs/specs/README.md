@@ -46,6 +46,6 @@ Other planning specs:
 
 ## Next Task
 
-No strict spec lane is active. Specs `118` through `124` are archived.
-Resume the held lifecycle closeout, then reassess 0.13.0 readiness. No strict
-spec lane is ready. Release mutation stays separate.
+No strict spec lane is active. Specs `118` through `124` are archived. Ready
+`g10.014` and downstream `g10.015` own the Dependabot backlog without reopening
+a spec lane. Future release mutation stays separate.

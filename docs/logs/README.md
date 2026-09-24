@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/24-162800-dependabot-cargo-frontier.md`](./2026-09/24-162800-dependabot-cargo-frontier.md)
+  — promoted ten Dependabot PRs into two serial reviewed Cargo batches
 - [`2026-09/24-152221-effigy-v0-13-0-release-note.md`](./2026-09/24-152221-effigy-v0-13-0-release-note.md)
   — 0.13.0 release notes, migration guidance, and publication verification
 - [`2026-09/13-100503-named-skill-resolution-stdio-planning.md`](./2026-09/13-100503-named-skill-resolution-stdio-planning.md)
@@ -156,5 +158,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Resume the held lifecycle closeout, then reassess 0.13.0 readiness. Release mutation
-and doctor cache pruning remain separate operator-owned decisions.
+Dispatch ready `g10.014` through Northstar Queue, then `g10.015` after its
+terminal closeout. Future release mutation and doctor cache pruning remain
+separate decisions.

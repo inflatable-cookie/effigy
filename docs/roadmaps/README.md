@@ -22,8 +22,10 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: none. All three pre-0.13.0 repairs have merged and
-  completed lifecycle closeout.
+- Approved frontier: [`g10.014`](./g10/014-resolve-compatible-dependabot-lock-updates.md)
+  ready; [`g10.015`](./g10/015-resolve-direct-dependabot-upgrades.md) approved
+  after `g10.014` closes. Both replace the ten open Dependabot PRs in two
+  serial current-base batches.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -89,9 +91,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-The 0.13.0 release is published and install-verified. Return to Northstar
-planning with the operator to choose the next strategic runway. Doctor cache
-pruning and S3 retirement remain separate decisions.
+Dispatch `g10.014` through Northstar Queue, then `g10.015` after its terminal
+closeout. Return to planning after the Dependabot backlog is resolved. Doctor
+cache pruning and S3 retirement remain separate decisions.
 
 ## Historical language boundary
 

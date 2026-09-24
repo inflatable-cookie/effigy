@@ -11,8 +11,10 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- None. All approved pre-0.13.0 repairs have merged and completed lifecycle
-  closeout.
+- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — ready;
+  consolidate six compatible lockfile-only Dependabot updates.
+- [`g10.015`](./015-resolve-direct-dependabot-upgrades.md) — approved downstream;
+  wait for `g10.014` before changing the shared lockfile.
 
 `g10.001` through `g10.013` are complete.
 
@@ -54,6 +56,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
   the retained graph lane.
 - `g10.006` then rebased, revalidated, and merged through PR #109. Both tasks
   have terminal revision-8 lifecycle records.
+- The operator requested resolution of ten open Dependabot PRs after the
+  0.13.0 release and selected consolidated batch PRs. `g10.014` owns six
+  compatible lockfile updates; `g10.015` owns the direct Argon2, tree-sitter,
+  and tabled upgrades plus the overlapping tree-sitter-language update.
+  `Cargo.lock` ownership and merges are serial.
 
 ## Task-surface intake
 
@@ -78,9 +85,9 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-The 0.13.0 release is published and install-verified. Return to Northstar
-planning with the operator to choose the next strategic runway. Doctor cache
-pruning and S3 retirement remain separate decisions.
+Dispatch `g10.014` through Northstar Queue. Its terminal closeout unlocks
+`g10.015`; after both batches, return to planning with the operator. Doctor
+cache pruning and S3 retirement remain separate decisions.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7bde7ea06f11db008d01daaf8e983cf7e57a54b72ef166419fceb2bb5620a05c -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

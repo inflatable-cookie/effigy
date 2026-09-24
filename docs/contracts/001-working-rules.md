@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Resume the held lifecycle closeout, then reassess 0.13.0 release readiness.
-Doctor cache pruning, release mutation, and S3 retirement remain separately
-gated.
+Dispatch ready `g10.014` through Northstar Queue. `g10.015` waits for its
+terminal closeout and shares `Cargo.lock`. Doctor cache pruning, future release
+mutation, and S3 retirement remain separately gated.

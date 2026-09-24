@@ -284,5 +284,6 @@ role:
 
 ## Next Task
 
-Resume the held lifecycle closeout, then reassess 0.13.0 release readiness.
-Cache pruning, release mutation, and S3 retirement remain separately gated.
+Dispatch ready `g10.014` through Northstar Queue, then `g10.015` after its
+terminal closeout. Cache pruning, future release mutation, and S3 retirement
+remain separately gated.

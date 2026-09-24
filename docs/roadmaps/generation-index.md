@@ -1,20 +1,18 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: none; final lifecycle closeout pending
+Approved frontier: g10.014 ready; g10.015 approved after g10.014
 Updated: 2026-09-24
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.010` are complete. Catalog-scoped graph indexing,
-its dependency-maintenance prerequisite, published/draft task surfaces, and
-the Queue protocol migration are terminal. Bounded doctor and incremental
-catalog-scoped scans completed through `g10.010`. Three independent
-pre-0.13.0 release repairs were approved as `g10.011` through `g10.013`.
-`g10.011` and `g10.013` completed. The final repair merged and awaits
-lifecycle closeout. The next decision is the 0.13.0 release-readiness review.
+open; `g10.001` through `g10.013` are complete. The 0.13.0 release is published
+and install-verified. The operator then selected consolidated resolution of
+ten open Dependabot PRs. `g10.014` owns six compatible lockfile updates;
+`g10.015` owns the three direct upgrades and overlapping language update.
+The shared lockfile requires serial execution.
 
 ## Generation history
 
@@ -45,9 +43,9 @@ trees without opening another generation.
 - Optional-provider/S3 retirement remains in triage `20260901-092640`.
 - Release keep-on-failure and hosted-evidence delegation remain in triage
   `20260905-092527` and `20260906-224721`.
-- Effigy release mutation remains explicitly operator-gated.
+- Future Effigy release mutation remains explicitly operator-gated.
 
 ## Next Task
 
-Resume the held lifecycle closeout, then return to Chatterbox for 0.13.0
-readiness.
+Dispatch `g10.014` through Northstar Queue, then `g10.015` after terminal
+closeout. Choose the next strategic runway with the operator afterward.
