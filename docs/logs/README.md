@@ -115,6 +115,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — removed planning currentness drift holding g10.011 lifecycle closeout
 - [`2026-09/24-134221-g10-013-closeout-currentness-repair.md`](./2026-09/24-134221-g10-013-closeout-currentness-repair.md)
   — cleared stale next actions holding g10.013 lifecycle closeout
+- [`2026-09/24-141915-g10-012-closeout-currentness-repair.md`](./2026-09/24-141915-g10-012-closeout-currentness-repair.md)
+  — cleared the final repair from live next actions for closeout
 
 ## Log template
 
@@ -150,6 +152,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Resume the held lifecycle closeout and continue `g10.012` in Queue. After
-reviewed closeout, reassess 0.13.0 readiness. Release mutation
+Resume the held lifecycle closeout, then reassess 0.13.0 readiness. Release mutation
 and doctor cache pruning remain separate operator-owned decisions.

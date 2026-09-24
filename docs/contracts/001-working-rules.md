@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Resume the held lifecycle closeout. Continue `g10.012` through Queue, then
-reassess release readiness after reviewed closeout. Doctor cache pruning,
-release mutation, and S3 retirement remain separately gated.
+Resume the held lifecycle closeout, then reassess 0.13.0 release readiness.
+Doctor cache pruning, release mutation, and S3 retirement remain separately
+gated.

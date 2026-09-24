@@ -22,9 +22,8 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: [`g10.012`](./g10/012-doctor-subprocess-deadlines.md),
-  the remaining pre-0.13.0 repair. `g10.001` through `g10.011` are complete;
-  `g10.013` merged and awaits lifecycle closeout.
+- Approved frontier: none. All three pre-0.13.0 repairs have merged;
+  the final lifecycle closeout is pending.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -90,8 +89,7 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Resume the held lifecycle closeout and continue Queue execution of `g10.012`.
-After reviewed closeout, recheck 0.13.0 readiness.
+Resume the held lifecycle closeout, then recheck 0.13.0 readiness.
 Effigy release execution, doctor cache pruning, and S3 retirement remain
 separately gated.
 

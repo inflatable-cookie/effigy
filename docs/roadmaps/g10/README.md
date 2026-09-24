@@ -11,11 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.012`](./012-doctor-subprocess-deadlines.md) — bound doctor subprocesses
-  to the overall deadline.
+- None. All approved pre-0.13.0 repairs have merged; the final lifecycle
+  closeout is pending.
 
-`g10.001` through `g10.011` are complete; `g10.013` merged and awaits hook
-closeout. `g10.012` is the remaining pre-0.13.0 repair.
+`g10.001` through `g10.011` and `g10.013` are complete. The final task's
+reviewed merge awaits hook closeout.
 
 ## Boundaries
 
@@ -79,9 +79,8 @@ closeout. `g10.012` is the remaining pre-0.13.0 repair.
 
 ## Next Task
 
-Resume the held lifecycle closeout and continue Queue execution of `g10.012`.
-After its reviewed closeout, return to Chatterbox
-for 0.13.0 readiness. Release mutation, doctor cache pruning, and S3
+Resume the held lifecycle closeout, then return to Chatterbox for 0.13.0
+readiness. Release mutation, doctor cache pruning, and S3
 retirement remain separately gated.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:5cc4038973a737637538504e7d238e4687dbd7cbee35996a2cd5f4729f4ce3e7 -->
 | Generation | Disposition | Runway state |
