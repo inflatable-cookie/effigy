@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] `cargo update -p X --precise` silently re-resolves unrelated lockfile edges — 2026-09-24
+- Friction: updating only `hickory-proto`/`hickory-server` to 0.26.3 with per-package `--precise` updates re-selected unrelated edges that were already validly locked: `tempfile 3.27.0` dropped from `getrandom 0.4.3` to `0.3.4` (splitting getrandom into an extra version) and several `windows-sys` consumers re-pointed from 0.61.2 to existing 0.60.2/0.59.0 entries. The drift reproduced deterministically regardless of update order.
+- Impact: bounded dependency tasks get unexplainable lockfile deltas exactly when review oracles demand none, and the extra getrandom version ships unless caught.
+- Possible fix: when the target releases keep dependency lists identical, apply the version/checksum entry update surgically to `Cargo.lock` and validate with `cargo fetch --locked` plus `--locked` builds (what Dependabot itself writes); longer term, cargo could offer a truly edge-stable precise update mode.
+- Surface: `Cargo.lock` maintenance workflow; `cargo update -p ... --precise` behavior.
+
 ### [ ] Doctor-bounded subprocesses are opt-in per call site — 2026-09-24
 - Friction: `ReadOnlyProcess::run` carries no deadline, so a new dependency-inspection subprocess silently bypasses the doctor budget, and `inspect_cargo_link` mapped an inventory timeout to `cargo-resolution-inspection-failed` instead of propagating it until g10.012 added the `is_process_timeout` early return.
 - Impact: future subprocess call sites can reintroduce unbounded doctor hangs or mistimed phases by default.
