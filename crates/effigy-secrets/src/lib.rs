@@ -709,13 +709,32 @@ mod tests {
             VaultSecretRecord::new(SecretValue::new("postgres://secret-value")),
         );
 
-        let envelope = payload
+        let mut envelope = payload
             .encrypt_with_material(
                 "correct horse battery staple",
                 vec![42; DEFAULT_SALT_LEN],
                 vec![7; XCHACHA20POLY1305_NONCE_LEN],
             )
             .expect("encrypt");
+        // Fixed v0.13.0 / argon2 0.5.3 vector. Reuse its ciphertext to
+        // check that a vault written before the upgrade still opens.
+        assert_eq!(
+            derive_vault_key("correct horse battery staple", &envelope.kdf).expect("derive"),
+            [
+                0x9a, 0xe3, 0x66, 0xcc, 0x91, 0xb4, 0x7b, 0xa2, 0x59, 0x8b, 0x19, 0x14, 0x00, 0x35,
+                0xcd, 0xe0, 0xe8, 0x6a, 0x49, 0xdc, 0x71, 0x98, 0x11, 0x96, 0x59, 0x43, 0xb1, 0x6e,
+                0xb2, 0xc8, 0x59, 0x8d,
+            ]
+        );
+        let old_ciphertext = vec![
+            251, 114, 83, 167, 232, 137, 224, 105, 97, 227, 249, 226, 189, 148, 135, 31, 197, 240,
+            150, 134, 234, 167, 171, 98, 103, 177, 144, 40, 174, 229, 133, 147, 14, 181, 176, 226,
+            239, 125, 130, 114, 61, 133, 115, 246, 182, 236, 1, 165, 137, 80, 81, 69, 25, 7, 21,
+            13, 180, 55, 87, 0, 61, 110, 247, 31, 110, 150, 178, 24, 53, 206, 242, 62, 56, 211,
+            244, 211, 46, 51, 128, 191,
+        ];
+        assert_eq!(envelope.payload.ciphertext, old_ciphertext);
+        envelope.payload.ciphertext = old_ciphertext;
         let decrypted = envelope
             .decrypt_with_passphrase("correct horse battery staple")
             .expect("decrypt");

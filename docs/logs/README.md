@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/24-173000-g10-015-direct-dependabot-upgrades.md`](./2026-09/24-173000-g10-015-direct-dependabot-upgrades.md)
+  — current-base direct Cargo upgrades with vault, graph, and table compatibility proof
 - [`2026-09/24-171000-hickory-retarget-disposition.md`](./2026-09/24-171000-hickory-retarget-disposition.md)
   — Hickory 0.26.3 retarget and corrected bot-PR disposition
 - [`2026-09/24-164500-g10-014-compatible-dependabot-lock.md`](./2026-09/24-164500-g10-014-compatible-dependabot-lock.md)
