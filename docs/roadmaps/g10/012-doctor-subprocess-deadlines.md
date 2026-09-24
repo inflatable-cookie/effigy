@@ -1,6 +1,5 @@
 # g10.012 — Doctor subprocess deadlines
 
-Status: ready
 Owner: doctor, scan, and dependency maintainers
 Created: 2026-09-24
 Governing refs: architecture `029`, contract `047`, completed task `g10.010`
