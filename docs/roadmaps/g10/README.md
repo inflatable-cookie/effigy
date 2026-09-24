@@ -88,7 +88,7 @@ weakening source isolation, machine-safe output, or runtime contracts.
 Run queued `g10.015` after its prerequisite reaches terminal closeout; after
 that batch, return to planning with the operator. Doctor
 cache pruning and S3 retirement remain separate decisions.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7bde7ea06f11db008d01daaf8e983cf7e57a54b72ef166419fceb2bb5620a05c -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:4bdb9760429347b040d4820f8d9f496b8c7c1ef3926e55cdbae97da0e131a8d9 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g10 | open | planning_required |
@@ -106,4 +106,5 @@ cache pruning and S3 retirement remain separate decisions.
 | g10.011 | complete | none | 8 | sha256:662faf219b8d797233e1c1fafd7ade3e3620ac1e6983de7eef1b9333feb3aa58 |
 | g10.012 | complete | none | 8 | sha256:77c770dee88cc0c6e080d20ea7b19e6e00f68bbf4f73f8b9bdd4cb6272398ae9 |
 | g10.013 | complete | none | 8 | sha256:1806cd3a5f2835288804585cb0c7541b52f17fe2dedff13d5547046ceb80192e |
+| g10.014 | complete | none | 8 | sha256:63fb0f233fad44d1f74af5cfe3ed024e86a8d3102c9ad0d514f5637f3832a799 |
 <!-- northstar:lifecycle:end -->
