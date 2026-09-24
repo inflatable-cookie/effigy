@@ -26,8 +26,7 @@ pub const SUPPORTED_CATALOG_PACK_UPDATE_SCHEMA: u32 = 1;
 /// public channel may exist, and a command may even exist on `main`, before any
 /// released binary exposes update. The committed file is validated against
 /// [`PackUpdateCapability::for_this_build`]. Tests inject
-/// [`PackUpdateCapability::Present`] to prove the future oldest-field invariant
-/// without claiming that this release exposes update.
+/// [`PackUpdateCapability::Absent`] to prove the pre-update invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackUpdateCapability {
     /// No released Effigy yet exposes public `service pack update`.
@@ -47,7 +46,7 @@ impl PackUpdateCapability {
     /// support-policy or release PR that records
     /// `oldest_update_capable_release`.
     pub fn for_this_build() -> Self {
-        Self::Absent
+        Self::Present
     }
 }
 

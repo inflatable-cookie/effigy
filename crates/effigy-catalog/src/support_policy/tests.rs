@@ -37,7 +37,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn committed_file_matches_this_crate_release_without_oldest_field() {
+fn committed_file_matches_this_crate_release_with_oldest_field() {
     let current = current_effigy_release().expect("workspace package version is semver");
     let policy = CatalogPackUpdatePolicy::load_from_repo_root(
         &repo_root(),
@@ -49,7 +49,7 @@ fn committed_file_matches_this_crate_release_without_oldest_field() {
     assert_eq!(policy.schema_version, 1);
     assert_eq!(policy.as_of_release, current);
     assert_eq!(policy.required_versions, vec![current.clone()]);
-    assert_eq!(policy.oldest_update_capable_release, None);
+    assert_eq!(policy.oldest_update_capable_release, Some(current.clone()));
     assert_eq!(policy.minimum_required_version(), &current);
     assert!(
         repo_root().join(CATALOG_PACK_UPDATE_POLICY_FILE).is_file(),
@@ -58,10 +58,10 @@ fn committed_file_matches_this_crate_release_without_oldest_field() {
 }
 
 #[test]
-fn this_build_does_not_claim_released_public_update() {
+fn this_build_exposes_released_public_update() {
     assert_eq!(
         PackUpdateCapability::for_this_build(),
-        PackUpdateCapability::Absent
+        PackUpdateCapability::Present
     );
 }
 
@@ -75,18 +75,8 @@ fn artifact_publication_alone_does_not_require_the_oldest_field() {
         published_channel.published,
         "counterexample: an official artifact/channel may exist"
     );
-    assert_eq!(
-        PackUpdateCapability::for_this_build(),
-        PackUpdateCapability::Absent,
-        "channel publication must not advance released-update capability"
-    );
-
-    let policy = parse(
-        VALID_PRE_UPDATE,
-        "0.12.1",
-        PackUpdateCapability::for_this_build(),
-    )
-    .expect("pre-update policy stays valid while a channel may be published");
+    let policy = parse(VALID_PRE_UPDATE, "0.12.1", PackUpdateCapability::Absent)
+        .expect("pre-update policy stays valid while a channel may be published");
     assert_eq!(policy.oldest_update_capable_release, None);
 
     let error = parse_err(
@@ -97,7 +87,7 @@ required_versions = ["0.12.1"]
 oldest_update_capable_release = "0.12.1"
 "#,
         "0.12.1",
-        PackUpdateCapability::for_this_build(),
+        PackUpdateCapability::Absent,
     );
     assert!(
         error.contains("`oldest_update_capable_release` is forbidden"),

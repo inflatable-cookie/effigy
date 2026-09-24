@@ -11,11 +11,10 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- None. All approved pre-0.13.0 repairs have merged; the final lifecycle
-  closeout is pending.
+- None. All approved pre-0.13.0 repairs have merged and completed lifecycle
+  closeout.
 
-`g10.001` through `g10.011` and `g10.013` are complete. The final task's
-reviewed merge awaits hook closeout.
+`g10.001` through `g10.013` are complete.
 
 ## Boundaries
 
@@ -79,9 +78,9 @@ reviewed merge awaits hook closeout.
 
 ## Next Task
 
-Resume the held lifecycle closeout, then return to Chatterbox for 0.13.0
-readiness. Release mutation, doctor cache pruning, and S3
-retirement remain separately gated.
+Review and validate the 0.13.0 release preparation, then follow the release
+protocol for tagging and distribution. Doctor cache pruning and S3 retirement
+remain separate decisions.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7bde7ea06f11db008d01daaf8e983cf7e57a54b72ef166419fceb2bb5620a05c -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

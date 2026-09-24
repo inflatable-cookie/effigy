@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-24
+
 ### Breaking
 - Executable `local`, `repo`, `deliver`, `extend`, and `admin` namespace aliases
   and their migration warnings are removed. Use built-ins directly as
@@ -66,7 +68,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Release gate runs now persist full per-gate output and a redacted execution
   environment under `.effigy/reports/release/gates/`, with additive JSON paths
   and failure diagnostics that include a bounded output tail.
-- Consumer-contract guidance now states that full `effigy doctor` executes
+- Consumer-contract guidance now states that `effigy doctor --deep` may execute
   eligible repo-owned health tasks and is not guaranteed read-only, and
   documents `effigy doctor <task>` (doctor explain) as the non-executing
   routing probe that reports root, catalog, and selection mode without
@@ -82,8 +84,8 @@ During v0.x, MINOR bumps may include breaking changes.
   under the durable store lock. Resolution, pull, compatibility, validation,
   and activation failures leave active, previous, and channel identity
   unchanged. Ordinary catalog use stays network-silent. The support-policy
-  `oldest_update_capable_release` field remains absent until a released Effigy
-  records that capability.
+  `oldest_update_capable_release` records 0.13.0 as the first release with
+  public update support.
 - Effigy now owns `support/catalog-pack-update.toml`, the machine-readable
   catalog-pack update support floor. A typed `effigy-catalog` validator checks
   schema, semantic versions, current-release membership, and the
