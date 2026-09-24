@@ -63,7 +63,7 @@ Architecture, roadmap, guides, and logs should align with these constraints unle
 
 ## Next Task
 
-`g10.001` through `g10.013` are complete and 0.13.0 is published. The operator
-selected `g10.014` and downstream `g10.015` for the Dependabot backlog. After
-their closeout, use Northstar Atlas with the operator to choose the next
+`g10.001` through `g10.014` are complete and 0.13.0 is published. The operator
+selected consolidated Dependabot batches; `g10.015` is running and `g10.016`
+owns the newly retargeted Hickory updates. After their closeout, use Northstar Atlas with the operator to choose the next
 strategic runway. The second governance review keeps Effigy at Stage 2.

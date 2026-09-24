@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch ready `g10.014` through Northstar Queue. `g10.015` waits for its
-terminal closeout and shares `Cargo.lock`. Doctor cache pruning, future release
-mutation, and S3 retirement remain separately gated.
+Run queued `g10.016` after `g10.015` terminal closeout; both share `Cargo.lock`.
+Doctor cache pruning, future release mutation, and S3 retirement remain
+separately gated.

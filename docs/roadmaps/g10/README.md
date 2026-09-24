@@ -11,12 +11,14 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — PR #117
-  merged; Queue closeout pending.
-- [`g10.015`](./015-resolve-direct-dependabot-upgrades.md) — approved downstream;
-  wait for `g10.014` before changing the shared lockfile.
+- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — complete
+  through PR #117.
+- [`g10.015`](./015-resolve-direct-dependabot-upgrades.md) — running on the
+  direct dependency upgrades.
+- [`g10.016`](./016-resolve-hickory-follow-up.md) — approved downstream for
+  the bot PRs retargeted to Hickory 0.26.3; wait for `g10.015`.
 
-`g10.001` through `g10.013` are complete.
+`g10.001` through `g10.014` are complete.
 
 ## Boundaries
 
@@ -61,6 +63,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
   compatible lockfile updates; `g10.015` owns the direct Argon2, tree-sitter,
   and tabled upgrades plus the overlapping tree-sitter-language update.
   `Cargo.lock` ownership and merges are serial.
+- Dependabot retargeted #97 and #100 to Hickory 0.26.3 after PR #117 merged
+  0.26.2. `g10.016` owns that follow-up and the corrected source-PR disposition.
 
 ## Task-surface intake
 
@@ -85,8 +89,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Run queued `g10.015` after its prerequisite reaches terminal closeout; after
-that batch, return to planning with the operator. Doctor
+Run queued `g10.016` after the direct-dependency batch reaches terminal
+closeout; then return to planning with the operator. Doctor
 cache pruning and S3 retirement remain separate decisions.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:4bdb9760429347b040d4820f8d9f496b8c7c1ef3926e55cdbae97da0e131a8d9 -->
 | Generation | Disposition | Runway state |

@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/24-171000-hickory-retarget-disposition.md`](./2026-09/24-171000-hickory-retarget-disposition.md)
+  — Hickory 0.26.3 retarget and corrected bot-PR disposition
 - [`2026-09/24-164500-g10-014-compatible-dependabot-lock.md`](./2026-09/24-164500-g10-014-compatible-dependabot-lock.md)
   — current-base Cargo.lock refresh for six compatible Dependabot updates
 - [`2026-09/24-162800-dependabot-cargo-frontier.md`](./2026-09/24-162800-dependabot-cargo-frontier.md)
@@ -160,6 +162,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Dispatch ready `g10.014` through Northstar Queue, then `g10.015` after its
-terminal closeout. Future release mutation and doctor cache pruning remain
-separate decisions.
+Run queued `g10.016` after `g10.015` terminal closeout. Future release
+mutation and doctor cache pruning remain separate decisions.

@@ -47,5 +47,5 @@ Other planning specs:
 ## Next Task
 
 No strict spec lane is active. Specs `118` through `124` are archived. Ready
-`g10.014` and downstream `g10.015` own the Dependabot backlog without reopening
-a spec lane. Future release mutation stays separate.
+`g10.015` and downstream `g10.016` own the remaining Dependabot backlog
+without reopening a spec lane. Future release mutation stays separate.

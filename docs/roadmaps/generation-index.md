@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.014 ready; g10.015 approved after g10.014
+Approved frontier: g10.015 running; g10.016 approved after g10.015
 Updated: 2026-09-24
 
 ## Lifecycle state
@@ -12,7 +12,8 @@ open; `g10.001` through `g10.013` are complete. The 0.13.0 release is published
 and install-verified. The operator then selected consolidated resolution of
 ten open Dependabot PRs. `g10.014` owns six compatible lockfile updates;
 `g10.015` owns the three direct upgrades and overlapping language update.
-The shared lockfile requires serial execution.
+Dependabot then retargeted #97 and #100 to Hickory 0.26.3; `g10.016` owns that
+follow-up. The shared lockfile requires serial execution.
 
 ## Generation history
 
@@ -47,5 +48,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch `g10.014` through Northstar Queue, then `g10.015` after terminal
-closeout. Choose the next strategic runway with the operator afterward.
+Run queued `g10.016` after `g10.015` terminal closeout. Choose the next
+strategic runway with the operator afterward.

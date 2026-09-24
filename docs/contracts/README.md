@@ -284,6 +284,5 @@ role:
 
 ## Next Task
 
-Dispatch ready `g10.014` through Northstar Queue, then `g10.015` after its
-terminal closeout. Cache pruning, future release mutation, and S3 retirement
-remain separately gated.
+Run queued `g10.016` after `g10.015` terminal closeout. Cache pruning, future
+release mutation, and S3 retirement remain separately gated.
