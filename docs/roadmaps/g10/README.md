@@ -11,8 +11,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — ready;
-  consolidate six compatible lockfile-only Dependabot updates.
+- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — PR #117
+  merged; Queue closeout pending.
 - [`g10.015`](./015-resolve-direct-dependabot-upgrades.md) — approved downstream;
   wait for `g10.014` before changing the shared lockfile.
 
@@ -85,8 +85,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Dispatch `g10.014` through Northstar Queue. Its terminal closeout unlocks
-`g10.015`; after both batches, return to planning with the operator. Doctor
+Run queued `g10.015` after its prerequisite reaches terminal closeout; after
+that batch, return to planning with the operator. Doctor
 cache pruning and S3 retirement remain separate decisions.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7bde7ea06f11db008d01daaf8e983cf7e57a54b72ef166419fceb2bb5620a05c -->
 | Generation | Disposition | Runway state |
