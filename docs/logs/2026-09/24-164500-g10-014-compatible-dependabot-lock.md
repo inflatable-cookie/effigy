@@ -22,7 +22,7 @@ Batch: post-0.13.0-compatible-dependabot-lock
 | [#99](https://github.com/inflatable-cookie/effigy/pull/99) | bump indexmap 2.14.0 to 2.14.2 | `d0ee0c95eebb29d6c570f6e7f96c02793cd657ec` | indexmap 2.14.0 -> 2.14.2 |
 | [#100](https://github.com/inflatable-cookie/effigy/pull/100) | bump hickory-server 0.26.1 to 0.26.2 | `132f83807129d4f93a2009c5911233e239c3b9be` | hickory-server 0.26.1 -> 0.26.2 |
 
-Those bot heads were lockfile-only against older bases. This replacement was resolved on current `main` with `cargo update -p <crate> --precise <version>` for each target. Do not close the bot PRs until this aggregate PR merges.
+Those bot heads were lockfile-only against older bases. This replacement was resolved on current `main` with `cargo update -p <crate> --precise <version>` for each target. Aggregate PR: [#117](https://github.com/inflatable-cookie/effigy/pull/117). Do not close the bot PRs until that PR merges.
 
 ## Lockfile delta
 
