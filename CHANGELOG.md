@@ -293,6 +293,13 @@ During v0.x, MINOR bumps may include breaking changes.
   use stay offline.
 
 ### Fixed
+- `effigy doctor` now bounds its subprocess work with the selected overall
+  deadline. A stalled Cargo metadata or Git identity child spawned during
+  dependency health or the deep scan inventory is terminated with its owned
+  process tree and reaped, and doctor reports a non-zero incomplete result
+  naming the `dependency_health` or `scan_inventory` phase with the completed
+  evidence instead of hanging past its budget. The `0`
+  `EFFIGY_DOCTOR_TIMEOUT_MS` override stays deliberately unbounded.
 - `effigy changelog validate` now rejects duplicate category headings under
   `[Unreleased]` while retaining historical released sections, and `changelog
   analyze` counts every entry even before duplicates are consolidated.

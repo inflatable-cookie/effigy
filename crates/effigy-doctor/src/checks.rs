@@ -31,10 +31,10 @@ pub(super) fn run_structural_checks(
         state,
         progress,
     );
-    if structural_complete {
-        crate::dependency_health::run_dependency_health_check(resolved_root, state);
+    if !structural_complete {
+        return false;
     }
-    structural_complete
+    crate::dependency_health::run_dependency_health_check(resolved_root, state, deadline)
 }
 
 pub(super) fn record_deep_checks_skipped(state: &mut DoctorState) {
