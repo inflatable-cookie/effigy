@@ -508,10 +508,7 @@ pub(crate) fn git_head_file(
     })?;
     let git_root = PathBuf::from(toplevel.stdout.trim());
     let relative = path.strip_prefix(&git_root).map_err(|_| {
-        DepsError::invalid(
-            path,
-            "tracked Cargo.lock is outside the Git repository",
-        )
+        DepsError::invalid(path, "tracked Cargo.lock is outside the Git repository")
     })?;
     process
         .run(&ProcessRequest {

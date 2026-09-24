@@ -7,6 +7,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Installed Northstar skill task leaves `{skill}` unexpanded through `--repo` — 2026-09-24
+- Friction: `effigy --repo <installed-northstar-skill> northstar/language:route ...` passed the literal `{skill}/scripts/language-package-lifecycle.ts` to Bun and failed before the Rust audit route. Calling the same local script by absolute path succeeded.
+- Impact: the documented installed-skill language route is unusable through this Effigy invocation.
+- Possible fix: make the task placeholder resolve for `--repo` execution or update the Northstar task definition and route to a supported path form.
+- Surface: installed Northstar `effigy.toml` task interpolation; Effigy task runner `--repo` behavior.
+
 ### [ ] `effigy-core` build-info env test races under full-workspace parallelism — 2026-09-15
 - Friction: the exact-head review of g10.008 observed `build_info::tests::read_active_version_env_trims_and_ignores_empty_values` fail once during a full parallel `cargo test --workspace` run (process-global `EFFIGY_*` version env vars mutated concurrently by `EnvGuard`), while it passes in isolation and under `effigy qa`. `effigy-core` only gained `task_selection.rs` in that lane.
 - Impact: full workspace rounds can fail intermittently for reasons unrelated to the change under test.

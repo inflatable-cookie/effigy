@@ -127,6 +127,11 @@ Formatting behavior:
 - preserves entry content
 - sorts categories into canonical order
 
+Keep each category in one section under `[Unreleased]`. `changelog validate`
+rejects duplicate headings there while preserving historical released
+sections, and `changelog analyze` counts every entry even when inspecting an
+unfixed file.
+
 ### Analyze
 
 Use this to inspect the current `Unreleased` section and the next likely bump:

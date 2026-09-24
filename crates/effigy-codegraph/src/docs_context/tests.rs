@@ -1001,7 +1001,6 @@ fn oversized_traversed_section_is_omitted_whole() {
             max_sections: Some(2),
             max_bytes: Some(max_bytes),
             max_hops: Some(1),
-            ..Default::default()
         },
     );
     assert_eq!(payload.results.len(), 2);

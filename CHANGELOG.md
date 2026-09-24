@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- Executable `local`, `repo`, `deliver`, `extend`, and `admin` namespace aliases
+  and their migration warnings are removed. Use built-ins directly as
+  `effigy <command> ...`; the former namespace words now follow ordinary
+  repository selector routing. Help groups remain for discovery.
+
 ### Added
 - Published and draft task surfaces. `[tasks]` stays the small published
   command surface, and a new lifecycle-labelled `[drafts]` table carries
@@ -91,146 +97,6 @@ During v0.x, MINOR bumps may include breaking changes.
   that names the create-only collision and never carries signed URLs,
   credentials, or response bodies. Omitting the option or passing `false`
   preserves the existing unconditional write byte-for-byte.
-
-### Changed
-- `effigy doctor` is now a bounded structural-only check by default (10
-  seconds). `--deep` explicitly adds enabled content scans and selected-scope
-  `health` under a 120-second overall budget, with `--catalog`,
-  `--all-catalogs`, `--refresh`, and `EFFIGY_DOCTOR_TIMEOUT_MS` controls. Deep
-  scans share one scope walk and an exact atomic cache under
-  `.effigy/doctor/cache/v1/`; doctor text and JSON now expose run scope,
-  budget, completeness, per-check state and timing, and cache counts.
-- `effigy docs context` keeps a repository-owned documentation corpus: catalog
-  segmentation no longer removes an explicitly configured documentation root,
-  and refreshing documentation context does not refresh a source catalog. Its
-  provenance stamp is now stored per scope, so it does not reuse or overwrite a
-  code scope's git stamp.
-- The bundled Northstar starter now uses the flattened generation-plus-task
-  model: generation READMEs own the approved frontier, executable planning
-  units are top-level `gNN.NNN` tasks, and the documentation graph exposes
-  `task` and `archived-roadmap` kinds instead of nested ready cards.
-- `effigy docs context` answers a warm query on this repository roughly three
-  times faster (p50 1935 ms to 602 ms on a current index; 2045 ms to 682 ms
-  with a dirty working tree), and a stale docs-only refresh of 50 Markdown
-  files drops from 12.8 s to 10.2 s under the default budget. The cause was
-  glob recompilation: every documentation-profile compile revalidated kind
-  overlap across every in-scope document, and every scope build asked each
-  document for its kind, rebuilding the same `docs_policy.graph` matchers each
-  time. Each distinct pattern now compiles once per process. Ranking,
-  provenance, budgets, freshness identity, and every default are unchanged; the
-  frozen `perf:docs-context-benchmark` matrix stays green and its results are
-  byte-identical.
-- The shared `effigy.graph.timeout.v1` detail now carries an additive `phase`
-  block naming what the bounded run was doing when the budget expired
-  (`freshness-scan`, `refresh-lock-wait`, `index-walk`, `index-files`,
-  `search-index-rebuild`, `docs-scope`, `docs-rank`, `docs-select`), with
-  `items_done`/`items_total` for the file-proportional phases, plus a matching
-  recovery line. The schema id, schema version, and every existing field are
-  unchanged.
-- `release gates` announces its configured inventory and always emits progress
-  on stderr, keeping JSON stdout contract-pure; first-time `.effigy` writers
-  use the existing gitignore convention.
-- Direct built-in invocation is canonical again. The executable `local`,
-  `repo`, `deliver`, `extend`, and `admin` namespace aliases and their
-  migration warnings are removed. Help grouping and `effigy help <group>`
-  stay as discovery; each built-in runs as `effigy <command> ...` without a
-  warning. Former namespace words return to ordinary selector routing.
-- Retired the `docs/roadmaps/backlog/` intake layer. Roadmaps now hold only
-  promoted executable tasks while `docs/triage/` temporarily holds unresolved
-  or deferred candidates with no execution authority; the two surviving
-  candidates (consumer cohort expansion, vendored skill portfolio sync) moved
-  to timestamped triage notes. Guide `049` is self-contained for versioning,
-  rollback, support-window, and v1-planning policy, live references point at
-  current guides and triage notes, and both repo-owned `qa:docs` and the
-  bundled Northstar starter reject a reintroduced `docs/roadmaps/backlog/`
-  through a `test ! -e` absence check. The starter also emits a
-  `docs/triage/README.md` intake anchor.
-
-### Fixed
-- Committed Cargo resolution now uses patched `rustls 0.23.45` and non-yanked
-  `chacha20 0.10.2`, clearing RUSTSEC-2026-0285 and the yanked-release warning
-  with no `deny.toml` exception and no manifest, requirement, or feature change.
-  Cargo also moved the resolver-required `aws-lc-rs 1.18.1`, `aws-lc-sys
-  0.45.0`, and `rustls-webpki 0.103.15` transitives; full `cargo deny check`
-  passes.
-- The attached container startup SIGINT CLI test now waits for a fixture-owned
-  marker written after the delayed startup child is active, with separate
-  startup-delay and marker-wait budgets, instead of racing equal three-second
-  deadlines.
-- A provably stale repository-local install — the checkout's own
-  `.local-install/bin/effigy` whose recorded `+local.<sha>` identity resolves
-  in that checkout as a strict ancestor of its `HEAD` — now fails a strict
-  manifest parse with the original TOML error plus the installed and current
-  revisions and the source-build refresh
-  `cargo run --bin effigy -- bootstrap:local`. Current installs, unprovable or
-  divergent recorded commits, release/global binaries, and consumer
-  repositories keep the ordinary parse error unchanged. Proven by card `1117`.
-- `effigy deps link cargo` now links across a package version transition.
-  Pointing a consumer whose `Cargo.lock` pins a released Git tag at a local
-  candidate carrying a different version previously left Cargo holding the
-  locked packages, recorded the patch entries under `[[patch.unused]]`, and
-  failed verification. Planning now detects the transition per package and
-  reports it, and link refreshes exactly those packages before verifying; a
-  same-version link refreshes nothing. A patch Cargo still leaves unapplied is
-  a verification failure that names the package instead of a silent Git
-  resolution. Every affected lockfile is also part of the transaction, so a
-  failed apply, refresh, or verification restores each one byte-for-byte
-  instead of leaving lock residue behind.
-- `effigy docs context` now keeps identifier-shaped query tokens
-  (`catalog_tasks`, `foo::bar`) whole alongside their split words and ranks
-  exact whole-term containment above split-word density. `catalog_tasks`
-  retrieves the guide `026` section that contains that literal; `graph` still
-  does not match `graphql`. Candidate recall still uses the shared FTS index.
-  Proven by card `1114`.
-- Cargo lockfile release sync now authorizes version changes by actual Cargo
-  workspace package identity and each member's metadata-reported package
-  version, preserving independent versions in mixed-version workspaces. A
-  third-party package move is rejected and the pre-prepare tree restored even
-  when that package's new version matches a workspace member's target version.
-- Child-catalog test-suite task references now keep the originating repository's
-  loaded container registry while using the selected child task's cwd. An
-  explicit child registry still wins, and direct child invocation keeps normal
-  discovery semantics.
-- `effigy docs context` now shares `EFFIGY_GRAPH_TIMEOUT_MS`, typed timeout
-  detail, health snapshot, and recovery guidance with graph queries. Cold and
-  stale rebuilds announce progress on stderr; JSON stdout stays contract-pure,
-  `0` disables the bound, and usage errors are validated before the timer.
-- Documentation-context selection now reserves one fitting traversed result
-  when at least two section slots are available, while retaining the best
-  lexical result first. One-slot, no-traversal, and oversized-result behavior
-  stays unchanged.
-- `perf:docs-context-benchmark` empty-result proof is fixture-owned. The live
-  Effigy target keeps its authority and historical cases and no longer carries a
-  query that fails when its terms appear in documentation. A live-target empty
-  case is rejected before the matrix runs. Current matrix is 11 cases;
-  historical freeze logs keep the older 12-case counts.
-- Leading YAML frontmatter in Markdown documents is no longer indexed as one
-  synthetic setext heading. A complete leading `---` … `---` block — including
-  an empty body or a body that begins with blank lines — stays metadata: real
-  ATX/setext headings keep their original spans, and profile-configured field
-  facts and labelled relations inside the block remain available. Incomplete or
-  non-leading `---` delimiters keep ordinary Markdown heading behavior. The
-  Markdown extractor identity bumps to `0.2.1` so unchanged files reindex after
-  upgrade instead of retaining a stale synthetic heading.
-- `effigy service list` no longer advertises root bundled catalog assets such as
-  `README.md` or `compose.override.example.yml` as callable fragments. Bundled
-  inventory membership is the set of first-level directories that carry
-  `service.toml`. Filesystem override and installed-pack listing remain
-  directory-based and unchanged.
-- Rhai script hosts now set explicit expression-depth limits (`64` global /
-  `32` in functions) on every production engine, matching the previous release
-  defaults instead of inheriting Rhai's lower `debug_assertions` parser caps.
-  A checked-in script that parsed under an installed release binary no longer
-  fails the documented `cargo run --bin effigy -- <task>` fallback solely
-  because of build-profile drift.
-- `effigy docs add-log-index` now inserts a missing log entry as the first item
-  under the `## Active logs` section of `docs/logs/README.md` (newest first),
-  ahead of any current entries and never below a later section such as
-  `## Next Task`. A missing or duplicated `## Active logs` heading is an error
-  that leaves the index file byte-identical. Path normalization, report
-  schemas, and repeat-run idempotence are unchanged.
-
-### Added
 - `effigy service pack` manages independently versioned catalog packs:
   `status`, `install oci://<REPO>@sha256:<DIGEST>`, `install --path <DIR>`,
   `update`, `rollback`, and `reset`, each with text output, a standard JSON payload, and
@@ -349,6 +215,53 @@ During v0.x, MINOR bumps may include breaking changes.
   exists.
 
 ### Changed
+- `effigy doctor` is now a bounded structural-only check by default (10
+  seconds). `--deep` explicitly adds enabled content scans and selected-scope
+  `health` under a 120-second overall budget, with `--catalog`,
+  `--all-catalogs`, `--refresh`, and `EFFIGY_DOCTOR_TIMEOUT_MS` controls. Deep
+  scans share one scope walk and an exact atomic cache under
+  `.effigy/doctor/cache/v1/`; doctor text and JSON now expose run scope,
+  budget, completeness, per-check state and timing, and cache counts.
+- `effigy docs context` keeps a repository-owned documentation corpus: catalog
+  segmentation no longer removes an explicitly configured documentation root,
+  and refreshing documentation context does not refresh a source catalog. Its
+  provenance stamp is now stored per scope, so it does not reuse or overwrite a
+  code scope's git stamp.
+- The bundled Northstar starter now uses the flattened generation-plus-task
+  model: generation READMEs own the approved frontier, executable planning
+  units are top-level `gNN.NNN` tasks, and the documentation graph exposes
+  `task` and `archived-roadmap` kinds instead of nested ready cards.
+- `effigy docs context` answers a warm query on this repository roughly three
+  times faster (p50 1935 ms to 602 ms on a current index; 2045 ms to 682 ms
+  with a dirty working tree), and a stale docs-only refresh of 50 Markdown
+  files drops from 12.8 s to 10.2 s under the default budget. The cause was
+  glob recompilation: every documentation-profile compile revalidated kind
+  overlap across every in-scope document, and every scope build asked each
+  document for its kind, rebuilding the same `docs_policy.graph` matchers each
+  time. Each distinct pattern now compiles once per process. Ranking,
+  provenance, budgets, freshness identity, and every default are unchanged; the
+  frozen `perf:docs-context-benchmark` matrix stays green and its results are
+  byte-identical.
+- The shared `effigy.graph.timeout.v1` detail now carries an additive `phase`
+  block naming what the bounded run was doing when the budget expired
+  (`freshness-scan`, `refresh-lock-wait`, `index-walk`, `index-files`,
+  `search-index-rebuild`, `docs-scope`, `docs-rank`, `docs-select`), with
+  `items_done`/`items_total` for the file-proportional phases, plus a matching
+  recovery line. The schema id, schema version, and every existing field are
+  unchanged.
+- `release gates` announces its configured inventory and always emits progress
+  on stderr, keeping JSON stdout contract-pure; first-time `.effigy` writers
+  use the existing gitignore convention.
+- Retired the `docs/roadmaps/backlog/` intake layer. Roadmaps now hold only
+  promoted executable tasks while `docs/triage/` temporarily holds unresolved
+  or deferred candidates with no execution authority; the two surviving
+  candidates (consumer cohort expansion, vendored skill portfolio sync) moved
+  to timestamped triage notes. Guide `049` is self-contained for versioning,
+  rollback, support-window, and v1-planning policy, live references point at
+  current guides and triage notes, and both repo-owned `qa:docs` and the
+  bundled Northstar starter reject a reintroduced `docs/roadmaps/backlog/`
+  through a `test ! -e` absence check. The starter also emits a
+  `docs/triage/README.md` intake anchor.
 - `effigy help <topic>` no longer silently falls back to general help. An
   unknown topic now fails with exit code `2` and names the valid groups and
   commands. When a manifest selector or `[defer] builtins` entry owns a built-in
@@ -366,8 +279,107 @@ During v0.x, MINOR bumps may include breaking changes.
 - The `effigy` agent skill now routes documentation-authority questions to
   `effigy docs context` and no longer claims the graph profile ships without a
   docs-context command.
+- Effigy's embedded catalog is now a generated snapshot of the official
+  `inflatable-cookie/effigy-catalog-pack` `v1.0.1` artifact. The checked-in
+  `crates/effigy-catalog/catalog/` tree is a byte-for-byte copy of the pack
+  repository's canonical `pack/` root (now including `pack.toml`) at source
+  commit `5ef0ec2b64612c7803cc6105a65ea462862a0b21`, and fragment behavior is
+  unchanged. A typed `catalog-pack.lock.toml` records the source
+  repository/commit, pack version, OCI manifest digest, and unpacked content
+  identity; offline repository tests recompute manifest facts, content
+  identity, and the deterministic OCI manifest digest from the snapshot and
+  reject byte, manifest, version, content-identity, or lock drift, so a hand
+  edit now fails `cargo test`. No public command is added and ordinary QA and
+  use stay offline.
 
 ### Fixed
+- `effigy changelog validate` now rejects duplicate category headings under
+  `[Unreleased]` while retaining historical released sections, and `changelog
+  analyze` counts every entry even before duplicates are consolidated.
+  Previously a repeated heading could silently hide earlier entries from
+  release status and bump analysis.
+- Committed Cargo resolution now uses patched `rustls 0.23.45` and non-yanked
+  `chacha20 0.10.2`, clearing RUSTSEC-2026-0285 and the yanked-release warning
+  with no `deny.toml` exception and no manifest, requirement, or feature change.
+  Cargo also moved the resolver-required `aws-lc-rs 1.18.1`, `aws-lc-sys
+  0.45.0`, and `rustls-webpki 0.103.15` transitives; full `cargo deny check`
+  passes.
+- The attached container startup SIGINT CLI test now waits for a fixture-owned
+  marker written after the delayed startup child is active, with separate
+  startup-delay and marker-wait budgets, instead of racing equal three-second
+  deadlines.
+- A provably stale repository-local install — the checkout's own
+  `.local-install/bin/effigy` whose recorded `+local.<sha>` identity resolves
+  in that checkout as a strict ancestor of its `HEAD` — now fails a strict
+  manifest parse with the original TOML error plus the installed and current
+  revisions and the source-build refresh
+  `cargo run --bin effigy -- bootstrap:local`. Current installs, unprovable or
+  divergent recorded commits, release/global binaries, and consumer
+  repositories keep the ordinary parse error unchanged. Proven by card `1117`.
+- `effigy deps link cargo` now links across a package version transition.
+  Pointing a consumer whose `Cargo.lock` pins a released Git tag at a local
+  candidate carrying a different version previously left Cargo holding the
+  locked packages, recorded the patch entries under `[[patch.unused]]`, and
+  failed verification. Planning now detects the transition per package and
+  reports it, and link refreshes exactly those packages before verifying; a
+  same-version link refreshes nothing. A patch Cargo still leaves unapplied is
+  a verification failure that names the package instead of a silent Git
+  resolution. Every affected lockfile is also part of the transaction, so a
+  failed apply, refresh, or verification restores each one byte-for-byte
+  instead of leaving lock residue behind.
+- `effigy docs context` now keeps identifier-shaped query tokens
+  (`catalog_tasks`, `foo::bar`) whole alongside their split words and ranks
+  exact whole-term containment above split-word density. `catalog_tasks`
+  retrieves the guide `026` section that contains that literal; `graph` still
+  does not match `graphql`. Candidate recall still uses the shared FTS index.
+  Proven by card `1114`.
+- Cargo lockfile release sync now authorizes version changes by actual Cargo
+  workspace package identity and each member's metadata-reported package
+  version, preserving independent versions in mixed-version workspaces. A
+  third-party package move is rejected and the pre-prepare tree restored even
+  when that package's new version matches a workspace member's target version.
+- Child-catalog test-suite task references now keep the originating repository's
+  loaded container registry while using the selected child task's cwd. An
+  explicit child registry still wins, and direct child invocation keeps normal
+  discovery semantics.
+- `effigy docs context` now shares `EFFIGY_GRAPH_TIMEOUT_MS`, typed timeout
+  detail, health snapshot, and recovery guidance with graph queries. Cold and
+  stale rebuilds announce progress on stderr; JSON stdout stays contract-pure,
+  `0` disables the bound, and usage errors are validated before the timer.
+- Documentation-context selection now reserves one fitting traversed result
+  when at least two section slots are available, while retaining the best
+  lexical result first. One-slot, no-traversal, and oversized-result behavior
+  stays unchanged.
+- `perf:docs-context-benchmark` empty-result proof is fixture-owned. The live
+  Effigy target keeps its authority and historical cases and no longer carries a
+  query that fails when its terms appear in documentation. A live-target empty
+  case is rejected before the matrix runs. Current matrix is 11 cases;
+  historical freeze logs keep the older 12-case counts.
+- Leading YAML frontmatter in Markdown documents is no longer indexed as one
+  synthetic setext heading. A complete leading `---` … `---` block — including
+  an empty body or a body that begins with blank lines — stays metadata: real
+  ATX/setext headings keep their original spans, and profile-configured field
+  facts and labelled relations inside the block remain available. Incomplete or
+  non-leading `---` delimiters keep ordinary Markdown heading behavior. The
+  Markdown extractor identity bumps to `0.2.1` so unchanged files reindex after
+  upgrade instead of retaining a stale synthetic heading.
+- `effigy service list` no longer advertises root bundled catalog assets such as
+  `README.md` or `compose.override.example.yml` as callable fragments. Bundled
+  inventory membership is the set of first-level directories that carry
+  `service.toml`. Filesystem override and installed-pack listing remain
+  directory-based and unchanged.
+- Rhai script hosts now set explicit expression-depth limits (`64` global /
+  `32` in functions) on every production engine, matching the previous release
+  defaults instead of inheriting Rhai's lower `debug_assertions` parser caps.
+  A checked-in script that parsed under an installed release binary no longer
+  fails the documented `cargo run --bin effigy -- <task>` fallback solely
+  because of build-profile drift.
+- `effigy docs add-log-index` now inserts a missing log entry as the first item
+  under the `## Active logs` section of `docs/logs/README.md` (newest first),
+  ahead of any current entries and never below a later section such as
+  `## Next Task`. A missing or duplicated `## Active logs` heading is an error
+  that leaves the index file byte-identical. Path normalization, report
+  schemas, and repeat-run idempotence are unchanged.
 - `effigy skill run` no longer resolves the consumer secret vault. A consumer
   that declares required Rhai-target secrets could not run an unrelated
   external skill task non-interactively, because Rhai secret-store construction
@@ -483,20 +495,6 @@ During v0.x, MINOR bumps may include breaking changes.
   primary checkout's vault, so worktrees share one machine-local vault instead
   of forking a partial local one. Vault creation still writes where it was
   asked to.
-
-### Changed
-- Effigy's embedded catalog is now a generated snapshot of the official
-  `inflatable-cookie/effigy-catalog-pack` `v1.0.1` artifact. The checked-in
-  `crates/effigy-catalog/catalog/` tree is a byte-for-byte copy of the pack
-  repository's canonical `pack/` root (now including `pack.toml`) at source
-  commit `5ef0ec2b64612c7803cc6105a65ea462862a0b21`, and fragment behavior is
-  unchanged. A typed `catalog-pack.lock.toml` records the source
-  repository/commit, pack version, OCI manifest digest, and unpacked content
-  identity; offline repository tests recompute manifest facts, content
-  identity, and the deterministic OCI manifest digest from the snapshot and
-  reject byte, manifest, version, content-identity, or lock drift, so a hand
-  edit now fails `cargo test`. No public command is added and ordinary QA and
-  use stay offline.
 
 ## [0.12.1] - 2026-08-25
 

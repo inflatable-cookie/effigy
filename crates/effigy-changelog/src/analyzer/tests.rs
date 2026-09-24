@@ -178,6 +178,14 @@ fn unreleased_counts_are_correct() {
 }
 
 #[test]
+fn repeated_category_counts_all_entries_even_before_validation() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n### Added\n- First\n\n### Fixed\n- Repair\n\n### Added\n- Second\n\n## [0.1.0] - 2026-03-01\n\n### Added\n- Initial\n";
+    let analysis = analyze_str(input);
+    assert_eq!(analysis.unreleased_counts.get("Added"), Some(&2));
+    assert_eq!(analysis.unreleased_counts.get("Fixed"), Some(&1));
+}
+
+#[test]
 fn analyze_effigy_changelog() {
     let content = include_str!("../../../../CHANGELOG.md");
     let changelog = parse_changelog(content).expect("should parse");

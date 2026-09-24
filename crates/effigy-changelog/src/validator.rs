@@ -23,6 +23,7 @@ pub(super) fn validate_changelog(
 
     check_unreleased_present(changelog, &mut diagnostics);
     check_empty_sections(changelog, &mut diagnostics);
+    check_duplicate_categories(changelog, &mut diagnostics);
     check_duplicate_versions(changelog, &mut diagnostics);
     check_version_ordering(changelog, &mut diagnostics);
     check_date_validity(changelog, &mut diagnostics);
@@ -55,6 +56,32 @@ fn check_empty_sections(changelog: &Changelog, diagnostics: &mut Vec<ValidationD
                         cat.kind
                     ),
                     suggestion: Some(format!("remove the `### {}` section", cat.kind)),
+                });
+            }
+        }
+    }
+}
+
+fn check_duplicate_categories(changelog: &Changelog, diagnostics: &mut Vec<ValidationDiagnostic>) {
+    for release in changelog
+        .releases
+        .iter()
+        .filter(|release| release.is_unreleased())
+    {
+        let mut seen = HashSet::new();
+        for category in &release.categories {
+            if !seen.insert(category.kind) {
+                diagnostics.push(ValidationDiagnostic {
+                    line: category.line,
+                    rule: "duplicate-category",
+                    message: format!(
+                        "category `### {}` appears more than once in `[Unreleased]`",
+                        category.kind
+                    ),
+                    suggestion: Some(format!(
+                        "combine the `### {}` entries into one section",
+                        category.kind
+                    )),
                 });
             }
         }

@@ -56,7 +56,9 @@ pub(super) fn analyze_changelog(changelog: &Changelog) -> Analysis {
         for cat in &unreleased.categories {
             let count = cat.entries.len();
             if count > 0 {
-                unreleased_counts.insert(cat.kind.header_text().to_owned(), count);
+                *unreleased_counts
+                    .entry(cat.kind.header_text().to_owned())
+                    .or_insert(0) += count;
                 has_any = true;
 
                 match cat.kind {

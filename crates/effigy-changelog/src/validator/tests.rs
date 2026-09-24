@@ -86,6 +86,24 @@ fn duplicate_version_detected() {
 }
 
 #[test]
+fn duplicate_category_detected_within_one_release() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n### Added\n- First\n\n### Fixed\n- Repair\n\n### Added\n- Second\n";
+    let diagnostics = validate_str(input);
+    let duplicates = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.rule == "duplicate-category")
+        .collect::<Vec<_>>();
+    assert_eq!(duplicates.len(), 1);
+    assert!(duplicates[0].message.contains("Added"));
+}
+
+#[test]
+fn historical_released_category_duplicates_remain_valid() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-03-01\n\n### Added\n- First\n\n### Fixed\n- Repair\n\n### Added\n- Second\n";
+    assert!(validate_str(input).is_empty());
+}
+
+#[test]
 fn out_of_order_versions() {
     let input = "\
 # Changelog

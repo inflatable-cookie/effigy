@@ -107,6 +107,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
   — promoted bounded structural doctor and incremental catalog-scoped deep scans
 - [`2026-09/24-122316-g10-front-door-reconciliation.md`](./2026-09/24-122316-g10-front-door-reconciliation.md)
   — reconciled g10.010 terminal state and indexed two open Acowtancy triage notes
+- [`2026-09/24-124833-release-readiness-audit.md`](./2026-09/24-124833-release-readiness-audit.md)
+  — audited unreleased runtime and docs changes; recorded pre-release blockers
 
 ## Log template
 

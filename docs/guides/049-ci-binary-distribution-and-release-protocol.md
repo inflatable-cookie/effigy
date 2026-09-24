@@ -298,6 +298,14 @@ and resolve the failure before continuing.
      updates the primary version file, moves `[Unreleased]` entries into a
      dated release heading, syncs configured `Cargo.lock` and secondary
      `package.json` files, and writes `.release-prepared.json`.
+   - For Effigy itself, prepare the release-owned
+     `support/catalog-pack-update.toml` alongside the version bump. Set
+     `as_of_release` and `required_versions` for the target release, and set
+     `oldest_update_capable_release` when the release first exposes public
+     `service pack update`. Update `PackUpdateCapability::for_this_build` and
+     its tests in the same release change. The built-in prepare flow does not
+     sync this support policy; its committed-file test and release gates fail
+     if it stays on the previous version.
    - Review versioned install examples in user-facing docs, especially the root
      `README.md`, and refresh any explicit release tags so the front door does
      not lag the newly prepared version.
