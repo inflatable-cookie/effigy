@@ -1,6 +1,5 @@
 # g10.008 — Published and draft task surfaces
 
-Status: ready
 Owner: task manifest, discovery, routing, and execution
 Created: 2026-09-15
 Governing refs: `docs/architecture/028-published-and-draft-task-surfaces.md`, `docs/contracts/046-published-and-draft-task-surface-contract.md`, `docs/contracts/013-task-execution-request-contract.md`, `docs/contracts/017-task-status-record-and-active-run-model-contract.md`, `docs/contracts/018-task-status-query-surface-and-read-model-contract.md`, `docs/contracts/043-feature-placement-and-surface-migration-contract.md`

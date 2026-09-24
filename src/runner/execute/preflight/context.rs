@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
 use effigy_context::TaskSourceContext;
-use effigy_execution::{ExecutionDiscoveryPlan, ExecutionPreflightInput, ExecutionSurface};
+use effigy_execution::{
+    ExecutionDiscoveryPlan, ExecutionOutputMode, ExecutionPreflightInput, ExecutionSurface,
+};
 
 use super::runtime::prepare_execution_runtime_args;
 use crate::runner::error::RunnerError;
@@ -19,6 +21,7 @@ pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) runtime_args_raw: TaskRuntimeArgs,
     pub(in crate::runner) runtime_args_exec: TaskRuntimeArgs,
     pub(in crate::runner) output_json: bool,
+    pub(in crate::runner) output_mode: ExecutionOutputMode,
     pub(in crate::runner) resolved: ResolvedTarget,
     pub(in crate::runner) discovery_plan: ExecutionDiscoveryPlan,
     pub(in crate::runner) selector: TaskSelector,
@@ -70,6 +73,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         runtime_args_raw,
         runtime_args_exec,
         output_json,
+        output_mode: input.output_mode,
         resolved: discovery.resolved,
         selector: discovery_plan.selector.clone(),
         discovery_plan,

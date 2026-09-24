@@ -159,25 +159,89 @@ pub(crate) fn update_index_stamp(
 pub(crate) fn dirty_paths(repo_root: &Path) -> Option<std::collections::BTreeSet<String>> {
     let output = Command::new("git")
         .arg("status")
-        .arg("--porcelain")
+        .args(["--porcelain=v1", "-z", "--untracked-files=all"])
         .current_dir(repo_root)
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    let stdout = String::from_utf8(output.stdout).ok()?;
     let mut paths = std::collections::BTreeSet::new();
-    for line in stdout.lines() {
-        // `XY <path>`, or `XY <old> -> <new>` for a rename. An unparsable
-        // line makes the whole answer unknown rather than partly wrong.
-        let rest = line.get(3..)?;
-        for part in rest.split(" -> ") {
-            let part = part.trim().trim_matches('"');
-            if !part.is_empty() {
-                paths.insert(part.to_owned());
-            }
+    if output.stdout.is_empty() {
+        return Some(paths);
+    }
+    let records = output.stdout.strip_suffix(&[0])?;
+    let mut records = records.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.len() < 4 || record[2] != b' ' {
+            return None;
+        }
+        paths.insert(String::from_utf8(record[3..].to_vec()).ok()?);
+        // In porcelain v1 -z, a rename/copy has two NUL-terminated paths:
+        // destination first, then source. Both identities are uncertain.
+        if matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C') {
+            paths.insert(String::from_utf8(records.next()?.to_vec()).ok()?);
         }
     }
     Some(paths)
+}
+
+/// Positive evidence that an exact repository-relative file has HEAD's bytes.
+pub(crate) fn path_at_head(repo_root: &Path, path: &str) -> bool {
+    let Ok(output) = Command::new("git")
+        .arg("show")
+        .arg(format!("HEAD:{path}"))
+        .current_dir(repo_root)
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+        && std::fs::read(repo_root.join(path))
+            .map(|bytes| bytes == output.stdout)
+            .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod dirty_paths_tests {
+    use super::*;
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn nul_status_decodes_quoted_names_and_both_rename_endpoints() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "fixture@example.invalid"]);
+        git(root, &["config", "user.name", "Fixture"]);
+        std::fs::write(root.join("before name.md"), "same\n").expect("write");
+        std::fs::write(root.join("quo\"té.md"), "clean\n").expect("write");
+        std::fs::write(root.join("clean.md"), "clean\n").expect("write");
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "fixture"]);
+        git(root, &["mv", "before name.md", "after name.md"]);
+        std::fs::write(root.join("quo\"té.md"), "dirty\n").expect("dirty");
+        std::fs::write(root.join("untracked space.md"), "new\n").expect("untracked");
+
+        let dirty = dirty_paths(root).expect("git status");
+        for name in [
+            "before name.md",
+            "after name.md",
+            "quo\"té.md",
+            "untracked space.md",
+        ] {
+            assert!(dirty.contains(name), "{name}: {dirty:?}");
+        }
+        assert!(path_at_head(root, "clean.md"));
+        assert!(!path_at_head(root, "before name.md"));
+        assert!(!path_at_head(root, "after name.md"));
+    }
 }

@@ -1,6 +1,5 @@
 # g10.004 — Place log-index entries under Active logs
 
-Status: ready
 Owner: documentation policy
 Created: 2026-09-14
 Governing refs: `docs/architecture/010-package-map.md`, `docs/contracts/030-low-risk-deduplication-contract.md`, `docs/guides/029-docs-qa-checklist-and-validation.md`, `docs/logs/README.md`

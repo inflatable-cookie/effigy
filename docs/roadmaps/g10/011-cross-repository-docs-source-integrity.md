@@ -1,6 +1,5 @@
 # g10.011 — Cross-repository docs-source integrity
 
-Status: ready
 Owner: documentation context and manifest maintainers
 Created: 2026-09-24
 Governing refs: architecture `024`, contract `041`, guide `079`

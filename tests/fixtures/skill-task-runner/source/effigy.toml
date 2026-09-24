@@ -54,6 +54,34 @@ run_in = "host"
 run = "exit 23"
 run_in = "host"
 
+[tasks.raw-nested-cat]
+run = [{ task = "raw-cat" }]
+run_in = "host"
+
+[tasks.raw-nested-streams]
+run = [{ task = "raw-streams" }]
+run_in = "host"
+
+[tasks.raw-nested-exit]
+run = [{ task = "raw-exit" }]
+run_in = "host"
+
+[tasks.raw-double-nested-streams]
+run = [{ task = "raw-nested-streams" }]
+run_in = "host"
+
+[tasks.raw-nested-rhai]
+run = [{ task = "rhai" }]
+run_in = "host"
+
+[tasks.raw-nested-tasks]
+run = [{ task = "tasks" }]
+run_in = "host"
+
+[tasks.raw-non-fail-fast-exit]
+run = [{ task = "raw-exit", fail_fast = false }]
+run_in = "host"
+
 [tasks.raw-marker]
 run = "printf 'ran' > raw-marker.txt"
 run_in = "host"

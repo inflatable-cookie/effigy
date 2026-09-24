@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use super::*;
 use crate::docs_context::payload::{
@@ -39,16 +40,31 @@ fn write(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write");
 }
 
-/// A directory that looks like a checkout to enumeration without paying for a
-/// real `git init`: classification only asks whether `.git` is present, and the
-/// identity fields degrade to `None` when git cannot answer.
+fn commit(path: &Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "fixture@example.invalid"],
+        vec!["config", "user.name", "Fixture"],
+        vec!["add", "-A"],
+        vec!["commit", "-qm", "fixture"],
+    ] {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "{output:?}");
+    }
+}
+
 fn checkout(root: &Path, name: &str, manifest: Option<&str>) -> PathBuf {
     let path = root.join(name);
-    fs::create_dir_all(path.join(".git")).expect("create .git");
+    fs::create_dir_all(&path).expect("create checkout");
     write(&path.join("README.md"), "# fixture\n");
     if let Some(manifest) = manifest {
         write(&path.join("effigy.toml"), manifest);
     }
+    commit(&path);
     path
 }
 
@@ -232,7 +248,7 @@ fn a_not_shared_neighbour_with_a_bundle_and_an_overlay_is_never_cloned_written_o
     checkout(&repos, "shared-atlas", Some(SHARED_MANIFEST));
 
     let vault = repos.join("private-vault");
-    fs::create_dir_all(vault.join(".git")).expect("create .git");
+    fs::create_dir_all(&vault).expect("create vault");
     write(
         &vault.join("effigy.toml"),
         r#"
@@ -253,6 +269,7 @@ include = ["fragments/sources.toml"]
     write(&vault.join("fragments/sources.toml"), SHARED_MANIFEST);
     write(&vault.join("effigy.local.toml"), SHARED_MANIFEST);
     write(&vault.join("README.md"), "# vault\n");
+    commit(&vault);
 
     let portfolio = portfolio_file(temp.path(), "\"repos\"");
     let mut searched = Vec::new();
@@ -313,12 +330,13 @@ fn an_opt_in_that_lives_only_in_an_include_does_not_grant_membership() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repos = temp.path().join("repos");
     let split = repos.join("split-manifest");
-    fs::create_dir_all(split.join(".git")).expect("create .git");
+    fs::create_dir_all(&split).expect("create split");
     write(
         &split.join("effigy.toml"),
         "[catalog]\nalias = \"split\"\n\n[manifest]\ninclude = [\"fragments/sources.toml\"]\n",
     );
     write(&split.join("fragments/sources.toml"), SHARED_MANIFEST);
+    commit(&split);
 
     let portfolio = portfolio_file(temp.path(), "\"repos\"");
     let payload = docs_context_sources(
@@ -422,6 +440,92 @@ fn a_missing_directory_is_reported_without_silencing_a_healthy_one() {
         ]
     );
     assert!(payload.answered());
+}
+
+#[test]
+fn unreadable_directory_status_is_invalid_while_a_sibling_answers() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repos = temp.path().join("repos");
+    checkout(&repos, "shared-atlas", Some(SHARED_MANIFEST));
+    write(&temp.path().join("not-a-directory"), "file");
+    let portfolio = portfolio_file(temp.path(), "\"repos\", \"not-a-directory\"");
+    let payload = docs_context_sources(
+        &portfolio,
+        "tolerance",
+        DocsContextRequest::default(),
+        &[],
+        |root| SourceQueryOutcome::Answered(Box::new(answered_payload(root))),
+    )
+    .expect("routing");
+    assert_eq!(
+        statuses(&payload),
+        vec![
+            ("shared-atlas".to_owned(), STATUS_OK.to_owned()),
+            ("not-a-directory".to_owned(), STATUS_INVALID.to_owned())
+        ]
+    );
+    assert!(payload.repositories[1]
+        .next_step
+        .as_deref()
+        .expect("reason")
+        .contains("Not a directory"));
+}
+
+#[test]
+fn child_listing_error_retains_partial_children_and_the_io_reason() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path();
+    let child = checkout(directory, "shared-atlas", Some(SHARED_MANIFEST));
+    let (children, error) = collect_children(
+        directory,
+        [
+            Ok(("shared-atlas".to_owned(), child.clone())),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "listing stopped",
+            )),
+        ]
+        .into_iter(),
+    );
+    assert_eq!(children, vec![("shared-atlas".to_owned(), child)]);
+    assert_eq!(
+        error.expect("listing error").kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+}
+
+#[test]
+fn duplicate_handles_fail_before_query_even_with_only() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    checkout(
+        &temp.path().join("one"),
+        "shared-atlas",
+        Some(SHARED_MANIFEST),
+    );
+    checkout(
+        &temp.path().join("two"),
+        "shared-atlas",
+        Some(SHARED_MANIFEST),
+    );
+    let portfolio = portfolio_file(temp.path(), "\"one\", \"two\"");
+    let mut queries = 0;
+    let error = docs_context_sources(
+        &portfolio,
+        "tolerance",
+        DocsContextRequest::default(),
+        &["shared-atlas".to_owned()],
+        |_| {
+            queries += 1;
+            SourceQueryOutcome::TimedOut
+        },
+    )
+    .expect_err("collision");
+    let message = error.to_string();
+    assert!(
+        message.contains("shared-atlas") && message.contains("one") && message.contains("two"),
+        "{message}"
+    );
+    assert_eq!(queries, 0);
 }
 
 #[test]
@@ -576,11 +680,10 @@ fn results_stay_grouped_per_repository_with_declared_membership_metadata() {
         assert_eq!(repository.results[0].result.rank, 1);
         assert_eq!(repository.front_doors, vec!["README.md".to_owned()]);
         assert_eq!(repository.skill_roots, vec![".agents/skills".to_owned()]);
-        // Identity is never optimistic: these fixtures have no real git
-        // objects, so committed bytes cannot be claimed.
+        // These fixtures have real HEAD objects and clean paths.
         assert_eq!(
             repository.results[0].content_identity,
-            CONTENT_IDENTITY_WORKING_TREE
+            CONTENT_IDENTITY_COMMITTED
         );
     }
     // Every repository received the whole budget; it is never divided.
@@ -617,22 +720,23 @@ fn an_unreadable_portfolio_is_a_usage_error_and_an_empty_query_wins_over_it() {
 
 #[test]
 fn content_identity_never_claims_committed_bytes_without_git_evidence() {
+    let temp = tempfile::tempdir().expect("tempdir");
     let dirty = std::collections::BTreeSet::from(["docs/README.md".to_owned()]);
     let head = Some("abc123".to_owned());
     assert_eq!(
-        super::content_identity(&head, Some(&dirty), "docs/README.md"),
+        super::content_identity(temp.path(), &head, Some(&dirty), "docs/README.md"),
         CONTENT_IDENTITY_WORKING_TREE
     );
     assert_eq!(
-        super::content_identity(&head, Some(&dirty), "docs/other.md"),
-        CONTENT_IDENTITY_COMMITTED
-    );
-    assert_eq!(
-        super::content_identity(&head, None, "docs/other.md"),
+        super::content_identity(temp.path(), &head, Some(&dirty), "docs/other.md"),
         CONTENT_IDENTITY_WORKING_TREE
     );
     assert_eq!(
-        super::content_identity(&None, Some(&dirty), "docs/other.md"),
+        super::content_identity(temp.path(), &head, None, "docs/other.md"),
+        CONTENT_IDENTITY_WORKING_TREE
+    );
+    assert_eq!(
+        super::content_identity(temp.path(), &None, Some(&dirty), "docs/other.md"),
         CONTENT_IDENTITY_WORKING_TREE
     );
 }

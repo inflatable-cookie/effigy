@@ -1,6 +1,5 @@
 # g10.005 — Stabilize the container startup SIGINT test
 
-Status: ready
 Owner: container runtime test harness
 Created: 2026-09-14
 Governing refs: `docs/contracts/005-container-runtime-contract.md`, `docs/contracts/012-container-manager-contract.md`, `docs/contracts/015-runtime-operation-pipeline-contract.md`, `docs/architecture/022-runtime-architecture-sanity-audit.md`
