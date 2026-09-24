@@ -16,6 +16,8 @@ Baseline: `03a4b44e56e63b7902680b3401f1752b14202819` (`g10.014` terminal record,
 
 The three direct manifests changed. `cargo update -p argon2 --precise 0.6.0` resolved all four targets against current `main`. Required transitives: `blake2` 0.10.6 -> 0.11.0, `password-hash` 0.5.0 -> 0.6.1, new `phc` 0.6.1, `tabled_derive` 0.11.0 -> 0.12.0. `proc-macro-error2` and `proc-macro-error-attr2` dropped. The lockfile also adjusted dependency edges on existing `digest` and `tempfile` versions. No unrelated package version changed.
 
+Aggregate PR: [#118](https://github.com/inflatable-cookie/effigy/pull/118). The four source PRs remain open until it merges.
+
 ## Compatibility evidence
 
 - Before the upgrade, the v0.13.0 build with `argon2 0.5.3` derived this Argon2id key from passphrase `correct horse battery staple`, 32 bytes of salt `0x2a`, and parameters m=19456 KiB, t=2, p=1: `9ae366cc91b47ba2598b19140035cde0e86a49dc719811965943b16eb2c8598d`. A focused test pins that key and the old XChaCha20Poly1305 ciphertext generated with a 24-byte `0x07` nonce, then decrypts those old ciphertext bytes after the upgrade.
