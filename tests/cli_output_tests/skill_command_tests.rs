@@ -1334,6 +1334,65 @@ fn skill_stdio_passthrough_json_hook_passes_one_raw_object() {
 }
 
 #[test]
+fn skill_nested_stdio_passthrough_preserves_bytes_and_leaf_status() {
+    let source = fixture_root().join("source");
+    let consumer = unique_temp_consumer("nested-passthrough");
+    let source = source.to_str().expect("utf8 source");
+    let payload: &[u8] = &[0x7b, 0xff, 0x00, 0x80, b'}'];
+    let run = |selector, stdin: &[u8]| {
+        run_skill_with_stdio(
+            &consumer,
+            None,
+            &[
+                "skill",
+                "run",
+                "--path",
+                source,
+                selector,
+                "--stdio",
+                "passthrough",
+            ],
+            stdin,
+        )
+    };
+
+    let cat = run("raw-nested-cat", payload);
+    assert_eq!(cat.status.code(), Some(0), "{cat:?}");
+    assert_eq!(cat.stdout, payload, "{cat:?}");
+    assert!(cat.stderr.is_empty(), "{cat:?}");
+
+    for selector in ["raw-nested-streams", "raw-double-nested-streams"] {
+        let streams = run(selector, b"");
+        assert_eq!(streams.status.code(), Some(0), "{streams:?}");
+        assert_eq!(streams.stdout, b"raw-out", "{streams:?}");
+        assert_eq!(streams.stderr, b"raw-err", "{streams:?}");
+    }
+
+    let exited = run("raw-nested-exit", b"");
+    assert_eq!(exited.status.code(), Some(23), "{exited:?}");
+    assert!(exited.stdout.is_empty(), "{exited:?}");
+    assert!(exited.stderr.is_empty(), "{exited:?}");
+
+    let continued = run("raw-non-fail-fast-exit", b"");
+    assert_eq!(continued.status.code(), Some(23), "{continued:?}");
+    assert!(continued.stdout.is_empty(), "{continued:?}");
+    assert!(continued.stderr.is_empty(), "{continued:?}");
+
+    let direct_rhai = run("rhai", b"");
+    let nested_rhai = run("raw-nested-rhai", b"");
+    assert_eq!(nested_rhai.status.code(), direct_rhai.status.code());
+    assert_eq!(nested_rhai.stdout, direct_rhai.stdout);
+    assert_eq!(nested_rhai.stderr, direct_rhai.stderr);
+
+    let tasks = run("raw-nested-tasks", b"");
+    assert_eq!(tasks.status.code(), Some(0), "{tasks:?}");
+    assert!(!tasks.stdout.is_empty(), "{tasks:?}");
+    assert!(tasks.stderr.is_empty(), "{tasks:?}");
+
+    std::fs::remove_dir_all(&consumer).expect("remove nested passthrough consumer");
+}
+
+#[test]
 fn skill_stdio_passthrough_failures_leave_stdout_empty_and_do_not_run() {
     let fixtures = fixture_root();
     let source = fixtures.join("source");

@@ -175,6 +175,7 @@ pub struct ExecutionPreflightInput {
     pub surface: ExecutionSurface,
     pub secret_targets: Vec<String>,
     pub task_source: Option<TaskSourceContext>,
+    pub output_mode: ExecutionOutputMode,
 }
 
 impl ExecutionPreflightInput {
@@ -191,6 +192,7 @@ impl ExecutionPreflightInput {
             surface,
             secret_targets: Vec::new(),
             task_source: None,
+            output_mode: ExecutionOutputMode::default(),
         }
     }
 
@@ -201,6 +203,11 @@ impl ExecutionPreflightInput {
 
     pub fn with_task_source(mut self, task_source: Option<TaskSourceContext>) -> Self {
         self.task_source = task_source;
+        self
+    }
+
+    pub fn with_output_mode(mut self, output_mode: ExecutionOutputMode) -> Self {
+        self.output_mode = output_mode;
         self
     }
 }
@@ -481,6 +488,7 @@ impl ExecutionDispatchPlan {
         )
         .with_secret_targets(self.request.environment.secret_targets.clone())
         .with_task_source(self.request.runtime_context.task_source().cloned())
+        .with_output_mode(self.output_mode)
     }
 }
 

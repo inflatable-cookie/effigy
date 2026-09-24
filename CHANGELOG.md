@@ -293,6 +293,9 @@ During v0.x, MINOR bumps may include breaking changes.
   use stay offline.
 
 ### Fixed
+- `effigy skill run --stdio passthrough` now carries raw stdio and the leaf
+  exit status through nested task steps, without adding a trailing newline
+  to nested output.
 - Cross-repository docs sources now require sharing consent from the neighbor's
   committed root manifest, decode Git dirty paths and rename endpoints exactly,
   reject duplicate checkout handles before querying, and distinguish absent
