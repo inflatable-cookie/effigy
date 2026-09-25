@@ -218,11 +218,18 @@ Long-running Rust + Bun workspace container. Used by `[bundle].base =
 
 - Image: custom Dockerfile (Rust + Bun base).
 - Parameters:
-  - `rust_version` (default `"1.88"`) — Rust base image tag.
+  - `rust_version` (default `"1.91"`) — Rust base image tag.
   - `bun_version` (default `"1.3.14"`) — pinned Bun release; the
     Dockerfile downloads the matching `bun-v<version>` GitHub release
     archive and verifies its SHA256 against the release's
     `SHASUMS256.txt`. The build fails when the version is empty.
+  - `browser_runtime` (default `"none"`) — opt-in Chromium system-library
+    layer. `"chromium"` installs Debian Bookworm runtime libraries and a
+    basic font set as root at image build. Unknown values fail the image
+    build. The image does not contain a browser binary, Playwright, Node,
+    or `npx`; each repo installs its matching browser into the `dev` user
+    cache. The extra packages increase image size, and changing the value
+    requires a rebuild.
   - `workspace_mount` (default `"/workspace-root"`) — in-container mount
     point for the workspace root.
   - `working_subdir` (default `""`) — subdirectory of `workspace_mount` used

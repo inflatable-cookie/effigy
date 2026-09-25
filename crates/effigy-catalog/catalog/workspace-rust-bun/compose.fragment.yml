@@ -6,6 +6,7 @@ services:
       args:
         RUST_VERSION: "{{ rust_version }}"
         BUN_VERSION: "{{ bun_version }}"
+        BROWSER_RUNTIME: "{{ browser_runtime }}"
         WORKSPACE_UID: "{{ host_uid }}"
         WORKSPACE_GID: "{{ host_gid }}"
         WORKSPACE_MOUNT: "{{ workspace_mount }}"

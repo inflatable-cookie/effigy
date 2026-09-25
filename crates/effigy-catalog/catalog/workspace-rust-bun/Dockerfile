@@ -96,6 +96,53 @@ RUN rustup component add clippy \
 RUN mkdir -p /home/dev/.cargo "${WORKSPACE_MOUNT}" \
     && chown -R dev:"${WORKSPACE_GID}" /home/dev /usr/local/cargo /usr/local/bun "${WORKSPACE_MOUNT}"
 
+# ── Optional Chromium system libraries ────────────────────────────────
+# Declared here so toggling the option does not bust the Rust/Bun/Clippy
+# layers. Default `none` is a no-op. `chromium` installs OS libraries and
+# fonts only; browser binaries stay consumer-owned in the `dev` user cache.
+# Unsupported values fail the build with a named error.
+ARG BROWSER_RUNTIME=none
+RUN set -eux; \
+    case "${BROWSER_RUNTIME}" in \
+        none) \
+            echo "BROWSER_RUNTIME=none; skipping Chromium system libraries"; \
+            ;; \
+        chromium) \
+            apt-get update; \
+            apt-get install -y --no-install-recommends \
+                fonts-dejavu-core \
+                fonts-liberation \
+                fonts-noto-color-emoji \
+                fonts-unifont \
+                libasound2 \
+                libatk-bridge2.0-0 \
+                libatk1.0-0 \
+                libatspi2.0-0 \
+                libcairo2 \
+                libcups2 \
+                libdbus-1-3 \
+                libdrm2 \
+                libgbm1 \
+                libglib2.0-0 \
+                libnspr4 \
+                libnss3 \
+                libpango-1.0-0 \
+                libx11-6 \
+                libxcb1 \
+                libxcomposite1 \
+                libxdamage1 \
+                libxext6 \
+                libxfixes3 \
+                libxkbcommon0 \
+                libxrandr2; \
+            rm -rf /var/lib/apt/lists/*; \
+            ;; \
+        *) \
+            echo "unsupported BROWSER_RUNTIME='${BROWSER_RUNTIME}'; expected none or chromium" >&2; \
+            exit 1; \
+            ;; \
+    esac
+
 ENV HOME=/home/dev
 ENV CARGO_HOME=/usr/local/cargo
 

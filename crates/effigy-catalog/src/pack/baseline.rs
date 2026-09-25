@@ -619,19 +619,19 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BASELINE_LOCK_FILE)
     }
 
-    /// Identity facts of the accepted `v1.0.1` artifact, pinned here so a
+    /// Identity facts of the accepted `v1.1.0` artifact, pinned here so a
     /// future baseline bump must deliberately update both the lock and these
     /// markers together.
     const PINNED_CONTENT_IDENTITY: &str =
-        "sha256:9498d33f1eccbb91e971b55f5169830baca26326a8f802408a0432e733254974";
+        "sha256:e92cc2f217fa2ba4de302b8376ec558afb042acd3a83e4d33ecfb03dc40606a3";
     const PINNED_OCI_MANIFEST_DIGEST: &str =
-        "sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3";
+        "sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba";
     const PINNED_FILE_COUNT: usize = 42;
-    const PINNED_BYTE_COUNT: u64 = 88_600;
+    const PINNED_BYTE_COUNT: u64 = 90_852;
 
-    /// Provenance of the accepted `v1.0.1` publication, shared by the
-    /// committed lock and fixture locks.
-    fn provenance() -> BaselineSource {
+    /// Provenance of isolated fixture packs. These stay on `1.0.1` so fixture
+    /// composition does not depend on the committed baseline version.
+    fn fixture_provenance() -> BaselineSource {
         BaselineSource {
             source_repository: BASELINE_SOURCE_REPOSITORY.to_owned(),
             source_commit: "5ef0ec2b64612c7803cc6105a65ea462862a0b21".to_owned(),
@@ -640,6 +640,20 @@ mod tests {
             source_tag_object: "2bb561109dfe8ec1346779370e2e9f428ef5ddd2".to_owned(),
             pack_id: "effigy-default-catalog".to_owned(),
             pack_version: "1.0.1".to_owned(),
+        }
+    }
+
+    /// Provenance of the accepted `v1.1.0` publication recorded in the
+    /// committed lock.
+    fn committed_provenance() -> BaselineSource {
+        BaselineSource {
+            source_repository: BASELINE_SOURCE_REPOSITORY.to_owned(),
+            source_commit: "c932c58f64cafd10a70d24907dc77fb81230bb01".to_owned(),
+            source_created: "2026-09-25T10:28:40Z".to_owned(),
+            source_tag: "v1.1.0".to_owned(),
+            source_tag_object: "72f5d7551dc0430fcc83af36066463bd9f1aab82".to_owned(),
+            pack_id: "effigy-default-catalog".to_owned(),
+            pack_version: "1.1.0".to_owned(),
         }
     }
 
@@ -675,7 +689,7 @@ mod tests {
     }
 
     fn fixture_lock(snapshot: &Path) -> CompiledBaselineLock {
-        compose_baseline_lock(snapshot, provenance()).expect("fixture lock")
+        compose_baseline_lock(snapshot, fixture_provenance()).expect("fixture lock")
     }
 
     #[test]
@@ -700,8 +714,8 @@ mod tests {
         // provenance must reproduce the committed lock exactly: regeneration
         // is a pure function of snapshot bytes and provenance.
         let committed = CompiledBaselineLock::load(&committed_lock_path()).expect("committed lock");
-        let regenerated =
-            compose_baseline_lock(&committed_snapshot_dir(), provenance()).expect("regenerate");
+        let regenerated = compose_baseline_lock(&committed_snapshot_dir(), committed_provenance())
+            .expect("regenerate");
         assert_eq!(regenerated, committed);
     }
 

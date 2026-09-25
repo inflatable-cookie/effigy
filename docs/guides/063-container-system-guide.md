@@ -263,6 +263,14 @@ detach_timeout_secs = 10
 mounts = ["./:/workspace"]
 ```
 
+`workspace-rust-bun` stays a toolchain image by default (`browser_runtime =
+"none"`). Set `browser_runtime = "chromium"` on that service to install
+Debian Chromium shared libraries and a basic font set at image build. The
+image does not ship Chromium, Playwright, or Node; the consuming repo still
+downloads its own browser revision. Changing the value requires an image
+rebuild. See [`067`](./067-catalog-services-reference.md) for the full
+parameter surface.
+
 Effigy generates runtime-owned compose output under:
 
 - `.effigy/runtime/compose/.effigy-compose.generated.yml`
