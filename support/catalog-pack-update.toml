@@ -9,6 +9,6 @@
 # existence and candidate compatibility belong to pack publication.
 
 schema_version = 1
-as_of_release = "0.13.0"
-required_versions = ["0.13.0"]
+as_of_release = "0.13.1"
+required_versions = ["0.13.0", "0.13.1"]
 oldest_update_capable_release = "0.13.0"

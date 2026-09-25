@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-25
+
 ### Added
 - `workspace-rust-bun` accepts `browser_runtime = "chromium"` to install
   Debian Chromium shared libraries and a basic font set at image build.

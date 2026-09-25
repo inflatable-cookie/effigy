@@ -48,9 +48,12 @@ fn committed_file_matches_this_crate_release_with_oldest_field() {
 
     assert_eq!(policy.schema_version, 1);
     assert_eq!(policy.as_of_release, current);
-    assert_eq!(policy.required_versions, vec![current.clone()]);
-    assert_eq!(policy.oldest_update_capable_release, Some(current.clone()));
-    assert_eq!(policy.minimum_required_version(), &current);
+    assert_eq!(policy.required_versions, vec![version("0.13.0"), current]);
+    assert_eq!(
+        policy.oldest_update_capable_release,
+        Some(version("0.13.0"))
+    );
+    assert_eq!(policy.minimum_required_version(), &version("0.13.0"));
     assert!(
         repo_root().join(CATALOG_PACK_UPDATE_POLICY_FILE).is_file(),
         "support floor lives in the Effigy repository, not in pack content"

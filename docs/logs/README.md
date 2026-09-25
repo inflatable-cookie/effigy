@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/25-120300-effigy-v0-13-1-release-note.md`](./2026-09/25-120300-effigy-v0-13-1-release-note.md)
+  — 0.13.1 browser-runtime release notes
 - [`2026-09/25-101900-g10-017-chromium-workspace-runtime.md`](./2026-09/25-101900-g10-017-chromium-workspace-runtime.md)
 - [`2026-09/25-090000-browser-runtime-frontier.md`](./2026-09/25-090000-browser-runtime-frontier.md)
   — approved core image lane and serial Underlay bundle follow-up
