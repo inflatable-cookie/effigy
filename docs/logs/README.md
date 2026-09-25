@@ -89,6 +89,8 @@ Vision rollout history is summarized in `docs/vision/history/README.md`.
 
 ## Active logs
 
+- [`2026-09/25-090000-browser-runtime-frontier.md`](./2026-09/25-090000-browser-runtime-frontier.md)
+  — approved core image lane and serial Underlay bundle follow-up
 - [`2026-09/24-190300-g10-016-hickory-follow-up.md`](./2026-09/24-190300-g10-016-hickory-follow-up.md)
   — Hickory 0.26.3 bounded lockfile replacement covering both retargeted bot PRs
 - [`2026-09/24-173000-g10-015-direct-dependabot-upgrades.md`](./2026-09/24-173000-g10-015-direct-dependabot-upgrades.md)
@@ -166,5 +168,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Run queued `g10.016` after `g10.015` terminal closeout. Future release
-mutation and doctor cache pruning remain separate decisions.
+Dispatch the approved browser-runtime catalog task through Queue. Its core
+closeout precedes external bundle wiring. Future release mutation and doctor
+cache pruning remain separate decisions.

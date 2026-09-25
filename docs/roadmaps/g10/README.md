@@ -11,14 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.014`](./014-resolve-compatible-dependabot-lock-updates.md) — complete
-  through PR #117.
-- [`g10.015`](./015-resolve-direct-dependabot-upgrades.md) — running on the
-  direct dependency upgrades.
-- [`g10.016`](./016-resolve-hickory-follow-up.md) — approved downstream for
-  the bot PRs retargeted to Hickory 0.26.3; wait for `g10.015`.
+- [`g10.017`](./017-opt-in-chromium-workspace-runtime.md) — ready; add opt-in
+  Chromium system libraries to the built-in Rust/Bun workspace image and prove
+  a non-root linux-arm64 launch.
 
-`g10.001` through `g10.014` are complete.
+`g10.001` through `g10.016` are complete.
 
 ## Boundaries
 
@@ -66,6 +63,15 @@ weakening source isolation, machine-safe output, or runtime contracts.
 - Dependabot retargeted #97 and #100 to Hickory 0.26.3 after PR #117 merged
   0.26.2. `g10.016` owns that follow-up and the corrected source-PR disposition.
 
+## Browser-runtime intake
+
+- Acowtancy g05.195 is blocked on real Chromium evidence in the shared
+  `workspace-rust-bun` container. The browser downloads, but Debian runtime
+  libraries are missing and the non-root user cannot install them.
+- `g10.017` adds a default-off catalog image option and requires a real
+  linux-arm64 launch as `dev`. The external Underlay bundle will expose the
+  input after core closeout; its version gate and PR stay in that repository.
+
 ## Task-surface intake
 
 - `[tasks]` remains the compatible published repository command interface.
@@ -89,9 +95,9 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Run the queued Hickory follow-up after the direct-dependency batch reaches
-terminal closeout; then return to planning with the operator. Doctor
-cache pruning and S3 retirement remain separate decisions.
+Dispatch the approved browser-runtime catalog task through Queue. After its
+terminal closeout, advance the external bundle input with a supporting
+Effigy version gate. Doctor cache pruning and S3 retirement remain separate.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:d400f929778e252e851bee676b035eb1da7ff5cbabbca97a83b57fed61a0db2a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

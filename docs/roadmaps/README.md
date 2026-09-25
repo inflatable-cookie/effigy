@@ -22,9 +22,8 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: [`g10.015`](./g10/015-resolve-direct-dependabot-upgrades.md)
-  is running; [`g10.016`](./g10/016-resolve-hickory-follow-up.md) waits for its
-  terminal closeout. The first lockfile batch merged through PR #117.
+- Approved frontier: [`g10.017`](./g10/017-opt-in-chromium-workspace-runtime.md)
+  is ready for the built-in workspace image. The Dependabot batches are complete.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -90,9 +89,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Run the queued Hickory follow-up after the direct-dependency batch reaches
-terminal closeout. Return to planning after the Dependabot backlog is resolved.
-Doctor cache pruning and S3 retirement remain separate decisions.
+Dispatch the approved catalog browser-runtime task through Northstar Queue.
+The external Underlay bundle input follows core closeout and a supporting
+Effigy version gate. Doctor cache pruning and S3 retirement remain separate.
 
 ## Historical language boundary
 

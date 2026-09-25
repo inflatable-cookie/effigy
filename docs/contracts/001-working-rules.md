@@ -1,7 +1,7 @@
 # 001 Working Rules
 
 Status: active
-Updated: 2026-09-24
+Updated: 2026-09-25
 
 This contract defines how Effigy plans and executes Northstar work using the
 generation-plus-task model.
@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Run queued `g10.016` after `g10.015` terminal closeout; both share `Cargo.lock`.
-Doctor cache pruning, future release mutation, and S3 retirement remain
-separately gated.
+Dispatch the approved browser-runtime catalog task through Queue. The
+external bundle input and any release are separate follow-ups. Doctor cache
+pruning and S3 retirement remain separately gated.

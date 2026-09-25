@@ -1,19 +1,21 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.015 running; g10.016 approved after g10.015
-Updated: 2026-09-24
+Approved frontier: g10.017 ready; external bundle input follows core closeout
+Updated: 2026-09-25
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.013` are complete. The 0.13.0 release is published
+open; `g10.001` through `g10.016` are complete. The 0.13.0 release is published
 and install-verified. The operator then selected consolidated resolution of
 ten open Dependabot PRs. `g10.014` owns six compatible lockfile updates;
-`g10.015` owns the three direct upgrades and overlapping language update.
-Dependabot then retargeted #97 and #100 to Hickory 0.26.3; `g10.016` owns that
-follow-up. The shared lockfile requires serial execution.
+`g10.015` completed the three direct upgrades and overlapping language
+update. `g10.016` completed the Hickory 0.26.3 retarget follow-up. Tom then
+approved an opt-in browser runtime for the built-in Rust/Bun workspace image;
+`g10.017` owns the core catalog work. External bundle wiring follows in its
+own repository.
 
 ## Generation history
 
@@ -48,5 +50,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Run queued `g10.016` after `g10.015` terminal closeout. Choose the next
-strategic runway with the operator afterward.
+Dispatch the approved browser-runtime catalog task. Follow core closeout with
+the external Underlay bundle input and a supporting Effigy version gate.

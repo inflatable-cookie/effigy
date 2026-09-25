@@ -284,5 +284,6 @@ role:
 
 ## Next Task
 
-Run queued `g10.016` after `g10.015` terminal closeout. Cache pruning, future
-release mutation, and S3 retirement remain separately gated.
+Dispatch the approved browser-runtime catalog task through Queue. The
+external bundle input follows core closeout and a supporting version gate.
+Cache pruning, release mutation, and S3 retirement remain separately gated.
