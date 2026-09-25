@@ -1,0 +1,26 @@
+# Opt-in Chromium runtime for the Rust/Bun workspace image
+
+Raised: 2026-09-25. Request from the Acowtancy Northstar Queue Chatterbox on Tom's instruction. Planning request only; Tom will approve the lane. This note is intake, not execution authority.
+
+## Failure and evidence
+
+Acowtancy g05.195 (Queue task `8ecb45e7`, PR #345) needs real Playwright `dragTo`, keyboard, rendered-state, and request-log evidence. Its `workspace-rust-bun` container runs tasks as non-root `dev` on Colima linux-arm64. Playwright 1.55.1 downloaded Chromium revision 1193 into the user cache, but the browser cannot launch: `ldd` found 16 missing shared libraries and `dev` cannot install system packages. The worker evidence log at `docs/logs/2026-09/25-034300-g05-195-cream-question-figure-delivery.md` on [Acowtancy PR #345](https://github.com/inflatable-cookie/acowtancy/pull/345) records the exact failure. This is a shared image gap; per-project Dockerfile overrides would repeat it.
+
+Effigy's built-in service is `crates/effigy-catalog/catalog/workspace-rust-bun/{service.toml,compose.fragment.yml,Dockerfile}`. The external `underlay-effigy-bundle` selects it in `export.toml` and declares consumer inputs in `bundle.toml`. The image has Bun and Rust, not Node. Playwright documents that each package version selects matching browser binaries and that browser downloads live in a user cache, so the shared image should carry OS libraries while each repo installs its pinned browser. Playwright lists Debian 12 on arm64 as supported. Sources: [browser management](https://playwright.dev/docs/browsers), [system requirements](https://playwright.dev/docs/intro), [container guidance](https://playwright.dev/docs/docker).
+
+## Recommended design
+
+1. **Effigy catalog service first.** Add a string `browser_runtime` parameter with default `"none"` and accepted values `"none"` and `"chromium"`. Pass it as a Compose build argument. Make the Dockerfile reject unknown values. For `chromium`, install the Debian Bookworm Chromium runtime packages as root at image build, then remove apt lists. Start with `libnss3`, `libnspr4`, `libatk1.0-0`, `libatk-bridge2.0-0`, `libcups2`, `libdbus-1-3`, `libxkbcommon0`, `libatspi2.0-0`, `libxcomposite1`, `libxdamage1`, `libxfixes3`, `libxrandr2`, `libgbm1`, `libasound2`, and a basic font set such as `fonts-liberation`. Final package coverage is determined by the arm64 launch and `ldd` proof, not by this candidate list alone. The default path keeps the existing image behavior.
+2. **Keep browser versions with consumers.** Do not bake Chromium, Playwright, Node, or `npx` into the image. Repos keep their own `@playwright/test` pin and download the matching browser as `dev` through their package-manager task. Do not turn the option into arbitrary apt-package injection.
+3. **Underlay bundle after the core service works.** Add a `workspace.browser_runtime` input, default `"none"`, in `bundle.toml`; pass it to the selected service in `export.toml`; document the opt-in and required rebuild. Only `"chromium"` requests the extra image layer. Check version compatibility before publishing: the current bundle declares `minimum_effigy_version = "0.10.0"`, while an older Effigy catalog would silently ignore the new service parameter. Prefer a minimum Effigy version that includes the feature, or an equally explicit capability gate, so an opt-in cannot appear to succeed without installing the libraries. Do not guess the release number before core delivery.
+
+## Acceptance and scope
+
+- Core tests show default Compose args resolve to `none`, explicit `chromium` reaches the Docker build arg, and unsupported values fail clearly. Catalog service docs name the option and its cost.
+- One linux-arm64 smoke builds the opted-in image and runs as `dev`, installs the project-pinned Playwright 1.55.1 Chromium into the user cache, checks the headless executable's shared libraries, launches headless Chromium, renders a local page with text, and exits cleanly. The smoke records architecture, UID, browser revision, and result. A default-off build remains usable. No root/sudo step occurs at runtime.
+- Bundle inspection shows omitted input stays off and `workspace.browser_runtime = "chromium"` renders the service parameter. Its docs explain that a container rebuild is needed. Bundle compatibility is checked against the first Effigy version containing the catalog option.
+- No Acowtancy app changes, workflow edits, release mutation, cross-browser support, or browser binary pin in the shared image. After the bundle lands and Acowtancy opts in/rebuilds, its own worker resumes the real gesture, keyboard, named-state, and request-log oracle; the shared-image smoke does not claim to satisfy that app review.
+
+## Planning boundary and next move
+
+Tom's approval is still required to promote a ready lane. Recommend two serial, reviewable tasks: Effigy catalog support and arm64 smoke first; external bundle input, compatibility floor, and docs second. Their PRs should be separate because they have different repositories and owners. Then tell the Acowtancy Chatterbox when the bundle change lands so it can return g05.195 to its worker. No dispatch or implementation follows from this note.
