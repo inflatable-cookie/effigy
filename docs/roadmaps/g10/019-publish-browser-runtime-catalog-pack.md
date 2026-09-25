@@ -12,12 +12,12 @@ The reviewed canonical pack source is published under a new immutable version ta
 ## Ready-state rubric
 
 - [x] Tom explicitly approved pack publication after source review on 2026-09-25.
-- [ ] `g10.018` source PR is independently reviewed, merged, and its exact source commit recorded.
-- [ ] The release version, compatibility against Effigy's current support policy, and protected workflow inputs have been rechecked at that commit.
+- [x] `g10.018` PR #7 was independently reviewed at `f009a8c6718cbcf0c602dadea5938158cfeabeca`, merged as `76d594d8e72731547c0c2918746d5c98291d77b4`, and closed out on pack main at `c932c58f64cafd10a70d24907dc77fb81230bb01`.
+- [x] Pack `1.1.0` declares `>=0.13, <0.14`, admitting released Effigy `v0.13.0`; live provider controls, release freshness, publication model, and no-push rehearsal passed on 2026-09-25. The canonical source tag is `v1.1.0`, still absent at readiness; its proposed peeled source commit is pack main `c932c58f64cafd10a70d24907dc77fb81230bb01`.
 
 ## Dispatch manifest
 
-- **State:** planned; do not dispatch before the unchecked prerequisites pass.
+- **State:** ready; dispatch the protected publication lane against the exact pack source commit above.
 - **Completion:** protected publication succeeds and an independently reviewed evidence PR records source tag/object/commit, OCI version digest, attestation, public pull, compatibility, and `stable` result.
 - **Owned mutable paths:** pack-repository publication evidence and direct documentation corrections needed to report the result. The protected manual workflow performs provider mutations under its existing gates.
 - **Reserved surfaces:** Effigy's generated baseline, Underlay bundle, Acowtancy, unrelated release tags, provider settings and workflow code.

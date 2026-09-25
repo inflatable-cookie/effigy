@@ -22,8 +22,8 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: [`g10.018`](./g10/018-browser-runtime-catalog-pack-source.md)
-  moves the browser option into canonical catalog-pack source. The retained
+- Approved frontier: [`g10.019`](./g10/019-publish-browser-runtime-catalog-pack.md)
+  publishes the reviewed catalog-pack source. The retained
   [`g10.017`](./g10/017-opt-in-chromium-workspace-runtime.md) worker is blocked
   pending a published pack and Queue callback reconciliation. The Dependabot
   batches are complete.
@@ -92,8 +92,7 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Dispatch the catalog-pack source task `g10.018` through Northstar Queue, then
-publish its reviewed source through `g10.019`. Resume retained `g10.017` after
+Dispatch catalog-pack publication task `g10.019` through Northstar Queue. Resume retained `g10.017` after
 pack publication and Queue callback reconciliation. The external Underlay
 bundle input follows core closeout and a supporting Effigy version gate.
 Doctor cache pruning and S3 retirement remain separate.

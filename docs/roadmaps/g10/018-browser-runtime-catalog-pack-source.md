@@ -18,7 +18,7 @@ The canonical pack source contains the default-off Chromium system-library optio
 
 ## Dispatch manifest
 
-- **State:** ready; one source PR in `effigy-catalog-pack`.
+- **State:** complete through Queue task `18835f6d-4a7e-4a7e-9cb1-b19105f2d288` and source PR #7.
 - **Completion:** one independently reviewed PR merges the source, version, compatibility, and pack-owned documentation/tests; no release mutation in this task.
 - **Owned mutable paths:** `pack/workspace-rust-bun/{Dockerfile,service.toml,compose.fragment.yml}`, `pack/pack.toml`, pack-owned tests and documentation directly required for this option.
 - **Reserved surfaces:** Effigy's generated catalog, lock, pinned constants, `g10.017` worker worktree, protected publication workflow, release tags, OCI package and `stable` channel.
@@ -54,3 +54,7 @@ Pack `effigy qa`, focused service assembly and source tests, diff check, hosted 
 ## Next task
 
 After this PR merges, `g10.019` performs the separately approved, protected pack publication. `g10.017` remains blocked until the published artifact can be imported with honest provenance.
+
+## Closeout evidence
+
+PR #7 was independently reviewed at `f009a8c6718cbcf0c602dadea5938158cfeabeca`, merged as `76d594d8e72731547c0c2918746d5c98291d77b4`, and closed out at pack main `c932c58f64cafd10a70d24907dc77fb81230bb01`. Pack version `1.1.0` admits released Effigy `0.13.0`. The three effective workspace service files are byte-identical to the retained `g10.017` non-root arm64 smoke image. Pack QA, independent review, and hosted CI passed. No tag or OCI mutation occurred in this task.

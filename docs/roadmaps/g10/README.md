@@ -11,15 +11,13 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.018`](./018-browser-runtime-catalog-pack-source.md) — ready; land the
-  browser option in the canonical catalog-pack source.
-- [`g10.019`](./019-publish-browser-runtime-catalog-pack.md) — planned;
-  publish the reviewed source through the protected pack transaction.
+- [`g10.019`](./019-publish-browser-runtime-catalog-pack.md) — ready;
+  publish pack `1.1.0` through the protected transaction.
 - [`g10.017`](./017-opt-in-chromium-workspace-runtime.md) — active but blocked;
   retain its proven arm64 implementation until the published pack can be
   imported as a generated baseline.
 
-`g10.001` through `g10.016` are complete.
+`g10.001` through `g10.016` and `g10.018` are complete.
 
 ## Boundaries
 
@@ -74,8 +72,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
   libraries are missing and the non-root user cannot install them.
 - The retained `g10.017` worker proved a real linux-arm64 Playwright launch as
   `dev`, but direct edits to Effigy's generated catalog broke the pinned
-  catalog-pack provenance lock. `g10.018` moves the option into canonical pack
-  source; `g10.019` publishes the reviewed artifact. `g10.017` then imports
+  catalog-pack provenance lock. `g10.018` moved the option into canonical pack
+  source through PR #7; `g10.019` publishes the reviewed artifact. `g10.017` then imports
   exact bytes and provenance. The external Underlay bundle follows core
   closeout; its version gate and PR stay in that repository.
 
@@ -102,8 +100,7 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Dispatch `g10.018` through Queue. After its reviewed source merge, prepare and
-dispatch `g10.019` publication. Resume the retained `g10.017` worker after
+Dispatch `g10.019` publication through Queue. Resume the retained `g10.017` worker after
 pack publication and Queue callback reconciliation; then advance the external
 bundle input with a supporting Effigy version gate. Doctor cache pruning and
 S3 retirement remain separate.
