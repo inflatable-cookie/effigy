@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch the approved browser-runtime catalog task through Queue. The
-external bundle input and any release are separate follow-ups. Doctor cache
+Dispatch the approved external Underlay bundle browser input as g10.020 through
+Queue. Effigy 0.13.1 and the core catalog option are released. Doctor cache
 pruning and S3 retirement remain separately gated.

@@ -22,10 +22,9 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: the browser runtime core PR #120 has merged from the
-  verified catalog pack; Queue owns its lifecycle closeout. The external
-  Underlay bundle input is the next approved direction. The Dependabot batches
-  are complete.
+- Approved frontier: [g10.020](./g10/020-underlay-bundle-chromium-input.md)
+  exposes the merged browser runtime through the Underlay bundle, gated at
+  released Effigy 0.13.1. The Dependabot batches are complete.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -91,8 +90,7 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Prepare the external Underlay bundle input with a supporting Effigy version
-gate, then dispatch it after core closeout.
+Dispatch [g10.020](./g10/020-underlay-bundle-chromium-input.md) through Queue.
 Doctor cache pruning and S3 retirement remain separate.
 
 ## Historical language boundary

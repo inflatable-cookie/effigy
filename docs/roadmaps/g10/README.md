@@ -11,10 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- Browser runtime core PR #120 has merged from the published pack. Queue owns
-  its lifecycle closeout; the external Underlay bundle input follows.
+- Browser runtime core PR #120 is terminal, and Effigy 0.13.1 is released.
+  [g10.020](./020-underlay-bundle-chromium-input.md) owns the external bundle
+  input and version gate.
 
-`g10.001` through `g10.016`, `g10.018`, and `g10.019` are complete.
+`g10.001` through `g10.019` are complete.
 
 ## Boundaries
 
@@ -71,8 +72,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
   `dev`, but direct edits to Effigy's generated catalog broke the pinned
   catalog-pack provenance lock. `g10.018` moved the option into canonical pack
   source through PR #7; `g10.019` published the reviewed artifact. `g10.017` now imports
-  exact bytes and provenance. The external Underlay bundle follows core
-  closeout; its version gate and PR stay in that repository.
+  exact bytes and provenance. `g10.017` is terminal; Effigy 0.13.1 shipped
+  the option. `g10.020` owns the bundle version gate and PR in that repository.
 - `g10.017`'s task card keeps its original pinned planning prose for the
   lifecycle hook. The approved provenance correction, generated-import scope,
   and merged PR #120 evidence are recorded in the browser-runtime frontier log
@@ -101,9 +102,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Prepare the external Underlay bundle input with a supporting Effigy version
-gate, then dispatch it after core closeout. Doctor cache pruning and
-S3 retirement remain separate.
+Dispatch [g10.020](./020-underlay-bundle-chromium-input.md) through Queue.
+Doctor cache pruning and S3 retirement remain separate.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:8cb4c9afbc06b7a0fc22f1d21072dde9cac6ac7856150513de752655d78e1e54 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

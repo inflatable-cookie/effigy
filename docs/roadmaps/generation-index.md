@@ -1,21 +1,21 @@
 # Roadmap Generation Index
 
 Current generation: g10
-Approved frontier: g10.017 ready; external bundle input follows core closeout
+Approved frontier: g10.020 ready; Underlay bundle browser input
 Updated: 2026-09-25
 
 ## Lifecycle state
 
 Generations `g01` through `g09` are safely closed and compacted. The operator
 selected an agent-native skill-execution runway on 2026-09-13. `g10` remains
-open; `g10.001` through `g10.016` are complete. The 0.13.0 release is published
+open; `g10.001` through `g10.019` are complete. The 0.13.0 release is published
 and install-verified. The operator then selected consolidated resolution of
 ten open Dependabot PRs. `g10.014` owns six compatible lockfile updates;
 `g10.015` completed the three direct upgrades and overlapping language
 update. `g10.016` completed the Hickory 0.26.3 retarget follow-up. Tom then
 approved an opt-in browser runtime for the built-in Rust/Bun workspace image;
-`g10.017` owns the core catalog work. External bundle wiring follows in its
-own repository.
+`g10.017` completed the core catalog work. Effigy 0.13.1 is published and
+install-verified. `g10.020` owns external bundle wiring in its repository.
 
 ## Generation history
 
@@ -50,5 +50,5 @@ trees without opening another generation.
 
 ## Next Task
 
-Dispatch the approved browser-runtime catalog task. Follow core closeout with
-the external Underlay bundle input and a supporting Effigy version gate.
+Dispatch [g10.020](./g10/020-underlay-bundle-chromium-input.md) for the external
+Underlay bundle input and released Effigy 0.13.1 gate.

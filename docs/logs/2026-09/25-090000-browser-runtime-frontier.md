@@ -34,3 +34,16 @@ Protected run `36124764718` published pack `v1.1.0` from source commit `c932c58f
 ## 2026-09-25 lifecycle pin repair
 
 Queue resumed the same `g10.017` worker under a new authenticated run. Its PR #120 passed independent review and merged as `0e7b77dfda715f3c565a68241b92e1d48c995706`, but task closeout initially refused the later human-prose edits to `docs/roadmaps/g10/017-opt-in-chromium-workspace-runtime.md`: the hook requires that task card to match the pinned planning blob outside its generated lifecycle block. The card was restored byte-for-byte to its original planning version. This log and `g10.018`/`g10.019` retain the approved provenance correction: the worker was authorized to import the generated `catalog/` snapshot, lock, and pinned baseline constants only from the verified published artifact, with 42 paths/bytes, content identity, source tag/commit, and digest-bound attestation checked. No `v1.0.1` provenance was claimed for edited bytes. The hook's generated terminal block remains Queue-owned.
+
+## 2026-09-25 release and bundle handoff
+
+Queue completed `g10.017` after PR #120 merge and terminal closeout at
+`8d4771d6161ff6bda77697e9a5c99713e35992fb`. Effigy v0.13.1 is
+published from release commit `d186388fc486efb12e5e4380b606c51239ca9fe6`;
+release workflow [36134489320](https://github.com/inflatable-cookie/effigy/actions/runs/36134489320)
+passed all gates, four platform builds, GitHub release creation, and Homebrew
+tap update. Tagged install verification passed five checks, and the published
+ARM64 macOS binary reports `effigy v0.13.1`. The approved bundle follow-up is
+now `g10.020`: expose the default-off input, require 0.13.1 for this bundle
+revision, and prove default/explicit rendering and older-binary rejection.
+Acowtancy browser evidence remains downstream of bundle merge and rebuild.
