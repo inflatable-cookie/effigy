@@ -11,9 +11,13 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.017`](./017-opt-in-chromium-workspace-runtime.md) — ready; add opt-in
-  Chromium system libraries to the built-in Rust/Bun workspace image and prove
-  a non-root linux-arm64 launch.
+- [`g10.018`](./018-browser-runtime-catalog-pack-source.md) — ready; land the
+  browser option in the canonical catalog-pack source.
+- [`g10.019`](./019-publish-browser-runtime-catalog-pack.md) — planned;
+  publish the reviewed source through the protected pack transaction.
+- [`g10.017`](./017-opt-in-chromium-workspace-runtime.md) — active but blocked;
+  retain its proven arm64 implementation until the published pack can be
+  imported as a generated baseline.
 
 `g10.001` through `g10.016` are complete.
 
@@ -68,9 +72,12 @@ weakening source isolation, machine-safe output, or runtime contracts.
 - Acowtancy g05.195 is blocked on real Chromium evidence in the shared
   `workspace-rust-bun` container. The browser downloads, but Debian runtime
   libraries are missing and the non-root user cannot install them.
-- `g10.017` adds a default-off catalog image option and requires a real
-  linux-arm64 launch as `dev`. The external Underlay bundle will expose the
-  input after core closeout; its version gate and PR stay in that repository.
+- The retained `g10.017` worker proved a real linux-arm64 Playwright launch as
+  `dev`, but direct edits to Effigy's generated catalog broke the pinned
+  catalog-pack provenance lock. `g10.018` moves the option into canonical pack
+  source; `g10.019` publishes the reviewed artifact. `g10.017` then imports
+  exact bytes and provenance. The external Underlay bundle follows core
+  closeout; its version gate and PR stay in that repository.
 
 ## Task-surface intake
 
@@ -95,9 +102,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Dispatch the approved browser-runtime catalog task through Queue. After its
-terminal closeout, advance the external bundle input with a supporting
-Effigy version gate. Doctor cache pruning and S3 retirement remain separate.
+Dispatch `g10.018` through Queue. After its reviewed source merge, prepare and
+dispatch `g10.019` publication. Resume the retained `g10.017` worker after
+pack publication and Queue callback reconciliation; then advance the external
+bundle input with a supporting Effigy version gate. Doctor cache pruning and
+S3 retirement remain separate.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:d400f929778e252e851bee676b035eb1da7ff5cbabbca97a83b57fed61a0db2a -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

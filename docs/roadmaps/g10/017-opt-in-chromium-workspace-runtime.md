@@ -3,7 +3,7 @@
 Owner: catalog workspace image and container assembly
 Created: 2026-09-25
 Governing refs: `docs/contracts/001-working-rules.md`, `docs/guides/063-container-system-guide.md`, `docs/guides/067-catalog-services-reference.md`, `docs/guides/065-external-bundle-adoption.md`
-Depends on: none; `g10.016` is terminal
+Depends on: `g10.018` source merge and `g10.019` published catalog pack; `g10.016` is terminal
 
 ## Outcome
 
@@ -18,6 +18,8 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 
 ## Decisions
 
+- The built-in catalog is a generated copy of `inflatable-cookie/effigy-catalog-pack`. Do not commit the worker's edited catalog files or recalculate the existing `v1.0.1` lock as if those bytes came from the old source commit. `g10.018` moves the reviewed browser change into the canonical pack source; `g10.019` publishes an immutable new pack artifact. Then this task imports the exact published bytes and regenerates the lock from their real provenance.
+
 - Add a string `browser_runtime` service parameter with default `"none"` and supported value `"chromium"`. Pass it into the Compose build args. Reject unknown values clearly at build; no arbitrary apt package input.
 - Install Chromium's Debian Bookworm system dependencies and a basic font set as root at image build, before the non-root `dev` runtime. Use the Acowtancy `ldd` list as a starting set and verify the final package list by launch, not assumption.
 - Do not bake Chromium, Playwright, Node, `npx`, or a browser revision into the image. The consumer installs its own matching browser in `dev`'s user cache.
@@ -25,9 +27,9 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 
 ## Dispatch manifest
 
-- **State:** ready; one catalog-image lane.
+- **State:** active, blocked on canonical pack source/publication and Queue callback reconciliation; retain the existing worker and workspace.
 - **Completion:** one independently reviewed current-base PR merges the catalog option, docs, and targeted assembly checks, with a recorded linux-arm64 build and non-root Chromium launch smoke.
-- **Owned mutable paths:** `crates/effigy-catalog/catalog/workspace-rust-bun/{service.toml,compose.fragment.yml,Dockerfile}`; focused catalog tests under `crates/effigy-catalog/tests/integration/workspace.rs`; `docs/guides/067-catalog-services-reference.md` and directly related container guidance; `CHANGELOG.md` if the option is user-facing; this task's evidence under `docs/logs/2026-09/`; `PAPERCUTS.md` for execution friction.
+- **Owned mutable paths:** generated `crates/effigy-catalog/catalog/` snapshot, `crates/effigy-catalog/catalog-pack.lock.toml`, and pinned baseline constants only as one verified import from the published artifact; focused catalog tests under `crates/effigy-catalog/tests/integration/workspace.rs`; `docs/guides/067-catalog-services-reference.md` and directly related container guidance; `CHANGELOG.md` if the option is user-facing; this task's evidence under `docs/logs/2026-09/`; `PAPERCUTS.md` for execution friction.
 - **Reserved closeout surfaces:** task status, lifecycle records/projections, generation and docs front doors, and the submitted handoff are Queue/hook/Chatterbox owned.
 - **Worker:** general Rust/catalog and Docker work in the automatic Queue pool; independent exact-head review.
 - **Excluded:** bundle repository edits, Acowtancy app changes, runtime Node installation, browser binary installation in the image, cross-browser support, arbitrary package injection, release mutation, and workflow edits.
@@ -35,11 +37,10 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 
 ## Work
 
-1. Inspect catalog parameter and Compose assembly patterns. Add `browser_runtime` default `none`, the build argument, and a bounded Dockerfile branch for `chromium`; fail on unsupported values.
-2. Install only the necessary Debian runtime libraries and fonts in the opt-in branch, with apt metadata removed afterward. Keep the default image path free of those optional packages.
-3. Add focused assembly assertions for default and explicit modes. Document the input, its image-size tradeoff, consumer-owned browser download, and rebuild requirement.
-4. On linux-arm64, build the opted-in image and run a smoke as `dev`: install Chromium for pinned `@playwright/test` 1.55.1 into the user cache, check the browser executable for unresolved shared libraries, launch headless Chromium, render local text, and close cleanly. Record architecture, UID, browser revision, and command/result. Check a default-off build remains usable.
-5. Run focused and coherent repository validation; open one non-draft PR for independent review and current-base CI.
+1. Preserve the retained worker's uncommitted implementation and linux-arm64 smoke evidence while `g10.018` and `g10.019` complete. Compare the eventual published pack files with that implementation; do not hand-edit the generated snapshot.
+2. Import the published pack's exact bytes and provenance into the generated baseline, including lock and pinned identities. Verify its digest-bound source and content identity.
+3. Carry forward the focused assembly assertions, docs, and browser smoke evidence. Repeat a focused launch only if the imported image bytes differ from the already proven implementation.
+4. Run focused and coherent repository validation; open one non-draft PR for independent review and current-base CI.
 
 ## Acceptance and review oracle
 
@@ -62,6 +63,7 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 - Stop if the opt-in cannot launch without changing the Rust/Bun base, container privileges, mount policy, or unrelated catalog services; return a specific proposal.
 - Stop if only an x86_64 or root smoke is available, or if the browser launch result is replaced by `ldd` alone.
 - Stop on unrelated package/version movement, unowned paths, or stale exact-head review.
+- Stop if the pack source, published digest, and generated snapshot cannot be proven byte-for-byte equal. Never repair the lock by retaining `v1.0.1` provenance for edited bytes.
 
 ## Evidence
 
