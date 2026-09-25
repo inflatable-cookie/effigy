@@ -73,6 +73,10 @@ weakening source isolation, machine-safe output, or runtime contracts.
   source through PR #7; `g10.019` published the reviewed artifact. `g10.017` now imports
   exact bytes and provenance. The external Underlay bundle follows core
   closeout; its version gate and PR stay in that repository.
+- `g10.017`'s task card keeps its original pinned planning prose for the
+  lifecycle hook. The approved provenance correction, generated-import scope,
+  and merged PR #120 evidence are recorded in the browser-runtime frontier log
+  and the `g10.018`/`g10.019` cards.
 
 ## Task-surface intake
 
