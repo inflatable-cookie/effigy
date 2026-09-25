@@ -22,9 +22,9 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: [g10.020](./g10/020-underlay-bundle-chromium-input.md)
-  exposes the merged browser runtime through the Underlay bundle, gated at
-  released Effigy 0.13.1. The Dependabot batches are complete.
+- Approved frontier: none in Effigy. [g10.020](./g10/020-underlay-bundle-chromium-input.md)
+  closed after the Underlay bundle merge. Acowtancy owns the consumer rebuild
+  and browser evidence.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -90,8 +90,9 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Dispatch [g10.020](./g10/020-underlay-bundle-chromium-input.md) through Queue.
-Doctor cache pruning and S3 retirement remain separate.
+Hand the merged bundle input to Acowtancy for its workspace rebuild and
+g05.195 browser proof. No further Effigy task is ready; doctor cache pruning
+and S3 retirement remain separate planning candidates.
 
 ## Historical language boundary
 

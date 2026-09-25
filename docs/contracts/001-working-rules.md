@@ -93,6 +93,6 @@ polish lane.
 
 ## Next Task
 
-Dispatch the approved external Underlay bundle browser input as g10.020 through
-Queue. Effigy 0.13.1 and the core catalog option are released. Doctor cache
-pruning and S3 retirement remain separately gated.
+The g10.020 Underlay bundle input is merged and gated at released Effigy
+0.13.1. Acowtancy owns its consumer rebuild and browser proof. No Effigy task
+is ready; doctor cache pruning and S3 retirement remain separately gated.

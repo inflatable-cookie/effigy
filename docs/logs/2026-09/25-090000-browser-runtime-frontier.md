@@ -47,3 +47,17 @@ ARM64 macOS binary reports `effigy v0.13.1`. The approved bundle follow-up is
 now `g10.020`: expose the default-off input, require 0.13.1 for this bundle
 revision, and prove default/explicit rendering and older-binary rejection.
 Acowtancy browser evidence remains downstream of bundle merge and rebuild.
+
+## 2026-09-25 bundle closeout
+
+Underlay bundle PR [#2](https://github.com/inflatable-cookie/underlay-effigy-bundle/pull/2)
+merged as `1da2f0ed801c76f542db4830ab6eb2534c84a323`; Queue task
+`7ec6cc8b-305e-4372-b8d7-679c75cad97d` is done with closeout commit
+`90bf10018a9bb615879ed35a6ae5080f1cb7bfc6`. The accepted independent
+review covered head `45313ad5cbee6538d1910f55d0774d82006a9a01` after
+a data-preservation finding was fixed in the rebuild docs. Published Effigy
+0.13.1 rendered default `none` and explicit `chromium` through the service and
+Compose build arg; published 0.13.0 rejected the bundle's minimum-version
+gate. No image bytes changed. Acowtancy can now set the input, rebuild with
+`effigy container reset --keep-data` and `effigy container up`, install its
+matching browser as `dev`, and resume g05.195 browser evidence.

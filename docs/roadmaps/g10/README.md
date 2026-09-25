@@ -11,11 +11,11 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- Browser runtime core PR #120 is terminal, and Effigy 0.13.1 is released.
-  [g10.020](./020-underlay-bundle-chromium-input.md) owns the external bundle
-  input and version gate.
+- Browser runtime core PR #120 is terminal, Effigy 0.13.1 is released, and
+  [g10.020](./020-underlay-bundle-chromium-input.md) completed the external
+  bundle input and version gate. No Effigy task is ready.
 
-`g10.001` through `g10.019` are complete.
+`g10.001` through `g10.020` are complete.
 
 ## Boundaries
 
@@ -102,8 +102,9 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Dispatch [g10.020](./020-underlay-bundle-chromium-input.md) through Queue.
-Doctor cache pruning and S3 retirement remain separate.
+Acowtancy enables the merged bundle input, rebuilds its workspace, and
+resumes g05.195 browser proof. Doctor cache pruning and S3 retirement remain
+separate planning candidates; choose the next Effigy runway explicitly.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:8cb4c9afbc06b7a0fc22f1d21072dde9cac6ac7856150513de752655d78e1e54 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |

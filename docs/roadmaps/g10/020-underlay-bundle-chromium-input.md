@@ -1,6 +1,6 @@
 # g10.020 — Underlay bundle Chromium input
 
-Status: ready
+Status: complete
 Owner: `inflatable-cookie/underlay-effigy-bundle` export and input schema
 Created: 2026-09-25
 Governing refs: `docs/contracts/001-working-rules.md`, `docs/guides/065-external-bundle-adoption.md`, `docs/guides/067-catalog-services-reference.md`, `docs/roadmaps/g10/017-opt-in-chromium-workspace-runtime.md`
@@ -20,8 +20,8 @@ One reviewed bundle PR merges with rendered default and opt-in proof.
   in g10.017; published pack v1.1.0 supplies the exact service bytes.
 - [x] Effigy v0.13.1 is published with four binaries; the tagged install check
   and direct ARM64 macOS binary smoke passed.
-- [x] The bundle repository is clean, has no active Queue task, and owns only
-  its input/export/docs change. No open design choice remains.
+- [x] At dispatch, the bundle repository was clean with no active Queue task.
+  It owned only the input/export/docs change; no design choice remained.
 
 ## Decisions
 
@@ -37,7 +37,8 @@ One reviewed bundle PR merges with rendered default and opt-in proof.
 
 ## Dispatch manifest
 
-- **State:** ready; one external bundle lane, no parallel owner of these files.
+- **State:** complete through Queue task
+  `7ec6cc8b-305e-4372-b8d7-679c75cad97d` and bundle PR #2.
 - **Completion:** one non-draft PR in `underlay-effigy-bundle` passes independent
   exact-head review and current-base validation, then merges.
 - **Owned mutable paths:** bundle `bundle.toml`, `export.toml`, `README.md`, and
@@ -89,11 +90,24 @@ this task changes no effective image bytes.
 
 ## Evidence
 
-Record released binary identities, rendered default and opt-in values, old
-version rejection, PR/reviewed head/merge, and any limits. Queue owns its task
-record; Chatterbox updates this cross-repository planning card after closeout.
+Bundle PR [#2](https://github.com/inflatable-cookie/underlay-effigy-bundle/pull/2)
+merged as `1da2f0ed801c76f542db4830ab6eb2534c84a323` and closed through
+Queue at bundle main `90bf10018a9bb615879ed35a6ae5080f1cb7bfc6`. The
+accepted Northstar review covered exact head
+`45313ad5cbee6538d1910f55d0774d82006a9a01`. An earlier review found
+that plain `container reset` could delete data; the worker corrected the
+example to `effigy container reset --keep-data` before the accepted review.
+
+Published Effigy 0.13.1 rendered omitted input as `none` and explicit input
+as `chromium`, both through the service parameter and Compose
+`BROWSER_RUNTIME` build arg. Published 0.13.0 rejected the bundle's 0.13.1
+floor. `git diff --check` passed. The PR had no configured checks; exact-head
+acceptance is recorded in the Northstar review comment and the bundle
+[closeout log](https://github.com/inflatable-cookie/underlay-effigy-bundle/blob/90bf10018a9bb615879ed35a6ae5080f1cb7bfc6/docs/logs/2026-09/2026-09-25-g10-020-underlay-browser-input.md).
+Image bytes did not change, so the g10.017 arm64 browser smoke was not
+repeated. Acowtancy still owns its workspace rebuild and browser evidence.
 
 ## Next task
 
-After bundle merge, notify the Acowtancy Chatterbox to enable the option,
-rebuild its workspace, and resume g05.195 browser gesture and request evidence.
+Acowtancy enables the merged option, rebuilds its workspace, and resumes
+g05.195 browser gesture and request evidence. No further Effigy task is ready.
