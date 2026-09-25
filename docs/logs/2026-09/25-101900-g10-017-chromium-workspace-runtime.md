@@ -3,7 +3,8 @@
 Status: implementation complete; awaiting independent review, current-base CI, and merge
 Created: 2026-09-25
 Roadmap: g10.017
-Baseline: `1f8341283477c896649bfabbacf0bca88c87426c` (planning commit on `main`)
+Baseline: planning `1f8341283477c896649bfabbacf0bca88c87426c`; current `main`
+`b69c009ae` after `g10.018`/`g10.019`. Imported pack `v1.1.0`.
 
 ## Resolution
 
@@ -68,19 +69,44 @@ The catalog entrypoint writes `/var/log/effigy-ssh-bridge.log` as root, so a
 plain `--user 1000:1000` run without `--entrypoint` fails before the command.
 Recorded in `PAPERCUTS.md`; the smoke bypassed the entrypoint.
 
+## Published pack import
+
+Imported `ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba`
+(`oras pull` after GHCR login). Manifest annotations:
+
+- content-id `sha256:e92cc2f217fa2ba4de302b8376ec558afb042acd3a83e4d33ecfb03dc40606a3`
+- source-commit `c932c58f64cafd10a70d24907dc77fb81230bb01`
+- source-tag `v1.1.0`
+- source-tag-object `72f5d7551dc0430fcc83af36066463bd9f1aab82`
+- created `2026-09-25T10:28:40Z`
+
+Unpacked tree: 42 regular files, 90,852 bytes. Local content identity of the
+extracted tree matches the annotation. `workspace-rust-bun/{Dockerfile,
+compose.fragment.yml,service.toml}` are byte-identical to the retained
+implementation, so the earlier non-root arm64 Playwright smoke was not
+repeated. `catalog-pack.lock.toml` and pinned baseline constants now record
+that `v1.1.0` provenance. `compose_baseline_lock` regenerates the same lock
+and OCI digest.
+
 ## Validation
 
+- `cargo test -p effigy-catalog --lib --locked pack::baseline::tests`: 15
+  passed, including committed snapshot verify and deterministic regeneration.
 - `cargo test -p effigy-catalog --test integration --locked workspace_rust_bun`:
   6 passed (default `none`, explicit `chromium`, unknown value forwarded,
   Dockerfile named-error and no Playwright/Node/npx bake-in).
-- Remaining repository validation is recorded below this implementation
-  checkpoint as it completes.
+- `cargo test --workspace --locked`: passed.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets --locked -- -D warnings`: passed.
+- `effigy qa:docs`: passed.
+- `git diff --check`: passed.
 
 ## Vision Target Delta
 
 - Primary tags: `MAINT`, `CONTRACT`.
 - Movement: shared `workspace-rust-bun` image can opt into Chromium OS
-  libraries without a per-project Dockerfile; default path stays toolchain-only.
+  libraries without a per-project Dockerfile; generated catalog baseline is
+  published pack `v1.1.0`, not a v1.0.1 lock over edited bytes.
 - Remaining gap: independent exact-head review, current-base CI, merge, then
   the separate Underlay bundle input and version gate.
 

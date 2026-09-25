@@ -13,6 +13,11 @@ During v0.x, MINOR bumps may include breaking changes.
   Playwright, or Node; consumers download their own revision after rebuild.
   Unknown values fail the build.
 
+### Changed
+- The generated `workspace-rust-bun` catalog snapshot and
+  `catalog-pack.lock.toml` now track published catalog-pack `v1.1.0`
+  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba`).
+
 ## [0.13.0] - 2026-09-24
 
 ### Breaking

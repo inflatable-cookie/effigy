@@ -17,13 +17,13 @@ schema_version = 1
 
 [baseline]
 source_repository = "inflatable-cookie/effigy-catalog-pack"
-source_commit = "5ef0ec2b64612c7803cc6105a65ea462862a0b21"
-source_created = "2026-09-02T11:49:10Z"
-source_tag = "v1.0.1"
-source_tag_object = "2bb561109dfe8ec1346779370e2e9f428ef5ddd2"
+source_commit = "c932c58f64cafd10a70d24907dc77fb81230bb01"
+source_created = "2026-09-25T10:28:40Z"
+source_tag = "v1.1.0"
+source_tag_object = "72f5d7551dc0430fcc83af36066463bd9f1aab82"
 pack_id = "effigy-default-catalog"
-pack_version = "1.0.1"
+pack_version = "1.1.0"
 
 [identities]
-oci_manifest_digest = "sha256:91de584e77487765c24f53abb63413783a99c0a7926c25aee1289a3cf370d9f3"
-content_identity = "sha256:9498d33f1eccbb91e971b55f5169830baca26326a8f802408a0432e733254974"
+oci_manifest_digest = "sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba"
+content_identity = "sha256:e92cc2f217fa2ba4de302b8376ec558afb042acd3a83e4d33ecfb03dc40606a3"
