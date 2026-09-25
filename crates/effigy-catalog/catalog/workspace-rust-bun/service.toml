@@ -12,6 +12,11 @@ type = "string"
 default = "1.3.14"
 description = "Bun version to install (e.g. '1.3.14'), pinned by default. The Dockerfile downloads the matching bun-v<version> GitHub release archive and verifies its SHA256 against the release's SHASUMS256.txt; the build fails if the version is empty."
 
+[params.browser_runtime]
+type = "string"
+default = "none"
+description = "Optional Chromium system-library layer. Default `none` leaves the ordinary Rust/Bun image unchanged. `chromium` installs Debian Bookworm runtime libraries and a basic font set as root at image build. Unknown values fail the image build. The image does not ship a browser binary, Playwright, Node, or npx; the consuming repo downloads its matching browser into the `dev` user cache. Changing this value requires an image rebuild."
+
 [params.workspace_mount]
 type = "string"
 default = "/workspace-root"

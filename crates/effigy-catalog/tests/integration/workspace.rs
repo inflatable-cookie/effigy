@@ -62,6 +62,29 @@ fn resolve_workspace_rust_bun_fragment() {
         dockerfile.contains("rustup component add clippy"),
         "Dockerfile should install Clippy so consumer validate tasks need no extra rustup step"
     );
+    assert!(
+        dockerfile.contains("ARG BROWSER_RUNTIME=none"),
+        "Dockerfile should default BROWSER_RUNTIME to none"
+    );
+    assert!(
+        dockerfile.contains("unsupported BROWSER_RUNTIME=")
+            && dockerfile.contains("expected none or chromium"),
+        "Dockerfile should fail unknown BROWSER_RUNTIME values with a named error"
+    );
+    assert!(
+        dockerfile.contains("libnss3")
+            && dockerfile.contains("libatk-bridge2.0-0")
+            && dockerfile.contains("fonts-liberation"),
+        "chromium branch should install Chromium shared libraries and a basic font set"
+    );
+    let lowered = dockerfile.to_ascii_lowercase();
+    assert!(
+        !lowered.contains("playwright")
+            && !lowered.contains("npx")
+            && !dockerfile.contains("nodejs")
+            && !dockerfile.contains("chromium-browser"),
+        "Dockerfile should not bake Playwright, Node, npx, or a browser package"
+    );
 }
 
 #[test]
@@ -94,6 +117,11 @@ fn workspace_rust_bun_assembles_with_defaults() {
         args.get("BUN_VERSION").unwrap().as_str().unwrap(),
         "1.3.14",
         "bun should default to a pinned version"
+    );
+    assert_eq!(
+        args.get("BROWSER_RUNTIME").unwrap().as_str().unwrap(),
+        "none",
+        "browser_runtime should default off so ordinary workspaces stay toolchain-only"
     );
 
     // sleep infinity command (long-running shell target, not a real service).
@@ -190,6 +218,90 @@ fn workspace_rust_bun_publishes_host_ports_when_requested() {
     assert_eq!(
         workspace.get("working_dir").unwrap().as_str().unwrap(),
         "/workspace-root/workspace-app-reference"
+    );
+}
+
+#[test]
+fn workspace_rust_bun_passes_chromium_browser_runtime_build_arg() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "workspace".to_string(),
+        catalog: "workspace-rust-bun".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "browser_runtime".to_string(),
+                toml::Value::String("chromium".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "example-dev", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let workspace = validate_service(&doc, "workspace");
+    let args = workspace
+        .get("build")
+        .expect("build block")
+        .get("args")
+        .expect("build args");
+    assert_eq!(
+        args.get("BROWSER_RUNTIME").unwrap().as_str().unwrap(),
+        "chromium"
+    );
+
+    let dockerfile = result
+        .dockerfiles
+        .get("workspace")
+        .expect("workspace Dockerfile");
+    assert!(
+        dockerfile.contains("case \"${BROWSER_RUNTIME}\" in"),
+        "opt-in should still use the bounded Dockerfile branch, not a per-project override"
+    );
+}
+
+#[test]
+fn workspace_rust_bun_forwards_unknown_browser_runtime_to_build() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "workspace".to_string(),
+        catalog: "workspace-rust-bun".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "browser_runtime".to_string(),
+                toml::Value::String("chrome".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "example-dev", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let workspace = validate_service(&doc, "workspace");
+    let args = workspace
+        .get("build")
+        .expect("build block")
+        .get("args")
+        .expect("build args");
+    assert_eq!(
+        args.get("BROWSER_RUNTIME").unwrap().as_str().unwrap(),
+        "chrome",
+        "typos must reach the image build so the Dockerfile named error fires"
     );
 }
 

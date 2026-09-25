@@ -7,6 +7,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 <!-- Keep entries short. Append newest entries at the top. Do not include secrets. -->
 
+### [ ] Colima VM DNS proxy can timeout Docker Hub blob pulls — 2026-09-25
+- Friction: `nerdctl build` of `rust:1.91-bookworm` failed after ~3 minutes with `lookup registry-1.docker.io on 192.168.5.3:53: read udp ... i/o timeout` while the Mac host resolved the same name via LAN DNS in 19ms. A retry minutes later succeeded.
+- Impact: linux-arm64 catalog image smokes on Colima look wedged or blocked on a host DNS proxy that is not the worker's registry credentials.
+- Possible fix: make Colima's `192.168.5.3` DNS proxy fail over to the host resolver, or document a bounded retry for worker image pulls.
+- Surface: Colima default VM DNS; `nerdctl build` of `workspace-rust-bun`.
+
+### [ ] `workspace-rust-bun` entrypoint cannot run as `dev` — 2026-09-25
+- Friction: `nerdctl run --user 1000:1000` dies before the command because `/usr/local/bin/effigy-entrypoint` writes `/var/log/effigy-ssh-bridge.log` as root (`Permission denied`). The non-root Playwright smoke had to use `--entrypoint bash`.
+- Impact: any compose `user: "1000:1000"` / `user: "dev"` launch of the catalog image fails at start instead of reaching the shell or task.
+- Possible fix: write the bridge log under `/tmp` (dev-owned) or create the log path as root then drop privileges, matching the existing socat bridge model.
+- Surface: `crates/effigy-catalog/catalog/workspace-rust-bun/Dockerfile` `effigy-entrypoint`.
+
 ### [ ] `cargo update -p X --precise` silently re-resolves unrelated lockfile edges — 2026-09-24
 - Friction: updating only `hickory-proto`/`hickory-server` to 0.26.3 with per-package `--precise` updates re-selected unrelated edges that were already validly locked: `tempfile 3.27.0` dropped from `getrandom 0.4.3` to `0.3.4` (splitting getrandom into an extra version) and several `windows-sys` consumers re-pointed from 0.61.2 to existing 0.60.2/0.59.0 entries. The drift reproduced deterministically regardless of update order.
 - Impact: bounded dependency tasks get unexplainable lockfile deltas exactly when review oracles demand none, and the extra getrandom version ships unless caught.
