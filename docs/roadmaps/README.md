@@ -22,9 +22,10 @@ Queue execution record. “Effigy task” means a command selector.
 ## Current planning state
 
 - Active generation: [`g10`](./g10/README.md) — agent-native skill execution.
-- Approved frontier: the retained [`g10.017`](./g10/017-opt-in-chromium-workspace-runtime.md)
-  worker imports the published pack and finishes the built-in browser option.
-  Catalog-pack source and publication are complete. The Dependabot batches are complete.
+- Approved frontier: the browser runtime core PR #120 has merged from the
+  verified catalog pack; Queue owns its lifecycle closeout. The external
+  Underlay bundle input is the next approved direction. The Dependabot batches
+  are complete.
 - Active strict lane: none.
 - `g01` through `g09` are closed and compacted into
   [`archive/`](./archive/).
@@ -90,9 +91,8 @@ Do not open a new generation to escape cleanup or manufacture a ready task.
 
 ## Next Task
 
-Resume retained `g10.017` through Northstar Queue to import the verified pack.
-The external Underlay
-bundle input follows core closeout and a supporting Effigy version gate.
+Prepare the external Underlay bundle input with a supporting Effigy version
+gate, then dispatch it after core closeout.
 Doctor cache pruning and S3 retirement remain separate.
 
 ## Historical language boundary

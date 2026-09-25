@@ -11,8 +11,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Approved frontier
 
-- [`g10.017`](./017-opt-in-chromium-workspace-runtime.md) — active; resume the
-  retained worker to import the published pack as an exact generated baseline.
+- Browser runtime core PR #120 has merged from the published pack. Queue owns
+  its lifecycle closeout; the external Underlay bundle input follows.
 
 `g10.001` through `g10.016`, `g10.018`, and `g10.019` are complete.
 
@@ -101,9 +101,8 @@ weakening source isolation, machine-safe output, or runtime contracts.
 
 ## Next Task
 
-Resume the retained `g10.017` worker through Queue's versioned operator control
-to import the published pack and finish core review; then advance the external
-bundle input with a supporting Effigy version gate. Doctor cache pruning and
+Prepare the external Underlay bundle input with a supporting Effigy version
+gate, then dispatch it after core closeout. Doctor cache pruning and
 S3 retirement remain separate.
 <!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:d400f929778e252e851bee676b035eb1da7ff5cbabbca97a83b57fed61a0db2a -->
 | Generation | Disposition | Runway state |
