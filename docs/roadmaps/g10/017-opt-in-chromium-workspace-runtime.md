@@ -27,7 +27,7 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 
 ## Dispatch manifest
 
-- **State:** active, blocked on canonical pack source/publication and Queue callback reconciliation; retain the existing worker and workspace.
+- **State:** active; canonical pack source and publication are complete. Resume the retained worker/workspace through Queue's versioned `resume_worker` control, which closes the missing-callback attention episode without forging the old run's callback.
 - **Completion:** one independently reviewed current-base PR merges the catalog option, docs, and targeted assembly checks, with a recorded linux-arm64 build and non-root Chromium launch smoke.
 - **Owned mutable paths:** generated `crates/effigy-catalog/catalog/` snapshot, `crates/effigy-catalog/catalog-pack.lock.toml`, and pinned baseline constants only as one verified import from the published artifact; focused catalog tests under `crates/effigy-catalog/tests/integration/workspace.rs`; `docs/guides/067-catalog-services-reference.md` and directly related container guidance; `CHANGELOG.md` if the option is user-facing; this task's evidence under `docs/logs/2026-09/`; `PAPERCUTS.md` for execution friction.
 - **Reserved closeout surfaces:** task status, lifecycle records/projections, generation and docs front doors, and the submitted handoff are Queue/hook/Chatterbox owned.
@@ -51,6 +51,7 @@ The built-in `workspace-rust-bun` service supports an explicit Chromium system-l
 | Real runtime | `ldd` passes a partial binary but Playwright still cannot launch as `dev` | linux-arm64 image smoke launches the pinned headless browser as non-root, renders local text, and exits; unresolved library check is empty |
 | Version ownership | Shared image contains one Chromium revision that disagrees with the repo package | Dockerfile installs system packages only; browser download is performed under the smoke's pinned consumer package |
 | Shared-catalog delivery | A project override hides the fix from other consumers | Change lands in the built-in service and its reference docs; bundle remains a separate downstream lane |
+| Published provenance | Edited recovery files claim pack `v1.0.1` source | Import exact `v1.1.0` OCI digest `sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba`; verify 42 source paths/bytes, content identity, tag object, lock, and pinned baseline constants |
 
 ## Validation
 

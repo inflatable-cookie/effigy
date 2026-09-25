@@ -17,7 +17,7 @@ The reviewed canonical pack source is published under a new immutable version ta
 
 ## Dispatch manifest
 
-- **State:** ready; dispatch the protected publication lane against the exact pack source commit above.
+- **State:** complete through Queue task `a047926b-d189-4c9e-838e-9e21c3490b4d`, protected workflow run `36124764718`, and evidence PR #8.
 - **Completion:** protected publication succeeds and an independently reviewed evidence PR records source tag/object/commit, OCI version digest, attestation, public pull, compatibility, and `stable` result.
 - **Owned mutable paths:** pack-repository publication evidence and direct documentation corrections needed to report the result. The protected manual workflow performs provider mutations under its existing gates.
 - **Reserved surfaces:** Effigy's generated baseline, Underlay bundle, Acowtancy, unrelated release tags, provider settings and workflow code.
@@ -47,3 +47,7 @@ The reviewed canonical pack source is published under a new immutable version ta
 ## Next task
 
 Resume retained `g10.017` only after the pack artifact and Queue callback identity are reconciled. It imports the exact generated baseline, then the Underlay bundle exposes the input.
+
+## Closeout evidence
+
+Annotated `v1.1.0` tag object `72f5d7551dc0430fcc83af36066463bd9f1aab82` peels to source commit `c932c58f64cafd10a70d24907dc77fb81230bb01`. Protected run `36124764718` succeeded with environment approvals. OCI `ghcr.io/inflatable-cookie/effigy-catalog-pack:v1.1.0` and `stable` resolve to `sha256:5699fcb8641424cc6365feb2a4c4cc7f6056de385fc9dc49f771aec63f6078ba`. Digest-bound SLSA attestation and anonymous byte-for-byte pull were verified independently; unpacked content identity is `sha256:e92cc2f217fa2ba4de302b8376ec558afb042acd3a83e4d33ecfb03dc40606a3` across 42 files. Evidence PR #8 was reviewed at `7881d8f9b12826ed38329945022c85b846493bb4`, merged as `7fd4beaf105ce190bdea31c2a9c60ef1d8d6b4bb`, and closed out at pack main `829925597d29ac100ee0fceb40d8d2330012aada`.
