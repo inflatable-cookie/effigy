@@ -16,6 +16,10 @@ Effigy ships a versioned binary through GitHub Releases and a Homebrew tap. The 
 2. Review `effigy release execute --plan`. `effigy release execute --yes` commits the prepared files on `main` as `release: vX.Y.Z`, creates and pushes the annotated `vX.Y.Z` tag, and clears prepared state. Use it only after Tom explicitly authorizes the release.
 3. Dispatch `gh workflow run release-binaries.yml -f tag=vX.Y.Z` and watch the run. A pushed tag alone does not publish the binaries.
 
+## Hosted gate evidence
+
+Release prepare may reuse a hosted CI result for a gate explicitly configured for reuse. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy. The release record must name every reused gate and link to its run. Until this support is implemented, follow the prepare steps above.
+
 ## Verify and recover
 
 - After artifacts publish, run `effigy release verify-install --tag vX.Y.Z`. Check the GitHub release and Homebrew tap.
