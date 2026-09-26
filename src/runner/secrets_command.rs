@@ -8,8 +8,9 @@ use effigy_manifest::{
     ManifestSecretsUnlockPolicy, ManifestSecretsVaultIdentity,
 };
 use effigy_secrets::{
-    inspect_vault_permissions, local_dev_unlock_key_path, SecretValue, VaultEnvelope,
-    VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
+    inspect_vault_permissions, local_dev_unlock_key_path, local_unlock_credential_path,
+    read_local_unlock_passphrase, seal_local_unlock_passphrase, LocalDevUnlockKey, SecretValue,
+    VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
 };
 use serde_json::{json, Value};
 
@@ -35,6 +36,12 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
         }
         SecretsSubcommand::Init => {
             run_secrets_init(&repo_root, manifest.secrets.as_ref(), args.output_json)
+        }
+        SecretsSubcommand::Unlock => {
+            run_secrets_unlock(&repo_root, manifest.secrets.as_ref(), args.output_json)
+        }
+        SecretsSubcommand::Lock => {
+            run_secrets_lock(&repo_root, manifest.secrets.as_ref(), args.output_json)
         }
         SecretsSubcommand::Import { input } => run_secrets_import(
             &repo_root,
@@ -136,6 +143,7 @@ fn run_secrets_init(
         &payload,
         passphrase.expose(),
     )?;
+    remove_local_unlock_credential(&vault_path)?;
     if run_configured_vault_generate_task(repo_root, secrets)? {
         return render_mutation_result(
             repo_root,
@@ -155,6 +163,79 @@ fn run_secrets_init(
         &vault_path,
         output_json,
         "created empty vault",
+    )
+}
+
+fn run_secrets_unlock(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
+    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
+    // A legacy vault, a deleted key, or a stale key needs a fresh local payload.
+    if !matches!(
+        crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path),
+        Ok(ref local_payload) if local_payload == &payload
+    ) {
+        crate::runner::secret_vault::write_effigy_vault_payload(
+            &vault_path,
+            &payload,
+            passphrase.expose(),
+        )?;
+    }
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    let key = LocalDevUnlockKey::from_bytes(fs::read(&key_path).map_err(|error| {
+        RunnerError::task_invocation(format!("failed to read local unlock key: {error}"))
+    })?)
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let credential = seal_local_unlock_passphrase(&key, passphrase.expose())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    crate::runner::secret_vault::write_private_file(
+        &local_unlock_credential_path(&vault_path),
+        &credential,
+    )?;
+    render_mutation_result(
+        repo_root,
+        secrets,
+        "unlock",
+        None,
+        &vault_path,
+        output_json,
+        "local vault unlocked for commands and tasks",
+    )
+}
+
+fn run_secrets_lock(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
+    for path in [
+        local_dev_unlock_key_path(&vault_path),
+        local_unlock_credential_path(&vault_path),
+    ] {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "failed to remove local unlock state {}: {error}",
+                    path.display()
+                )))
+            }
+        }
+    }
+    render_mutation_result(
+        repo_root,
+        secrets,
+        "lock",
+        None,
+        &vault_path,
+        output_json,
+        "local vault locked; the next secret-backed task requires a passphrase",
     )
 }
 
@@ -215,10 +296,7 @@ fn run_secrets_change_passphrase(
 ) -> Result<String, RunnerError> {
     let secrets = require_secrets(secrets)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let current = read_secret_input(
-        "Current vault passphrase: ",
-        "EFFIGY_TEST_SECRETS_PASSPHRASE",
-    )?;
+    let current = read_vault_command_passphrase(&vault_path)?;
     let payload = read_vault_payload(&vault_path, current.expose())?;
     let preserved = payload.records.len();
     let new_passphrase = read_confirmed_new_passphrase()?;
@@ -227,6 +305,19 @@ fn run_secrets_change_passphrase(
         &payload,
         new_passphrase.expose(),
     )?;
+    if local_unlock_credential_path(&vault_path).exists() {
+        let key = LocalDevUnlockKey::from_bytes(
+            fs::read(local_dev_unlock_key_path(&vault_path))
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let credential = seal_local_unlock_passphrase(&key, new_passphrase.expose())
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        crate::runner::secret_vault::write_private_file(
+            &local_unlock_credential_path(&vault_path),
+            &credential,
+        )?;
+    }
 
     let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
     if let Some(object) = payload.as_object_mut() {
@@ -256,7 +347,7 @@ fn run_secrets_set(
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_vault_command_passphrase(&vault_path)?;
     let value = read_secret_input(
         &format!("Secret value for `{name}`: "),
         "EFFIGY_TEST_SECRETS_VALUE",
@@ -342,14 +433,14 @@ fn run_secrets_import(
         );
     }
 
-    let passphrase = read_secret_input(
-        if vault_exists {
-            "Vault passphrase: "
-        } else {
-            "Create vault passphrase: "
-        },
-        "EFFIGY_TEST_SECRETS_PASSPHRASE",
-    )?;
+    let passphrase = if vault_exists {
+        read_vault_command_passphrase(&vault_path)?
+    } else {
+        read_secret_input(
+            "Create vault passphrase: ",
+            "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        )?
+    };
     let mut payload = if vault_exists {
         read_vault_payload(&vault_path, passphrase.expose())?
     } else {
@@ -366,6 +457,9 @@ fn run_secrets_import(
         &payload,
         passphrase.expose(),
     )?;
+    if !vault_exists {
+        remove_local_unlock_credential(&vault_path)?;
+    }
 
     let summary = if vault_exists {
         "imported declared secrets into existing vault"
@@ -398,7 +492,7 @@ fn run_secrets_get(
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_vault_command_passphrase(&vault_path)?;
     let payload = read_vault_payload(&vault_path, passphrase.expose())?;
     let value = payload
         .records
@@ -425,7 +519,7 @@ fn run_secrets_unset(
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_vault_command_passphrase(&vault_path)?;
     let mut payload = read_vault_payload(&vault_path, passphrase.expose())?;
     payload.records.remove(name);
     crate::runner::secret_vault::write_effigy_vault_payload(
@@ -463,7 +557,7 @@ fn run_secrets_export(
     validate_export_destination(repo_root, output)?;
     let secrets = require_secrets(secrets)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_vault_command_passphrase(&vault_path)?;
     let payload = read_vault_payload(&vault_path, passphrase.expose())?;
 
     let mut missing_required = Vec::new();
@@ -947,6 +1041,32 @@ fn read_vault_payload(
     crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
 }
 
+fn read_vault_command_passphrase(vault_path: &Path) -> Result<SecretValue, RunnerError> {
+    if std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE").is_none()
+        && std::env::var_os(crate::runner::secret_session::internal_secret_passphrase_env())
+            .is_none()
+    {
+        if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        {
+            return Ok(passphrase);
+        }
+    }
+    read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")
+}
+
+fn remove_local_unlock_credential(vault_path: &Path) -> Result<(), RunnerError> {
+    let path = local_unlock_credential_path(vault_path);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation(format!(
+            "failed to remove old local unlock credential {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
 fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, RunnerError> {
     if test_env == crate::runner::secret_session::internal_secret_passphrase_env()
         || test_env == "EFFIGY_TEST_SECRETS_PASSPHRASE"
@@ -1160,7 +1280,8 @@ fn inspect_vault_doctor_state(
         );
     }
 
-    let Some(passphrase) = read_optional_vault_passphrase("Vault passphrase: ")? else {
+    let Some(passphrase) = read_optional_vault_passphrase(&vault_path, "Vault passphrase: ")?
+    else {
         warnings
             .push("secrets vault is locked; set a passphrase to validate stored values".to_owned());
         return Ok(VaultDoctorState {
@@ -1268,7 +1389,10 @@ fn inspect_vault_doctor_state(
     })
 }
 
-fn read_optional_vault_passphrase(prompt: &str) -> Result<Option<SecretValue>, RunnerError> {
+fn read_optional_vault_passphrase(
+    vault_path: &Path,
+    prompt: &str,
+) -> Result<Option<SecretValue>, RunnerError> {
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }
@@ -1276,6 +1400,11 @@ fn read_optional_vault_passphrase(prompt: &str) -> Result<Option<SecretValue>, R
         std::env::var(crate::runner::secret_session::internal_secret_passphrase_env())
     {
         return Ok(Some(SecretValue::new(value)));
+    }
+    if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    {
+        return Ok(Some(passphrase));
     }
     if !std::io::stdin().is_terminal() {
         return Ok(None);

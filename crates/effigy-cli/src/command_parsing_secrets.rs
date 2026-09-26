@@ -20,6 +20,8 @@ where
         "list" => parse_secrets_read_command(args, SecretsSubcommand::List),
         "doctor" => parse_secrets_read_command(args, SecretsSubcommand::Doctor),
         "init" => parse_secrets_read_command(args, SecretsSubcommand::Init),
+        "unlock" => parse_secrets_read_command(args, SecretsSubcommand::Unlock),
+        "lock" => parse_secrets_read_command(args, SecretsSubcommand::Lock),
         "import" => parse_secrets_import_command(args),
         "set" => parse_secrets_named_command(args, |name| SecretsSubcommand::Set { name }),
         "get" => parse_secrets_named_command(args, |name| SecretsSubcommand::Get { name }),

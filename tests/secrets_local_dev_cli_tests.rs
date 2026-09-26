@@ -2,8 +2,8 @@ use std::fs;
 use std::process::{Command, Stdio};
 
 use effigy_secrets::{
-    local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue, VaultPlaintextPayload,
-    VaultSecretRecord,
+    local_dev_unlock_key_path, local_unlock_credential_path, LocalDevUnlockKey, SecretValue,
+    VaultPlaintextPayload, VaultSecretRecord,
 };
 
 #[test]
@@ -80,6 +80,150 @@ fn first_dev_unlock_upgrades_a_legacy_vault() {
         "unattended dev failed: {}",
         String::from_utf8_lossy(&unattended.stderr)
     );
+}
+
+#[test]
+fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let vault_path = write_fixture(root.path(), false);
+    let unlock = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "unlock", "--json"])
+        .current_dir(root.path())
+        .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase")
+        .stdin(Stdio::null())
+        .output()
+        .expect("unlock vault");
+    assert!(
+        unlock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unlock.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&unlock.stdout).expect("unlock json");
+    assert_eq!(json["result"]["action"], "unlock");
+    let credential_path = local_unlock_credential_path(&vault_path);
+    let credential = fs::read(&credential_path).expect("sealed credential");
+    assert!(!credential
+        .windows(b"vault-passphrase".len())
+        .any(|part| part == b"vault-passphrase"));
+    assert!(local_dev_unlock_key_path(&vault_path).exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&credential_path)
+                .expect("credential mode")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    for args in [vec!["secrets", "get", "api_token"], vec!["serve"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(&args)
+            .current_dir(root.path())
+            .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+            .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+            .stdin(Stdio::null())
+            .output()
+            .expect("use unlocked vault");
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("tok_local_dev"));
+    }
+
+    let set = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "set", "api_token"])
+        .current_dir(root.path())
+        .env("EFFIGY_TEST_SECRETS_VALUE", "tok_updated")
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .stdin(Stdio::null())
+        .output()
+        .expect("set with unlocked vault");
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor", "--json"])
+        .current_dir(root.path())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .stdin(Stdio::null())
+        .output()
+        .expect("doctor with unlocked vault");
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
+    assert_eq!(json["result"]["vault_state"]["status"], "unlocked");
+
+    let changed = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "change-passphrase"])
+        .current_dir(root.path())
+        .env("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", "new-passphrase")
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .stdin(Stdio::null())
+        .output()
+        .expect("change passphrase with unlocked vault");
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    let get = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "get", "api_token"])
+        .current_dir(root.path())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .stdin(Stdio::null())
+        .output()
+        .expect("get after passphrase change");
+    assert!(
+        get.status.success(),
+        "{}",
+        String::from_utf8_lossy(&get.stderr)
+    );
+    assert!(String::from_utf8_lossy(&get.stdout).contains("tok_updated"));
+
+    let lock = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "lock"])
+        .current_dir(root.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("lock vault");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    assert!(!credential_path.exists());
+    assert!(!local_dev_unlock_key_path(&vault_path).exists());
+    for args in [
+        vec!["secrets", "get", "api_token"],
+        vec!["serve"],
+        vec!["dev"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(&args)
+            .current_dir(root.path())
+            .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+            .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+            .stdin(Stdio::null())
+            .output()
+            .expect("use locked vault");
+        assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
+    }
 }
 
 fn write_fixture(root: &std::path::Path, with_local_dev_unlock: bool) -> std::path::PathBuf {

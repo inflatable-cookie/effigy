@@ -6,8 +6,9 @@ use effigy_manifest::{
     ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TASK_MANIFEST_FILE,
 };
 use effigy_secrets::{
-    inspect_vault_permissions, local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue,
-    VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
+    inspect_vault_permissions, local_dev_unlock_key_path, read_local_unlock_passphrase,
+    LocalDevUnlockKey, SecretValue, VaultEnvelope, VaultPermissionStatus, VaultPlaintextPayload,
+    VaultSecretRecord,
 };
 use rhai::{EvalAltResult, ImmutableString, Map};
 
@@ -92,7 +93,7 @@ pub(crate) fn resolve_rhai_secret_store(
         let (payload, passphrase) = if local_dev_secret_access_active() {
             (read_rhai_local_dev_vault_payload(&vault_path)?, None)
         } else {
-            let passphrase = read_rhai_secret_passphrase(false)?
+            let passphrase = read_rhai_secret_passphrase(&vault_path, false)?
                 .ok_or_else(|| RhaiHostError::new("vault passphrase is required"))?;
             let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
             (payload, Some(passphrase))
@@ -194,12 +195,20 @@ fn declared_rhai_secret_vault_path(
     Ok(PathBuf::from(path))
 }
 
-fn read_rhai_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RhaiHostError> {
+fn read_rhai_secret_passphrase(
+    vault_path: &Path,
+    optional_only: bool,
+) -> Result<Option<SecretValue>, RhaiHostError> {
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }
     if let Ok(value) = std::env::var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
+    }
+    if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
+        .map_err(|error| RhaiHostError::new(error.to_string()))?
+    {
+        return Ok(Some(passphrase));
     }
     if !std::io::stdin().is_terminal() {
         if optional_only {
@@ -384,7 +393,7 @@ fn active_rhai_load_vault_if_needed(
     let (payload, passphrase) = if local_dev_secret_access_active() {
         (read_rhai_local_dev_vault_payload(&vault_path)?, None)
     } else {
-        let Some(passphrase) = read_rhai_secret_passphrase(!require_unlock)? else {
+        let Some(passphrase) = read_rhai_secret_passphrase(&vault_path, !require_unlock)? else {
             super::ACTIVE_RHAI_SECRETS.with(|active| {
                 if let Some(store) = active.borrow_mut().as_mut() {
                     store.vault_loaded = true;
@@ -483,7 +492,7 @@ fn active_rhai_set_secret_records(
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?
     {
         Some(passphrase) => passphrase,
-        None => read_rhai_secret_passphrase(false)
+        None => read_rhai_secret_passphrase(&vault_path, false)
             .map_err(|error| crate::rhai_runtime_error(error.to_string()))?
             .ok_or_else(|| crate::rhai_runtime_error("vault passphrase is required"))?,
     };

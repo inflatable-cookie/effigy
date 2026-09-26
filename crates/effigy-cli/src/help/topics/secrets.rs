@@ -13,6 +13,8 @@ pub(crate) fn render_secrets_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy secrets list [--repo <PATH>] [--json]",
             "effigy secrets doctor [--repo <PATH>] [--json]",
             "effigy secrets init [--repo <PATH>] [--json]",
+            "effigy secrets unlock [--repo <PATH>] [--json]",
+            "effigy secrets lock [--repo <PATH>] [--json]",
             "effigy secrets import [<PATH>] [--repo <PATH>] [--json]",
             "effigy secrets set <NAME> [--repo <PATH>] [--json]",
             "effigy secrets get <NAME> [--repo <PATH>] [--json]",
@@ -33,6 +35,14 @@ pub(crate) fn render_secrets_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
                 "Check declaration/backend config without reading values",
             ),
             ("init", "Create an empty encrypted local vault"),
+            (
+                "unlock",
+                "Authorize local secrets commands and tasks without prompts",
+            ),
+            (
+                "lock",
+                "Revoke prompt-free local secrets commands and tasks",
+            ),
             (
                 "import [<PATH>]",
                 "Import declared secrets from a .env-style file; defaults to ./.env",
@@ -57,6 +67,8 @@ pub(crate) fn render_secrets_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
             "effigy secrets list",
             "effigy secrets doctor",
             "effigy secrets init",
+            "effigy secrets unlock",
+            "effigy secrets lock",
             "effigy secrets import",
             "effigy secrets import infra/local.env",
             "effigy secrets set database_url",

@@ -141,15 +141,20 @@ Supported policy targets:
 - `external`: reserved for a future backend adapter contract
 
 Direct `effigy secrets get`, mutation, doctor, and export operations follow the
-configured passphrase policy. A resolved `dev` task may instead decrypt the
-separate local-dev payload with `.effigy` state. New vaults create that key at
-initialization. A legacy vault requires one final passphrase unlock from
-`effigy dev`, which upgrades it in place.
+configured passphrase policy until an operator runs `effigy secrets unlock`.
+That command verifies the passphrase and seals a local command credential with
+the adjacent local-dev key. Secret-backed tasks and direct commands can then
+run unattended until `effigy secrets lock` removes both local files. A resolved
+`dev` task may decrypt the separate local-dev payload with `.effigy` state
+without the command credential. New vaults create that key at initialization.
+A legacy vault requires one final passphrase unlock from `effigy dev` or
+`effigy secrets unlock`, which upgrades it in place. Changing the passphrase
+also rotates an active command credential.
 
 The local-dev key is a runtime capability, not an isolation boundary against a
 repo-owner process. A process allowed to run or alter the application can also
-influence how injected secrets are consumed. The boundary prevents accidental
-direct CLI disclosure while allowing unattended local app startup.
+influence how injected secrets are consumed. Direct CLI disclosure remains
+passphrase-gated until the operator creates the sealed command credential.
 
 ## Runtime Injection
 
@@ -170,8 +175,9 @@ Injection rules:
 - managed tasks that set `secrets = "required"` receive declared
   `targets = ["tasks"]` values across their child process launches, even when
   the child shell commands do not spell out the env names directly
-- resolved `dev` tasks use the local-dev payload without prompting; other task
-  names and direct vault commands keep the configured passphrase behavior
+- resolved `dev` tasks use the local-dev payload without prompting; after an
+  explicit `secrets unlock`, other task names and direct vault commands use the
+  sealed local command credential without prompting
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
 - deploy provider package scripts run with `targets = ["deploy"]` access

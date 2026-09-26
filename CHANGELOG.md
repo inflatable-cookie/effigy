@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy secrets unlock` accepts one operator passphrase, repairs the local
+  dev key, and allows direct vault commands and secret-backed tasks to run
+  without a prompt. `effigy secrets lock` revokes both local unlock files.
+
 ### Breaking
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 

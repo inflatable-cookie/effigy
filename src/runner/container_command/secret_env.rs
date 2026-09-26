@@ -108,7 +108,8 @@ pub(super) fn resolve_container_secret_runtime(
             }
         }
     } else {
-        let Some(passphrase) = crate::runner::secret_session::read_secret_passphrase(
+        let Some(passphrase) = crate::runner::secret_session::read_vault_passphrase(
+            &vault_path,
             required_names.is_empty() && !force_unlock,
             "Vault passphrase: ",
             "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",

@@ -303,6 +303,8 @@ pub enum SecretsSubcommand {
     List,
     Doctor,
     Init,
+    Unlock,
+    Lock,
     Import {
         input: PathBuf,
     },

@@ -24,6 +24,8 @@ pub const DEFAULT_SALT_LEN: usize = 32;
 pub const XCHACHA20POLY1305_NONCE_LEN: usize = 24;
 pub const VAULT_KEY_LEN: usize = 32;
 pub const LOCAL_DEV_KEY_SUFFIX: &str = ".local-dev-key";
+pub const LOCAL_UNLOCK_SUFFIX: &str = ".local-unlock";
+const LOCAL_UNLOCK_SCHEMA: &str = "effigy.secrets.local-unlock.v1";
 pub const ARGON2_M_COST_KIB: u32 = 19_456;
 pub const ARGON2_T_COST: u32 = 2;
 pub const ARGON2_P_COST: u32 = 1;
@@ -71,6 +73,12 @@ pub enum VaultFileError {
     Randomness,
     #[error("failed to decode vault payload: {0}")]
     PayloadJson(serde_json::Error),
+    #[error("failed to read local unlock state: {0}")]
+    LocalUnlockIo(#[source] std::io::Error),
+    #[error("local unlock state has unsafe permissions")]
+    UnsafeLocalUnlockPermissions,
+    #[error("invalid local unlock credential")]
+    InvalidLocalUnlockCredential,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +304,76 @@ pub fn local_dev_unlock_key_path(vault_path: &Path) -> std::path::PathBuf {
     let mut path = vault_path.as_os_str().to_os_string();
     path.push(LOCAL_DEV_KEY_SUFFIX);
     path.into()
+}
+
+pub fn local_unlock_credential_path(vault_path: &Path) -> std::path::PathBuf {
+    let mut path = vault_path.as_os_str().to_os_string();
+    path.push(LOCAL_UNLOCK_SUFFIX);
+    path.into()
+}
+
+#[derive(Serialize, Deserialize)]
+struct LocalUnlockCredential {
+    schema: String,
+    nonce: Vec<u8>,
+    ciphertext: Vec<u8>,
+}
+
+pub fn seal_local_unlock_passphrase(
+    key: &LocalDevUnlockKey,
+    passphrase: &str,
+) -> Result<Vec<u8>, VaultFileError> {
+    let mut nonce = vec![0; XCHACHA20POLY1305_NONCE_LEN];
+    getrandom::fill(&mut nonce).map_err(|_| VaultFileError::Randomness)?;
+    let cipher = XChaCha20Poly1305::new(&local_dev_aead_key(key)?);
+    let xnonce = <&XNonce>::try_from(nonce.as_slice())
+        .map_err(|_| VaultFileError::InvalidLocalUnlockCredential)?;
+    let ciphertext = cipher
+        .encrypt(xnonce, passphrase.as_bytes())
+        .map_err(|_| VaultFileError::Encrypt)?;
+    serde_json::to_vec(&LocalUnlockCredential {
+        schema: LOCAL_UNLOCK_SCHEMA.to_owned(),
+        nonce,
+        ciphertext,
+    })
+    .map_err(VaultFileError::Json)
+}
+
+pub fn read_local_unlock_passphrase(
+    vault_path: &Path,
+) -> Result<Option<SecretValue>, VaultFileError> {
+    let credential_path = local_unlock_credential_path(vault_path);
+    let raw = match fs::read(&credential_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(VaultFileError::LocalUnlockIo(error)),
+    };
+    for path in [&credential_path, &local_dev_unlock_key_path(vault_path)] {
+        match inspect_vault_permissions(path).map_err(VaultFileError::LocalUnlockIo)? {
+            VaultPermissionStatus::Safe | VaultPermissionStatus::UnsupportedPlatform => {}
+            VaultPermissionStatus::Unsafe { .. } => {
+                return Err(VaultFileError::UnsafeLocalUnlockPermissions);
+            }
+        }
+    }
+    let key = LocalDevUnlockKey::from_bytes(
+        fs::read(local_dev_unlock_key_path(vault_path)).map_err(VaultFileError::LocalUnlockIo)?,
+    )?;
+    let credential: LocalUnlockCredential = serde_json::from_slice(&raw)?;
+    if credential.schema != LOCAL_UNLOCK_SCHEMA
+        || credential.nonce.len() != XCHACHA20POLY1305_NONCE_LEN
+    {
+        return Err(VaultFileError::InvalidLocalUnlockCredential);
+    }
+    let cipher = XChaCha20Poly1305::new(&local_dev_aead_key(&key)?);
+    let nonce = <&XNonce>::try_from(credential.nonce.as_slice())
+        .map_err(|_| VaultFileError::InvalidLocalUnlockCredential)?;
+    let plaintext = cipher
+        .decrypt(nonce, credential.ciphertext.as_ref())
+        .map_err(|_| VaultFileError::Decrypt)?;
+    let passphrase =
+        String::from_utf8(plaintext).map_err(|_| VaultFileError::InvalidLocalUnlockCredential)?;
+    Ok(Some(SecretValue::new(passphrase)))
 }
 
 impl EncryptedVaultPayload {
@@ -814,6 +892,52 @@ mod tests {
             error.to_string(),
             "vault has no local-dev encrypted payload"
         );
+    }
+
+    #[test]
+    fn local_unlock_credential_requires_matching_key_and_private_files() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let vault_path = root.path().join("local.vault");
+        let key = LocalDevUnlockKey::generate().expect("key");
+        let key_path = local_dev_unlock_key_path(&vault_path);
+        let credential_path = local_unlock_credential_path(&vault_path);
+        fs::write(&key_path, key.expose()).expect("key file");
+        fs::write(
+            &credential_path,
+            seal_local_unlock_passphrase(&key, "vault-passphrase").expect("seal"),
+        )
+        .expect("credential file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)).expect("key mode");
+            fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o600))
+                .expect("credential mode");
+        }
+        assert_eq!(
+            read_local_unlock_passphrase(&vault_path)
+                .expect("read credential")
+                .expect("present")
+                .expose(),
+            "vault-passphrase"
+        );
+        fs::write(
+            &key_path,
+            LocalDevUnlockKey::generate().expect("other key").expose(),
+        )
+        .expect("replace key");
+        assert!(read_local_unlock_passphrase(&vault_path).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&key_path, key.expose()).expect("restore key");
+            fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o644))
+                .expect("make credential unsafe");
+            assert!(matches!(
+                read_local_unlock_passphrase(&vault_path),
+                Err(VaultFileError::UnsafeLocalUnlockPermissions)
+            ));
+        }
     }
 
     #[test]

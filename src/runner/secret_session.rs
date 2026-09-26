@@ -3,6 +3,7 @@ use effigy_core::shell::shell_quote;
 use effigy_secrets::SecretValue;
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
@@ -105,6 +106,24 @@ pub(in crate::runner) fn read_secret_passphrase(
     let secret = SecretValue::new(value);
     cache_secret_passphrase(&secret);
     Ok(Some(secret))
+}
+
+pub(in crate::runner) fn read_vault_passphrase(
+    vault_path: &Path,
+    optional_only: bool,
+    prompt: &str,
+    missing_tty_error: &str,
+) -> Result<Option<SecretValue>, RunnerError> {
+    if std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none()
+        && std::env::var_os(INTERNAL_SECRET_PASSPHRASE_ENV).is_none()
+    {
+        if let Some(passphrase) = effigy_secrets::read_local_unlock_passphrase(vault_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        {
+            return Ok(Some(passphrase));
+        }
+    }
+    read_secret_passphrase(optional_only, prompt, missing_tty_error)
 }
 
 pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
