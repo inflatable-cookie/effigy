@@ -253,7 +253,7 @@ That keeps the repo root from turning into a row of one-file directories while
 still letting contextual fragments live next to the files they actually govern.
 
 For the Rhai host API and v1 limits, use
-[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).
+[`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md).
 
 ## 6) Keep Shared Helpers Shared
 
@@ -298,14 +298,14 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
-- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`050-env-schema-integration.md`](050-env-schema-integration.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+- [`058-demo-system-guide.md`](058-demo-system-guide.md)
+- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
+- [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md)
+- [`070-per-machine-overlays-and-external-mounts.md`](070-per-machine-overlays-and-external-mounts.md)
   for a worked end-to-end pattern that combines auto-discovery,
   `extend`/`optional` includes, domain sugar, and external host
   mounts into one developer-onboarding workflow.
@@ -313,9 +313,9 @@ After this guide, you should be able to:
 ## Next Step
 
 After this guide, use
-[`058-demo-system-guide.md`](./058-demo-system-guide.md) if the next split is a
+[`058-demo-system-guide.md`](058-demo-system-guide.md) if the next split is a
 demo registry fragment, use
-[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+[`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 if the next job is migrating an existing demo-script surface, or use
-[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) when you want more
+[`022-manifest-cookbook.md`](022-manifest-cookbook.md) when you want more
 copy-paste manifest patterns instead of composition rules.

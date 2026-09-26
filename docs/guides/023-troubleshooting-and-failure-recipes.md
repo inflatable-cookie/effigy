@@ -2,7 +2,7 @@
 
 This guide maps common Effigy failures to focused diagnosis steps and concrete fixes.
 
-Use [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for full command syntax and flag details.
+Use [`025-command-reference-matrix.md`](025-command-reference-matrix.md) for full command syntax and flag details.
 
 
 ## Vision Alignment
@@ -596,13 +596,13 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+- [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
+- [`018-doctor-explain-mode.md`](018-doctor-explain-mode.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 
 ## Next Step
 
-When symptom-level fixes are done, codify the preventative CI checks in [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
+When symptom-level fixes are done, codify the preventative CI checks in [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md).

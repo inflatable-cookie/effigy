@@ -12,9 +12,9 @@ This is the mental-model guide for:
 
 Use:
 - this guide for the model and naming rules
-- [`063-container-system-guide.md`](./063-container-system-guide.md) for the
+- [`063-container-system-guide.md`](063-container-system-guide.md) for the
   direct container commands
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md) for copy-paste
   manifest patterns
 
 ## Start Here
@@ -359,11 +359,11 @@ here.
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [container runtime contract](../knowledge/contracts/005-container-runtime-contract.md)
 
 ## Next Step
 

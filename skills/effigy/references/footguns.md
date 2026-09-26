@@ -90,7 +90,7 @@ Keep the task-cost ladder explicit:
 - `health` — cheap orientation: fmt, toolchain floor, docs-forbidden,
   `cargo check`, or equivalent seconds-scale probes
 - `validate` — mid-cost focused validation
-- `qa` — the full test/docs/contracts board
+- `qa` — the full test/docs/knowledge/contracts board
 
 Never write `health = [{ task = "qa" }]`, directly or through another task.
 `effigy doctor` delegates to `tasks.health`; collapsing the ladder turns a

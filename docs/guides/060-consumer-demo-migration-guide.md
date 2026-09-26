@@ -183,15 +183,15 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+- [`058-demo-system-guide.md`](058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
 
 ## Next Step
 
-After this guide, use [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+After this guide, use [`058-demo-system-guide.md`](058-demo-system-guide.md)
 for the steady-state operator surface, then use
-[`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when the
+[`025-command-reference-matrix.md`](025-command-reference-matrix.md) when the
 next job is exact command shape or JSON-contract lookup.

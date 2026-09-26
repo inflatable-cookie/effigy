@@ -38,7 +38,7 @@ Use it when **all** of the following are true:
 
 If the env applies to every developer uniformly, just commit it
 straight into `effigy.toml`. If it's pure secret material, manage it
-through the env-schema layer (see [050](./050-env-schema-integration.md))
+through the env-schema layer (see [050](050-env-schema-integration.md))
 and skip overlays. This pattern fits the case in the middle: a
 **committed, opt-in environment** that each machine completes with
 private details.
@@ -272,7 +272,7 @@ deterministic:
 - **No `effigy.local.toml` in the runner** — the file is gitignored,
   so a fresh clone on the runner never has it.
 
-Both are documented in [059](./059-manifest-composition-guide.md).
+Both are documented in [059](059-manifest-composition-guide.md).
 
 ## Inspection And Verification
 
@@ -311,13 +311,13 @@ git grep <env-name>-bastion envs/   # alias name only — never a real host
 
 ## Related Guides
 
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
   — full include-directive semantics (extend, override, optional,
   auto-discovery).
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
   — host-mount rules including the External Host Mounts subsection.
-- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
+- [`050-env-schema-integration.md`](050-env-schema-integration.md)
   — manifest env layer (distinct from process env used in mounts).
-- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
+- [`066-local-manifest-bundles.md`](066-local-manifest-bundles.md)
   — adjacent pattern for shipping bundled local mounts via user
   config.

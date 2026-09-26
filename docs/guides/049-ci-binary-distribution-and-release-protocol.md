@@ -8,11 +8,11 @@ Use this guide when the job is maintainership policy:
 This is not the first page for cutting a release.
 
 Use:
-- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+- [`051-release-orchestration.md`](051-release-orchestration.md) for the
   actual `effigy release ...` workflow
-- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
+- [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
   the shipped distribution commands
-- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+- [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)
   for changelog-specific work
 
 ## Start Here
@@ -315,7 +315,7 @@ and resolve the failure before continuing.
 
 4. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
-   - Place in `docs/logs/YYYY-MM/` with the standard naming convention.
+   - Draft the notes for Tom and publish the reviewed text with the GitHub release.
    - Use `effigy changelog extract CHANGELOG.md --version X.Y.Z` to extract the
      changelog body for that release as the starting point.
    - Treat the extracted changelog body as source material, then add summary,
@@ -412,13 +412,10 @@ Workflow changes still require explicit human approval.
 
 Effigy's compatibility-only release wrappers are already retired. The historical
 retirement-record template lives at
-[`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md)
-and is kept only so old logs linking to it do not dead-end.
+[`archive/053-release-wrapper-retirement-record-template.md`](archive/053-release-wrapper-retirement-record-template.md)
+and is kept for older external links.
 
-If a new wrapper layer is ever retired in the future, record the decision in
-the dated release checkpoint log
-([`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md))
-rather than reviving the retired template.
+If a new wrapper layer is retired, update the owning contract and the reviewed release notes rather than reviving the retired template.
 
 Current operating stance:
 - prefer built-in release commands for operator-driven runs
@@ -463,17 +460,17 @@ Hotfix expectations:
 
 - Use a `PATCH` bump within the same `MINOR` line.
 - Include a focused regression test for the root cause.
-- Add a short checkpoint log under `docs/logs/YYYY-MM/`.
+- Keep failed-release evidence in the GitHub run and Queue outcome.
 
 ## Related Guides
 
-- [`010-path-installation-and-release.md`](./010-path-installation-and-release.md)
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
-- [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+- [`010-path-installation-and-release.md`](010-path-installation-and-release.md)
+- [`014-release-checklist-template.md`](014-release-checklist-template.md)
+- [`036-release-notes-authoring-template-and-examples.md`](036-release-notes-authoring-template-and-examples.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`042-homebrew-tap-and-release-automation.md`](042-homebrew-tap-and-release-automation.md)
+- [`044-distribution-first-publish-execution-runbook.md`](044-distribution-first-publish-execution-runbook.md)
+- [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
 
 ## Next Step
 

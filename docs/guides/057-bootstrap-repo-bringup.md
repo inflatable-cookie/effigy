@@ -440,15 +440,15 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`026-json-payload-examples.md`](026-json-payload-examples.md)
 
 ## Next Step
 
 After bootstrap works for one repo, move to
-[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) to tighten the
+[`022-manifest-cookbook.md`](022-manifest-cookbook.md) to tighten the
 manifest patterns around setup/start ownership, then use
-[`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when you
+[`025-command-reference-matrix.md`](025-command-reference-matrix.md) when you
 need the exact JSON schema and command shape quickly.

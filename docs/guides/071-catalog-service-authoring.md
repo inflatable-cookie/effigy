@@ -4,7 +4,7 @@ Use this guide when you want to add or change a shipped service catalog under
 `crates/effigy-catalog/catalog/`.
 
 This is the authoring guide. For the consumer-facing reference, use
-[`067-catalog-services-reference.md`](./067-catalog-services-reference.md).
+[`067-catalog-services-reference.md`](067-catalog-services-reference.md).
 
 ## What A Catalog Owns
 
@@ -165,7 +165,7 @@ of the catalog files.
 3. Add `compose.fragment.yml`.
 4. Add `Dockerfile` only if needed.
 5. Add integration coverage in `crates/effigy-catalog/tests/integration/`.
-6. Add or update consumer docs in [`067-catalog-services-reference.md`](./067-catalog-services-reference.md).
+6. Add or update consumer docs in [`067-catalog-services-reference.md`](067-catalog-services-reference.md).
 
 ## Validation
 
@@ -189,7 +189,7 @@ The same fragment layout is what an independently versioned catalog pack
 carries. Add a `pack.toml` at the root of a directory of fragments, then
 install it with `effigy service pack install --path <DIR>` to test it against a
 real resolver. Layer order, precedence, and recovery are documented in
-[`067-catalog-services-reference.md`](./067-catalog-services-reference.md).
+[`067-catalog-services-reference.md`](067-catalog-services-reference.md).
 
 Nothing about fragment authoring changes inside a pack: `service.toml` schema,
 variant merge order, and template rendering stay owned by
@@ -202,6 +202,6 @@ cannot redefine the Effigy-owned required set.
 
 ## Related Guides
 
-- Consumer reference: [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
-- Local dev systems and containers: [`063-container-system-guide.md`](./063-container-system-guide.md)
-- External bundle adoption: [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)
+- Consumer reference: [`067-catalog-services-reference.md`](067-catalog-services-reference.md)
+- Local dev systems and containers: [`063-container-system-guide.md`](063-container-system-guide.md)
+- External bundle adoption: [`065-external-bundle-adoption.md`](065-external-bundle-adoption.md)

@@ -9,11 +9,11 @@ surfaces inside `effigy container ...` and `effigy bootstrap ...`.
 Use:
 
 - this guide for the direct artifact commands and everyday workflows
-- [`014-artifact-substrate-contract.md`](../contracts/014-artifact-substrate-contract.md)
+- [`014-artifact-substrate-contract.md`](../knowledge/contracts/014-artifact-substrate-contract.md)
   for the formal contract, security rules, and drift triggers
-- [`063-container-system-guide.md`](./063-container-system-guide.md) for
+- [`063-container-system-guide.md`](063-container-system-guide.md) for
 generated-compose data lifecycle details
-- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) for
+- [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md) for
 bootstrap seed behavior
 
 ## Start Here
@@ -186,7 +186,7 @@ Payload schemas:
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
 
-See [`026-json-payload-examples.md`](./026-json-payload-examples.md) for
+See [`026-json-payload-examples.md`](026-json-payload-examples.md) for
 realistic sample payloads.
 
 Current boundary:
@@ -220,11 +220,11 @@ Every staged artifact carries an `effigy-artifact.json` metadata file shaped lik
 
 ## Related Guides
 
-- [`014-artifact-substrate-contract.md`](../contracts/014-artifact-substrate-contract.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`014-artifact-substrate-contract.md`](../knowledge/contracts/014-artifact-substrate-contract.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`026-json-payload-examples.md`](026-json-payload-examples.md)
 
 ## Next Step
 

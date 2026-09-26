@@ -62,8 +62,8 @@ Task-composition note:
   cases live in Rust tests
 
 Design notes:
-- [`2026-03-12-docs-policy-config-boundary.md`](../logs/archive/2026-03/12-093000-docs-policy-config-boundary.md)
-- [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/archive/2026-03/12-094500-minimal-docs-policy-config-design.md)
+- `2026-03-12-docs-policy-config-boundary.md` (in Git history)
+- `2026-03-12-minimal-docs-policy-config-design.md` (in Git history)
 
 Intentional remaining shell scripts:
 - none
@@ -107,7 +107,7 @@ first. The only remaining workflow-bound shell reproduction path is the Linux
 glibc floor check.
 
 Install pinning and team migration policy:
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
 
 PR-style changed-only simulation:
 
@@ -321,7 +321,7 @@ Naming pattern:
 
 ## 10) Pre-Push CI Stability Checklist
 
-Canonical checklist and troubleshooting live in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).
+Canonical checklist and troubleshooting live in [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md).
 
 Use this fast path before pushing changes that touch command behavior, JSON schemas, or docs contracts:
 
@@ -469,17 +469,17 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
 
 ## Next Step
 
 After wiring one of these recipes, use
-[`017-json-output-contracts.md`](./017-json-output-contracts.md) and
-[`026-json-payload-examples.md`](./026-json-payload-examples.md) to validate
+[`017-json-output-contracts.md`](017-json-output-contracts.md) and
+[`026-json-payload-examples.md`](026-json-payload-examples.md) to validate
 that the machine-facing contract is explicit enough to survive future CLI
 changes.

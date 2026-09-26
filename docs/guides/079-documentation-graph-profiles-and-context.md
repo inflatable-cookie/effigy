@@ -6,9 +6,9 @@ profile that gives that evidence meaning, the adoption boundary between a
 template and a committed profile, and the query shapes that pay off.
 
 Canonical rules live in
-[`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
+[`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md)
 and
-[`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md).
+[`../architecture/024-repository-defined-documentation-graph.md`](../knowledge/architecture/024-repository-defined-documentation-graph.md).
 
 ## Vision Alignment
 
@@ -74,12 +74,12 @@ current = ["active", "ready"]
 historical = ["complete", "archived"]
 
 [docs_policy.graph.kinds.contract]
-include = ["docs/contracts/*.md"]
+include = ["docs/knowledge/contracts/*.md"]
 authority = 100
 default-currentness = "current"
 
 [docs_policy.graph.relations.next-task]
-headings = ["Next Task"]
+headings = ["Next move"]
 ```
 
 Effigy reserves none of these names. A repository with no `docs/` directory, no
@@ -112,11 +112,7 @@ the committed bytes are the only runtime authority.
 - Adopting a newer template is an explicit merge: run
   `effigy init northstar --dry-run`, read the emitted block, and take the parts
   you want.
-- Deviating is expected. Effigy's own profile in `docs/effigy.docs.toml` sets
-  `cardinality = "many"` for `status` and `owner` because its roadmap and
-  architecture documents legitimately carry per-section metadata lines; the
-  starter ships `"one"`. Currentness then resolves from the first occurrence in
-  file order, which is the document header.
+- Repositories own their fields and currentness rules. Effigy's current profile in `docs/effigy.docs.toml` ranks knowledge, plan, guides, and triage for this repository. The committed profile is runtime authority; the starter is only an example.
 
 ## Example Queries
 
@@ -130,36 +126,23 @@ effigy docs context "documentation graph profile contract"
 # 2. what is the architecture decision behind it
 effigy docs context "repository defined documentation graph architecture"
 
-# 3. which milestone owns this work right now
-effigy docs context "repository defined documentation graph milestone execution plan"
+# 3. what matters next in this repository
+effigy docs context "Choose the next Effigy product outcome with Tom"
 
-# 4. what is the active planning lane
-effigy docs context "active strict lane spec set"
+# 4. which user guide explains the surface
+effigy docs context "documentation graph profiles and context guide"
 
-# 5. what is the next task in that lane
-effigy docs context "next task" --max-sections 4
+# 5. what is the current release procedure
+effigy docs context "Effigy release procedure"
 
-# 6. what did we decide before, and why
-effigy docs context "bounded documentation context query closeout evidence"
+# 6. what did an archived user guide say
+effigy docs context "docs consistency sweep and changelog"
 
 # 7. which section names this identifier
 effigy docs context "catalog_tasks"
 ```
 
-Shapes 3, 4, and 5 are different questions and stay separate. **Current roadmap**
-names the generation or task's own subject matter and returns that file. **Active
-lane** asks the planning front door which lane is open. **Next task** targets the
-`Next Task` heading that lanes, roadmaps, and tasks all carry.
-
-A current-roadmap query answers with whatever the repository's `Status:` values
-say is current — it does not manufacture one. Run against this repository today,
-shape 3 returns `docs/architecture/024-repository-defined-documentation-graph.md`
-at rank 1 and `docs/roadmaps/archive/g08.md` at rank 2. The roll-up reads
-`currentness historical` because `g08.035`
-closed and no generation has been opened since. That is the honest answer, not a
-miss: the architecture document is the live authority on the subject and the
-generation is finished. On a repository with live work the same shape returns the
-active task as `current`, and its completed predecessors rank below it.
+Effigy's current profile ranks [knowledge](../knowledge/README.md) as product authority and [the plan](../plan.md) as intent. Queue owns live task state, so a docs-context query does not answer which task is running. Historical process records remain in Git history.
 
 The same shape in the arbitrary vocabulary of
 `tests/fixtures/docs-context-benchmark/generic-handbook/`, where a live and a
@@ -306,7 +289,7 @@ Lazy refresh shares the graph command's wall-clock policy through
 stale rebuilds announce progress on stderr. A timeout returns the shared
 `effigy.graph.timeout.v1` detail with graph health, the phase the bound expired
 in, and recovery guidance; JSON stdout remains a valid standard command
-envelope. See [`076`](./076-code-graph-and-agent-workflows.md) for the phase
+envelope. See [`076`](076-code-graph-and-agent-workflows.md) for the phase
 names and what each one means.
 
 ## Measuring Retrieval Quality
@@ -333,12 +316,12 @@ freeze history recorded in the file. Reports land under
 
 ## Related Guides
 
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`026-json-payload-examples.md`](026-json-payload-examples.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
+- [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
 
 ## Next Step
 

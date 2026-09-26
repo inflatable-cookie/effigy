@@ -291,7 +291,7 @@ For agents, CI, or another non-interactive caller, use `effigy dev --headless`
 or `EFFIGY_MANAGED_HEADLESS=1`. Inspect the same supervisor from another shell
 with `effigy dev status`, `effigy dev logs [process] [--follow]`, and
 `effigy dev stop`. See the
-[managed-session guide](./docs/guides/012-dev-process-manager-tui.md) for
+[managed-session guide](docs/guides/012-dev-process-manager-tui.md) for
 readiness, ordering, secrets, state, and log behavior.
 
 ### Local HTTPS Gateway
@@ -453,18 +453,18 @@ mutates, or deletes a draft.
 
 | You want to... | Read this |
 |---|---|
-| Get started, run daily commands | [`docs/guides/021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md) |
-| See common workflows | [`docs/guides/055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md) |
-| Copy-paste manifest patterns | [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md) |
-| Run containers, workspaces, local domains | [`docs/guides/063-container-system-guide.md`](./docs/guides/063-container-system-guide.md) |
-| Build demos and proofs | [`docs/guides/058-demo-system-guide.md`](./docs/guides/058-demo-system-guide.md) |
-| Cut releases | [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md) |
-| Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md) |
-| Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](./docs/guides/077-local-dependency-linking.md) |
-| Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md) |
-| Full guide map | [`docs/guides/README.md`](./docs/guides/README.md) |
+| Get started, run daily commands | [`docs/guides/021-quick-start-and-command-cookbook.md`](docs/guides/021-quick-start-and-command-cookbook.md) |
+| See common workflows | [`docs/guides/055-everyday-workflows.md`](docs/guides/055-everyday-workflows.md) |
+| Copy-paste manifest patterns | [`docs/guides/022-manifest-cookbook.md`](docs/guides/022-manifest-cookbook.md) |
+| Run containers, workspaces, local domains | [`docs/guides/063-container-system-guide.md`](docs/guides/063-container-system-guide.md) |
+| Build demos and proofs | [`docs/guides/058-demo-system-guide.md`](docs/guides/058-demo-system-guide.md) |
+| Cut releases | [`docs/guides/051-release-orchestration.md`](docs/guides/051-release-orchestration.md) |
+| Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](docs/guides/024-ci-and-automation-recipes.md) |
+| Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](docs/guides/077-local-dependency-linking.md) |
+| Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md) |
+| Full guide map | [`docs/guides/README.md`](docs/guides/README.md) |
 
-Command reference: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+Command reference: [`docs/guides/025-command-reference-matrix.md`](docs/guides/025-command-reference-matrix.md)
 
 ---
 
@@ -484,7 +484,7 @@ effigy --json release simulate   # Machine-readable dry-runs
 
 Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
-Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md). In a monorepo, `[catalog.graph] segmented = true` gives each product its own lazy graph scope; `--catalog <ALIAS>` selects one and `--all-catalogs` is the only fan-out.
+Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md). In a monorepo, `[catalog.graph] segmented = true` gives each product its own lazy graph scope; `--catalog <ALIAS>` selects one and `--all-catalogs` is the only fan-out.
 
 For agents that want a head start, we ship a skill that teaches Claude Code, OpenAI Codex, Cursor, and 50+ other agents the exact patterns:
 

@@ -541,46 +541,38 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
             "Created effigy.toml",
             "Created README.md",
             "Created AGENTS.md",
-            "Created CHANGELOG.md",
             "Created docs/README.md",
-            "Created docs/vision/README.md",
-            "Created docs/vision/001-product-vision.md",
-            "Created docs/roadmaps/README.md",
+            "Created docs/knowledge/README.md",
+            "Created docs/knowledge/vision.md",
+            "Created docs/plan.md",
             "Created docs/triage/README.md",
-            "Created docs/logs/README.md",
-            "Created docs/policy/vision-next-task-verbs.txt",
-            "Next steps:",
-            "<PROJECT_NAME>",
+            "Created docs/knowledge/contracts/release.md",
+            "Created .paseo/queue.json",
+            "Fill in AGENTS.md",
+            "docs/knowledge/vision.md",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "northstar root manifest");
     assert_path_exists(&root.join("AGENTS.md"), "northstar agent contract");
     assert_path_exists(
-        &root.join("docs/vision/001-product-vision.md"),
+        &root.join("docs/knowledge/vision.md"),
         "northstar first vision document (nested dirs must be created)",
     );
     assert_path_exists(
-        &root.join("docs/policy/vision-next-task-verbs.txt"),
+        &root.join(".paseo/queue.json"),
         "northstar next-task verb allowlist (nested dirs must be created)",
     );
     assert_path_exists(
         &root.join("docs/triage/README.md"),
         "northstar triage intake anchor (non-authoritative candidates)",
     );
-    // Starter docs_policy wiring + qa:northstar bundle should be present
-    // in the emitted manifest.
+    // The lean starter keeps its graph profile and QA in the emitted manifest.
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
         &[
-            "validate = [",
-            "qa:northstar",
-            "{ task = \"qa:northstar:agent-defaults\" }",
-            "{ task = \"qa:northstar:headings\" }",
-            "{ task = \"qa:northstar:no-backlog\" }",
-            "health = [",
-            "{ task = \"ping\" }",
-            "validate = [",
-            "qa:northstar",
+            "[docs_policy.graph]",
+            "qa:docs",
+            "docs/knowledge/contracts/release.md",
         ],
     );
 }
@@ -623,11 +615,14 @@ fn run_manifest_task_builtin_init_northstar_force_overwrites_all_targets() {
         &[
             "Overwrote effigy.toml",
             "Created AGENTS.md",
-            "Created docs/vision/001-product-vision.md",
+            "Created docs/knowledge/vision.md",
         ],
     );
     assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
-    assert_path_exists(&root.join("docs/logs/README.md"), "northstar logs index");
+    assert_path_exists(
+        &root.join("docs/knowledge/contracts/release.md"),
+        "northstar logs index",
+    );
 }
 
 #[test]
@@ -640,8 +635,8 @@ fn run_manifest_task_builtin_init_northstar_dry_run_prints_fenced_sections_witho
         &[
             "=== effigy.toml ===",
             "=== AGENTS.md ===",
-            "=== docs/vision/001-product-vision.md ===",
-            "=== docs/policy/vision-next-task-verbs.txt ===",
+            "=== docs/knowledge/vision.md ===",
+            "=== .paseo/queue.json ===",
         ],
     );
     assert_path_missing(
@@ -649,7 +644,7 @@ fn run_manifest_task_builtin_init_northstar_dry_run_prints_fenced_sections_witho
         "northstar dry-run must not write the root manifest",
     );
     assert_path_missing(
-        &root.join("docs/vision/001-product-vision.md"),
+        &root.join("docs/knowledge/vision.md"),
         "northstar dry-run must not write nested docs",
     );
 }
@@ -668,10 +663,10 @@ fn run_manifest_task_builtin_init_northstar_json_reports_files_array_and_guidanc
             "\"overwritten\": false",
             "\"files\":",
             "\"target\": \"effigy.toml\"",
-            "\"target\": \"docs/vision/001-product-vision.md\"",
-            "\"target\": \"docs/policy/vision-next-task-verbs.txt\"",
+            "\"target\": \"docs/knowledge/vision.md\"",
+            "\"target\": \".paseo/queue.json\"",
             "\"guidance\":",
-            "<PROJECT_NAME>",
+            "docs/knowledge/vision.md",
         ],
     );
     assert_path_exists(&root.join("AGENTS.md"), "northstar json agent contract");

@@ -1,48 +1,11 @@
 # Triage
 
-Triage notes are unresolved or deferred planning candidates. They are
-**non-authoritative**: no triage note grants execution authority, and no
-triage note is an executable planning unit.
+Unresolved leads live here until Tom chooses an outcome for `docs/plan.md`. These notes do not authorize implementation. A Queue brief carries the approved task.
 
-The sole executable planning unit is a top-level Northstar task at
-`docs/roadmaps/gNN/NNN-<slug>.md`, referenced as `gNN.NNN`. A triage note
-becomes executable only after operator intent promotes it into a ready
-top-level task in an active generation, with current canonical refs.
-
-## Intake contract
-
-- File naming: `YYYYMMDD-HHMMSS-<slug>.md`, matching the log segmentation
-  model.
-- Each note preserves its source, scope, constraints, open questions,
-  promotion conditions, owner, next check, and governing links.
-- Do not edit a note's meaning to manufacture a frontier from it.
-- Promotion requires operator intent, current canonical refs, an active
-  generation, and a ready top-level Northstar task.
-- Deletion or decline is deliberate: record why in the closing log, not by
-  silent removal.
-
-## Open notes
-
-- [`20260909-152106-consumer-adoption-cohort-expansion.md`](./20260909-152106-consumer-adoption-cohort-expansion.md)
-  — consumer cohort expansion, the only surviving candidate from the retired
-  `g09` theme backlog (2026-09-09).
-- [`20260909-152107-vendored-effigy-skill-portfolio-sync.md`](./20260909-152107-vendored-effigy-skill-portfolio-sync.md)
-  — vendored Effigy skill portfolio status and sync; linked from the open
-  `PAPERCUTS.md` entry (2026-09-09).
-- [`20260901-092640-feature-boundary-residual-open-design.md`](./20260901-092640-feature-boundary-residual-open-design.md)
-  — feature-placement residual questions (2026-09-01).
-- [`20260905-092527-release-gate-failure-diagnosability.md`](./20260905-092527-release-gate-failure-diagnosability.md)
-  — release-gate keep-on-failure remainder (2026-09-05).
-- [`20260906-224721-release-gates-satisfied-by-hosted-evidence.md`](./20260906-224721-release-gates-satisfied-by-hosted-evidence.md)
-  — release gates satisfied by hosted evidence (2026-09-06).
-- [`20260917-212846-host-database-structural-check.md`](./20260917-212846-host-database-structural-check.md)
-  — host PostgreSQL tooling diagnosis in structural doctor (2026-09-17).
-- [`20260917-230600-per-worktree-container-identity-default.md`](./20260917-230600-per-worktree-container-identity-default.md)
-  — safe container identity and teardown for concurrent worktrees (2026-09-17).
-
-## Next Task
-
-The remaining notes are open and unscheduled. The four 2026-09-24 release
-findings were promoted to `g10.011` through `g10.013` and removed in the same
-planning batch. Use Northstar Atlas for the later strategic runway; do not
-promote a remaining note without operator direction.
+- [Consumer adoption cohort](20260909-152106-consumer-adoption-cohort-expansion.md)
+- [Vendored skill sync](20260909-152107-vendored-effigy-skill-portfolio-sync.md)
+- [Feature boundary questions](20260901-092640-feature-boundary-residual-open-design.md)
+- [Release gate diagnosability](20260905-092527-release-gate-failure-diagnosability.md)
+- [Hosted release evidence](20260906-224721-release-gates-satisfied-by-hosted-evidence.md)
+- [Host database structural diagnosis](20260917-212846-host-database-structural-check.md)
+- [Per-worktree container and gateway identity](20260917-230600-per-worktree-container-identity-default.md)

@@ -47,9 +47,9 @@ Start with the family that matches your job:
 
 Companion references:
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 
 ### Dependency Status (`effigy.deps.status.v1`)
 
@@ -939,7 +939,7 @@ outcome, including failures, and the command exits non-zero if any scope failed.
 
 - treat the samples here as shape examples, not a promise that every field
   ordering choice matters
-- use [`017-json-output-contracts.md`](./017-json-output-contracts.md) for the
+- use [`017-json-output-contracts.md`](017-json-output-contracts.md) for the
   formal schema and contract rules
 - use this guide when you want realistic payloads before writing assertions,
   adapters, or fixtures
@@ -3985,11 +3985,11 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
-- [`078-papercuts-discovery-and-capture.md`](./078-papercuts-discovery-and-capture.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md)
+- [`078-papercuts-discovery-and-capture.md`](078-papercuts-discovery-and-capture.md)
 
 ## Next Step
 

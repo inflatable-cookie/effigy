@@ -66,7 +66,7 @@ fn parse_skill_run_allows_named_lookup_without_path() {
     let command = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/queue:hook".to_owned(),
+        "northstar-lean/retired-concepts".to_owned(),
     ])
     .expect("parse named skill run");
     assert_eq!(
@@ -76,7 +76,7 @@ fn parse_skill_run_allows_named_lookup_without_path() {
                 path: None,
                 stdio: SkillStdioMode::Default,
                 task: TaskInvocation {
-                    name: "northstar/queue:hook".to_owned(),
+                    name: "northstar-lean/retired-concepts".to_owned(),
                     args: Vec::new(),
                 },
                 repo_override: None,
@@ -118,7 +118,7 @@ fn parse_skill_stdio_passthrough_is_typed() {
     let command = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/queue:hook".to_owned(),
+        "northstar-lean/retired-concepts".to_owned(),
         "--stdio".to_owned(),
         "passthrough".to_owned(),
     ])
@@ -132,7 +132,7 @@ fn parse_skill_stdio_passthrough_is_typed() {
     let invalid = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/queue:hook".to_owned(),
+        "northstar-lean/retired-concepts".to_owned(),
         "--stdio".to_owned(),
         "raw".to_owned(),
     ])
@@ -145,7 +145,7 @@ fn parse_skill_run_rejects_json_with_stdio_passthrough_in_both_flag_positions() 
     let local = parse_command(vec![
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/queue:hook".to_owned(),
+        "northstar-lean/retired-concepts".to_owned(),
         "--stdio".to_owned(),
         "passthrough".to_owned(),
         "--json".to_owned(),
@@ -157,7 +157,7 @@ fn parse_skill_run_rejects_json_with_stdio_passthrough_in_both_flag_positions() 
         "--json".to_owned(),
         "skill".to_owned(),
         "run".to_owned(),
-        "northstar/queue:hook".to_owned(),
+        "northstar-lean/retired-concepts".to_owned(),
         "--stdio".to_owned(),
         "passthrough".to_owned(),
     ])

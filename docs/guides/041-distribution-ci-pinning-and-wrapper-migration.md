@@ -1,5 +1,5 @@
 > Status: Deprecated
-> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+> Superseded by: [`062-distribution-system-guide.md`](062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 > Kept for: historical CI pinning and wrapper-migration detail
 
 # 041 - Distribution CI Pinning and Wrapper Migration
@@ -124,11 +124,11 @@ Migration steps:
 
 ## Related Guides
 
-- [`010-path-installation-and-release.md`](./010-path-installation-and-release.md)
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+- [`010-path-installation-and-release.md`](010-path-installation-and-release.md)
+- [`014-release-checklist-template.md`](014-release-checklist-template.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`028-migration-quick-paths.md`](028-migration-quick-paths.md)
 
 ## Next Step
 
-After CI pinning and wrapper migration are stable, use [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for current channel workflow detail. The former backlog phase C/E planning is closed.
+After CI pinning and wrapper migration are stable, use [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for current channel workflow detail. The former backlog phase C/E planning is closed.

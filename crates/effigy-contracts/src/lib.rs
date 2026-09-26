@@ -5,8 +5,9 @@ use std::process::Command;
 use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
 use serde_json::{json, Value};
 
-pub const DEFAULT_SCHEMA_INDEX: &str = "docs/contracts/json-schema-index.json";
-pub const DEFAULT_SELECTION_CONTRACT: &str = "docs/contracts/json-selection-contract.json";
+pub const DEFAULT_SCHEMA_INDEX: &str = "docs/knowledge/contracts/json-schema-index.json";
+pub const DEFAULT_SELECTION_CONTRACT: &str =
+    "docs/knowledge/contracts/json-selection-contract.json";
 pub const DEFAULT_SELECTION_ARTIFACT: &str = "json-contracts-selected.json";
 
 #[derive(Debug)]

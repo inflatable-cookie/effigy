@@ -30,11 +30,11 @@ workspace = "api"
 [bundle]
 base = { type = "path", dir = "bundles/workspace-app" }
 
-[docs_policy.indexes.vision]
+[docs_policy.indexes.topic]
 file = "docs/README.md"
 dir = "docs"
 
-[docs_policy.next_actions.vision]
+[docs_policy.next_actions.topic]
 index = "vision"
 heading = "Next"
 allowlist_file = "docs/allowlist.txt"

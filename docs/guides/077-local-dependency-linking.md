@@ -402,9 +402,9 @@ All operations use the standard `effigy.command.v1` envelope under global
 
 Read `result` on success. Doctor failures carry the same dependency findings
 under `error.details`. See
-[`026-json-payload-examples.md`](./026-json-payload-examples.md) for payload
+[`026-json-payload-examples.md`](026-json-payload-examples.md) for payload
 examples and
-[`034-local-dependency-linking-contract.md`](../contracts/034-local-dependency-linking-contract.md)
+[`034-local-dependency-linking-contract.md`](../knowledge/contracts/034-local-dependency-linking-contract.md)
 for normative behavior.
 
 ## Proof State

@@ -36,15 +36,15 @@ run_in = "either"
 [tasks]
 qa = "cargo test"
 
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 section = "Vision Artifacts"
 exclude = ["history/**"]
 
-[docs_policy.next_actions.vision]
+[docs_policy.next_actions.topic]
 index = "vision"
-heading = "## Next Task"
+heading = "## Next move"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
 [docs_policy.graph]
@@ -748,7 +748,7 @@ fn validate_manifest_schema_accepts_manifest_include_section() {
 [manifest]
 include = [
   "effigy.tasks.toml",
-  { path = "effigy.docs.toml", override = ["docs_policy.indexes.vision"] },
+  { path = "effigy.docs.toml", override = ["docs_policy.indexes.topic"] },
 ]
 
 [tasks.dev]

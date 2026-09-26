@@ -14,7 +14,7 @@ the same public guide layer as user-facing product docs.
 The current front doors are now better:
 - [`../../README.md`](../../README.md)
 - [`../README.md`](../README.md)
-- [`README.md`](./README.md)
+- [`README.md`](README.md)
 
 The next problem is the portfolio underneath them.
 
@@ -121,8 +121,8 @@ The next useful consolidation batches are:
 ## Related Guides
 
 - [`../README.md`](../README.md)
-- [`README.md`](./README.md)
-- [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
+- [`README.md`](README.md)
+- [`040-docs-archive-and-deprecation-policy.md`](040-docs-archive-and-deprecation-policy.md)
 
 ## Next Step
 

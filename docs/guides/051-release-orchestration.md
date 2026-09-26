@@ -8,11 +8,11 @@ This is the canonical guide for the shipped `effigy release` surface.
 
 Use:
 - this guide for the release workflow and `[release]` config
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer policy and binary channel rules
-- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
+- [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
   the wider distribution commands
-- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+- [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)
   for changelog-specific work
 
 ## Start Here
@@ -475,7 +475,7 @@ effigy changelog extract CHANGELOG.md --version X.Y.Z
 This prints the release body without the outer version heading, which makes it a
 good baseline for:
 
-- `docs/logs/YYYY-MM/...` release notes
+- reviewed GitHub release notes
 - release PR summaries
 - later workflow automation once `.github/workflows/` changes are explicitly
   approved
@@ -513,10 +513,10 @@ verification through built-in commands instead of wrapper scripts.
 
 ## Related Guides
 
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-- [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`014-release-checklist-template.md`](014-release-checklist-template.md)
+- [`036-release-notes-authoring-template-and-examples.md`](036-release-notes-authoring-template-and-examples.md)
+- [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 
 ## Next Step
 

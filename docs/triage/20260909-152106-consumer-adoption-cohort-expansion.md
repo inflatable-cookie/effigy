@@ -3,12 +3,12 @@
 Status: open — unscheduled candidate
 Created: 2026-09-09
 Owner: Platform + Repository Maintainers
-Source: retired roadmap backlog `docs/roadmaps/backlog/g09-candidate-themes.md`
+Source: retired roadmap backlog `docs/plans/backlog/g09-candidate-themes.md`
   (Theme 3, 2026-08-17 through 2026-09-05); preserved here on backlog
   retirement without change of meaning
-Vision: [`007-vision-adoption-and-maturity-model-v1.md`](../vision/007-vision-adoption-and-maturity-model-v1.md)
+Vision: `007-vision-adoption-and-maturity-model-v1.md` (in Git history)
   (section 6 adoption posture) and
-  [`020-strategic-runway-atlas-v1.md`](../vision/020-strategic-runway-atlas-v1.md)
+  `020-strategic-runway-atlas-v1.md` (in Git history)
 
 ## Purpose
 
@@ -64,7 +64,7 @@ Promotion signals:
 Promotion requires operator intent, current canonical refs, an active
 generation, and a ready top-level Northstar task.
 
-## Next Task
+## Next move
 
 Theme 3's maturity question is settled; cohort expansion is unscheduled until
 a consumer asks or `docs context --sources` evidence motivates it. Next check:

@@ -69,8 +69,8 @@ query. Adopting a newer template is an explicit merge
 Adoption guide and example queries:
 `docs/guides/079-documentation-graph-profiles-and-context.md`. The profile
 grammar and ranking rules live in
-`docs/contracts/041-documentation-graph-profile-contract.md`; the architecture
-decision is `docs/architecture/024-repository-defined-documentation-graph.md`.
+`docs/knowledge/contracts/041-documentation-graph-profile-contract.md`; the architecture
+decision is `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`.
 
 ## `[tasks]`
 

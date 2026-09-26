@@ -726,11 +726,11 @@ Be explicit about the limits:
 
 ## Related References
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
-- [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
-- [`../architecture/024-repository-defined-documentation-graph.md`](../architecture/024-repository-defined-documentation-graph.md)
-- [`../contracts/041-documentation-graph-profile-contract.md`](../contracts/041-documentation-graph-profile-contract.md)
-- [`../contracts/045-catalog-scoped-code-graph-contract.md`](../contracts/045-catalog-scoped-code-graph-contract.md)
-- [`../architecture/027-catalog-scoped-code-graph.md`](../architecture/027-catalog-scoped-code-graph.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`026-json-payload-examples.md`](026-json-payload-examples.md)
+- [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
+- [`../architecture/024-repository-defined-documentation-graph.md`](../knowledge/architecture/024-repository-defined-documentation-graph.md)
+- [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md)
+- [`../contracts/045-catalog-scoped-code-graph-contract.md`](../knowledge/contracts/045-catalog-scoped-code-graph-contract.md)
+- [`../architecture/027-catalog-scoped-code-graph.md`](../knowledge/architecture/027-catalog-scoped-code-graph.md)

@@ -320,12 +320,12 @@ startup failures do not collapse to an unexplained exit code.
 
 ## Related Guides
 
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 
 ## Next Step
 

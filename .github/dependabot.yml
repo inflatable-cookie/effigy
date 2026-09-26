@@ -1,6 +1,5 @@
 # Dependency update automation.
 #
-# Roadmap: docs/roadmaps/g08/012-supply-chain-and-ci-security-gates.md
 # Paired with the cargo-deny supply-chain gate in ci.yml and deny.toml.
 version: 2
 updates:

@@ -92,9 +92,9 @@ run = "printf dev"
     write_manifest(
         &root.join("effigy.docs.toml"),
         r#"
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 "#,
     );
 
@@ -108,7 +108,7 @@ dir = "docs/vision"
     assert!(parsed["value_sources"].is_array());
     assert!(parsed["effective_manifest"]
         .as_str()
-        .is_some_and(|text| text.contains("[docs_policy.indexes.vision]")));
+        .is_some_and(|text| text.contains("[docs_policy.indexes.topic]")));
     assert!(parsed["selected_path"].is_null());
     assert!(parsed["selected_value"].is_null());
 }

@@ -77,9 +77,9 @@ headings = ["See also"]
 #[test]
 fn missing_profile_indexes_exact_sections_as_document() {
     let temp = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(temp.path().join("docs/contracts")).expect("mkdir");
+    fs::create_dir_all(temp.path().join("docs/knowledge/contracts")).expect("mkdir");
     fs::write(
-        temp.path().join("docs/contracts/example.md"),
+        temp.path().join("docs/knowledge/contracts/example.md"),
         "# Title\n\nIntro.\n\n## Alpha\n\nAlpha body.\n\n### Nested\n\nNested body.\n\n## Beta\n\nBeta body.\n",
     )
     .expect("write markdown");
@@ -89,7 +89,7 @@ fn missing_profile_indexes_exact_sections_as_document() {
     let symbols = store.list_symbols().expect("symbols");
     let document = symbols
         .iter()
-        .find(|symbol| symbol.canonical_name == "docs/contracts/example.md")
+        .find(|symbol| symbol.canonical_name == "docs/knowledge/contracts/example.md")
         .expect("document");
     assert_eq!(document.kind, "document");
     assert_eq!(document.span.start.line, 1);
@@ -97,19 +97,19 @@ fn missing_profile_indexes_exact_sections_as_document() {
 
     let title = symbols
         .iter()
-        .find(|symbol| symbol.canonical_name == "docs/contracts/example.md#title")
+        .find(|symbol| symbol.canonical_name == "docs/knowledge/contracts/example.md#title")
         .expect("title");
     let alpha = symbols
         .iter()
-        .find(|symbol| symbol.canonical_name == "docs/contracts/example.md#alpha")
+        .find(|symbol| symbol.canonical_name == "docs/knowledge/contracts/example.md#alpha")
         .expect("alpha");
     let nested = symbols
         .iter()
-        .find(|symbol| symbol.canonical_name == "docs/contracts/example.md#nested")
+        .find(|symbol| symbol.canonical_name == "docs/knowledge/contracts/example.md#nested")
         .expect("nested");
     let beta = symbols
         .iter()
-        .find(|symbol| symbol.canonical_name == "docs/contracts/example.md#beta")
+        .find(|symbol| symbol.canonical_name == "docs/knowledge/contracts/example.md#beta")
         .expect("beta");
 
     assert_eq!(title.kind, "heading-h1");
@@ -1013,6 +1013,6 @@ fn glob_helper_stays_generic() {
         "handbook/playbooks/*.md",
         "handbook/playbooks/setup.md"
     ));
-    assert!(!include_str!("../language/markdown/extract.rs").contains("docs/contracts"));
+    assert!(!include_str!("../language/markdown/extract.rs").contains("docs/knowledge/contracts"));
     assert!(!include_str!("../language/markdown/extract.rs").contains("ready-card"));
 }

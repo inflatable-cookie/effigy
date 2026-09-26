@@ -98,7 +98,7 @@ Rules:
   `graph status` only for the report-only pre-refresh view
 
 Full workflow and limits:
-[`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+[`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
 
 ## 2b) Documentation Context Assist
 
@@ -126,7 +126,7 @@ Rules:
 - baseline mode works with no profile at all; a profile adds local meaning
 
 Full profile grammar, adoption boundary, and example queries:
-[`079-documentation-graph-profiles-and-context.md`](./079-documentation-graph-profiles-and-context.md)
+[`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
 
 ## 3) Reusable `AGENTS.md` Snippet
 
@@ -259,13 +259,11 @@ When a repo wants the full Northstar + Effigy operating model, keep the
 boundary explicit:
 
 - use the reusable repo contract in
-  [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-  as the source of truth for required files, `qa:northstar`, and docs policy
-- let the `northstar-effigy` skill or template bundle scaffold repo shape,
-  starter files, and adoption mode
+  [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+  for the current knowledge and plan shape, with `effigy qa` as validation
+- use `effigy init northstar` for a new lean repository, or the lean Northstar adoption guide for migration
 - let Effigy own the generic validation and execution surfaces, for example:
-  `check-paths`, `check-index`, `check-next-action`, `check-headings`,
-  `check-forbidden`, JSON mode, and release orchestration
+  `docs check links`, `docs check paths`, JSON mode, and release orchestration
 - treat the Northstar documentation graph profile as one committed
   `[docs_policy.graph]` block in the consumer manifest. The skill or starter may
   originate those bytes, but installation is a materialization step and later
@@ -401,11 +399,11 @@ Release adoption policy:
 
 When a consumer repo is also adopting the native demo surface:
 
-- use [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the steady-
+- use [`058-demo-system-guide.md`](058-demo-system-guide.md) for the steady-
   state operator model
-- use [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- use [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
   when the repo should split demo config into a dedicated fragment
-- use [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- use [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
   when the repo is still moving from demo scripts or one-wrapper-task-per-demo
   patterns
 
@@ -420,18 +418,18 @@ instructions short and point them at the native demo surface once it exists.
 
 ## Related Guides
 
-- [`010-path-installation-and-release.md`](./010-path-installation-and-release.md)
-- [`013-testing-orchestration.md`](./013-testing-orchestration.md)
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
-- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`010-path-installation-and-release.md`](010-path-installation-and-release.md)
+- [`013-testing-orchestration.md`](013-testing-orchestration.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`058-demo-system-guide.md`](058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
+- [`027-copy-paste-snippets.md`](027-copy-paste-snippets.md)
+- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
 
 ## Next Step
 
@@ -439,5 +437,5 @@ After adding the Effigy-first agent contract to a consumer repo, validate the
 repo against the minimum adoption criteria in Section 4 and then remove any
 obsolete wrapper-first guidance in the same batch. If the repo is also adopting
 native demos, continue with
-[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+[`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 instead of inventing a repo-local demo migration path.

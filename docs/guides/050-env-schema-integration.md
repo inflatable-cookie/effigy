@@ -278,10 +278,10 @@ project root and returns `Ok(None)` when the default file is absent.
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) -- task env patterns
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) -- test suite env
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) -- `effigy secrets` command surface
-- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md) -- dedicated secret management and vault workflow
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md) -- task env patterns
+- [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md) -- test suite env
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md) -- `effigy secrets` command surface
+- [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md) -- dedicated secret management and vault workflow
 
 ## Next Step
 

@@ -120,7 +120,7 @@ effigy qa:docs
 Expected outcome:
 - link checker passes
 - docs-only quality gate passes
-- for full docs QA checklist/troubleshooting, see [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- for full docs QA checklist/troubleshooting, see [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
 
 ## First Contribution Checklist
 
@@ -148,11 +148,11 @@ effigy qa:docs
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`026-json-payload-examples.md`](026-json-payload-examples.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
 
 ## Next Step
 
-After onboarding is complete, use the update rules in [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md) to scope your first docs or behavior change.
+After onboarding is complete, use the update rules in [`037-documentation-contribution-playbook.md`](037-documentation-contribution-playbook.md) to scope your first docs or behavior change.

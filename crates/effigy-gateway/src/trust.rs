@@ -3,7 +3,7 @@
 //! The gateway daemon runs with elevated privilege and proxies to whatever
 //! upstream each route names, so the route table file is a privilege boundary.
 //! Before the daemon trusts the file, it verifies two things, per
-//! `docs/contracts/033-gateway-route-table-trust-contract.md`:
+//! `docs/knowledge/contracts/033-gateway-route-table-trust-contract.md`:
 //!
 //! 1. **Permission** — the file must not be group- or other-writable, so a
 //!    non-owner local user cannot tamper with it. (The gateway directory lives

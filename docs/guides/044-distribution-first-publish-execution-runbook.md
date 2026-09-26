@@ -1,5 +1,5 @@
 > Status: Deprecated
-> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`051-release-orchestration.md`](./051-release-orchestration.md)
+> Superseded by: [`062-distribution-system-guide.md`](062-distribution-system-guide.md) and [`051-release-orchestration.md`](051-release-orchestration.md)
 > Kept for: historical first-publish execution detail
 > 
 > Note: This runbook originally included crates.io publish validation. Effigy
@@ -109,10 +109,10 @@ effigy --json help
 - source-install output log
 - Homebrew fresh install + upgrade logs
 - CI pinned install log
-- one dated checkpoint log in `docs/logs/YYYY-MM/`
+- one reviewed release summary attached to the GitHub release
 
-When using the built-in, attach per-step logs from `--artifacts-dir` directly in the checkpoint log.
-The closeout log can be generated from those logs using `effigy release evidence closeout`.
+When using the built-in, attach per-step logs from `--artifacts-dir` to the GitHub release evidence.
+A closeout summary can be generated from those logs using `effigy release evidence closeout`.
 Artifact completeness can be checked directly with `effigy release evidence validate`.
 The first-publish built-in uses `effigy release verify-install`, writes `distribution-summary.env` through `effigy release evidence summary`, and performs final artifact completeness checks through `effigy release evidence validate` before returning success.
 Local tooling sanity for this pipeline can be checked with `cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture`, which exercises the built-in distribution commands directly.
@@ -130,17 +130,17 @@ This runbook is the execution evidence source for:
 
 If any channel fails:
 1. stop rollout completion claims for this batch
-2. record failure in checkpoint log with exact command and output summary
+2. record failure in the GitHub run and Queue outcome with exact command and output summary
 3. rollback to previous known-good version/tag
 4. re-run failed channel only after fix is merged
 
 ## Related Guides
 
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`archive/043-wrapper-channel-evaluation-and-policy.md`](./archive/043-wrapper-channel-evaluation-and-policy.md)
+- [`014-release-checklist-template.md`](014-release-checklist-template.md)
+- [`054-release-checkpoint-log-template.md`](054-release-checkpoint-log-template.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`042-homebrew-tap-and-release-automation.md`](042-homebrew-tap-and-release-automation.md)
+- [`archive/043-wrapper-channel-evaluation-and-policy.md`](archive/043-wrapper-channel-evaluation-and-policy.md)
 
 ## Next Step
 

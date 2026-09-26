@@ -8,13 +8,13 @@ another wrapper script, shell note, or repo-local convention.
 This is not the best first page if you want narrative explanation first.
 
 Use:
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
   for fragment layout and `[manifest].include`
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
   for the mental model behind `system`, `workspace`, and `dev`
-- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
+- [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md) for
   Effigy-native scripting
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
+- [`058-demo-system-guide.md`](058-demo-system-guide.md) for the demo system
 
 ## Start Here
 
@@ -127,9 +127,9 @@ build = "bun run build"
 [manifest]
 minimum_effigy_version = "0.6.2"
 
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 section = "Vision Artifacts"
 ```
 
@@ -179,7 +179,7 @@ Rules:
 - keep the producer list tight, especially on Colima/containerd, because each
   isolated path spends mount budget on the workspace container
 - for user-global sibling library trees, pair this with
-  [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
+  [`069-workspace-host-integration.md`](069-workspace-host-integration.md)
   rather than inventing repo-local symlink tricks
 
 Inspection:
@@ -358,7 +358,7 @@ Lifecycle notes:
 Migration note:
 - if a consumer repo already has a `demos/` script pack or one wrapper task per
   demo, use
-  [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+  [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
   for the practical extraction and inline-`run = [ ... ]` path instead of
   expanding this cookbook section further.
 
@@ -414,7 +414,7 @@ Run-array step fields (in-process executor):
 - `id = "<name>"` step identifier; required when other steps reference it through `depends_on`
 - `run = "<command>"` shell command for the step; mutually exclusive with `task` and `rhai`
 - `task = "<selector>"` invoke another task by selector (catalog-prefixed selectors are accepted)
-- `rhai = "<path>"` run a file-backed Rhai script (see [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md))
+- `rhai = "<path>"` run a file-backed Rhai script (see [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md))
 - `depends_on = ["<id>", ...]` block this step until the listed steps finish successfully
 - `timeout_ms = <n>` per-step timeout in milliseconds; the step is cancelled and reported as failed when exceeded
 - `retry = <n>` automatic retry count after a non-zero exit (in addition to the first attempt)
@@ -468,7 +468,7 @@ Use this when:
 Do not use this to fake shell pipelines or replace frontend build tooling.
 
 For the full host API and v1 limits, use
-[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).
+[`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md).
 
 #### Run-Array Env Directives
 
@@ -1244,7 +1244,7 @@ description = "Application database connection URL"
 Store values with `effigy secrets set database_url`. Values inject into task
 processes, containers, Rhai scripts, deploy hooks, and state hooks without
 writing plaintext to repo files. See
-[`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
+[`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md).
 
 ## State Stacks
 
@@ -1266,7 +1266,7 @@ environment_policy = "all"
 
 Plan with `effigy state plan uat`, apply with `effigy state apply uat --yes`,
 capture with `effigy state capture uat new-content --yes`. See
-[`073-state-stack-guide.md`](./073-state-stack-guide.md).
+[`073-state-stack-guide.md`](073-state-stack-guide.md).
 
 ## Deploy Config
 
@@ -1285,7 +1285,7 @@ adapter = "railway"
 ```
 
 Plan with `effigy deploy plan uat`, apply with `effigy deploy apply uat --yes`.
-See [`074-deployment-guide.md`](./074-deployment-guide.md).
+See [`074-deployment-guide.md`](074-deployment-guide.md).
 
 ## Notes
 
@@ -1313,20 +1313,20 @@ api = "services/api"
 
 ## Related Guides
 
-- [`013-testing-orchestration.md`](./013-testing-orchestration.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
-- [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
-- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
-- [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
-- [`074-deployment-guide.md`](./074-deployment-guide.md)
-- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
+- [`013-testing-orchestration.md`](013-testing-orchestration.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
+- [`015-deferral-fallback-migration.md`](015-deferral-fallback-migration.md)
+- [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
+- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
+- [`073-state-stack-guide.md`](073-state-stack-guide.md)
+- [`074-deployment-guide.md`](074-deployment-guide.md)
+- [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
 
 ## Expected Outcome
 
@@ -1340,6 +1340,6 @@ After this guide, you should be able to:
 
 After adapting one of these patterns, run `effigy tasks` and `effigy test --plan`
 to confirm the repo now explains itself more clearly, then use
-[`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-or [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) to
+[`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+or [`025-command-reference-matrix.md`](025-command-reference-matrix.md) to
 close any remaining rough edges in the operator path.

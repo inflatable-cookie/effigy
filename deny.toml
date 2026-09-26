@@ -1,6 +1,5 @@
 # cargo-deny supply-chain policy for Effigy.
 #
-# Roadmap: docs/roadmaps/archive/g08.md
 #
 # Run locally:  cargo deny check
 # Subsets:      cargo deny check advisories | licenses | bans | sources

@@ -20,7 +20,7 @@ Definition:
 - Optional leading arguments on `effigy <task>` / `effigy <catalog>/<task>`
   parsed before task-specific passthrough: `--repo <PATH>`,
   `--verbose-root`, `--env-schema <PATH>` (see
-  [`050-env-schema-integration.md`](./050-env-schema-integration.md)).
+  [`050-env-schema-integration.md`](050-env-schema-integration.md)).
 
 Notes:
 - They must stay in the prefix segment consumed by the runtime parser, not
@@ -201,7 +201,7 @@ Notes:
 - queries do not rebuild the index; run `effigy graph index` explicitly
 
 Deep dive:
-- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
 
 ## Graph Explore
 
@@ -278,9 +278,9 @@ concurrent = [{ run = "cargo run -p api", start = 1, tab = 1, shutdown_on_exit =
 
 ## Related Guides
 
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`033-style-and-terminology-guide.md`](033-style-and-terminology-guide.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
 
 ## Next Step
 

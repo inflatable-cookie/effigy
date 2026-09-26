@@ -19,9 +19,9 @@ fn docs_policy_graph_profile_lines_are_repository_neutral() {
         for northstar_token in [
             "strict-ready",
             "archived-spec",
-            "docs/contracts",
-            "docs/specs/archive",
-            "Next Task",
+            "docs/knowledge/contracts",
+            "docs/knowledge/contracts/archive",
+            "Next move",
         ] {
             assert!(
                 !rendered.contains(northstar_token),

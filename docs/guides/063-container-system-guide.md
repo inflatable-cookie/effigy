@@ -12,9 +12,9 @@ This is the practical command guide for the container commands.
 Use:
 - this guide for the direct `effigy container ...` commands and container
   manifest shape
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
   for the model behind `system`, `workspace`, and `dev`
-- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`067-catalog-services-reference.md`](067-catalog-services-reference.md)
   for the shipped service catalog inputs
 
 ## Start Here
@@ -216,9 +216,9 @@ Use `container` when you want to:
 If the question is instead:
 
 - how should `dev`, `system`, and `workspace` fit together?
-  - use [`064`](./064-system-workspace-and-dev-contract.md)
+  - use [`064`](064-system-workspace-and-dev-contract.md)
 - which service inputs does a catalog support?
-  - use [`067`](./067-catalog-services-reference.md)
+  - use [`067`](067-catalog-services-reference.md)
 
 ## Manifest Shapes
 
@@ -268,7 +268,7 @@ mounts = ["./:/workspace"]
 Debian Chromium shared libraries and a basic font set at image build. The
 image does not ship Chromium, Playwright, or Node; the consuming repo still
 downloads its own browser revision. Changing the value requires an image
-rebuild. See [`067`](./067-catalog-services-reference.md) for the full
+rebuild. See [`067`](067-catalog-services-reference.md) for the full
 parameter surface.
 
 Effigy generates runtime-owned compose output under:
@@ -649,7 +649,7 @@ instead. `effigy gateway status` reports `route_table_trust` and
 `effigy doctor` warns when the table is untrusted. If you upgrade from a build
 that predates this and see an "untrusted" warning, re-run `effigy container up`
 (or re-register routes) once to re-stamp the table. The full model is in
-[`033-gateway-route-table-trust-contract.md`](../contracts/033-gateway-route-table-trust-contract.md).
+[`033-gateway-route-table-trust-contract.md`](../knowledge/contracts/033-gateway-route-table-trust-contract.md).
 
 ## Troubleshooting: stale SSH-agent forwarding
 
@@ -729,12 +729,12 @@ Still intentionally narrow:
 
 ## Related
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
-- [`014-artifact-substrate-contract.md`](../contracts/014-artifact-substrate-contract.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
+- [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md)
+- [`014-artifact-substrate-contract.md`](../knowledge/contracts/014-artifact-substrate-contract.md)
 
 ## Next Step
 

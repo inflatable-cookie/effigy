@@ -20,7 +20,7 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     options: &[
         (
             "--index <PATH>",
-            "Override the JSON schema index file (defaults to `docs/contracts/json-schema-index.json`)",
+            "Override the JSON schema index file (defaults to `docs/knowledge/contracts/json-schema-index.json`)",
         ),
         ("--fast", "Run the lighter JSON contract subset"),
         ("--full", "Run the full active JSON contract set"),
@@ -38,7 +38,7 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ),
         (
             "--contract <PATH>",
-            "Override the JSON contract file (defaults to `docs/contracts/json-selection-contract.json`)",
+            "Override the JSON contract file (defaults to `docs/knowledge/contracts/json-selection-contract.json`)",
         ),
         (
             "--artifact <PATH>",

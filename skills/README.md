@@ -5,10 +5,10 @@ assistants how to use Effigy.
 
 ## What's here
 
-- [`effigy/`](./effigy/) — main skill. Agent operating loop, graph assist,
+- [`effigy/`](effigy/) — main skill. Agent operating loop, graph assist,
   built-in surface lookup, JSON envelopes, config shapes, footguns, release
-  protocol. Light front door ([`SKILL.md`](./effigy/SKILL.md)) routes to topic
-  references in [`effigy/references/`](./effigy/references/). Task names such as
+  protocol. Light front door ([`SKILL.md`](effigy/SKILL.md)) routes to topic
+  references in [`effigy/references/`](effigy/references/). Task names such as
   **`dev`** are repo-defined unless the doc names a built-in (`test`, `init`, …).
 
 ## Install

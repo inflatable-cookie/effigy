@@ -62,9 +62,9 @@ When adding/updating command output:
 
 ## Related Guides
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
 
 ## Next Step
 
-After changing renderer behavior, run docs and JSON contract checks from [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before merging.
+After changing renderer behavior, run docs and JSON contract checks from [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md) before merging.

@@ -75,9 +75,9 @@ If cargo lock contention causes delayed startup for source-run mode, direct PATH
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`051-release-orchestration.md`](./051-release-orchestration.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](051-release-orchestration.md)
 
 ## Next Step
 

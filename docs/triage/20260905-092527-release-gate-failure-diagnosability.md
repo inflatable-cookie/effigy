@@ -3,8 +3,8 @@
 Status: open — unscheduled remainder
 Created: 2026-09-05
 Owner: chatterbox
-Source: Swallowtail Chatterbox handoff (2026-09-05), request 3 of 4
-Promoted: requests 1, 2, and 4 became [`g09.004`](../roadmaps/archive/g09.md)
+Source: Swallowtail Planner transfer (2026-09-05), request 3 of 4
+Promoted: requests 1, 2, and 4 became `g09.004` (in Git history)
 / strict spec `119` / card `1112` on 2026-09-05
 
 ## Issue
@@ -31,7 +31,7 @@ against the exact prepared state.
 - Whether a read-only alternative (render the prepared mutations as a diff
   without applying) satisfies the same need with no invariant change.
 
-## Next Task
+## Next move
 
 `g09.004` shipped the persisted evidence. Keep this remainder unscheduled until
 Swallowtail's next authorized release attempt shows whether those records are

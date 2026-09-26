@@ -135,12 +135,12 @@ Before finalizing a guide update:
 
 ## Related Guides
 
-- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md)
-- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
-- [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
-- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`017-json-output-contracts.md`](017-json-output-contracts.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
+- [`archive/031-docs-navigation-cleanup.md`](archive/031-docs-navigation-cleanup.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](archive/032-docs-consistency-sweep-and-changelog.md)
+- [`034-task-and-command-glossary.md`](034-task-and-command-glossary.md)
+- [`035-guide-ownership-and-update-triggers.md`](035-guide-ownership-and-update-triggers.md)
 
 ## Next Step
 

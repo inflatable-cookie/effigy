@@ -363,7 +363,7 @@ including local build metadata like `+local.<hash>`.
 that do not yet have a typed helper. First-party scripts should use the typed
 helper when one exists. First-party shipped Rhai scripts currently use neither
 escape hatch; a regression test keeps that true. The maintained coverage matrix is in
-[`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md).
+[`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md).
 
 Helpers that mirror CLI reports return the same JSON payload as the CLI
 `--json` mode, converted into Rhai maps/arrays. Process-like helpers such as
@@ -638,18 +638,18 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`../roadmaps/g02/004-rust-native-scripting-surface-contract.md`](../roadmaps/archive/g02.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
+- `../roadmaps/g02/004-rust-native-scripting-surface-contract.md` (in Git history)
 
 ## Next Step
 
 After this guide, use
-[`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md) if
+[`059-manifest-composition-guide.md`](059-manifest-composition-guide.md) if
 the next job is splitting Rhai scripts into focused manifest fragments, use
-[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) if you want broader
+[`022-manifest-cookbook.md`](022-manifest-cookbook.md) if you want broader
 task-pattern examples, or return to the active `g02.004` spec lane when the
 next move is deciding which repo migration slice should land after the
 foundation.

@@ -7,9 +7,9 @@ This guide is narrower than the release guides.
 
 Use:
 - this guide for `effigy changelog ...`
-- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+- [`051-release-orchestration.md`](051-release-orchestration.md) for the
   actual release cut flow
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer release policy
 
 ## Vision Alignment
@@ -186,8 +186,8 @@ Key integration points:
 
 For the full release contract, see:
 
-- [`051-release-orchestration.md`](./051-release-orchestration.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](051-release-orchestration.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 
 ## 5) Library Surface
 
@@ -250,10 +250,10 @@ Then wrap the extracted body with the human-authored note template from guide
 
 ## Related Guides
 
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`051-release-orchestration.md`](./051-release-orchestration.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`036-release-notes-authoring-template-and-examples.md`](036-release-notes-authoring-template-and-examples.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](051-release-orchestration.md)
 
 ## Next Step
 

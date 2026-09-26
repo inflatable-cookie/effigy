@@ -1,84 +1,36 @@
-# Agent Instructions for &lt;PROJECT_NAME&gt;
+# <Project name>
 
-This repo uses the Northstar + Effigy consumer contract. The docs,
-planning shape, and validation surface are documented in
-[`docs/guides/056-northstar-effigy-consumer-repo-contract.md`](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/056-northstar-effigy-consumer-repo-contract.md)
-(Effigy upstream).
+<One paragraph: what this project is, who it serves, and what it must never
+become.>
 
-Effigy is **manifest-driven** (`effigy.toml`, often split across includes): most
-`effigy <name>` calls are **repo tasks** (`qa`, `validate`, …). Built-ins include
-`test`, `init`, `doctor`, and the short list from **`effigy --help`**.
+## Where things live
 
-## Operating Loop
+- Current state: `docs/README.md`
+- Knowledge (one owner per fact): `docs/knowledge/README.md`
+- Retired concepts, which must not come back: `docs/knowledge/retired.toml`
+- Open questions: `docs/knowledge/questions.md`
+- What's next: `docs/plan.md`
+- Unresolved leads: `docs/triage/`
 
-Route by job, not by startup ritual:
+Tasks, briefs and status live in Queue, never in this repository.
 
-1. Use `effigy graph` when the job is code understanding.
-2. Use `effigy docs context "<question>"` when the job is documentation
-   authority: which contract, roadmap, or decision governs the work. It returns
-   exact sections with provenance, not a summary.
-3. Use `effigy tasks` when you need selector inventory or QA surfaces.
-4. Use `effigy doctor` (or `effigy health`) when routing is unclear or repo
-   health is the task.
-5. Inspect tests with `effigy test --plan` when test execution shape matters.
-6. Prefer `effigy <task>` over raw tooling whenever a task covers the path.
-7. Use `effigy --json <command>` when a machine consumer needs the output.
-8. Only use `--repo <PATH>` when intentionally targeting a different repo.
-   Never teach an explicit current-directory repo override as a default.
-9. Fall back to raw tools only when Effigy does not cover the path.
+## Commands
 
-## Default test policy
+- `<command>` — <what it does>
 
-`effigy test` is always the built-in orchestration entrypoint. Use automatic
-Rust/Vitest detection for simple repos or declare named `[test.suites]` for
-explicit polyglot and lifecycle-aware routing. Never define `tasks.test`.
+## Product rules
 
-## Docs authority
+- <Rules about the product itself that every change must respect.>
 
-- `docs/README.md` names the docs authority for this repo.
-- `docs/vision/README.md` is the product vision index.
-- `docs/roadmaps/README.md` names the active generation and approved task
-  frontier.
-- `docs/logs/README.md` is the evidence and decision log.
+## Guardrails
 
-Do not collapse these three into a single generic planning note.
+- <Things an agent must not do without asking: releases, migrations,
+  credentials, shared infrastructure.>
+- When a change alters what is true, update the owning knowledge file in the
+  same PR.
+- An operator ruling given in conversation goes into its owning file before
+  the thread ends.
 
-`[docs_policy.graph]` in `effigy.toml` declares this repo's documentation
-semantics: roots, kinds, authority weights, metadata fields, currentness values,
-and typed relations. It is copied configuration owned by this repo. Effigy reads
-that committed block and nothing else when answering `effigy docs context`; no
-starter and no installed skill is consulted at runtime. Updating a template is
-an explicit merge, never an automatic reinterpretation.
+## Validate
 
-## Validation
-
-Run `effigy qa` to validate the full contract:
-
-- `validate` — repo-owned generic checks
-- `qa:docs` — docs spine + README/agent-contract drift
-- `qa:northstar` — indexes, next-actions, headings, forbidden defaults
-
-Fix the underlying drift when `qa:northstar` fails. Do not suppress
-checks to get a passing run.
-
-## Changelog
-
-Append user-facing changes to `CHANGELOG.md` under `[Unreleased]` as
-you ship them. Categories: **Breaking**, **Added**, **Changed**,
-**Fixed**.
-
-## Release policy
-
-- Never initiate a release without explicit human instruction.
-- Never modify CI workflows without explicit approval.
-- Never bypass release gates — fix the underlying issue instead.
-
-Once release work is active, the canonical entrypoint is
-`effigy release prepare` → `effigy release execute`.
-
-## Fallback boundary
-
-Raw tools are allowed only when Effigy does not cover the path (e.g.
-rare migration scripts or one-off scratch). When you reach for raw
-tooling, note it in the next log entry so the fallback boundary stays
-visible.
+`<validation command>` before opening a PR.

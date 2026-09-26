@@ -5,7 +5,7 @@ Created: 2026-09-09
 Owner: Agent adoption and skill distribution (reassigned 2026-09-05 docs
   cleanup; orchestrator does not own triage)
 Source: retired roadmap backlog
-  `docs/roadmaps/backlog/vendored-effigy-skill-portfolio-status-and-sync.md`
+  `docs/plans/backlog/vendored-effigy-skill-portfolio-status-and-sync.md`
   (2026-08-31, from Northstar papercuts wave 23 and the open Effigy
   `PAPERCUTS.md` entry); preserved here on backlog retirement without change
   of meaning
@@ -81,7 +81,7 @@ Promotion signals:
 Promotion requires operator intent, current canonical refs, an active
 generation, and a ready top-level Northstar task.
 
-## Next Task
+## Next move
 
 Keep the matching `PAPERCUTS.md` entry open until this candidate is promoted
 or deliberately declined. Next check: agent-adoption evidence that portfolio

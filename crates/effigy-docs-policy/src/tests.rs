@@ -97,11 +97,11 @@ fn scan_markdown_links_ignores_fenced_code_blocks() {
 #[test]
 fn collect_link_check_files_defaults_to_full_docs_tree() {
     let fixture = DocsFixture::new("link-defaults");
-    fixture.mkdir("docs/logs/2026-03");
+    fixture.mkdir("docs/notes/2026-03");
     fixture.mkdir("docs/research");
     fixture.write("README.md", "# Root\n");
     fixture.write("docs/README.md", "# Docs\n");
-    fixture.write("docs/logs/2026-03/example.md", "# Log\n");
+    fixture.write("docs/notes/2026-03/example.md", "# Log\n");
     fixture.write("docs/research/example.md", "# Research\n");
 
     let files = collect_link_check_files(fixture.root(), &[]);
@@ -113,52 +113,52 @@ fn collect_link_check_files_defaults_to_full_docs_tree() {
 
     assert!(rendered.contains(&"README.md".to_owned()));
     assert!(rendered.contains(&"docs/README.md".to_owned()));
-    assert!(rendered.contains(&"docs/logs/2026-03/example.md".to_owned()));
+    assert!(rendered.contains(&"docs/notes/2026-03/example.md".to_owned()));
     assert!(rendered.contains(&"docs/research/example.md".to_owned()));
 }
 
 #[test]
 fn normalize_log_index_relative_path_accepts_docs_logs_prefix() {
     let normalized =
-        normalize_log_index_relative_path(Path::new("docs/logs/2026-03/02-160000-my-log.md"))
+        normalize_log_index_relative_path(Path::new("docs/notes/2026-03/02-160000-my-log.md"))
             .expect("normalize path");
     assert_eq!(normalized, "2026-03/02-160000-my-log.md");
 }
 
 #[test]
 fn insert_log_index_entry_puts_new_entry_first_in_active_logs() {
-    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch g10.004\n";
+    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next move\n- dispatch g10.004\n";
     let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
     let updated = insert_log_index_entry(index, entry).expect("insert");
     let active = updated.find("## Active logs").expect("active heading");
-    let next = updated.find("## Next Task").expect("next heading");
+    let next = updated.find("## Next move").expect("next heading");
     let new = updated
         .find("2026-03/02-160000-my-log.md")
         .expect("new entry");
     let old = updated.find("2026-03/01-000000-old.md").expect("old entry");
     assert!(active < new, "entry lands inside Active logs");
-    assert!(new < next, "entry stays before Next Task");
+    assert!(new < next, "entry stays before Next move");
     assert!(new < old, "newest entry stays first");
     assert_eq!(
         updated,
-        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch g10.004\n"
+        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next move\n- dispatch g10.004\n"
     );
 }
 
 #[test]
 fn insert_log_index_entry_handles_empty_active_logs_before_next_task() {
-    let index = "# Logs\n\n## Active logs\n\n## Next Task\n- dispatch g10.004\n";
+    let index = "# Logs\n\n## Active logs\n\n## Next move\n- dispatch g10.004\n";
     let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
     let updated = insert_log_index_entry(index, entry).expect("insert");
     assert_eq!(
         updated,
-        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n\n## Next Task\n- dispatch g10.004\n"
+        "# Logs\n\n## Active logs\n\n- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)\n\n## Next move\n- dispatch g10.004\n"
     );
 }
 
 #[test]
 fn insert_log_index_entry_rejects_missing_active_logs() {
-    let index = "# Logs\n\n## Archived logs\n- older\n\n## Next Task\n- dispatch\n";
+    let index = "# Logs\n\n## Archived logs\n- older\n\n## Next move\n- dispatch\n";
     let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
     assert!(insert_log_index_entry(index, entry).is_err());
 }
@@ -172,7 +172,7 @@ fn insert_log_index_entry_rejects_duplicate_active_logs() {
 
 #[test]
 fn insert_log_index_entry_repeat_run_stays_idempotent() {
-    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next Task\n- dispatch\n";
+    let index = "# Logs\n\n## Active logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Next move\n- dispatch\n";
     let entry = "- [`2026-03/02-160000-my-log.md`](./2026-03/02-160000-my-log.md)";
     // Mirror the runner: skip insertion when the exact bullet already exists.
     let once = insert_log_index_entry(index, entry).expect("first insert");
@@ -188,14 +188,14 @@ fn insert_log_index_entry_repeat_run_stays_idempotent() {
 #[test]
 fn collect_workflow_check_files_excludes_logs_for_default_docs_scope() {
     let fixture = DocsFixture::new("workflow-paths");
-    fixture.mkdir("docs/logs/2026-03");
+    fixture.mkdir("docs/notes/2026-03");
     fixture.mkdir("docs/guides");
     fixture.write("docs/guides/example.md", "# Guide\n");
-    fixture.write("docs/logs/2026-03/example.md", "# Log\n");
+    fixture.write("docs/notes/2026-03/example.md", "# Log\n");
 
     let files = collect_workflow_check_files(
         &fixture.root().join("docs"),
-        &fixture.root().join("docs/logs"),
+        &fixture.root().join("docs/notes"),
         true,
     );
     let rendered = files
@@ -205,7 +205,7 @@ fn collect_workflow_check_files_excludes_logs_for_default_docs_scope() {
         .collect::<Vec<_>>();
 
     assert!(rendered.contains(&"docs/guides/example.md".to_owned()));
-    assert!(!rendered.contains(&"docs/logs/2026-03/example.md".to_owned()));
+    assert!(!rendered.contains(&"docs/notes/2026-03/example.md".to_owned()));
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn check_workflow_paths_reports_stale_reference() {
     let findings = check_workflow_paths(
         fixture.root(),
         &fixture.root().join("docs"),
-        &fixture.root().join("docs/logs"),
+        &fixture.root().join("docs/notes"),
         true,
     )
     .expect("workflow check");
@@ -337,8 +337,8 @@ fn resolve_docs_index_spec_loads_named_policy_index() {
     policy.indexes.insert(
         "vision".to_owned(),
         ManifestDocsPolicyIndexConfig {
-            file: "docs/vision/README.md".to_owned(),
-            dir: "docs/vision".to_owned(),
+            file: "docs/knowledge/README.md".to_owned(),
+            dir: "docs/knowledge".to_owned(),
             section: Some("Vision Artifacts".to_owned()),
             exclude: vec!["history/**".to_owned()],
         },
@@ -347,15 +347,15 @@ fn resolve_docs_index_spec_loads_named_policy_index() {
     let spec =
         resolve_docs_index_spec(fixture.root(), &policy, Some("vision"), None, None).expect("spec");
     assert_eq!(spec.policy_name.as_deref(), Some("vision"));
-    assert_eq!(spec.index, fixture.root().join("docs/vision/README.md"));
-    assert_eq!(spec.dir, fixture.root().join("docs/vision"));
+    assert_eq!(spec.index, fixture.root().join("docs/knowledge/README.md"));
+    assert_eq!(spec.dir, fixture.root().join("docs/knowledge"));
     assert_eq!(spec.section.as_deref(), Some("Vision Artifacts"));
     assert_eq!(spec.exclude, vec!["history/**"]);
 }
 
 #[test]
 fn first_non_empty_section_line_skips_heading_and_blank_lines() {
-    let line = first_non_empty_section_line("## Next Task\n\nShip the thing.\n").expect("line");
+    let line = first_non_empty_section_line("## Next move\n\nShip the thing.\n").expect("line");
     assert_eq!(line, "Ship the thing.");
 }
 
@@ -375,8 +375,8 @@ fn resolve_docs_next_action_spec_loads_named_policy() {
     policy.indexes.insert(
         "vision".to_owned(),
         ManifestDocsPolicyIndexConfig {
-            file: "docs/vision/README.md".to_owned(),
-            dir: "docs/vision".to_owned(),
+            file: "docs/knowledge/README.md".to_owned(),
+            dir: "docs/knowledge".to_owned(),
             section: Some("Vision Artifacts".to_owned()),
             exclude: Vec::new(),
         },
@@ -385,7 +385,7 @@ fn resolve_docs_next_action_spec_loads_named_policy() {
         "vision".to_owned(),
         ManifestDocsPolicyNextActionConfig {
             index: "vision".to_owned(),
-            heading: "## Next Task".to_owned(),
+            heading: "## Next move".to_owned(),
             allowlist_file: "docs/scripts/fixtures/verbs.txt".to_owned(),
         },
     );
@@ -393,8 +393,8 @@ fn resolve_docs_next_action_spec_loads_named_policy() {
     let spec =
         resolve_docs_next_action_spec(fixture.root(), &policy, Some("vision")).expect("spec");
     assert_eq!(spec.policy_name.as_deref(), Some("vision"));
-    assert_eq!(spec.heading, "## Next Task");
-    assert_eq!(spec.heading_without_hashes, "Next Task");
+    assert_eq!(spec.heading, "## Next move");
+    assert_eq!(spec.heading_without_hashes, "Next move");
     assert_eq!(
         spec.allowlist_file,
         fixture.root().join("docs/scripts/fixtures/verbs.txt")

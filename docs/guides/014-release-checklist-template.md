@@ -107,7 +107,7 @@ Owner: `name/team`
 - [ ] Validate install on at least one clean machine/session.
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
-- [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
+- [ ] Review the release procedure and candidate evidence.
   - [ ] `effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 8) Sign-off
@@ -120,11 +120,11 @@ Owner: `name/team`
 
 ## Related Guides
 
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-- [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
-- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
+- [`036-release-notes-authoring-template-and-examples.md`](036-release-notes-authoring-template-and-examples.md)
+- [`054-release-checkpoint-log-template.md`](054-release-checkpoint-log-template.md)
+- [`042-homebrew-tap-and-release-automation.md`](042-homebrew-tap-and-release-automation.md)
 
 ## Next Step
 
-After running this checklist for a release, publish a dated log under `docs/logs/YYYY-MM/` and link it from your release PR.
+After running this checklist for a release, publish the reviewed notes with the GitHub release and link the release from your PR.

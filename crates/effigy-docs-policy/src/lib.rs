@@ -204,14 +204,14 @@ pub fn resolve_docs_index_spec(
         dir_override
             .cloned()
             .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.dir.clone())))
-            .unwrap_or_else(|| PathBuf::from("docs/logs")),
+            .unwrap_or_else(|| PathBuf::from("docs/notes")),
     );
     let index = resolve_repo_input(
         repo_root,
         index_override
             .cloned()
             .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.file.clone())))
-            .unwrap_or_else(|| PathBuf::from("docs/logs/README.md")),
+            .unwrap_or_else(|| PathBuf::from("docs/notes/README.md")),
     );
 
     Ok(DocsIndexSpec {
@@ -220,7 +220,7 @@ pub fn resolve_docs_index_spec(
         index,
         section: configured.and_then(|(_, entry)| entry.section.clone()),
         // The default logs index excludes the archive subtree: closed-generation
-        // logs live under `docs/logs/archive/**` and are intentionally dropped
+        // logs live under `docs/notes/archive/**` and are intentionally dropped
         // from the active index (see the retention convention in the logs
         // README). A named `[docs_policy.indexes.<name>]` keeps its own excludes.
         exclude: configured
@@ -392,7 +392,7 @@ pub fn normalize_log_index_relative_path(log_path: &Path) -> Result<String, Docs
     let raw = log_path.to_string_lossy().replace('\\', "/");
     let trimmed = raw.trim_start_matches("./");
     let relative = trimmed
-        .strip_prefix("docs/logs/")
+        .strip_prefix("docs/notes/")
         .unwrap_or(trimmed)
         .to_owned();
 
@@ -422,7 +422,7 @@ pub fn normalize_log_index_relative_path(log_path: &Path) -> Result<String, Docs
 /// Newest-first: the entry lands immediately after the heading and its
 /// existing blank-line separator, ahead of any current entries. The next
 /// level-two heading is a hard boundary; the entry never leaks into a later
-/// section such as `## Next Task`.
+/// section such as `## Next move`.
 ///
 /// Fails closed without a partial rewrite when the index has no `## Active
 /// logs` heading or has more than one, so callers leave the file byte-identical.
@@ -471,7 +471,7 @@ pub fn insert_log_index_entry(
     output.push_str(entry);
     output.push('\n');
     // Keep a blank line between the entry and following prose or a heading
-    // (for example `## Next Task` after an empty section). A following list
+    // (for example `## Next move` after an empty section). A following list
     // item needs no separator.
     if lines
         .get(cursor)

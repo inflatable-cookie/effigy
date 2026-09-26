@@ -99,7 +99,7 @@ None currently tracked.
 `bovine-accelerator` currently relies on the object-storage helpers for media
 uploads. Keep that surface available until `bovine-accelerator-desktop` owns the
 replacement path and the consumer migration satisfies
-[contract 043](../contracts/043-feature-placement-and-surface-migration-contract.md).
+[contract 043](../knowledge/contracts/043-feature-placement-and-surface-migration-contract.md).
 Extraction remains a placement direction, not current removal authority.
 
 The retained `storage::put` surface accepts an optional boolean `create_only`.
@@ -259,9 +259,9 @@ if !artifacts["ok"] { throw("artifact validation failed"); }
 ```
 
 For fuller task-shape guidance, use
-[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md),
-[`073-state-stack-guide.md`](./073-state-stack-guide.md), and
-[`074-deployment-guide.md`](./074-deployment-guide.md).
+[`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md),
+[`073-state-stack-guide.md`](073-state-stack-guide.md), and
+[`074-deployment-guide.md`](074-deployment-guide.md).
 
 ## Runtime and Execution Surface
 

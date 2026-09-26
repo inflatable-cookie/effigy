@@ -290,5 +290,5 @@ effigy deploy status production
 ## JSON Output
 
 All deploy commands support `--json` for machine-readable reports. See
-[`017-json-output-contracts.md`](./017-json-output-contracts.md) for schema
+[`017-json-output-contracts.md`](017-json-output-contracts.md) for schema
 details.

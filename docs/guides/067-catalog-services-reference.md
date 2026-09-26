@@ -9,7 +9,7 @@ one is a small pinned compose fragment with a narrow parameter surface and
 explicit defaults.
 
 If you want to author or change a catalog service, use
-[`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md).
+[`071-catalog-service-authoring.md`](071-catalog-service-authoring.md).
 
 ## How To Use A Catalog Service
 
@@ -44,7 +44,7 @@ effigy bundle sync
 
 Catalog-driven services land in generated compose under
 `.effigy/runtime/compose/`; see
-[`063-container-system-guide.md`](./063-container-system-guide.md) for the
+[`063-container-system-guide.md`](063-container-system-guide.md) for the
 runtime layout.
 
 ## Catalog Layers
@@ -97,7 +97,7 @@ effigy = ">=0.12, <0.13"
 
 Fragment files (`service.toml`, `compose.fragment.yml`, `Dockerfile`,
 `configs/`, `variants/`) follow
-[`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
+[`071-catalog-service-authoring.md`](071-catalog-service-authoring.md)
 unchanged. A pack cannot widen the fragment schema.
 
 ### Acquisition rules
@@ -536,16 +536,16 @@ the environment declares `[containers.<name>.dns]`:
   `minio` (`9000`, `9001`), `elasticsearch` (`9200`), `phpmyadmin` (`80`),
   `nginx` (`80`), `workspace-rust-bun` (via `host_ports`).
 
-See [`063-container-system-guide.md`](./063-container-system-guide.md) for
+See [`063-container-system-guide.md`](063-container-system-guide.md) for
 the loopback IP pool, alias hostname behavior, and resolver details.
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
+- [`065-external-bundle-adoption.md`](065-external-bundle-adoption.md)
 
 ## Expected Outcome
 
@@ -565,4 +565,4 @@ parameters in this reference, then narrow only the parameters that matter.
 If the repo needs a service shape not listed here, either extract the
 closest fragment with `effigy service extract <name>` or declare the service
 directly in a user-owned `compose_file` as documented in
-[`063-container-system-guide.md`](./063-container-system-guide.md).
+[`063-container-system-guide.md`](063-container-system-guide.md).

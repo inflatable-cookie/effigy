@@ -70,19 +70,14 @@ fn builtin_config_parser_contracts_are_stable() {
 
     let parsed = parse_config_contract_request(
         &task,
-        &string_args(&[
-            "--inspect",
-            "--path",
-            "docs_policy.indexes.vision",
-            "--json",
-        ]),
+        &string_args(&["--inspect", "--path", "docs_policy.indexes.topic", "--json"]),
     )
     .expect("config parse");
     assert_eq!(
         parsed,
         ConfigParseContract {
             inspect: true,
-            inspect_path: Some("docs_policy.indexes.vision".to_owned()),
+            inspect_path: Some("docs_policy.indexes.topic".to_owned()),
             schema: false,
             minimal: false,
             output_json: true,
