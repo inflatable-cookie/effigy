@@ -81,8 +81,6 @@ For narrative workflow guidance instead of lookup, start with:
   repo state stack: use `effigy state plan`.
 - Need dependencies to resolve from a local Cargo or Bun checkout through
   machine-local links, or through a committed Bun pin: use `effigy deps`.
-- Need to inventory execution friction in one project or sibling projects: use
-  `effigy papercuts`.
 - Need to run tasks shipped by an installed skill against the current or an
   explicit consumer repo: use `effigy skill tasks` then `effigy skill run`.
 - Need bounded, current, authoritative documentation evidence with exact
@@ -99,7 +97,6 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | --- | --- |
 | `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy drafts`, `effigy draft`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
 | `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
-| `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts`, `effigy papercuts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
 | `effigy help extend` | `effigy skill`, `effigy rhai surface` |
 | `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
@@ -132,7 +129,6 @@ through the help route.
 | `effigy draft` | Run one explicitly selected draft through ordinary catalog routing, request, and execution; never falls through from published selectors | `<SELECTOR>`, `--repo`, `--json`, `-- <ARGS>` | `effigy.task.run.v1` with additive `surface` / `surface_identity` for drafts | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
 | `effigy skill` | List or execute one explicitly selected, isolated skill task catalog while a separate consumer repo owns runtime effects | `tasks`, `run`, `--path`, `--repo`, `--json`, `-- <ARGS>` | `effigy.skill.tasks.v1`, `effigy.skill.run.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/042-external-skill-task-runner-contract.md`](../knowledge/contracts/042-external-skill-task-runner-contract.md) |
 | `effigy deps` | Inspect dependency state, manage machine-local Cargo and Bun links, and author committed Bun pins | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `pin bun <PATH> [--dry-run]`; `unpin bun <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1`, `effigy.deps.pin.v1` | [`077-local-dependency-linking.md`](077-local-dependency-linking.md) |
-| `effigy papercuts` | Discover root papercut queues in one project or immediate sibling projects; safely add one project entry | `--scope`, `--all`, `add`, `--friction`, `--impact`, `--fix`, `--surface`, `--json` | `effigy.papercuts.v1`, `effigy.papercuts.add.v1` | [`078-papercuts-discovery-and-capture.md`](078-papercuts-discovery-and-capture.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog, extract bundled fragments into repo-owned overrides, and manage installed catalog packs | `list`, `extract`, `pack status`, `pack install <oci://...@sha256:...>`, `pack install --path <DIR>`, `pack update`, `pack rollback`, `pack reset`, `--repo`, `--dir`, `--path`, `--json` | `effigy.service.list.v1`, `effigy.service.extract.v1`, `effigy.service.pack.status.v1`, `effigy.service.pack.install.v1`, `effigy.service.pack.update.v1`, `effigy.service.pack.rollback.v1`, `effigy.service.pack.reset.v1` | [`067-catalog-services-reference.md`](067-catalog-services-reference.md), `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container; primary-service commands use its declared `workspace_user` and `workspace_home`, while non-console callers run without a TTY | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
@@ -198,8 +194,6 @@ effigy skill tasks --path <SKILL_DIR|EFFIGY_TOML> [--json]
 effigy skill run [--path <SKILL_DIR|EFFIGY_TOML>] <SELECTOR> [--repo <CONSUMER>] [--json] [--stdio passthrough] [-- <ARGS>]
 effigy deps [--repo <PATH>] [--json]
 effigy deps status [cargo|bun] [--repo <PATH>] [--json]
-effigy papercuts [--all] [--scope <PATH>] [--json]
-effigy papercuts add <TITLE> --friction <TEXT> --impact <TEXT> --fix <TEXT> --surface <TEXT> [--scope <PATH>] [--json]
 effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]
 effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]
 effigy doctor --deep [--catalog <ALIAS> | --all-catalogs] [--refresh]

@@ -547,7 +547,6 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
             "Created docs/plan.md",
             "Created docs/triage/README.md",
             "Created docs/knowledge/contracts/release.md",
-            "Created .paseo/queue.json",
             "Fill in AGENTS.md",
             "docs/knowledge/vision.md",
         ],
@@ -557,10 +556,6 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
     assert_path_exists(
         &root.join("docs/knowledge/vision.md"),
         "northstar first vision document (nested dirs must be created)",
-    );
-    assert_path_exists(
-        &root.join(".paseo/queue.json"),
-        "northstar next-task verb allowlist (nested dirs must be created)",
     );
     assert_path_exists(
         &root.join("docs/triage/README.md"),
@@ -636,7 +631,6 @@ fn run_manifest_task_builtin_init_northstar_dry_run_prints_fenced_sections_witho
             "=== effigy.toml ===",
             "=== AGENTS.md ===",
             "=== docs/knowledge/vision.md ===",
-            "=== .paseo/queue.json ===",
         ],
     );
     assert_path_missing(
@@ -664,7 +658,6 @@ fn run_manifest_task_builtin_init_northstar_json_reports_files_array_and_guidanc
             "\"files\":",
             "\"target\": \"effigy.toml\"",
             "\"target\": \"docs/knowledge/vision.md\"",
-            "\"target\": \".paseo/queue.json\"",
             "\"guidance\":",
             "docs/knowledge/vision.md",
         ],

@@ -64,7 +64,7 @@ Primary ownership is fixed as follows:
 | --- | --- |
 | `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
-| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
+| `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
@@ -81,7 +81,7 @@ help topic into an executable namespace or change flat published-task routing.
 
 ## Repository-Intelligence Contract
 
-Graph, scan, docs, contracts, and papercuts remain provider-neutral core
+Graph, scan, docs, and contracts remain provider-neutral core
 capabilities.
 
 The help group:

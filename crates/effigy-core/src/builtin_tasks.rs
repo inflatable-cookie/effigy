@@ -27,10 +27,6 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
         "deps",
         "Inspect dependency state, manage machine-local links, and author committed Bun pins",
     ),
-    (
-        "papercuts",
-        "Discover project papercut queues for humans and agents",
-    ),
     ("help", "Show general help (same as --help)"),
     (
         "doctor",

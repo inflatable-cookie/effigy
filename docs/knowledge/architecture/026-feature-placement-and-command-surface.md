@@ -60,7 +60,7 @@ The exact primary help taxonomy is:
 | --- | --- |
 | work | `<task>`, `<catalog>/<task>`, `tasks`, `draft`, `drafts`, `test`, `watch`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
-| `repo` | `graph`, `scan`, `docs`, `contracts`, `papercuts` |
+| `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
@@ -72,7 +72,7 @@ Detailed help may cross-link borderline capabilities such as `bootstrap`,
 
 ## Repository Intelligence
 
-Graph, scan, docs, contracts, and papercuts remain Effigy core. They provide
+Graph, scan, docs, and contracts remain Effigy core. They provide
 provider-neutral, deterministic repository navigation and policy evidence for
 operators, agents, and CI.
 
@@ -248,7 +248,7 @@ follows proven replacement.
 | Artifact, state, deploy, release transactions | Core provider-neutral transaction façades |
 | Provider scripts, templates, and app hooks | Provider or consumer owned |
 | Effigy self-distribution recipes | Repository or installed extension |
-| Graph, scan, docs, contracts, papercuts | Core repository intelligence |
+| Graph, scan, docs, contracts | Core repository intelligence |
 | Rhai execution boundary and typed Effigy routing | Core runtime contract |
 | Standalone/provider-specific Rhai utilities | Optional runtime/provider candidates |
 | External skill source code | Installed extension source behind core isolation |

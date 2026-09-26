@@ -34,7 +34,7 @@ complexity.
 
 - **Deterministic spine:** catalog membership, task routing, tests, JSON
   envelopes, and release gates remain inspectable.
-- **Agent operations:** graph, docs context, scan, doctor, and papercuts should
+- **Agent operations:** graph, docs context, scan, and doctor should
   reduce reconstruction work without making generated summaries authoritative.
 - **Portfolio proof:** bootstrap, bundles, dependency links, and consumer
   guidance need evidence from real sibling repositories, not fixtures alone.

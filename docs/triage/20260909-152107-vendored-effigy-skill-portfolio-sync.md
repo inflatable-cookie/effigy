@@ -6,12 +6,12 @@ Owner: Agent adoption and skill distribution (reassigned 2026-09-05 docs
   cleanup; orchestrator does not own triage)
 Source: retired roadmap backlog
   `docs/plans/backlog/vendored-effigy-skill-portfolio-status-and-sync.md`
-  (2026-08-31, from Northstar papercuts wave 23 and the open Effigy
-  `PAPERCUTS.md` entry); preserved here on backlog retirement without change
+  (2026-08-31, from Northstar papercuts wave 23 and the Effigy papercut
+  now imported into Queue); preserved here on backlog retirement without change
   of meaning
 Depends on: completed `g08.037` external skill task runner
-Papercuts: [`PAPERCUTS.md`](../../PAPERCUTS.md) (open entry "Vendored Effigy
-  skills need portfolio-level status and sync", 2026-08-30)
+Papercuts: Queue entry "Vendored Effigy skills need portfolio-level status and
+  sync" (2026-08-30)
 
 ## Purpose
 
@@ -83,7 +83,7 @@ generation, and a ready top-level Northstar task.
 
 ## Next move
 
-Keep the matching `PAPERCUTS.md` entry open until this candidate is promoted
+Keep the matching Queue papercut open until this candidate is promoted
 or deliberately declined. Next check: agent-adoption evidence that portfolio
 drift blocks consumer work, or the next operator-led strategic runway
 checkpoint, whichever comes first. Do not create a worker or ready task from

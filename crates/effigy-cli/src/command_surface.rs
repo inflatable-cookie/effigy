@@ -116,10 +116,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("deps"),
     },
     CommandDescriptor {
-        topic: HelpTopic::Papercuts,
-        command_name: Some("papercuts"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Secrets,
         command_name: Some("secrets"),
     },
@@ -401,13 +397,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         deferred_builtin: Some("contracts"),
         help_argument: Some("contracts"),
     },
-    GeneralHelpEntry {
-        group: HelpGroup::Repo,
-        command: "effigy papercuts",
-        description: "Discover project papercut queues for humans and agents",
-        deferred_builtin: None,
-        help_argument: Some("papercuts"),
-    },
     // ---- deliver ------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
@@ -556,7 +545,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("graph", HelpTopic::Graph),
     ("help", HelpTopic::General),
     ("init", HelpTopic::Init),
-    ("papercuts", HelpTopic::Papercuts),
     ("release", HelpTopic::Release),
     ("rhai", HelpTopic::Rhai),
     ("secrets", HelpTopic::Secrets),

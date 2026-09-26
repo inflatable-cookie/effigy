@@ -1,5 +1,5 @@
 [docs_policy.graph]
-roots = ["README.md", "AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs"]
+roots = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs"]
 
 # Effigy's knowledge and architecture documents may carry per-section
 # `Status:` and `Owner:` lines as well as the document header line, so both
@@ -67,7 +67,7 @@ authority = 10
 default-currentness = "historical"
 
 [docs_policy.graph.kinds.front-door]
-include = ["README.md", "AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs/README.md"]
+include = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs/README.md"]
 authority = 40
 default-currentness = "current"
 

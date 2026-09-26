@@ -12,6 +12,12 @@ During v0.x, MINOR bumps may include breaking changes.
   without a prompt. `effigy secrets lock` revokes both local unlock files.
 
 ### Breaking
+- Lean Northstar repositories no longer carry a Queue manifest. `effigy init
+  northstar` omits it; Queue closeout is the default, and overrides live in
+  Queue project settings (`project.set`).
+- Removed the `effigy papercuts` command and JSON schemas, `effigy-papercuts`
+  crate, Northstar starter papercut file, contract 036, and guide 078. Queue's
+  papercuts table owns capture and inventory after the portfolio import.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed

@@ -4,7 +4,7 @@ Status: open — Chatterbox recommendation, awaiting operator decision
 Created: 2026-09-06
 Owner: chatterbox
 Source: Swallowtail Chatterbox request (2026-09-06); Swallowtail
-`PAPERCUTS.md` "Effigy cannot skip release gates from hosted exact-SHA
+imported Queue papercut "Effigy cannot skip release gates from hosted exact-SHA
 evidence — 2026-09-06" and Swallowtail contract 036 "Hosted Gate Delegation"
 Contracts: [`039`](../knowledge/contracts/039-pre-release-ci-proof-contract.md)
 Guide: [`051`](../guides/051-release-orchestration.md)

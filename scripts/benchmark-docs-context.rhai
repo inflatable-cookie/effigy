@@ -58,7 +58,7 @@
 //   892691f31  fifth freeze. `generic-no-match` added, and the `effigy-no-match`
 //              literal confined to this file. That case asserts an empty report
 //              against this repository's own corpus, whose profile roots include
-//              docs/, README.md, AGENTS.md, CHANGELOG.md, and PAPERCUTS.md, so
+//              docs/, README.md, AGENTS.md, and CHANGELOG.md, so
 //              documenting its query inside any of them gives the terms a
 //              non-zero document frequency and turns the case red. It broke
 //              exactly that way twice while the card `1090` evidence log was

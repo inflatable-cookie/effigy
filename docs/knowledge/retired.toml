@@ -27,3 +27,23 @@ terms = ["vision artifact status register", "vision decision record index"]
 paths = ["docs/vision/"]
 config_keys = ["docs_policy.indexes.vision"]
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-queue-manifest"
+retired = "2026-09-26"
+replacement = "Queue closeout is the no-manifest default; project.set owns repository-specific overrides."
+owner = "docs/guides/056-northstar-effigy-consumer-repo-contract.md"
+terms = ["paseo.queue.control.v5"]
+paths = [".paseo/queue.json", "crates/effigy-catalog/starters/northstar/.paseo/"]
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-papercuts-command"
+retired = "2026-09-26"
+replacement = "Queue's papercuts table owns capture and inventory."
+owner = "docs/knowledge/vision.md"
+terms = ["effigy papercuts", "PAPERCUTS.md", "effigy-papercuts"]
+paths = ["docs/knowledge/contracts/036-papercuts-discovery-contract.md", "docs/guides/078-papercuts-discovery-and-capture.md", "crates/effigy-papercuts/"]
+config_keys = ["effigy.papercuts.v1", "effigy.papercuts.add.v1"]
+allow = ["CHANGELOG.md"]

@@ -9,7 +9,8 @@ This guide's path stays stable for consumers. A new repository can start with `e
 - `docs/knowledge/` owns current vision, architecture, contracts, release procedure, retired concepts, and open questions.
 - `docs/plan.md` holds prioritized intent; `docs/triage/` holds unresolved leads.
 - `docs/guides/` remains product documentation at stable consumer paths.
-- `.paseo/queue.json` uses schema `paseo.queue.control.v5`, `closeout: "queue"`, and `hooks: []` after Queue supports the cut.
+- Queue closeout is the default. New lean repositories carry no Queue files.
+  Repository-specific overrides belong in Queue project settings (`project.set`).
 
 Queue owns briefs, task status, review, closeout, and outcomes. A repository's committed `[docs_policy.graph]` profile is the only authority for `effigy docs context`; neither the starter nor an installed skill is read at query time.
 

@@ -3424,64 +3424,6 @@ new passphrase.
 secret values in JSON or text output. Export metadata adds `action = "export"`,
 `format = "env"`, `output`, `keys_exported`, `changed`, and a plaintext warning.
 
-### Papercuts Discovery (`effigy.papercuts.v1`)
-
-```json
-{
-  "schema": "effigy.papercuts.v1",
-  "schema_version": 1,
-  "scope": "/workspace/projects",
-  "mode": "collection",
-  "summary": {
-    "projects_scanned": 2,
-    "files_found": 2,
-    "open": 1,
-    "closed": 0,
-    "diagnostics": 0
-  },
-  "entries": [
-    {
-      "project": "app",
-      "project_root": "/workspace/projects/app",
-      "source_path": "/workspace/projects/app/PAPERCUTS.md",
-      "source_line": 8,
-      "status": "open",
-      "title": "Graph output is noisy",
-      "date": "2026-08-09",
-      "friction": "stale output floods agent context",
-      "impact": "orientation repeats the refresh step",
-      "possible_fix": "refresh once before returning query output",
-      "surface": "Effigy graph",
-      "fingerprint": "6f2e..."
-    }
-  ],
-  "diagnostics": []
-}
-```
-
-### Papercuts Capture (`effigy.papercuts.add.v1`)
-
-```json
-{
-  "schema": "effigy.papercuts.add.v1",
-  "schema_version": 1,
-  "entry": {
-    "project": "app",
-    "project_root": "/workspace/projects/app",
-    "source_path": "/workspace/projects/app/PAPERCUTS.md",
-    "source_line": 8,
-    "status": "open",
-    "title": "Graph output is noisy",
-    "date": "2026-08-09",
-    "friction": "stale output floods agent context",
-    "impact": "orientation repeats the refresh step",
-    "possible_fix": "refresh once before returning query output",
-    "surface": "Effigy graph",
-    "fingerprint": "6f2e..."
-  }
-}
-```
-
 ### External Skill Task Inventory (`effigy.skill.tasks.v1`)
 
 ```json
@@ -3989,7 +3931,6 @@ After this guide, you should be able to:
 - [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
 - [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md)
-- [`078-papercuts-discovery-and-capture.md`](078-papercuts-discovery-and-capture.md)
 
 ## Next Step
 
