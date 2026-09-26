@@ -71,6 +71,13 @@ Use this for the compose shape of the service itself:
 Keep it narrow. If the template starts carrying policy for unrelated runtime
 behavior, that policy probably belongs in `service.toml` or Rust.
 
+Shell variables in `healthcheck.test` and other Compose values should use
+`$$` so Compose interpolation leaves a literal `$` for the container
+shell. Write `$$code`, not `$code`. Docker Compose and `nerdctl compose`
+otherwise substitute an empty string and warn that the variable is unset.
+Assemble also escapes remaining `$` in generated Compose values, so an
+unescaped `$code` in a shipped fragment still reaches the container shell.
+
 ### `Dockerfile`
 
 Only add a `Dockerfile` when the service truly needs a custom image.

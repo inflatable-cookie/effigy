@@ -43,6 +43,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Generated Nginx health checks keep the wget exit-code shell variable
+  after Compose interpolation. A site whose root returns 404 can become
+  healthy; transport failures stay unhealthy.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ## [0.13.1] - 2026-09-25

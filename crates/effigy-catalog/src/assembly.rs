@@ -404,11 +404,11 @@ impl ComposeAssembler {
             );
         }
 
-        serde_yaml::to_string(&YamlValue::Mapping(doc)).map_err(|e| {
-            CatalogError::TemplateRenderError {
-                name: "<assembly>".to_string(),
-                reason: format!("failed to serialize final compose document: {e}"),
-            }
+        let mut root = YamlValue::Mapping(doc);
+        escape_compose_interpolation_in_values(&mut root);
+        serde_yaml::to_string(&root).map_err(|e| CatalogError::TemplateRenderError {
+            name: "<assembly>".to_string(),
+            reason: format!("failed to serialize final compose document: {e}"),
         })
     }
 
@@ -562,6 +562,51 @@ impl ComposeAssembler {
             );
         }
     }
+}
+
+/// Escape `$` in generated Compose YAML values so Docker Compose and
+/// `nerdctl compose` leave a literal `$` for the container shell.
+///
+/// `$code` becomes `$$code`. Already-escaped `$$` is left alone.
+fn escape_compose_interpolation_in_values(value: &mut YamlValue) {
+    match value {
+        YamlValue::String(text) => *text = escape_compose_dollar_literals(text),
+        YamlValue::Sequence(items) => {
+            for item in items {
+                escape_compose_interpolation_in_values(item);
+            }
+        }
+        YamlValue::Mapping(map) => {
+            for (_, nested) in map {
+                escape_compose_interpolation_in_values(nested);
+            }
+        }
+        YamlValue::Tagged(tagged) => {
+            escape_compose_interpolation_in_values(&mut tagged.value);
+        }
+        YamlValue::Null | YamlValue::Bool(_) | YamlValue::Number(_) => {}
+    }
+}
+
+fn escape_compose_dollar_literals(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' {
+            out.push('$');
+            out.push('$');
+            if i + 1 < chars.len() && chars[i + 1] == '$' {
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn discovered_volume_persist(mount: &str) -> bool {

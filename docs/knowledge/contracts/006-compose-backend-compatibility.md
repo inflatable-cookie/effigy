@@ -57,11 +57,13 @@ does not provide them directly:
 - sibling-service bring-up after a partial or failed runtime start
 - primary-service exec readiness after recreate or restart churn
 - container-local TCP alias visibility inside Effigy-owned execution targets
+- generated Compose values that need a literal `$` for the container shell
+  (`$code` written as `$$code` so Compose interpolation does not blank it)
 
 These are legitimate product behaviors as long as:
 
 - the repair is derived from the same effective model as the non-repaired path
-- the repair runs through shared runtime-prep ownership
+- runtime repairs run through shared runtime-prep ownership
 - the repaired behavior is explicitly documented and tested
 
 ### Unsupported
@@ -162,6 +164,27 @@ Target compatibility case:
 
 - `runtime_prep_reconciles_container_local_tcp_aliases`
 
+### Generated Compose literal dollars
+
+Expected product guarantee:
+
+- generated Compose values keep container-shell `$` after Compose interpolation
+  so health commands such as the Nginx wget `0`/`8` check still see `$code`
+
+Backend status:
+
+- Docker Compose and `nerdctl compose` interpolate `$VAR` in YAML values,
+  warn when the variable is unset, and substitute an empty string
+
+Effigy ownership:
+
+- compose assembly escapes `$` in generated values (`$code` → `$$code`,
+  already-escaped `$$` left alone) before writing the Compose file
+
+Target compatibility case:
+
+- `nginx_healthcheck_survives_compose_interpolation_and_treats_http_responses_as_ready`
+
 ## Validation direction
 
 Compatibility coverage should prefer small targeted tests over one broad smoke
@@ -191,3 +214,4 @@ Update this contract when Effigy changes:
 - which capability gaps are repaired by shared runtime prep
 - the alias guarantee scope for Effigy-owned execution targets
 - the expected compatibility cases used to prove backend-sensitive behavior
+- how generated Compose values escape `$` for backend interpolation

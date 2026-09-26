@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
 
@@ -161,7 +163,7 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
 }
 
 #[test]
-fn nginx_healthcheck_treats_http_response_as_ready_even_for_404_routes() {
+fn nginx_healthcheck_survives_compose_interpolation_and_treats_http_responses_as_ready() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -180,11 +182,167 @@ fn nginx_healthcheck_treats_http_response_as_ready_even_for_404_routes() {
     let doc = validate_compose_structure(&result.compose_yaml);
     let web = validate_service(&doc, "web");
     let health = web.get("healthcheck").expect("healthcheck");
-    let test = format!("{:?}", health.get("test").expect("healthcheck test"));
+    let test = health.get("test").expect("healthcheck test");
+    let command = nginx_healthcheck_command(test);
+
     assert!(
-        test.contains("wget -q -O /dev/null http://127.0.0.1:80/") && test.contains("eq 8"),
-        "nginx healthcheck should treat any HTTP response as ready, got: {test}"
+        command.contains("wget -q -O /dev/null http://127.0.0.1:80/") && command.contains("eq 8"),
+        "nginx healthcheck should treat any HTTP response as ready, got: {command}"
     );
+    assert!(
+        command.contains("$$code"),
+        "rendered health command must use $$ so Compose leaves $code for the shell, got: {command}"
+    );
+    assert!(
+        result.compose_yaml.contains("$$code"),
+        "serialized compose must retain $$code for nerdctl/Docker Compose interpolation, got:\n{}",
+        result.compose_yaml
+    );
+
+    let (interpolated_yaml, yaml_warnings) = compose_interpolate(&result.compose_yaml);
+    assert!(
+        !yaml_warnings.iter().any(|name| name == "code"),
+        "Compose interpolation must not substitute `code`; warnings: {yaml_warnings:?}\n{interpolated_yaml}"
+    );
+
+    let (interpolated, warnings) = compose_interpolate(command);
+    assert!(
+        warnings.is_empty(),
+        "health command should not trigger Compose substitution warnings, got {warnings:?} from {command}"
+    );
+    assert!(
+        interpolated.contains("[ \"$code\" -eq 0 ]")
+            && interpolated.contains("[ \"$code\" -eq 8 ]"),
+        "after Compose interpolation the shell must still see $code, got: {interpolated}"
+    );
+    assert!(
+        !interpolated.contains("[ \"\" -eq"),
+        "Compose must not blank the wget exit-code variable, got: {interpolated}"
+    );
+
+    assert_eq!(
+        nginx_health_status_for_wget_exit(&interpolated, 0),
+        0,
+        "HTTP success (wget 0) should be healthy"
+    );
+    assert_eq!(
+        nginx_health_status_for_wget_exit(&interpolated, 8),
+        0,
+        "HTTP error such as 404 (wget 8) should be healthy"
+    );
+    assert_ne!(
+        nginx_health_status_for_wget_exit(&interpolated, 1),
+        0,
+        "generic wget failure should be unhealthy"
+    );
+    assert_ne!(
+        nginx_health_status_for_wget_exit(&interpolated, 4),
+        0,
+        "network failure should be unhealthy"
+    );
+}
+
+fn nginx_healthcheck_command(test: &serde_yaml::Value) -> &str {
+    let seq = test.as_sequence().unwrap_or_else(|| {
+        panic!("healthcheck test should be a CMD-SHELL sequence, got: {test:?}")
+    });
+    assert_eq!(
+        seq.first().and_then(serde_yaml::Value::as_str),
+        Some("CMD-SHELL"),
+        "healthcheck test should start with CMD-SHELL, got: {test:?}"
+    );
+    seq.get(1)
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or_else(|| panic!("healthcheck test missing command string, got: {test:?}"))
+}
+
+/// Compose-spec interpolation for `$VAR`, `${VAR}`, and `$$` → `$`.
+fn compose_interpolate(input: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::new();
+    let mut warnings = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '$' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        if i + 1 < chars.len() && chars[i + 1] == '$' {
+            out.push('$');
+            i += 2;
+            continue;
+        }
+        if i + 1 < chars.len() && chars[i + 1] == '{' {
+            let start = i + 2;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '}' {
+                end += 1;
+            }
+            if end < chars.len() && chars[end] == '}' {
+                let name: String = chars[start..end].iter().collect();
+                if compose_ident(&name) {
+                    warnings.push(name);
+                } else {
+                    out.push_str(&format!("${{{name}}}"));
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        if i + 1 < chars.len() && compose_ident_start(chars[i + 1]) {
+            let start = i + 1;
+            let mut end = start + 1;
+            while end < chars.len() && compose_ident_continue(chars[end]) {
+                end += 1;
+            }
+            let name: String = chars[start..end].iter().collect();
+            warnings.push(name);
+            i = end;
+            continue;
+        }
+        out.push('$');
+        i += 1;
+    }
+    (out, warnings)
+}
+
+fn compose_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if compose_ident_start(first) => chars.all(compose_ident_continue),
+        _ => false,
+    }
+}
+
+fn compose_ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn compose_ident_continue(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn nginx_health_status_for_wget_exit(command: &str, wget_exit: i32) -> i32 {
+    let dir = tempfile::tempdir().unwrap();
+    let wget = dir.path().join("wget");
+    std::fs::write(&wget, format!("#!/bin/sh\nexit {wget_exit}\n")).unwrap();
+    let mut perms = std::fs::metadata(&wget).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wget, perms).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+    );
+    Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env("PATH", path)
+        .status()
+        .unwrap_or_else(|error| panic!("failed to run health command `{command}`: {error}"))
+        .code()
+        .unwrap_or(255)
 }
 
 #[test]
