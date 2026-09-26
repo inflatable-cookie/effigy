@@ -237,6 +237,7 @@ fn on_task_exit_labels() {
 
 fn test_policy(compose_source: EffectiveComposeSource) -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
+        repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: ManifestContainerDriver::Colima,
         startup: ManifestContainerStartup::Detached,

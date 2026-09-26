@@ -1067,6 +1067,7 @@ version = "0.13.1"
 dependencies = [
  "chrono",
  "effigy-core",
+ "fs2",
  "hickory-proto",
  "hickory-server",
  "http-body-util",

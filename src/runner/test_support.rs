@@ -13,6 +13,7 @@ pub(in crate::runner) fn effective_container_policy(
 ) -> EffectiveContainerPolicy {
     let compose_file = compose_file.into();
     EffectiveContainerPolicy {
+        repo_root: std::path::PathBuf::from("/tmp"),
         name: name.to_owned(),
         driver: ManifestContainerDriver::Colima,
         startup: ManifestContainerStartup::Detached,

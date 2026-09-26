@@ -11,6 +11,7 @@ fn test_route(domain: &str, target: &str) -> Route {
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
+        scope: None,
         registered: Utc::now(),
     }
 }
@@ -222,6 +223,7 @@ fn route_serialization_format() {
         tcp_target: None,
         source: RouteSource::Container,
         project: "/tmp/proj".to_string(),
+        scope: None,
         tls: false,
         registered: DateTime::parse_from_rfc3339("2026-04-16T10:00:00Z")
             .unwrap()

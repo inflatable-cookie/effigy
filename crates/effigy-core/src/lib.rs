@@ -25,3 +25,4 @@ pub mod shell;
 pub mod task_lock;
 pub mod task_selection;
 pub mod widgets;
+pub mod worktree_scope;

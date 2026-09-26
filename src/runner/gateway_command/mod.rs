@@ -350,18 +350,30 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
 
 fn run_gateway_repair(yes: bool, output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
+    let _lock = effigy_gateway::routes::RouteTableLock::acquire(&config.route_table_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let plan = gateway_repair_plan(&route_table, detect_active_gateway_projects());
     let mut removed = Vec::new();
 
     if yes && !plan.repairable_domains.is_empty() {
+        let removed_routes = plan
+            .repairable_domains
+            .iter()
+            .filter_map(|domain| route_table.lookup(domain).cloned())
+            .collect::<Vec<_>>();
         for domain in &plan.repairable_domains {
             let _ = route_table.deregister(domain);
         }
         route_table
             .save(&config.route_table_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        for route in &removed_routes {
+            if route.tls {
+                remove_gateway_tls_cert(&route.domain)?;
+            }
+        }
         removed = plan.repairable_domains.clone();
     }
 
@@ -525,6 +537,12 @@ fn classify_gateway_conflict_route(
 ) -> (bool, Option<String>) {
     if route.source != effigy_gateway::routes::RouteSource::Container {
         return (false, Some("non-container route".to_owned()));
+    }
+    if let Some(scope) = route.scope.as_deref() {
+        if effigy_core::worktree_scope::is_live(std::path::Path::new(&route.project), scope) {
+            return (false, Some("live worktree owner".to_owned()));
+        }
+        return (true, Some("retired worktree generation".to_owned()));
     }
     if route
         .tcp_target

@@ -278,6 +278,15 @@ Effigy generates runtime-owned compose output under:
 
 Treat that directory as runtime output, not repo-owned source.
 
+In a linked Git worktree, Effigy adds a stable generation suffix to generated
+Compose project names. Containers, networks and managed volumes therefore use
+different identities from the primary checkout and other worktrees. Generated
+host ports are allocated separately, even if `host.ports` declares fixed
+numbers. The primary checkout keeps its existing name and ports. Repeated
+commands in one worktree reach the same stack; a recreated worktree gets a new
+identity. To intentionally share one Compose stack, set
+`share_runtime_identity = true` under `[containers.<name>]`.
+
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
 `"127.0.0.1:<allocated-host-port>:3000"`, so dev services (dbgate,
@@ -311,6 +320,13 @@ Use this when:
 - the repo already owns its own compose file
 - the repo has taken local ownership through `effigy container <name> eject`
 - the generated catalog path is not sufficient
+
+Linked worktrees using a repo-owned Compose file still get a scoped project
+name. Effigy refuses fixed published ports, `container_name`, and named or
+external top-level volumes and networks in that file because it cannot safely
+rewrite repo-owned Compose resources. Remove those fixed resources, use
+generated Compose, or explicitly opt into a shared runtime with
+`share_runtime_identity = true`.
 
 ## Core Rules
 
@@ -637,6 +653,14 @@ Safety rules:
 TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
+
+Gateway domains remain exactly as declared. If another live worktree owns a
+domain, registration fails and names the owning checkout; set distinct domains
+in the consumer manifest before running both stacks. This also protects TLS
+certificates and TCP service aliases: stopping one worktree never removes a
+sibling's current route. A route from a retired worktree generation can be
+reclaimed on the next registration. `effigy gateway repair --yes` can clean
+stale TCP alias conflicts, but leaves live worktree routes alone.
 
 ### Route-table trust
 

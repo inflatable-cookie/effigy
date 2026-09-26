@@ -307,6 +307,9 @@ pub struct ManifestContainerConfig {
     pub compose_file: Option<String>,
     #[serde(default)]
     pub project_name: Option<String>,
+    /// Deliberately reuse one Compose identity across linked worktrees.
+    #[serde(default)]
+    pub share_runtime_identity: bool,
     #[serde(default)]
     pub primary_service: Option<String>,
     #[serde(default)]

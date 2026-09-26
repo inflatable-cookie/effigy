@@ -256,6 +256,7 @@ mod tests {
             source: RouteSource::Container,
             project: "/tmp/app".to_owned(),
             tls: false,
+            scope: None,
             registered: Utc::now(),
         });
 
@@ -280,6 +281,7 @@ mod tests {
                 source: RouteSource::Container,
                 project: "/tmp/app".to_owned(),
                 tls: false,
+                scope: None,
                 registered: Utc::now(),
             });
         }

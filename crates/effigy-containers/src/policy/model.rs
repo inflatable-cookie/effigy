@@ -20,6 +20,7 @@ pub enum EffectiveComposeSource {
 
 #[derive(Debug, Clone)]
 pub struct EffectiveContainerPolicy {
+    pub repo_root: PathBuf,
     pub name: String,
     pub driver: ManifestContainerDriver,
     pub startup: ManifestContainerStartup,

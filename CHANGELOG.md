@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Linked Git worktrees receive stable, distinct generated-Compose identities
+  and allocated host ports by default. `share_runtime_identity = true` opts
+  into a shared Compose stack.
+- Gateway route claims and teardown now check worktree generation ownership
+  under a route-table lock, including TLS and TCP aliases; live foreign domain
+  claims fail with the owning checkout path.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.

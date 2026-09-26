@@ -282,7 +282,7 @@ fn build_effective_policy(
         name,
         containers.environments.len(),
         repo_root,
-    );
+    )?;
     let (
         mut compose_files,
         compose_file_display,
@@ -359,6 +359,7 @@ fn build_effective_policy(
     let _ = containers;
 
     Ok(EffectiveContainerPolicy {
+        repo_root: repo_root.to_path_buf(),
         name: name.to_owned(),
         driver,
         startup: config.startup.unwrap_or(ManifestContainerStartup::Attached),

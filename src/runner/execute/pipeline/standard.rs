@@ -1099,6 +1099,7 @@ mod tests {
             "web",
             |_repo_root, _container_name| {
                 Ok(EffectiveContainerPolicy {
+                    repo_root: std::path::PathBuf::from("/tmp"),
                     name: "web".to_owned(),
                     driver: effigy_manifest::ManifestContainerDriver::Colima,
                     startup: effigy_manifest::ManifestContainerStartup::Detached,
@@ -1170,6 +1171,7 @@ mod tests {
     fn inline_workspace_activation_skips_host_container_lease_refresh() {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "dev__app".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,

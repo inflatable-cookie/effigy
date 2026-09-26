@@ -16,6 +16,93 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
 }
 
 #[test]
+fn linked_worktrees_generate_distinct_compose_resources_and_source_mounts() {
+    with_temp_effigy_home("linked-worktree-resources", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("linked-worktree-resources");
+        let primary = root.join("primary");
+        let mut policies = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.join(name);
+            let private = primary.join(".git/worktrees").join(name);
+            fs::create_dir_all(&checkout).unwrap();
+            fs::create_dir_all(&private).unwrap();
+            fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", private.display()),
+            )
+            .unwrap();
+            fs::write(private.join("commondir"), "../..\n").unwrap();
+            fs::write(
+                checkout.join("effigy.toml"),
+                r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "shared-dev"
+primary_service = "app"
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+host_ports = ["41001:41001"]
+"#,
+            )
+            .unwrap();
+            let policy = load_container_policy(&checkout, None).unwrap();
+            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(
+                compose.contains(&checkout.display().to_string()),
+                "{compose}"
+            );
+            assert!(policy
+                .managed_volumes
+                .iter()
+                .all(|volume| volume.name.starts_with(&policy.project_name)));
+            policies.push(policy);
+        }
+        assert_ne!(policies[0].project_name, policies[1].project_name);
+        assert_ne!(policies[0].declared_ports, policies[1].declared_ports);
+        let again = load_container_policy(&policies[0].repo_root, None).unwrap();
+        assert_eq!(again.project_name, policies[0].project_name);
+        assert_eq!(again.declared_ports, policies[0].declared_ports);
+    });
+}
+
+#[test]
+fn linked_direct_compose_with_fixed_port_fails_closed() {
+    let root = temp_repo("linked-direct-fixed-port");
+    let checkout = root.join("worker");
+    let private = root.join("primary/.git/worktrees/worker");
+    fs::create_dir_all(&checkout).unwrap();
+    fs::create_dir_all(&private).unwrap();
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", private.display()),
+    )
+    .unwrap();
+    fs::write(private.join("commondir"), "../..\n").unwrap();
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
+    )
+    .unwrap();
+    fs::write(
+        checkout.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+"#,
+    )
+    .unwrap();
+    let error = load_container_policy(&checkout, None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("services.app.ports"), "{error}");
+}
+
+#[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
         let _lock = crate::test_env_lock();

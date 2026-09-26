@@ -35,6 +35,7 @@ fn test_route(domain: &str, target: &str) -> Route {
         tcp_target: None,
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
+        scope: None,
         tls: false,
         registered: Utc::now(),
     }
@@ -49,6 +50,7 @@ fn test_route_with_dns_ip(domain: &str, target: &str, dns_ip: Ipv4Addr) -> Route
         tcp_target: None,
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
+        scope: None,
         tls: false,
         registered: Utc::now(),
     }
