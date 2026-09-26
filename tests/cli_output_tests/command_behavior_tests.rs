@@ -2883,7 +2883,10 @@ include = ["docs/knowledge/*.md", "docs/knowledge/contracts/*.md"]
 authority = 100
 "#).expect("manifest");
     for task in ["qa:docs", "qa"] {
-        let output = run_json_cli_command(&root, &[task]);
+        let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
+            .parent()
+            .expect("effigy binary directory");
+        let output = run_json_cli_command_with_path(&root, &[task], binary_dir);
         assert!(output.status.success(), "{task} should pass: {output:?}");
         assert_eq!(parse_stdout_json(&output)["ok"], true);
     }
@@ -2935,7 +2938,10 @@ fn cli_workspace_container_starter_bundle_passes_via_nested_docs_authority() {
     )
     .expect("authority release");
     fs::write(authority.join("effigy.toml"), "[tasks]\n\"qa:docs\" = [\"effigy docs check links\", \"effigy docs check paths AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/contracts/release.md\"]\nqa = [{ task = \"qa:docs\" }]\n").expect("authority manifest");
-    let output = run_json_cli_command(&root, &["qa"]);
+    let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
+        .parent()
+        .expect("effigy binary directory");
+    let output = run_json_cli_command_with_path(&root, &["qa"], binary_dir);
     assert!(
         output.status.success(),
         "workspace qa should pass: {output:?}"
