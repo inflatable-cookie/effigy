@@ -16,6 +16,7 @@ const BOOTSTRAP_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     usage: text_lines![
         "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+        "effigy bootstrap deps sync [--js-only|--rust-only] [--refresh-lock] [--json] [<path>...]",
         "effigy bootstrap children status [--json]",
         "effigy bootstrap children sync [--fetch-only] [--checkout] [--json]",
         "effigy bootstrap teardown [--yes] [--json]",
@@ -28,6 +29,7 @@ const BOOTSTRAP_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "--backend <containerd|docker>" => "Force bootstrap to use a specific container backend for this session instead of ambient detection or machine defaults; on a real TTY Effigy also prompts when both are available and uses any saved machine preference as the default choice",
         "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>" => "Stage one or more SQL dumps or explicit `oci://` artifacts into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets, and a bare target reads `./<target>.sql`",
         "--fresh" => "Append a session-scoped suffix to generated-compose project names during bootstrap so volumes and runtime state stay isolated from prior local runs",
+        "--refresh-lock" => "Explicitly regenerate or refresh the Bun text lockfile during `bootstrap deps sync`; review the resulting `bun.lock` before committing",
         "--no-prompt" => "Disable interactive bootstrap prompts for missing database seed inputs even on a real TTY; pair with --reuse-path to reuse a non-empty destination non-interactively",
         "--reuse-path" => "Reuse a non-empty bootstrap destination without interactive confirmation",
         "--start" => "Force the repo's configured bootstrap start task to run after bootstrap setup completes",
@@ -50,6 +52,7 @@ const BOOTSTRAP_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed app=oci://ghcr.io/acme/private-data:uat --start",
         "effigy bootstrap git@github.com:acowtancy/market.git --db-seed legacy_mysql --start",
         "effigy bootstrap git@github.com:Cumberland-BS/cbs.git --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql --start",
+        "effigy bootstrap deps sync --refresh-lock packages/ui",
         "effigy bootstrap git@github.com:acowtancy/market.git --fresh --no-start",
         "effigy bootstrap children status",
         "effigy bootstrap children sync",

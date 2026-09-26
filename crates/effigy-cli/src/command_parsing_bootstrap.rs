@@ -260,12 +260,14 @@ where
     let args = args.into_iter();
     let mut output_json = false;
     let mut mode = BootstrapDepsSyncMode::Both;
+    let mut refresh_lock = false;
     let mut paths = Vec::<String>::new();
 
     for arg in args {
         match arg.as_str() {
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
             "--json" => output_json = true,
+            "--refresh-lock" => refresh_lock = true,
             "--js-only" => {
                 if mode == BootstrapDepsSyncMode::RustOnly {
                     return Err(CliParseError::UnknownArgument(arg.to_owned()));
@@ -283,12 +285,20 @@ where
         }
     }
 
+    if refresh_lock && mode == BootstrapDepsSyncMode::RustOnly {
+        return Err(CliParseError::UnknownArgument("--refresh-lock".to_owned()));
+    }
+
     if paths.is_empty() {
         paths.push(".".to_owned());
     }
 
     Ok(Command::Bootstrap(BootstrapArgs {
-        subcommand: BootstrapSubcommand::DepsSync { mode, paths },
+        subcommand: BootstrapSubcommand::DepsSync {
+            mode,
+            refresh_lock,
+            paths,
+        },
         output_json,
     }))
 }

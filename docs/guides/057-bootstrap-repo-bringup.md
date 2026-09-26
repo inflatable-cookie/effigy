@@ -282,7 +282,7 @@ emits both `start.task` (first selector, for back-compat) and
 need ad-hoc `bun install` / `cargo fetch` shell chains.
 
 ```sh
-effigy bootstrap deps sync [--js-only|--rust-only] [--json] [<path>...]
+effigy bootstrap deps sync [--js-only|--rust-only] [--refresh-lock] [--json] [<path>...]
 ```
 
 What it does:
@@ -292,6 +292,9 @@ What it does:
 - JS install command is selected from the nearest manifest's
   `[package_manager].js` (`bun`, `pnpm`, `npm`); `direct` is rejected with
   a clear error
+- Bun preparation requires `bun.lock` or `bun.lockb` at the Bun workspace
+  root and runs `bun install --frozen-lockfile`; a missing lock fails before
+  Bun runs
 - Rust install command is `cargo fetch --manifest-path Cargo.toml`
 - multiple paths run in order; each is resolved relative to the repo root
   unless absolute
@@ -300,7 +303,24 @@ Flags:
 
 - `--js-only` skip Rust paths even when `Cargo.toml` is present
 - `--rust-only` skip JS paths even when `package.json` is present
+- `--refresh-lock` is an explicit Bun-only action. It runs
+  `bun install --save-text-lockfile` to generate or refresh `bun.lock`; review
+  and commit that lock, then run `bootstrap deps sync` again for the frozen
+  install
 - `--json` emit `effigy.bootstrap.deps.v1` inside the normal command envelope
+
+When a dependency change needs a new lock, use the refresh path deliberately:
+
+```sh
+effigy bootstrap deps sync --refresh-lock packages/ui
+git diff -- packages/ui/bun.lock
+effigy bootstrap deps sync packages/ui
+```
+
+After a successful managed Bun install, Effigy removes `.DS_Store`, `._*`, and
+`__MACOSX` entries from the selected Bun workspace's `node_modules` tree. The
+same entries stay in local `file:` dependency checkouts; package files such as
+`package.json` and source files remain in the installed dependency.
 
 Inside a manifest:
 

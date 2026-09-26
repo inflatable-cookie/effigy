@@ -819,6 +819,7 @@ pub enum BootstrapSubcommand {
     },
     DepsSync {
         mode: BootstrapDepsSyncMode,
+        refresh_lock: bool,
         paths: Vec<String>,
     },
     ChildrenStatus,

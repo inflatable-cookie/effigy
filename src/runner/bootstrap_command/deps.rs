@@ -29,11 +29,20 @@ struct BootstrapDepsSkippedPath {
 pub(in crate::runner) fn run_bootstrap_deps_sync(
     repo_root: &Path,
     mode: BootstrapDepsSyncMode,
+    refresh_lock: bool,
     paths: &[String],
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let root_parent = repo_root.parent().unwrap_or(repo_root);
     let mut manifest_cache = BTreeMap::<PathBuf, Option<ManifestJsPackageManager>>::new();
+    preflight_bun_installs(
+        repo_root,
+        root_parent,
+        mode,
+        refresh_lock,
+        paths,
+        &mut manifest_cache,
+    )?;
     let mut operations = Vec::<BootstrapDepsOperation>::new();
     let mut skipped = Vec::<BootstrapDepsSkippedPath>::new();
 
@@ -67,8 +76,21 @@ pub(in crate::runner) fn run_bootstrap_deps_sync(
                     path_raw
                 ))
             })?;
-            let (program, args, command) = js_install_invocation(package_manager, path_raw)?;
+            let bun_install_root = if package_manager == ManifestJsPackageManager::Bun {
+                Some(find_bun_workspace_root(&resolved, root_parent))
+            } else {
+                None
+            };
+            let (program, args, command) = js_install_invocation(
+                package_manager,
+                path_raw,
+                refresh_lock,
+                bun_install_root.as_deref(),
+            )?;
             run_sync_command(program, &args, &resolved, &command)?;
+            if let Some(install_root) = bun_install_root {
+                remove_macos_metadata_from_node_modules(&install_root)?;
+            }
             operations.push(BootstrapDepsOperation {
                 path: path_raw.clone(),
                 absolute_path: resolved.display().to_string(),
@@ -212,15 +234,174 @@ fn js_package_manager_for_manifest(
 fn js_install_invocation(
     package_manager: ManifestJsPackageManager,
     path_raw: &str,
-) -> Result<(&'static str, [&'static str; 1], String), RunnerError> {
+    refresh_lock: bool,
+    bun_install_root: Option<&Path>,
+) -> Result<(&'static str, Vec<&'static str>, String), RunnerError> {
     match package_manager {
-        ManifestJsPackageManager::Bun => Ok(("bun", ["install"], "bun install".to_owned())),
-        ManifestJsPackageManager::Pnpm => Ok(("pnpm", ["install"], "pnpm install".to_owned())),
-        ManifestJsPackageManager::Npm => Ok(("npm", ["install"], "npm install".to_owned())),
+        ManifestJsPackageManager::Bun if refresh_lock => Ok((
+            "bun",
+            vec!["install", "--save-text-lockfile"],
+            "bun install --save-text-lockfile".to_owned(),
+        )),
+        ManifestJsPackageManager::Bun => {
+            let install_root = bun_install_root.expect("Bun install root is resolved first");
+            ensure_bun_lock_exists(path_raw, install_root)?;
+            Ok((
+                "bun",
+                vec!["install", "--frozen-lockfile"],
+                "bun install --frozen-lockfile".to_owned(),
+            ))
+        }
+        ManifestJsPackageManager::Pnpm if refresh_lock => Err(RunnerError::task_invocation(
+            format!(
+                "`bootstrap deps sync --refresh-lock {path_raw}` is only supported when `[package_manager].js = \"bun\"`"
+            ),
+        )),
+        ManifestJsPackageManager::Npm if refresh_lock => Err(RunnerError::task_invocation(
+            format!(
+                "`bootstrap deps sync --refresh-lock {path_raw}` is only supported when `[package_manager].js = \"bun\"`"
+            ),
+        )),
+        ManifestJsPackageManager::Pnpm => {
+            Ok(("pnpm", vec!["install"], "pnpm install".to_owned()))
+        }
+        ManifestJsPackageManager::Npm => Ok(("npm", vec!["install"], "npm install".to_owned())),
         ManifestJsPackageManager::Direct => Err(RunnerError::task_invocation(format!(
             "`bootstrap deps sync {path_raw}` cannot hydrate JS dependencies with `[package_manager].js = \"direct\"`",
         ))),
     }
+}
+
+fn preflight_bun_installs(
+    repo_root: &Path,
+    root_parent: &Path,
+    mode: BootstrapDepsSyncMode,
+    refresh_lock: bool,
+    paths: &[String],
+    manifest_cache: &mut BTreeMap<PathBuf, Option<ManifestJsPackageManager>>,
+) -> Result<(), RunnerError> {
+    if mode == BootstrapDepsSyncMode::RustOnly {
+        return Ok(());
+    }
+
+    let mut bun_target_found = false;
+    for path_raw in paths {
+        let Some(resolved) = resolve_bootstrap_sync_path(repo_root, root_parent, path_raw)? else {
+            continue;
+        };
+        if !resolved.join("package.json").is_file() {
+            continue;
+        }
+
+        let manifest_path = find_nearest_manifest_path(&resolved, root_parent);
+        let package_manager = js_package_manager_for_manifest(manifest_path.as_deref(), manifest_cache)?
+            .ok_or_else(|| {
+                RunnerError::task_invocation(format!(
+                    "`bootstrap deps sync {path_raw}` found package.json but no `[package_manager].js` is configured"
+                ))
+            })?;
+        if package_manager == ManifestJsPackageManager::Bun {
+            bun_target_found = true;
+            if !refresh_lock {
+                let install_root = find_bun_workspace_root(&resolved, root_parent);
+                ensure_bun_lock_exists(path_raw, &install_root)?;
+            }
+        } else if refresh_lock {
+            return Err(RunnerError::task_invocation(format!(
+                "`bootstrap deps sync --refresh-lock {path_raw}` is only supported when `[package_manager].js = \"bun\"`"
+            )));
+        }
+    }
+
+    if refresh_lock && !bun_target_found {
+        return Err(RunnerError::task_invocation(
+            "`bootstrap deps sync --refresh-lock` requires at least one target with a Bun package.json and `[package_manager].js = \"bun\"`"
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_bun_lock_exists(path_raw: &str, install_root: &Path) -> Result<(), RunnerError> {
+    let has_lock = ["bun.lock", "bun.lockb"]
+        .iter()
+        .any(|name| install_root.join(name).is_file());
+    if has_lock {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "`bootstrap deps sync {path_raw}` requires `bun.lock` or `bun.lockb` at {} for a frozen Bun install; run `effigy bootstrap deps sync --refresh-lock {path_raw}` to generate or refresh `bun.lock`, review and commit it, then rerun without `--refresh-lock`",
+        install_root.display()
+    )))
+}
+
+fn find_bun_workspace_root(project_dir: &Path, root_parent: &Path) -> PathBuf {
+    let root_parent = root_parent
+        .canonicalize()
+        .unwrap_or_else(|_| root_parent.to_path_buf());
+    for ancestor in project_dir.ancestors() {
+        if !ancestor.starts_with(&root_parent) {
+            break;
+        }
+        let manifest_path = ancestor.join("package.json");
+        let Ok(contents) = std::fs::read_to_string(manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) else {
+            continue;
+        };
+        if manifest.get("workspaces").is_some() {
+            return ancestor.to_path_buf();
+        }
+    }
+    project_dir.to_path_buf()
+}
+
+fn remove_macos_metadata_from_node_modules(install_root: &Path) -> Result<(), RunnerError> {
+    let node_modules = install_root.join("node_modules");
+    let metadata = match std::fs::symlink_metadata(&node_modules) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(RunnerError::task_invocation_failed_read(
+                &node_modules,
+                error,
+            ))
+        }
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    remove_macos_metadata_entries(&node_modules)
+}
+
+fn remove_macos_metadata_entries(directory: &Path) -> Result<(), RunnerError> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| RunnerError::task_invocation_failed_read(directory, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| RunnerError::task_invocation_failed_read(directory, error))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == ".DS_Store" || name.starts_with("._") || name == "__MACOSX" {
+            let result = if file_type.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            if let Err(error) = result {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(RunnerError::task_invocation_failed_write(&path, error));
+                }
+            }
+        } else if file_type.is_dir() {
+            remove_macos_metadata_entries(&path)?;
+        }
+    }
+    Ok(())
 }
 
 fn run_sync_command(
