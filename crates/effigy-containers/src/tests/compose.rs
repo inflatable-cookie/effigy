@@ -68,6 +68,60 @@ host_ports = ["41001:41001"]
 }
 
 #[test]
+fn linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared() {
+    with_temp_effigy_home("linked-worktree-hosts", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("linked-worktree-hosts");
+        let primary = root.join("primary");
+        fs::create_dir_all(primary.join(".git/worktrees")).unwrap();
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
+primary_service = "app"
+[containers.web.dns]
+routes = [
+  { domain = "app.test", tls = true, service = "web" },
+  { domain = "mail.app.test", tls = false, service = "mail" },
+]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+"#;
+        fs::write(primary.join("effigy.toml"), manifest).unwrap();
+        let primary_policy = load_container_policy(&primary, None).unwrap();
+        assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
+        assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
+        assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
+        let mut effective = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.join(name);
+            let private = primary.join(".git/worktrees").join(name);
+            fs::create_dir_all(&checkout).unwrap();
+            fs::create_dir_all(&private).unwrap();
+            fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", private.display()),
+            )
+            .unwrap();
+            fs::write(private.join("commondir"), "../..\n").unwrap();
+            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            let policy = load_container_policy(&checkout, None).unwrap();
+            assert_eq!(policy.dns_routes[0].declared(), "app.test");
+            assert_ne!(policy.dns_routes[0].domain, "app.test");
+            assert!(policy.dns_routes[0].domain.contains("-w"));
+            assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
+            assert!(policy.compose_files[0].is_file());
+            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(compose.contains("com.effigy.scope"), "{compose}");
+            effective.push(policy.dns_routes[0].domain.clone());
+        }
+        assert_ne!(effective[0], effective[1]);
+        assert_ne!(effective[0], "app.test");
+    });
+}
+
+#[test]
 fn linked_direct_compose_with_fixed_port_fails_closed() {
     let root = temp_repo("linked-direct-fixed-port");
     let checkout = root.join("worker");

@@ -319,6 +319,14 @@ pub fn parse_listed_volume_names(output: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn parse_listed_resource_names(output: &str) -> Result<Vec<String>, String> {
+    let trimmed = output.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return Err("resource listing returned JSON instead of formatted names".to_owned());
+    }
+    Ok(parse_listed_volume_names(output))
+}
+
 pub fn parse_inspect_volume_metadata(output: &str) -> Option<RuntimeVolumeMetadata> {
     parse_inspect_volume_metadata_list(output)
         .into_iter()
@@ -334,35 +342,60 @@ pub fn parse_inspect_volume_metadata_list(output: &str) -> Vec<RuntimeVolumeMeta
     };
     entries
         .iter()
-        .filter_map(|entry| {
-            let name = entry.get("Name")?.as_str()?.to_owned();
-            let mount_point = entry
-                .get("Mountpoint")
-                .and_then(JsonValue::as_str)
-                .map(str::to_owned);
-            let size_bytes = entry
-                .get("UsageData")
-                .and_then(|value| value.get("Size"))
-                .and_then(JsonValue::as_u64);
-            Some(RuntimeVolumeMetadata {
-                name,
-                mount_point,
-                size_bytes,
-                labels: entry
-                    .get("Labels")
-                    .and_then(JsonValue::as_object)
-                    .map(|labels| {
-                        labels
-                            .iter()
-                            .filter_map(|(key, value)| {
-                                value.as_str().map(|value| (key.clone(), value.to_owned()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            })
-        })
+        .filter_map(parse_inspect_volume_entry)
         .collect()
+}
+
+pub fn parse_inspect_volume_metadata_list_strict(
+    output: &str,
+    expected_names: &[String],
+) -> Result<Vec<RuntimeVolumeMetadata>, String> {
+    let parsed: JsonValue = serde_json::from_str(output.trim())
+        .map_err(|error| format!("volume inspect did not return JSON: {error}"))?;
+    let entries = parsed
+        .as_array()
+        .ok_or_else(|| "volume inspect did not return a JSON array".to_owned())?;
+    let mut metadata = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let parsed_entry = parse_inspect_volume_entry(entry)
+            .ok_or_else(|| format!("volume inspect entry {index} is missing a usable Name"))?;
+        metadata.push(parsed_entry);
+    }
+    for name in expected_names {
+        if !metadata.iter().any(|entry| &entry.name == name) {
+            return Err(format!("volume inspect omitted listed volume `{name}`"));
+        }
+    }
+    Ok(metadata)
+}
+
+fn parse_inspect_volume_entry(entry: &JsonValue) -> Option<RuntimeVolumeMetadata> {
+    let name = entry.get("Name")?.as_str()?.to_owned();
+    let mount_point = entry
+        .get("Mountpoint")
+        .and_then(JsonValue::as_str)
+        .map(str::to_owned);
+    let size_bytes = entry
+        .get("UsageData")
+        .and_then(|value| value.get("Size"))
+        .and_then(JsonValue::as_u64);
+    Some(RuntimeVolumeMetadata {
+        name,
+        mount_point,
+        size_bytes,
+        labels: entry
+            .get("Labels")
+            .and_then(JsonValue::as_object)
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
 }
 
 pub fn parse_volume_usage_bytes(output: &str) -> Option<u64> {

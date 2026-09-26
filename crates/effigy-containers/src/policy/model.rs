@@ -104,6 +104,8 @@ impl HostProcessSignal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveDnsRoute {
     pub domain: String,
+    /// Manifest domain before worktree host rewriting. Empty means `domain`.
+    pub declared_domain: String,
     pub tls: bool,
     pub port: Option<u16>,
     pub service: Option<String>,
@@ -112,6 +114,16 @@ pub struct EffectiveDnsRoute {
     /// container-service host-port resolution. Mutually exclusive
     /// with `service` at the manifest layer.
     pub target_host: Option<String>,
+}
+
+impl EffectiveDnsRoute {
+    pub fn declared(&self) -> &str {
+        if self.declared_domain.is_empty() {
+            &self.domain
+        } else {
+            &self.declared_domain
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

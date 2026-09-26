@@ -14,9 +14,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 12] = [
+    const ACTIONS: [&str; 14] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject",
+        "profile", "eject", "hosts", "retire",
     ];
 
     let mut args = args.into_iter();
@@ -50,6 +50,8 @@ where
         "profile" => parse_container_profile(name, args),
         "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
+        "hosts" => parse_container_hosts(name, args),
+        "retire" => parse_container_retire(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -233,6 +235,48 @@ where
     I: IntoIterator<Item = String>,
 {
     parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Eject { name })
+}
+
+fn parse_container_hosts<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Hosts { name })
+}
+
+fn parse_container_retire<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut yes = false;
+    let mut scope: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--yes" => yes = true,
+            "--scope" => {
+                scope = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--scope".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Retire { name, scope, yes },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_cache<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

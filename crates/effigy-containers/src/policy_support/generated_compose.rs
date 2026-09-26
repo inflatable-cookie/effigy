@@ -12,6 +12,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
+use crate::runtime::scope::{MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     layered_catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
     ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
@@ -23,6 +24,88 @@ use crate::{
 /// from the local machine — including through the gateway's TCP aliases and
 /// proxy, which already target `127.0.0.1` — without exposing them to the LAN.
 const DEFAULT_PUBLISH_ADDRESS: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;
+
+fn runtime_scope_token(repo_root: &Path, config: &ManifestContainerConfig) -> Option<String> {
+    if config.share_runtime_identity {
+        return None;
+    }
+    effigy_core::worktree_scope::load_or_create(repo_root)
+        .ok()
+        .flatten()
+}
+
+fn apply_runtime_scope_labels(
+    document: &mut GeneratedComposeDocument,
+    token: &str,
+    project_name: &str,
+) {
+    for service in document.services.values_mut() {
+        upsert_yaml_label(&mut service.extra, SCOPE_LABEL, token);
+        upsert_yaml_label(&mut service.extra, MANAGED_LABEL, "true");
+        upsert_yaml_label(&mut service.extra, PROJECT_LABEL, project_name);
+    }
+    if let Some(YamlValue::Mapping(volumes)) = document.extra.get_mut("volumes") {
+        for volume in volumes.values_mut() {
+            let YamlValue::Mapping(volume_map) = volume else {
+                continue;
+            };
+            upsert_mapping_label(volume_map, SCOPE_LABEL, token);
+            upsert_mapping_label(volume_map, MANAGED_LABEL, "true");
+            upsert_mapping_label(volume_map, PROJECT_LABEL, project_name);
+        }
+    }
+    let networks = document
+        .extra
+        .entry("networks".to_owned())
+        .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+    if let YamlValue::Mapping(networks) = networks {
+        let default_network = networks
+            .entry(YamlValue::String("default".to_owned()))
+            .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+        if let YamlValue::Mapping(network_map) = default_network {
+            upsert_mapping_label(network_map, SCOPE_LABEL, token);
+            upsert_mapping_label(network_map, MANAGED_LABEL, "true");
+            upsert_mapping_label(network_map, PROJECT_LABEL, project_name);
+        }
+    }
+}
+
+fn upsert_mapping_label(map: &mut serde_yaml::Mapping, key: &str, value: &str) {
+    let labels = match map.get_mut("labels") {
+        Some(YamlValue::Mapping(existing)) => existing,
+        _ => {
+            map.insert(
+                YamlValue::String("labels".to_owned()),
+                YamlValue::Mapping(serde_yaml::Mapping::new()),
+            );
+            match map.get_mut("labels") {
+                Some(YamlValue::Mapping(existing)) => existing,
+                _ => return,
+            }
+        }
+    };
+    labels.insert(
+        YamlValue::String(key.to_owned()),
+        YamlValue::String(value.to_owned()),
+    );
+}
+
+fn upsert_yaml_label(
+    extra: &mut std::collections::BTreeMap<String, YamlValue>,
+    key: &str,
+    value: &str,
+) {
+    let labels = extra
+        .entry("labels".to_owned())
+        .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+    let YamlValue::Mapping(map) = labels else {
+        return;
+    };
+    map.insert(
+        YamlValue::String(key.to_owned()),
+        YamlValue::String(value.to_owned()),
+    );
+}
 
 fn resolve_publish_address(
     container_name: &str,
@@ -319,6 +402,9 @@ pub(crate) fn resolve_compose_source(
         config,
         &mut compose_document,
     )?;
+    if let Some(token) = runtime_scope_token(repo_root, config) {
+        apply_runtime_scope_labels(&mut compose_document, &token, project_name);
+    }
     let configured_bindings = configured_host_ports(config)
         .iter()
         .map(|raw| parse_port_binding(raw))

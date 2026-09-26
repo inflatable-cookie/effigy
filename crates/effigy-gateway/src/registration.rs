@@ -178,6 +178,140 @@ pub fn deregister_project_routes(
     Ok(count)
 }
 
+/// Remove routes owned by a recorded checkout generation.
+///
+/// Uses the durable token rather than the live Git worktree directory, so
+/// cleanup can retry after the checkout is gone.
+pub fn deregister_owned_routes(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+) -> Result<Vec<Route>, GatewayError> {
+    deregister_owned_routes_with(route_table_path, project_path, scope, |_| Ok(()))
+}
+
+/// Remove owned routes and run `on_removed` before releasing the route lock.
+///
+/// TLS certificate deletion belongs here so another checkout cannot claim the
+/// domain and then lose its certificate. The callback runs before the table is
+/// saved; a callback error leaves the route in place.
+pub fn deregister_owned_routes_with<F>(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    on_removed: F,
+) -> Result<Vec<Route>, GatewayError>
+where
+    F: FnMut(&Route) -> Result<(), GatewayError>,
+{
+    deregister_owned_routes_matching(route_table_path, project_path, scope, None, on_removed)
+}
+
+/// Remove owned routes whose domains are in `domains`, then save the table.
+///
+/// `domains = None` removes every route owned by the checkout generation.
+/// `on_removed` runs while the route is still recorded; failure skips save.
+pub fn deregister_owned_routes_matching<F>(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    domains: Option<&[String]>,
+    mut on_removed: F,
+) -> Result<Vec<Route>, GatewayError>
+where
+    F: FnMut(&Route) -> Result<(), GatewayError>,
+{
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let mut table = RouteTable::load(route_table_path)?;
+    let owned = table
+        .all_routes()
+        .into_iter()
+        .filter(|route| owned_by(route, project_path, scope))
+        .filter(|route| {
+            domains
+                .map(|allowed| allowed.iter().any(|domain| domain == &route.domain))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if owned.is_empty() {
+        return Ok(owned);
+    }
+    for route in &owned {
+        on_removed(route)?;
+        let _ = table.deregister(&route.domain);
+    }
+    table.save(route_table_path)?;
+    Ok(owned)
+}
+
+/// Remove owned routes and leftover TLS certificates under the route lock.
+///
+/// `remove_cert` runs only when the domain is still owned by this generation
+/// or is unclaimed. A live foreign owner keeps its certificate and route.
+/// Owned routes are deregistered after their certificates are removed; a
+/// callback error leaves the table unchanged on disk.
+pub fn cleanup_owned_routes_and_certs<F>(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    route_domains: Option<&[String]>,
+    cert_domains: &[String],
+    mut remove_cert: F,
+) -> Result<Vec<Route>, GatewayError>
+where
+    F: FnMut(&str) -> Result<(), GatewayError>,
+{
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let mut table = RouteTable::load(route_table_path)?;
+    let mut removed = Vec::new();
+    let mut domains = cert_domains.to_vec();
+    match route_domains {
+        Some(allowed) => {
+            for domain in allowed {
+                if !domains.iter().any(|existing| existing == domain) {
+                    domains.push(domain.clone());
+                }
+            }
+        }
+        None => {
+            for route in table.all_routes() {
+                if owned_by(route, project_path, scope)
+                    && !domains.iter().any(|existing| existing == &route.domain)
+                {
+                    domains.push(route.domain.clone());
+                }
+            }
+        }
+    }
+    for domain in &domains {
+        match table.lookup(domain).cloned() {
+            Some(route) if owned_by(&route, project_path, scope) => {
+                let remove_route = route_domains
+                    .map(|allowed| allowed.iter().any(|allowed| allowed == domain))
+                    .unwrap_or(true);
+                if route.tls || cert_domains.iter().any(|pending| pending == domain) {
+                    remove_cert(domain)?;
+                }
+                if remove_route {
+                    let _ = table.deregister(domain);
+                    removed.push(route);
+                }
+            }
+            Some(_) => {}
+            None => {
+                if cert_domains.iter().any(|pending| pending == domain) {
+                    remove_cert(domain)?;
+                }
+            }
+        }
+    }
+    if !removed.is_empty() {
+        table.save(route_table_path)?;
+    }
+    Ok(removed)
+}
+
 /// Build a route registration from container and port configuration.
 ///
 /// If a port registry is available and the project has an allocation,

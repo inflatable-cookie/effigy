@@ -44,6 +44,8 @@ Start with the family that matches your job:
   `Completion`, `Completion Candidates`
 - agent-facing repo context:
   `Graph Status`, `Graph Explore`, `Graph Context`, `Graph Affected`, `Graph Watch`
+- scoped container hosts and retirement:
+  `Container Hosts`, `Container Retire`
 
 Companion references:
 
@@ -3908,6 +3910,69 @@ An `--only` handle that resolves to nothing is reported rather than ignored:
   "status": "disallowed",
   "next_step": "`--only no-such-repo` matched no directory named by `/workspace/portfolio/portfolio.toml`; run without `--only` to list the handles this portfolio can reach",
   "results": []
+}
+```
+
+### Container Hosts (`effigy.container.hosts.v1`)
+
+```json
+{
+  "schema": "effigy.container.hosts.v1",
+  "schema_version": 1,
+  "ok": true,
+  "checkout": "/worktrees/worker",
+  "scope": {
+    "kind": "worktree",
+    "token": "abcdef0123456789abcdef0123456789",
+    "host_key": "abcdef01",
+    "shared_runtime_identity": false
+  },
+  "base_domain": {
+    "declared": "app.test",
+    "effective": "app-wabcdef01.test"
+  },
+  "cookie_domain": "app-wabcdef01.test",
+  "relying_party_id": "app-wabcdef01.test",
+  "routes": [
+    {
+      "kind": "http",
+      "declared": "app.test",
+      "effective": "app-wabcdef01.test",
+      "tls": true,
+      "service": "web",
+      "origin": "https://app-wabcdef01.test"
+    },
+    {
+      "kind": "tcp",
+      "declared": "postgres.app.test",
+      "effective": "postgres.app-wabcdef01.test",
+      "tls": false,
+      "service": "db",
+      "origin": null
+    }
+  ]
+}
+```
+
+### Container Retire (`effigy.container.retire.v1`)
+
+```json
+{
+  "schema": "effigy.container.retire.v1",
+  "schema_version": 1,
+  "ok": true,
+  "idempotent": true,
+  "scope": {
+    "token": "abcdef0123456789abcdef0123456789",
+    "checkout": "/worktrees/worker",
+    "compose_kind": "generated"
+  },
+  "skip_reason": null,
+  "removed": [],
+  "retained": [],
+  "mismatch": [],
+  "remaining": [],
+  "record_removed": false
 }
 ```
 

@@ -358,6 +358,49 @@ fn parse_removed_catalog_command_and_catalogue_task_fallback_are_distinct() {
 }
 
 #[test]
+fn parse_container_hosts_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "hosts".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Hosts { name: None },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_retire_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "retire".to_owned(),
+        "--scope".to_owned(),
+        "abcdef0123456789abcdef0123456789".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Retire {
+                name: None,
+                scope: Some("abcdef0123456789abcdef0123456789".to_owned()),
+                yes: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_container_eject_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),

@@ -24,6 +24,9 @@ pub use ops::{
     ContainerStatsOperation, ContainerStatusOperation, ContainerUpOperation,
     ContainerVolumeListOperation, ContainerVolumeOperation, ContainerVolumePruneOperation,
 };
+pub use policy::hosts::{
+    build_host_map, EffectiveHostMap, EffectiveHostRoute, HostRouteKind, HostScopeKind,
+};
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
 };
@@ -38,15 +41,24 @@ pub use policy::model::{
 };
 pub use report::{
     cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
-    data_pull_production_report, data_transfer_report, down_report, eject_report, logs_report,
-    reset_report, stats_global_report, status_global_report, status_report, up_detached_report,
-    volume_list_report, volume_prune_report, AllocatedPortsSummary, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    data_pull_production_report, data_transfer_report, down_report, eject_report, hosts_report,
+    logs_report, reset_report, retire_report, stats_global_report, status_global_report,
+    status_report, up_detached_report, volume_list_report, volume_prune_report,
+    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::eject::eject_generated_compose;
+pub use runtime::retire::{
+    plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,
+};
+pub use runtime::scope::{
+    load as load_scope_record, load_for_checkout, remove as remove_scope_record,
+    upsert as upsert_scope_record, volume_has_ownership_proof, ScopeComposeKind, ScopeRecord,
+    COMPOSE_PROJECT_LABEL, MANAGED_LABEL, PERSIST_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+};
 pub use workspace::load_workspace_ownership_targets;
 
 #[cfg(test)]

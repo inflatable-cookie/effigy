@@ -239,6 +239,14 @@ fn parse_listed_volume_names_reads_first_column() {
 }
 
 #[test]
+fn parse_listed_resource_names_rejects_json_listings() {
+    let error = parse_listed_resource_names("[{ \"Name\": \"proj-db-data\" }]\n").unwrap_err();
+    assert!(error.contains("JSON"));
+    let names = parse_listed_resource_names("proj-db-data\nproj-cache-data\n").unwrap();
+    assert_eq!(names, vec!["proj-db-data", "proj-cache-data"]);
+}
+
+#[test]
 fn parse_inspect_volume_metadata_reads_mount_and_size() {
     let metadata = parse_inspect_volume_metadata(
         r#"[{
@@ -286,6 +294,40 @@ fn parse_inspect_volume_metadata_list_reads_multiple_entries() {
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].name, "proj-db-data");
     assert_eq!(entries[1].name, "proj-cache-data");
+}
+
+#[test]
+fn parse_inspect_volume_metadata_list_strict_requires_array_and_listed_names() {
+    let listed = vec!["proj-db-data".to_owned(), "proj-cache-data".to_owned()];
+    let entries = parse_inspect_volume_metadata_list_strict(
+        r#"[{
+            "Name": "proj-db-data",
+            "Mountpoint": "/var/lib/docker/volumes/proj-db-data/_data"
+        }, {
+            "Name": "proj-cache-data"
+        }]"#,
+        &listed,
+    )
+    .expect("inspect");
+    assert_eq!(entries.len(), 2);
+    let missing =
+        parse_inspect_volume_metadata_list_strict(r#"[{ "Name": "proj-db-data" }]"#, &listed)
+            .unwrap_err();
+    assert!(missing.contains("proj-cache-data"));
+    let malformed = parse_inspect_volume_metadata_list_strict("{", &listed).unwrap_err();
+    assert!(malformed.contains("JSON"));
+    let object = parse_inspect_volume_metadata_list_strict(
+        r#"{ "Name": "proj-db-data" }"#,
+        &["proj-db-data".to_owned()],
+    )
+    .unwrap_err();
+    assert!(object.contains("JSON array"));
+    let nameless = parse_inspect_volume_metadata_list_strict(
+        r#"[{ "Mountpoint": "/tmp" }]"#,
+        &["proj-db-data".to_owned()],
+    )
+    .unwrap_err();
+    assert!(nameless.contains("Name"));
 }
 
 #[test]

@@ -118,6 +118,8 @@ effigy container <NAME> data import <VOLUME> <PATH>
 effigy container <NAME> data pull-production
 effigy container <NAME> reset --keep-data
 effigy container <NAME> eject
+effigy container hosts
+effigy container retire --yes
 effigy container cache list --global
 effigy container volume list --dormant
 ```
@@ -137,6 +139,8 @@ Useful flags:
 - `--wipe-data` deletes persistent named volumes during `reset`
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
+- `hosts` prints the effective HTTP and TCP host map for this checkout
+- `retire --yes` removes only this runtime scope's owned resources; `--scope <TOKEN>` retries after the worktree directory is gone
 
 ## QA Recipe
 
@@ -286,6 +290,27 @@ numbers. The primary checkout keeps its existing name and ports. Repeated
 commands in one worktree reach the same stack; a recreated worktree gets a new
 identity. To intentionally share one Compose stack, set
 `share_runtime_identity = true` under `[containers.<name>]`.
+
+Linked worktrees also get a distinct gateway host map. Declared
+`app.test` becomes `app-w<host-key>.test`; helpers such as
+`mail.app.test` stay under that apex. The primary checkout keeps the
+declared names. `effigy container hosts --json` is the machine-readable
+map for public URLs, origins, cookie scope, WebAuthn and test selectors.
+Effigy does not rewrite application configuration. `effigy container
+retire --yes` removes that scope's owned containers, networks, mutable
+volumes, isolated routes and ports using `com.effigy.scope` or the exact
+Compose project label, and only on the runtime profile that produced each
+observation. Shared services, persistent volumes, external
+volumes, and shared-identity routes stay. Repo-owned Compose volumes stay
+unless labelled `com.effigy.persist=false`. A record under
+`~/.effigy/runtime-scopes/` survives a deleted checkout and aggregates
+every environment and runtime profile in that worktree so the same command
+can retry. Record writes are locked and atomic; corrupt JSON fails closed.
+A backend that cannot list resources, or that returns malformed inspect
+output, fails instead of reporting an empty stack. TLS certificates for
+isolated routes are removed under the route lock after an owner check;
+failure leaves the route and a pending-cert list on the record. A pending
+certificate whose domain now has a foreign owner stays.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
@@ -654,9 +679,9 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
-Gateway domains remain exactly as declared. If another live worktree owns a
-domain, registration fails and names the owning checkout; set distinct domains
-in the consumer manifest before running both stacks. This also protects TLS
+Linked worktrees register the effective host map from `effigy container
+hosts`, not the raw declared domains. If another live worktree already owns a
+name, registration fails and names the owning checkout. This also protects TLS
 certificates and TCP service aliases: stopping one worktree never removes a
 sibling's current route. A route from a retired worktree generation can be
 reclaimed on the next registration. `effigy gateway repair --yes` can clean

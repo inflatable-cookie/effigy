@@ -1291,6 +1291,176 @@ fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContai
     }
 }
 
+pub fn hosts_report(
+    checkout: &std::path::Path,
+    host_map: &crate::EffectiveHostMap,
+) -> ContainerCommandReport {
+    let kind = match host_map.kind {
+        crate::HostScopeKind::Primary => "primary",
+        crate::HostScopeKind::Worktree => "worktree",
+    };
+    let routes = host_map
+        .routes
+        .iter()
+        .map(|route| {
+            json!({
+                "kind": match route.kind {
+                    crate::HostRouteKind::Http => "http",
+                    crate::HostRouteKind::Tcp => "tcp",
+                },
+                "declared": route.declared,
+                "effective": route.effective,
+                "tls": route.tls,
+                "service": route.service,
+                "origin": route.origin,
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = json!({
+        "schema": "effigy.container.hosts.v1",
+        "schema_version": 1,
+        "ok": true,
+        "checkout": checkout.display().to_string(),
+        "scope": {
+            "kind": kind,
+            "token": host_map.token,
+            "host_key": host_map.host_key,
+            "shared_runtime_identity": host_map.shared_runtime_identity,
+        },
+        "base_domain": {
+            "declared": host_map.declared_base,
+            "effective": host_map.effective_base,
+        },
+        "cookie_domain": host_map.cookie_domain(),
+        "relying_party_id": host_map.relying_party_id(),
+        "routes": routes,
+    });
+    let mut lines = Vec::new();
+    match host_map.effective_base.as_deref() {
+        Some(base) if host_map.kind == crate::HostScopeKind::Worktree => {
+            lines.push(format!(
+                "[ok] effective hosts for worktree scope {}",
+                host_map.host_key.as_deref().unwrap_or("unknown")
+            ));
+            if let Some(declared) = host_map.declared_base.as_deref() {
+                lines.push(format!("base: {declared} -> {base}"));
+            }
+        }
+        Some(base) => {
+            lines.push(format!(
+                "[ok] effective hosts for primary checkout `{base}`"
+            ));
+        }
+        None => lines.push("[ok] no declared gateway hosts".to_owned()),
+    }
+    for route in &host_map.routes {
+        let kind = match route.kind {
+            crate::HostRouteKind::Http => {
+                if route.tls {
+                    "https"
+                } else {
+                    "http"
+                }
+            }
+            crate::HostRouteKind::Tcp => "tcp",
+        };
+        let origin = route.origin.as_deref().unwrap_or(route.effective.as_str());
+        lines.push(format!("{kind} {origin} (declared {})", route.declared));
+    }
+    if let Some(cookie) = host_map.cookie_domain() {
+        lines.push(format!("cookie_domain: {cookie}"));
+        lines.push(format!("relying_party_id: {cookie}"));
+    }
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn retire_report(
+    record: Option<&crate::ScopeRecord>,
+    plan: Option<&crate::RetirementPlan>,
+    removed: &[crate::ObservedResource],
+    remaining: &[crate::ObservedResource],
+    record_removed: bool,
+) -> ContainerCommandReport {
+    let ok = remaining.is_empty();
+    let json = json!({
+        "schema": "effigy.container.retire.v1",
+        "schema_version": 1,
+        "ok": ok,
+        "idempotent": removed.is_empty() && remaining.is_empty(),
+        "scope": record.map(|record| json!({
+            "token": record.token,
+            "checkout": record.checkout,
+            "compose_kind": match record.compose_kind {
+                crate::ScopeComposeKind::Generated => "generated",
+                crate::ScopeComposeKind::RepoOwned => "repo_owned",
+                crate::ScopeComposeKind::SharedIdentity => "shared_identity",
+            },
+        })),
+        "skip_reason": plan.and_then(|plan| plan.skip_reason),
+        "removed": removed.iter().map(observed_json).collect::<Vec<_>>(),
+        "retained": plan.map(|plan| plan.retain.iter().map(observed_json).collect::<Vec<_>>()),
+        "mismatch": plan.map(|plan| plan.mismatch.iter().map(observed_json).collect::<Vec<_>>()),
+        "remaining": remaining.iter().map(observed_json).collect::<Vec<_>>(),
+        "record_removed": record_removed,
+    });
+    let mut lines = Vec::new();
+    if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
+        lines.push(format!(
+            "[ok] runtime scope is `{reason}`; shared resources were left in place"
+        ));
+    } else if ok && removed.is_empty() {
+        lines.push("[ok] runtime scope has no owned resources left".to_owned());
+    } else if ok {
+        lines.push(format!(
+            "[ok] retired {} owned runtime resource(s)",
+            removed.len()
+        ));
+    } else {
+        lines.push(format!(
+            "[error] runtime scope still owns {} resource(s)",
+            remaining.len()
+        ));
+        for resource in remaining {
+            lines.push(format!(
+                "remaining {}: {}",
+                kind_label(resource.kind),
+                resource.name
+            ));
+        }
+    }
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+fn observed_json(resource: &crate::ObservedResource) -> JsonValue {
+    json!({
+        "kind": kind_label(resource.kind),
+        "name": resource.name,
+        "scope_label": resource.scope_label,
+        "project_label": resource.project_label,
+        "persist": resource.persist,
+        "external": resource.external,
+        "profile": resource.profile,
+    })
+}
+
+fn kind_label(kind: crate::ObservedKind) -> &'static str {
+    match kind {
+        crate::ObservedKind::Container => "container",
+        crate::ObservedKind::Volume => "volume",
+        crate::ObservedKind::Network => "network",
+        crate::ObservedKind::Route => "route",
+        crate::ObservedKind::Port => "port",
+        crate::ObservedKind::Loopback => "loopback",
+        crate::ObservedKind::TlsCert => "tls_cert",
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
 

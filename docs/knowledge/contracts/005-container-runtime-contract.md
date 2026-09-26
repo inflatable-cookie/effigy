@@ -69,6 +69,40 @@ generation is stale and may be claimed by another worktree. A fixed domain
 therefore refuses a second live worktree until the consumer supplies distinct
 domains. The route table never silently moves a live sibling's domain.
 
+A linked worktree that does not share runtime identity gets one effective host
+map for its declared HTTP routes and TCP aliases. The apex becomes
+`<apex>-w<host-key>.<tld>` (for `app.test`, `app-w<host-key>.test`); helper
+hosts such as `mail.app.test` stay under that apex. The primary checkout keeps
+declared names. `effigy container hosts` returns declared and effective names,
+origins, cookie domain and WebAuthn relying-party id. Effigy registers those
+effective names on the gateway. It does not rewrite application configuration.
+
+Owned mutable resources for that generation carry `com.effigy.scope` or the
+exact Compose project label. `effigy container retire` deletes only resources
+those proofs still attribute to the recorded token, and only on the runtime
+profile that produced the labelled observation. Same-named resources in
+another profile stay. Shared services, persistent
+and external volumes, and foreign-owned resources stay. Shared-identity
+routes and loopbacks stay even when the same worktree also has isolated
+stacks. Compose networks are part of the owned inventory. A durable record
+under `~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can
+retry; one record per generation token aggregates every container environment
+and every runtime profile in that worktree. Record writes take a lock and
+replace the file atomically; a corrupt record is an error, not an empty
+scope. Backend discovery failures, including malformed inspect or listing
+JSON, keep the record and do not report success. Success requires that no
+owned container, mutable volume, network, isolated route, port, loopback, or
+TLS certificate remains. A second retire with nothing left is success,
+including a shared-only scope whose durable record is then removed.
+Repo-owned Compose is classified as such: cleanup uses the scoped project
+label, not a name prefix, and named volumes in those projects stay unless
+labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
+stack deletion. Certificate removal for retired TLS routes is recorded on
+the scope first, then runs as one owner-checked operation under the
+route-table lock before the table is saved. A TLS failure leaves the route
+and the pending-cert list for retry. A pending certificate whose domain now
+has a foreign owner is left in place.
+
 ## Contract goals
 
 When Effigy routes work into a container-backed runtime, it should guarantee:

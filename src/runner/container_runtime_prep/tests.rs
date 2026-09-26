@@ -527,6 +527,7 @@ fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
     let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
     policy.dns_routes = vec![EffectiveDnsRoute {
         domain: "demo.test".to_owned(),
+        declared_domain: "demo.test".to_owned(),
         tls: false,
         port: None,
         service: None,

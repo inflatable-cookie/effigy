@@ -13,6 +13,22 @@ During v0.x, MINOR bumps may include breaking changes.
 - Gateway route claims and teardown now check worktree generation ownership
   under a route-table lock, including TLS and TCP aliases; live foreign domain
   claims fail with the owning checkout path.
+- Linked worktrees expose one effective host map (`effigy container hosts`)
+  that rewrites declared HTTP routes and TCP aliases onto
+  `<apex>-w<scope>.test` while the primary checkout keeps declared names.
+- `effigy container retire` removes one runtime scope's owned containers,
+  networks, mutable volumes, isolated routes and ports using label proofs
+  and a durable record under `~/.effigy/runtime-scopes/`, so cleanup can
+  retry after the checkout is gone. The record aggregates every container
+  environment and runtime profile in that worktree. Shared, persistent,
+  external, and shared-identity resources stay, including repo-owned
+  Compose volumes unless labelled mutable. Discovery failures and
+  malformed inspect output keep the record. Deletion uses the profile that
+  produced each labelled observation. TLS certificates are recorded, then
+  removed under the route lock after an owner check; a foreign claim keeps
+  its certificate. A second retire is success
+  when nothing owned remains, and a shared-only retire then drops the
+  durable record.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.

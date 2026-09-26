@@ -18,5 +18,6 @@ planning response. A contract or release gate failure calls for immediate
 repair before promotion. Historical risk reviews and stage scorecards stay in
 Git history; no periodic status mirror is maintained here.
 
-The unresolved [per-worktree gateway hostname lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
-is a concrete instance of identity/routing risk, not a settled convention.
+The [per-worktree gateway hostname lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
+still tracks consumer application wiring. Effigy now owns scoped host discovery
+and labelled retirement for worker worktrees.

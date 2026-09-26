@@ -1281,6 +1281,7 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
     let mut policy = test_policy();
     policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
         domain: "clientname.test".to_owned(),
+        declared_domain: "clientname.test".to_owned(),
         tls: false,
         port: None,
         service: None,

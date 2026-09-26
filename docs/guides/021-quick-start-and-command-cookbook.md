@@ -237,6 +237,8 @@ effigy dev               # Run the repo's dev task inside it
 When old local runtime state starts to pile up:
 
 ```sh
+effigy container hosts --json
+effigy container retire --yes
 effigy container cache list --global
 effigy container volume list --dormant
 ```

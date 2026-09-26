@@ -943,6 +943,14 @@ pub enum ContainerSubcommand {
     Eject {
         name: Option<String>,
     },
+    Hosts {
+        name: Option<String>,
+    },
+    Retire {
+        name: Option<String>,
+        scope: Option<String>,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
