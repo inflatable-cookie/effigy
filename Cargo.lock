@@ -3144,9 +3144,9 @@ dependencies = [
 
 [[package]]
 name = "reqx"
-version = "0.2.0"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d9f0a84f43a067a97ca9d6476c6f02bb4857f9cb7e3e87ce3cfa3f510754f99"
+checksum = "1d5cfcb3cffc80b141c89bf196a7ec93a3ad3a932ec62c610b12b46453185db2"
 dependencies = [
  "bytes",
  "futures-core",
@@ -3157,6 +3157,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "ipnet",
  "rand 0.10.2",
  "rustls",
  "rustls-native-certs",
