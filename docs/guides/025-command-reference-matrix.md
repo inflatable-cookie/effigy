@@ -97,6 +97,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | --- | --- |
 | `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy drafts`, `effigy draft`, `effigy test`, `effigy watch`, `effigy doctor`, `effigy init` |
 | `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
+| `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
 | `effigy help extend` | `effigy skill`, `effigy rhai surface` |
 | `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
