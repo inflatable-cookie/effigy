@@ -103,6 +103,18 @@ route-table lock before the table is saved. A TLS failure leaves the route
 and the pending-cert list for retry. A pending certificate whose domain now
 has a foreign owner is left in place.
 
+## Approved ephemeral clone extension
+
+Tom approved the same runtime scope for a full clone whose local Git config
+sets `effigy.runtimeScope = ephemeral`. The orchestrator sets this marker when
+it creates the clone. Effigy will store that clone's token in its own
+`.git/effigy-runtime-scope`; deleting and recreating the clone creates a new
+generation. `is_live`, effective hosts, route ownership and `container retire`
+must use the same scope behavior as linked worktrees. An unmarked full clone
+keeps primary-checkout behavior. A marked clone has its own Git directory and
+needs no linked-worktree shared-Git-directory mount in the container. Until
+this extension lands, only linked worktrees receive isolated runtime scopes.
+
 ## Contract goals
 
 When Effigy routes work into a container-backed runtime, it should guarantee:
