@@ -45,3 +45,4 @@ Current technical authority for Effigy.
 | 046 Published And Draft Task Surface Contract | [046-published-and-draft-task-surface-contract.md](046-published-and-draft-task-surface-contract.md) |
 | Bounded Doctor and Scan Cache Contract | [047-bounded-doctor-and-scan-cache-contract.md](047-bounded-doctor-and-scan-cache-contract.md) |
 | Effigy release procedure | [release.md](release.md) |
+| Internal writing style | [writing-style.md](writing-style.md) |

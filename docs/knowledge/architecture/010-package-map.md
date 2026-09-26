@@ -125,7 +125,7 @@ Current authority surfaces:
 | --- | --- |
 | [`src/runner/runtime_session_context.rs`](../../../src/runner/runtime_session_context.rs) | typed runtime/session context for lease refresh and public-workspace cleanup policy |
 | [`src/runner/container_runtime.rs`](../../../src/runner/container_runtime.rs) | handoff marker and in-container recursion guard surface |
-| [`src/runner/container_runtime_prep.rs`](../../src/runner/container_runtime_prep.rs) | side-effect adapter for `effigy-runtime-plan` activation stages: policy validation, running-state checks, mount prep, compose up, exec readiness, alias reconciliation, gateway readiness, and lease refresh |
+| [`src/runner/container_runtime_prep.rs`](../../../src/runner/container_runtime_prep/mod.rs) | side-effect adapter for `effigy-runtime-plan` activation stages: policy validation, running-state checks, mount prep, compose up, exec readiness, alias reconciliation, gateway readiness, and lease refresh |
 | [`src/runner/host_container_lease.rs`](../../../src/runner/host_container_lease.rs) | non-shell host-container lease refresh, persistence, and reaper bootstrap |
 
 ### Execution surfaces
@@ -137,13 +137,13 @@ Current authority surfaces:
 | [`src/runner/exec_command/mod.rs`](../../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and container exec dispatch over runtime activation and transport adapters |
 | [`src/runner/exec_command/surface.rs`](../../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
 | [`src/runner/deferral/*`](../../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
-| [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface over captured runtime context and execution request helpers |
+| [`src/runner/script_command.rs`](../../../src/runner/script_command/mod.rs) | Rhai-owned runner entry surface over captured runtime context and execution request helpers |
 
 ### Container operation and data surfaces
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/container_command/*`](../../src/runner/container_command.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
+| [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-artifacts`, container operation plans, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/artifact_command.rs`](../../../src/runner/artifact_command.rs) | artifact command glue over `effigy-artifacts` refs, OCI transport, staging, apply, and capture plans |
@@ -154,16 +154,16 @@ Current authority surfaces:
 | --- | --- |
 | [`src/runner/system_command/workspace_session.rs`](../../../src/runner/system_command/workspace_session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
 | [`src/runner/system_command/workspace_provisioning.rs`](../../../src/runner/system_command/workspace_provisioning.rs) | workspace artifact install, permission prep, linux workspace binary provisioning |
-| [`src/runner/system_command/workspace.rs`](../../src/runner/system_command/workspace.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
+| [`src/runner/system_command/workspace.rs`](../../../src/runner/system_command/workspace/mod.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
 | [`src/runner/interactive_session.rs`](../../../src/runner/interactive_session.rs) | shared interactive ownership classification model |
 
 ### Gateway/runtime exposure
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/container_command/gateway_registration.rs`](../../src/runner/container_command/gateway_registration.rs) | gateway route reconciliation, runtime target translation, route-table mutation |
+| [`src/runner/container_command/gateway_registration.rs`](../../../src/runner/container_command/gateway_registration/mod.rs) | gateway route reconciliation, runtime target translation, route-table mutation |
 | [`src/runner/container_command/support.rs`](../../../src/runner/container_command/support.rs) | gateway/runtime support helpers shared by lifecycle and runtime prep |
-| [`src/runner/gateway_command/*`](../../src/runner/gateway_command.rs) | operator gateway command surfaces and daemon management |
+| [`src/runner/gateway_command/*`](../../../src/runner/gateway_command/mod.rs) | operator gateway command surfaces and daemon management |
 
 ### Failure model
 
