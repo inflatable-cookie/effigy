@@ -7,7 +7,9 @@ Current technical authority for Effigy.
 | Effigy Architecture Overview | [000-overview.md](000-overview.md) |
 | Package Map | [010-package-map.md](010-package-map.md) |
 | Multiprocess TUI Config Contract | [011-multiprocess-tui-config-contract.md](011-multiprocess-tui-config-contract.md) |
+| Container infrastructure design | [020-container-infrastructure-design.md](020-container-infrastructure-design.md) |
 | Production Deployment Export Architecture | [021-production-deployment-export-architecture.md](021-production-deployment-export-architecture.md) |
+| Runtime ownership and pipelines | [022-runtime-architecture-sanity-audit.md](022-runtime-architecture-sanity-audit.md) |
 | Local Dependency Linking Architecture | [023-local-dependency-linking-architecture.md](023-local-dependency-linking-architecture.md) |
 | Repository-Defined Documentation Graph Architecture | [024-repository-defined-documentation-graph.md](024-repository-defined-documentation-graph.md) |
 | External Skill Task Execution | [025-external-skill-task-execution.md](025-external-skill-task-execution.md) |

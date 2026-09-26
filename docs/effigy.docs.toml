@@ -47,7 +47,7 @@ authority = 90
 default-currentness = "current"
 
 [docs_policy.graph.kinds.knowledge]
-include = ["docs/knowledge/*.md", "docs/knowledge/domain/*.md"]
+include = ["docs/knowledge/*.md", "docs/knowledge/domain/*.md", "docs/knowledge/vision/*.md"]
 authority = 85
 default-currentness = "current"
 
