@@ -19,6 +19,7 @@ use crate::policy_support::effigy_home_dir;
 pub const SCOPE_LABEL: &str = "com.effigy.scope";
 pub const MANAGED_LABEL: &str = "com.effigy.managed";
 pub const PROJECT_LABEL: &str = "com.effigy.project";
+pub const PERSIST_LABEL: &str = "com.effigy.persist";
 
 const RECORD_SCHEMA: &str = "effigy.runtime-scope.v1";
 
@@ -64,7 +65,7 @@ impl ScopeRecord {
                 EffectiveComposeSource::Direct => ScopeComposeKind::RepoOwned,
             }
         };
-        let retain_project_names = policy
+        let mut retain_project_names = policy
             .shared_services
             .iter()
             .map(|service| service.project_name.clone())
@@ -75,9 +76,10 @@ impl ScopeRecord {
             .map(|volume| volume.name.clone())
             .collect::<Vec<_>>();
         let retain_volumes = policy
-            .shared_services
+            .managed_volumes
             .iter()
-            .map(|service| service.project_name.clone())
+            .filter(|volume| volume.persist)
+            .map(|volume| volume.name.clone())
             .collect::<Vec<_>>();
         let routes = host_map
             .routes
@@ -89,6 +91,12 @@ impl ScopeRecord {
             policy.project_name,
             policy.repo_root.display()
         )];
+        let project_names = if share_runtime_identity {
+            retain_project_names.push(policy.project_name.clone());
+            Vec::new()
+        } else {
+            vec![policy.project_name.clone()]
+        };
         Self {
             schema: RECORD_SCHEMA.to_owned(),
             schema_version: 1,
@@ -98,13 +106,31 @@ impl ScopeRecord {
             updated_unix: unix_now(),
             compose_kind,
             profile: policy.profile.clone(),
-            project_names: vec![policy.project_name.clone()],
+            project_names,
             retain_project_names,
             owned_volumes,
             retain_volumes,
             routes,
             loopback_identities,
         }
+    }
+
+    fn merged_with(&self, other: &Self) -> Self {
+        let mut merged = self.clone();
+        union_sorted(&mut merged.project_names, &other.project_names);
+        union_sorted(
+            &mut merged.retain_project_names,
+            &other.retain_project_names,
+        );
+        union_sorted(&mut merged.owned_volumes, &other.owned_volumes);
+        union_sorted(&mut merged.retain_volumes, &other.retain_volumes);
+        union_sorted(&mut merged.routes, &other.routes);
+        union_sorted(&mut merged.loopback_identities, &other.loopback_identities);
+        merged.compose_kind = merge_compose_kind(merged.compose_kind, other.compose_kind);
+        merged.host_key = other.host_key.clone();
+        merged.profile = other.profile.clone();
+        merged.updated_unix = unix_now();
+        merged
     }
 }
 
@@ -126,7 +152,11 @@ pub fn upsert(record: &ScopeRecord) -> io::Result<PathBuf> {
     let dir = records_dir()?;
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", record.token));
-    let payload = serde_json::to_vec_pretty(record).map_err(|error| {
+    let merged = match load(&record.token)? {
+        Some(existing) if existing.checkout == record.checkout => existing.merged_with(record),
+        _ => record.clone(),
+    };
+    let payload = serde_json::to_vec_pretty(&merged).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("cannot serialize runtime-scope record: {error}"),
@@ -134,6 +164,30 @@ pub fn upsert(record: &ScopeRecord) -> io::Result<PathBuf> {
     })?;
     fs::write(&path, payload)?;
     Ok(path)
+}
+
+fn union_sorted(target: &mut Vec<String>, extra: &[String]) {
+    for value in extra {
+        if !target.iter().any(|existing| existing == value) {
+            target.push(value.clone());
+        }
+    }
+    target.sort();
+    target.dedup();
+}
+
+fn merge_compose_kind(left: ScopeComposeKind, right: ScopeComposeKind) -> ScopeComposeKind {
+    match (left, right) {
+        (ScopeComposeKind::Generated, _) | (_, ScopeComposeKind::Generated) => {
+            ScopeComposeKind::Generated
+        }
+        (ScopeComposeKind::RepoOwned, _) | (_, ScopeComposeKind::RepoOwned) => {
+            ScopeComposeKind::RepoOwned
+        }
+        (ScopeComposeKind::SharedIdentity, ScopeComposeKind::SharedIdentity) => {
+            ScopeComposeKind::SharedIdentity
+        }
+    }
 }
 
 pub fn load(token: &str) -> io::Result<Option<ScopeRecord>> {
@@ -282,6 +336,53 @@ mod tests {
             assert_eq!(loaded.project_names, vec!["app-dev-wt-abcdef012345"]);
             let by_path = load_for_checkout(&checkout).unwrap();
             assert_eq!(by_path.len(), 1);
+        });
+    }
+
+    #[test]
+    fn upsert_merges_sibling_environments_for_one_scope() {
+        let home = tempfile::tempdir().unwrap();
+        with_test_effigy_home(home.path(), || {
+            let checkout = home.path().join("worker");
+            let mut web = policy(&checkout);
+            web.name = "web".to_owned();
+            web.project_name = "app-web-wt-abcdef012345".to_owned();
+            let mut worker = policy(&checkout);
+            worker.name = "worker".to_owned();
+            worker.project_name = "app-worker-wt-abcdef012345".to_owned();
+            worker.dns_routes[0].domain = "jobs.app-wabcdef01.test".to_owned();
+            worker.dns_routes[0].declared_domain = "jobs.app.test".to_owned();
+            let token = "abcdef0123456789abcdef0123456789";
+            let web_map = build_host_map(&web.dns_routes, &[], &[], Some(token), false);
+            let worker_map = build_host_map(&worker.dns_routes, &[], &[], Some(token), false);
+            upsert(&ScopeRecord::from_policy(
+                &web, token, "abcdef01", &web_map, false,
+            ))
+            .unwrap();
+            upsert(&ScopeRecord::from_policy(
+                &worker,
+                token,
+                "abcdef01",
+                &worker_map,
+                false,
+            ))
+            .unwrap();
+            let loaded = load(token).unwrap().expect("record");
+            assert_eq!(
+                loaded.project_names,
+                vec![
+                    "app-web-wt-abcdef012345".to_owned(),
+                    "app-worker-wt-abcdef012345".to_owned()
+                ]
+            );
+            assert!(loaded
+                .routes
+                .iter()
+                .any(|route| route == "app-wabcdef01.test"));
+            assert!(loaded
+                .routes
+                .iter()
+                .any(|route| route == "jobs.app-wabcdef01.test"));
         });
     }
 }

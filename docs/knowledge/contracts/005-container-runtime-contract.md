@@ -79,13 +79,18 @@ effective names on the gateway. It does not rewrite application configuration.
 
 Owned mutable resources for that generation carry `com.effigy.scope` or the
 exact Compose project label. `effigy container retire` deletes only resources
-those proofs still attribute to the recorded token. Shared services, external
-volumes and foreign-owned resources stay. A durable record under
-`~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can retry.
-Success requires that no owned container, volume, route, port or loopback
-record remains. A second retire with nothing left is success. Repo-owned
-Compose is classified as such: cleanup uses the scoped project label, not a
-name prefix. `share_runtime_identity = true` skips stack deletion.
+those proofs still attribute to the recorded token. Shared services, persistent
+and external volumes, and foreign-owned resources stay. Compose networks are
+part of the owned inventory. A durable record under
+`~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can retry;
+one record per generation token aggregates every container environment in that
+worktree. Backend discovery failures keep the record and do not report
+success. Success requires that no owned container, mutable volume, network,
+route, port or loopback record remains. A second retire with nothing left is
+success. Repo-owned Compose is classified as such: cleanup uses the scoped
+project label, not a name prefix. `share_runtime_identity = true` skips stack
+deletion. Certificate removal for retired TLS routes happens while the route
+table lock is held.
 
 ## Contract goals
 

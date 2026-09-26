@@ -187,6 +187,22 @@ pub fn deregister_owned_routes(
     project_path: &str,
     scope: Option<&str>,
 ) -> Result<Vec<Route>, GatewayError> {
+    deregister_owned_routes_with(route_table_path, project_path, scope, |_| Ok(()))
+}
+
+/// Remove owned routes and run `on_removed` before releasing the route lock.
+///
+/// TLS certificate deletion belongs here so another checkout cannot claim the
+/// domain and then lose its certificate.
+pub fn deregister_owned_routes_with<F>(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    mut on_removed: F,
+) -> Result<Vec<Route>, GatewayError>
+where
+    F: FnMut(&Route) -> Result<(), GatewayError>,
+{
     let _lock = RouteTableLock::acquire(route_table_path)?;
     let mut table = RouteTable::load(route_table_path)?;
     let owned = table
@@ -202,6 +218,9 @@ pub fn deregister_owned_routes(
         let _ = table.deregister(&route.domain);
     }
     table.save(route_table_path)?;
+    for route in &owned {
+        on_removed(route)?;
+    }
     Ok(owned)
 }
 

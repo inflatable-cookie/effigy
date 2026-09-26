@@ -49,33 +49,45 @@ fn apply_runtime_scope_labels(
             let YamlValue::Mapping(volume_map) = volume else {
                 continue;
             };
-            let labels = match volume_map.get_mut("labels") {
-                Some(YamlValue::Mapping(existing)) => existing,
-                _ => {
-                    volume_map.insert(
-                        YamlValue::String("labels".to_owned()),
-                        YamlValue::Mapping(serde_yaml::Mapping::new()),
-                    );
-                    match volume_map.get_mut("labels") {
-                        Some(YamlValue::Mapping(existing)) => existing,
-                        _ => continue,
-                    }
-                }
-            };
-            labels.insert(
-                YamlValue::String(SCOPE_LABEL.to_owned()),
-                YamlValue::String(token.to_owned()),
-            );
-            labels.insert(
-                YamlValue::String(MANAGED_LABEL.to_owned()),
-                YamlValue::String("true".to_owned()),
-            );
-            labels.insert(
-                YamlValue::String(PROJECT_LABEL.to_owned()),
-                YamlValue::String(project_name.to_owned()),
-            );
+            upsert_mapping_label(volume_map, SCOPE_LABEL, token);
+            upsert_mapping_label(volume_map, MANAGED_LABEL, "true");
+            upsert_mapping_label(volume_map, PROJECT_LABEL, project_name);
         }
     }
+    let networks = document
+        .extra
+        .entry("networks".to_owned())
+        .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+    if let YamlValue::Mapping(networks) = networks {
+        let default_network = networks
+            .entry(YamlValue::String("default".to_owned()))
+            .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
+        if let YamlValue::Mapping(network_map) = default_network {
+            upsert_mapping_label(network_map, SCOPE_LABEL, token);
+            upsert_mapping_label(network_map, MANAGED_LABEL, "true");
+            upsert_mapping_label(network_map, PROJECT_LABEL, project_name);
+        }
+    }
+}
+
+fn upsert_mapping_label(map: &mut serde_yaml::Mapping, key: &str, value: &str) {
+    let labels = match map.get_mut("labels") {
+        Some(YamlValue::Mapping(existing)) => existing,
+        _ => {
+            map.insert(
+                YamlValue::String("labels".to_owned()),
+                YamlValue::Mapping(serde_yaml::Mapping::new()),
+            );
+            match map.get_mut("labels") {
+                Some(YamlValue::Mapping(existing)) => existing,
+                _ => return,
+            }
+        }
+    };
+    labels.insert(
+        YamlValue::String(key.to_owned()),
+        YamlValue::String(value.to_owned()),
+    );
 }
 
 fn upsert_yaml_label(

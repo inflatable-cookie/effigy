@@ -297,11 +297,13 @@ Linked worktrees also get a distinct gateway host map. Declared
 declared names. `effigy container hosts --json` is the machine-readable
 map for public URLs, origins, cookie scope, WebAuthn and test selectors.
 Effigy does not rewrite application configuration. `effigy container
-retire --yes` removes that scope's owned containers, volumes, routes and
-ports using `com.effigy.scope` or the exact Compose project label. Shared
-services and external volumes stay. A record under
-`~/.effigy/runtime-scopes/` survives a deleted checkout so the same
-command can retry.
+retire --yes` removes that scope's owned containers, networks, mutable
+volumes, routes and ports using `com.effigy.scope` or the exact Compose
+project label. Shared services, persistent volumes, and external volumes
+stay. A record under `~/.effigy/runtime-scopes/` survives a deleted
+checkout and aggregates every environment in that worktree so the same
+command can retry. A backend that cannot list resources fails instead of
+reporting an empty stack.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into

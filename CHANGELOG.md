@@ -17,10 +17,13 @@ During v0.x, MINOR bumps may include breaking changes.
   that rewrites declared HTTP routes and TCP aliases onto
   `<apex>-w<scope>.test` while the primary checkout keeps declared names.
 - `effigy container retire` removes one runtime scope's owned containers,
-  volumes, routes and ports using label proofs and a durable record under
-  `~/.effigy/runtime-scopes/`, so cleanup can retry after the checkout is
-  gone. Shared and external resources stay. A second retire is success when
-  nothing owned remains.
+  networks, mutable volumes, routes and ports using label proofs and a
+  durable record under `~/.effigy/runtime-scopes/`, so cleanup can retry
+  after the checkout is gone. The record aggregates every container
+  environment in that worktree. Shared, persistent, and external resources
+  stay. Discovery failures keep the record. TLS certificates are removed
+  while the route lock is held. A second retire is success when nothing
+  owned remains.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.

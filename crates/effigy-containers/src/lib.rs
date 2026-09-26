@@ -56,8 +56,8 @@ pub use runtime::retire::{
 };
 pub use runtime::scope::{
     load as load_scope_record, load_for_checkout, remove as remove_scope_record,
-    upsert as upsert_scope_record, ScopeComposeKind, ScopeRecord, MANAGED_LABEL, PROJECT_LABEL,
-    SCOPE_LABEL,
+    upsert as upsert_scope_record, ScopeComposeKind, ScopeRecord, MANAGED_LABEL, PERSIST_LABEL,
+    PROJECT_LABEL, SCOPE_LABEL,
 };
 pub use workspace::load_workspace_ownership_targets;
 

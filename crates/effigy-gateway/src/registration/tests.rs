@@ -352,3 +352,46 @@ fn deregister_owned_routes_retries_after_checkout_is_gone() {
         deregister_owned_routes(&path, &checkout.display().to_string(), Some(&token)).unwrap();
     assert!(again.is_empty());
 }
+
+#[test]
+fn deregister_owned_routes_runs_tls_callback_before_releasing_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let registration = build_registration(
+        "app.test",
+        "app",
+        &checkout.display().to_string(),
+        8100,
+        true,
+        None,
+    );
+    register_route(&path, &registration).unwrap();
+    let token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    let seen = std::sync::Mutex::new(Vec::new());
+    let removed = deregister_owned_routes_with(
+        &path,
+        &checkout.display().to_string(),
+        Some(&token),
+        |route| {
+            assert!(
+                RouteTable::load(&path)
+                    .unwrap()
+                    .lookup("app.test")
+                    .is_none(),
+                "route table must already omit the domain while the lock is held"
+            );
+            seen.lock().unwrap().push(route.domain.clone());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
+}
