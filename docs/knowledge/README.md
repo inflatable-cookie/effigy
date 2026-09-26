@@ -4,7 +4,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 
 | Topic | Owner |
 | --- | --- |
-| Product direction | [Vision](vision.md) |
+| Product direction | [Vision](vision.md), [quality targets](vision/quality-targets.md), [risks](vision/risks.md), [exceptions](vision/exceptions.md) |
 | System shape | [Architecture](architecture.md) |
 | Detailed component design | [Architecture directory](architecture/000-overview.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
