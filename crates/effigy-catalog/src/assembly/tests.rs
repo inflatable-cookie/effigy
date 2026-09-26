@@ -162,3 +162,18 @@ fn discovered_volume_persist_treats_cache_like_mounts_as_ephemeral() {
     assert!(!discovered_volume_persist("/usr/local/cargo/registry"));
     assert!(discovered_volume_persist("/var/lib/mysql"));
 }
+
+#[test]
+fn escape_compose_dollar_literals_preserves_shell_variables_for_compose() {
+    assert_eq!(
+        escape_compose_dollar_literals(
+            r#"wget -q -O /dev/null http://127.0.0.1:80/ >/dev/null 2>&1; code=$?; [ "$code" -eq 0 ] || [ "$code" -eq 8 ]"#
+        ),
+        r#"wget -q -O /dev/null http://127.0.0.1:80/ >/dev/null 2>&1; code=$$?; [ "$$code" -eq 0 ] || [ "$$code" -eq 8 ]"#
+    );
+    assert_eq!(
+        escape_compose_dollar_literals(r#"code=$$?; [ "$$code" -eq 0 ]"#),
+        r#"code=$$?; [ "$$code" -eq 0 ]"#
+    );
+    assert_eq!(escape_compose_dollar_literals("no dollars"), "no dollars");
+}

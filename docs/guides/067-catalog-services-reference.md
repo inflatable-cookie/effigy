@@ -429,7 +429,9 @@ Nginx reverse proxy / static web server for PHP-FPM setups.
   - `error_page_404` (default `"/index.php"`)
 - Exposed port: `80`.
 - Volumes: repo root (read-only bind) plus service config (read-only bind).
-- Healthcheck: HTTP `GET /` on port 80.
+- Healthcheck: HTTP `GET /` on port 80. Any HTTP response, including 404,
+  is healthy; connection and other wget failures stay unhealthy. Generated
+  Compose keeps the wget exit-code shell variable after interpolation.
 - Shell target: no.
 - Depends on: optional `php-fpm` service in the same environment.
 - Gateway: typically the primary HTTP route (`<host>`) via
