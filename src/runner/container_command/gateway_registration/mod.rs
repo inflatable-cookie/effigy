@@ -1518,7 +1518,7 @@ fn parse_port_binding(
     Ok((host_port, container_port))
 }
 
-fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
+pub(super) fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
     Ok(gateway_dir()?.join("routes.json"))
 }
 

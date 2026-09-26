@@ -1218,6 +1218,7 @@ mod tests {
         policy.dns_routes = vec![
             EffectiveDnsRoute {
                 domain: "project.test".to_owned(),
+                declared_domain: "project.test".to_owned(),
                 tls: false,
                 port: None,
                 service: None,
@@ -1225,6 +1226,7 @@ mod tests {
             },
             EffectiveDnsRoute {
                 domain: "admin.project.test".to_owned(),
+                declared_domain: "admin.project.test".to_owned(),
                 tls: true,
                 port: Some(41002),
                 service: Some("admin".to_owned()),
@@ -1255,6 +1257,7 @@ mod tests {
         policy.dns_routes = vec![
             EffectiveDnsRoute {
                 domain: "project.test".to_owned(),
+                declared_domain: "project.test".to_owned(),
                 tls: false,
                 port: None,
                 service: None,
@@ -1262,6 +1265,7 @@ mod tests {
             },
             EffectiveDnsRoute {
                 domain: "admin.project.test".to_owned(),
+                declared_domain: "admin.project.test".to_owned(),
                 tls: true,
                 port: Some(41002),
                 service: Some("admin".to_owned()),
@@ -1269,6 +1273,7 @@ mod tests {
             },
             EffectiveDnsRoute {
                 domain: "api.project.test".to_owned(),
+                declared_domain: "api.project.test".to_owned(),
                 tls: true,
                 port: None,
                 service: None,

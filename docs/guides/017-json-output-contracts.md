@@ -169,6 +169,8 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.artifact.inspect.v1`
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
+- `effigy.container.hosts.v1`
+- `effigy.container.retire.v1`
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 

@@ -42,6 +42,7 @@ fn test_policy() -> EffectiveContainerPolicy {
         dns_port: None,
         dns_routes: vec![effigy_containers::EffectiveDnsRoute {
             domain: "clientname.test".to_owned(),
+            declared_domain: "clientname.test".to_owned(),
             tls: true,
             port: None,
             service: None,
@@ -358,6 +359,7 @@ fn resolves_multiple_gateway_routes_for_one_container() {
         .dns_routes
         .push(effigy_containers::EffectiveDnsRoute {
             domain: "admin.clientname.test".to_owned(),
+            declared_domain: "admin.clientname.test".to_owned(),
             tls: false,
             port: Some(9001),
             service: Some("admin".to_owned()),
@@ -678,6 +680,7 @@ fn expected_alias_route_counts_drop_domains_shadowed_by_explicit_dns_routes() {
         .dns_routes
         .push(effigy_containers::EffectiveDnsRoute {
             domain: "postgres.clientname.test".to_owned(),
+            declared_domain: "postgres.clientname.test".to_owned(),
             tls: false,
             port: Some(9001),
             service: Some("dbadmin".to_owned()),
@@ -703,6 +706,7 @@ fn explicit_dns_routes_win_over_derived_service_alias_domains() {
             .dns_routes
             .push(effigy_containers::EffectiveDnsRoute {
                 domain: "postgres.clientname.test".to_owned(),
+                declared_domain: "postgres.clientname.test".to_owned(),
                 tls: false,
                 port: Some(9001),
                 service: Some("dbadmin".to_owned()),
@@ -808,6 +812,7 @@ fn explicit_dns_routes_win_over_derived_shared_service_alias_domains() {
             .dns_routes
             .push(effigy_containers::EffectiveDnsRoute {
                 domain: "postgres.clientname.test".to_owned(),
+                declared_domain: "postgres.clientname.test".to_owned(),
                 tls: false,
                 port: Some(9001),
                 service: Some("dbadmin".to_owned()),

@@ -218,7 +218,9 @@ effigy bootstrap teardown --yes
 
 That cleanup path reads the recorded session, resets each touched repo on the
 generated-compose path, removes the matching fresh-session data, and deletes the
-session record files.
+session record files. Worker worktree stacks use `effigy container retire`
+instead; that command owns per-scope labelled cleanup and a durable record
+outside the checkout.
 
 ## Minimal Manifest Contract
 

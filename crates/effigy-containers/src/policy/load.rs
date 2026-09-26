@@ -9,11 +9,13 @@ use effigy_manifest::{
 };
 
 use crate::mount_spec::resolve_host_mounts;
+use crate::policy::hosts::{apply_scope_to_routes, build_host_map, host_key, scope_token};
 use crate::policy::project::{
     default_project_name_base, resolve_project_name, validate_unique_project_names,
 };
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
+use crate::runtime::scope::{upsert as upsert_scope_record, ScopeRecord};
 use crate::workspace::{materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite};
 use crate::{
     resolve_catalog_network_contract, DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE,
@@ -327,7 +329,8 @@ fn build_effective_policy(
             continue;
         }
         dns_routes.push(EffectiveDnsRoute {
-            domain: route.domain,
+            domain: route.domain.clone(),
+            declared_domain: route.domain,
             tls: route.tls.unwrap_or(false),
             port: route.port,
             service: route.service.filter(|value| !value.trim().is_empty()),
@@ -336,6 +339,10 @@ fn build_effective_policy(
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty()),
         });
+    }
+    let runtime_token = scope_token(repo_root, config.share_runtime_identity)?;
+    if let Some(key) = runtime_token.as_deref().and_then(host_key) {
+        apply_scope_to_routes(&mut dns_routes, key);
     }
     let service_aliases = effective_service_aliases(repo_root, config)?;
     if driver == ManifestContainerDriver::Colima {
@@ -358,7 +365,7 @@ fn build_effective_policy(
         default_workspace_identity_for_primary_service(config, &primary_service);
     let _ = containers;
 
-    Ok(EffectiveContainerPolicy {
+    let policy = EffectiveContainerPolicy {
         repo_root: repo_root.to_path_buf(),
         name: name.to_owned(),
         driver,
@@ -421,7 +428,31 @@ fn build_effective_policy(
             .iter()
             .map(resolve_host_process)
             .collect(),
-    })
+    };
+    if let Some(token) = runtime_token.as_deref() {
+        if let Some(key) = host_key(token) {
+            let host_map = build_host_map(
+                &policy.dns_routes,
+                &policy.service_aliases,
+                &policy.shared_services,
+                Some(token),
+                config.share_runtime_identity,
+            );
+            let record = ScopeRecord::from_policy(
+                &policy,
+                token,
+                key,
+                &host_map,
+                config.share_runtime_identity,
+            );
+            upsert_scope_record(&record).map_err(|error| ContainerPolicyError::Read {
+                path: crate::runtime::scope::record_path(token)
+                    .unwrap_or_else(|_| repo_root.join(".effigy/runtime-scopes")),
+                error,
+            })?;
+        }
+    }
+    Ok(policy)
 }
 
 fn resolve_host_process(

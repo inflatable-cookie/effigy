@@ -338,9 +338,13 @@ tls = true
 
 `domains = ["app.test"]` with `domain_defaults` is shorthand for repeated
 routes; an explicit route for the same domain wins. `target_host` takes a
-`host:port` target and cannot be combined with `service` in one route. The
-hostname for concurrent worktrees remains an [open lead](../../triage/20260917-230600-per-worktree-container-identity-default.md),
-not a convention established by this design.
+`host:port` target and cannot be combined with `service` in one route. Linked
+worktrees that do not share runtime identity rewrite the declared apex to
+`<apex>-w<host-key>.<tld>` so HTTP routes and TCP aliases stay one set.
+`effigy container hosts` exposes that map. The primary checkout keeps declared
+names. Consumer apps still feed those names into public URLs, origins, cookies
+and selectors; see the [worktree isolation lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
+for remaining consumer wiring.
 
 The route table at `~/.effigy/gateway/routes.json` maps domain names to
 upstream, DNS, TCP alias, TLS, source, and project facts. Writers replace it
@@ -462,10 +466,10 @@ services. The policy rejects unsupported variant/config combinations and
 requires at least one local service. Sharing trades isolation for resource
 use; it is explicit, not an automatic optimization.
 
-The gateway domain remains globally keyed by hostname. Two worktrees with the
-same configured domain can collide; the [open lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
-records the unresolved identity/default question. Port allocation alone does
-not solve that collision.
+Gateway domains are globally keyed by hostname. Linked worktrees receive
+distinct effective names from the declared apex, so two live stacks can
+register together. `effigy container retire` removes one scope's owned
+resources by label and recorded identity without a global prune.
 
 ## Crate and Module Ownership
 

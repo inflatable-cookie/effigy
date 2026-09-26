@@ -18,6 +18,8 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes, including legacy opaque `efv-*` Rust target volumes; use `cache prune --kind rust-target`, not orphan volume cleanup, for Rust target pressure.",
         "`container profile status` reports Colima profile sizing against Effigy's managed targets, `container profile resize` applies managed sizing in place by stopping and restarting the profile, `container profile recreate --disk <GiB> --yes` rebuilds it, and `container profile purge --yes` deletes it without restart.",
         "`container volume list` now follows normal repo scope by default; add `--global` for cross-runtime inventory, use `--dormant` for repo-scoped superseded volumes, and use `--orphans` only with `--global` for true ownerless volumes.",
+        "`container hosts` prints the effective HTTP and TCP host map for this checkout. Linked worktrees use `<apex>-w<scope>.test` while the primary checkout keeps declared names.",
+        "`container retire` removes only this runtime scope's owned containers, volumes, routes and ports. Cleanup is idempotent, uses backend labels, and keeps a durable record outside the worktree so a deleted checkout can still retry.",
     ],
     usage: text_lines![
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -55,6 +57,9 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]",
         "effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]",
         "effigy container <NAME> eject [--repo <PATH>] [--json]",
+        "effigy container hosts [--repo <PATH>] [--json]",
+        "effigy container <NAME> hosts [--repo <PATH>] [--json]",
+        "effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]",
         "effigy --json container up [--repo <PATH>]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -107,6 +112,9 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container web reset --keep-data",
         "effigy container web reset",
         "effigy container web eject",
+        "effigy container hosts --json",
+        "effigy container retire --yes",
+        "effigy container retire --scope abcdef0123456789abcdef0123456789 --yes",
     ],
 };
 
@@ -117,7 +125,8 @@ const CONTAINER_OPTIONS: &[(&str, &str)] = option_rows![
     "--global" => "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects. For `volume list`, inspect Effigy-managed named volumes across available runtimes.",
     "--orphans" => "For `volume list --global`, show only ownerless volumes whose repo is gone or no longer declares them.",
     "--dormant" => "For repo-scoped `volume list`, show only superseded volumes the current repo no longer declares or mounts.",
-    "--yes" => "Confirm destructive data, cache, or volume cleanup operations without an interactive prompt",
+    "--yes" => "Confirm destructive data, cache, volume, or runtime-scope cleanup operations without an interactive prompt",
+    "--scope <TOKEN>" => "For `retire`, select a durable runtime-scope token so cleanup can retry after the worktree directory is gone",
     "--project <NAME>" => "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--global`",
     "--profile <NAME>" => "For `container profile`, select a Colima profile instead of the configured/default `effigy` profile",
     "--disk <GiB>" => "For `container profile recreate`, set the managed Colima profile disk size for this recreate; interactive runs prompt when omitted",

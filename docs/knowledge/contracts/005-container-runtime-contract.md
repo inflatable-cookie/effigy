@@ -69,6 +69,24 @@ generation is stale and may be claimed by another worktree. A fixed domain
 therefore refuses a second live worktree until the consumer supplies distinct
 domains. The route table never silently moves a live sibling's domain.
 
+A linked worktree that does not share runtime identity gets one effective host
+map for its declared HTTP routes and TCP aliases. The apex becomes
+`<apex>-w<host-key>.<tld>` (for `app.test`, `app-w<host-key>.test`); helper
+hosts such as `mail.app.test` stay under that apex. The primary checkout keeps
+declared names. `effigy container hosts` returns declared and effective names,
+origins, cookie domain and WebAuthn relying-party id. Effigy registers those
+effective names on the gateway. It does not rewrite application configuration.
+
+Owned mutable resources for that generation carry `com.effigy.scope` or the
+exact Compose project label. `effigy container retire` deletes only resources
+those proofs still attribute to the recorded token. Shared services, external
+volumes and foreign-owned resources stay. A durable record under
+`~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can retry.
+Success requires that no owned container, volume, route, port or loopback
+record remains. A second retire with nothing left is success. Repo-owned
+Compose is classified as such: cleanup uses the scoped project label, not a
+name prefix. `share_runtime_identity = true` skips stack deletion.
+
 ## Contract goals
 
 When Effigy routes work into a container-backed runtime, it should guarantee:

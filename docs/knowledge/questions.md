@@ -1,3 +1,3 @@
 # Questions
 
-No question currently blocks approved Effigy work. The gateway hostname convention and its ownership split remain an unresolved [triage lead](../triage/20260917-230600-per-worktree-container-identity-default.md); it has not been promoted into the plan.
+No question currently blocks approved Effigy work. Effigy now derives scoped worker hosts and a verifiable retire path. Consumer application wiring of those names remains on the [worktree isolation lead](../triage/20260917-230600-per-worktree-container-identity-default.md).

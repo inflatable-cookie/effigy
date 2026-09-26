@@ -73,7 +73,7 @@ Current authority surfaces:
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
-| `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
+| `effigy-containers` | effective container policy, scoped host maps, durable runtime-scope records, labelled retirement planning, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema, and local catalog-pack support-floor validation |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
@@ -143,6 +143,8 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
+| [`src/runner/container_command/hosts.rs`](../../../src/runner/container_command/hosts.rs) | effective host map for one checkout: declared and scoped HTTP/TCP names |
+| [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | labelled per-scope retirement over the durable runtime-scope record |
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-artifacts`, container operation plans, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/artifact_command.rs`](../../../src/runner/artifact_command.rs) | artifact command glue over `effigy-artifacts` refs, OCI transport, staging, apply, and capture plans |

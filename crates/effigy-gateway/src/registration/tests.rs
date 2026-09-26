@@ -316,3 +316,39 @@ fn simultaneous_distinct_domains_do_not_lose_updates() {
     }
     assert_eq!(RouteTable::load(&path).unwrap().len(), 12);
 }
+
+#[test]
+fn deregister_owned_routes_retries_after_checkout_is_gone() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, private) = linked_checkout(root.path(), "worker");
+    let registration = build_registration(
+        "app.test",
+        "app",
+        &checkout.display().to_string(),
+        8100,
+        true,
+        None,
+    );
+    register_route(&path, &registration).unwrap();
+    let token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    std::fs::remove_dir_all(&checkout).unwrap();
+    std::fs::remove_dir_all(&private).unwrap();
+    let removed =
+        deregister_owned_routes(&path, &checkout.display().to_string(), Some(&token)).unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].domain, "app.test");
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .is_none());
+    let again =
+        deregister_owned_routes(&path, &checkout.display().to_string(), Some(&token)).unwrap();
+    assert!(again.is_empty());
+}

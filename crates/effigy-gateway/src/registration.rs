@@ -178,6 +178,33 @@ pub fn deregister_project_routes(
     Ok(count)
 }
 
+/// Remove routes owned by a recorded checkout generation.
+///
+/// Uses the durable token rather than the live Git worktree directory, so
+/// cleanup can retry after the checkout is gone.
+pub fn deregister_owned_routes(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+) -> Result<Vec<Route>, GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
+    let mut table = RouteTable::load(route_table_path)?;
+    let owned = table
+        .all_routes()
+        .into_iter()
+        .filter(|route| owned_by(route, project_path, scope))
+        .cloned()
+        .collect::<Vec<_>>();
+    if owned.is_empty() {
+        return Ok(owned);
+    }
+    for route in &owned {
+        let _ = table.deregister(&route.domain);
+    }
+    table.save(route_table_path)?;
+    Ok(owned)
+}
+
 /// Build a route registration from container and port configuration.
 ///
 /// If a port registry is available and the project has an allocation,
