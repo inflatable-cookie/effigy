@@ -2,8 +2,8 @@
 
 Use this guide to choose the shortest safe migration path for common Effigy adoption scenarios.
 
-For detailed command syntax, see [`025-command-reference-matrix.md`](./025-command-reference-matrix.md).
-For CI implementation templates, see [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
+For detailed command syntax, see [`025-command-reference-matrix.md`](025-command-reference-matrix.md).
+For CI implementation templates, see [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md).
 
 ## 1) Path A: New Repo Onboarding
 
@@ -107,7 +107,7 @@ Exit criteria:
 - contract validation job passes on PR and main
 - triage artifacts are uploaded on failure
 
-Implementation details live in [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
+Implementation details live in [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md).
 
 ## 4) Path D: Monorepo Expansion (Single Catalog -> Multi-Catalog)
 
@@ -217,12 +217,12 @@ If CI or scripts still reference them, migrate to `effigy doctor` or `effigy doc
 
 ## Related Guides
 
-- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+- [`021-quick-start-and-command-cookbook.md`](021-quick-start-and-command-cookbook.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`027-copy-paste-snippets.md`](027-copy-paste-snippets.md)
 
 ## Next Step
 
-Choose one migration path and then run the validation bundle from [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before merging.
+Choose one migration path and then run the validation bundle from [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md) before merging.

@@ -56,4 +56,4 @@ When adding a new guide:
 
 ## Next Step
 
-After any index change, record the update in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and re-run docs link checks.
+After any index change, record the update in [`032-docs-consistency-sweep-and-changelog.md`](032-docs-consistency-sweep-and-changelog.md) and re-run docs link checks.

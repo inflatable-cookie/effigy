@@ -6,9 +6,9 @@ Owner: chatterbox
 Source: Swallowtail Chatterbox request (2026-09-06); Swallowtail
 `PAPERCUTS.md` "Effigy cannot skip release gates from hosted exact-SHA
 evidence — 2026-09-06" and Swallowtail contract 036 "Hosted Gate Delegation"
-Contracts: [`039`](../contracts/039-pre-release-ci-proof-contract.md)
+Contracts: [`039`](../knowledge/contracts/039-pre-release-ci-proof-contract.md)
 Guide: [`051`](../guides/051-release-orchestration.md)
-Related: [`20260905-092527`](./20260905-092527-release-gate-failure-diagnosability.md)
+Related: [`20260905-092527`](20260905-092527-release-gate-failure-diagnosability.md)
 (keep-on-failure remainder)
 
 ## Issue
@@ -75,7 +75,7 @@ once the contract `039` mutation-boundary caveat is documented in guide `051`.
 - Whether contract `039` should state that delegating a mutation-sensitive
   gate is a consumer decision, or forbid it for gates that read lockfiles.
 
-## Next Task
+## Next move
 
 Operator decides whether to promote a future bounded strict lane: grammar,
 `delegated` outcome, report/JSON fields, guide `051` and contract `039`

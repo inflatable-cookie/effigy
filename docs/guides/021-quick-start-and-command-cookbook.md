@@ -3,7 +3,7 @@
 This guide is the shortest path from install to useful daily commands.
 
 Use this page when you want the first ten minutes to feel clear. Use
-[`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when you
+[`025-command-reference-matrix.md`](025-command-reference-matrix.md) when you
 need the full command and flag surface.
 
 ## 1) Quick Start (5 Minutes)
@@ -105,9 +105,9 @@ Baseline mental model:
 For fuller patterns such as multi-process dev stacks, systems, workspaces,
 containers, demos, and manifest composition, continue to:
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
 
 ## 3) Global JSON, `--repo`, and task-runtime prefix flags
 
@@ -159,7 +159,7 @@ effigy validate --verbose-root
   invocation (parsed from the task argument list).
 - **`--env-schema <PATH>`** — override which env schema file validates and
   merges plain (non-secret) values for that run. See
-  [`050-env-schema-integration.md`](./050-env-schema-integration.md).
+  [`050-env-schema-integration.md`](050-env-schema-integration.md).
 - **`--verbose-root`** — widen diagnostics and path resolution toward the
   repository root when the selected catalog is nested.
 
@@ -176,7 +176,7 @@ must own runtime effects:
 ```sh
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check
-effigy skill run northstar/queue:hook --stdio passthrough < payload.json
+effigy skill run northstar-lean/retired-concepts --stdio passthrough < payload.json
 effigy skill run --path ~/.agents/skills/northstar northstar/check \
   --repo /path/to/consumer -- --task-argument
 ```
@@ -241,7 +241,7 @@ effigy container cache list --global
 effigy container volume list --dormant
 ```
 
-Read more: [`063-container-system-guide.md`](./063-container-system-guide.md)
+Read more: [`063-container-system-guide.md`](063-container-system-guide.md)
 
 ## 6) Commands You Will Reach For First
 
@@ -357,25 +357,25 @@ effigy secrets doctor            # check vault health
 
 Secrets are injected into tasks, containers, Rhai scripts, and deploy hooks
 without writing plaintext to repo files. See
-[`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
+[`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md).
 
 ## 8) Choose the Next Detail Page
 
 - Day-to-day workflows:
-  [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+  [`055-everyday-workflows.md`](055-everyday-workflows.md)
 - More manifest patterns:
-  [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+  [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - Local containers, systems, and workspaces:
-  [`063-container-system-guide.md`](./063-container-system-guide.md) and
-  [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+  [`063-container-system-guide.md`](063-container-system-guide.md) and
+  [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
 - Task routing, tests, watch, or troubleshooting:
-  [`016-task-routing-precedence.md`](./016-task-routing-precedence.md),
-  [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md),
-  [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+  [`016-task-routing-precedence.md`](016-task-routing-precedence.md),
+  [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md),
+  [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 - Demos, JSON, or bootstrap:
-  [`058-demo-system-guide.md`](./058-demo-system-guide.md),
-  [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md),
-  [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+  [`058-demo-system-guide.md`](058-demo-system-guide.md),
+  [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md),
+  [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
 
 ## Expected Outcome
 
@@ -387,26 +387,26 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
-- [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
-- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
-- [`074-deployment-guide.md`](./074-deployment-guide.md)
+- [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
+- [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- [`012-dev-process-manager-tui.md`](012-dev-process-manager-tui.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
+- [`063-container-system-guide.md`](063-container-system-guide.md)
+- [`058-demo-system-guide.md`](058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
+- [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
+- [`073-state-stack-guide.md`](073-state-stack-guide.md)
+- [`074-deployment-guide.md`](074-deployment-guide.md)
 
 ## Next Step
 
 After this quick start, move to
-[`055-everyday-workflows.md`](./055-everyday-workflows.md) to shape the daily
+[`055-everyday-workflows.md`](055-everyday-workflows.md) to shape the daily
 operator path, then use
-[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) to remove the next
+[`022-manifest-cookbook.md`](022-manifest-cookbook.md) to remove the next
 piece of wrapper-script or directory-hunting friction from your repo.

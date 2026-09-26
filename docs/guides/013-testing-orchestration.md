@@ -169,11 +169,11 @@ TUI diagnostics:
 
 ## Related Guides
 
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
 
 ## Next Step
 
-After finalizing test routing, capture expected machine payloads in [`026-json-payload-examples.md`](./026-json-payload-examples.md) for CI consumers.
+After finalizing test routing, capture expected machine payloads in [`026-json-payload-examples.md`](026-json-payload-examples.md) for CI consumers.

@@ -88,7 +88,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
             "concurrent = [",
             "[docs_policy.graph]",
             "strict-ready",
-            "docs/contracts",
+            "docs/knowledge/contracts",
         ],
     );
 }
@@ -123,7 +123,7 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
             "[manifest]",
             "minimum_effigy_version = \"0.6.2\"",
             "\"effigy.tasks.toml\"",
-            "{ path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] }",
+            "{ path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.topic\"] }",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);
@@ -142,7 +142,7 @@ fn run_manifest_task_builtin_config_schema_minimal_manifest_target_omits_graph_p
             "minimum_effigy_version = \"0.6.2\"",
         ],
     );
-    assert_output_excludes_all(&out, &["[docs_policy.graph]", "docs/contracts"]);
+    assert_output_excludes_all(&out, &["[docs_policy.graph]", "docs/knowledge/contracts"]);
 }
 
 #[test]

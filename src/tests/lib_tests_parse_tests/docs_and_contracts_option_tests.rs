@@ -105,9 +105,9 @@ fn parse_docs_check_index_with_overrides() {
         "--policy-index".to_owned(),
         "vision".to_owned(),
         "--dir".to_owned(),
-        "docs/logs".to_owned(),
+        "docs/notes".to_owned(),
         "--index".to_owned(),
-        "docs/logs/README.md".to_owned(),
+        "docs/notes/README.md".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -126,8 +126,8 @@ fn parse_docs_check_index_with_overrides() {
                 required_headings: Vec::new(),
                 forbidden_text: Vec::new(),
                 policy_index: Box::new(Some("vision".to_owned())),
-                dir: Box::new(Some(PathBuf::from("docs/logs"))),
-                index: Box::new(Some(PathBuf::from("docs/logs/README.md"))),
+                dir: Box::new(Some(PathBuf::from("docs/notes"))),
+                index: Box::new(Some(PathBuf::from("docs/notes/README.md"))),
                 policy_name: Box::new(None),
             },
             repo_override: None,
@@ -143,7 +143,7 @@ fn parse_docs_add_log_index_with_repo_override() {
         "add-log-index".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
-        "docs/logs/2026-03/02-160000-my-log.md".to_owned(),
+        "docs/notes/2026-03/02-160000-my-log.md".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -152,7 +152,7 @@ fn parse_docs_add_log_index_with_repo_override() {
         cmd,
         Command::Docs(DocsArgs {
             subcommand: DocsSubcommand::AddLogIndex {
-                log_path: PathBuf::from("docs/logs/2026-03/02-160000-my-log.md"),
+                log_path: PathBuf::from("docs/notes/2026-03/02-160000-my-log.md"),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -543,7 +543,7 @@ fn parse_contracts_validate_selection_with_overrides() {
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--contract".to_owned(),
-        "docs/contracts/selection.json".to_owned(),
+        "docs/knowledge/contracts/selection.json".to_owned(),
         "--artifact".to_owned(),
         "tmp/selected.json".to_owned(),
         "--json".to_owned(),
@@ -554,7 +554,7 @@ fn parse_contracts_validate_selection_with_overrides() {
         cmd,
         Command::Contracts(ContractsArgs {
             subcommand: ContractsSubcommand::ValidateSelection {
-                contract_path: Some(PathBuf::from("docs/contracts/selection.json")),
+                contract_path: Some(PathBuf::from("docs/knowledge/contracts/selection.json")),
                 artifact_path: Some(PathBuf::from("tmp/selected.json")),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
@@ -571,7 +571,7 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--index".to_owned(),
-        "docs/contracts/index.json".to_owned(),
+        "docs/knowledge/contracts/index.json".to_owned(),
         "--fast".to_owned(),
         "--changed-only".to_owned(),
         "origin/main".to_owned(),
@@ -584,7 +584,7 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
         cmd,
         Command::Contracts(ContractsArgs {
             subcommand: ContractsSubcommand::CheckJson {
-                index_path: Some(PathBuf::from("docs/contracts/index.json")),
+                index_path: Some(PathBuf::from("docs/knowledge/contracts/index.json")),
                 mode: ContractsCheckMode::Fast,
                 changed_only_base: Some("origin/main".to_owned()),
                 print_selected: ContractsSelectionPrintMode::Json,
@@ -756,7 +756,7 @@ fn parse_release_evidence_closeout_with_output_and_owner() {
         "--artifacts-dir".to_owned(),
         "artifacts/dist".to_owned(),
         "--output".to_owned(),
-        "docs/logs/out.md".to_owned(),
+        "docs/notes/out.md".to_owned(),
         "--owner".to_owned(),
         "CI".to_owned(),
         "--expect-homebrew".to_owned(),
@@ -771,7 +771,7 @@ fn parse_release_evidence_closeout_with_output_and_owner() {
                 subcommand: ReleaseEvidenceSubcommand::Closeout {
                     tag: "v0.2.5".to_owned(),
                     artifacts_dir: PathBuf::from("artifacts/dist"),
-                    output_path: Some(PathBuf::from("docs/logs/out.md")),
+                    output_path: Some(PathBuf::from("docs/notes/out.md")),
                     owner: "CI".to_owned(),
                     expect_homebrew: true,
                 },

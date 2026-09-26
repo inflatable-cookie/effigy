@@ -26,9 +26,9 @@ run = "printf tasks"
     write_manifest(
         &root.join("effigy.docs.toml"),
         r#"
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 
 [tasks.qa]
 run = "printf docs"
@@ -48,9 +48,9 @@ run = "printf docs"
             "- effigy.toml -> effigy.docs.toml (override: tasks.qa)",
             "- tasks.qa: effigy.tasks.toml -> effigy.docs.toml",
             "effigy.docs.toml:",
-            "- docs_policy.indexes.vision.file",
+            "- docs_policy.indexes.topic.file",
             "Effective Manifest",
-            "[docs_policy.indexes.vision]",
+            "[docs_policy.indexes.topic]",
             "[tasks.dev]",
             "[tasks.qa]",
             "run = \"printf docs\"",

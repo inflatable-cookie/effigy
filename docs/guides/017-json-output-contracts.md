@@ -112,7 +112,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.papercuts.v1`
 - `effigy.papercuts.add.v1`
 
-Operator workflow and recovery: [`077-local-dependency-linking.md`](./077-local-dependency-linking.md).
+Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-dependency-linking.md).
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
 - `effigy.version.v1`
@@ -433,10 +433,10 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- Watch/init/migrate command contracts: [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
-- DAG/policy/locking behavior: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
-- CI automation patterns: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- Watch/init/migrate command contracts: [`019-watch-init-migrate-foundation.md`](019-watch-init-migrate-foundation.md)
+- DAG/policy/locking behavior: [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
+- CI automation patterns: [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 
 ## Next Step
 
-After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `effigy contracts check-json --fast`.
+After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](026-json-payload-examples.md) and run `effigy contracts check-json --fast`.

@@ -1,5 +1,5 @@
 > Status: Deprecated
-> Superseded by: [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
+> Superseded by: [`037-documentation-contribution-playbook.md`](037-documentation-contribution-playbook.md)
 > Kept for: historical trigger-matrix detail
 
 # 035 - Guide Ownership and Update Triggers
@@ -94,9 +94,9 @@ effigy docs check links README.md $(find docs -name '*.md' | sort)
 
 ## Related Guides
 
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
-- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
+- [`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md)
+- [`033-style-and-terminology-guide.md`](033-style-and-terminology-guide.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](archive/032-docs-consistency-sweep-and-changelog.md)
 
 ## Next Step
 

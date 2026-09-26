@@ -6,15 +6,15 @@ use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 #[test]
 fn run_manifest_task_uses_docs_policy_loaded_from_composed_manifest() {
     let root = temp_workspace("composed-manifest-docs-policy-runtime");
-    std::fs::create_dir_all(root.join("docs/vision")).expect("mkdir docs/vision");
+    std::fs::create_dir_all(root.join("docs/knowledge")).expect("mkdir docs/knowledge");
     std::fs::write(
-        root.join("docs/vision/README.md"),
+        root.join("docs/knowledge/README.md"),
         "# Vision\n\n## Vision Artifacts\n\n- [001-demo.md](./001-demo.md)\n",
     )
     .expect("write vision index");
     std::fs::write(
-        root.join("docs/vision/001-demo.md"),
-        "# Demo\n\n## Next Task\n\nBuild the next proof.\n",
+        root.join("docs/knowledge/001-demo.md"),
+        "# Demo\n\n## Next move\n\nBuild the next proof.\n",
     )
     .expect("write vision doc");
 
@@ -29,9 +29,9 @@ include = ["effigy.tasks.toml", "effigy.docs.toml"]
     write_manifest(
         &root.join("effigy.docs.toml"),
         r#"
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 section = "Vision Artifacts"
 "#,
     );
@@ -47,7 +47,7 @@ section = "Vision Artifacts"
             required_blocks: Vec::new(),
             required_headings: Vec::new(),
             forbidden_text: Vec::new(),
-            policy_index: Box::new(Some("vision".to_owned())),
+            policy_index: Box::new(Some("topic".to_owned())),
             dir: Box::new(None),
             index: Box::new(None),
             policy_name: Box::new(None),

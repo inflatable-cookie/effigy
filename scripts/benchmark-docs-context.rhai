@@ -25,7 +25,7 @@
 //   b6a60e1b6  second freeze. Three Effigy cases were re-anchored on surfaces
 //              that survive their own lane closing, and the no-match query was
 //              replaced with terms that are genuinely absent. 10 of 11 held.
-//              `effigy-current-roadmap` missed: `docs/roadmaps/g08/README.md`
+//              `effigy-current-roadmap` missed: `docs/plans/g08/README.md`
 //              ranked 6, not top three. Diagnosis: `roadmap` reaches 1540 of
 //              2319 scoped documents, so corpus weighting drops it, and the
 //              remaining terms (`generation`, `theme`, `purpose`) are section
@@ -245,8 +245,8 @@ let targets = [
                 expect: "live-authority",
                 query: "documentation graph profile contract",
                 extra_args: [],
-                expected_path: "docs/contracts/041-documentation-graph-profile-contract.md",
-                rival_path: "docs/logs/archive/2026-08/31-181957-documentation-context-1089.md",
+                expected_path: "docs/knowledge/contracts/041-documentation-graph-profile-contract.md",
+                rival_path: "docs/guides/079-documentation-graph-profiles-and-context.md",
                 max_rank: 3,
             },
             #{
@@ -255,8 +255,8 @@ let targets = [
                 expect: "live-authority",
                 query: "repository defined documentation graph architecture",
                 extra_args: [],
-                expected_path: "docs/architecture/024-repository-defined-documentation-graph.md",
-                rival_path: "docs/roadmaps/archive/g08.md",
+                expected_path: "docs/knowledge/architecture/024-repository-defined-documentation-graph.md",
+                rival_path: "docs/guides/079-documentation-graph-profiles-and-context.md",
                 max_rank: 3,
             },
             // Fourth freeze; see the freeze history above. A query that names an
@@ -273,27 +273,14 @@ let targets = [
                 expected_path: "docs/guides/archive/032-docs-consistency-sweep-and-changelog.md",
                 max_rank: 8,
             },
-            // Re-anchored in the second freeze. The strict-lane front door is the
-            // standing answer to "what is the next task", and unlike a ready card
-            // it survives its own lane closing.
             #{
-                id: "effigy-next-task",
-                dimension: "next-task",
+                id: "effigy-plan",
+                dimension: "plan",
                 expect: "live-authority",
-                query: "active strict lane spec set",
+                query: "Choose the next Effigy product outcome with Tom",
                 extra_args: [],
-                expected_path: "docs/specs/README.md",
-                rival_path: "docs/specs/archive/107-documentation-coverage-parity.md",
+                expected_path: "docs/plan.md",
                 max_rank: 3,
-            },
-            #{
-                id: "effigy-historical-decision",
-                dimension: "historical-decision",
-                expect: "historical-retrieval",
-                query: "bounded documentation context query card 1089 closeout evidence",
-                extra_args: [],
-                expected_path: "docs/logs/archive/2026-08/31-181957-documentation-context-1089.md",
-                max_rank: 8,
             },
             #{
                 id: "effigy-exact-identifier",

@@ -10,11 +10,11 @@ policy and orchestration guides only after you know you need them.
 
 Use:
 - this guide for `effigy release ...`
-- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+- [`051-release-orchestration.md`](051-release-orchestration.md) for the
   release cut workflow
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer policy and binary channel rules
-- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+- [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)
   for changelog work
 
 This surface is built to be optional. A repo can use one command, or adopt a
@@ -44,9 +44,9 @@ For Effigy's own repo, the normal sequence is:
 - Need one focused check or report: use the matching `release` subcommand.
 - Need evidence capture around an existing release flow: use
   `evidence validate`, `evidence summary`, and `evidence closeout`.
-- Need the release cut itself: use [`051-release-orchestration.md`](./051-release-orchestration.md).
+- Need the release cut itself: use [`051-release-orchestration.md`](051-release-orchestration.md).
 - Need channel rules or CI install policy: use
-  [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md).
+  [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md).
 
 ## What Exists Today
 
@@ -119,7 +119,7 @@ required-files = [".github/workflows/release-binaries.yml"]
 
 [distribution.closeout]
 owner = "release"
-related = "docs/roadmaps/distribution.md"
+related = "docs/plans/distribution.md"
 next-step = "Review the captured evidence and publish release sign-off notes."
 ```
 
@@ -195,10 +195,10 @@ framework.
 
 ## Related Guides
 
-- [049-ci-binary-distribution-and-release-protocol.md](./049-ci-binary-distribution-and-release-protocol.md)
-- [051-release-orchestration.md](./051-release-orchestration.md)
-- [052-changelog-workflows-and-northstar-profile.md](./052-changelog-workflows-and-northstar-profile.md)
-- [059-manifest-composition-guide.md](./059-manifest-composition-guide.md)
+- [049-ci-binary-distribution-and-release-protocol.md](049-ci-binary-distribution-and-release-protocol.md)
+- [051-release-orchestration.md](051-release-orchestration.md)
+- [052-changelog-workflows-and-northstar-profile.md](052-changelog-workflows-and-northstar-profile.md)
+- [059-manifest-composition-guide.md](059-manifest-composition-guide.md)
 
 ## Expected Outcome
 

@@ -3,8 +3,8 @@
 Status: open
 Created: 2026-09-01
 Owner: chatterbox (reassigned 2026-09-05 docs cleanup; orchestrator does not own triage)
-Architecture: [`026`](../architecture/026-feature-placement-and-command-surface.md)
-Contract: [`043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
+Architecture: [`026`](../knowledge/architecture/026-feature-placement-and-command-surface.md)
+Contract: [`043`](../knowledge/contracts/043-feature-placement-and-surface-migration-contract.md)
 
 ## Purpose
 
@@ -38,7 +38,7 @@ acquisition decisions moved into architecture `026`, contract `043`, and the
   create-if-absent behavior. The optional-provider and retirement questions in
   this note remain open.
 
-## Next Task
+## Next move
 
 These questions remain open and unscheduled. Next check: the first Bovine
 Accelerator consumer evidence that the media-upload replacement is live, or the

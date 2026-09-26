@@ -138,7 +138,7 @@ pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         manifest_include_comment(profile),
         "include = [",
         "  \"effigy.tasks.toml\",",
-        "  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] },",
+        "  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.topic\"] },",
         "]",
         "",
         "[task_defaults]",
@@ -247,7 +247,7 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "",
         "[distribution.closeout]",
         "owner = \"release\"",
-        "related = \"docs/roadmaps/distribution.md\"",
+        "related = \"docs/plans/distribution.md\"",
         "next-step = \"Review the captured evidence and publish your repo's release sign-off notes.\"",
         "",
     ]

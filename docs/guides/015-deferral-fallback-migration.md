@@ -125,9 +125,9 @@ Recommended deprecation trigger per repo:
 
 ## Related Guides
 
-- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+- [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`028-migration-quick-paths.md`](028-migration-quick-paths.md)
 
 ## Next Step
 

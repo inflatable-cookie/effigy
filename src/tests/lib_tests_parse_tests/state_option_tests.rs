@@ -372,7 +372,7 @@ fn parse_state_capture_with_positional_manifest() {
     let cmd = parse_command(vec![
         "state".to_owned(),
         "capture".to_owned(),
-        "docs/contracts/fixtures/state-stack/acowtancy-uat.toml".to_owned(),
+        "docs/knowledge/contracts/fixtures/state-stack/acowtancy-uat.toml".to_owned(),
         "--role".to_owned(),
         "uat-capture".to_owned(),
         "--source-env".to_owned(),
@@ -390,7 +390,7 @@ fn parse_state_capture_with_positional_manifest() {
         Command::State(StateArgs {
             subcommand: StateSubcommand::Capture {
                 manifest: Some(PathBuf::from(
-                    "docs/contracts/fixtures/state-stack/acowtancy-uat.toml",
+                    "docs/knowledge/contracts/fixtures/state-stack/acowtancy-uat.toml",
                 )),
                 stack: None,
                 profile: None,

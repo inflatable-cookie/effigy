@@ -186,7 +186,7 @@ Good pattern:
   tasks that really need to live together
 
 For the deeper composition rules, use
-[`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md).
+[`059-manifest-composition-guide.md`](059-manifest-composition-guide.md).
 
 ## 7) When To Use Demos Instead Of Tasks
 
@@ -213,20 +213,20 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`../roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](../roadmaps/archive/g02.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`055-everyday-workflows.md`](055-everyday-workflows.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
+- [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
+- `../roadmaps/g02/003-demo-harness-model-and-runner-contract.md` (in Git history)
 
 ## Next Step
 
 After this guide, move to
-[`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md) if
+[`059-manifest-composition-guide.md`](059-manifest-composition-guide.md) if
 you need to split demo config into manifest fragments, use
-[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+[`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 when the next job is migrating a script-based demo surface, or use
-[`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when the
+[`025-command-reference-matrix.md`](025-command-reference-matrix.md) when the
 next job is command lookup or JSON-contract detail.

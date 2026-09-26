@@ -22,9 +22,9 @@ fn missing_graph_selects_baseline_without_error() {
     write_manifest(
         temp.path(),
         r#"
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
+[docs_policy.indexes.topic]
+file = "docs/knowledge/README.md"
+dir = "docs/knowledge"
 "#,
     );
 

@@ -16,7 +16,7 @@ mod report;
 
 const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
 const DEFAULT_JSON_EXAMPLES_SECTION: &str = "Completion Candidates";
-const DEFAULT_LOGS_DIR: &str = "docs/logs";
+const DEFAULT_LOGS_DIR: &str = "docs/notes";
 const DEFAULT_WORKFLOW_DOCS_DIR: &str = "docs";
 
 pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {

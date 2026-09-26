@@ -380,7 +380,7 @@ pub fn generate_closeout_command(
     let output_path = output_path.unwrap_or_else(|| {
         let sanitized_tag = tag.trim_start_matches('v').replace('.', "-");
         PathBuf::from(format!(
-            "docs/logs/{}/{}-{}-distribution-acceptance-closeout-{}.md",
+            "docs/notes/{}/{}-{}-distribution-acceptance-closeout-{}.md",
             now.format("%Y-%m"),
             now.format("%d"),
             now.format("%H%M%S"),

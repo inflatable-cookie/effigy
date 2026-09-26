@@ -246,7 +246,7 @@ pub(super) fn run_add_log_index(
     log_path: &Path,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let index_path = repo_root.join("docs/logs/README.md");
+    let index_path = repo_root.join("docs/notes/README.md");
     if !index_path.is_file() {
         return Err(RunnerError::task_invocation(format!(
             "logs index not found: {}",

@@ -1,35 +1,15 @@
-# Docs for &lt;PROJECT_NAME&gt;
+# <Project name> — current state
 
-This repo is the docs authority for `<PROJECT_NAME>`. Start here when
-looking for product intent, planning state, or evidence.
+<A page at most: what works today, what is being built, and the constraints
+that matter right now. Link to knowledge by topic; don't restate it.>
 
-## Folders
+## By topic
 
-- [`vision/`](vision/README.md) — current product vision, long-term outcome,
-  strategic constraints, and target envelopes.
-- [`roadmaps/`](roadmaps/README.md) — active generation and task frontier,
-  organized by generation.
-- [`triage/`](triage/README.md) — non-authoritative intake for unresolved or
-  deferred candidates. Never executable.
-- [`logs/`](logs/README.md) — evidence, decisions, and meaningful batch
-  records. Not a chat log.
+- Vision: [knowledge/vision.md](knowledge/vision.md)
+- Architecture: [knowledge/architecture.md](knowledge/architecture.md)
+- Contracts: [knowledge/contracts/](knowledge/contracts/README.md)
+- Domain: [knowledge/domain/](knowledge/domain/README.md)
 
-Optional folders (add as the repo matures):
+## What's next
 
-- `guides/` — operator-facing how-to material
-- `contracts/` — repo working rules and promise shapes
-- `architecture/` — system and component design
-- `research/` — open questions, spikes, background
-
-## Start here
-
-A newcomer should read, in order:
-
-1. [`vision/README.md`](vision/README.md) — what this project is for
-2. [`roadmaps/README.md`](roadmaps/README.md) — what is being built next
-3. [`logs/README.md`](logs/README.md) — how to read or add evidence
-
-## Contract
-
-This repo follows the Northstar + Effigy consumer contract. Run
-`effigy qa:northstar` to validate the docs spine and agent contract.
+See [plan.md](plan.md).

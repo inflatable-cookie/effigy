@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
+
+### Changed
+- Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
+
 ## [0.13.1] - 2026-09-25
 
 ### Added
@@ -284,7 +290,7 @@ During v0.x, MINOR bumps may include breaking changes.
   name, `effigy help <command>` defers with `effigy <command> --help` instead of
   showing the built-in panel, and never executes the repository's task.
 - Markdown graph documents no longer infer kinds from path prefixes such as
-  `docs/contracts/` or `docs/guides/`. Baseline kind is `document`; a
+  `docs/knowledge/contracts/` or `docs/guides/`. Baseline kind is `document`; a
   repository profile assigns kinds.
 - This repository now ships its own `[docs_policy.graph]` profile in
   `docs/effigy.docs.toml`, so `effigy docs context` runs here with Northstar
@@ -2551,7 +2557,7 @@ During v0.x, MINOR bumps may include breaking changes.
   external side-effect boundary by delegating tag verification, summary
   writing, and artifact validation to native Effigy commands instead of
   shell-wrapper entrypoints
-- Retire redundant docs/contracts/distribution wrapper scripts and update
+- Retire redundant docs/knowledge/contracts/distribution wrapper scripts and update
   active workflows, tasks, and operator guides to call native `effigy`
   commands or targeted Rust tests directly where no external script boundary
   is needed

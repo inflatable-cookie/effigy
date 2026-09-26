@@ -24,7 +24,7 @@ use crate::error::GatewayError;
 ///
 /// The gateway's read-path trust check (see [`crate::trust`]) requires this
 /// marker before an elevated daemon will trust the file. See
-/// `docs/contracts/033-gateway-route-table-trust-contract.md`.
+/// `docs/knowledge/contracts/033-gateway-route-table-trust-contract.md`.
 pub const ROUTE_TABLE_MANAGED_MARKER: &str = "effigy-gateway-route-table-v1";
 
 /// On-disk envelope: routes plus the Effigy-managed provenance marker.

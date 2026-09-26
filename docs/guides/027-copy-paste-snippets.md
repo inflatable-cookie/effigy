@@ -2,7 +2,7 @@
 
 Use this guide for quick manifest bootstraps you can paste and adapt.
 
-For CI workflow snippets, use [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
+For CI workflow snippets, use [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md).
 
 ## Start Here
 
@@ -265,7 +265,7 @@ run = "composer global exec effigy -- {request} {args}"
 
 Use only when unresolved selectors must forward to legacy tooling.
 
-See [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md) for the full deferral migration guide.
+See [`015-deferral-fallback-migration.md`](015-deferral-fallback-migration.md) for the full deferral migration guide.
 
 ## 8) Cache Configuration Snippet
 
@@ -368,10 +368,10 @@ Keep `[scan.stale_suppressions].doctor = false` unless you want suppression find
 
 ## Related Guides
 
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
+- [`028-migration-quick-paths.md`](028-migration-quick-paths.md)
 
 ## Expected Outcome
 
@@ -384,7 +384,7 @@ After this guide, you should be able to:
 ## Next Step
 
 After pasting a snippet, move to
-[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) to turn the copied
+[`022-manifest-cookbook.md`](022-manifest-cookbook.md) to turn the copied
 baseline into an intentional repo-specific contract, then validate the result
 with the checks in
-[`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).
+[`029-docs-qa-checklist-and-validation.md`](029-docs-qa-checklist-and-validation.md).

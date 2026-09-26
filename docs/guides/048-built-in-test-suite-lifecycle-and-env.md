@@ -190,10 +190,10 @@ After applying this pattern, `effigy test` remains the single entrypoint for tes
 
 ## Related Guides
 
-- [`013-testing-orchestration.md`](./013-testing-orchestration.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`013-testing-orchestration.md`](013-testing-orchestration.md)
+- [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
 
 ## Next Step
 

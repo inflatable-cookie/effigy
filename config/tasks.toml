@@ -26,27 +26,16 @@
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
-"qa:docs:index" = "cargo run --bin effigy -- docs check index"
-"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
-"qa:docs:backlog-absence" = "test ! -e docs/roadmaps/backlog"
-"qa:docs:vision" = [
-  "cargo run --bin effigy -- docs check headings docs/roadmaps/README.md --require-heading '## Current planning state' --require-heading '## Next Task'",
-  "cargo run --bin effigy -- docs check headings docs/roadmaps/generation-index.md --require-heading '## Lifecycle state' --require-heading '## Next Task'",
-  "cargo run --bin effigy -- docs check headings docs/roadmaps/templates/task-template.md --require-heading '## Ready-State Rubric' --require-heading '## Dispatch manifest' --require-heading '## Acceptance and review oracle' --require-heading '## Next task'",
-  "cargo run --bin effigy -- docs check headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md --require-heading '## Vision Alignment'",
-  "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'",
-  "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'",
+"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:docs:knowledge" = [
+  "cargo run --bin effigy -- docs check paths README.md AGENTS.md docs/README.md docs/plan.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
   "cargo run --bin effigy -- docs check workflow-paths",
-  "cargo run --bin effigy -- docs check index --policy-index vision",
-  "cargo run --bin effigy -- docs check next-action --policy vision",
 ]
 "qa:docs" = [
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },
-  { task = "qa:docs:index" },
   { task = "qa:docs:agent-defaults" },
-  { task = "qa:docs:backlog-absence" },
-  { task = "qa:docs:vision" },
+  { task = "qa:docs:knowledge" },
 ]
 
 # JSON contract QA

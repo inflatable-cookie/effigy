@@ -67,7 +67,7 @@ Farmyard initially returned 200, but during a signed-in Playwright walkthrough
 the fixed `*.acowtancy.test` gateway routes moved to another worktree stack.
 Mailpit OTP and the browser session then failed. A later `container up` attempt
 recycled the workspace and closed ports 41001/41002. The evidence is
-`docs/logs/2026-09/25-235300-g05-225-dairy-signed-in-walkthroughs.md` on that
+`docs/notes/2026-09/25-235300-g05-225-dairy-signed-in-walkthroughs.md` on that
 PR branch. The separate workspace-recycle cause still needs inspection.
 
 Known mechanism in Effigy: `RouteTable` has one entry per domain;
@@ -105,7 +105,7 @@ contract; choose the division of Effigy, bundle, and Acowtancy work; determine
 whether the observed workspace recycle and fixed published ports need a
 separate runtime repair. Next check: inspect concurrent-stack evidence and
 settle these decisions with Tom before canonical promotion. Governing refs:
-`docs/contracts/005-container-runtime-contract.md`,
-`docs/contracts/009-execution-surface-convergence.md`,
+`docs/knowledge/contracts/005-container-runtime-contract.md`,
+`docs/knowledge/contracts/009-execution-surface-convergence.md`,
 `docs/guides/063-container-system-guide.md`, and this note's original
 worktree-identity request.

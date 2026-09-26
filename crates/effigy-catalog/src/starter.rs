@@ -280,104 +280,60 @@ mod tests {
 
     #[test]
     fn northstar_starter_resolves_with_all_declared_files_and_guidance() {
-        let resolver = StarterResolver::new();
-        let starter = resolver
+        let starter = StarterResolver::new()
             .resolve("northstar")
-            .expect("northstar starter should resolve");
-
-        assert_eq!(starter.name, "northstar");
+            .expect("northstar starter");
         let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
         for expected in [
             "effigy.toml",
             "README.md",
             "AGENTS.md",
-            "CHANGELOG.md",
+            ".paseo/queue.json",
             "docs/README.md",
-            "docs/vision/README.md",
-            "docs/vision/001-product-vision.md",
-            "docs/roadmaps/README.md",
-            "docs/roadmaps/templates/task-template.md",
+            "docs/plan.md",
+            "docs/knowledge/README.md",
+            "docs/knowledge/vision.md",
+            "docs/knowledge/contracts/release.md",
+            "docs/knowledge/retired.toml",
+            "docs/knowledge/questions.md",
             "docs/triage/README.md",
-            "docs/logs/README.md",
-            "docs/policy/vision-next-task-verbs.txt",
         ] {
             assert!(
                 targets.contains(&expected),
-                "expected northstar to declare {expected}; got {targets:?}"
+                "missing {expected}: {targets:?}"
             );
         }
-        let guidance = starter.guidance.expect("northstar ships guidance text");
-        assert!(guidance.contains("<PROJECT_NAME>"));
-        assert!(guidance.contains("qa:northstar"));
-
-        let agents = starter
-            .files
-            .iter()
-            .find(|file| file.target == "AGENTS.md")
-            .expect("northstar agent contract")
-            .contents
-            .as_str();
-        assert!(agents.contains("Route by job, not by startup ritual"));
+        assert!(starter.guidance.expect("guidance").contains("Queue"));
     }
 
     #[test]
     fn northstar_starter_owns_the_northstar_graph_profile() {
         let resolver = StarterResolver::new();
-        let northstar = resolver.resolve("northstar").expect("northstar starter");
-        let northstar_manifest = northstar
+        let starter = resolver.resolve("northstar").expect("northstar starter");
+        let manifest = starter
             .files
             .iter()
-            .find(|file| file.target == "effigy.toml")
-            .expect("northstar manifest")
+            .find(|f| f.target == "effigy.toml")
+            .expect("manifest")
             .contents
             .as_str();
-
         for expected in [
             "[docs_policy.graph]",
-            "[docs_policy.graph.fields.status]",
-            "[docs_policy.graph.fields.owner]",
-            "[docs_policy.graph.currentness]",
-            "[docs_policy.graph.kinds.contract]",
-            "include = [\"docs/contracts/*.md\"]",
-            "[docs_policy.graph.kinds.architecture]",
-            "[docs_policy.graph.kinds.spec]",
-            "[docs_policy.graph.kinds.archived-spec]",
-            "include = [\"docs/specs/archive/*.md\"]",
-            "[docs_policy.graph.kinds.vision]",
-            "[docs_policy.graph.kinds.roadmap]",
-            "[docs_policy.graph.kinds.task]",
-            "[docs_policy.graph.kinds.archived-roadmap]",
-            "[docs_policy.graph.kinds.guide]",
-            "[docs_policy.graph.kinds.log]",
-            "[docs_policy.graph.kinds.handoff]",
-            "[docs_policy.graph.relations.contract]",
-            "[docs_policy.graph.relations.roadmap]",
-            "[docs_policy.graph.relations.task]",
-            "[docs_policy.graph.relations.evidence]",
-            "[docs_policy.graph.relations.supersedes]",
-            "[docs_policy.graph.relations.next-task]",
-            "headings = [\"Next Task\", \"Next task\"]",
-            // The template must say, in the emitted bytes, that it is copied
-            "COPIED configuration",
-            "only runtime authority",
-            "\"qa:northstar:no-backlog\" = \"test ! -e docs/roadmaps/backlog\"",
-            "{ task = \"qa:northstar:no-backlog\" }",
-            "\"qa:northstar:agent-defaults\" = \"effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'\"",
-            "{ task = \"qa:northstar:agent-defaults\" }",
-            "{ task = \"qa:northstar:headings\" }",
-            "{ task = \"qa:northstar:next-action\" }",
+            "[docs_policy.graph.kinds.knowledge]",
+            "[docs_policy.graph.kinds.plan]",
+            "docs/knowledge/contracts/release.md",
+            "qa = [{ task = \"qa:docs\" }]",
         ] {
             assert!(
-                northstar_manifest.contains(expected),
-                "Northstar starter manifest misses `{expected}`"
+                manifest.contains(expected),
+                "starter manifest misses {expected}"
             );
         }
-
         let minimal = resolver.resolve("minimal").expect("minimal starter");
         let minimal_manifest = minimal
             .files
             .iter()
-            .find(|file| file.target == "effigy.toml")
+            .find(|f| f.target == "effigy.toml")
             .expect("minimal manifest")
             .contents
             .as_str();

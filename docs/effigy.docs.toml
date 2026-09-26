@@ -1,32 +1,10 @@
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
-section = "Vision Artifacts"
-exclude = ["history/**", "governance/**", "decisions/**"]
-
-[docs_policy.next_actions.vision]
-index = "vision"
-heading = "## Next Task"
-allowlist_file = "docs/scripts/fixtures/vision-next-task/actionable-verbs.txt"
-
-# ---- Documentation graph profile ---------------------------------------------
-# Effigy's own repository-owned documentation semantics for `effigy docs context`
-# (contract `041`, architecture `024`).
-#
-# This block is committed consumer configuration. It was materialized from the
-# `northstar` starter (`effigy init northstar`) and then extended for this
-# repository's real docs tree. Nothing reads an installed skill or starter at
-# runtime: the bytes below are the only authority. Updating the starter or the
-# `effigy` agent skill does not reinterpret this profile — re-materializing is
-# an explicit edit to this file.
-
 [docs_policy.graph]
 roots = ["README.md", "AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs"]
 
-# Effigy's roadmap and architecture documents legitimately carry per-section
+# Effigy's knowledge and architecture documents may carry per-section
 # `Status:` and `Owner:` lines as well as the document header line, so both
 # fields are multi-valued here. Currentness resolves from the first occurrence
-# in file order, which is the document header. The `northstar` starter ships
+# in file order, which is the document header. The former starter shipped
 # `cardinality = "one"` for both; this repository deliberately deviates, which
 # is exactly what consumer-owned configuration means.
 [docs_policy.graph.fields.status]
@@ -59,50 +37,25 @@ historical = ["complete", "archived", "closed", "superseded", "deprecated"]
 # its parent directory.
 
 [docs_policy.graph.kinds.contract]
-include = ["docs/contracts/*.md"]
+include = ["docs/knowledge/contracts/*.md"]
 authority = 100
 default-currentness = "current"
 
 [docs_policy.graph.kinds.architecture]
-include = ["docs/architecture/*.md"]
+include = ["docs/knowledge/architecture/*.md"]
 authority = 90
 default-currentness = "current"
 
-[docs_policy.graph.kinds.spec]
-include = ["docs/specs/*.md"]
+[docs_policy.graph.kinds.knowledge]
+include = ["docs/knowledge/*.md", "docs/knowledge/domain/*.md"]
 authority = 85
 default-currentness = "current"
 
-[docs_policy.graph.kinds.archived-spec]
-include = ["docs/specs/archive/*.md"]
-authority = 10
-default-currentness = "historical"
-
-[docs_policy.graph.kinds.vision]
-include = ["docs/vision/*.md", "docs/vision/decisions/*.md", "docs/vision/governance/*.md"]
-authority = 80
+[docs_policy.graph.kinds.plan]
+include = ["docs/plan.md"]
+authority = 65
 default-currentness = "current"
 
-[docs_policy.graph.kinds.archived-vision]
-include = ["docs/vision/history/*.md"]
-authority = 10
-default-currentness = "historical"
-
-[docs_policy.graph.kinds.roadmap]
-include = ["docs/roadmaps/*.md", "docs/roadmaps/g??/README.md"]
-authority = 70
-
-[docs_policy.graph.kinds.task]
-include = ["docs/roadmaps/g??/[0-9][0-9][0-9]-*.md"]
-authority = 60
-
-[docs_policy.graph.kinds.archived-roadmap]
-include = ["docs/roadmaps/archive/*.md"]
-authority = 10
-default-currentness = "historical"
-
-# Live guides carry no `Status:` line; the directory split is the currentness
-# signal, so the kind default supplies it and `archived-guide` overrides it.
 [docs_policy.graph.kinds.guide]
 include = ["docs/guides/*.md"]
 authority = 50
@@ -118,31 +71,9 @@ include = ["README.md", "AGENTS.md", "CHANGELOG.md", "PAPERCUTS.md", "docs/READM
 authority = 40
 default-currentness = "current"
 
-[docs_policy.graph.kinds.log]
-include = ["docs/logs/*.md", "docs/logs/*/*.md"]
-authority = 30
-default-currentness = "historical"
-
-[docs_policy.graph.kinds.archived-log]
-include = ["docs/logs/archive/*/*.md"]
-authority = 5
-default-currentness = "historical"
-
-[docs_policy.graph.kinds.audit]
-include = ["docs/audits/*.md", "docs/roadmaps/*/audits/*.md"]
-authority = 25
-
-[docs_policy.graph.kinds.research]
-include = ["docs/research/*.md", "docs/research/*/*.md"]
-authority = 20
-
 [docs_policy.graph.kinds.triage]
 include = ["docs/triage/*.md"]
 authority = 20
-
-[docs_policy.graph.kinds.handoff]
-include = ["docs/handoffs/*.md"]
-authority = 15
 
 # ---- Relations ---------------------------------------------------------------
 # Labels match `Label: [link](target)` metadata lines; headings match links found
@@ -154,20 +85,5 @@ labels = ["Contract", "Contracts"]
 [docs_policy.graph.relations.architecture]
 labels = ["Architecture"]
 
-[docs_policy.graph.relations.spec]
-labels = ["Spec", "Lane", "Strict lane"]
-
-[docs_policy.graph.relations.roadmap]
-labels = ["Roadmap", "Roadmaps"]
-
-[docs_policy.graph.relations.task]
-labels = ["Task", "Northstar task", "Current task", "Ready task", "Completed task"]
-
-[docs_policy.graph.relations.evidence]
-labels = ["Evidence", "Prior evidence", "Predecessor evidence", "Closeout log", "Predecessor"]
-
 [docs_policy.graph.relations.depends-on]
 labels = ["Depends on"]
-
-[docs_policy.graph.relations.next-task]
-headings = ["Next Task", "Next task"]

@@ -159,14 +159,14 @@ After this guide, you should be able to:
 
 ## Related Guides
 
-- DAG run/policy/lock baseline: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
-- Troubleshooting watch and lock failures: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- CI recipes for JSON command automation: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- Scenario-based adoption paths: [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+- DAG run/policy/lock baseline: [`020-dag-lock-policy-baseline.md`](020-dag-lock-policy-baseline.md)
+- Troubleshooting watch and lock failures: [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
+- CI recipes for JSON command automation: [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- Scenario-based adoption paths: [`028-migration-quick-paths.md`](028-migration-quick-paths.md)
 
 ## Next Step
 
 After adopting any watch/init/migrate flow, move to
-[`028-migration-quick-paths.md`](./028-migration-quick-paths.md) and convert
+[`028-migration-quick-paths.md`](028-migration-quick-paths.md) and convert
 the next repo-specific bootstrap or watcher script into a documented Effigy
 path.

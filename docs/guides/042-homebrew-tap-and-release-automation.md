@@ -1,5 +1,5 @@
 > Status: Deprecated
-> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+> Superseded by: [`062-distribution-system-guide.md`](062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 > Kept for: historical Homebrew-tap implementation detail
 
 # 042 - Homebrew Tap and Release Automation
@@ -128,14 +128,14 @@ Per release:
 
 ## Related Guides
 
-- [`010-path-installation-and-release.md`](./010-path-installation-and-release.md)
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`010-path-installation-and-release.md`](010-path-installation-and-release.md)
+- [`014-release-checklist-template.md`](014-release-checklist-template.md)
+- [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
 
 ## Next Step
 
 After the first production run, attach the generated tap PR URL in a dated
 checkpoint log using
-[`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
+[`054-release-checkpoint-log-template.md`](054-release-checkpoint-log-template.md)
 and proceed to first-publish channel matrix execution.

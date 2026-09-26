@@ -342,7 +342,7 @@ context automatically.
 
 `effigy --json secrets list` returns `effigy.secrets.v1` with metadata only — no
 values, no hashes, no decrypted contents. See
-[`017-json-output-contracts.md`](./017-json-output-contracts.md).
+[`017-json-output-contracts.md`](017-json-output-contracts.md).
 
 ## Relationship To `.env.schema`
 
@@ -359,10 +359,10 @@ Migration path:
 
 ## Related
 
-- [`050-env-schema-integration.md`](./050-env-schema-integration.md) — env schema
+- [`050-env-schema-integration.md`](050-env-schema-integration.md) — env schema
   for non-secret configuration
-- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) — secret
+- [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md) — secret
   access from Rhai scripts
-- [`074-deployment-guide.md`](./074-deployment-guide.md) — deploy secret targets
+- [`074-deployment-guide.md`](074-deployment-guide.md) — deploy secret targets
   and hooks
-- [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) — full contract
+- [`../contracts/032-secret-and-local-config-management-contract.md`](../knowledge/contracts/032-secret-and-local-config-management-contract.md) — full contract

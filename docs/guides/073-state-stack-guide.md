@@ -241,6 +241,6 @@ lineage record inside each report.
 ## JSON Output
 
 All state commands support `--json` for machine-readable reports. See
-[`017-json-output-contracts.md`](./017-json-output-contracts.md) for schema
+[`017-json-output-contracts.md`](017-json-output-contracts.md) for schema
 ids: `effigy.state-stack.plan.v1`, `effigy.state-stack.apply.v1`,
 `effigy.state-stack.capture.v1`.

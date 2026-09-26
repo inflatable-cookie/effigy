@@ -594,7 +594,7 @@ const GOVERNED_RUNTIME_FILES: &[&str] = &[
 
 /// Mixed-purpose directories that host at least one governed file. Their
 /// siblings are legitimately allowed to name repository paths - the `docs check`
-/// families document `docs/logs` and `docs/guides` in their help - so the
+/// families document `docs/notes` and `docs/guides` in their help - so the
 /// directory cannot simply be walked. Its inventory is asserted instead, which
 /// forces a new file here to be classified by hand.
 const MIXED_RUNTIME_DIRS: &[(&str, &[&str])] = &[(
@@ -672,16 +672,16 @@ const NORTHSTAR_VOCABULARY: &[&str] = &[
     "handoff",
     "archived-spec",
     "next-task",
-    "next task",
+    "next action",
     "strict-ready",
     "papercut",
-    "docs/contracts",
-    "docs/specs",
-    "docs/roadmaps",
-    "docs/vision",
-    "docs/logs",
+    "docs/knowledge/contracts",
+    "docs/knowledge/contracts",
+    "docs/plans",
+    "docs/knowledge",
+    "docs/notes",
     "docs/guides",
-    "docs/handoffs",
+    "docs/briefs",
 ];
 
 fn repo_root() -> PathBuf {
@@ -777,18 +777,11 @@ fn northstar_consumer_repo(label: &str) -> PathBuf {
     let init = run_docs(&root, &["init", "northstar"]);
     assert!(init.status.success(), "init northstar failed: {init:?}");
 
-    std::fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
-    std::fs::create_dir_all(root.join("docs/specs/archive")).expect("mkdir archived specs");
+    std::fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir contracts");
     std::fs::write(
-        root.join("docs/contracts/001-widget-calibration-contract.md"),
-        "# 001 - Widget Calibration Contract\n\nStatus: active\nOwner: Platform\n\n## Tolerance band\n\nThe widget calibrator tolerance band is plus or minus four millirads.\n",
-    )
-    .expect("write contract");
-    std::fs::write(
-        root.join("docs/specs/archive/090-widget-calibration-lane.md"),
-        "# 090 - Widget Calibration Lane\n\nStatus: archived\n\n## Tolerance band\n\nThe widget calibrator tolerance band was plus or minus nine millirads.\n",
-    )
-    .expect("write archived spec");
+        root.join("docs/knowledge/contracts/001-widget-calibration-contract.md"),
+        "# Widget Calibration\n\nThe widget calibrator tolerance band is plus or minus four millirads.\n",
+    ).expect("write contract");
     root
 }
 
@@ -810,52 +803,21 @@ fn northstar_starter_profile_is_queryable_from_the_copied_manifest_alone() {
         .iter()
         .map(|kind| kind.as_str().expect("kind token").to_owned())
         .collect();
-    for expected in [
-        "contract",
-        "archived-spec",
-        "roadmap",
-        "task",
-        "archived-roadmap",
-        "log",
-    ] {
+    for expected in ["knowledge", "plan", "guide"] {
         assert!(
             kinds.contains(&expected.to_owned()),
-            "copied Northstar profile is missing kind `{expected}`; got {kinds:?}"
+            "missing {expected}: {kinds:?}"
         );
     }
-    let relations: Vec<String> = result["profile"]["relations"]
-        .as_array()
-        .expect("profile relations")
-        .iter()
-        .map(|relation| relation.as_str().expect("relation token").to_owned())
-        .collect();
-    for expected in ["contract", "roadmap", "task", "evidence", "next-task"] {
-        assert!(
-            relations.contains(&expected.to_owned()),
-            "copied Northstar profile is missing relation `{expected}`; got {relations:?}"
-        );
-    }
-
     let results = result["results"].as_array().expect("results array");
     let first = &results[0];
     assert_eq!(
-        first["path"], "docs/contracts/001-widget-calibration-contract.md",
+        first["path"], "docs/knowledge/contracts/001-widget-calibration-contract.md",
         "the live contract must outrank the archived spec at equal relevance"
     );
-    assert_eq!(first["document_kind"], "contract");
+    assert_eq!(first["document_kind"], "knowledge");
     assert_eq!(first["authority"], 100);
     assert_eq!(first["currentness"], "current");
-
-    let archived = results
-        .iter()
-        .find(|entry| entry["path"] == "docs/specs/archive/090-widget-calibration-lane.md")
-        .expect("the archived spec stays retrievable");
-    assert_eq!(archived["document_kind"], "archived-spec");
-    assert_eq!(archived["currentness"], "historical");
-    assert!(
-        archived["rank"].as_u64() > first["rank"].as_u64(),
-        "the historical counterpart must not outrank the live contract"
-    );
 
     std::fs::remove_dir_all(&repo).ok();
 }
@@ -940,8 +902,8 @@ fn installed_skill_and_template_directories_never_reach_the_query() {
     let manifest_path = repo.join("effigy.toml");
     let manifest = std::fs::read_to_string(&manifest_path).expect("read consumer manifest");
     let edited = manifest.replace(
-        "[docs_policy.graph.kinds.contract]\ninclude = [\"docs/contracts/*.md\"]\nexclude = []\nauthority = 100",
-        "[docs_policy.graph.kinds.contract]\ninclude = [\"docs/contracts/*.md\"]\nexclude = []\nauthority = 44",
+        "[docs_policy.graph.kinds.knowledge]\ninclude = [\"docs/knowledge/*.md\", \"docs/knowledge/contracts/*.md\", \"docs/knowledge/domain/*.md\"]\nauthority = 100",
+        "[docs_policy.graph.kinds.knowledge]\ninclude = [\"docs/knowledge/*.md\", \"docs/knowledge/contracts/*.md\", \"docs/knowledge/domain/*.md\"]\nauthority = 44",
     );
     assert_ne!(edited, manifest, "consumer authority weight was not found");
     std::fs::write(&manifest_path, edited).expect("write consumer manifest");
@@ -955,7 +917,9 @@ fn installed_skill_and_template_directories_never_reach_the_query() {
         .as_array()
         .expect("results array")
         .iter()
-        .find(|entry| entry["path"] == "docs/contracts/001-widget-calibration-contract.md")
+        .find(|entry| {
+            entry["path"] == "docs/knowledge/contracts/001-widget-calibration-contract.md"
+        })
         .expect("the contract is still retrievable");
     assert_eq!(
         contract["authority"], 44,

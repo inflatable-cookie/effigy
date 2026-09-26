@@ -49,10 +49,7 @@ impl FileRole {
         {
             return Self::Config;
         }
-        if lower.starts_with("docs/roadmaps/")
-            || lower.starts_with("docs/specs/")
-            || lower.starts_with("docs/logs/")
-        {
+        if lower == "docs/plan.md" || lower.starts_with("docs/plans/") {
             return Self::Planning;
         }
         if language_id == "markdown" || lower.starts_with("docs/") || lower.ends_with(".md") {

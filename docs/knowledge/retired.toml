@@ -1,0 +1,29 @@
+[[retired]]
+id = "northstar-process-records"
+retired = "2026-09-26"
+replacement = "Knowledge in docs/knowledge/, intent in docs/plan.md; tasks, briefs, status and outcomes live in Queue."
+owner = "docs/knowledge/README.md"
+terms = ["roadmap card", "generation index", "lifecycle record", "northstar:lifecycle", "chatterbox handoff"]
+paths = [".northstar/lifecycle/", "docs/roadmaps/", "docs/handoffs/", "docs/logs/"]
+config_keys = ["northstar/queue:hook", "paseo.queue.control.v4"]
+allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-strict-planning-lane"
+retired = "2026-09-26"
+replacement = "Effigy intent lives in docs/plan.md; Queue holds briefs and task outcomes."
+owner = "docs/plan.md"
+terms = ["strict planning lane", "Next Task"]
+paths = ["docs/specs/", "docs/scripts/fixtures/vision-next-task/"]
+config_keys = ["docs_policy.next_actions.vision"]
+allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-vision-governance-records"
+retired = "2026-09-26"
+replacement = "Current product direction lives in docs/knowledge/vision.md; Git keeps prior review and decision records."
+owner = "docs/knowledge/vision.md"
+terms = ["vision artifact status register", "vision decision record index"]
+paths = ["docs/vision/"]
+config_keys = ["docs_policy.indexes.vision"]
+allow = ["CHANGELOG.md"]

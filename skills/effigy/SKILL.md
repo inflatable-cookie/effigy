@@ -213,7 +213,7 @@ Add `--json` when the agent needs to verify canonical source, target,
 invocation, and execution paths. Use `--stdio passthrough` to let the selected
 task own raw stdin/stdout/stderr and exit status for machine-to-machine calls;
 it cannot combine with `--json`. Contract:
-`docs/contracts/042-external-skill-task-runner-contract.md`.
+`docs/knowledge/contracts/042-external-skill-task-runner-contract.md`.
 
 **Documentation context** — `effigy docs context "<question>"` returns bounded
 exact Markdown sections with path, span, kind, authority, currentness, fields,
@@ -249,9 +249,9 @@ Sequence: `references/release-protocol.md`.
 | Topic | Guide |
 |-------|-------|
 | Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
-| Documentation graph profile | `docs/guides/079-documentation-graph-profiles-and-context.md`, `docs/architecture/024-repository-defined-documentation-graph.md`, `docs/contracts/041-documentation-graph-profile-contract.md` |
+| Documentation graph profile | `docs/guides/079-documentation-graph-profiles-and-context.md`, `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`, `docs/knowledge/contracts/041-documentation-graph-profile-contract.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
-| Installed skill task execution | `docs/contracts/042-external-skill-task-runner-contract.md`, `docs/architecture/025-external-skill-task-execution.md` |
+| Installed skill task execution | `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`, `docs/knowledge/architecture/025-external-skill-task-execution.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |
 | Rhai host surface audit | `docs/guides/068-rhai-host-surface-audit.md` |
 | Task routing | `docs/guides/016-task-routing-precedence.md` |
