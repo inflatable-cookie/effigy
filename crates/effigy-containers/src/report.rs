@@ -1456,6 +1456,7 @@ fn kind_label(kind: crate::ObservedKind) -> &'static str {
         crate::ObservedKind::Route => "route",
         crate::ObservedKind::Port => "port",
         crate::ObservedKind::Loopback => "loopback",
+        crate::ObservedKind::TlsCert => "tls_cert",
     }
 }
 

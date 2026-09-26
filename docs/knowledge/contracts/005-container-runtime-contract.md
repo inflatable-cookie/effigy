@@ -80,17 +80,24 @@ effective names on the gateway. It does not rewrite application configuration.
 Owned mutable resources for that generation carry `com.effigy.scope` or the
 exact Compose project label. `effigy container retire` deletes only resources
 those proofs still attribute to the recorded token. Shared services, persistent
-and external volumes, and foreign-owned resources stay. Compose networks are
-part of the owned inventory. A durable record under
-`~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can retry;
-one record per generation token aggregates every container environment in that
-worktree. Backend discovery failures keep the record and do not report
-success. Success requires that no owned container, mutable volume, network,
-route, port or loopback record remains. A second retire with nothing left is
-success. Repo-owned Compose is classified as such: cleanup uses the scoped
-project label, not a name prefix. `share_runtime_identity = true` skips stack
-deletion. Certificate removal for retired TLS routes happens while the route
-table lock is held.
+and external volumes, and foreign-owned resources stay. Shared-identity
+routes and loopbacks stay even when the same worktree also has isolated
+stacks. Compose networks are part of the owned inventory. A durable record
+under `~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can
+retry; one record per generation token aggregates every container environment
+and every runtime profile in that worktree. Record writes take a lock and
+replace the file atomically; a corrupt record is an error, not an empty
+scope. Backend discovery failures, including malformed inspect or listing
+JSON, keep the record and do not report success. Success requires that no
+owned container, mutable volume, network, isolated route, port, loopback, or
+TLS certificate remains. A second retire with nothing left is success,
+including a shared-only scope whose durable record is then removed.
+Repo-owned Compose is classified as such: cleanup uses the scoped project
+label, not a name prefix, and named volumes in those projects stay unless
+labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
+stack deletion. Certificate removal for retired TLS routes is recorded on
+the scope first, then runs under the route-table lock before the table is
+saved; a TLS failure leaves the route and the pending-cert list for retry.
 
 ## Contract goals
 

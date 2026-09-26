@@ -193,11 +193,29 @@ pub fn deregister_owned_routes(
 /// Remove owned routes and run `on_removed` before releasing the route lock.
 ///
 /// TLS certificate deletion belongs here so another checkout cannot claim the
-/// domain and then lose its certificate.
+/// domain and then lose its certificate. The callback runs before the table is
+/// saved; a callback error leaves the route in place.
 pub fn deregister_owned_routes_with<F>(
     route_table_path: &Path,
     project_path: &str,
     scope: Option<&str>,
+    on_removed: F,
+) -> Result<Vec<Route>, GatewayError>
+where
+    F: FnMut(&Route) -> Result<(), GatewayError>,
+{
+    deregister_owned_routes_matching(route_table_path, project_path, scope, None, on_removed)
+}
+
+/// Remove owned routes whose domains are in `domains`, then save the table.
+///
+/// `domains = None` removes every route owned by the checkout generation.
+/// `on_removed` runs while the route is still recorded; failure skips save.
+pub fn deregister_owned_routes_matching<F>(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    domains: Option<&[String]>,
     mut on_removed: F,
 ) -> Result<Vec<Route>, GatewayError>
 where
@@ -209,18 +227,21 @@ where
         .all_routes()
         .into_iter()
         .filter(|route| owned_by(route, project_path, scope))
+        .filter(|route| {
+            domains
+                .map(|allowed| allowed.iter().any(|domain| domain == &route.domain))
+                .unwrap_or(true)
+        })
         .cloned()
         .collect::<Vec<_>>();
     if owned.is_empty() {
         return Ok(owned);
     }
     for route in &owned {
+        on_removed(route)?;
         let _ = table.deregister(&route.domain);
     }
     table.save(route_table_path)?;
-    for route in &owned {
-        on_removed(route)?;
-    }
     Ok(owned)
 }
 

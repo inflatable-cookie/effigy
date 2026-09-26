@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::GatewayError;
 use crate::ports::PortRegistry;
 
 #[test]
@@ -384,8 +385,8 @@ fn deregister_owned_routes_runs_tls_callback_before_releasing_lock() {
                 RouteTable::load(&path)
                     .unwrap()
                     .lookup("app.test")
-                    .is_none(),
-                "route table must already omit the domain while the lock is held"
+                    .is_some(),
+                "route table still contains the domain until the TLS callback succeeds"
             );
             seen.lock().unwrap().push(route.domain.clone());
             Ok(())
@@ -394,4 +395,89 @@ fn deregister_owned_routes_runs_tls_callback_before_releasing_lock() {
     .unwrap();
     assert_eq!(removed.len(), 1);
     assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .is_none());
+}
+
+#[test]
+fn deregister_owned_routes_keeps_route_when_tls_callback_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let registration = build_registration(
+        "app.test",
+        "app",
+        &checkout.display().to_string(),
+        8100,
+        true,
+        None,
+    );
+    register_route(&path, &registration).unwrap();
+    let token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    let error = deregister_owned_routes_with(
+        &path,
+        &checkout.display().to_string(),
+        Some(&token),
+        |route| {
+            Err(GatewayError::TlsError {
+                domain: route.domain.clone(),
+                reason: "mkcert failed".to_owned(),
+            })
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("mkcert failed"));
+    assert!(
+        RouteTable::load(&path)
+            .unwrap()
+            .lookup("app.test")
+            .is_some(),
+        "callback failure must leave the route recorded"
+    );
+}
+
+#[test]
+fn deregister_owned_routes_matching_leaves_unlisted_owned_routes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let checkout_path = checkout.display().to_string();
+    register_route(
+        &path,
+        &build_registration("app.test", "app", &checkout_path, 8100, true, None),
+    )
+    .unwrap();
+    register_route(
+        &path,
+        &build_registration("mail.app.test", "app", &checkout_path, 8101, true, None),
+    )
+    .unwrap();
+    let token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    let removed = deregister_owned_routes_matching(
+        &path,
+        &checkout_path,
+        Some(&token),
+        Some(&["app.test".to_owned()]),
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].domain, "app.test");
+    let table = RouteTable::load(&path).unwrap();
+    assert!(table.lookup("app.test").is_none());
+    assert!(table.lookup("mail.app.test").is_some());
 }

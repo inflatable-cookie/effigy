@@ -14,6 +14,7 @@ pub enum ObservedKind {
     Route,
     Port,
     Loopback,
+    TlsCert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,16 +37,6 @@ pub struct RetirementPlan {
 }
 
 pub fn plan_retirement(record: &ScopeRecord, observed: &[ObservedResource]) -> RetirementPlan {
-    if record.project_names.is_empty() {
-        return RetirementPlan {
-            compose_kind: record.compose_kind,
-            skip_reason: Some("shared_runtime_identity"),
-            delete: Vec::new(),
-            retain: observed.to_vec(),
-            mismatch: Vec::new(),
-        };
-    }
-
     let mut delete = Vec::new();
     let mut retain = Vec::new();
     let mut mismatch = Vec::new();
@@ -58,10 +49,23 @@ pub fn plan_retirement(record: &ScopeRecord, observed: &[ObservedResource]) -> R
     }
     RetirementPlan {
         compose_kind: record.compose_kind,
-        skip_reason: None,
+        skip_reason: shared_identity_skip_reason(record),
         delete,
         retain,
         mismatch,
+    }
+}
+
+fn shared_identity_skip_reason(record: &ScopeRecord) -> Option<&'static str> {
+    if record.compose_kind == ScopeComposeKind::SharedIdentity
+        && record.project_names.is_empty()
+        && record.routes.is_empty()
+        && record.loopback_identities.is_empty()
+        && record.pending_tls_certs.is_empty()
+    {
+        Some("shared_runtime_identity")
+    } else {
+        None
     }
 }
 
@@ -95,6 +99,30 @@ fn classify(record: &ScopeRecord, resource: &ObservedResource) -> ResourceClass 
             .iter()
             .any(|name| name == project)
     }) {
+        return ResourceClass::Retain;
+    }
+    if resource.kind == ObservedKind::Route
+        && record
+            .retain_routes
+            .iter()
+            .any(|route| route == &resource.name)
+    {
+        return ResourceClass::Retain;
+    }
+    if resource.kind == ObservedKind::Loopback
+        && record
+            .retain_loopback_identities
+            .iter()
+            .any(|identity| identity == &resource.name)
+    {
+        return ResourceClass::Retain;
+    }
+    if resource.kind == ObservedKind::TlsCert
+        && record
+            .retain_routes
+            .iter()
+            .any(|route| route == &resource.name)
+    {
         return ResourceClass::Retain;
     }
     if resource
@@ -148,6 +176,14 @@ fn classify(record: &ScopeRecord, resource: &ObservedResource) -> ResourceClass 
     {
         return ResourceClass::Delete;
     }
+    if resource.kind == ObservedKind::TlsCert
+        && record
+            .pending_tls_certs
+            .iter()
+            .any(|domain| domain == &resource.name)
+    {
+        return ResourceClass::Delete;
+    }
     ResourceClass::Mismatch
 }
 
@@ -165,15 +201,31 @@ mod tests {
             updated_unix: 1,
             compose_kind: ScopeComposeKind::Generated,
             profile: "effigy".to_owned(),
+            profiles: vec!["effigy".to_owned()],
             project_names: vec!["app-dev-wt-aaaaaaaaaaaa".to_owned()],
             retain_project_names: vec!["shared-redis".to_owned()],
+            repo_owned_projects: vec![],
             owned_volumes: vec![
                 "app-dev-wt-aaaaaaaaaaaa-db-data".to_owned(),
                 "app-dev-wt-aaaaaaaaaaaa-target".to_owned(),
             ],
             retain_volumes: vec!["app-dev-wt-aaaaaaaaaaaa-db-data".to_owned()],
             routes: vec!["app-waaaaaaaa.test".to_owned()],
+            retain_routes: vec![],
             loopback_identities: vec!["project:app-dev-wt-aaaaaaaaaaaa:/tmp/worker".to_owned()],
+            retain_loopback_identities: vec![],
+            pending_tls_certs: vec![],
+        }
+    }
+
+    fn route(name: &str, token: &str) -> ObservedResource {
+        ObservedResource {
+            kind: ObservedKind::Route,
+            name: name.to_owned(),
+            scope_label: Some(token.to_owned()),
+            project_label: Some("/tmp/worker".to_owned()),
+            persist: false,
+            external: false,
         }
     }
 
@@ -262,6 +314,9 @@ mod tests {
         let mut record = record();
         record.compose_kind = ScopeComposeKind::SharedIdentity;
         record.project_names.clear();
+        record.routes.clear();
+        record.loopback_identities.clear();
+        record.retain_project_names.push("app-dev".to_owned());
         let plan = plan_retirement(
             &record,
             &[volume(
@@ -274,6 +329,73 @@ mod tests {
         );
         assert_eq!(plan.skip_reason, Some("shared_runtime_identity"));
         assert!(plan.delete.is_empty());
+        assert_eq!(plan.retain.len(), 1);
+    }
+
+    #[test]
+    fn mixed_shared_and_isolated_retains_shared_routes() {
+        let mut record = record();
+        record.retain_routes = vec!["app.test".to_owned()];
+        record.retain_loopback_identities = vec!["project:app-dev:/tmp/worker".to_owned()];
+        let token = record.token.clone();
+        let plan = plan_retirement(
+            &record,
+            &[
+                route("app-waaaaaaaa.test", &token),
+                route("app.test", &token),
+                ObservedResource {
+                    kind: ObservedKind::Loopback,
+                    name: "project:app-dev:/tmp/worker".to_owned(),
+                    scope_label: Some(token.clone()),
+                    project_label: Some("app-dev".to_owned()),
+                    persist: false,
+                    external: false,
+                },
+            ],
+        );
+        assert!(plan.skip_reason.is_none());
+        assert_eq!(plan.delete.len(), 1);
+        assert_eq!(plan.delete[0].name, "app-waaaaaaaa.test");
+        assert_eq!(plan.retain.len(), 2);
+        assert!(plan
+            .retain
+            .iter()
+            .any(|resource| resource.name == "app.test"));
+    }
+
+    #[test]
+    fn pending_tls_cert_is_owned_until_the_files_are_gone() {
+        let mut record = record();
+        record.pending_tls_certs = vec!["app-waaaaaaaa.test".to_owned()];
+        let leftover = ObservedResource {
+            kind: ObservedKind::TlsCert,
+            name: "app-waaaaaaaa.test".to_owned(),
+            scope_label: Some(record.token.clone()),
+            project_label: None,
+            persist: false,
+            external: false,
+        };
+        let remaining = remaining_after(&record, std::slice::from_ref(&leftover));
+        assert_eq!(remaining, vec![leftover]);
+    }
+
+    #[test]
+    fn repo_owned_persistent_volume_is_retained() {
+        let mut record = record();
+        record.compose_kind = ScopeComposeKind::RepoOwned;
+        record.repo_owned_projects = vec!["app-dev-wt-aaaaaaaaaaaa".to_owned()];
+        let plan = plan_retirement(
+            &record,
+            &[volume(
+                "app-dev-wt-aaaaaaaaaaaa-db-data",
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                Some("app-dev-wt-aaaaaaaaaaaa"),
+                true,
+                false,
+            )],
+        );
+        assert!(plan.delete.is_empty());
+        assert_eq!(plan.retain.len(), 1);
     }
 
     #[test]
