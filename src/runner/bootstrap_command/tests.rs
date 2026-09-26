@@ -198,6 +198,7 @@ fn create_js_child_remote(name: &str) -> PathBuf {
     )
     .expect("write manifest");
     fs::write(worktree.join("package.json"), "{}\n").expect("write package");
+    fs::write(worktree.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
     init_git_repo(&worktree);
     commit_all(&worktree, "init js child");
     let remote = bare_remote_path(&format!("{name}-bare"));
@@ -842,6 +843,7 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
     let ui = root.join("ui");
     fs::create_dir_all(&ui).expect("mkdir ui");
     fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
+    fs::write(ui.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
 
     let api = root.join("api");
     fs::create_dir_all(&api).expect("mkdir api");
@@ -872,6 +874,7 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
         BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
                 mode: BootstrapDepsSyncMode::Both,
+                refresh_lock: false,
                 paths: vec!["ui".to_owned(), "api".to_owned()],
             },
             output_json: false,
@@ -881,7 +884,7 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
     .expect("run bootstrap deps sync");
 
     assert!(out.contains("bootstrap deps sync completed (2)"));
-    assert!(out.contains("ui [js]: bun install"));
+    assert!(out.contains("ui [js]: bun install --frozen-lockfile"));
     assert!(out.contains("api [rust]: cargo fetch --manifest-path Cargo.toml"));
     assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
     assert!(
@@ -892,6 +895,159 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
         fs::read_to_string(api.join("cargo.args")).expect("read cargo args"),
         "fetch --manifest-path Cargo.toml "
     );
+}
+
+#[test]
+fn bootstrap_bun_refresh_generates_lock_and_scrubs_metadata_from_managed_dependencies() {
+    let root = temp_dir("bootstrap-bun-refresh-metadata");
+    fs::write(
+        root.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("package.json"),
+        r#"{"name":"consumer","private":true,"workspaces":["ui"]}"#,
+    )
+    .expect("write workspace manifest");
+
+    let ui = root.join("ui");
+    fs::create_dir_all(&ui).expect("mkdir ui");
+    fs::write(
+        ui.join("package.json"),
+        r#"{"name":"ui","dependencies":{"shared":"file:../shared"}}"#,
+    )
+    .expect("write ui package");
+
+    let shared = root.join("shared");
+    fs::create_dir_all(shared.join("__MACOSX")).expect("mkdir metadata directory");
+    fs::write(
+        shared.join("package.json"),
+        r#"{"name":"shared","version":"1.0.0","main":"index.js"}"#,
+    )
+    .expect("write shared package");
+    fs::write(shared.join("index.js"), "module.exports = 1;\n").expect("write real file");
+    fs::write(shared.join(".DS_Store"), "metadata").expect("write Finder metadata");
+    fs::write(shared.join("._index.js"), "metadata").expect("write AppleDouble metadata");
+    fs::write(shared.join("__MACOSX/._index.js"), "metadata").expect("write archive metadata");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(
+        bin_dir.join("bun"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > bun.args\nmkdir -p ../node_modules/shared\ncp -R ../shared/. ../node_modules/shared/\ncase \" $* \" in\n  *\" --save-text-lockfile \"*) printf 'lockfile-version = 1\\n' > ../bun.lock ;;\nesac\n",
+    )
+    .expect("write fake bun");
+    let script = bin_dir.join("bun");
+    let mut perms = fs::metadata(&script).expect("stat fake bun").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod fake bun");
+
+    let _process_lock = crate::contract_test_support::lock_test();
+    let _path = PathPrepend::new(&bin_dir);
+    let refreshed = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::JsOnly,
+                refresh_lock: true,
+                paths: vec!["ui".to_owned()],
+            },
+            output_json: false,
+        },
+        root.clone(),
+    )
+    .expect("refresh Bun lock");
+    assert!(refreshed.contains("ui [js]: bun install --save-text-lockfile"));
+    assert!(
+        root.join("bun.lock").is_file(),
+        "refresh should create bun.lock"
+    );
+
+    let installed = root.join("node_modules/shared");
+    assert!(
+        installed.join("index.js").is_file(),
+        "real package file remains"
+    );
+    assert!(
+        installed.join("package.json").is_file(),
+        "package manifest remains"
+    );
+    assert!(!installed.join(".DS_Store").exists());
+    assert!(!installed.join("._index.js").exists());
+    assert!(!installed.join("__MACOSX").exists());
+    assert!(
+        shared.join(".DS_Store").is_file(),
+        "source metadata is untouched"
+    );
+    assert!(
+        shared.join("._index.js").is_file(),
+        "source metadata is untouched"
+    );
+    assert!(shared.join("__MACOSX/._index.js").is_file());
+
+    let frozen = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::JsOnly,
+                refresh_lock: false,
+                paths: vec!["ui".to_owned()],
+            },
+            output_json: false,
+        },
+        root.clone(),
+    )
+    .expect("frozen Bun prepare after refreshing lock");
+    assert!(frozen.contains("ui [js]: bun install --frozen-lockfile"));
+    assert_eq!(
+        fs::read_to_string(ui.join("bun.args")).expect("read Bun args"),
+        "install\n--frozen-lockfile\n"
+    );
+}
+
+#[test]
+fn bootstrap_bun_frozen_install_fails_early_without_lock() {
+    let root = temp_dir("bootstrap-bun-missing-lock");
+    fs::write(
+        root.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    )
+    .expect("write manifest");
+    let ui = root.join("ui");
+    fs::create_dir_all(&ui).expect("mkdir ui");
+    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(
+        bin_dir.join("bun"),
+        "#!/bin/sh\nprintf called > bun.marker\n",
+    )
+    .expect("write fake bun");
+    let script = bin_dir.join("bun");
+    let mut perms = fs::metadata(&script).expect("stat fake bun").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod fake bun");
+
+    let _process_lock = crate::contract_test_support::lock_test();
+    let _path = PathPrepend::new(&bin_dir);
+    let error = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::JsOnly,
+                refresh_lock: false,
+                paths: vec!["ui".to_owned()],
+            },
+            output_json: false,
+        },
+        root.clone(),
+    )
+    .expect_err("missing Bun lock should fail before running Bun");
+
+    let message = error.to_string();
+    assert!(message.contains("bun.lock"), "{message}");
+    assert!(message.contains("bun.lockb"), "{message}");
+    assert!(message.contains("--refresh-lock"), "{message}");
+    assert!(!ui.join("bun.marker").exists(), "Bun must not be invoked");
 }
 
 #[test]
@@ -1257,6 +1413,7 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
     let ui = root.join("ui");
     fs::create_dir_all(&ui).expect("mkdir ui");
     fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
+    fs::write(ui.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
 
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
@@ -1272,6 +1429,7 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
         BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
                 mode: BootstrapDepsSyncMode::Both,
+                refresh_lock: false,
                 paths: vec!["ui".to_owned(), "missing-ui".to_owned()],
             },
             output_json: false,
@@ -1281,7 +1439,7 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
     .expect("run bootstrap deps sync");
 
     assert!(out.contains("bootstrap deps sync completed (1)"));
-    assert!(out.contains("ui [js]: bun install"));
+    assert!(out.contains("ui [js]: bun install --frozen-lockfile"));
     assert!(out.contains("missing-ui [skip]: missing directory"));
     assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
 }

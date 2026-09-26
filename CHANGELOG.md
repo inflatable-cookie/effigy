@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy bootstrap deps sync` runs Bun installs frozen against a committed
+  `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
+  refresh `bun.lock`; successful managed Bun installs also remove Finder and
+  AppleDouble metadata copied into `node_modules` without changing local
+  dependency sources.
 - Linked Git worktrees receive stable, distinct generated-Compose identities
   and allocated host ports by default. `share_runtime_identity = true` opts
   into a shared Compose stack.

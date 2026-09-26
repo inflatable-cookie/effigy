@@ -410,11 +410,46 @@ fn parse_bootstrap_deps_sync_subcommand() {
         Command::Bootstrap(BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
                 mode: BootstrapDepsSyncMode::RustOnly,
+                refresh_lock: false,
                 paths: vec!["../platform".to_owned(), "api".to_owned()],
             },
             output_json: true,
         })
     );
+}
+
+#[test]
+fn parse_bootstrap_deps_sync_refresh_lock_option() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "deps".to_owned(),
+        "sync".to_owned(),
+        "--refresh-lock".to_owned(),
+        "packages/ui".to_owned(),
+    ])
+    .expect("parse refresh-lock command");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::Both,
+                refresh_lock: true,
+                paths: vec!["packages/ui".to_owned()],
+            },
+            output_json: false,
+        })
+    );
+
+    let error = parse_command(vec![
+        "bootstrap".to_owned(),
+        "deps".to_owned(),
+        "sync".to_owned(),
+        "--refresh-lock".to_owned(),
+        "--rust-only".to_owned(),
+    ])
+    .expect_err("refresh-lock does not apply to Rust-only sync");
+    assert!(error.to_string().contains("--refresh-lock"));
 }
 
 #[test]

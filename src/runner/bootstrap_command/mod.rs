@@ -87,9 +87,11 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
         BootstrapSubcommand::Teardown { yes } => {
             session::run_bootstrap_teardown_with_cwd(cwd, args.output_json, *yes)
         }
-        BootstrapSubcommand::DepsSync { mode, paths } => {
-            deps::run_bootstrap_deps_sync(&cwd, *mode, paths, args.output_json)
-        }
+        BootstrapSubcommand::DepsSync {
+            mode,
+            refresh_lock,
+            paths,
+        } => deps::run_bootstrap_deps_sync(&cwd, *mode, *refresh_lock, paths, args.output_json),
         BootstrapSubcommand::ChildrenStatus => {
             run_bootstrap_children_status(&cwd, args.output_json)
         }

@@ -37,6 +37,7 @@ fn bootstrap_deps_json_contract_has_versioned_shape() {
     );
     fs::create_dir_all(root.join("ui")).expect("mkdir ui");
     fs::write(root.join("ui/package.json"), "{}\n").expect("write package");
+    fs::write(root.join("ui/bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
     fs::create_dir_all(root.join("bin")).expect("mkdir bin");
     fs::write(root.join("bin/bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
     let mut perms = fs::metadata(root.join("bin/bun"))
@@ -56,6 +57,7 @@ fn bootstrap_deps_json_contract_has_versioned_shape() {
         &run_command(Command::Bootstrap(BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
                 mode: BootstrapDepsSyncMode::Both,
+                refresh_lock: false,
                 paths: vec!["ui".to_owned()],
             },
             output_json: true,
@@ -69,7 +71,10 @@ fn bootstrap_deps_json_contract_has_versioned_shape() {
     assert!(parsed["operations"].is_array());
     assert_eq!(parsed["operations"][0]["path"], "ui");
     assert_eq!(parsed["operations"][0]["kind"], "js");
-    assert_eq!(parsed["operations"][0]["command"], "bun install");
+    assert_eq!(
+        parsed["operations"][0]["command"],
+        "bun install --frozen-lockfile"
+    );
 }
 
 #[test]
