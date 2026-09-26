@@ -1445,6 +1445,7 @@ fn observed_json(resource: &crate::ObservedResource) -> JsonValue {
         "project_label": resource.project_label,
         "persist": resource.persist,
         "external": resource.external,
+        "profile": resource.profile,
     })
 }
 

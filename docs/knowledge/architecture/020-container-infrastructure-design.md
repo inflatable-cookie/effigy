@@ -469,7 +469,8 @@ use; it is explicit, not an automatic optimization.
 Gateway domains are globally keyed by hostname. Linked worktrees receive
 distinct effective names from the declared apex, so two live stacks can
 register together. `effigy container retire` removes one scope's owned
-resources by label and recorded identity without a global prune. Shared
+resources by label and recorded identity without a global prune, and only
+on the backend that produced each observation. Shared
 routes stay when a worktree mixes isolated and shared-identity stacks;
 repo-owned Compose volumes stay unless labelled mutable.
 

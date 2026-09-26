@@ -13,7 +13,7 @@ use effigy_containers::{
 use effigy_core::worktree_scope;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
-use effigy_gateway::registration::deregister_owned_routes_matching;
+use effigy_gateway::registration::{cleanup_owned_routes_and_certs, owned_by};
 use effigy_gateway::routes::{RouteTable, RouteTableLock};
 
 use super::data::maybe_confirm_destructive_container_action;
@@ -119,12 +119,12 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
     let mut loopbacks_cleared = false;
     for resource in &plan.delete {
         let deleted = match resource.kind {
-            ObservedKind::Route if routes_cleared => true,
+            ObservedKind::Route | ObservedKind::TlsCert if routes_cleared => true,
             ObservedKind::Port if ports_cleared => true,
             ObservedKind::Loopback if loopbacks_cleared => true,
-            ObservedKind::Route => {
+            ObservedKind::Route | ObservedKind::TlsCert => {
                 routes_cleared = true;
-                delete_routes(&record)?
+                delete_routes_and_owned_certs(&record)?
             }
             ObservedKind::Port => {
                 ports_cleared = true;
@@ -134,10 +134,9 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
                 loopbacks_cleared = true;
                 delete_loopbacks(&record)?
             }
-            ObservedKind::Container => delete_container(&record, &resource.name)?,
-            ObservedKind::Volume => delete_volume(&record, &resource.name)?,
-            ObservedKind::Network => delete_network(&record, &resource.name)?,
-            ObservedKind::TlsCert => delete_tls_cert(&resource.name)?,
+            ObservedKind::Container => delete_container(&record, resource)?,
+            ObservedKind::Volume => delete_volume(&record, resource)?,
+            ObservedKind::Network => delete_network(&record, resource)?,
         };
         if deleted {
             removed.push(resource.clone());
@@ -329,6 +328,7 @@ fn observe_volumes_for_profile(
                 .or_else(|| entry.labels.get(COMPOSE_PROJECT_LABEL).cloned()),
             persist,
             external,
+            profile: Some(profile.to_owned()),
         });
     }
     Ok(observed)
@@ -355,6 +355,7 @@ fn list_named_resources(
                     project_label: project_label.clone(),
                     persist: false,
                     external: false,
+                    profile: Some(profile.clone()),
                 }),
         );
     }
@@ -381,8 +382,15 @@ fn list_names(
 }
 
 fn unique_resources(mut found: Vec<ObservedResource>) -> Vec<ObservedResource> {
-    found.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.name.cmp(&right.name)));
-    found.dedup_by(|left, right| left.kind == right.kind && left.name == right.name);
+    found.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then(left.name.cmp(&right.name))
+            .then(left.profile.cmp(&right.profile))
+    });
+    found.dedup_by(|left, right| {
+        left.kind == right.kind && left.name == right.name && left.profile == right.profile
+    });
     found
 }
 
@@ -411,6 +419,7 @@ fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerE
             project_label: Some(route.project.clone()),
             persist: false,
             external: false,
+            profile: None,
         })
         .collect())
 }
@@ -437,6 +446,7 @@ fn observe_ports(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerEr
             project_label: Some(name.clone()),
             persist: false,
             external: false,
+            profile: None,
         })
         .collect())
 }
@@ -460,6 +470,7 @@ fn observe_loopbacks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
             project_label: record.project_names.first().cloned(),
             persist: false,
             external: false,
+            profile: None,
         })
         .collect())
 }
@@ -469,12 +480,25 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
         return Ok(Vec::new());
     }
     let certs_dir = gateway_dir()?.join("certs");
+    let path = super::gateway_registration::gateway_route_table_path()?;
+    let table = if path.is_file() {
+        RouteTable::load(&path).map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    } else {
+        RouteTable::new()
+    };
     Ok(record
         .pending_tls_certs
         .iter()
         .filter(|domain| {
-            certs_dir.join(format!("{domain}.pem")).exists()
-                || certs_dir.join(format!("{domain}-key.pem")).exists()
+            let files_exist = certs_dir.join(format!("{domain}.pem")).exists()
+                || certs_dir.join(format!("{domain}-key.pem")).exists();
+            if !files_exist {
+                return false;
+            }
+            match table.lookup(domain) {
+                Some(route) => owned_by(route, &record.checkout, Some(&record.token)),
+                None => true,
+            }
         })
         .map(|domain| ObservedResource {
             kind: ObservedKind::TlsCert,
@@ -483,6 +507,7 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
             project_label: None,
             persist: false,
             external: false,
+            profile: None,
         })
         .collect())
 }
@@ -517,37 +542,49 @@ fn remember_pending_tls(record: &ScopeRecord) -> Result<ScopeRecord, RunnerError
         })
 }
 
-fn delete_container(record: &ScopeRecord, name: &str) -> Result<bool, RunnerError> {
+fn delete_container(
+    record: &ScopeRecord,
+    resource: &ObservedResource,
+) -> Result<bool, RunnerError> {
     let command = DockerCommand {
         program: "docker".to_owned(),
-        args: vec!["rm".to_owned(), "-f".to_owned(), name.to_owned()],
-        description: format!("remove owned container {name}"),
+        args: vec!["rm".to_owned(), "-f".to_owned(), resource.name.clone()],
+        description: format!("remove owned container {}", resource.name),
     };
-    Ok(delete_with_profiles(record, &command))
+    Ok(delete_on_observed_profile(record, resource, &command))
 }
 
-fn delete_network(record: &ScopeRecord, name: &str) -> Result<bool, RunnerError> {
-    if is_builtin_network(name) {
+fn delete_network(record: &ScopeRecord, resource: &ObservedResource) -> Result<bool, RunnerError> {
+    if is_builtin_network(&resource.name) {
         return Ok(true);
     }
     let command = DockerCommand {
         program: "docker".to_owned(),
-        args: vec!["network".to_owned(), "rm".to_owned(), name.to_owned()],
-        description: format!("remove owned network {name}"),
+        args: vec!["network".to_owned(), "rm".to_owned(), resource.name.clone()],
+        description: format!("remove owned network {}", resource.name),
     };
-    Ok(delete_with_profiles(record, &command))
+    Ok(delete_on_observed_profile(record, resource, &command))
 }
 
-fn delete_volume(record: &ScopeRecord, name: &str) -> Result<bool, RunnerError> {
-    Ok(delete_with_profiles(record, &remove_volume_command(name)))
+fn delete_volume(record: &ScopeRecord, resource: &ObservedResource) -> Result<bool, RunnerError> {
+    Ok(delete_on_observed_profile(
+        record,
+        resource,
+        &remove_volume_command(&resource.name),
+    ))
 }
 
-fn delete_with_profiles(record: &ScopeRecord, command: &DockerCommand) -> bool {
-    record.observation_profiles().iter().any(|profile| {
-        run_runtime_volume_capture(&observation_cwd(record), profile, command)
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    })
+fn delete_on_observed_profile(
+    record: &ScopeRecord,
+    resource: &ObservedResource,
+    command: &DockerCommand,
+) -> bool {
+    let Some(profile) = resource.profile.as_deref() else {
+        return false;
+    };
+    run_runtime_volume_capture(&observation_cwd(record), profile, command)
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 fn delete_tls_cert(domain: &str) -> Result<bool, RunnerError> {
@@ -562,28 +599,24 @@ fn delete_tls_cert(domain: &str) -> Result<bool, RunnerError> {
     Ok(!pem.exists() && !key.exists())
 }
 
-fn delete_routes(record: &ScopeRecord) -> Result<bool, RunnerError> {
+fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerError> {
     let path = super::gateway_registration::gateway_route_table_path()?;
-    deregister_owned_routes_matching(
+    cleanup_owned_routes_and_certs(
         &path,
         &record.checkout,
         Some(&record.token),
         Some(&record.routes),
-        |route| {
-            if !route.tls {
-                return Ok(());
-            }
-            match delete_tls_cert(&route.domain) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(effigy_gateway::GatewayError::TlsError {
-                    domain: route.domain.clone(),
-                    reason: "certificate files remain".to_owned(),
-                }),
-                Err(error) => Err(effigy_gateway::GatewayError::TlsError {
-                    domain: route.domain.clone(),
-                    reason: error.to_string(),
-                }),
-            }
+        &record.pending_tls_certs,
+        |domain| match delete_tls_cert(domain) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(effigy_gateway::GatewayError::TlsError {
+                domain: domain.to_owned(),
+                reason: "certificate files remain".to_owned(),
+            }),
+            Err(error) => Err(effigy_gateway::GatewayError::TlsError {
+                domain: domain.to_owned(),
+                reason: error.to_string(),
+            }),
         },
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;

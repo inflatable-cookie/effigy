@@ -25,6 +25,7 @@ pub struct ObservedResource {
     pub project_label: Option<String>,
     pub persist: bool,
     pub external: bool,
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,6 +227,7 @@ mod tests {
             project_label: Some("/tmp/worker".to_owned()),
             persist: false,
             external: false,
+            profile: None,
         }
     }
 
@@ -243,6 +245,7 @@ mod tests {
             project_label: project.map(str::to_owned),
             persist,
             external,
+            profile: None,
         }
     }
 
@@ -350,6 +353,7 @@ mod tests {
                     project_label: Some("app-dev".to_owned()),
                     persist: false,
                     external: false,
+                    profile: None,
                 },
             ],
         );
@@ -374,6 +378,7 @@ mod tests {
             project_label: None,
             persist: false,
             external: false,
+            profile: None,
         };
         let remaining = remaining_after(&record, std::slice::from_ref(&leftover));
         assert_eq!(remaining, vec![leftover]);
@@ -425,6 +430,7 @@ mod tests {
                 project_label: Some("app-dev-wt-aaaaaaaaaaaa".to_owned()),
                 persist: false,
                 external: false,
+                profile: Some("effigy".to_owned()),
             }],
         );
         assert_eq!(plan.delete.len(), 1);
@@ -445,5 +451,21 @@ mod tests {
         );
         assert!(plan.delete.is_empty());
         assert_eq!(plan.mismatch.len(), 1);
+    }
+
+    #[test]
+    fn same_named_owned_resources_in_different_profiles_remain_independently() {
+        let mut left = volume(
+            "db",
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            Some("app-dev-wt-aaaaaaaaaaaa"),
+            false,
+            false,
+        );
+        left.profile = Some("profile-a".to_owned());
+        let mut right = left.clone();
+        right.profile = Some("profile-b".to_owned());
+        let remaining = remaining_after(&record(), &[left.clone(), right.clone()]);
+        assert_eq!(remaining, vec![left, right]);
     }
 }

@@ -23,8 +23,10 @@ During v0.x, MINOR bumps may include breaking changes.
   environment and runtime profile in that worktree. Shared, persistent,
   external, and shared-identity resources stay, including repo-owned
   Compose volumes unless labelled mutable. Discovery failures and
-  malformed inspect output keep the record. TLS certificates are recorded,
-  then removed before the route table is saved. A second retire is success
+  malformed inspect output keep the record. Deletion uses the profile that
+  produced each labelled observation. TLS certificates are recorded, then
+  removed under the route lock after an owner check; a foreign claim keeps
+  its certificate. A second retire is success
   when nothing owned remains, and a shared-only retire then drops the
   durable record.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local

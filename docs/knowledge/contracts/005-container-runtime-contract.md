@@ -79,7 +79,9 @@ effective names on the gateway. It does not rewrite application configuration.
 
 Owned mutable resources for that generation carry `com.effigy.scope` or the
 exact Compose project label. `effigy container retire` deletes only resources
-those proofs still attribute to the recorded token. Shared services, persistent
+those proofs still attribute to the recorded token, and only on the runtime
+profile that produced the labelled observation. Same-named resources in
+another profile stay. Shared services, persistent
 and external volumes, and foreign-owned resources stay. Shared-identity
 routes and loopbacks stay even when the same worktree also has isolated
 stacks. Compose networks are part of the owned inventory. A durable record
@@ -96,8 +98,10 @@ Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
 stack deletion. Certificate removal for retired TLS routes is recorded on
-the scope first, then runs under the route-table lock before the table is
-saved; a TLS failure leaves the route and the pending-cert list for retry.
+the scope first, then runs as one owner-checked operation under the
+route-table lock before the table is saved. A TLS failure leaves the route
+and the pending-cert list for retry. A pending certificate whose domain now
+has a foreign owner is left in place.
 
 ## Contract goals
 

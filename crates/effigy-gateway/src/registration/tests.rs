@@ -481,3 +481,126 @@ fn deregister_owned_routes_matching_leaves_unlisted_owned_routes() {
     assert!(table.lookup("app.test").is_none());
     assert!(table.lookup("mail.app.test").is_some());
 }
+
+#[test]
+fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (ours, _private) = linked_checkout(root.path(), "worker");
+    let (theirs, _theirs_private) = linked_checkout(root.path(), "sibling");
+    let ours_path = ours.display().to_string();
+    register_route(
+        &path,
+        &build_registration("app.test", "app", &ours_path, 8100, true, None),
+    )
+    .unwrap();
+    let our_token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    deregister_owned_routes(&path, &ours_path, Some(&our_token)).unwrap();
+    register_route(
+        &path,
+        &build_registration(
+            "app.test",
+            "app",
+            &theirs.display().to_string(),
+            8100,
+            true,
+            None,
+        ),
+    )
+    .unwrap();
+    let seen = std::sync::Mutex::new(Vec::new());
+    let removed = cleanup_owned_routes_and_certs(
+        &path,
+        &ours_path,
+        Some(&our_token),
+        Some(&["app.test".to_owned()]),
+        &["app.test".to_owned()],
+        |domain| {
+            seen.lock().unwrap().push(domain.to_owned());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(removed.is_empty());
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .is_some());
+}
+
+#[test]
+fn cleanup_owned_routes_and_certs_removes_unclaimed_pending_cert() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let checkout_path = checkout.display().to_string();
+    let seen = std::sync::Mutex::new(Vec::new());
+    let removed = cleanup_owned_routes_and_certs(
+        &path,
+        &checkout_path,
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        Some(&[]),
+        &["app.test".to_owned()],
+        |domain| {
+            seen.lock().unwrap().push(domain.to_owned());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(removed.is_empty());
+    assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
+    assert!(RouteTable::load(&path).unwrap().is_empty());
+}
+
+#[test]
+fn cleanup_owned_routes_and_certs_removes_owned_cert_then_route() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let checkout_path = checkout.display().to_string();
+    register_route(
+        &path,
+        &build_registration("app.test", "app", &checkout_path, 8100, true, None),
+    )
+    .unwrap();
+    let token = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .unwrap()
+        .scope
+        .clone()
+        .expect("scope");
+    let seen = std::sync::Mutex::new(Vec::new());
+    let removed = cleanup_owned_routes_and_certs(
+        &path,
+        &checkout_path,
+        Some(&token),
+        Some(&["app.test".to_owned()]),
+        &["app.test".to_owned()],
+        |domain| {
+            assert!(
+                RouteTable::load(&path)
+                    .unwrap()
+                    .lookup("app.test")
+                    .is_some(),
+                "route table still contains the domain until the TLS callback succeeds"
+            );
+            seen.lock().unwrap().push(domain.to_owned());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
+    assert!(RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.test")
+        .is_none());
+}

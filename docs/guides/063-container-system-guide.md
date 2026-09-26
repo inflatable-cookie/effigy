@@ -299,7 +299,8 @@ map for public URLs, origins, cookie scope, WebAuthn and test selectors.
 Effigy does not rewrite application configuration. `effigy container
 retire --yes` removes that scope's owned containers, networks, mutable
 volumes, isolated routes and ports using `com.effigy.scope` or the exact
-Compose project label. Shared services, persistent volumes, external
+Compose project label, and only on the runtime profile that produced each
+observation. Shared services, persistent volumes, external
 volumes, and shared-identity routes stay. Repo-owned Compose volumes stay
 unless labelled `com.effigy.persist=false`. A record under
 `~/.effigy/runtime-scopes/` survives a deleted checkout and aggregates
@@ -307,8 +308,9 @@ every environment and runtime profile in that worktree so the same command
 can retry. Record writes are locked and atomic; corrupt JSON fails closed.
 A backend that cannot list resources, or that returns malformed inspect
 output, fails instead of reporting an empty stack. TLS certificates for
-isolated routes are removed before the route table is saved; failure
-leaves the route and a pending-cert list on the record.
+isolated routes are removed under the route lock after an owner check;
+failure leaves the route and a pending-cert list on the record. A pending
+certificate whose domain now has a foreign owner stays.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
