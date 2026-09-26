@@ -80,7 +80,7 @@ current route. The Underlay bundle renders DNS domains from its `host` input;
 Acowtancy currently supplies the same `acowtancy.test` host to every worktree.
 Distinct compose projects alone cannot isolate those public names.
 
-Proposed planning split, subject to Tom's approval:
+Approved planning split; implementation details remain open:
 
 1. Effigy must reject a live foreign-owned domain claim with an actionable
    collision report, preserve the existing route, and remove routes only when
@@ -100,11 +100,13 @@ Proposed planning split, subject to Tom's approval:
    browser sessions, both healthy throughout startup, selector execution,
    and teardown of one stack.
 
-Open decisions: choose the hostname convention and effective-host discovery
-contract; choose the division of Effigy, bundle, and Acowtancy work; determine
-whether the observed workspace recycle and fixed published ports need a
-separate runtime repair. Next check: inspect concurrent-stack evidence and
-settle these decisions with Tom before canonical promotion. Governing refs:
+Tom approved the direction on 2026-09-26: an ephemeral runtime scope per worker
+worktree; Effigy-owned resource identity, gateway ownership, effective host
+discovery and cleanup; Queue-owned retirement and retry; distinct worker base
+domains while the main checkout keeps its current names. The
+[plan](../plan.md) owns the priority. The concrete Effigy/Queue interface and
+the observed workspace recycle and fixed published ports still need inspection
+in the implementation tasks. Governing refs:
 `docs/knowledge/contracts/005-container-runtime-contract.md`,
 `docs/knowledge/contracts/009-execution-surface-convergence.md`,
 `docs/guides/063-container-system-guide.md`, and this note's original
