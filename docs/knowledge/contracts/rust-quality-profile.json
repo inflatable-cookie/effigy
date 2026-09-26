@@ -33,7 +33,6 @@
       "crates/effigy-gateway/Cargo.toml",
       "crates/effigy-managed/Cargo.toml",
       "crates/effigy-manifest/Cargo.toml",
-      "crates/effigy-papercuts/Cargo.toml",
       "crates/effigy-process/Cargo.toml",
       "crates/effigy-release/Cargo.toml",
       "crates/effigy-rhai/Cargo.toml",

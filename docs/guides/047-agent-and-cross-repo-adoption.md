@@ -150,10 +150,8 @@ Default flow:
 9. Fall back to raw tool commands only when Effigy does not yet cover the path
 
 Portfolio maintenance:
-- use `effigy --json papercuts --scope <projects-dir>` to inventory root
-  papercut queues for periodic triage
-- treat entries as observations until the owning project's planning process
-  promotes them
+- use Queue for papercut capture and inventory; promote observations through
+  the owning project's planning process
 
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available

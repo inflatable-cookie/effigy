@@ -28,7 +28,7 @@ Tasks, briefs, status, and outcomes live in Queue. The repository holds product 
 - Do not change `.github/workflows/` or start a release without explicit human instruction. Never bypass release gates or re-tag a failed release.
 - Do not add package scripts that re-export Effigy tasks.
 - Update the owning knowledge file when product truth changes. Record operator rulings there before handing over.
-- Append solvable friction to `PAPERCUTS.md`; leave unresolved leads in `docs/triage/` until planned.
+- File small recurring friction in Queue; leave unresolved leads in `docs/triage/` until planned.
 - Add user-facing changes under `CHANGELOG.md` `[Unreleased]`.
 
 ## Validate

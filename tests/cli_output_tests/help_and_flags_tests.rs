@@ -401,7 +401,6 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
         "effigy scan",
         "effigy docs",
         "effigy contracts",
-        "effigy papercuts",
     ] {
         assert!(stdout.contains(command), "missing {command}: {stdout}");
     }

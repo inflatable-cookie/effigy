@@ -168,7 +168,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Changelog(_)
         | Command::Deploy(_)
         | Command::Deps(_)
-        | Command::Papercuts(_)
         | Command::Defer(_)
         | Command::Exec(_)
         | Command::Secrets(_)

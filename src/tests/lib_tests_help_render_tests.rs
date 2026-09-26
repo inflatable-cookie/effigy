@@ -77,7 +77,6 @@ fn render_repo_group_help_lists_only_repository_intelligence_commands() {
         "effigy scan",
         "effigy docs",
         "effigy contracts",
-        "effigy papercuts",
     ] {
         assert!(rendered.contains(command), "missing {command}: {rendered}");
     }

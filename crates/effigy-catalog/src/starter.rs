@@ -284,25 +284,33 @@ mod tests {
             .resolve("northstar")
             .expect("northstar starter");
         let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
-        for expected in [
+        let expected_targets = [
             "effigy.toml",
             "README.md",
             "AGENTS.md",
-            ".paseo/queue.json",
             "docs/README.md",
             "docs/plan.md",
             "docs/knowledge/README.md",
+            "docs/knowledge/architecture.md",
+            "docs/knowledge/contracts/README.md",
+            "docs/knowledge/domain/README.md",
             "docs/knowledge/vision.md",
             "docs/knowledge/contracts/release.md",
             "docs/knowledge/retired.toml",
             "docs/knowledge/questions.md",
             "docs/triage/README.md",
-        ] {
+        ];
+        for expected in expected_targets {
             assert!(
                 targets.contains(&expected),
                 "missing {expected}: {targets:?}"
             );
         }
+        assert_eq!(
+            targets.len(),
+            expected_targets.len(),
+            "unexpected starter file: {targets:?}"
+        );
         assert!(starter.guidance.expect("guidance").contains("Queue"));
     }
 

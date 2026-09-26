@@ -3,13 +3,7 @@ name = "northstar"
 description = "Lean Northstar: current knowledge, intent, triage, and a repository-owned docs check."
 
 [[files]]
-target = ".paseo/queue.json"
-
-[[files]]
 target = "AGENTS.md"
-
-[[files]]
-target = "PAPERCUTS.md"
 
 [[files]]
 target = "README.md"
