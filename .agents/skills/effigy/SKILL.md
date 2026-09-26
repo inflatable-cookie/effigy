@@ -192,7 +192,9 @@ read-only `container.workspace-ownership` findings for root-owned managed
 volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
 
 **Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
-`[secrets]` is declared. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
+`[secrets]` is declared. An operator can run `effigy secrets unlock` to enable
+prompt-free local commands and secret-backed tasks; `secrets lock` revokes that
+access. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
 
 **Bundles** — `[bundle].base` with `path` / `git` / `oci`; `effigy bundle inspect`,
 `effigy bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.

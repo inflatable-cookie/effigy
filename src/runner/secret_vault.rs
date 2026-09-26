@@ -161,7 +161,7 @@ pub(in crate::runner) fn write_effigy_vault_payload(
     write_private_file(vault_path, rendered.as_bytes())
 }
 
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
+pub(in crate::runner) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             RunnerError::task_invocation(format!(

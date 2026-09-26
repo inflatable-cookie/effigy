@@ -108,14 +108,29 @@ for the vault passphrase after setup. This applies to task, container, and Rhai
 secret injection reached from the resolved `dev` task, including catalog
 selectors such as `api/dev`.
 
-Direct vault commands still follow the configured passphrase policy. In
-particular, `secrets get`, `set`, `unset`, `doctor`, `change-passphrase`, and
-`export` do not use the local-dev key to unlock secret values.
+To authorize agents and other local commands without repeated passphrase
+prompts, run `effigy secrets unlock` once at an interactive terminal. It checks
+the passphrase, creates or repairs the local-dev key, and writes a machine-local,
+mode-`0600` credential encrypted with that key. The credential supports direct
+`secrets get`, `set`, `unset`, `import`, `doctor`, `export`, and
+`change-passphrase`, plus secret-backed tasks, containers, and Rhai scripts.
+`change-passphrase` updates it to the new passphrase. `secrets init` still asks
+for a new passphrase. The unlock lasts until `effigy secrets lock` removes both
+local unlock files. This also makes the next `dev` run prompt again.
+
+The local files live beside the vault and are shared with linked worktrees that
+use the primary checkout's vault. Anyone who can read both files can use the
+vault; keep the vault directory out of version control and restrict filesystem
+access.
+
+Without an explicit `secrets unlock`, direct vault commands still require the
+passphrase. The local-dev key alone only unlocks resolved `dev` tasks.
 
 Existing vaults prompt once on their next `effigy dev` run, then add the
 local-dev payload and key in place. Delete the adjacent
 `local.vault.local-dev-key` file to revoke unattended dev unlock; the next dev
-run requires the passphrase and creates a new key.
+run requires the passphrase and creates a new key. Use `effigy secrets lock`
+when the broader command unlock is active.
 
 This is a command boundary, not isolation from code allowed to run as the app.
 An agent that can change or inspect the running application may also influence

@@ -562,7 +562,8 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
             }
         }
     } else {
-        let Some(passphrase) = read_task_secret_passphrase(required_names.is_empty())? else {
+        let Some(passphrase) = read_task_secret_passphrase(&vault_path, required_names.is_empty())?
+        else {
             return Ok(Vec::new());
         };
         read_task_secret_vault_payload(&vault_path, passphrase.expose())?
@@ -575,7 +576,7 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
         payload = if local_dev {
             crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path)?
         } else {
-            let Some(passphrase) = read_task_secret_passphrase(false)? else {
+            let Some(passphrase) = read_task_secret_passphrase(&vault_path, false)? else {
                 unreachable!("required task secret generation needs an unlock passphrase")
             };
             read_task_secret_vault_payload(&vault_path, passphrase.expose())?
@@ -658,8 +659,12 @@ fn maybe_generate_required_task_secrets(
         .map(|_| ())
 }
 
-fn read_task_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RunnerError> {
-    crate::runner::secret_session::read_secret_passphrase(
+fn read_task_secret_passphrase(
+    vault_path: &Path,
+    optional_only: bool,
+) -> Result<Option<SecretValue>, RunnerError> {
+    crate::runner::secret_session::read_vault_passphrase(
+        vault_path,
         optional_only,
         "Vault passphrase: ",
         "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
