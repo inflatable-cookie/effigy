@@ -10,9 +10,12 @@
 //! notifications.
 
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+use fs2::FileExt;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -94,12 +97,56 @@ pub struct Route {
     /// Absolute path to the project directory.
     pub project: String,
 
+    /// Generation token of the linked worktree that claimed this route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+
     /// Whether TLS is enabled for this route.
     #[serde(default)]
     pub tls: bool,
 
     /// When this route was registered.
     pub registered: DateTime<Utc>,
+}
+
+/// Process-wide and cross-process lock for route-table read/check/write.
+/// The lock file is separate from the atomically replaced JSON file.
+pub struct RouteTableLock(std::fs::File);
+
+impl RouteTableLock {
+    pub fn acquire(path: &Path) -> Result<Self, GatewayError> {
+        let lock_path = path.with_extension("lock");
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                GatewayError::RouteTableWriteError {
+                    path: lock_path.clone(),
+                    reason: error.to_string(),
+                }
+            })?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| GatewayError::RouteTableWriteError {
+                path: lock_path.clone(),
+                reason: error.to_string(),
+            })?;
+        file.lock_exclusive()
+            .map_err(|error| GatewayError::RouteTableWriteError {
+                path: lock_path,
+                reason: format!("lock: {error}"),
+            })?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for RouteTableLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 /// How a route was registered.

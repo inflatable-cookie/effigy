@@ -225,6 +225,7 @@ fn gateway_route_variants_render_stably() {
 #[test]
 fn container_runtime_exec_not_ready_constructor_preserves_runtime_shape() {
     let policy = EffectiveContainerPolicy {
+        repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: effigy_manifest::ManifestContainerDriver::Colima,
         startup: effigy_manifest::ManifestContainerStartup::Detached,

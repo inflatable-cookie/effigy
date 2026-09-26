@@ -34,6 +34,10 @@ pub enum GatewayError {
     #[error("route already registered for domain '{domain}'")]
     DuplicateRoute { domain: String },
 
+    /// Another live checkout owns this domain.
+    #[error("gateway domain `{domain}` is owned by live checkout `{project}`; configure a distinct domain for this worktree or stop the owning checkout")]
+    ForeignRoute { domain: String, project: String },
+
     /// No route found for the given domain.
     #[error("no route registered for domain '{domain}'")]
     RouteNotFound { domain: String },

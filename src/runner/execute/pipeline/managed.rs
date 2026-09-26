@@ -1446,6 +1446,7 @@ mod tests {
 
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "stack".to_owned(),
             driver: ManifestContainerDriver::Colima,
             startup: ManifestContainerStartup::Attached,

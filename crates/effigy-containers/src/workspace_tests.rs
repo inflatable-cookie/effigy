@@ -274,6 +274,7 @@ mod host_git_mount_tests {
         let mut services = BTreeMap::new();
         services.insert("workspace".to_owned(), service);
         ManifestContainerConfig {
+            share_runtime_identity: false,
             driver: None,
             startup: None,
             profile: None,

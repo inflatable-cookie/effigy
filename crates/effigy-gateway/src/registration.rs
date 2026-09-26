@@ -19,7 +19,46 @@ use chrono::Utc;
 
 use crate::error::GatewayError;
 use crate::ports::PortRegistry;
+use crate::routes::RouteTableLock;
 use crate::routes::{Route, RouteSource, RouteTable};
+use effigy_core::worktree_scope;
+
+/// Resolve the generation that owns container gateway routes.
+pub fn project_scope(project_path: &str) -> Result<Option<String>, GatewayError> {
+    worktree_scope::load_or_create(Path::new(project_path)).map_err(|error| {
+        GatewayError::RouteTableReadError {
+            path: Path::new(project_path).to_path_buf(),
+            reason: format!("cannot establish worktree route owner: {error}"),
+        }
+    })
+}
+
+/// Whether a route still belongs to this exact checkout generation.
+pub fn owned_by(route: &Route, project_path: &str, scope: Option<&str>) -> bool {
+    route.project == project_path && route.scope.as_deref() == scope
+}
+
+/// Refuse a live foreign owner; an absent worktree generation is stale.
+pub fn check_claim(
+    route: &Route,
+    project_path: &str,
+    scope: Option<&str>,
+) -> Result<(), GatewayError> {
+    if owned_by(route, project_path, scope) {
+        return Ok(());
+    }
+    let live = match route.scope.as_deref() {
+        Some(token) => worktree_scope::is_live(Path::new(&route.project), token),
+        None => Path::new(&route.project).exists(),
+    };
+    if live || route.source != RouteSource::Container {
+        return Err(GatewayError::ForeignRoute {
+            domain: route.domain.clone(),
+            project: route.project.clone(),
+        });
+    }
+    Ok(())
+}
 
 /// Configuration for registering a container route.
 #[derive(Debug, Clone)]
@@ -57,7 +96,12 @@ pub fn register_route(
     route_table_path: &Path,
     registration: &RouteRegistration,
 ) -> Result<(), GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
     let mut table = RouteTable::load(route_table_path)?;
+    let scope = project_scope(&registration.project_path)?;
+    if let Some(existing) = table.lookup(&registration.domain) {
+        check_claim(existing, &registration.project_path, scope.as_deref())?;
+    }
 
     table.upsert(Route {
         domain: registration.domain.clone(),
@@ -68,6 +112,7 @@ pub fn register_route(
         source: registration.source,
         project: registration.project_path.clone(),
         tls: registration.tls,
+        scope,
         registered: Utc::now(),
     });
 
@@ -79,14 +124,25 @@ pub fn register_route(
 ///
 /// Loads the route table, removes the route, and saves atomically.
 /// Returns Ok even if the route wasn't found (idempotent teardown).
-pub fn deregister_route(route_table_path: &Path, domain: &str) -> Result<(), GatewayError> {
+pub fn deregister_route(
+    route_table_path: &Path,
+    domain: &str,
+    project_path: &str,
+) -> Result<bool, GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
     let mut table = RouteTable::load(route_table_path)?;
-
-    // Ignore not-found errors — idempotent teardown.
+    let Ok(scope) = project_scope(project_path) else {
+        return Ok(false);
+    };
+    let owned = table
+        .lookup(domain)
+        .is_some_and(|route| owned_by(route, project_path, scope.as_deref()));
+    if !owned {
+        return Ok(false);
+    }
     let _ = table.deregister(domain);
-
     table.save(route_table_path)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Deregister all routes for a project path.
@@ -97,12 +153,16 @@ pub fn deregister_project_routes(
     route_table_path: &Path,
     project_path: &str,
 ) -> Result<usize, GatewayError> {
+    let _lock = RouteTableLock::acquire(route_table_path)?;
     let mut table = RouteTable::load(route_table_path)?;
+    let Ok(scope) = project_scope(project_path) else {
+        return Ok(0);
+    };
 
     let domains_to_remove: Vec<String> = table
         .all_routes()
         .iter()
-        .filter(|r| r.project == project_path)
+        .filter(|r| owned_by(r, project_path, scope.as_deref()))
         .map(|r| r.domain.clone())
         .collect();
 

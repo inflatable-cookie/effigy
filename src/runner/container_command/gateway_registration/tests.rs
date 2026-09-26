@@ -25,6 +25,7 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
 
 fn test_policy() -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
+        repo_root: std::path::PathBuf::from("/tmp"),
         name: "web".to_owned(),
         driver: ManifestContainerDriver::Colima,
         startup: ManifestContainerStartup::Detached,
@@ -218,7 +219,8 @@ fn register_and_deregister_gateway_route_roundtrip() {
     assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
     assert!(registered.tls);
 
-    deregister_gateway_route_at(&route_table_path, "clientname.test").expect("deregister");
+    deregister_gateway_route_at(&route_table_path, &repo_root, "clientname.test")
+        .expect("deregister");
     let table = RouteTable::load(&route_table_path).expect("load deregistered route table");
     assert!(table.lookup("clientname.test").is_none());
 }
@@ -242,6 +244,7 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
 
     let mut table = RouteTable::new();
     table.upsert(effigy_gateway::routes::Route {
+        scope: None,
         domain: desired.domain.clone(),
         target: desired.target.clone(),
         dns_ip: desired.dns_ip,
@@ -260,6 +263,7 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
     .expect("registered routes should match"));
 
     table.upsert(effigy_gateway::routes::Route {
+        scope: None,
         project: other_repo_root.display().to_string(),
         ..table
             .lookup(&desired.domain)
@@ -837,6 +841,7 @@ fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_regi
         )];
         let route_table_path = gateway_route_table_path().expect("route table path");
         let project_path = "/tmp/repo";
+        policy.repo_root = PathBuf::from(project_path);
         std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
             .expect("mkdir route table parent");
         register_route(
@@ -880,6 +885,138 @@ fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_regi
         assert!(table.lookup("memcached.clientname.test").is_none());
         assert!(removed.contains(&"postgres.clientname.test".to_owned()));
         assert!(removed.contains(&"memcached.clientname.test".to_owned()));
+    });
+}
+
+#[test]
+fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
+    with_test_home("foreign-teardown-tls-tcp", || {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.path().join(name);
+            let private = root.path().join("primary/.git/worktrees").join(name);
+            std::fs::create_dir_all(&checkout).unwrap();
+            std::fs::create_dir_all(&private).unwrap();
+            std::fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", private.display()),
+            )
+            .unwrap();
+            std::fs::write(private.join("commondir"), "../..\n").unwrap();
+            paths.push(checkout);
+        }
+        let route_table_path = gateway_route_table_path().unwrap();
+        for (domain, tls, tcp_port) in [
+            ("clientname.test", true, None),
+            ("postgres.clientname.test", false, Some(5432)),
+        ] {
+            register_route(
+                &route_table_path,
+                &RouteRegistration {
+                    domain: domain.to_owned(),
+                    target: (!domain.starts_with("postgres")).then(|| "127.0.0.1:8100".to_owned()),
+                    dns_ip: tcp_port.map(|_| std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                    tcp_port,
+                    tcp_target: tcp_port.map(|_| "127.0.0.1:8132".to_owned()),
+                    tls,
+                    project_path: paths[0].display().to_string(),
+                    source: RouteSource::Container,
+                },
+            )
+            .unwrap();
+        }
+        let certs = gateway_dir().unwrap().join("certs");
+        std::fs::create_dir_all(&certs).unwrap();
+        let cert = certs.join("clientname.test.pem");
+        let key = certs.join("clientname.test-key.pem");
+        std::fs::write(&cert, "cert").unwrap();
+        std::fs::write(&key, "key").unwrap();
+
+        let mut policy = test_policy();
+        policy.repo_root = paths[1].clone();
+        assert!(deregister_gateway_routes_for_container(&policy)
+            .unwrap()
+            .is_empty());
+        let table = RouteTable::load(&route_table_path).unwrap();
+        assert_eq!(table.len(), 2);
+        assert!(cert.exists() && key.exists());
+
+        policy.repo_root = paths[0].clone();
+        let removed = deregister_gateway_routes_for_container(&policy).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(RouteTable::load(&route_table_path).unwrap().is_empty());
+        assert!(!cert.exists() && !key.exists());
+    });
+}
+
+#[test]
+fn stale_tcp_alias_can_be_reclaimed_without_live_listener_takeover() {
+    with_test_home("stale-tcp-alias", || {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("worker");
+        let private = root.path().join("primary/.git/worktrees/worker");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .unwrap();
+        std::fs::write(private.join("commondir"), "../..\n").unwrap();
+        let path = gateway_route_table_path().unwrap();
+        register_route(
+            &path,
+            &RouteRegistration {
+                domain: "postgres.example.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:8132".to_owned()),
+                tls: true,
+                project_path: checkout.display().to_string(),
+                source: RouteSource::Container,
+            },
+        )
+        .unwrap();
+        let certs = gateway_dir().unwrap().join("certs");
+        std::fs::create_dir_all(&certs).unwrap();
+        let cert = certs.join("postgres.example.test.pem");
+        let key = certs.join("postgres.example.test-key.pem");
+        std::fs::write(&cert, "cert").unwrap();
+        std::fs::write(&key, "key").unwrap();
+        let old_scope = RouteTable::load(&path)
+            .unwrap()
+            .lookup("postgres.example.test")
+            .unwrap()
+            .scope
+            .clone();
+        std::fs::remove_dir_all(&private).unwrap();
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::write(private.join("commondir"), "../..\n").unwrap();
+        reconcile_gateway_routes(
+            &path,
+            &checkout,
+            &[RegisteredGatewayRoute {
+                domain: "postgres.example.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:8232".to_owned()),
+                tls: false,
+                service: Some("db".to_owned()),
+                external_target: false,
+            }],
+        )
+        .unwrap();
+        let current = RouteTable::load(&path)
+            .unwrap()
+            .lookup("postgres.example.test")
+            .unwrap()
+            .clone();
+        assert_ne!(current.scope, old_scope);
+        assert_eq!(current.tcp_target.as_deref(), Some("127.0.0.1:8232"));
+        assert!(!cert.exists() && !key.exists());
     });
 }
 
@@ -977,6 +1114,7 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
 
     let mut route_table = RouteTable::new();
     route_table.upsert(effigy_gateway::routes::Route {
+        scope: None,
         domain: "postgres.active.test".to_owned(),
         target: None,
         dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
@@ -988,6 +1126,7 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
         registered: chrono::Utc::now(),
     });
     route_table.upsert(effigy_gateway::routes::Route {
+        scope: None,
         domain: "postgres.stale.test".to_owned(),
         target: None,
         dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 2)),

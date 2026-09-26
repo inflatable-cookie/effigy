@@ -105,6 +105,7 @@ fn demo_route_table() -> RouteTable {
         tls: false,
         source: RouteSource::Container,
         project: "/tmp/demo".to_owned(),
+        scope: None,
         registered: chrono::Utc::now(),
     });
     table

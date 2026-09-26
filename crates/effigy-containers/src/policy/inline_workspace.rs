@@ -66,6 +66,7 @@ pub fn load_inline_workspace_container_policy(
         &mut compose_files,
     )?;
     Ok(EffectiveContainerPolicy {
+        repo_root: repo_root.to_path_buf(),
         name: synthetic_name.to_owned(),
         driver: ManifestContainerDriver::Colima,
         startup: ManifestContainerStartup::Attached,
@@ -79,7 +80,11 @@ pub fn load_inline_workspace_container_policy(
             .to_string(),
         managed_volumes: Vec::new(),
         shared_services: Vec::new(),
-        project_name: format!("{repo}-{synthetic_name}-inline"),
+        project_name: super::project::scope_project_name(
+            repo_root,
+            format!("{repo}-{synthetic_name}-inline"),
+            false,
+        )?,
         primary_service: "workspace".to_owned(),
         dns_domain: None,
         dns_tls: false,

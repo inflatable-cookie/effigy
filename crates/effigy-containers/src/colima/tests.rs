@@ -369,6 +369,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerStartup,
     };
     EffectiveContainerPolicy {
+        repo_root: std::path::PathBuf::from("/tmp"),
         name: "test".to_string(),
         driver: ManifestContainerDriver::Colima,
         startup: ManifestContainerStartup::Attached,

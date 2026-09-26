@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-05-07
+Last Updated: 2026-09-26
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -41,6 +41,33 @@ The first covered surfaces are:
 - Rhai container-targeted execution helpers
 
 Direct operator use of raw compose commands is outside this contract.
+
+## Linked worktree ownership
+
+Effigy gives each linked Git worktree generation a stable runtime token stored
+in Git's private worktree directory, outside the checkout. Generated Compose
+project names include that token even when a manifest supplies `project_name`.
+The project name scopes Compose containers, networks and managed volumes;
+generated published ports use a project-specific allocation, including when
+the manifest names a fixed host port. Repeated commands in one worktree reuse
+the token. Recreating a worktree at the same path creates a new token. The
+primary checkout keeps its existing project name and port behavior.
+
+`share_runtime_identity = true` is an explicit opt-in to one Compose identity
+across worktrees. It must not arise merely from equal `project_name` values.
+Repo-owned Compose files keep their own resource rules: linked worktrees fail
+closed when they contain fixed published ports, container names, or named
+external resources that Effigy cannot scope.
+
+Gateway route ownership is the checkout path plus its generation token. Route
+table claims and removals serialize under a lock separate from the atomically
+replaced table file. A live foreign owner blocks a domain claim, including
+HTTP, TLS and TCP alias routes. Teardown and stale-route pruning remove only
+routes still owned by the caller; certificate deletion follows the same
+owner-checked removal while the lock is held. A missing or replaced worktree
+generation is stale and may be claimed by another worktree. A fixed domain
+therefore refuses a second live worktree until the consumer supplies distinct
+domains. The route table never silently moves a live sibling's domain.
 
 ## Contract goals
 

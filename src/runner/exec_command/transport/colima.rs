@@ -345,6 +345,7 @@ mod tests {
     #[test]
     fn resolve_running_service_container_name_prefers_matching_project_service() {
         let policy = effigy_containers::EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,
@@ -416,6 +417,7 @@ mod tests {
     fn cached_running_service_container_name_reuses_first_lookup() {
         let repo_root = Path::new("/tmp/repo");
         let policy = effigy_containers::EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,
@@ -474,6 +476,7 @@ mod tests {
     fn resolve_compose_service_container_id_uses_first_non_empty_line() {
         let repo_root = Path::new("/tmp/repo");
         let policy = effigy_containers::EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,
@@ -530,6 +533,7 @@ mod tests {
     fn direct_exec_with_stdin_file_keeps_interactive_stdin_without_tty() {
         let repo_root = Path::new("/tmp/repo");
         let policy = effigy_containers::EffectiveContainerPolicy {
+            repo_root: std::path::PathBuf::from("/tmp"),
             name: "web".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,

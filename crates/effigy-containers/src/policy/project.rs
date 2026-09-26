@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
+use effigy_core::worktree_scope;
 use effigy_manifest::{LoadedTaskManifest, ManifestContainerConfig, ManifestContainersConfig};
 
 use super::model::ContainerPolicyError;
@@ -44,15 +45,33 @@ pub(crate) fn resolve_project_name(
     name: &str,
     container_count: usize,
     repo_root: &Path,
-) -> String {
+) -> Result<String, ContainerPolicyError> {
     let project_name = config
         .project_name
         .clone()
         .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
-    sanitize_project_name_component(&apply_bootstrap_fresh_session_suffix(
-        repo_root,
-        project_name,
-    ))
+    let project_name = apply_bootstrap_fresh_session_suffix(repo_root, project_name);
+    let project_name = scope_project_name(repo_root, project_name, config.share_runtime_identity)?;
+    Ok(sanitize_project_name_component(&project_name))
+}
+
+pub(crate) fn scope_project_name(
+    repo_root: &Path,
+    project_name: String,
+    share_runtime_identity: bool,
+) -> Result<String, ContainerPolicyError> {
+    if share_runtime_identity {
+        Ok(project_name)
+    } else if let Some(scope) = worktree_scope::load_or_create(repo_root).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "cannot establish linked-worktree runtime identity for {}: {error}",
+            repo_root.display()
+        ))
+    })? {
+        Ok(format!("{project_name}-wt-{}", &scope[..12]))
+    } else {
+        Ok(project_name)
+    }
 }
 
 fn default_project_name(
@@ -84,7 +103,7 @@ pub(crate) fn validate_unique_project_names(
                 name,
                 containers.environments.len(),
                 repo_root,
-            ))
+            )?)
             .or_default()
             .push(name.clone());
     }
@@ -145,4 +164,47 @@ fn bootstrap_fresh_session_id(repo_root: &Path) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_checkout_keeps_name_while_linked_worktrees_get_stable_distinct_names() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("primary");
+        std::fs::create_dir_all(primary.join(".git/worktrees")).unwrap();
+        let config: ManifestContainerConfig = toml::from_str("project_name = 'app-dev'").unwrap();
+        assert_eq!(
+            resolve_project_name(&config, "app", "dev", 1, &primary).unwrap(),
+            "app-dev"
+        );
+        let mut names = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.path().join(name);
+            let private = primary.join(".git/worktrees").join(name);
+            std::fs::create_dir_all(&checkout).unwrap();
+            std::fs::create_dir_all(&private).unwrap();
+            std::fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", private.display()),
+            )
+            .unwrap();
+            std::fs::write(private.join("commondir"), "../..\n").unwrap();
+            let value = resolve_project_name(&config, "app", "dev", 1, &checkout).unwrap();
+            assert_eq!(
+                value,
+                resolve_project_name(&config, "app", "dev", 1, &checkout).unwrap()
+            );
+            names.push(value);
+        }
+        assert_ne!(names[0], names[1]);
+        let shared: ManifestContainerConfig =
+            toml::from_str("project_name = 'app-dev'\nshare_runtime_identity = true").unwrap();
+        assert_eq!(
+            resolve_project_name(&shared, "app", "dev", 1, &root.path().join("one")).unwrap(),
+            "app-dev"
+        );
+    }
 }

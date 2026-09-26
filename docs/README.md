@@ -1,6 +1,6 @@
 # Effigy — current state
 
-Effigy runs manifest tasks and built-in workflows across monorepos. Version 0.13.1 ships opt-in Chromium runtime libraries in the Rust/Bun workspace image; the external bundle input is merged. The concurrent-worktree gateway hostname issue remains [triage](triage/20260917-230600-per-worktree-container-identity-default.md) pending an operator decision.
+Effigy runs manifest tasks and built-in workflows across monorepos. Linked worktrees get distinct generated-Compose identities by default, and gateway routes reject live foreign claims. Consumer applications that hard-code one public hostname still need scoped domain configuration before two browser stacks can run together; see the [collision evidence](triage/20260917-230600-per-worktree-container-identity-default.md).
 
 ## By topic
 

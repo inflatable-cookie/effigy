@@ -7,6 +7,7 @@ use effigy_catalog::{
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
+use effigy_gateway::routes::RouteTableLock;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
@@ -229,6 +230,11 @@ pub(crate) fn resolve_compose_source(
         }
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
+        if effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
+            && !config.share_runtime_identity
+        {
+            validate_linked_direct_compose(&compose_file, config)?;
+        }
         let display = path_relative_to_repo(repo_root, &compose_file);
         let effective_ports = if config
             .host
@@ -295,6 +301,11 @@ pub(crate) fn resolve_compose_source(
         "typed assembly policy application",
         &assembly.compose_yaml,
     )?;
+    if effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
+        && !config.share_runtime_identity
+    {
+        validate_scoped_generated_compose(project_name, &assembly, &compose_document)?;
+    }
     apply_shared_service_env_policy(&shared_services, &mut compose_document)?;
     apply_generated_compose_media_policy(
         repo_root,
@@ -333,6 +344,8 @@ pub(crate) fn resolve_compose_source(
         &configured_bindings,
         &project_loopback_port_rules(repo_root, project_name, config)?,
         publish_address,
+        effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
+            && !config.share_runtime_identity,
         &mut compose_document,
     )?;
     compose_document.write_back(
@@ -383,6 +396,110 @@ pub(crate) fn resolve_compose_source(
         effective_ports,
         shared_services,
     ))
+}
+
+fn validate_linked_direct_compose(
+    compose_file: &Path,
+    config: &ManifestContainerConfig,
+) -> Result<(), ContainerPolicyError> {
+    let source =
+        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+            path: compose_file.to_path_buf(),
+            error,
+        })?;
+    let value: YamlValue = serde_yaml::from_str(&source).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "compose file {} is invalid YAML: {error}",
+            compose_file.display()
+        ))
+    })?;
+    let mut fixed = Vec::new();
+    if config
+        .host
+        .as_ref()
+        .is_some_and(|host| !host.ports.is_empty())
+    {
+        fixed.push("manifest host.ports".to_owned());
+    }
+    if let Some(services) = value.get("services").and_then(YamlValue::as_mapping) {
+        for (name, service) in services {
+            let name = name.as_str().unwrap_or("<service>");
+            if service.get("container_name").is_some() {
+                fixed.push(format!("services.{name}.container_name"));
+            }
+            if service
+                .get("ports")
+                .and_then(YamlValue::as_sequence)
+                .is_some_and(|ports| !ports.is_empty())
+            {
+                fixed.push(format!("services.{name}.ports"));
+            }
+        }
+    }
+    for section in ["volumes", "networks"] {
+        if let Some(entries) = value.get(section).and_then(YamlValue::as_mapping) {
+            for (name, entry) in entries {
+                if entry.get("name").is_some() || entry.get("external").is_some() {
+                    fixed.push(format!("{section}.{}", name.as_str().unwrap_or("<name>")));
+                }
+            }
+        }
+    }
+    if fixed.is_empty() {
+        return Ok(());
+    }
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "linked worktree cannot isolate repo-owned compose at {} with fixed resources ({}); use generated compose, remove fixed names/ports, or set share_runtime_identity = true to opt into one shared runtime",
+        compose_file.display(), fixed.join(", ")
+    )))
+}
+
+fn validate_scoped_generated_compose(
+    project_name: &str,
+    assembly: &effigy_catalog::assembly::AssemblyResult,
+    document: &GeneratedComposeDocument,
+) -> Result<(), ContainerPolicyError> {
+    let prefix = format!("{project_name}-");
+    let mut fixed = assembly
+        .volumes
+        .iter()
+        .filter(|volume| !volume.name.starts_with(&prefix))
+        .map(|volume| format!("volume {}", volume.name))
+        .collect::<Vec<_>>();
+    for (name, service) in &document.services {
+        if let Some(container_name) = service
+            .extra
+            .get("container_name")
+            .and_then(YamlValue::as_str)
+        {
+            if !container_name.contains(project_name) {
+                fixed.push(format!("services.{name}.container_name = {container_name}"));
+            }
+        }
+    }
+    if let Some(networks) = document
+        .extra
+        .get("networks")
+        .and_then(YamlValue::as_mapping)
+    {
+        for (name, network) in networks {
+            if let Some(value) = network.get("name").and_then(YamlValue::as_str) {
+                if !value.contains(project_name) {
+                    fixed.push(format!(
+                        "networks.{} = {value}",
+                        name.as_str().unwrap_or("<name>")
+                    ));
+                }
+            }
+        }
+    }
+    if fixed.is_empty() {
+        return Ok(());
+    }
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "generated compose for linked worktree has fixed mutable resources ({}); make them depend on the effective project name",
+        fixed.join(", ")
+    )))
 }
 
 fn build_service_declarations(
@@ -522,6 +639,7 @@ fn resolve_shared_service_bindings(
                 service,
             )?,
             publish_address,
+            false,
             &mut compose_document,
         )?;
         compose_document.write_back(
@@ -654,12 +772,17 @@ fn apply_generated_compose_port_policy(
     explicit_bindings: &[PortBinding],
     loopback_rules: &[LoopbackPortRule],
     publish_address: std::net::Ipv4Addr,
+    scope_explicit_ports: bool,
     compose_document: &mut GeneratedComposeDocument,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
     let mut effective_ports = Vec::new();
 
     let mut registry = None;
+    let _port_lock = effigy_home_dir()
+        .map(|home| RouteTableLock::acquire(&home.join("ports.json")))
+        .transpose()
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
 
     for service_name in compose_document.sorted_service_names() {
         let Some(service) = compose_document.services.get_mut(&service_name) else {
@@ -688,8 +811,10 @@ fn apply_generated_compose_port_policy(
             if !keep_runtime_binding {
                 continue;
             }
-            let host_port = if let Some(explicit) = explicit {
-                used_explicit_ports.insert(explicit.container);
+            if explicit.is_some() {
+                used_explicit_ports.insert(binding.container);
+            }
+            let host_port = if let Some(explicit) = explicit.filter(|_| !scope_explicit_ports) {
                 explicit.host
             } else {
                 if registry.is_none() {
@@ -813,6 +938,8 @@ fn load_or_allocate_loopback_ip(
         return Ok(None);
     };
     let path = home.join("gateway").join("loopback-ips.json");
+    let _lock = RouteTableLock::acquire(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     if let Some(existing) = registry.get(identity) {
@@ -1363,6 +1490,7 @@ services:
                 }],
                 &[],
                 std::net::Ipv4Addr::LOCALHOST,
+                false,
                 &mut compose_document,
             )
             .expect("apply port policy");
@@ -1409,6 +1537,7 @@ services:
                 }],
                 &[],
                 std::net::Ipv4Addr::UNSPECIFIED,
+                false,
                 &mut compose_document,
             )
             .expect("apply port policy");
@@ -1454,6 +1583,7 @@ services:
                 }],
                 &[],
                 std::net::Ipv4Addr::LOCALHOST,
+                false,
                 &mut compose_document,
             )
             .expect("apply port policy");
@@ -1518,5 +1648,42 @@ services:
             &volumes[2],
             GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
         ));
+    }
+
+    #[test]
+    fn scoped_generated_projects_allocate_distinct_ports_even_with_fixed_manifest_port() {
+        let home = tempfile::tempdir().unwrap();
+        with_test_effigy_home(home.path(), || {
+            let mut assigned = Vec::new();
+            for (project, repo) in [("app-wt-one", "/tmp/one"), ("app-wt-two", "/tmp/two")] {
+                let mut document = GeneratedComposeDocument::parse(
+                    project,
+                    "test",
+                    r#"
+services:
+  app:
+    ports: ["8080:80"]
+"#,
+                )
+                .unwrap();
+                let ports = apply_generated_compose_port_policy(
+                    Path::new(repo),
+                    project,
+                    &[PortBinding {
+                        host: 8080,
+                        container: 80,
+                    }],
+                    &[],
+                    std::net::Ipv4Addr::LOCALHOST,
+                    true,
+                    &mut document,
+                )
+                .unwrap();
+                assigned.push(ports[0].clone());
+                assert_eq!(document.services["app"].ports.as_ref().unwrap().len(), 1);
+            }
+            assert_ne!(assigned[0], assigned[1]);
+            assert_ne!(assigned[0], "8080:80");
+        });
     }
 }
