@@ -8,6 +8,9 @@ pub(super) fn runner_error_rendered_output(error: &RunnerError) -> Option<&str> 
         RunnerError::CommandJsonFailure { rendered } => non_empty_rendered(rendered),
         RunnerError::GraphOperationTimeout { rendered, .. } => non_empty_rendered(rendered),
         RunnerError::DepsOperationNonZero { rendered, .. } => non_empty_rendered(rendered),
+        RunnerError::TaskLockConflict(details) => {
+            details.details_json.as_deref().and_then(non_empty_rendered)
+        }
         _ => None,
     }
 }

@@ -21,6 +21,7 @@ fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
             repo_override: Some(PathBuf::from("/tmp/x")),
             verbose_root: true,
             env_schema_override: Some(PathBuf::from("config/test.env.schema")),
+            lock_wait_ms: None,
             passthrough: vec!["--flag".to_owned(), "abc".to_owned()],
         }
     );
@@ -43,6 +44,7 @@ fn parse_task_runtime_args_stops_at_passthrough_delimiter() {
             repo_override: Some(PathBuf::from("/tmp/home")),
             verbose_root: false,
             env_schema_override: None,
+            lock_wait_ms: None,
             passthrough: vec![
                 "--".to_owned(),
                 "--repo".to_owned(),
@@ -51,6 +53,25 @@ fn parse_task_runtime_args_stops_at_passthrough_delimiter() {
             ],
         }
     );
+}
+
+#[test]
+fn parse_task_runtime_args_extracts_lock_wait_ms() {
+    let parsed =
+        parse_task_runtime_args(&["--lock-wait-ms".to_owned(), "250".to_owned()]).expect("parse");
+    assert_eq!(parsed.lock_wait_ms, Some(250));
+}
+
+#[test]
+fn parse_task_runtime_args_requires_lock_wait_ms_value() {
+    let err =
+        parse_task_runtime_args(&["--lock-wait-ms".to_owned()]).expect_err("parse should fail");
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("task argument --lock-wait-ms requires a value"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]

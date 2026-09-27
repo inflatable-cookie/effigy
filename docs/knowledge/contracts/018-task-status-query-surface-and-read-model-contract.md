@@ -129,6 +129,9 @@ For one selector, text output must show at least:
 - selected catalog root / repo target
 - warnings like stale active record ignored
 
+A caller whose lock wait expired uses this one-selector query to inspect the
+live owner named in the lock-conflict error, then retries after release.
+
 For `--all`, text output must:
 
 - group by selected catalog root or logical task scope
@@ -195,3 +198,4 @@ Update this contract when any of these change:
 - minimum text result content
 - JSON schema ids or minimum fields
 - read-side ownership boundary between runtime/task discovery/report layers
+- the lock-wait inspect path that names `tasks status <selector>`

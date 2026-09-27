@@ -272,7 +272,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Work,
         command: "effigy tasks unlock",
-        description: "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
+        description: "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`, or a task selector)",
         deferred_builtin: None,
         help_argument: None,
     },

@@ -15,6 +15,7 @@ pub fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, Strin
     let mut repo: Option<PathBuf> = None;
     let mut verbose_root = false;
     let mut env_schema_override: Option<PathBuf> = None;
+    let mut lock_wait_ms: Option<u64> = None;
     let mut passthrough: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i < args.len() {
@@ -39,6 +40,14 @@ pub fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, Strin
             i += 2;
             continue;
         }
+        if arg == "--lock-wait-ms" {
+            let Some(value) = args.get(i + 1) else {
+                return Err("task argument --lock-wait-ms requires a value".to_owned());
+            };
+            lock_wait_ms = Some(parse_lock_wait_ms(value)?);
+            i += 2;
+            continue;
+        }
         if arg == "--verbose-root" {
             verbose_root = true;
             i += 1;
@@ -51,7 +60,14 @@ pub fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, Strin
         repo_override: repo,
         verbose_root,
         env_schema_override,
+        lock_wait_ms,
         passthrough,
+    })
+}
+
+fn parse_lock_wait_ms(value: &str) -> Result<u64, String> {
+    value.parse::<u64>().map_err(|_| {
+        "task argument --lock-wait-ms must be a non-negative integer millisecond count".to_owned()
     })
 }
 

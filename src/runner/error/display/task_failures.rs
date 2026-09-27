@@ -35,18 +35,38 @@ pub(super) fn write_lock_conflict(
         holder_heartbeat_at_epoch_ms,
         holder_hostname,
         holder_workspace_root,
+        wait_timeout_ms,
+        waited_ms,
+        status_command,
         remediation,
+        ..
     } = details;
-    write!(
-        f,
-        "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, lock={}); {remediation}",
-        render_optional(holder_pid),
-        render_optional(holder_started_at_epoch_ms),
-        render_optional(holder_heartbeat_at_epoch_ms),
-        render_optional(holder_hostname),
-        render_optional(holder_workspace_root),
-        lock_path.display()
-    )
+    if wait_timeout_ms.is_some() {
+        write!(
+            f,
+            "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, wait_timeout_ms={}, waited_ms={}, status_command={}, lock={}); {remediation}",
+            render_optional(holder_pid),
+            render_optional(holder_started_at_epoch_ms),
+            render_optional(holder_heartbeat_at_epoch_ms),
+            render_optional(holder_hostname),
+            render_optional(holder_workspace_root),
+            render_optional(wait_timeout_ms),
+            render_optional(waited_ms),
+            render_optional(status_command),
+            lock_path.display()
+        )
+    } else {
+        write!(
+            f,
+            "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, lock={}); {remediation}",
+            render_optional(holder_pid),
+            render_optional(holder_started_at_epoch_ms),
+            render_optional(holder_heartbeat_at_epoch_ms),
+            render_optional(holder_hostname),
+            render_optional(holder_workspace_root),
+            lock_path.display()
+        )
+    }
 }
 
 pub(super) fn write_task_lock_io(

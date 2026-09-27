@@ -7,7 +7,7 @@ use super::super::super::exec_command::{
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
     RoutedTaskExecRequest,
 };
-use super::super::super::locking::io::acquire_scopes;
+use super::super::super::locking::io::{acquire_scopes_with_wait, resolve_lock_wait_ms};
 use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{
     effective_task_binding_inputs, execution_scope_root, resolve_execution_binding_resolution,
@@ -114,9 +114,11 @@ fn run_standard_task_inner(
     lock_scope: &crate::runner::locking::model::LockScope,
     status: &mut TaskStatusTracker,
 ) -> Result<(String, String), RunnerError> {
-    let _lock_guards = acquire_scopes(
+    let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
+    let _lock_guards = acquire_scopes_with_wait(
         &preflight.resolved.resolved_root,
         std::slice::from_ref(lock_scope),
+        wait_timeout_ms,
     )?;
 
     let cache_check = check_task_cache(

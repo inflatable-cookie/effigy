@@ -2,7 +2,7 @@ use super::super::super::container_command::{
     run_container_exec_operation_capture, support::validate_running_container_runtime_match,
 };
 use super::super::super::gateway_command::gateway_up_for_managed_task;
-use super::super::super::locking::io::acquire_scopes;
+use super::super::super::locking::io::{acquire_scopes_with_wait, resolve_lock_wait_ms};
 use super::super::super::locking::model::LockScope;
 use super::super::super::managed_shell::{
     managed_readiness_probe_urls, render_handoff_managed_lifecycle_command,
@@ -153,7 +153,12 @@ pub(in crate::runner) fn run_managed_task(
                 selection.task,
                 &preflight.selector,
             )];
-            let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
+            let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
+            let _lock_guards = acquire_scopes_with_wait(
+                &preflight.resolved.resolved_root,
+                &lock_scopes,
+                wait_timeout_ms,
+            )?;
             let _ = name;
             return run_workspace_with_repo_root_and_cleanup_override(
                 &preflight.resolved.resolved_root,
@@ -274,7 +279,12 @@ pub(in crate::runner) fn run_managed_task(
             profile: plan.profile.clone(),
         });
     }
-    let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
+    let wait_timeout_ms = resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?;
+    let _lock_guards = acquire_scopes_with_wait(
+        &preflight.resolved.resolved_root,
+        &lock_scopes,
+        wait_timeout_ms,
+    )?;
 
     if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
         maybe_start_managed_gateway(

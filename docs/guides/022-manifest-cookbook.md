@@ -609,10 +609,12 @@ web/dev processes automatically instead of leaving them running in the
 background.
 
 Lock behavior:
-- tasks lock on `task:<name>` by default, so unrelated tasks can run concurrently in the same repo
+- tasks lock on `task:<selector>` by default, so unrelated selectors can run concurrently in the same repo
+- colon-namespaced selectors such as `validate:activity-routing` and `validate:other` stay distinct
 - set `tasks.<name>.lock = "<shared-name>"` when multiple tasks should serialize together
 - managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
-- recover specific collisions with `effigy tasks unlock task:<name>`, `effigy tasks unlock shared:<name>`, or `effigy tasks unlock profile:<task>/<profile>`
+- wait for a live owner with `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; inspect it with `effigy tasks status <selector>`
+- recover specific collisions with `effigy tasks unlock task:<selector>`, a task selector such as `validate:activity-routing`, `effigy tasks unlock shared:<name>`, or `effigy tasks unlock profile:<task>/<profile>`
 
 ## Draft Tasks
 

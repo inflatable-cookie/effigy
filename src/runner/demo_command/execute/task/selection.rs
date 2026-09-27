@@ -83,6 +83,7 @@ pub(in crate::runner::demo_command) fn concurrent_runner_task_process_names(
         repo_override: None,
         verbose_root: false,
         env_schema_override: None,
+        lock_wait_ms: None,
         passthrough: Vec::new(),
     };
     resolve_managed_task_plan(
@@ -114,6 +115,7 @@ pub(super) fn resolve_concurrent_runner_plan(
         repo_override: None,
         verbose_root: false,
         env_schema_override: None,
+        lock_wait_ms: None,
         passthrough: Vec::new(),
     };
     let mut plan = resolve_managed_task_plan(

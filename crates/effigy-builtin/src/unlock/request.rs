@@ -33,12 +33,9 @@ pub(super) fn parse_unlock_request(
             return Ok(ParseLoopAction::Handled);
         }
         parser.unknown_if_flag_or(arg, |value| {
-            let Some(scope) = LockScope::parse(value) else {
-                return Err(BuiltinError::task_invocation(format!(
-                    "`{}` unlock target `{value}` is invalid; expected `workspace`, `shared:<name>`, `task:<name>`, or `profile:<task>/<profile>`",
-                    task.name
-                )));
-            };
+            let scope = LockScope::parse_unlock_target(value).map_err(|detail| {
+                BuiltinError::task_invocation(format!("`{}` {detail}", task.name))
+            })?;
             scopes.push(scope);
             Ok(ParseLoopAction::Handled)
         })
