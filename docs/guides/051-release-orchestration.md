@@ -182,9 +182,16 @@ Supported `[release]` fields:
 - `tag-format`
   - optional tag template
   - supports `{version}` placeholder
+- `[release.hosted-evidence]`
+  - optional GitHub Actions lookup used when a gate sets
+    `reuse-hosted-evidence = true`
+  - `workflow` is required in that case
+  - `event` defaults to `workflow_dispatch`
+  - `branch` defaults to `main`
 - `[release.gates]`
   - optional named gate map
-  - supports string shorthand or table form with `command` and `description`
+  - supports string shorthand or table form with `command`, `description`, and
+    optional `reuse-hosted-evidence`
 
 During `effigy release prepare`, supported structured version files keep their
 existing layout:
@@ -198,12 +205,20 @@ Gate forms:
 [release.gates]
 fmt = "cargo fmt --all -- --check"
 
+[release.hosted-evidence]
+workflow = "ci.yml"
+
 [release.gates.test]
 command = "cargo test"
 description = "Run the Rust test suite"
+reuse-hosted-evidence = true
 ```
 
-Gates run in declaration order. Put cheap checks first.
+Gates run in declaration order. Put cheap checks first. A gate with
+`reuse-hosted-evidence = true` is satisfied by a successful GitHub Actions run
+for this repository's exact `HEAD` SHA, verified through authenticated `gh`.
+Gates without that flag still run locally. Bad hosted evidence fails closed
+instead of running the local command.
 
 For a new project that already declares its intended first release version,
 opt in explicitly:
@@ -421,12 +436,35 @@ Gate behavior:
 After a failed gate, look at that gate's log first. Prepare and execute text
 also print the last 20 lines of combined stdout/stderr plus the log path.
 `--json` adds optional `log_path` per gate result and `environment_path` for
-the run; those fields do not change schema ids.
+the run, plus optional `reused`, `hosted_run_url`, `hosted_head_sha`, and
+`hosted_repository` when a named gate reused hosted evidence. Those fields do
+not change schema ids.
 
-Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. This
-is a repository policy gate, not a provider assumption in the generic release
-engine. GitHub-hosted consumers can adopt the same exact-SHA pattern; other
-providers should supply an equivalent gate for their CI system.
+Named hosted reuse:
+
+```toml
+[release.hosted-evidence]
+workflow = "ci.yml"
+
+[release.gates.ci]
+command = "sh scripts/check-release-ci.sh"
+
+[release.gates.test]
+command = "cargo test"
+reuse-hosted-evidence = true
+```
+
+- lookup uses authenticated `gh run list --repo <origin-owner/name>`
+- the run must match this repository and the exact `HEAD` SHA
+- prepare mutations do not change `HEAD`; reuse attests the source commit
+- status, prepare, simulate, `release gates`, and execute share that verdict
+- `.release-prepared.json` records each reused gate and its run URL
+- missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
+  fails the named gate; unlisted gates still run locally
+
+Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. That
+`ci` gate stays a required local command. Hosted reuse is opt-in per gate on
+GitHub-hosted consumers; other providers keep supplying local gates.
 
 Important prepare rule:
 

@@ -43,7 +43,7 @@ schema artifacts live beside these files.
 | [035-release-tag-identity-contract.md](035-release-tag-identity-contract.md) | release tag object, deterministic annotation-message, push-order, and no-retag evidence contract. |
 | [037-explicit-catalog-membership-contract.md](037-explicit-catalog-membership-contract.md) | root-owned catalog membership, named and inline mounted members, shared normalization, routing stability, and ambient-discovery removal contract. |
 | [038-unified-test-orchestration-contract.md](038-unified-test-orchestration-contract.md) | v0.11 single-authority test configuration, polyglot suite selection, non-executing planning, and `tasks.test` removal contract. |
-| [039-pre-release-ci-proof-contract.md](039-pre-release-ci-proof-contract.md) | exact-candidate hosted CI evidence required before release preparation and execution. |
+| [039-pre-release-ci-proof-contract.md](039-pre-release-ci-proof-contract.md) | exact-candidate hosted CI evidence required before release preparation and execution, including named GitHub Actions reuse. |
 | [040-bun-committed-dependency-pinning-contract.md](040-bun-committed-dependency-pinning-contract.md) | implemented and consumer-proven root-consumer Bun overrides as a committed counterpart to machine-local links. |
 | [041-documentation-graph-profile-contract.md](041-documentation-graph-profile-contract.md) | repository-owned documentation graph profiles, exact Markdown semantics, bounded context retrieval, and the Northstar runtime-independence boundary. |
 | [042-external-skill-task-runner-contract.md](042-external-skill-task-runner-contract.md) | installed task-source and consumer-target separation, isolation, rejection, execution, and evidence rules. |

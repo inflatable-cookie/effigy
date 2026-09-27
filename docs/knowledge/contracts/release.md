@@ -18,7 +18,7 @@ Effigy ships a versioned binary through GitHub Releases and a Homebrew tap. The 
 
 ## Hosted gate evidence
 
-Release prepare may reuse a hosted CI result for a gate explicitly configured for reuse. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy. The release record must name every reused gate and link to its run. Until this support is implemented, follow the prepare steps above.
+Release prepare may reuse a hosted CI result for a gate explicitly configured with `reuse-hosted-evidence = true`. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released (`HEAD` at prepare time). Prepare's version, changelog, and lockfile mutations do not change that SHA. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy, including against the prepared working tree. Missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence fails closed. The release record names every reused gate and links to its run. The configured `ci` proof remains a prerequisite, not blanket permission to skip other gates.
 
 ## Gate checks and an empty Unreleased section
 

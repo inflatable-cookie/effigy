@@ -70,6 +70,12 @@ Missing, pending, red, or different-commit evidence blocks every gate-checked
 preview and prepare. Local release gates then validate deterministic release
 file mutations; they do not replace hosted CI on the candidate source.
 
+A gate may opt in with `reuse-hosted-evidence = true` when
+`[release.hosted-evidence].workflow` is set. Reuse accepts only this
+repository's GitHub Actions run for the exact `HEAD` SHA, verified through
+authenticated `gh`. Unlisted gates still run locally. Bad evidence fails
+closed. Prepare records each reused gate and its run URL.
+
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
 

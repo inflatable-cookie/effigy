@@ -12,7 +12,7 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         context,
         "release",
         release,
-        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format",
+        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format, hosted-evidence",
     ) else {
         return;
     };
@@ -35,6 +35,8 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
             "gates",
             "tag_format",
             "tag-format",
+            "hosted_evidence",
+            "hosted-evidence",
         ],
     );
 
@@ -81,9 +83,49 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         "release.tag_format",
     );
 
+    if let Some(hosted_evidence) = release_table
+        .get("hosted-evidence")
+        .or_else(|| release_table.get("hosted_evidence"))
+    {
+        validate_hosted_evidence(context, hosted_evidence);
+    }
+
     if let Some(gates) = release_table.get("gates") {
         validate_release_gates(context, gates);
     }
+}
+
+fn validate_hosted_evidence(context: &mut SchemaContext<'_, '_>, hosted_evidence: &Value) {
+    let Some(hosted_table) = require_table(
+        context,
+        "release.hosted-evidence",
+        hosted_evidence,
+        "expected table with `workflow` and optional `event`/`branch`",
+    ) else {
+        return;
+    };
+
+    validate_allowed_keys(
+        context,
+        "release.hosted-evidence",
+        hosted_table,
+        &["workflow", "event", "branch"],
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        hosted_table.get("workflow"),
+        "release.hosted-evidence.workflow",
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        hosted_table.get("event"),
+        "release.hosted-evidence.event",
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        hosted_table.get("branch"),
+        "release.hosted-evidence.branch",
+    );
 }
 
 fn validate_release_gates(context: &mut SchemaContext<'_, '_>, gates: &Value) {
@@ -107,12 +149,22 @@ fn validate_release_gates(context: &mut SchemaContext<'_, '_>, gates: &Value) {
             context,
             &gate_path,
             gate_value,
-            "expected string command or table with `command`/`description`",
+            "expected string command or table with `command`/`description`/`reuse-hosted-evidence`",
         ) else {
             continue;
         };
 
-        validate_allowed_keys(context, &gate_path, gate_table, &["command", "description"]);
+        validate_allowed_keys(
+            context,
+            &gate_path,
+            gate_table,
+            &[
+                "command",
+                "description",
+                "reuse-hosted-evidence",
+                "reuse_hosted_evidence",
+            ],
+        );
         validate_optional_non_empty_string_field(
             context,
             gate_table.get("command"),
@@ -122,6 +174,13 @@ fn validate_release_gates(context: &mut SchemaContext<'_, '_>, gates: &Value) {
             context,
             gate_table.get("description"),
             &format!("{gate_path}.description"),
+        );
+        validate_optional_boolean_field(
+            context,
+            gate_table
+                .get("reuse-hosted-evidence")
+                .or_else(|| gate_table.get("reuse_hosted_evidence")),
+            &format!("{gate_path}.reuse-hosted-evidence"),
         );
     }
 }

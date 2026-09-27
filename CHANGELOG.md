@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy release prepare` can satisfy a gate marked
+  `reuse-hosted-evidence = true` with a successful GitHub Actions run for this
+  repository's exact `HEAD` SHA, verified through authenticated `gh`. Unlisted
+  gates still run locally. Missing, pending, failed, ambiguous,
+  wrong-repository, or wrong-SHA evidence fails closed. The release record
+  names each reused gate and links to its run.
 - Task lock waits are bounded by `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`.
   Independent selectors keep distinct `task:<selector>` locks. A timed-out
   waiter names the live owner and `effigy tasks status <selector>`; that

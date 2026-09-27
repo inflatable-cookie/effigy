@@ -1,5 +1,6 @@
 mod gate_reports;
 mod git;
+mod hosted_evidence;
 mod model;
 mod prepare_helpers;
 mod render_json;
@@ -10,12 +11,17 @@ mod text;
 mod verify_install;
 mod version;
 
+pub use hosted_evidence::{
+    collect_hosted_evidence, evaluate_hosted_runs, github_repository_from_remote_url,
+    parse_gh_run_list_json, GhCliHostedEvidenceLookup, HostedEvidenceError, HostedEvidenceLookup,
+    HostedEvidenceQuery, HostedEvidenceSpec, HostedRun,
+};
 pub use model::{
     FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult, ReleaseConfig,
     ReleaseContext, ReleaseError, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleasePreparedFileFingerprint,
     ReleasePreparedSourceFingerprints, ReleasePreparedState, ReleaseSimulation, ReleaseStatus,
-    ReleaseVerifyInstall, VerificationStepResult,
+    ReleaseVerifyInstall, ReusedGateRecord, VerificationStepResult,
 };
 use prepare_helpers::{
     apply_bump, build_post_release_instructions, build_sync_mutations, unreleased_counts,
@@ -83,6 +89,7 @@ use effigy_manifest::config_sections::{
     ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails,
 };
 use effigy_manifest::load_task_manifest;
+use hosted_evidence::hosted_evidence_spec_from_manifest;
 
 use effigy_manifest::TASK_MANIFEST_FILE;
 
@@ -117,6 +124,8 @@ pub struct ResolvedGate {
     pub name: String,
     pub command: String,
     pub description: Option<String>,
+    pub reuse_hosted_evidence: bool,
+    pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +212,9 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
         sync_files,
         gates,
         tag_format,
+        hosted_evidence: hosted_evidence_spec_from_manifest(
+            manifest_release.and_then(|config| config.hosted_evidence.as_ref()),
+        )?,
     })
 }
 
@@ -332,24 +344,37 @@ pub fn resolve_config_path(
 }
 
 pub fn resolve_gates(config: &ManifestReleaseConfig) -> Result<Vec<ResolvedGate>, ReleaseError> {
+    let hosted = hosted_evidence_spec_from_manifest(config.hosted_evidence.as_ref())?;
     let mut gates = Vec::with_capacity(config.gates.len());
     for (name, gate) in &config.gates {
-        let (command, description) = match gate {
-            ManifestReleaseGateConfig::Command(command) => (command.trim(), None),
+        let (command, description, reuse_hosted_evidence) = match gate {
+            ManifestReleaseGateConfig::Command(command) => (command.trim(), None, false),
             ManifestReleaseGateConfig::Detailed(ManifestReleaseGateDetails {
                 command,
                 description,
-            }) => (command.trim(), description.clone()),
+                reuse_hosted_evidence,
+            }) => (command.trim(), description.clone(), *reuse_hosted_evidence),
         };
         if command.is_empty() {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release gate `{name}` must not have an empty command"
             )));
         }
+        if reuse_hosted_evidence && hosted.is_none() {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release gate `{name}` sets reuse-hosted-evidence but [release.hosted-evidence].workflow is not configured"
+            )));
+        }
         gates.push(ResolvedGate {
             name: name.clone(),
             command: command.to_owned(),
             description,
+            reuse_hosted_evidence,
+            hosted_evidence: if reuse_hosted_evidence {
+                hosted.clone()
+            } else {
+                None
+            },
         });
     }
     Ok(gates)
@@ -435,13 +460,26 @@ pub fn run_release_gates(
     gates: &[ResolvedGate],
     fail_fast: bool,
 ) -> GateExecutionReport {
-    run_release_gates_with_progress(root, gates, fail_fast, |_| {})
+    run_release_gates_with_lookup(root, gates, fail_fast, &GhCliHostedEvidenceLookup, |_| {})
 }
 
 pub fn run_release_gates_with_progress<F>(
     root: &Path,
     gates: &[ResolvedGate],
     fail_fast: bool,
+    progress: F,
+) -> GateExecutionReport
+where
+    F: FnMut(&str),
+{
+    run_release_gates_with_lookup(root, gates, fail_fast, &GhCliHostedEvidenceLookup, progress)
+}
+
+pub fn run_release_gates_with_lookup<F>(
+    root: &Path,
+    gates: &[ResolvedGate],
+    fail_fast: bool,
+    lookup: &dyn HostedEvidenceLookup,
     mut progress: F,
 ) -> GateExecutionReport
 where
@@ -451,14 +489,26 @@ where
     let environment_path = gate_reports::persist_gate_run_environment(root);
     let mut results = Vec::with_capacity(gates.len());
     let mut stopped_early = false;
+    let hosted = resolve_run_hosted_evidence(root, gates, lookup, &mut progress);
 
     for gate in gates {
-        progress(&format!("running gate `{}`", gate.name));
-        let result = run_release_gate(root, gate);
+        let result = if gate.reuse_hosted_evidence {
+            progress(&format!("reusing hosted evidence for gate `{}`", gate.name));
+            gate_result_from_hosted_evidence(root, gate, hosted.as_ref())
+        } else {
+            progress(&format!("running gate `{}`", gate.name));
+            run_release_gate(root, gate)
+        };
         progress(&format!(
             "gate `{}` {} ({})",
             result.name,
-            if result.passed { "passed" } else { "failed" },
+            if result.reused {
+                "reused"
+            } else if result.passed {
+                "passed"
+            } else {
+                "failed"
+            },
             format_duration_ms(result.duration_ms),
         ));
         let passed = result.passed;
@@ -475,6 +525,115 @@ where
         total_duration_ms: started.elapsed().as_millis(),
         environment_path,
     }
+}
+
+fn resolve_run_hosted_evidence(
+    root: &Path,
+    gates: &[ResolvedGate],
+    lookup: &dyn HostedEvidenceLookup,
+    progress: &mut dyn FnMut(&str),
+) -> Option<Result<HostedRun, HostedEvidenceError>> {
+    let spec = gates
+        .iter()
+        .find(|gate| gate.reuse_hosted_evidence)?
+        .hosted_evidence
+        .as_ref()?;
+    progress("checking hosted GitHub Actions evidence");
+    Some(collect_hosted_evidence(root, spec, lookup))
+}
+
+fn gate_result_from_hosted_evidence(
+    root: &Path,
+    gate: &ResolvedGate,
+    hosted: Option<&Result<HostedRun, HostedEvidenceError>>,
+) -> GateResult {
+    let started_at = gate_reports::capture_started_at();
+    let started = Instant::now();
+    let mut result = match hosted {
+        Some(Ok(run)) => GateResult {
+            name: gate.name.clone(),
+            description: gate.description.clone(),
+            command: gate.command.clone(),
+            passed: true,
+            exit_code: None,
+            stdout: format!(
+                "reused hosted GitHub Actions run {} for commit {}",
+                run.url, run.head_sha
+            ),
+            stderr: String::new(),
+            launch_error: None,
+            duration_ms: started.elapsed().as_millis(),
+            log_path: None,
+            reused: true,
+            hosted_run_url: Some(run.url.clone()),
+            hosted_head_sha: Some(run.head_sha.clone()),
+            hosted_repository: Some(run.repository.clone()),
+        },
+        Some(Err(error)) => GateResult {
+            name: gate.name.clone(),
+            description: gate.description.clone(),
+            command: gate.command.clone(),
+            passed: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: error.diagnostic(&gate.name),
+            launch_error: None,
+            duration_ms: started.elapsed().as_millis(),
+            log_path: None,
+            reused: false,
+            hosted_run_url: hosted_error_url(error),
+            hosted_head_sha: None,
+            hosted_repository: None,
+        },
+        None => GateResult {
+            name: gate.name.clone(),
+            description: gate.description.clone(),
+            command: gate.command.clone(),
+            passed: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "hosted evidence for gate `{}` could not be verified through authenticated `gh`: [release.hosted-evidence].workflow is not configured",
+                gate.name
+            ),
+            launch_error: None,
+            duration_ms: started.elapsed().as_millis(),
+            log_path: None,
+            reused: false,
+            hosted_run_url: None,
+            hosted_head_sha: None,
+            hosted_repository: None,
+        },
+    };
+    result.log_path = gate_reports::persist_gate_result_log(root, &result, &started_at);
+    result
+}
+
+fn hosted_error_url(error: &HostedEvidenceError) -> Option<String> {
+    match error {
+        HostedEvidenceError::Pending { url, .. }
+        | HostedEvidenceError::Failed { url, .. }
+        | HostedEvidenceError::WrongRepository { url, .. }
+        | HostedEvidenceError::WrongSha { url, .. } => Some(url.clone()),
+        HostedEvidenceError::Missing { .. }
+        | HostedEvidenceError::Ambiguous { .. }
+        | HostedEvidenceError::LookupFailed { .. } => None,
+    }
+}
+
+pub fn reused_gate_records(results: &[GateResult]) -> Vec<ReusedGateRecord> {
+    results
+        .iter()
+        .filter(|gate| gate.reused && gate.passed)
+        .filter_map(|gate| {
+            Some(ReusedGateRecord {
+                name: gate.name.clone(),
+                run_url: gate.hosted_run_url.clone()?,
+                head_sha: gate.hosted_head_sha.clone()?,
+                repository: gate.hosted_repository.clone()?,
+            })
+        })
+        .collect()
 }
 
 pub fn collect_release_gate_run(
@@ -517,6 +676,10 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             launch_error: None,
             duration_ms: started.elapsed().as_millis(),
             log_path: None,
+            reused: false,
+            hosted_run_url: None,
+            hosted_head_sha: None,
+            hosted_repository: None,
         },
         Err(error) => GateResult {
             name: gate.name.clone(),
@@ -529,6 +692,10 @@ pub fn run_release_gate(root: &Path, gate: &ResolvedGate) -> GateResult {
             launch_error: Some(error.to_string()),
             duration_ms: started.elapsed().as_millis(),
             log_path: None,
+            reused: false,
+            hosted_run_url: None,
+            hosted_head_sha: None,
+            hosted_repository: None,
         },
     };
     result.log_path = gate_reports::persist_gate_result_log(root, &result, &started_at);
@@ -946,6 +1113,7 @@ pub fn collect_release_execute_plan(
     let mut unexpected_files = Vec::new();
     let mut source_fingerprint_available = false;
     let mut fingerprint_drift = Vec::new();
+    let mut reused_gates = Vec::new();
 
     if !state_file.exists() {
         blockers.push(format!(
@@ -966,6 +1134,7 @@ pub fn collect_release_execute_plan(
                 prepared_at = Some(state.prepared_at_raw.clone());
                 gates_checked = state.gates_checked;
                 gates_passed = state.gates_passed;
+                reused_gates = state.reused_gates.clone();
                 prepared_branch = state
                     .source_fingerprints
                     .as_ref()
@@ -1108,6 +1277,7 @@ pub fn collect_release_execute_plan(
         unexpected_files,
         source_fingerprint_available,
         fingerprint_drift,
+        reused_gates,
         warnings,
         blockers: blockers.clone(),
         ready: blockers.is_empty(),
@@ -1119,6 +1289,27 @@ pub fn execute_release_prepare<F>(
     state_file_name: &str,
     check_gates: bool,
     version_override: Option<semver::Version>,
+    progress: F,
+) -> Result<ReleasePrepared, ReleaseError>
+where
+    F: FnMut(&str),
+{
+    execute_release_prepare_with_lookup(
+        repo_root,
+        state_file_name,
+        check_gates,
+        version_override,
+        &GhCliHostedEvidenceLookup,
+        progress,
+    )
+}
+
+pub fn execute_release_prepare_with_lookup<F>(
+    repo_root: PathBuf,
+    state_file_name: &str,
+    check_gates: bool,
+    version_override: Option<semver::Version>,
+    lookup: &dyn HostedEvidenceLookup,
     mut progress: F,
 ) -> Result<ReleasePrepared, ReleaseError>
 where
@@ -1206,7 +1397,7 @@ where
 
     let gate_report = if check_gates {
         progress("re-running release gates against prepared files");
-        run_release_gates_with_progress(&repo_root, &context.config.gates, true, |message| {
+        run_release_gates_with_lookup(&repo_root, &context.config.gates, true, lookup, |message| {
             progress(message);
         })
     } else {
@@ -1258,6 +1449,7 @@ where
         files_modified: &files_modified,
         prepared_branch: prepared_branch.as_deref(),
         prepared_head: prepared_head.as_deref(),
+        reused_gates: &reused_gate_records(&gate_report.results),
     })?;
 
     Ok(ReleasePrepared {
