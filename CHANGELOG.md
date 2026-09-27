@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Container-routed worktree tasks verify the live checkout mount and refresh
+  changed Cargo inputs before execution. Built-in Bun tests report the frozen
+  `bootstrap deps sync` route when a fresh worktree lacks dependencies.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and
