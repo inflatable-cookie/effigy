@@ -270,9 +270,10 @@ general deploy/state/artifact generation hook.
 ## Use In Containers
 
 Secrets with `targets = ["containers"]` are resolved before `effigy container
-up` and `effigy container reset`. Read-only checks (`status`, `logs`,
-`stats`), exec/shell against an already running runtime, and `down` do not
-unlock the vault. Unrelated required container secrets cannot block those
+up`. Read-only checks (`status`, `logs`, `stats`), exec/shell against an
+already running runtime, `down`, and `reset` do not unlock the vault. Reset
+only tears down runtime artifacts; the next `container up` is what injects
+secrets again. Unrelated required container secrets cannot block those
 operations. No repo-root `.env` file is written.
 
 Stored optional values are injected when the vault is unlocked. Missing

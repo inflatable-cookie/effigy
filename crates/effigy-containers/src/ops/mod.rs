@@ -210,6 +210,7 @@ mod tests {
             plan.side_effect,
             ContainerSideEffectClass::DestroysRuntimeData
         );
+        assert!(!plan.consumes_declared_container_secrets());
         assert_eq!(
             plan.confirmation,
             ContainerConfirmationPolicy::RequireConfirmation {
@@ -230,7 +231,7 @@ mod tests {
         .plan();
 
         assert_eq!(plan.side_effect, ContainerSideEffectClass::RecreatesRuntime);
-        assert!(plan.consumes_declared_container_secrets());
+        assert!(!plan.consumes_declared_container_secrets());
         assert_eq!(
             plan.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired

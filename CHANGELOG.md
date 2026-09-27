@@ -49,11 +49,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 - Local operations classify the minimum secret scope before any vault
-  prompt. Secret-free installed skill tasks and read-only container
-  checks (`status`, `logs`, `stats`) no longer unlock an unrelated
-  required project vault. Secret-consuming tasks, Rhai scripts that
-  call `secrets::`, and `container up` / `container reset` still fail
-  closed with a precise missing-secret diagnostic.
+  prompt. Secret-free installed skill tasks and container checks that
+  do not start a runtime (`status`, `logs`, `stats`, `reset`, `down`)
+  no longer unlock an unrelated required project vault. Secret-consuming
+  tasks, Rhai scripts that call `secrets::`, and `container up` still
+  fail closed with a precise missing-secret diagnostic.
 - Generated Nginx health checks keep the wget exit-code shell variable
   after Compose interpolation. A site whose root returns 404 can become
   healthy; transport failures stay unhealthy.

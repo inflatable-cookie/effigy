@@ -7930,6 +7930,48 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
 }
 
 #[test]
+fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
+    let root = temp_workspace("container-reset-unrelated-secrets");
+    write_container_fixture(&root, None, "./app:/workspace");
+    append_required_container_secret(&root);
+    write_locked_test_vault(&root, "vault-passphrase", &[]);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("reset")
+        .arg("--keep-data")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "reset failed: {output:?}");
+    assert!(
+        !stderr.contains("container secrets require an unlocked vault passphrase"),
+        "{stderr}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.reset.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+}
+
+#[test]
 fn cli_container_data_list_json_reports_managed_volumes() {
     let root = temp_workspace("container-data-list");
     write_generated_container_volume_fixture(&root);

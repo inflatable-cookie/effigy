@@ -886,6 +886,7 @@ mod tests {
             keep_data.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
         );
+        assert!(!keep_data.consumes_declared_container_secrets());
 
         let wipe_data = lifecycle_operation_plan(
             Path::new("/tmp/repo"),
@@ -898,6 +899,7 @@ mod tests {
                 reason: "reset removes runtime data",
             }
         );
+        assert!(!wipe_data.consumes_declared_container_secrets());
     }
 
     #[test]

@@ -181,8 +181,10 @@ Injection rules:
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting
 - container operations unlock `targets = ["containers"]` values only when the
-  selected operation starts or recreates a runtime (`container up`,
-  `container reset`); read, exec, logs, stats, and teardown stay secret-free
+  selected operation starts a runtime (`container up`); read, exec, logs,
+  stats, reset, and teardown stay secret-free. Reset tears down runtime
+  artifacts and does not inject secrets; a later `container up` is the
+  secret-consuming bring-up
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
 - a Rhai script unlocks required `targets = ["rhai"]` values only when the

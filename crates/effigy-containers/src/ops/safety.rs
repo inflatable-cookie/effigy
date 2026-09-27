@@ -12,10 +12,10 @@ pub enum ContainerSideEffectClass {
 }
 
 impl ContainerSideEffectClass {
-    /// Host vault injection is only for bring-up. Read, exec, and teardown
-    /// reuse whatever the running runtime already has.
+    /// Host vault injection is only for bring-up. Read, exec, reset, and
+    /// teardown reuse or discard whatever the running runtime already has.
     pub fn consumes_declared_container_secrets(self) -> bool {
-        matches!(self, Self::StartsRuntime | Self::RecreatesRuntime)
+        matches!(self, Self::StartsRuntime)
     }
 }
 
