@@ -9,10 +9,13 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - Graph lookups name a live refresh-lock holder (pid and age) and serve the
   last complete snapshot as `stale-index` instead of reading a partial rebuild
-  or spending the query budget on the lock. `--stale-index` reads that
-  snapshot without waiting or refreshing; a cold checkout returns
-  `missing-index` and names `effigy graph index --json`. A dead lock pid is a
-  stale holder and does not consume the full in-flight wait.
+  or spending the query budget on the lock. Without a snapshot they return
+  `missing-index` and do not query the live database. The snapshot is published
+  after the search index is rebuilt, via an atomic replace that keeps the prior
+  file until the new copy is complete. `--stale-index` reads that snapshot
+  without waiting or refreshing; a cold checkout returns `missing-index` and
+  names `effigy graph index --json`. A dead lock pid is a stale holder and does
+  not consume the full in-flight wait.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and

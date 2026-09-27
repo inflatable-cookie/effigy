@@ -111,7 +111,8 @@ acquire succeeds. A lookup that finds the lock held:
 - serves the last complete snapshot as freshness state `stale-index` when one
   exists, and never reads a partial in-flight rebuild;
 - otherwise returns `missing-index` with the lock identity and the next action
-  (`effigy graph index --json`, or `--stale-index` once a snapshot exists).
+  (`effigy graph index --json`, or `--stale-index` once a snapshot exists),
+  without querying the live database.
 
 `--stale-index` is a read-only lookup option on graph data queries. It skips
 refresh and lock wait, reads the last complete snapshot (or the live database

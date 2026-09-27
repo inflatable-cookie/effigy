@@ -80,10 +80,13 @@ Each has its own refresh lock and last-complete snapshot. Manifests cannot
 supply database paths or named store pools. Alias encoding must be
 deterministic and traversal-safe.
 
-A finished index publishes `graph.complete.db` beside `graph.db`. Lookups that
-meet a live refresh lock, or that pass `--stale-index`, read that snapshot
-instead of a partial live rebuild. The result is marked `stale-index` and is
-never presented as current. A lock wait records the holder pid and age when
+A finished index publishes `graph.complete.db` beside `graph.db` after all
+queryable state, including the search index, is updated. The new file is
+vacuumed into a sibling path and renamed over the previous snapshot only after
+success. Lookups that meet a live refresh lock, or that pass `--stale-index`,
+read that snapshot instead of a partial live rebuild. Without a snapshot they
+return `missing-index` and do not query the live database. The result is marked
+`stale-index` when a snapshot is served and is never presented as current. A lock wait records the holder pid and age when
 the lock file has them; a dead pid is a stale holder and does not consume the
 full in-flight wait. A cold checkout with no complete snapshot returns
 `missing-index` under `--stale-index` instead of spending the query budget on

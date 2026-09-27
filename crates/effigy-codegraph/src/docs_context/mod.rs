@@ -244,6 +244,9 @@ fn ensure_freshness(
                 "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
             )
         })?,
+        crate::refresh::RefreshSource::Unavailable => {
+            return Err(CodeGraphError::validation(freshness.summary));
+        }
     };
     Ok((store, freshness))
 }

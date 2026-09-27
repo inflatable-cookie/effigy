@@ -288,6 +288,8 @@ pub enum RefreshSource {
     Live,
     /// The last complete snapshot. Never a partial in-flight rebuild.
     CompleteSnapshot,
+    /// No complete corpus is safe to query. Callers must return status only.
+    Unavailable,
 }
 
 /// How a lookup should treat refresh, cold builds, and snapshots.
@@ -511,10 +513,13 @@ pub(crate) fn ensure_fresh_with_wait_and_progress(
 }
 
 /// Open the store a lookup should read, applying [`RefreshPolicy`].
+///
+/// `None` means no complete corpus is available. Callers must return the
+/// freshness status without querying the live database.
 pub fn open_query_store(
     scope: &GraphScope,
     policy: RefreshPolicy,
-) -> Result<(GraphStore, GraphFreshnessPayload), CodeGraphError> {
+) -> Result<(Option<GraphStore>, GraphFreshnessPayload), CodeGraphError> {
     if policy.stale_index {
         return open_stale_index_store(scope);
     }
@@ -523,21 +528,22 @@ pub fn open_query_store(
         ensure_fresh_with_wait_and_progress(scope, &store, IN_FLIGHT_WAIT_MS, policy, |_| {})?;
     let freshness = apply_notes(outcome.freshness, &outcome.notes);
     match outcome.source {
-        RefreshSource::Live => Ok((store, freshness)),
+        RefreshSource::Live => Ok((Some(store), freshness)),
         RefreshSource::CompleteSnapshot => {
             let snapshot = GraphStore::open_complete_snapshot(scope)?.ok_or_else(|| {
                 CodeGraphError::validation(
                     "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
                 )
             })?;
-            Ok((snapshot, freshness))
+            Ok((Some(snapshot), freshness))
         }
+        RefreshSource::Unavailable => Ok((None, freshness)),
     }
 }
 
 fn open_stale_index_store(
     scope: &GraphScope,
-) -> Result<(GraphStore, GraphFreshnessPayload), CodeGraphError> {
+) -> Result<(Option<GraphStore>, GraphFreshnessPayload), CodeGraphError> {
     let inspection = inspect_refresh_lock(&scope.paths().refresh_lock_path);
     if inspection.held {
         if let Some(snapshot) = GraphStore::open_complete_snapshot(scope)? {
@@ -551,13 +557,10 @@ fn open_stale_index_store(
                 "{}; {}",
                 freshness.summary, "passed `--stale-index` while a refresh lock is held"
             );
-            return Ok((snapshot, freshness));
+            return Ok((Some(snapshot), freshness));
         }
-        let store = GraphStore::open_for_scope(scope)?;
-        return Ok((
-            store,
-            locked_without_snapshot_outcome(scope, &inspection).freshness,
-        ));
+        let outcome = locked_without_snapshot_outcome(scope, &inspection);
+        return Ok((None, apply_notes(outcome.freshness, &outcome.notes)));
     }
 
     if let Some(snapshot) = GraphStore::open_complete_snapshot(scope)? {
@@ -565,12 +568,27 @@ fn open_stale_index_store(
             .failed_diagnostic_paths_in_scope(scope)
             .map(|paths| paths.len())
             .unwrap_or(0);
-        return Ok((snapshot, stale_index_freshness_payload(&[], failed, None)));
+        return Ok((
+            Some(snapshot),
+            stale_index_freshness_payload(&[], failed, None),
+        ));
     }
 
     let store = GraphStore::open_for_scope(scope)?;
-    stale_index_outcome(scope, &store)
-        .map(|outcome| (store, apply_notes(outcome.freshness, &outcome.notes)))
+    let outcome = stale_index_outcome(scope, &store)?;
+    let freshness = apply_notes(outcome.freshness, &outcome.notes);
+    match outcome.source {
+        RefreshSource::Live => Ok((Some(store), freshness)),
+        RefreshSource::CompleteSnapshot => {
+            let snapshot = GraphStore::open_complete_snapshot(scope)?.ok_or_else(|| {
+                CodeGraphError::validation(
+                    "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
+                )
+            })?;
+            Ok((Some(snapshot), freshness))
+        }
+        RefreshSource::Unavailable => Ok((None, freshness)),
+    }
 }
 
 fn stale_index_outcome(
@@ -653,7 +671,7 @@ fn missing_index_outcome(scope: &GraphScope, summary: &str) -> RefreshOutcome {
     RefreshOutcome {
         freshness,
         notes: Vec::new(),
-        source: RefreshSource::Live,
+        source: RefreshSource::Unavailable,
     }
 }
 
@@ -672,7 +690,7 @@ fn locked_without_snapshot_outcome(
     RefreshOutcome {
         freshness,
         notes: vec!["graph refresh in progress by another process".to_owned()],
-        source: RefreshSource::Live,
+        source: RefreshSource::Unavailable,
     }
 }
 

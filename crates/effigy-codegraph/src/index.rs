@@ -248,11 +248,11 @@ pub(crate) fn run_index_unlocked_in_scope(
     store.save_index_run(&run)?;
     store.save_metadata(DOCS_PROFILE_FINGERPRINT_KEY, &current_fingerprint)?;
     store.save_metadata(&scope_config_key, &scope_config)?;
-    store.snapshot_complete_index()?;
     if graph_changed {
         phase::enter(GraphPhase::SearchIndexRebuild);
         store.refresh_search_index_in_scope(scope)?;
     }
+    store.snapshot_complete_index()?;
     crate::git::update_index_stamp(scope, &store)?;
 
     Ok(IndexReport {

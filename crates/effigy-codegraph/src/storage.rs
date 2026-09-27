@@ -1,5 +1,5 @@
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, MappedRows, OpenFlags, OptionalExtension};
@@ -91,6 +91,11 @@ impl GraphStore {
     }
 
     /// Replace the complete snapshot with a consistent copy of the live database.
+    ///
+    /// The copy is vacuumed into a unique sibling path and renamed onto the
+    /// canonical snapshot only after success, so a concurrent lookup never sees
+    /// a missing or half-written file and a failed publish leaves the prior
+    /// snapshot in place.
     pub(crate) fn snapshot_complete_index(&self) -> Result<(), CodeGraphError> {
         if self.counts()?.files == 0 || !self.has_finished_index_run()? {
             return Ok(());
@@ -99,15 +104,23 @@ impl GraphStore {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        remove_sqlite_sidecars(dest);
-        let _ = std::fs::remove_file(dest);
+        let tmp = publishing_snapshot_path(dest);
+        remove_sqlite_sidecars(&tmp);
+        let _ = std::fs::remove_file(&tmp);
         let _ = self
             .connection
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        let dest_str = dest.to_str().ok_or_else(|| {
+        let tmp_str = tmp.to_str().ok_or_else(|| {
             CodeGraphError::validation("complete graph snapshot path is not valid UTF-8")
         })?;
-        self.connection.execute("VACUUM INTO ?1", [dest_str])?;
+        if let Err(error) = self.connection.execute("VACUUM INTO ?1", [tmp_str]) {
+            remove_snapshot_file(&tmp);
+            return Err(error.into());
+        }
+        if let Err(error) = std::fs::rename(&tmp, dest) {
+            remove_snapshot_file(&tmp);
+            return Err(error.into());
+        }
         Ok(())
     }
 
@@ -1302,6 +1315,22 @@ fn scope_record_predicate(scope: &GraphScope) -> (String, Vec<Value>) {
         "record_id IN (SELECT id FROM files WHERE {files_clause})\n          OR record_id IN (SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE {symbols_clause})\n          OR record_id IN (SELECT d.id FROM diagnostics d JOIN files f ON f.id = d.file_id WHERE {diagnostics_clause})"
     );
     (predicate, params)
+}
+
+fn publishing_snapshot_path(dest: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    dest.with_file_name(format!(
+        "graph.complete.publishing-{}-{nanos}.db",
+        std::process::id()
+    ))
+}
+
+fn remove_snapshot_file(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    remove_sqlite_sidecars(path);
 }
 
 fn remove_sqlite_sidecars(db_path: &Path) {
