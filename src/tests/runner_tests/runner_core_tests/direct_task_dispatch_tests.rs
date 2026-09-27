@@ -146,6 +146,210 @@ fn direct_task_dispatch_writes_blocked_task_status_record_for_lock_conflict() {
     assert_active_task_status_dir_empty(&root);
 }
 
+#[test]
+fn selector_plan_does_not_start_the_task_process() {
+    let root = temp_workspace("selector-plan-no-process");
+    let marker = root.join("plan-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.slow]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "slow".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan");
+
+    assert!(
+        !marker.exists(),
+        "plan must not start the task process: {}",
+        marker.display()
+    );
+    assert!(
+        output.contains("Selector: slow"),
+        "plain plan should name the selector: {output}"
+    );
+    assert!(
+        output.contains("Command:"),
+        "plain plan should include command shape: {output}"
+    );
+    assert!(
+        output.contains(&format!("printf ran > '{}'", marker.display())),
+        "plain plan should include the resolved command: {output}"
+    );
+}
+
+#[test]
+fn selector_plan_json_reports_command_shape_without_executing() {
+    let root = temp_workspace("selector-plan-json-no-process");
+    let marker = root.join("plan-json-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.probe]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "probe".to_owned(),
+            args: vec!["--json".to_owned(), "--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan json");
+
+    assert!(
+        !marker.exists(),
+        "json plan must not start the task process: {}",
+        marker.display()
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("plan json");
+    assert_eq!(parsed["schema"], "effigy.task.plan.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["executed"], false);
+    assert_eq!(parsed["task"], "probe");
+    assert_eq!(parsed["selector"], "probe");
+    assert!(
+        parsed["command"]
+            .as_str()
+            .is_some_and(|command| command.contains("printf ran")),
+        "plan command should match the task body: {parsed}"
+    );
+    assert!(parsed["catalog"]["root"].is_string());
+    assert!(parsed["catalog"]["manifest"].is_string());
+}
+
+#[test]
+fn json_selector_without_plan_still_executes() {
+    let root = temp_workspace("selector-json-still-executes");
+    let marker = root.join("json-should-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.probe]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "probe".to_owned(),
+            args: vec!["--json".to_owned()],
+        }),
+        &context,
+    )
+    .expect("json execution");
+
+    assert_file_text_equals(&marker, "ran");
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("run json");
+    assert_eq!(parsed["schema"], "effigy.task.run.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["task"], "probe");
+}
+
+#[test]
+fn selector_plan_does_not_run_deferral_fallback() {
+    let root = temp_workspace("selector-plan-no-defer");
+    let marker = root.join("defer-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!("[defer]\nrun = \"printf ran > '{}'\"\n", marker.display()),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let error = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "missing-task".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect_err("missing selector plan should not defer");
+
+    assert!(
+        !marker.exists(),
+        "plan must not start the deferral process: {}",
+        marker.display()
+    );
+    assert!(
+        matches!(error, RunnerError::TaskNotFoundAny { .. }),
+        "expected catalog miss, got {error}"
+    );
+}
+
+#[test]
+fn selector_plan_renders_managed_tui_process_shape() {
+    let root = temp_workspace("selector-plan-managed-tui");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "web", run = "vite dev", start = 2, tab = 2 }
+]
+"#,
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("managed tui plan");
+
+    assert!(output.contains("Selector: dev"), "{output}");
+    assert!(
+        output.contains("api: cargo run -p api"),
+        "tui plan should name process commands: {output}"
+    );
+    assert!(output.contains("web: vite dev"), "{output}");
+}
+
+#[test]
+fn selector_plan_does_not_resolve_env_schema_exec() {
+    let root = temp_workspace("selector-plan-no-env-exec");
+    let marker = root.join("env-exec-must-not-run.out");
+    write_root_manifest(&root, "[tasks.build]\nrun = \"printf ok\"\n");
+    fs::write(
+        root.join(".env.schema"),
+        format!("SIDE=exec('printf ran > {}')\n", marker.display()),
+    )
+    .expect("write env schema");
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "build".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan");
+
+    assert!(
+        !marker.exists(),
+        "plan must not run env-schema exec(): {}",
+        marker.display()
+    );
+}
+
 fn latest_task_status_record(root: &std::path::Path) -> TaskStatusCompletedRecord {
     let reports_root = root.join(".effigy/reports/tasks");
     let mut latest_paths = fs::read_dir(&reports_root)

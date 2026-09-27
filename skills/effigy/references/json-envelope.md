@@ -64,6 +64,7 @@ These commands produce stable JSON payloads suitable for agents to consume:
 | `effigy --json doctor` | `result.findings[]` with `check_id`, `evidence`, `severity`, and `remediation` |
 | `effigy --json doctor <selector> <args...>` | routing decision tree |
 | `effigy --json test --plan` | `result.targets[]` with resolved test plans |
+| `effigy --json <selector> --plan` | `result` is `effigy.task.plan.v1` (`executed` is false); `effigy --json <selector>` still runs the task |
 | `effigy --json config completion candidates` | `result.candidates[]` and completion cache metadata |
 | `effigy --json config` | merged config tree |
 | `effigy --json release status` | `result.gates.results[]` on success; failed gate checks may carry the same report under `error.details.gates.results[]` |

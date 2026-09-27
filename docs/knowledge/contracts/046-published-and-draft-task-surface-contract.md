@@ -66,12 +66,13 @@ manifest. Its versioned JSON schema is additive and independent of
 Draft execution is:
 
 ```text
-effigy draft <SELECTOR> [--json] [-- <ARGS>]
+effigy draft <SELECTOR> [--json] [--plan] [-- <ARGS>]
 ```
 
 It selects only `[drafts]`. It reuses explicit catalog alias, catalog path,
 cwd-nearest, and shallowest-unambiguous routing within the draft set. Ordinary
-flat task invocation never falls through to a draft.
+flat task invocation never falls through to a draft. `--plan` resolves the
+draft, catalog, and command without executing; `--json` remains output format.
 
 `draft` and `drafts` join the work help group as direct built-ins. Existing
 repository-selector precedence and diagnostics remain consistent with other

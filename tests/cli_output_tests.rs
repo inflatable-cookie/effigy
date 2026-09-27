@@ -22,6 +22,8 @@ mod json_envelope_tests;
 mod released_surface_transition_tests;
 #[path = "cli_output_tests/released_surface_v0_2_13_tests.rs"]
 mod released_surface_v0_2_13_tests;
+#[path = "cli_output_tests/selector_plan_tests.rs"]
+mod selector_plan_tests;
 #[path = "cli_output_tests/skill_command_tests.rs"]
 mod skill_command_tests;
 #[path = "cli_output_tests/state_command_tests.rs"]

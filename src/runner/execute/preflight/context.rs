@@ -21,6 +21,7 @@ pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) runtime_args_raw: TaskRuntimeArgs,
     pub(in crate::runner) runtime_args_exec: TaskRuntimeArgs,
     pub(in crate::runner) output_json: bool,
+    pub(in crate::runner) plan: bool,
     pub(in crate::runner) output_mode: ExecutionOutputMode,
     pub(in crate::runner) resolved: ResolvedTarget,
     pub(in crate::runner) discovery_plan: ExecutionDiscoveryPlan,
@@ -58,7 +59,7 @@ pub(in crate::runner) fn build_execution_preflight(
 pub(in crate::runner) fn build_execution_preflight_from_input(
     input: ExecutionPreflightInput,
 ) -> Result<ExecutionPreflight, RunnerError> {
-    let (runtime_args_raw, runtime_args_exec, output_json) =
+    let (runtime_args_raw, runtime_args_exec, output_json, plan) =
         prepare_execution_runtime_args(&input.args)?;
     let discovery = discovery::discover_execution_preflight(
         &input.selector,
@@ -73,6 +74,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         runtime_args_raw,
         runtime_args_exec,
         output_json,
+        plan,
         output_mode: input.output_mode,
         resolved: discovery.resolved,
         selector: discovery_plan.selector.clone(),

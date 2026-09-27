@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy <selector> --plan` and `effigy draft <selector> --plan` resolve the
+  task, catalog, and command without starting a task process. `--plan` is
+  consumed by Effigy and is not passed through to the task. Unresolved
+  selectors do not run deferral, exec aliases, or other builtins;
+  `effigy test --plan` keeps the test builtin. `--json` remains an output
+  format: `effigy --json <selector>` still executes.
 - Graph lookups name a live refresh-lock holder (pid and age) and serve the
   last complete snapshot as `stale-index` instead of reading a partial rebuild
   or spending the query budget on the lock. Without a snapshot they return
@@ -60,6 +66,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Task and draft text runs send the framed CLI header to stderr so stdout is
+  only the task's own bytes. Command substitution no longer needs to strip the
+  banner.
 - Installed skill examples now invoke `northstar/retired-concepts`. The
   temporary `northstar-lean` alias is no longer taught in help, guides,
   parse tests, or `AGENTS.md`.

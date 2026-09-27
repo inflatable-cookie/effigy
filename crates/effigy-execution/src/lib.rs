@@ -220,13 +220,14 @@ pub struct ExecutionRuntimeArgsPlan {
     pub verbose_root: bool,
     pub env_schema_override: Option<PathBuf>,
     pub output_json: bool,
+    pub plan: bool,
 }
 
 impl ExecutionRuntimeArgsPlan {
     pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
         let raw = effigy_tasks::parse_task_runtime_args(args)
             .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
-        let (exec_args, output_json) = strip_task_json_flag(&raw.passthrough);
+        let (exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
 
         Ok(Self {
             raw_args: raw.passthrough,
@@ -235,6 +236,7 @@ impl ExecutionRuntimeArgsPlan {
             verbose_root: raw.verbose_root,
             env_schema_override: raw.env_schema_override,
             output_json,
+            plan,
         })
     }
 
@@ -257,9 +259,10 @@ impl ExecutionRuntimeArgsPlan {
     }
 }
 
-fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
+fn strip_task_output_flags(args: &[String]) -> (Vec<String>, bool, bool) {
     let mut stripped = Vec::with_capacity(args.len());
     let mut json_mode = false;
+    let mut plan = false;
     let mut passthrough_mode = false;
     for arg in args {
         if arg == "--" {
@@ -271,9 +274,13 @@ fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
             json_mode = true;
             continue;
         }
+        if !passthrough_mode && arg == "--plan" {
+            plan = true;
+            continue;
+        }
         stripped.push(arg.clone());
     }
-    (stripped, json_mode)
+    (stripped, json_mode, plan)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -955,6 +962,7 @@ mod tests {
         assert_eq!(plan.env_schema_override, Some(schema.clone()));
         assert!(plan.verbose_root);
         assert!(plan.output_json);
+        assert!(!plan.plan);
         assert_eq!(
             plan.raw_args,
             vec!["--json".to_owned(), "--".to_owned(), "--json".to_owned()]
@@ -972,6 +980,31 @@ mod tests {
             vec!["--json".to_owned(), "--".to_owned(), "--json".to_owned()]
         );
         assert_eq!(exec.passthrough, vec!["--".to_owned(), "--json".to_owned()]);
+    }
+
+    #[test]
+    fn runtime_args_plan_strips_selector_plan_flag_before_passthrough() {
+        let args = vec![
+            "--plan".to_owned(),
+            "--json".to_owned(),
+            "--".to_owned(),
+            "--plan".to_owned(),
+        ];
+
+        let plan = ExecutionRuntimeArgsPlan::from_args(&args).expect("runtime args");
+
+        assert!(plan.plan);
+        assert!(plan.output_json);
+        assert_eq!(
+            plan.raw_args,
+            vec![
+                "--plan".to_owned(),
+                "--json".to_owned(),
+                "--".to_owned(),
+                "--plan".to_owned()
+            ]
+        );
+        assert_eq!(plan.exec_args, vec!["--".to_owned(), "--plan".to_owned()]);
     }
 
     #[test]

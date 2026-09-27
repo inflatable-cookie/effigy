@@ -5,7 +5,9 @@ use super::super::selection::result;
 use super::super::selection::SelectionResolution;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;
 use crate::runner::command_context::active_runtime_context;
-use crate::runner::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
+use crate::runner::deferral::{
+    deferred_builtins_from_catalogs, run_deferred_request, select_deferral, should_attempt_deferral,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::try_run_exec_alias;
 use effigy_builtin::try_run_builtin_task;
@@ -18,6 +20,9 @@ pub(super) fn resolve_selection_error<'a>(
 ) -> Result<SelectionResolution<'a>, RunnerError> {
     if let Some(removed_builtin_error) = removed_builtin_invocation_error(&preflight.selector) {
         return Err(removed_builtin_error);
+    }
+    if preflight.plan {
+        return resolve_plan_selection_error(task, preflight, error);
     }
     if let Some(output) = resolve_builtin_selection_output(task, preflight)? {
         return Ok(result::output(output));
@@ -39,6 +44,32 @@ pub(super) fn resolve_selection_error<'a>(
         }
     }
     Err(error)
+}
+
+fn resolve_plan_selection_error<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+    error: RunnerError,
+) -> Result<SelectionResolution<'a>, RunnerError> {
+    // `effigy test --plan` is the test builtin's own plan, not a selector plan.
+    if preflight.selector.task_name == "test" {
+        if let Some(output) = resolve_builtin_selection_output(task, preflight)? {
+            return Ok(result::output(output));
+        }
+    }
+    // A remapped builtin (`[defer].builtins = ["release"]`) still owns `--plan`
+    // as that command's flag. Generic deferral and exec aliases do not run.
+    if selector_is_deferred_builtin(preflight) {
+        if let Some(output) = resolve_deferred_selection_output(task, preflight, &error)? {
+            return Ok(result::output(output));
+        }
+    }
+    Err(error)
+}
+
+fn selector_is_deferred_builtin(preflight: &ExecutionPreflight) -> bool {
+    deferred_builtins_from_catalogs(&preflight.catalogs, &preflight.resolved.resolved_root)
+        .contains(&preflight.selector.task_name)
 }
 
 fn should_try_deferral_before_exec_alias() -> bool {

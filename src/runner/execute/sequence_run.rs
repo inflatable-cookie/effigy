@@ -1139,6 +1139,7 @@ run = [{ task = "db:migrate" }]
                 passthrough: Vec::new(),
             },
             output_json: false,
+            plan: false,
             output_mode: effigy_execution::ExecutionOutputMode::Capture,
             resolved: ResolvedTarget {
                 resolved_root: PathBuf::from("/workspace-root/acowtancy"),

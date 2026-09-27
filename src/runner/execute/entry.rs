@@ -13,7 +13,7 @@ fn run_manifest_task_with_preflight_input(
 ) -> Result<String, RunnerError> {
     let preflight = build_execution_preflight_from_input(input)?;
     let _local_dev_secrets = crate::runner::secret_session::activate_local_dev_secret_access(
-        preflight.selector.task_name == "dev",
+        !preflight.plan && preflight.selector.task_name == "dev",
     );
     run_execution_pipeline(task, preflight)
 }
@@ -25,8 +25,11 @@ fn run_manifest_task_with_preflight_input_and_env(
 ) -> Result<String, RunnerError> {
     let preflight = build_execution_preflight_from_input(input)?;
     let _local_dev_secrets = crate::runner::secret_session::activate_local_dev_secret_access(
-        preflight.selector.task_name == "dev",
+        !preflight.plan && preflight.selector.task_name == "dev",
     );
+    if preflight.plan {
+        return run_execution_pipeline(task, preflight);
+    }
     let (selection, selection_plan) =
         match super::selection::resolve_task_selection(task, &preflight)? {
             super::selection::SelectionResolution::Selected { selection, plan } => {

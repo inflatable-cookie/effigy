@@ -15,6 +15,8 @@ Use the built-in diagnostic task:
 ```bash
 effigy tasks
 effigy tasks --resolve catalog-a/api
+effigy catalog-a/api --plan
+effigy --json catalog-a/api --plan
 effigy tasks --resolve ../shared/validate
 effigy tasks --resolve test
 effigy tasks --json
@@ -23,6 +25,12 @@ effigy tasks --json --pretty false --resolve catalog-a/api
 ```
 
 The `tasks` output shows effective catalogs plus routing precedence and resolution evidence.
+
+`effigy <selector> --plan` is the non-executing command-shape path. It is not
+`tasks --resolve` and it is not `--json`. `--json` only chooses the envelope;
+`effigy --json <selector>` still runs the task. An unresolved selector with
+`--plan` fails without deferral or exec-alias fallback; `effigy test --plan`
+keeps the test builtin.
 
 ## Discovery Scope
 

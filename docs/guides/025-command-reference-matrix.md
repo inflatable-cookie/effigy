@@ -46,6 +46,9 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy secrets list`, `doctor`, `init`, `set`, `import`, `unset`, `unlock`, or `lock`.
 - Need host-local DNS, route status, or TLS setup for container domains: use
   `effigy gateway`.
+- Need to inspect a selector without running it: use `effigy <selector> --plan`
+  (or `effigy --json <selector> --plan`). `--json` alone still executes; see
+  [`017-json-output-contracts.md`](017-json-output-contracts.md).
 - Need machine-readable output: add top-level `effigy --json <command>` (or
   task-local `--json` where the command supports it; see
   [`017-json-output-contracts.md`](017-json-output-contracts.md)).
@@ -127,7 +130,7 @@ through the help route.
 | `effigy uninstall` | Plan or remove Effigy-owned local installation state | `--plan`, `--yes`, `--json` | command envelope with cleanup plan/result | `effigy uninstall --help` |
 | `effigy tasks` | List effective catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
 | `effigy drafts` | Inventory lifecycle-labelled `[drafts]` definitions with purpose, created/expiry, lifecycle state, and composed source; never mutates or expires them | `[FILTER]`, `--repo`, `--json`, `--pretty true\|false` | `effigy.drafts.v1` | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
-| `effigy draft` | Run one explicitly selected draft through ordinary catalog routing, request, and execution; never falls through from published selectors | `<SELECTOR>`, `--repo`, `--json`, `-- <ARGS>` | `effigy.task.run.v1` with additive `surface` / `surface_identity` for drafts | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
+| `effigy draft` | Run one explicitly selected draft through ordinary catalog routing, request, and execution; `--plan` inspects without executing; never falls through from published selectors | `<SELECTOR>`, `--repo`, `--json`, `--plan`, `-- <ARGS>` | `effigy.task.run.v1` with additive `surface` / `surface_identity` for drafts; `effigy.task.plan.v1` | `016-task-routing-precedence.md`, `022-manifest-cookbook.md` |
 | `effigy skill` | List or execute one explicitly selected, isolated skill task catalog while a separate consumer repo owns runtime effects | `tasks`, `run`, `--path`, `--repo`, `--json`, `-- <ARGS>` | `effigy.skill.tasks.v1`, `effigy.skill.run.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/042-external-skill-task-runner-contract.md`](../knowledge/contracts/042-external-skill-task-runner-contract.md) |
 | `effigy deps` | Inspect dependency state, manage machine-local Cargo and Bun links, and author committed Bun pins | `status [cargo\|bun]`; `link <cargo\|bun> <PATH> [--dry-run]`; `unlink <cargo\|bun> <PATH> [--dry-run]`; `pin bun <PATH> [--dry-run]`; `unpin bun <PATH> [--dry-run]`; `--repo`, `--json` | `effigy.deps.status.v1`, `effigy.deps.link.v1`, `effigy.deps.unlink.v1`, `effigy.deps.pin.v1` | [`077-local-dependency-linking.md`](077-local-dependency-linking.md) |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
@@ -160,7 +163,7 @@ through the help route.
 | `effigy config completion` | Prompt for shell completion setup on a real TTY, export raw shell completion scripts, install user-local completion files, wire bash/zsh startup automatically when needed, and surface selector candidates | `bash\|zsh\|fish`, `--install`, `--export`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v2`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../knowledge/contracts/016-state-stack-and-layered-seed-framework-contract.md) |
-| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1` | `012-dev-process-manager-tui.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
+| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`; `--plan`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1`, `effigy.task.plan.v1` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
 
 ## JSON Envelope
 
@@ -359,8 +362,8 @@ effigy init --apply-actions <ID>[,<ID>...] [--json]
 effigy init <name> [--dry-run] [--force] [--json]
 effigy init --list [--json]
 effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
-effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [task args]
-effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [task args]
+effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--plan] [--json] [task args]
+effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--plan] [--json] [task args]
 ```
 
 Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
@@ -501,6 +504,11 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   passthrough-style built-ins `doctor`, `watch`, and `scan` reject them on the
   built-in invocation itself (use `effigy <builtin> --help` and
   [`050-env-schema-integration.md`](050-env-schema-integration.md))
+- `effigy <selector> --plan` inspects the resolved task, catalog, and command
+  without starting a task process. `--json` is output format only:
+  `effigy --json <selector>` still executes. Pass `-- --plan` when the task
+  itself should receive `--plan`. Task text runs keep the framed header on
+  stderr so stdout is only the task bytes.
 - all scan commands accept either `--json` or `--markdown`, not both
 - `scan validation-gaps` accepts changed paths as args or via `--stdin`
 - `scan --graph-context` refreshes the index before enriching supported scan
@@ -601,6 +609,7 @@ Routing diagnosis:
 
 ```sh
 effigy tasks --resolve test
+effigy app/build --plan
 effigy doctor --repo /path/to/workspace app/build --watch
 ```
 
