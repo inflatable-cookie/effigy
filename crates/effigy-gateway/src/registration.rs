@@ -28,7 +28,7 @@ pub fn project_scope(project_path: &str) -> Result<Option<String>, GatewayError>
     worktree_scope::load_or_create(Path::new(project_path)).map_err(|error| {
         GatewayError::RouteTableReadError {
             path: Path::new(project_path).to_path_buf(),
-            reason: format!("cannot establish worktree route owner: {error}"),
+            reason: format!("cannot establish route owner generation: {error}"),
         }
     })
 }

@@ -305,6 +305,17 @@ pub(crate) fn resolve_compose_source(
         )));
     }
 
+    // A linked worktree and a clone marked `effigy.runtimeScope = ephemeral`
+    // both isolate their runtime resources; `share_runtime_identity = true`
+    // opts either shape back into one shared Compose identity.
+    let runtime_scoped = !config.share_runtime_identity
+        && effigy_core::worktree_scope::is_runtime_scoped(repo_root).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "cannot determine runtime scope for {}: {error}",
+                repo_root.display()
+            ))
+        })?;
+
     if let Some(compose_file) = &config.compose_file {
         if !configured_media_mounts(config).is_empty() {
             return Err(ContainerPolicyError::TaskInvocation(format!(
@@ -313,10 +324,8 @@ pub(crate) fn resolve_compose_source(
         }
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
-        if effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
-            && !config.share_runtime_identity
-        {
-            validate_linked_direct_compose(&compose_file, config)?;
+        if runtime_scoped {
+            validate_scoped_direct_compose(&compose_file, config)?;
         }
         let display = path_relative_to_repo(repo_root, &compose_file);
         let effective_ports = if config
@@ -384,9 +393,7 @@ pub(crate) fn resolve_compose_source(
         "typed assembly policy application",
         &assembly.compose_yaml,
     )?;
-    if effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
-        && !config.share_runtime_identity
-    {
+    if runtime_scoped {
         validate_scoped_generated_compose(project_name, &assembly, &compose_document)?;
     }
     apply_shared_service_env_policy(&shared_services, &mut compose_document)?;
@@ -430,8 +437,7 @@ pub(crate) fn resolve_compose_source(
         &configured_bindings,
         &project_loopback_port_rules(repo_root, project_name, config)?,
         publish_address,
-        effigy_core::git_worktree::detect_linked_worktree(repo_root).is_some()
-            && !config.share_runtime_identity,
+        runtime_scoped,
         &mut compose_document,
     )?;
     compose_document.write_back(
@@ -484,7 +490,7 @@ pub(crate) fn resolve_compose_source(
     ))
 }
 
-fn validate_linked_direct_compose(
+fn validate_scoped_direct_compose(
     compose_file: &Path,
     config: &ManifestContainerConfig,
 ) -> Result<(), ContainerPolicyError> {
@@ -535,7 +541,7 @@ fn validate_linked_direct_compose(
         return Ok(());
     }
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "linked worktree cannot isolate repo-owned compose at {} with fixed resources ({}); use generated compose, remove fixed names/ports, or set share_runtime_identity = true to opt into one shared runtime",
+        "runtime-scoped checkout (linked worktree or ephemeral clone) cannot isolate repo-owned compose at {} with fixed resources ({}); use generated compose, remove fixed names/ports, or set share_runtime_identity = true to opt into one shared runtime",
         compose_file.display(), fixed.join(", ")
     )))
 }
@@ -583,7 +589,7 @@ fn validate_scoped_generated_compose(
         return Ok(());
     }
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "generated compose for linked worktree has fixed mutable resources ({}); make them depend on the effective project name",
+        "generated compose for runtime-scoped checkout (linked worktree or ephemeral clone) has fixed mutable resources ({}); make them depend on the effective project name",
         fixed.join(", ")
     )))
 }

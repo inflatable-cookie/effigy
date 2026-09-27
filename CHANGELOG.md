@@ -47,6 +47,17 @@ During v0.x, MINOR bumps may include breaking changes.
 - Linked worktrees expose one effective host map (`effigy container hosts`)
   that rewrites declared HTTP routes and TCP aliases onto
   `<apex>-w<scope>.test` while the primary checkout keeps declared names.
+- A full clone marked `effigy.runtimeScope = ephemeral` in its local Git
+  config now receives the same isolated runtime identity as a linked Git
+  worktree: a token in the clone's own `.git/effigy-runtime-scope`, distinct
+  generated Compose names (`-ec-` tag) and allocated ports, the same
+  effective gateway hosts (`scope.kind = "ephemeral-clone"` in `container
+  hosts --json`), gateway route ownership, and `container retire` with
+  retry-by-token after the clone is deleted. The marker is read from the
+  checkout's own `.git/config` only — no global or system Git config, no
+  include expansion — and no shared-Git-directory mount is added because a
+  marked clone is self-contained. Unmarked clones keep primary-checkout
+  behavior; recreated clones get a new generation token.
 - `effigy container retire` removes one runtime scope's owned containers,
   networks, mutable volumes, isolated routes and ports using label proofs
   and a durable record under `~/.effigy/runtime-scopes/`, so cleanup can

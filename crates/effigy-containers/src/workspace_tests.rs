@@ -988,4 +988,19 @@ mod worktree_git_mount_tests {
         assert!(build_worktree_git_mounts(&root).is_empty());
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn marked_ephemeral_clone_is_self_contained_and_adds_no_git_mount() {
+        // A marked clone owns its `.git` directory outright, so the
+        // linked-worktree shared-Git-directory mount must never appear.
+        let root = temp_dir("ephemeral-clone");
+        fs::create_dir_all(root.join(".git")).expect("git dir");
+        fs::write(
+            root.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("local config marker");
+        assert!(build_worktree_git_mounts(&root).is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
 }
