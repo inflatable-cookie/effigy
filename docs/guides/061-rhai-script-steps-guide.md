@@ -150,6 +150,7 @@ Current v1 helpers:
   - `secrets::has(name)` — returns true if the named secret is declared and available
   - `secrets::set(name, value)` — stores one declared Rhai-target secret
   - `secrets::set_many(map)` — stores multiple declared Rhai-target secrets in one write
+  - required Rhai secrets unlock only when the selected script has an executable `secrets` module path (`secrets::`); comments, string literals, and longer identifiers such as `mysecrets::` do not count
 - git and forge helpers:
   - `git::status()`
   - `git::working_tree_clean()`

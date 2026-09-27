@@ -20,6 +20,10 @@ Effigy ships a versioned binary through GitHub Releases and a Homebrew tap. The 
 
 Release prepare may reuse a hosted CI result for a gate explicitly configured for reuse. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy. The release record must name every reused gate and link to its run. Until this support is implemented, follow the prepare steps above.
 
+## Gate checks and an empty Unreleased section
+
+`effigy release status --check-gates` reports the configured gate verdict independently of the optional next-version proposal. An empty `[Unreleased]` section means there is nothing to release, not that the gates failed: passed gates still yield a successful gate check (`gates_passed` / `gate_check_passed`, `Gate check: passed`), while the status keeps `ready: false`, `next_version: null`, and the explicit `unreleased changelog section has no entries` blocker. A failed gate, an invalid changelog, a version mismatch, or an existing tag still fails the check. `simulate`, `prepare`, and `execute` keep requiring a derivable next version.
+
 ## Verify and recover
 
 - After artifacts publish, run `effigy release verify-install --tag vX.Y.Z`. Check the GitHub release and Homebrew tap.

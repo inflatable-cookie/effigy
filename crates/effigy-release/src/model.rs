@@ -65,6 +65,7 @@ pub struct ReleaseStatus {
     pub next_version: Option<semver::Version>,
     pub tag: Option<String>,
     pub gates_checked: bool,
+    pub gates_passed: bool,
     pub configured_gate_count: usize,
     pub gate_results: Vec<GateResult>,
     pub environment_path: Option<PathBuf>,

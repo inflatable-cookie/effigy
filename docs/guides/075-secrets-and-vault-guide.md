@@ -233,7 +233,8 @@ run = "dbmate migrate"
 The task receives `DATABASE_URL` in its environment if `database_url` is
 declared with `targets = ["tasks"]`, stored in the vault, and the task
 references `$DATABASE_URL` or `${DATABASE_URL}`. Missing required values block
-task execution before spawn only for referenced task-target secrets.
+task execution before spawn only for referenced task-target secrets. The
+selected operation's secret scope is resolved before any vault prompt.
 
 Managed tasks can opt into the broader task-secret path explicitly:
 
@@ -269,7 +270,11 @@ general deploy/state/artifact generation hook.
 ## Use In Containers
 
 Secrets with `targets = ["containers"]` are resolved before `effigy container
-up`. No repo-root `.env` file is written.
+up`. Read-only checks (`status`, `logs`, `stats`), exec/shell against an
+already running runtime, `down`, and `reset` do not unlock the vault. Reset
+only tears down runtime artifacts; the next `container up` is what injects
+secrets again. Unrelated required container secrets cannot block those
+operations. No repo-root `.env` file is written.
 
 Stored optional values are injected when the vault is unlocked. Missing
 optional values are skipped; only keys declared with `required = true` gate
@@ -332,6 +337,13 @@ Rules:
 - `secrets::set(name, value)` and `secrets::set_many(map)` require each secret
   to be declared for the `rhai` target and write to the encrypted vault
 - `secrets::set_many(map)` batches validation, unlock, encryption, and write
+- Required Rhai secrets unlock only when the selected script has an executable
+  `secrets` module path (`secrets::`). Comments, string literals, and longer
+  identifiers such as `mysecrets::` do not count. A secret-free script does not
+  prompt or fail for unrelated required values.
+  A script that uses `secrets::` still fails closed before side effects when a
+  required value is missing or the vault is locked.
+- Isolated `effigy skill run` tasks never resolve the consumer vault
 - Known values are redacted from Rhai errors and host output maps
 - Never build shell commands that embed secrets; use structured helpers
 
