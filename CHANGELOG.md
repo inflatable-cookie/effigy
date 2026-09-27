@@ -16,6 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
   without waiting or refreshing; a cold checkout returns `missing-index` and
   names `effigy graph index --json`. A dead lock pid is a stale holder and does
   not consume the full in-flight wait.
+- Container-routed worktree tasks verify the live checkout mount and refresh
+  changed Cargo inputs before execution. Built-in Bun tests report the frozen
+  `bootstrap deps sync` route when a fresh worktree lacks dependencies.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and
@@ -57,10 +60,27 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Local operations classify the minimum secret scope before any vault
+  prompt. Secret-free installed skill tasks and container checks that
+  do not start a runtime (`status`, `logs`, `stats`, `reset`, `down`)
+  no longer unlock an unrelated required project vault. Secret-consuming
+  tasks, Rhai scripts with an executable `secrets::` path, and
+  `container up` still fail closed with a precise missing-secret
+  diagnostic. Comments, string literals, and longer identifiers such
+  as `mysecrets::` do not unlock the vault.
 - Generated Nginx health checks keep the wget exit-code shell variable
   after Compose interpolation. A site whose root returns 404 can become
   healthy; transport failures stay unhealthy.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
+
+### Fixed
+- `effigy release status --check-gates` reports the configured gate verdict
+  independently of the optional next-version proposal. An empty
+  `[Unreleased]` section keeps `ready: false`, `next_version: null`, and the
+  explicit unreleased-entries blocker, but no longer turns passed gates into
+  a failed gate check. The status payload adds `gates_passed` and
+  `gate_check_passed`; `simulate`, `prepare`, and `execute` still require a
+  derivable next version.
 
 ## [0.13.1] - 2026-09-25
 

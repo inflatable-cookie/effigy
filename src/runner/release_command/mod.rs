@@ -132,16 +132,25 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         ReleaseSubcommand::Status { check_gates } => {
             let status = collect_release_status(&resolved, check_gates)?;
+            // With `--check-gates`, the exit status reports the gate check
+            // verdict independently of the optional next-version proposal: an
+            // empty `[Unreleased]` section keeps `ready` false and stays
+            // listed under blockers, but does not fail passed gates.
+            let succeeded = if check_gates {
+                status.gate_check_passed()
+            } else {
+                status.ready
+            };
             if args.output_json {
                 let rendered = render_release_status_json_payload(&status);
-                if status.ready {
+                if succeeded {
                     return Ok(rendered);
                 }
                 return Err(RunnerError::CommandJsonFailure { rendered });
             }
 
             let rendered = render_release_status_text(&status);
-            if status.ready {
+            if succeeded {
                 Ok(rendered)
             } else {
                 Err(RunnerError::task_invocation(rendered))

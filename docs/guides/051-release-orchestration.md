@@ -41,7 +41,7 @@ effigy release gates
 Use the commands by intent:
 
 - `simulate` for a no-write preview of the likely release path
-- `status --check-gates` for current readiness plus configured gate results
+- `status --check-gates` for current readiness plus the configured gate verdict, reported independently of the optional next-version proposal
 - `prepare --plan` for the exact file mutations Effigy would make
 - `prepare` / `execute` text mode when a human is actively reviewing the flow
 - `prepare --yes` / `execute --yes` when non-interactive operation is required
@@ -361,6 +361,12 @@ What each step is for:
      previewing a deliberate valid override
 2. `status --check-gates`
    - release readiness from current repo state plus gates
+   - an empty `[Unreleased]` section means there is nothing to release, not
+     that the gates failed: passed gates still exit successfully
+     (`Gate check: passed`, `gate_check_passed: true`) while the status keeps
+     `ready: false`, `next_version: null`, and the explicit unreleased-entries
+     blocker. `simulate`, `prepare`, and `execute` still require a derivable
+     next version.
 3. `prepare`
    - interactive review before writing
 4. `prepare --plan`

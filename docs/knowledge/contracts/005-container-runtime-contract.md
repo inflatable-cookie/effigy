@@ -156,6 +156,11 @@ The runtime-prep phase owns:
   directly
 - reconciling gateway/runtime exposure needed by the selected execution target
 - refreshing non-shell task leases when Effigy owns warm-runtime reuse
+- for scoped worktrees, proving a fresh host checkout marker is readable at
+  the container working directory and a container write reaches the selected
+  checkout before dispatch or lease refresh
+- refreshing changed Cargo input mtimes inside that mounted checkout before a
+  container-routed check, so host edits invalidate stale container artifacts
 
 Surface-specific presentation may differ. The prep contract must not.
 
@@ -364,6 +369,10 @@ Examples:
 
 Failure should report the runtime guarantee that could not be established, not
 just the downstream task failure it would have caused.
+
+A scoped worktree whose running primary service reads a different checkout
+fails before task execution. Effigy removes the temporary probe on both success
+and failure. A sibling's live runtime and persistent data are left alone.
 
 ## Validation direction
 

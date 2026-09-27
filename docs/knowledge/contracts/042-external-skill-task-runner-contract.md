@@ -108,7 +108,9 @@ run never resolves or unlocks the consumer vault, so consumer-declared required
 secrets cannot block an unrelated skill task on a non-interactive host, and
 `secrets::get`, `secrets::has`, `secrets::set`, and `secrets::set_many` are
 refused inside an isolated source. Consumer secret values are not injected into
-an isolated task's environment even when the task names them.
+an isolated task's environment even when the task names them. A secret-free
+installed skill task therefore succeeds without unlocking an unrelated project
+vault.
 
 This boundary is additive. Wider runtime inheritance needs a later contract and
 must not appear as implicit fallback.
