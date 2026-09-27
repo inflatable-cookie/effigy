@@ -28,6 +28,20 @@ Notes:
 - Some built-ins that use the passthrough parser (`doctor`, `watch`, `scan`)
   reject `--verbose-root` and `--env-schema` on that built-in invocation.
 
+## Selector plan
+
+Definition:
+- `effigy <selector> --plan` (and `effigy draft <selector> --plan`) resolves
+  task, catalog, and command shape without starting a task process.
+- `--json` is output format only. `effigy --json <selector>` still executes.
+
+Examples:
+
+```sh
+effigy app/build --plan
+effigy --json app/build --plan
+```
+
 ## Selector
 
 Definition:

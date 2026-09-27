@@ -113,7 +113,10 @@ queries do not absorb draft definitions or draft-only historical rows.
 
 `effigy drafts --json` and `effigy --json draft ...` have dedicated additive
 schemas. Existing `effigy tasks` and ordinary task-run JSON remain byte- and
-schema-compatible for repositories with no drafts.
+schema-compatible for repositories with no drafts. `effigy <selector> --plan`
+and `effigy draft <selector> --plan` share the non-executing selector plan
+(`effigy.task.plan.v1` under `--json`); `--json` does not itself prevent
+execution.
 
 ## Failure Boundary
 

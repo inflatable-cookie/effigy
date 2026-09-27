@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy <selector> --plan` and `effigy draft <selector> --plan` resolve the
+  task, catalog, and command without starting a task process. `--json` remains
+  an output format: `effigy --json <selector>` still executes.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and
@@ -48,6 +51,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Task and draft text runs send the framed CLI header to stderr so stdout is
+  only the task's own bytes. Command substitution no longer needs to strip the
+  banner.
 - Generated Nginx health checks keep the wget exit-code shell variable
   after Compose interpolation. A site whose root returns 404 can become
   healthy; transport failures stay unhealthy.

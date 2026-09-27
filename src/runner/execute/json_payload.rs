@@ -46,6 +46,48 @@ pub(super) fn render_task_command_json(
     encode_task_run_json(&payload)
 }
 
+pub(super) fn render_task_plan(
+    output_json: bool,
+    selector: &TaskSelector,
+    cwd: &std::path::Path,
+    command: &str,
+    selection: &TaskSelection<'_>,
+) -> Result<String, RunnerError> {
+    if output_json {
+        return encode_task_run_json(&payload::task_plan_payload(
+            selector, cwd, command, selection,
+        ));
+    }
+    Ok(render_task_plan_text(selector, cwd, command, selection))
+}
+
+fn render_task_plan_text(
+    selector: &TaskSelector,
+    cwd: &std::path::Path,
+    command: &str,
+    selection: &TaskSelection<'_>,
+) -> String {
+    let rendered_selector = selector
+        .prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
+        .unwrap_or_else(|| selector.task_name.clone());
+    let catalog = if selection.catalog.alias.is_empty() {
+        selection.catalog.catalog_root.display().to_string()
+    } else {
+        format!(
+            "{} ({})",
+            selection.catalog.alias,
+            selection.catalog.catalog_root.display()
+        )
+    };
+    format!(
+        "Selector: {rendered_selector}\nTask: {}\nCatalog: {catalog}\nCommand: {command}\nCwd: {}\n",
+        selector.task_name,
+        cwd.display()
+    )
+}
+
 fn encode_task_run_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
     Ok(encode_json(payload, true)?)
 }

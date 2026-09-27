@@ -201,9 +201,15 @@ pub fn run_cli(raw_args: Vec<String>) {
 }
 
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
+    let task_stdout_owned = command_owns_task_stdout(&command);
     let mut renderer = PlainRenderer::stdout(context.output_mode);
     if !context.suppress_header {
-        let _ = render_cli_header(&mut renderer, context.command_root);
+        if task_stdout_owned {
+            let mut header_renderer = PlainRenderer::stderr(context.output_mode);
+            let _ = render_cli_header(&mut header_renderer, context.command_root);
+        } else {
+            let _ = render_cli_header(&mut renderer, context.command_root);
+        }
     }
     let spinner = if should_show_transient_spinner(context, &command) {
         renderer.spinner(transient_spinner_label(&command)).ok()
@@ -222,7 +228,9 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             if !output.trim().is_empty() {
                 let _ = renderer.text(&output);
             }
-            let _ = renderer.text("");
+            if !task_stdout_owned || !output.trim().is_empty() {
+                let _ = renderer.text("");
+            }
         }
         Err(err) => {
             if let Some(spinner) = spinner.as_ref() {
@@ -259,6 +267,10 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             std::process::exit(1);
         }
     }
+}
+
+fn command_owns_task_stdout(command: &Command) -> bool {
+    matches!(command, Command::Task(_) | Command::Draft(_))
 }
 
 fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Command) -> bool {

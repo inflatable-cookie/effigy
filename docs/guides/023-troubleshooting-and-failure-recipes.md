@@ -581,9 +581,11 @@ Fix:
 - tighten `[defer].run` conditions in the active manifest,
 - avoid recursive calls that re-invoke the same unresolved selector chain.
 
-## 8) When to Use `doctor` vs `tasks --resolve`
+## 8) When to Use `doctor` vs `tasks --resolve` vs `--plan`
 
 - use `effigy tasks --resolve <selector>` for routing evidence only,
+- use `effigy <selector> --plan` for the resolved task, catalog, and command
+  without starting a process; `--json` is output format, not a plan flag,
 - use `effigy doctor <selector> <args...>` for full explain output including selection and deferral reasoning.
 
 ## Expected Outcome

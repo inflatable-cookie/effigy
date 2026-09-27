@@ -26,7 +26,7 @@ Use this page in two passes:
 Start with the family that matches your job:
 
 - task discovery or routing:
-  `Tasks`, `Task Status`, `Doctor Explain`, `Task Run`
+  `Tasks`, `Task Status`, `Doctor Explain`, `Task Run`, `Task Plan`
 - health, repo checks, or diagnostics:
   `Doctor` and the `Scan *` payloads
 - test automation:
@@ -2630,6 +2630,30 @@ Failure variant:
   "duration_ms": 32
 }
 ```
+
+### 22b) Task Plan (`effigy.task.plan.v1`)
+
+```json
+{
+  "schema": "effigy.task.plan.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": false,
+  "task": "build",
+  "selector": "api/build",
+  "command": "cargo run -p api --bin build",
+  "cwd": "/workspace/app/api",
+  "catalog": {
+    "alias": "api",
+    "root": "/workspace/app/api",
+    "manifest": "/workspace/app/api/effigy.toml"
+  }
+}
+```
+
+`executed` is always false. This payload is produced by
+`effigy --json <selector> --plan`. `effigy --json <selector>` without `--plan`
+still runs the task and returns `effigy.task.run.v1`.
 
 ## Artifact Payloads
 

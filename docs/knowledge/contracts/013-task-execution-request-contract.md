@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-08-31
+Last Updated: 2026-09-27
 
 ## Purpose
 
@@ -175,6 +175,16 @@ Valid modes:
 Surface-specific rendering may still differ, but runtime route and environment
 resolution must not change because a caller wrapped the output differently.
 
+`--json` is an output format. It must not change execute-versus-plan, and it
+must not be treated as a safety flag. Inspecting a selector without running it
+is a separate `--plan` operation on the task or draft invocation.
+
+Direct CLI presentation (the framed header) is not task output. For
+`effigy <selector>` and `effigy draft <selector>` text runs, that header goes
+to stderr so stdout is only the task's own bytes and the process keeps the
+task's success or failure status. JSON envelopes stay on stdout and already
+suppress the header.
+
 ## Cleanup and Handoff Rules
 
 Cleanup and handoff policy belong to the request.
@@ -191,11 +201,15 @@ policy must come from the resolved execution plan.
 
 ## Public API Boundary
 
-`ResolvedTaskExecutionPlan` is an internal planning contract in this round.
+`ResolvedTaskExecutionPlan` is an internal host/container routing contract. It
+is not a public CLI payload.
 
-No public CLI JSON schema is introduced by this contract. If a future command
-exposes execution plans or manager-backed operation reports publicly, it must
-add a separate JSON schema and contract update.
+The public non-executing selector plan is a separate schema,
+`effigy.task.plan.v1`. `effigy <selector> --plan` and
+`effigy draft <selector> --plan` resolve the task, catalog, and command shape
+without starting a task process, acquiring locks, activating containers, or
+writing task-status records. `--json` only chooses the envelope. Builtin
+`--plan` surfaces such as `effigy test --plan` keep their own meaning.
 
 ## Drift Triggers
 
@@ -207,7 +221,7 @@ Update this contract when Effigy changes:
 - Rhai execution helper behavior
 - embedded task dispatch behavior
 - task-source propagation through preflight and nested dispatch
-- public exposure of resolved execution plans
+- public `effigy.task.plan.v1` selector-plan fields
 - runtime operation pipeline boundaries that change what execution requests
   must carry
 
@@ -217,6 +231,8 @@ Minimum proof:
 
 - `cargo test -p effigy-execution`
 - direct task, bootstrap task, and Rhai task parity proof
+- focused selector-plan proofs that no task process starts
+- the existing `--json <selector>` execution envelope
 - Rhai container-targeted mysql seed execution with `stdin_file`
 - inside-container handoff routes container intent locally
 - repo override propagation is identical across embedded callers

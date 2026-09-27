@@ -61,7 +61,9 @@ effigy doctor
 the guide names a built-in explicitly). They are not magic Effigy verbs.
 
 If you are not sure which task will run, stop and use
-`effigy tasks --resolve <task-name>` before guessing.
+`effigy tasks --resolve <task-name>` or `effigy <task-name> --plan` before
+guessing. `--json` still executes: `effigy --json <task-name> --plan` is the
+machine-readable plan.
 
 ## 2) Minimal `effigy.toml`
 
@@ -253,6 +255,7 @@ Read more: [`063-container-system-guide.md`](063-container-system-guide.md)
 effigy tasks
 effigy tasks --resolve test
 effigy tasks --resolve app/build
+effigy app/build --plan
 ```
 
 Use these before running unfamiliar tasks.

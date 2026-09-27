@@ -51,7 +51,7 @@ Current authority surfaces:
 | Crate | Responsibility |
 | --- | --- |
 | `effigy` | top-level binary/library crate; wires CLI entry, runner orchestration, and TUI export surfaces |
-| `effigy-cli` | CLI argument models, parse helpers, header/help/version presentation pieces |
+| `effigy-cli` | CLI argument models, parse helpers, header/help/version presentation. Task and draft runs put the framed header on stderr so stdout stays the task payload |
 | `effigy-ui` | renderer abstraction, theme, plain/JSON output helpers |
 | `effigy-tui` | reusable TUI runtime and multiprocess terminal UI building blocks |
 

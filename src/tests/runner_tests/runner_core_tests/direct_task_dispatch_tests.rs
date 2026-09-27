@@ -146,6 +146,120 @@ fn direct_task_dispatch_writes_blocked_task_status_record_for_lock_conflict() {
     assert_active_task_status_dir_empty(&root);
 }
 
+#[test]
+fn selector_plan_does_not_start_the_task_process() {
+    let root = temp_workspace("selector-plan-no-process");
+    let marker = root.join("plan-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.slow]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "slow".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan");
+
+    assert!(
+        !marker.exists(),
+        "plan must not start the task process: {}",
+        marker.display()
+    );
+    assert!(
+        output.contains("Selector: slow"),
+        "plain plan should name the selector: {output}"
+    );
+    assert!(
+        output.contains("Command:"),
+        "plain plan should include command shape: {output}"
+    );
+    assert!(
+        output.contains(&format!("printf ran > '{}'", marker.display())),
+        "plain plan should include the resolved command: {output}"
+    );
+}
+
+#[test]
+fn selector_plan_json_reports_command_shape_without_executing() {
+    let root = temp_workspace("selector-plan-json-no-process");
+    let marker = root.join("plan-json-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.probe]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "probe".to_owned(),
+            args: vec!["--json".to_owned(), "--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan json");
+
+    assert!(
+        !marker.exists(),
+        "json plan must not start the task process: {}",
+        marker.display()
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("plan json");
+    assert_eq!(parsed["schema"], "effigy.task.plan.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["executed"], false);
+    assert_eq!(parsed["task"], "probe");
+    assert_eq!(parsed["selector"], "probe");
+    assert!(
+        parsed["command"]
+            .as_str()
+            .is_some_and(|command| command.contains("printf ran")),
+        "plan command should match the task body: {parsed}"
+    );
+    assert!(parsed["catalog"]["root"].is_string());
+    assert!(parsed["catalog"]["manifest"].is_string());
+}
+
+#[test]
+fn json_selector_without_plan_still_executes() {
+    let root = temp_workspace("selector-json-still-executes");
+    let marker = root.join("json-should-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            "[tasks.probe]\nrun = \"printf ran > '{}'\"\n",
+            marker.display()
+        ),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "probe".to_owned(),
+            args: vec!["--json".to_owned()],
+        }),
+        &context,
+    )
+    .expect("json execution");
+
+    assert_file_text_equals(&marker, "ran");
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("run json");
+    assert_eq!(parsed["schema"], "effigy.task.run.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["task"], "probe");
+}
+
 fn latest_task_status_record(root: &std::path::Path) -> TaskStatusCompletedRecord {
     let reports_root = root.join(".effigy/reports/tasks");
     let mut latest_paths = fs::read_dir(&reports_root)

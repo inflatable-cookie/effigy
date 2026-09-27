@@ -35,6 +35,8 @@ fn render_help_writes_structured_sections() {
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(rendered.contains("--env-schema <PATH>"));
+    assert!(rendered.contains("<task> --plan"));
+    assert!(rendered.contains("never a planning or safety flag"));
     assert!(rendered.contains("effigy <managed-task> --headless"));
     assert!(rendered.contains("EFFIGY_MANAGED_HEADLESS=1"));
     assert!(rendered.contains("logs [process] [--follow]"));

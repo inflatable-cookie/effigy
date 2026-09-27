@@ -21,7 +21,8 @@ effigy tasks --resolve app/build
 ```
 
 Use `effigy tasks` for discovery. Use `--resolve` when you want to understand
-which catalog owns a selector before you run it.
+which catalog owns a selector before you run it. Use `effigy <selector> --plan`
+when you need the command that would run, without running it.
 
 Deep dive:
 - [`016-task-routing-precedence.md`](016-task-routing-precedence.md)
