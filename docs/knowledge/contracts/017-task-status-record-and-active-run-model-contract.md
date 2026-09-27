@@ -128,11 +128,12 @@ These stages refine `running`. They are not independent top-level states.
 
 `waiting_for_lock` covers both immediate lock acquisition and a bounded wait.
 The wait is `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; omitted or `0` fails
-without waiting. A live owner is never stolen. When the wait expires, the
-blocked outcome names that owner and the `effigy tasks status <selector>`
-inspect path so the caller can retry after release. Independent selectors use
-the full rendered selector as `task:<selector>` lock identity unless a task
-opts into `shared:<name>`.
+without waiting. A live owner is never stolen. A waiter that does not acquire
+the lock must not replace or delete that owner's active record. When the wait
+expires, the blocked outcome names the live owner and
+`effigy tasks status <selector>`; that query keeps showing the running owner.
+Independent selectors use the full rendered selector as `task:<selector>` lock
+identity unless a task opts into `shared:<name>`.
 
 ## Persistence Layout
 

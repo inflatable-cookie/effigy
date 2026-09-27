@@ -223,6 +223,10 @@ impl RunnerError {
         rendered_output::runner_error_rendered_output(self)
     }
 
+    pub fn json_error_details(&self) -> Option<&str> {
+        rendered_output::runner_error_json_details(self)
+    }
+
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
     }

@@ -20,8 +20,7 @@ use super::super::routing::{
     RoutedTaskExecution,
 };
 use super::super::task_status::{
-    container_route_summary, host_route_summary, inline_route_summary, pending_route_summary,
-    TaskStatusTracker,
+    container_route_summary, host_route_summary, inline_route_summary, TaskStatusTracker,
 };
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
@@ -82,7 +81,6 @@ pub(in crate::runner) fn run_standard_task(
 
     let lock_scope = crate::runner::manifest::task_lock_scope(selection.task, &preflight.selector);
     let mut status = TaskStatusTracker::start(preflight, selection_plan, vec![lock_scope.label()])?;
-    status.update_stage(TaskStatusStage::WaitingForLock, pending_route_summary())?;
 
     let result = run_standard_task_inner(
         preflight,

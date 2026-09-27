@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
-    assert_unlock_success_case_table, lock_test, run_dev, run_task_with_repo, temp_workspace,
-    thread, write_lock_files, write_root_manifest, Duration, ManagedUnlockInvocationErrorCase,
-    ManagedUnlockSuccessCase,
+    assert_unlock_success_case_table, lock_test, parse_json_output_with_schema_version, run_dev,
+    run_task_status_from_repo, run_task_with_repo, temp_workspace, thread, write_lock_files,
+    write_root_manifest, Duration, ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase,
 };
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -322,6 +322,12 @@ run = "sleep 1"
     let err = run_dev(&root, &["--lock-wait-ms", "150"])
         .expect_err("live owner should survive a bounded wait");
     crate::runner::tests::prelude::assert_lock_conflict(err, "task:dev", "effigy tasks status dev");
+
+    let status = run_task_status_from_repo(&root, "dev", true);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
+    assert_eq!(parsed["state"], "running");
+    assert!(parsed["active"].is_object(), "live owner missing: {parsed}");
+    assert!(parsed["active"]["owner_pid"].as_u64().is_some());
 
     join.join()
         .expect("thread join")

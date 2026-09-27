@@ -9,9 +9,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - Task lock waits are bounded by `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`.
   Independent selectors keep distinct `task:<selector>` locks. A timed-out
-  waiter names the live owner and `effigy tasks status <selector>` so the
-  caller can retry after release. `effigy tasks unlock` accepts a task
-  selector such as `validate:activity-routing` as `task:validate:activity-routing`.
+  waiter names the live owner and `effigy tasks status <selector>`; that
+  query keeps the still-running owner so the caller can retry after release.
+  Lock-wait JSON stays in `--json` `error.details`. `effigy tasks unlock`
+  accepts a task selector such as `validate:activity-routing` as
+  `task:validate:activity-routing`.
 - `effigy <selector> --plan` and `effigy draft <selector> --plan` resolve the
   task, catalog, and command without starting a task process. `--plan` is
   consumed by Effigy and is not passed through to the task. Unresolved

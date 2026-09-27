@@ -130,7 +130,9 @@ For one selector, text output must show at least:
 - warnings like stale active record ignored
 
 A caller whose lock wait expired uses this one-selector query to inspect the
-live owner named in the lock-conflict error, then retries after release.
+live owner named in the lock-conflict error, then retries after release. The
+query must keep a trusted live active record for that owner; a waiter's
+blocked completed record must not hide it.
 
 For `--all`, text output must:
 

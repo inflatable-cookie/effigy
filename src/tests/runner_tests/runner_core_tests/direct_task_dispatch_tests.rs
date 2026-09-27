@@ -364,10 +364,13 @@ fn latest_task_status_record(root: &std::path::Path) -> TaskStatusCompletedRecor
 
 fn assert_active_task_status_dir_empty(root: &std::path::Path) {
     let active_root = root.join(".effigy/runtime/tasks/active");
-    let entries = fs::read_dir(&active_root)
-        .expect("read active task-status dir")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect active entries");
+    let entries = match fs::read_dir(&active_root) {
+        Ok(entries) => entries
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect active entries"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => panic!("read active task-status dir: {error}"),
+    };
     assert!(entries.is_empty(), "expected active dir to be empty");
 }
 
