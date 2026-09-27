@@ -162,6 +162,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.init.actions.v1`
 - `effigy.migrate.v1`
 - `effigy.unlock.v1`
+- `effigy.lock-wait.v1` (lock-wait timeout `error.details`)
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`

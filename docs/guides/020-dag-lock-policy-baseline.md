@@ -47,18 +47,32 @@ Policy keys:
 ## 3) Lock Scopes
 
 Runtime locks are file-based under `.effigy/locks`:
-- `task:<name>` by default
+- `task:<selector>` by default, using the full rendered selector (`qa:docs`,
+  `validate:activity-routing`, `acme-api/dev`)
 - `shared:<name>` when a task opts into a shared lock name
 - `profile:<task>/<profile>` (managed `mode = "tui"` runs)
+
+Independent selectors keep independent task locks. Two validation or QA
+selectors can run together unless they share an explicit `lock` name.
 
 On lock conflict, Effigy reports:
 - scope
 - lock path
 - holder pid (when available)
 - holder start time epoch ms (when available)
-- remediation hint
+- holder heartbeat (when available)
+- remediation hint, including `effigy tasks status <selector>` after a wait
 
-Stale locks are auto-reclaimed when the holder PID is no longer alive.
+Stale locks are auto-reclaimed when the holder PID is no longer alive, the
+recorded process is not an Effigy owner, or the heartbeat lease has expired.
+A live owner is never stolen.
+
+Callers may wait for a live owner with `--lock-wait-ms <N>` or
+`EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately. When the wait
+expires, the error names the live owner and the status command to inspect it.
+`effigy tasks status <selector>` keeps the still-running owner, including
+in-process sequence tasks; retry after that owner releases. Lock-wait JSON (`effigy.lock-wait.v1`) is `error.details`
+in `--json` mode, not text stdout.
 
 ## 4) Manual Unlock
 
@@ -66,10 +80,15 @@ Use the built-in unlock command:
 
 ```sh
 effigy tasks unlock task:dev
+effigy tasks unlock validate:activity-routing
 effigy tasks unlock shared:dev-stack task:dev profile:dev/admin
 effigy tasks unlock --all
 effigy tasks unlock --all --yes --json
 ```
+
+A task selector such as `validate:activity-routing` unlocks
+`task:validate:activity-routing`. Incomplete typed scopes such as
+`profile:foo` fail with that example instead of targeting a different family.
 
 `--json` returns `effigy.unlock.v1`. Broad unlock actions such as `--all`,
 `workspace`, `shared:<name>`, or multiple explicit scopes require confirmation

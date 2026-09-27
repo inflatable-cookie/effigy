@@ -64,10 +64,11 @@ impl std::fmt::Display for TaskError {
 
 impl std::error::Error for TaskError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TaskRuntimeArgs {
     pub repo_override: Option<PathBuf>,
     pub verbose_root: bool,
     pub env_schema_override: Option<PathBuf>,
+    pub lock_wait_ms: Option<u64>,
     pub passthrough: Vec<String>,
 }

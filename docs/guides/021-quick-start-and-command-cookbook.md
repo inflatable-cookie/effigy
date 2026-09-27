@@ -164,6 +164,10 @@ effigy validate --verbose-root
   [`050-env-schema-integration.md`](050-env-schema-integration.md).
 - **`--verbose-root`** — widen diagnostics and path resolution toward the
   repository root when the selected catalog is nested.
+- **`--lock-wait-ms <N>`** — wait up to `N` milliseconds for a live lock
+  owner before failing. `EFFIGY_LOCK_WAIT_MS` is the fallback when the flag is
+  omitted; `0` fails immediately. A timed-out waiter names the owner and
+  `effigy tasks status <selector>`.
 
 Built-ins that use Effigy's shared **passthrough** parser reject
 `--verbose-root` and `--env-schema` on the **builtin** invocation itself

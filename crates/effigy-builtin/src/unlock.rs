@@ -84,6 +84,7 @@ fn render_unlock_help() -> String {
                     "shared:<name>",
                     "task:<name>",
                     "profile:<task>/<profile>",
+                    "a task selector such as validate:activity-routing (unlocks task:validate:activity-routing)",
                 ],
             },
             HelpSection::Bulleted {
@@ -91,6 +92,7 @@ fn render_unlock_help() -> String {
                 items: &[
                     "effigy tasks unlock workspace",
                     "effigy tasks unlock shared:dev-stack task:dev profile:dev/admin",
+                    "effigy tasks unlock validate:activity-routing",
                     "effigy tasks unlock --all",
                     "effigy tasks unlock --all --yes --json",
                 ],

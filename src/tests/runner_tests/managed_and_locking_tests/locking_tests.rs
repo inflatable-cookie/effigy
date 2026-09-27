@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
-    assert_unlock_success_case_table, lock_test, run_dev, run_task_with_repo, temp_workspace,
-    thread, write_lock_files, write_root_manifest, Duration, ManagedUnlockInvocationErrorCase,
-    ManagedUnlockSuccessCase,
+    assert_unlock_success_case_table, lock_test, parse_json_output_with_schema_version, run_dev,
+    run_task_status_from_repo, run_task_with_repo, temp_workspace, thread, write_lock_files,
+    write_root_manifest, Duration, ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase,
 };
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -148,6 +148,13 @@ fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
             expected: &["removed: 1"],
         },
         ManagedUnlockSuccessCase {
+            workspace: "unlock-selector-form-task-scope",
+            args: &["validate:activity-routing"],
+            lock_files: &[("task-validate-activity-routing.lock", "{}")],
+            removed_lock_files: &["task-validate-activity-routing.lock"],
+            expected: &["removed: 1"],
+        },
+        ManagedUnlockSuccessCase {
             workspace: "unlock-explicit-profile-scope",
             args: &["profile:watch/test"],
             lock_files: &[("profile-watch-test.lock", "{}")],
@@ -201,6 +208,11 @@ fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
             workspace: "unlock-multiple-scopes-requires-confirmation",
             args: &["task:dev", "profile:watch/test"],
             expected: &["requires confirmation", "--yes"],
+        },
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-incomplete-profile-explains-selector-form",
+            args: &["profile:foo"],
+            expected: &["profile:<task>/<profile>", "task:validate:activity-routing"],
         },
     ];
 
@@ -262,4 +274,152 @@ lock = "dev-stack"
     join.join()
         .expect("thread join")
         .expect("first run should complete");
+}
+
+#[test]
+fn colon_namespaced_validation_selectors_do_not_share_locks() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-colon-selector-isolation");
+    write_root_manifest(
+        &root,
+        r#"[tasks."validate:activity-routing"]
+run = "sleep 1"
+
+[tasks."validate:other"]
+run = "printf other-ok"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || {
+        run_task_with_repo(&root_for_thread, "validate:activity-routing", &[])
+    });
+    std::thread::sleep(Duration::from_millis(120));
+
+    let _out = run_task_with_repo(&root, "validate:other", &[])
+        .expect("independent validation selector should not block");
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn lock_wait_timeout_names_live_owner_and_status_path() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-wait-timeout-live-owner");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "sleep 1"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
+    std::thread::sleep(Duration::from_millis(120));
+
+    let err = run_dev(&root, &["--lock-wait-ms", "150"])
+        .expect_err("live owner should survive a bounded wait");
+    crate::runner::tests::prelude::assert_lock_conflict(err, "task:dev", "effigy tasks status dev");
+
+    let status = run_task_status_from_repo(&root, "dev", true);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
+    assert_eq!(parsed["state"], "running");
+    assert!(parsed["active"].is_object(), "live owner missing: {parsed}");
+    assert!(parsed["active"]["owner_pid"].as_u64().is_some());
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn lock_wait_timeout_keeps_sequence_owner_on_status() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-wait-timeout-sequence-owner");
+    write_root_manifest(
+        &root,
+        r#"[tasks.validate]
+run = [{ task = "work" }]
+
+[tasks.work]
+run = "sleep 1"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_task_with_repo(&root_for_thread, "validate", &[]));
+    std::thread::sleep(Duration::from_millis(150));
+
+    let err = run_task_with_repo(&root, "validate", &["--lock-wait-ms", "150"])
+        .expect_err("live sequence owner should survive a bounded wait");
+    crate::runner::tests::prelude::assert_lock_conflict(
+        err,
+        "task:validate",
+        "effigy tasks status validate",
+    );
+
+    let status = run_task_status_from_repo(&root, "validate", true);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
+    assert_eq!(
+        parsed["state"], "running",
+        "sequence owner missing: {parsed}"
+    );
+    assert!(
+        parsed["active"].is_object(),
+        "live sequence owner missing: {parsed}"
+    );
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn lock_wait_acquires_after_live_owner_releases() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-wait-retry-after-release");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "sleep 0.2"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
+    std::thread::sleep(Duration::from_millis(80));
+
+    let out =
+        run_dev(&root, &["--lock-wait-ms", "2000"]).expect("waiter should acquire after release");
+    assert_output_equals(&out, "");
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn lock_wait_reclaims_stopped_owner_during_wait() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-wait-stopped-owner");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    write_lock_files(
+        &root,
+        &[(
+            "task-dev.lock",
+            r#"{"scope":"task:dev","pid":999999,"started_at_epoch_ms":0}"#,
+        )],
+    );
+
+    let out = run_dev(&root, &["--lock-wait-ms", "250"])
+        .expect("stopped owner should be reclaimed during wait");
+    assert_output_equals(&out, "");
 }

@@ -114,6 +114,7 @@ fn nested_runtime_args(runtime_args: &TaskRuntimeArgs, tail: &[String]) -> TaskR
         repo_override: runtime_args.repo_override.clone(),
         verbose_root: runtime_args.verbose_root,
         env_schema_override: runtime_args.env_schema_override.clone(),
+        lock_wait_ms: runtime_args.lock_wait_ms,
         passthrough: tail.to_vec(),
     }
 }

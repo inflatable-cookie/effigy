@@ -8,7 +8,9 @@ use effigy_execution::{
     TaskStatusKey, TaskStatusOutcome, TaskStatusRuntimeRouteSummary, TaskStatusStage,
     TaskStatusState, TaskStatusTargetIdentity,
 };
-use effigy_runtime::task_status::{task_status_storage_paths, TaskStatusStoragePaths};
+use effigy_runtime::task_status::{
+    reconcile_task_status_records, task_status_storage_paths, TaskStatusStoragePaths,
+};
 use effigy_tasks::{render_task_selector, TaskSurface};
 
 use super::planning::ExecutionPreflight;
@@ -32,6 +34,7 @@ pub(super) struct TaskStatusTracker {
     started_instant: Instant,
     lock_scopes: Vec<String>,
     active_path: std::path::PathBuf,
+    published_active: bool,
 }
 
 impl TaskStatusTracker {
@@ -57,18 +60,14 @@ impl TaskStatusTracker {
             key,
             identity,
             execution_surface: preflight.execution_surface.clone(),
-            runtime_route: TaskStatusRuntimeRouteSummary {
-                route: "pending".to_owned(),
-                container: None,
-                service: None,
-            },
+            runtime_route: pending_route_summary(),
             stage: TaskStatusStage::WaitingForLock,
             started_at,
             started_instant: Instant::now(),
             lock_scopes,
             active_path: paths.active_path,
+            published_active: false,
         };
-        tracker.write_active_record()?;
         Ok(tracker)
     }
 
@@ -79,6 +78,7 @@ impl TaskStatusTracker {
     ) -> Result<(), RunnerError> {
         self.stage = stage;
         self.runtime_route = runtime_route;
+        self.published_active = true;
         self.write_active_record()
     }
 
@@ -116,16 +116,32 @@ impl TaskStatusTracker {
             latest_report_path: display_path(&paths.latest_path, &self.repo_root),
             history_report_path: display_path(&paths.history_path, &self.repo_root),
         };
-        write_json_file(&paths.latest_path, &record, "latest task-status record")?;
         write_json_file(&paths.history_path, &record, "task-status history record")?;
-        match fs::remove_file(&self.active_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(RunnerError::task_invocation(format!(
-                "failed to remove active task-status record `{}`: {error}",
-                self.active_path.display()
-            ))),
+        if self.should_publish_latest_record()? {
+            write_json_file(&paths.latest_path, &record, "latest task-status record")?;
         }
+        if self.published_active {
+            match fs::remove_file(&self.active_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "failed to remove active task-status record `{}`: {error}",
+                        self.active_path.display()
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn should_publish_latest_record(&self) -> Result<bool, RunnerError> {
+        if self.published_active {
+            return Ok(true);
+        }
+        let snapshot = reconcile_task_status_records(&self.repo_root, &self.key)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        Ok(snapshot.active.is_none())
     }
 
     fn write_active_record(&self) -> Result<(), RunnerError> {
@@ -336,6 +352,10 @@ mod tests {
                 holder_heartbeat_at_epoch_ms: Some(1),
                 holder_hostname: None,
                 holder_workspace_root: None,
+                wait_timeout_ms: None,
+                waited_ms: None,
+                status_command: None,
+                details_json: None,
                 remediation: "unlock".to_owned(),
             })),
             TaskStatusStage::WaitingForLock,

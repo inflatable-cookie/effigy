@@ -243,7 +243,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                     context.command_name,
                     "RunnerError",
                     &err.to_string(),
-                    err.rendered_output().map(parse_json_or_string),
+                    err.json_error_details().map(parse_json_or_string),
                 );
             }
             if let Some(rendered) = err.rendered_output() {

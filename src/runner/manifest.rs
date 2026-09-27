@@ -72,4 +72,28 @@ mod tests {
             LockScope::Task("acme-api/dev".to_owned())
         );
     }
+
+    #[test]
+    fn default_task_lock_scope_keeps_colon_namespaced_selectors_distinct() {
+        let first = TaskSelector {
+            prefix: None,
+            task_name: "validate:activity-routing".to_owned(),
+        };
+        let second = TaskSelector {
+            prefix: None,
+            task_name: "validate:other".to_owned(),
+        };
+        assert_eq!(
+            task_lock_scope(&ManifestTask::default(), &first),
+            LockScope::Task("validate:activity-routing".to_owned())
+        );
+        assert_eq!(
+            task_lock_scope(&ManifestTask::default(), &second),
+            LockScope::Task("validate:other".to_owned())
+        );
+        assert_ne!(
+            task_lock_scope(&ManifestTask::default(), &first).file_name(),
+            task_lock_scope(&ManifestTask::default(), &second).file_name()
+        );
+    }
 }

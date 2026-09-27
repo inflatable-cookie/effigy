@@ -104,7 +104,7 @@ The first-round high-level state set is:
 `blocked` is reserved for bounded operator-visible failures where execution did
 not truly begin, such as:
 
-- lock conflict
+- lock conflict, including a caller wait that expired against a live owner
 - unsupported runtime route
 - missing required runtime dependency
 
@@ -125,6 +125,17 @@ First-round stage set:
 - `finishing`
 
 These stages refine `running`. They are not independent top-level states.
+
+`waiting_for_lock` covers both immediate lock acquisition and a bounded wait.
+The wait is `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; omitted or `0` fails
+without waiting. A live owner is never stolen. A waiter that does not acquire
+the lock must not replace or delete that owner's active record. The owner
+publishes an active record as soon as the lock is held, including in-process
+sequence tasks (`run = [{ task = ... }]`). When the wait expires, the blocked
+outcome names the live owner and `effigy tasks status <selector>`; that query
+keeps showing the running owner.
+Independent selectors use the full rendered selector as `task:<selector>` lock
+identity unless a task opts into `shared:<name>`.
 
 ## Persistence Layout
 
@@ -256,6 +267,7 @@ Update this contract when any of these change:
 - stale/live reconciliation rules
 - execution surfaces that are covered by the shared writer
 - minimum record fields expected by later read/query layers
+- lock-wait timeout source, live-owner inspect path, or default task lock identity
 
 ## Validation
 

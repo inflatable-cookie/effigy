@@ -112,6 +112,92 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
 }
 
 #[test]
+fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout() {
+    let root = temp_workspace("cli-lock-wait-timeout-status");
+    fs::write(root.join("effigy.toml"), "[tasks.dev]\nrun = \"sleep 8\"\n")
+        .expect("write manifest");
+
+    let mut owner = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn holding command");
+
+    let workspace_lock = root.join(".effigy/locks/task-dev.lock");
+    wait_for_path_exists(
+        &workspace_lock,
+        Duration::from_secs(15),
+        "task lock for task=dev",
+    );
+
+    let text = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("--lock-wait-ms")
+        .arg("150")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run timed-out waiter");
+    assert!(!text.status.success());
+    let stdout = String::from_utf8(text.stdout).expect("utf8 stdout");
+    let stderr = String::from_utf8(text.stderr).expect("utf8 stderr");
+    assert!(
+        !stdout.contains("effigy.lock-wait.v1"),
+        "text mode dumped lock-wait JSON: {stdout}"
+    );
+    assert!(stderr.contains("lock conflict"));
+    assert!(stderr.contains("effigy tasks status dev"));
+
+    let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("dev")
+        .arg("--lock-wait-ms")
+        .arg("150")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run json timed-out waiter");
+    assert!(!json.status.success());
+    let parsed: Value =
+        serde_json::from_str(&String::from_utf8(json.stdout).expect("utf8 json")).expect("json");
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.lock-wait.v1");
+    assert_eq!(
+        parsed["error"]["details"]["status_command"],
+        "effigy tasks status dev"
+    );
+
+    let status = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("tasks")
+        .arg("status")
+        .arg("dev")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run tasks status");
+    assert!(status.status.success(), "status failed: {status:?}");
+    let status_parsed: Value =
+        serde_json::from_str(&String::from_utf8(status.stdout).expect("utf8 status"))
+            .expect("json");
+    assert_eq!(status_parsed["result"]["state"], "running");
+    assert!(
+        status_parsed["result"]["active"].is_object(),
+        "live owner missing: {status_parsed}"
+    );
+    assert_ne!(status_parsed["result"]["active"]["owner_pid"], Value::Null);
+
+    let _ = owner.kill();
+    let _ = owner.wait();
+}
+
+#[test]
 fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
     let root = temp_workspace("cli-json-watch-lock-conflict");
     fs::write(

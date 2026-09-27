@@ -30,6 +30,7 @@ pub(super) fn run_builtin_config(
             repo_override: None,
             verbose_root: false,
             env_schema_override: None,
+            lock_wait_ms: None,
             passthrough: args[1..].to_vec(),
         };
         return completion::run_builtin_completion(&nested_task, &runtime_args, target_root);
