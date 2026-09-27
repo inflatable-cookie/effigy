@@ -57,6 +57,7 @@ fn graph_args(subcommand: GraphSubcommand, root: &Path) -> GraphArgs {
         output_json: true,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }
 }
 

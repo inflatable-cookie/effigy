@@ -96,9 +96,30 @@ available segmented aliases.
 - Explicit fan-out processes scopes separately and returns per-scope outcome;
   one failure does not masquerade as complete success.
 
-Query commands keep the existing bounded time budget. `graph index` and
+Query commands keep the existing bounded time budget. They do not extend that
+budget to hide a cold first index or a held refresh lock. `graph index` and
 `graph watch` retain their explicit long-running posture, scoped to the selected
 catalog unless fan-out is explicitly requested where supported.
+
+Refresh ownership stays exclusive: only the lock holder mutates the live
+database. The lock file records the holder pid and acquire time when the
+acquire succeeds. A lookup that finds the lock held:
+
+- names the holder pid and age when that metadata is readable;
+- treats a recorded pid that is no longer alive as a stale holder and does not
+  spend the full in-flight wait on it;
+- serves the last complete snapshot as freshness state `stale-index` when one
+  exists, and never reads a partial in-flight rebuild;
+- otherwise returns `missing-index` with the lock identity and the next action
+  (`effigy graph index --json`, or `--stale-index` once a snapshot exists),
+  without querying the live database.
+
+`--stale-index` is a read-only lookup option on graph data queries. It skips
+refresh and lock wait, reads the last complete snapshot (or the live database
+when the lock is free and a finished index exists), and marks the result
+`stale-index`. It cannot combine with `graph index`, `graph watch`, or
+`graph status --refresh`. A cold worktree with no complete index returns
+`missing-index` immediately and names `effigy graph index --json`.
 
 ## Storage
 
@@ -114,10 +135,11 @@ Independent catalog storage is:
 <workspace>/.effigy/graph/catalogs/<encoded-alias>/graph.db
 ```
 
-The matching lock is colocated in the same catalog graph directory. Alias
-encoding must be deterministic, collision-checked, and unable to escape the
-root-owned graph directory. User-configured database paths and named shared-store
-pools are not supported.
+The matching lock is colocated in the same catalog graph directory. A finished
+index also publishes `graph.complete.db` in that directory as the last complete
+snapshot. Alias encoding must be deterministic, collision-checked, and unable
+to escape the root-owned graph directory. User-configured database paths and
+named shared-store pools are not supported.
 
 Every shared-store entity that can affect query, freshness, deletion, or
 relationship traversal carries scope identity. Deleting or reindexing one scope
@@ -153,6 +175,10 @@ Existing graph payload schemas remain at version 1 with additive fields:
 - `catalog.selection` (`explicit`, `cwd`, or `root`);
 - `catalog.segmented`;
 - `catalog.independent`;
+- `freshness.state` may be `stale-index` when a lookup served the last complete
+  snapshot; `freshness.lock` names holder pid, age, and `stale_holder` when a
+  refresh lock was involved;
+- timeout health may include `refresh_lock` with the same identity;
 - fan-out results carry one complete outcome per catalog.
 
 Single-catalog repositories retain their existing fields and values. Human
@@ -180,10 +206,18 @@ compatible root-only case.
     catalogs.
 11. Existing unsegmented graph, path-filter, timeout, watch, text, and JSON
     behavior remains unchanged.
+12. A live refresh-lock holder is named (pid and age) and a lookup with a
+    complete snapshot returns `stale-index` without reading the in-progress
+    live database.
+13. A stale (dead) lock holder does not consume the full in-flight wait.
+14. `--stale-index` serves the last complete database without refreshing and
+    never presents it as current.
+15. A cold worktree with `--stale-index` returns `missing-index` immediately
+    and names `effigy graph index --json`.
 
 ## Change Triggers
 
 Revisit this contract when changing catalog graph grammar, effective membership,
 scope selection, graph paths, database schema, freshness identity, query
-predicates, fan-out behavior, documentation-corpus isolation, or graph JSON
-evidence.
+predicates, refresh-lock identity, complete-snapshot lookup, `--stale-index`,
+fan-out behavior, documentation-corpus isolation, or graph JSON evidence.

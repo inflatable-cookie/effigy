@@ -67,6 +67,7 @@ pub(crate) fn run_index_unlocked_in_scope(
     let profile_state = load_docs_profile_state(repo_root)?;
     let current_fingerprint = profile_state.fingerprint();
     let store = GraphStore::open_for_scope(scope)?;
+    store.preserve_complete_snapshot()?;
     let mut graph_changed = crate::language::markdown::demote_typed_relations(&store, scope)?;
     let existing_states = store.file_scan_state_map_in_scope(scope)?;
     let stored_extractors = store.extractor_version_map()?;
@@ -251,6 +252,7 @@ pub(crate) fn run_index_unlocked_in_scope(
         phase::enter(GraphPhase::SearchIndexRebuild);
         store.refresh_search_index_in_scope(scope)?;
     }
+    store.snapshot_complete_index()?;
     crate::git::update_index_stamp(scope, &store)?;
 
     Ok(IndexReport {
@@ -480,6 +482,46 @@ pub(crate) fn graph_freshness_payload(
         stale_path_count: stale_paths.len(),
         failed_path_count,
         stale_paths: stale_paths.to_vec(),
+        lock: None,
+    }
+}
+
+/// Freshness for a deliberate read of the last complete snapshot.
+pub(crate) fn stale_index_freshness_payload(
+    stale_paths: &[String],
+    failed_path_count: usize,
+    lock: Option<crate::json::GraphLockPayload>,
+) -> GraphFreshnessPayload {
+    let mut summary =
+        "serving last complete graph index (read-only, not current); run `effigy graph index --json`"
+            .to_owned();
+    if let Some(lock) = lock.as_ref() {
+        summary.push_str(&format!("; {}", describe_lock(lock)));
+    }
+    GraphFreshnessPayload {
+        state: "stale-index".to_owned(),
+        summary,
+        usable: true,
+        stale: true,
+        stale_path_count: stale_paths.len(),
+        failed_path_count,
+        stale_paths: stale_paths.to_vec(),
+        lock,
+    }
+}
+
+fn describe_lock(lock: &crate::json::GraphLockPayload) -> String {
+    match (lock.pid, lock.age_ms, lock.stale_holder) {
+        (Some(pid), Some(age_ms), true) => {
+            format!("refresh lock holder pid {pid} is stale (age {age_ms}ms)")
+        }
+        (Some(pid), Some(age_ms), false) => {
+            format!("refresh lock held by pid {pid} for {age_ms}ms")
+        }
+        (Some(pid), None, true) => format!("refresh lock holder pid {pid} is stale"),
+        (Some(pid), None, false) => format!("refresh lock held by pid {pid}"),
+        (_, Some(age_ms), _) => format!("refresh lock held for {age_ms}ms"),
+        _ => "refresh lock is held".to_owned(),
     }
 }
 

@@ -240,6 +240,7 @@ Values:
 - `refresh-recommended` — reindex before trusting queries
 - `degraded` — partial problems; treat output as bounded guidance
 - `missing-index` — run `graph index` first
+- `stale-index` — last complete snapshot, read-only and not current
 
 ## Graph Watch Event
 
