@@ -36,7 +36,9 @@ The query builds or refreshes a stale index before reading it. Use
 `--refresh` when the status command should also rebuild a stale or missing
 index. Graph data queries have a 120000ms wall-clock budget by default;
 `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` overrides it and `0` disables the bound. Explicit
-`graph index` and `graph watch` commands are unbounded.
+`graph index` and `graph watch` commands are unbounded. Pass `--stale-index` to
+read the last complete snapshot without waiting on a refresh lock or starting a
+cold build; the result is `stale-index` and not current.
 
 Good query shapes:
 
@@ -68,8 +70,9 @@ git diff --name-only | effigy scan validation-gaps --stdin --json
   `impact`, `context`, `explore`, `affected`, and `files` build or refresh the
   index on demand.
 - **Trust state still matters.** Gate on the freshness returned by the query.
-  A query may still report `refresh-recommended` when another refresh outlives
-  its bounded wait; retry after that refresh completes.
+  A query may report `stale-index` when it served the last complete snapshot
+  under a held refresh lock or `--stale-index`. That packet is usable
+  navigation and is not current. `missing-index` means run `graph index`.
 - **`graph affected` narrows validation** — it does not prove exhaustive test
   reachability.
 - **Graph-aware scans are review aids.** They do not prove semantic dead code,

@@ -55,7 +55,9 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `graph watch` | Foreground incremental refresh (streaming JSON) |
 
 Trust states on `graph status --json`: `ready`, `refresh-recommended`,
-`degraded`, `missing-index`. Reindex when not `ready` and `usable` is false.
+`degraded`, `missing-index`, `stale-index`. Reindex when not `ready` and
+`usable` is false. `stale-index` is usable navigation from the last complete
+snapshot and is not current.
 
 Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
 

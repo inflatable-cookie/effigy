@@ -1,10 +1,11 @@
 use super::*;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::docs_context::DocsContextRequest;
 use crate::refresh::{
-    ensure_fresh_with_wait_and_progress, run_index_exclusive_with_wait, RefreshLock,
+    ensure_fresh_with_wait_and_progress, inspect_refresh_lock, open_query_store,
+    run_index_exclusive_with_wait, RefreshLock, RefreshPolicy, RefreshSource,
 };
 use crate::scope::GraphScope;
 
@@ -129,15 +130,30 @@ fn query_serves_stale_when_refresh_lock_is_held() {
         .expect("lock must be free");
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome =
-        ensure_fresh_with_wait_and_progress(&repo_scope(temp.path()), &store, 250, |_| {})
-            .expect("ensure fresh");
-    assert!(outcome.freshness.stale);
-    assert_eq!(outcome.freshness.state, "refresh-recommended");
+    let started = Instant::now();
+    let outcome = ensure_fresh_with_wait_and_progress(
+        &repo_scope(temp.path()),
+        &store,
+        2_500,
+        RefreshPolicy::query(),
+        |_| {},
+    )
+    .expect("ensure fresh");
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "live holder with a complete snapshot must not spend the in-flight wait"
+    );
+    assert_eq!(outcome.freshness.state, "stale-index");
+    assert!(outcome.freshness.usable);
+    assert_eq!(outcome.source, RefreshSource::CompleteSnapshot);
+    let lock = outcome.freshness.lock.expect("lock identity");
+    assert!(lock.held);
+    assert_eq!(lock.pid, Some(std::process::id()));
+    assert!(!lock.stale_holder);
     assert!(outcome
         .notes
         .iter()
-        .any(|note| note.contains("in progress by another process")));
+        .any(|note| note.contains("last complete index")));
 }
 
 #[test]
@@ -150,6 +166,8 @@ fn query_detects_refresh_completed_by_concurrent_process() {
     )
     .expect("write rust");
     run_index(temp.path()).expect("index");
+    fs::remove_file(repo_scope(temp.path()).paths().complete_db_path)
+        .expect("drop snapshot so the waiter cannot short-circuit");
     fs::write(
         temp.path().join("src/lib.rs"),
         "pub fn run_release() { helper(); }\nfn helper() {}\npub fn concurrent_symbol() {}\n",
@@ -167,9 +185,14 @@ fn query_detects_refresh_completed_by_concurrent_process() {
     });
 
     let store = GraphStore::open(temp.path()).expect("open store");
-    let outcome =
-        ensure_fresh_with_wait_and_progress(&repo_scope(temp.path()), &store, 1_000, |_| {})
-            .expect("ensure fresh");
+    let outcome = ensure_fresh_with_wait_and_progress(
+        &repo_scope(temp.path()),
+        &store,
+        1_000,
+        RefreshPolicy::query(),
+        |_| {},
+    )
+    .expect("ensure fresh");
     handle.join().expect("join refresh thread");
 
     assert!(!outcome.freshness.stale);
@@ -250,4 +273,284 @@ fn refresh_and_query_record_a_readable_graph_phase() {
         (None, None) => {}
         other => panic!("progress must report both bounds or neither: {other:?}"),
     }
+}
+
+#[test]
+fn live_holder_with_complete_snapshot_is_named_and_served_read_only() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+    run_index(temp.path()).expect("index");
+    assert!(repo_scope(temp.path()).paths().complete_db_path.is_file());
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\npub fn live_holder_only() {}\n",
+    )
+    .expect("rewrite rust");
+
+    let _held = RefreshLock::try_acquire(&repo_scope(temp.path()))
+        .expect("hold refresh lock")
+        .expect("lock must be free");
+
+    let started = Instant::now();
+    let (store, freshness) = open_query_store(&repo_scope(temp.path()), RefreshPolicy::query())
+        .expect("lookup under live holder");
+    let store = store.expect("complete snapshot");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(freshness.state, "stale-index");
+    assert!(freshness.usable);
+    let lock = freshness.lock.expect("lock identity");
+    assert_eq!(lock.pid, Some(std::process::id()));
+    assert!(!lock.stale_holder);
+    let names = store
+        .list_symbols()
+        .expect("symbols")
+        .into_iter()
+        .map(|symbol| symbol.display_name)
+        .collect::<Vec<_>>();
+    assert!(names.iter().any(|name| name == "run_release"));
+    assert!(
+        !names.iter().any(|name| name == "live_holder_only"),
+        "must not read the in-progress live database"
+    );
+}
+
+#[test]
+fn stale_holder_does_not_consume_the_in_flight_wait() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn alpha() {}\n").expect("write rust");
+    run_index(temp.path()).expect("index");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn alpha() {}\npub fn beta() {}\n",
+    )
+    .expect("rewrite rust");
+
+    let mut held = RefreshLock::try_acquire(&repo_scope(temp.path()))
+        .expect("hold refresh lock")
+        .expect("lock must be free");
+    // A pid that is a valid positive `i32` and almost certainly unused. `u32::MAX`
+    // casts to `-1`, which `kill` treats as a process-group broadcast.
+    const DEAD_PID: u32 = 2_000_000;
+    held.plant_stale_identity(DEAD_PID).expect("plant dead pid");
+
+    let inspection = inspect_refresh_lock(&repo_scope(temp.path()).paths().refresh_lock_path);
+    assert!(inspection.held);
+    assert!(inspection
+        .identity
+        .as_ref()
+        .is_some_and(|identity| identity.stale_holder && identity.pid == DEAD_PID));
+
+    let store = GraphStore::open(temp.path()).expect("open store");
+    let started = Instant::now();
+    let outcome = ensure_fresh_with_wait_and_progress(
+        &repo_scope(temp.path()),
+        &store,
+        2_500,
+        RefreshPolicy::query(),
+        |_| {},
+    )
+    .expect("ensure fresh");
+    assert!(
+        started.elapsed() < Duration::from_millis(800),
+        "stale holder must not spend the full in-flight wait"
+    );
+    assert_eq!(outcome.freshness.state, "stale-index");
+    assert!(outcome
+        .freshness
+        .lock
+        .as_ref()
+        .is_some_and(|lock| lock.stale_holder && lock.pid == Some(DEAD_PID)));
+}
+
+#[test]
+fn stale_index_flag_serves_last_complete_database_without_refresh() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+    run_index(temp.path()).expect("index");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\npub fn after_index() {}\n",
+    )
+    .expect("rewrite rust");
+
+    let (store, freshness) =
+        open_query_store(&repo_scope(temp.path()), RefreshPolicy::lookup(true))
+            .expect("stale-index lookup");
+    let store = store.expect("complete snapshot");
+    assert_eq!(freshness.state, "stale-index");
+    assert!(freshness.usable);
+    assert!(freshness.summary.contains("not current"));
+    let names = store
+        .list_symbols()
+        .expect("symbols")
+        .into_iter()
+        .map(|symbol| symbol.display_name)
+        .collect::<Vec<_>>();
+    assert!(names.iter().any(|name| name == "run_release"));
+    assert!(
+        !names.iter().any(|name| name == "after_index"),
+        "stale-index must not refresh or read the dirty tree"
+    );
+}
+
+#[test]
+fn cold_worktree_stale_index_returns_immediately_with_next_action() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn cold_only() {}\n").expect("write rust");
+
+    let started = Instant::now();
+    let (_store, freshness) =
+        open_query_store(&repo_scope(temp.path()), RefreshPolicy::lookup(true))
+            .expect("cold stale-index lookup");
+    assert!(
+        started.elapsed() < Duration::from_millis(1_000),
+        "cold --stale-index must not start a first index"
+    );
+    assert_eq!(freshness.state, "missing-index");
+    assert!(!freshness.usable);
+    assert!(freshness.summary.contains("effigy graph index"));
+}
+
+#[test]
+fn lock_held_without_snapshot_does_not_query_live_store() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+
+    let _held = RefreshLock::try_acquire(&repo_scope(temp.path()))
+        .expect("hold refresh lock")
+        .expect("lock must be free");
+
+    for policy in [RefreshPolicy::query(), RefreshPolicy::lookup(true)] {
+        let (store, freshness) = open_query_store(&repo_scope(temp.path()), policy)
+            .expect("status-only lookup while cold lock is held");
+        assert!(
+            store.is_none(),
+            "lock-held lookup without a snapshot must not hand out the live store"
+        );
+        assert_eq!(freshness.state, "missing-index");
+        assert!(!freshness.usable);
+        assert!(freshness.lock.as_ref().is_some_and(|lock| lock.held));
+
+        let payload =
+            crate::search_in_scope(&repo_scope(temp.path()), "run_release", Some(10), policy)
+                .expect("search");
+        assert!(
+            payload.matches.is_empty(),
+            "must not search a partial live index: {:?}",
+            payload.matches
+        );
+        assert!(!payload.freshness.usable);
+    }
+}
+
+#[test]
+fn snapshot_search_covers_initial_index_and_changed_symbol() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+    run_index(temp.path()).expect("index");
+
+    let initial = crate::search_in_scope(
+        &repo_scope(temp.path()),
+        "run_release",
+        Some(10),
+        RefreshPolicy::lookup(true),
+    )
+    .expect("search initial snapshot");
+    assert_eq!(initial.freshness.state, "stale-index");
+    assert!(
+        initial
+            .matches
+            .iter()
+            .any(|entry| entry.name.as_deref() == Some("run_release")),
+        "initial snapshot FTS missed run_release: {:?}",
+        initial.matches
+    );
+
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\npub fn brand_new_symbol() {}\n",
+    )
+    .expect("rewrite rust");
+    run_index(temp.path()).expect("reindex");
+
+    let changed = crate::search_in_scope(
+        &repo_scope(temp.path()),
+        "brand_new_symbol",
+        Some(10),
+        RefreshPolicy::lookup(true),
+    )
+    .expect("search changed snapshot");
+    assert_eq!(changed.freshness.state, "stale-index");
+    assert!(
+        changed
+            .matches
+            .iter()
+            .any(|entry| entry.name.as_deref() == Some("brand_new_symbol")),
+        "changed snapshot FTS missed brand_new_symbol: {:?}",
+        changed.matches
+    );
+}
+
+#[test]
+fn snapshot_replace_keeps_prior_file_and_leaves_no_temp() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn first() {}\n").expect("write rust");
+    run_index(temp.path()).expect("index");
+    let dest = repo_scope(temp.path()).paths().complete_db_path;
+    assert!(dest.is_file(), "first snapshot missing");
+    let first_len = fs::metadata(&dest).expect("stat first snapshot").len();
+    assert!(first_len > 0);
+
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn first() {}\npub fn second() {}\n",
+    )
+    .expect("rewrite rust");
+    run_index(temp.path()).expect("reindex");
+    assert!(
+        dest.is_file(),
+        "replacement must publish over the prior snapshot"
+    );
+    let graph_dir = dest.parent().expect("graph dir");
+    let leftovers = fs::read_dir(graph_dir)
+        .expect("read graph dir")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().contains("publishing-"))
+        .count();
+    assert_eq!(leftovers, 0, "publishing temp files must not remain");
+
+    let payload = crate::search_in_scope(
+        &repo_scope(temp.path()),
+        "second",
+        Some(10),
+        RefreshPolicy::lookup(true),
+    )
+    .expect("search replaced snapshot");
+    assert!(payload
+        .matches
+        .iter()
+        .any(|entry| entry.name.as_deref() == Some("second")));
 }

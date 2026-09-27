@@ -101,6 +101,8 @@ fn graph_timeout_error(repo_root: &Path, command: &str, budget: Duration) -> Run
         "run `effigy graph status --json` to inspect index freshness".to_owned(),
         format!("raise the budget with `{GRAPH_TIMEOUT_ENV}=<ms>` (0 disables it)"),
         "run `effigy graph index --json` once to pay the cold build separately".to_owned(),
+        "pass `--stale-index` to read the last complete snapshot without waiting on a refresh lock"
+            .to_owned(),
     ];
     if let Some(phase) = phase.as_ref() {
         next.insert(0, describe_phase(phase));

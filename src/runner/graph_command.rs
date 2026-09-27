@@ -11,7 +11,7 @@ use effigy_codegraph::scope::{GraphScope, GraphScopePlan, GraphScopeRequest};
 use effigy_codegraph::{
     affected_in_scope, callees_in_scope, callers_in_scope, context_in_scope, explore_in_scope,
     files_in_scope, impact_in_scope, node_in_scope, render_json, run_index_in_scope,
-    search_in_scope, status_in_scope,
+    search_in_scope, status_in_scope, RefreshPolicy,
 };
 
 use crate::runner::command_context::resolve_active_command_context;
@@ -173,6 +173,7 @@ struct ScopeOutput {
 }
 
 fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutput, RunnerError> {
+    let policy = RefreshPolicy::lookup(args.stale_index);
     match &args.subcommand {
         GraphSubcommand::Index => {
             let report = run_index_in_scope(scope).map_err(map_graph_error)?;
@@ -200,32 +201,33 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
                 .to_owned(),
         )),
         GraphSubcommand::Search { query, limit } => {
-            let payload = search_in_scope(scope, query, *limit).map_err(map_graph_error)?;
+            let payload = search_in_scope(scope, query, *limit, policy).map_err(map_graph_error)?;
             let text = render_search_text(&payload);
             into_output(payload, text)
         }
         GraphSubcommand::Files { limit } => {
-            let payload = files_in_scope(scope, *limit).map_err(map_graph_error)?;
+            let payload = files_in_scope(scope, *limit, policy).map_err(map_graph_error)?;
             let text = render_files_text(&payload);
             into_output(payload, text)
         }
         GraphSubcommand::Node { id } => {
-            let payload = node_in_scope(scope, id).map_err(map_graph_error)?;
+            let payload = node_in_scope(scope, id, policy).map_err(map_graph_error)?;
             let text = render_node_text(id, &payload);
             into_output(payload, text)
         }
         GraphSubcommand::Callers { id, limit } => {
-            let payload = callers_in_scope(scope, id, *limit).map_err(map_graph_error)?;
+            let payload = callers_in_scope(scope, id, *limit, policy).map_err(map_graph_error)?;
             let text = render_related_text("callers", &payload);
             into_output(payload, text)
         }
         GraphSubcommand::Callees { id, limit } => {
-            let payload = callees_in_scope(scope, id, *limit).map_err(map_graph_error)?;
+            let payload = callees_in_scope(scope, id, *limit, policy).map_err(map_graph_error)?;
             let text = render_related_text("callees", &payload);
             into_output(payload, text)
         }
         GraphSubcommand::Impact { target, limit } => {
-            let payload = impact_in_scope(scope, target, *limit).map_err(map_graph_error)?;
+            let payload =
+                impact_in_scope(scope, target, *limit, policy).map_err(map_graph_error)?;
             let text = render_impact_text(&payload);
             into_output(payload, text)
         }
@@ -235,8 +237,8 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
             limit,
             ..
         } => {
-            let payload =
-                affected_in_scope(scope, changed_paths, *depth, *limit).map_err(map_graph_error)?;
+            let payload = affected_in_scope(scope, changed_paths, *depth, *limit, policy)
+                .map_err(map_graph_error)?;
             let text = render_affected_text(&payload);
             into_output(payload, text)
         }
@@ -247,9 +249,10 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
             languages,
             paths,
         } => {
-            let payload =
-                context_in_scope(scope, request, *max_files, *max_bytes, languages, paths)
-                    .map_err(map_graph_error)?;
+            let payload = context_in_scope(
+                scope, request, *max_files, *max_bytes, languages, paths, policy,
+            )
+            .map_err(map_graph_error)?;
             let text = render_context_text(&payload);
             into_output(payload, text)
         }
@@ -260,9 +263,10 @@ fn run_scope_operation(args: &GraphArgs, scope: &GraphScope) -> Result<ScopeOutp
             languages,
             paths,
         } => {
-            let payload =
-                explore_in_scope(scope, request, *max_files, *max_bytes, languages, paths)
-                    .map_err(map_graph_error)?;
+            let payload = explore_in_scope(
+                scope, request, *max_files, *max_bytes, languages, paths, policy,
+            )
+            .map_err(map_graph_error)?;
             let text = render_explore_text(&payload);
             into_output(payload, text)
         }
@@ -657,6 +661,21 @@ fn freshness_lines(freshness: &GraphFreshnessPayload) -> Vec<String> {
             "graph failures: {} paths failed during indexing",
             freshness.failed_path_count
         ));
+    }
+    if let Some(lock) = freshness.lock.as_ref() {
+        match (lock.pid, lock.age_ms, lock.stale_holder) {
+            (Some(pid), Some(age_ms), true) => lines.push(format!(
+                "graph refresh lock: stale holder pid {pid} (age {age_ms}ms)"
+            )),
+            (Some(pid), Some(age_ms), false) => {
+                lines.push(format!("graph refresh lock: pid {pid} held for {age_ms}ms"))
+            }
+            (Some(pid), _, true) => {
+                lines.push(format!("graph refresh lock: stale holder pid {pid}"))
+            }
+            (Some(pid), _, false) => lines.push(format!("graph refresh lock: held by pid {pid}")),
+            _ => lines.push("graph refresh lock: held".to_owned()),
+        }
     }
     lines
 }

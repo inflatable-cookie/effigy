@@ -389,6 +389,7 @@ fn graph_json_payloads_are_versioned() {
                 stale_path_count: 0,
                 failed_path_count: 0,
                 stale_paths: vec![],
+                lock: None,
             },
             stale_paths: vec![],
             new_paths: vec![],
@@ -427,6 +428,7 @@ fn graph_context_payload_round_trips() {
                 stale_path_count: 0,
                 failed_path_count: 0,
                 stale_paths: vec![],
+                lock: None,
             },
             items: vec![GraphContextItemPayload {
                 kind: "file".to_owned(),
@@ -478,6 +480,7 @@ fn graph_explore_payload_round_trips() {
                     stale_path_count: 0,
                     failed_path_count: 0,
                     stale_paths: vec![],
+                    lock: None,
                 },
                 counts: GraphCountsPayload {
                     files: 1,

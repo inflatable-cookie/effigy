@@ -4,12 +4,13 @@ use std::path::Path;
 use crate::error::CodeGraphError;
 use crate::json::{
     GraphAffectedFilePayload, GraphAffectedPayload, GraphAffectedTaskPayload,
-    GraphContextItemPayload, GraphContextOverflowPayload, GraphContextPayload,
+    GraphContextItemPayload, GraphContextOverflowPayload, GraphContextPayload, GraphCountsPayload,
     GraphExploreEditTargetPayload, GraphExploreIndexPayload, GraphExplorePayload,
     GraphExploreRelationPayload, GraphFilesPayload, GraphFreshnessPayload, GraphImpactPayload,
     GraphNodePayload, GraphRelatedNodesPayload, GraphSearchMatchPayload, GraphSearchPayload,
 };
 use crate::model::{EdgeRecord, FileRecord, SymbolRecord};
+use crate::refresh::RefreshPolicy;
 use crate::scope::GraphScope;
 use crate::storage::GraphStore;
 
@@ -28,16 +29,22 @@ use traversal::{
 };
 
 pub fn files(repo_root: &Path, limit: Option<usize>) -> Result<GraphFilesPayload, CodeGraphError> {
-    files_in_scope(&workspace_scope(repo_root)?, limit)
+    files_in_scope(&workspace_scope(repo_root)?, limit, RefreshPolicy::query())
 }
 
 /// `graph files` inside one selected scope.
 pub fn files_in_scope(
     scope: &GraphScope,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphFilesPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphFilesPayload {
+            freshness,
+            files: Vec::new(),
+        });
+    };
     let mut files = store.list_files_in_scope(scope)?;
     if let Some(limit) = limit {
         files.truncate(limit);
@@ -50,7 +57,12 @@ pub fn search(
     query: &str,
     limit: Option<usize>,
 ) -> Result<GraphSearchPayload, CodeGraphError> {
-    search_in_scope(&workspace_scope(repo_root)?, query, limit)
+    search_in_scope(
+        &workspace_scope(repo_root)?,
+        query,
+        limit,
+        RefreshPolicy::query(),
+    )
 }
 
 /// `graph search` inside one selected scope.
@@ -61,9 +73,16 @@ pub fn search_in_scope(
     scope: &GraphScope,
     query: &str,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphSearchPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphSearchPayload {
+            query: query.to_owned(),
+            freshness,
+            matches: Vec::new(),
+        });
+    };
     let limit = limit.unwrap_or(20);
     let matches = store
         .search_in_scope(query, limit, scope)?
@@ -135,16 +154,29 @@ fn search_match_payload(
 }
 
 pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
-    node_in_scope(&workspace_scope(repo_root)?, id)
+    node_in_scope(&workspace_scope(repo_root)?, id, RefreshPolicy::query())
 }
 
 /// `graph node` inside one selected scope.
 ///
 /// An id owned by a sibling catalog resolves to an empty node instead of
 /// opening or refreshing that sibling.
-pub fn node_in_scope(scope: &GraphScope, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+pub fn node_in_scope(
+    scope: &GraphScope,
+    id: &str,
+    policy: RefreshPolicy,
+) -> Result<GraphNodePayload, CodeGraphError> {
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphNodePayload {
+            freshness,
+            file: None,
+            symbol: None,
+            edges: Vec::new(),
+            references: Vec::new(),
+            diagnostics: Vec::new(),
+        });
+    };
     let file = store
         .find_file_by_id(id)?
         .filter(|record| scope.contains_relative(&record.path));
@@ -218,8 +250,9 @@ pub fn callers_in_scope(
     scope: &GraphScope,
     id: &str,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
-    related_in_scope(scope, id, limit, true)
+    related_in_scope(scope, id, limit, true, policy)
 }
 
 /// `graph callees` inside one selected scope.
@@ -227,8 +260,9 @@ pub fn callees_in_scope(
     scope: &GraphScope,
     id: &str,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
-    related_in_scope(scope, id, limit, false)
+    related_in_scope(scope, id, limit, false, policy)
 }
 
 pub fn impact(
@@ -236,7 +270,12 @@ pub fn impact(
     target: &str,
     limit: Option<usize>,
 ) -> Result<GraphImpactPayload, CodeGraphError> {
-    impact_in_scope(&workspace_scope(repo_root)?, target, limit)
+    impact_in_scope(
+        &workspace_scope(repo_root)?,
+        target,
+        limit,
+        RefreshPolicy::query(),
+    )
 }
 
 /// `graph impact` inside one selected scope.
@@ -244,9 +283,18 @@ pub fn impact_in_scope(
     scope: &GraphScope,
     target: &str,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphImpactPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphImpactPayload {
+            target: target.to_owned(),
+            freshness,
+            files: Vec::new(),
+            symbols: Vec::new(),
+            edges: Vec::new(),
+        });
+    };
     let files = store.list_files_in_scope(scope)?;
     let symbols = store.list_symbols_in_scope(scope)?;
     let edges = store.list_edges_in_scope(scope)?;
@@ -328,7 +376,13 @@ pub fn affected(
     depth: usize,
     limit: Option<usize>,
 ) -> Result<GraphAffectedPayload, CodeGraphError> {
-    affected_in_scope(&workspace_scope(repo_root)?, changed_paths, depth, limit)
+    affected_in_scope(
+        &workspace_scope(repo_root)?,
+        changed_paths,
+        depth,
+        limit,
+        RefreshPolicy::query(),
+    )
 }
 
 /// `graph affected` inside one selected scope.
@@ -337,9 +391,20 @@ pub fn affected_in_scope(
     changed_paths: &[String],
     depth: usize,
     limit: Option<usize>,
+    policy: RefreshPolicy,
 ) -> Result<GraphAffectedPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphAffectedPayload {
+            changed_paths: changed_paths.to_vec(),
+            freshness,
+            depth: depth.max(1),
+            affected_files: Vec::new(),
+            likely_test_files: Vec::new(),
+            likely_test_tasks: Vec::new(),
+            notes: vec!["no complete graph index is available to query".to_owned()],
+        });
+    };
     let files = store.list_files_in_scope(scope)?;
     let symbols = store.list_symbols_in_scope(scope)?;
     let edges = store.list_edges_in_scope(scope)?;
@@ -738,6 +803,7 @@ pub fn context(
         max_bytes,
         languages,
         paths,
+        RefreshPolicy::query(),
     )
 }
 
@@ -749,9 +815,25 @@ pub fn context_in_scope(
     max_bytes: Option<usize>,
     languages: &[String],
     paths: &[String],
+    policy: RefreshPolicy,
 ) -> Result<GraphContextPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphContextPayload {
+            request: request.to_owned(),
+            freshness,
+            items: Vec::new(),
+            overflow: GraphContextOverflowPayload {
+                omitted_items: 0,
+                omitted_files: 0,
+                omitted_symbols: 0,
+                omitted_docs: 0,
+                byte_budget: max_bytes.unwrap_or(4_096),
+                used_bytes: 0,
+            },
+            notes: vec!["no complete graph index is available to query".to_owned()],
+        });
+    };
     let files = store.list_files_in_scope(scope)?;
     let symbols = store.list_symbols_in_scope(scope)?;
     let edges = store.list_edges_in_scope(scope)?;
@@ -1210,6 +1292,7 @@ pub fn explore(
         max_bytes,
         languages,
         paths,
+        RefreshPolicy::query(),
     )
 }
 
@@ -1221,12 +1304,47 @@ pub fn explore_in_scope(
     max_bytes: Option<usize>,
     languages: &[String],
     paths: &[String],
+    policy: RefreshPolicy,
 ) -> Result<GraphExplorePayload, CodeGraphError> {
     let repo_root = scope.workspace_root();
     let max_files = max_files.unwrap_or(6);
     let max_bytes = max_bytes.unwrap_or(12_288);
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphExplorePayload {
+            query: request.to_owned(),
+            index: GraphExploreIndexPayload {
+                freshness,
+                counts: GraphCountsPayload {
+                    files: 0,
+                    symbols: 0,
+                    edges: 0,
+                    references: 0,
+                    diagnostics: 0,
+                    extractors: 0,
+                    index_runs: 0,
+                },
+            },
+            summary: "no complete graph index is available to query".to_owned(),
+            primary: Vec::new(),
+            excerpts: Vec::new(),
+            relations: Vec::new(),
+            edit_targets: Vec::new(),
+            likely_test_files: Vec::new(),
+            likely_test_tasks: Vec::new(),
+            overflow: GraphContextOverflowPayload {
+                omitted_items: 0,
+                omitted_files: 0,
+                omitted_symbols: 0,
+                omitted_docs: 0,
+                byte_budget: max_bytes,
+                used_bytes: 0,
+            },
+            guidance: vec![
+                "run `effigy graph index --json` to pay the cold build separately".to_owned(),
+            ],
+        });
+    };
     let files = store.list_files_in_scope(scope)?;
     let symbols = store.list_symbols_in_scope(scope)?;
     let edges = store.list_edges_in_scope(scope)?;
@@ -1532,7 +1650,13 @@ fn related(
     limit: Option<usize>,
     inbound: bool,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
-    related_in_scope(&workspace_scope(repo_root)?, id, limit, inbound)
+    related_in_scope(
+        &workspace_scope(repo_root)?,
+        id,
+        limit,
+        inbound,
+        RefreshPolicy::query(),
+    )
 }
 
 fn related_in_scope(
@@ -1540,9 +1664,17 @@ fn related_in_scope(
     id: &str,
     limit: Option<usize>,
     inbound: bool,
+    policy: RefreshPolicy,
 ) -> Result<GraphRelatedNodesPayload, CodeGraphError> {
-    let store = GraphStore::open_for_scope(scope)?;
-    let freshness = ensure_freshness(scope, &store)?;
+    let (store, freshness) = crate::refresh::open_query_store(scope, policy)?;
+    let Some(store) = store else {
+        return Ok(GraphRelatedNodesPayload {
+            freshness,
+            target_id: id.to_owned(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        });
+    };
     let symbols = store.list_symbols_in_scope(scope)?;
     let edges = store.list_edges_in_scope(scope)?;
     let target_symbol = symbols
@@ -1587,18 +1719,6 @@ fn related_in_scope(
         nodes: related_symbols,
         edges: related_edges,
     })
-}
-
-fn ensure_freshness(
-    scope: &GraphScope,
-    store: &GraphStore,
-) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let outcome = crate::refresh::ensure_fresh(scope, store)?;
-    let mut payload = outcome.freshness;
-    if !outcome.notes.is_empty() {
-        payload.summary = format!("{} ({})", payload.summary, outcome.notes.join("; "));
-    }
-    Ok(payload)
 }
 
 fn workspace_scope(repo_root: &Path) -> Result<GraphScope, CodeGraphError> {

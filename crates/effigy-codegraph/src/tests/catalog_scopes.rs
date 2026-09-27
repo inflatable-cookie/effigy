@@ -209,8 +209,13 @@ fn selecting_one_catalog_never_reads_a_sibling_tree() {
             .collect::<Vec<_>>()
     );
 
-    let search =
-        crate::search_in_scope(&bovine, "farmyard_symbol", Some(10)).expect("scoped search");
+    let search = crate::search_in_scope(
+        &bovine,
+        "farmyard_symbol",
+        Some(10),
+        crate::RefreshPolicy::query(),
+    )
+    .expect("scoped search");
     assert!(
         search.matches.is_empty(),
         "scoped query returned sibling results: {:?}",
@@ -284,8 +289,13 @@ fn shared_store_refresh_keeps_sibling_records() {
         "scope counts leaked sibling rows"
     );
 
-    let farmyard_search =
-        crate::search_in_scope(&farmyard, "farmyard_symbol", Some(10)).expect("scoped search");
+    let farmyard_search = crate::search_in_scope(
+        &farmyard,
+        "farmyard_symbol",
+        Some(10),
+        crate::RefreshPolicy::query(),
+    )
+    .expect("scoped search");
     assert!(
         farmyard_search
             .matches
@@ -526,8 +536,13 @@ fn external_reference_stays_unresolved_without_sibling_refresh() {
         !farmyard.paths().db_path.exists(),
         "resolving an external reference opened a sibling database"
     );
-    let payload =
-        crate::callers_in_scope(&bovine, "symbol:rust:bovine_uses", Some(10)).expect("callers");
+    let payload = crate::callers_in_scope(
+        &bovine,
+        "symbol:rust:bovine_uses",
+        Some(10),
+        crate::RefreshPolicy::query(),
+    )
+    .expect("callers");
     assert!(
         payload
             .nodes

@@ -107,6 +107,7 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     });
     let contracts = Command::Contracts(ContractsArgs {
         subcommand: ContractsSubcommand::ValidateSelection {

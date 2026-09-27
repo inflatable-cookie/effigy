@@ -72,10 +72,11 @@ pub struct GraphIndexPayload {
 ///
 /// Agents should gate on [`Self::state`] and [`Self::usable`] before trusting
 /// explore, context, or affected output. Typical states: `ready`,
-/// `refresh-recommended`, `degraded`, `missing-index`.
+/// `refresh-recommended`, `degraded`, `missing-index`, `stale-index`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphFreshnessPayload {
-    /// Trust label (`ready`, `refresh-recommended`, `degraded`, `missing-index`).
+    /// Trust label (`ready`, `refresh-recommended`, `degraded`, `missing-index`,
+    /// `stale-index`).
     pub state: String,
     /// One-line guidance for operators and agents.
     pub summary: String,
@@ -86,6 +87,21 @@ pub struct GraphFreshnessPayload {
     pub stale_path_count: usize,
     pub failed_path_count: usize,
     pub stale_paths: Vec<String>,
+    /// Refresh-lock identity when a query waited or served a snapshot because
+    /// another process held the lock. Absent when the lock was not involved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<GraphLockPayload>,
+}
+
+/// Who holds the graph refresh lock, and whether that holder is still alive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphLockPayload {
+    pub held: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age_ms: Option<u64>,
+    pub stale_holder: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
