@@ -461,6 +461,7 @@ mod tests {
         assert_eq!(plan.request.policy_name, "web");
         assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
         assert_eq!(plan.side_effect, ContainerSideEffectClass::ReadsRuntime);
+        assert!(!plan.consumes_declared_container_secrets());
     }
 
     #[test]

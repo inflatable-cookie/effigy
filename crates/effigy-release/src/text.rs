@@ -246,8 +246,17 @@ fn append_mutation_preview_lines(lines: &mut Vec<String>, mutations: &[FileMutat
 }
 
 pub fn render_release_status_text(status: &ReleaseStatus) -> String {
+    // When gates were checked, the headline reports the gate check verdict
+    // independently of the optional next-version proposal: an empty
+    // `[Unreleased]` section leaves `Ready to prepare` at no and keeps its
+    // blocker below, but does not turn passed gates into a blocked headline.
+    let headline_ok = if status.gates_checked {
+        status.gate_check_passed()
+    } else {
+        status.ready
+    };
     let mut lines = vec![
-        if status.ready {
+        if headline_ok {
             "Release Status".to_owned()
         } else {
             "Release Status Blocked".to_owned()
@@ -283,7 +292,13 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
             "  Suggested bump: {} -> {}",
             status.suggested_bump, next_version
         )),
-        None => lines.push(format!("  Suggested bump: {}", status.suggested_bump)),
+        None => {
+            lines.push(format!("  Suggested bump: {}", status.suggested_bump));
+            lines.push(
+                "  Next version: unavailable (no releasable Unreleased entries \u{2013} nothing to release)"
+                    .to_owned(),
+            );
+        }
     }
     if let Some(tag) = &status.tag {
         lines.push(format!("  Tag: {tag}"));
@@ -295,6 +310,16 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
         status.configured_gate_count,
         &status.gate_results,
     );
+    if status.gates_checked {
+        lines.push(format!(
+            "  Gate check: {}",
+            if status.gate_check_passed() {
+                "passed"
+            } else {
+                "failed"
+            }
+        ));
+    }
     lines.push(if status.ready {
         if status.gates_checked || status.configured_gate_count == 0 {
             "  Ready to prepare and execute: yes".to_owned()

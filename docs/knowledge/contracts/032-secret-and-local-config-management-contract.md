@@ -170,6 +170,8 @@ Injection rules:
 
 - pass secret values directly to child process environments where possible
 - avoid putting secrets into shell command strings
+- selection classifies the minimum secret scope for the selected local
+  operation before any vault prompt
 - task execution receives referenced `targets = ["tasks"]` values through
   process environment injection
 - managed tasks that set `secrets = "required"` receive declared
@@ -178,8 +180,25 @@ Injection rules:
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting
+- container operations unlock `targets = ["containers"]` values only when the
+  selected operation starts a runtime (`container up`); read, exec, logs,
+  stats, reset, and teardown stay secret-free. Reset tears down runtime
+  artifacts and does not inject secrets; a later `container up` is the
+  secret-consuming bring-up
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
+- a Rhai script unlocks required `targets = ["rhai"]` values only when the
+  selected source has an executable `secrets` module path (`secrets::`).
+  Comments, string literals, and longer identifiers such as `mysecrets::`
+  do not count. Secret-free scripts do not open the vault
+- `eval` and imported modules that first call `secrets::` after other side
+  effects stay fail-closed at the `secrets::*` call rather than at script
+  start; classify those as secret-consuming when the selected source itself
+  has an executable `secrets::` path
+- isolated skill runs never resolve or unlock the consumer vault
+- a secret-consuming operation still fails closed with a precise missing-secret
+  diagnostic when a required value in that scope is absent or the vault is
+  locked
 - deploy provider package scripts run with `targets = ["deploy"]` access
 - state apply hook tasks can receive `targets = ["state"]` values through the
   same process environment injection path
@@ -284,6 +303,8 @@ Effigy owns the tooling. Underlay owns the app-facing convention.
 - Unlock requires explicit operator participation.
 - Task, container, Rhai, and deploy paths can consume declared secrets through
   one model.
+- Secret-free local operations do not prompt for an unrelated required vault
+  value. Secret-consuming operations still fail closed.
 - Secret values are redacted from normal output and reports.
 - Underlay and Example App can move non-secret `.env` values into ordinary config.
 - Varlock is clearly documented as deferred.

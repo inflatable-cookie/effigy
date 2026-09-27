@@ -23,9 +23,96 @@ pub(crate) fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce
     })
 }
 
+pub(crate) fn rhai_script_consumes_secrets(script: &str) -> bool {
+    rhai_code_mentions_secrets_module(script.as_bytes(), 0, false).0
+}
+
+/// Scan executable Rhai source for the `secrets` module path, skipping
+/// comments and string literals. Interpolated `` `${...}` `` expressions are
+/// scanned as code. A longer identifier such as `mysecrets::` does not match.
+fn rhai_code_mentions_secrets_module(
+    bytes: &[u8],
+    mut index: usize,
+    stop_on_unmatched_brace: bool,
+) -> (bool, usize) {
+    let mut brace_depth = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            index = skip_rhai_double_quoted(bytes, index);
+            continue;
+        }
+        if bytes[index] == b'`' {
+            index += 1;
+            while index < bytes.len() {
+                if bytes[index] == b'`' {
+                    index += 1;
+                    break;
+                }
+                if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
+                    let (found, next) = rhai_code_mentions_secrets_module(bytes, index + 2, true);
+                    if found {
+                        return (true, next);
+                    }
+                    index = next;
+                    continue;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"secrets::")
+            && (index == 0 || !rhai_ident_continue(bytes[index - 1]))
+        {
+            return (true, index);
+        }
+        if stop_on_unmatched_brace {
+            match bytes[index] {
+                b'{' => brace_depth += 1,
+                b'}' if brace_depth == 0 => return (false, index + 1),
+                b'}' => brace_depth -= 1,
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    (false, index)
+}
+
+fn rhai_ident_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn skip_rhai_double_quoted(bytes: &[u8], mut index: usize) -> usize {
+    index += 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = (index + 2).min(bytes.len()),
+            b'"' => return index + 1,
+            _ => index += 1,
+        }
+    }
+    index
+}
+
 pub(crate) fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
+    consume_secrets: bool,
 ) -> Result<RhaiSecretStore, RhaiHostError> {
     if external_task_source_isolation_active() {
         return Ok(isolated_rhai_secret_store());
@@ -56,7 +143,7 @@ pub(crate) fn resolve_rhai_secret_store(
             store.declared_other_target.insert(name.clone());
         }
     }
-    if store.declared_rhai.is_empty() {
+    if store.declared_rhai.is_empty() || !consume_secrets {
         return Ok(store);
     }
 
