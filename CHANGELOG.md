@@ -51,6 +51,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Installed skill examples now invoke `northstar/retired-concepts`. The
+  temporary `northstar-lean` alias is no longer taught in help, guides,
+  parse tests, or `AGENTS.md`.
 - Local operations classify the minimum secret scope before any vault
   prompt. Secret-free installed skill tasks and container checks that
   do not start a runtime (`status`, `logs`, `stats`, `reset`, `down`)
