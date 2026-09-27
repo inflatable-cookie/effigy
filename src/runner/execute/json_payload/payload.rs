@@ -56,3 +56,47 @@ fn render_selector(selector: &TaskSelector) -> String {
         .map(|prefix| format!("{prefix}/{}", selector.task_name))
         .unwrap_or_else(|| selector.task_name.clone())
 }
+
+pub(super) fn task_plan_payload(
+    selector: &TaskSelector,
+    cwd: &std::path::Path,
+    command: &str,
+    selection: &TaskSelection<'_>,
+) -> serde_json::Value {
+    let mut payload = json!({
+        "schema": "effigy.task.plan.v1",
+        "schema_version": 1,
+        "ok": true,
+        "executed": false,
+        "task": selector.task_name,
+        "selector": render_selector(selector),
+        "command": command,
+        "cwd": cwd.display().to_string(),
+        "catalog": {
+            "alias": selection.catalog.alias,
+            "root": selection.catalog.catalog_root.display().to_string(),
+            "manifest": selection.catalog.manifest_path.display().to_string(),
+        },
+    });
+
+    if selection.surface == TaskSurface::Draft {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("surface".to_owned(), json!("draft"));
+            object.insert(
+                "surface_identity".to_owned(),
+                json!({
+                    "surface": "draft",
+                    "catalog_alias": selection.catalog.alias,
+                    "catalog_root": selection.catalog.catalog_root.display().to_string(),
+                    "definition_source": selection
+                        .catalog
+                        .draft_source(&selector.task_name)
+                        .display()
+                        .to_string(),
+                }),
+            );
+        }
+    }
+
+    payload
+}

@@ -11,11 +11,18 @@ effigy --json help
 effigy --json tasks
 effigy --json doctor
 effigy --json test --plan
+effigy --json <selector> --plan
 effigy --json watch --owner effigy --once test
 effigy --json <catalog-or-root-task>
 ```
 
 When JSON mode is active, CLI preamble output is suppressed and output is pure JSON.
+`--json` is an output format, never a planning or safety flag:
+`effigy --json <selector>` still runs the task. Use `effigy --json <selector> --plan`
+to inspect the resolved command without executing it.
+
+Task and draft text runs keep the framed header off stdout. Presentation goes to
+stderr so command substitution receives only the task bytes.
 
 
 ## Vision Alignment
@@ -158,6 +165,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
+- `effigy.task.plan.v1`
 - `effigy.service.list.v1`
 - `effigy.service.extract.v1`
 - `effigy.service.pack.status.v1`
@@ -232,6 +240,7 @@ effigy --json state capture uat new-content
 effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
 effigy --json state history uat --kind capture --limit 5
 effigy --json build --repo /path/to/workspace
+effigy --json build --plan --repo /path/to/workspace
 ```
 
 ## Catalog-Pack Fallback Notice

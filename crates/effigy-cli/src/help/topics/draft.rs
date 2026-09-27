@@ -11,7 +11,7 @@ const DRAFT_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`effigy draft` selects only `[drafts]`; it reuses catalog alias, cwd-nearest, and shallowest-unambiguous routing, then runs through the ordinary task request and pipeline. Ordinary flat invocation never falls through to a draft.",
     ],
     usage: &[
-        "effigy draft <SELECTOR> [--repo <PATH>] [--json] [-- <ARGS>]",
+        "effigy draft <SELECTOR> [--repo <PATH>] [--json] [--plan] [-- <ARGS>]",
         "effigy draft <catalog>/<SELECTOR> [-- <ARGS>]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -19,6 +19,10 @@ const DRAFT_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         (
             "<SELECTOR>",
             "Draft to run; use `<catalog>/<draft>` to pin the catalog",
+        ),
+        (
+            "--plan",
+            "Inspect the resolved draft, catalog, and command without executing",
         ),
         (
             "-- <ARGS>",
@@ -32,6 +36,8 @@ const DRAFT_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     examples: &[
         "effigy draft provider-smoke",
         "effigy draft provider-smoke -- --verbose",
+        "effigy draft provider-smoke --plan",
+        "effigy --json draft provider-smoke --plan",
         "effigy draft provider-smoke --json",
         "effigy --json draft provider-smoke",
     ],
