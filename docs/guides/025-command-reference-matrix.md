@@ -651,7 +651,7 @@ Installed skill task source with an independent consumer target:
 ```sh
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
-effigy skill run northstar-lean/retired-concepts --stdio passthrough < payload.json
+effigy skill run northstar/retired-concepts --stdio passthrough < payload.json
 effigy --json skill run --path ~/.agents/skills/northstar northstar/check --repo /work/app
 ```
 

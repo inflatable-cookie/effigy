@@ -60,6 +60,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Task and draft text runs send the framed CLI header to stderr so stdout is
   only the task's own bytes. Command substitution no longer needs to strip the
   banner.
+- Installed skill examples now invoke `northstar/retired-concepts`. The
+  temporary `northstar-lean` alias is no longer taught in help, guides,
+  parse tests, or `AGENTS.md`.
 - Local operations classify the minimum secret scope before any vault
   prompt. Secret-free installed skill tasks and container checks that
   do not start a runtime (`status`, `logs`, `stats`, `reset`, `down`)

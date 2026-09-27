@@ -178,7 +178,7 @@ must own runtime effects:
 ```sh
 effigy skill tasks --path ~/.agents/skills/northstar
 effigy skill run --path ~/.agents/skills/northstar northstar/check
-effigy skill run northstar-lean/retired-concepts --stdio passthrough < payload.json
+effigy skill run northstar/retired-concepts --stdio passthrough < payload.json
 effigy skill run --path ~/.agents/skills/northstar northstar/check \
   --repo /path/to/consumer -- --task-argument
 ```
