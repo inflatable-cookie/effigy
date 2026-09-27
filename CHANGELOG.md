@@ -54,8 +54,8 @@ During v0.x, MINOR bumps may include breaking changes.
   no longer unlock an unrelated required project vault. Secret-consuming
   tasks, Rhai scripts with an executable `secrets::` path, and
   `container up` still fail closed with a precise missing-secret
-  diagnostic. Comments and string literals that mention `secrets::`
-  do not unlock the vault.
+  diagnostic. Comments, string literals, and longer identifiers such
+  as `mysecrets::` do not unlock the vault.
 - Generated Nginx health checks keep the wget exit-code shell variable
   after Compose interpolation. A site whose root returns 404 can become
   healthy; transport failures stay unhealthy.

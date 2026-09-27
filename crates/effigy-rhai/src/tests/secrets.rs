@@ -23,6 +23,8 @@ log("ok");"#
     assert!(!rhai_script_consumes_secrets(
         r#"log("do not call secrets::get here");"#
     ));
+    assert!(!rhai_script_consumes_secrets(r#"mysecrets::status();"#));
+    assert!(!rhai_script_consumes_secrets(r#"_secrets::status();"#));
 }
 
 #[test]
@@ -266,6 +268,27 @@ fn execute_rhai_script_ignores_comment_mentions_of_secrets_module() {
         r#"
             // later: secrets::get("api_token")
             /* secrets::has("api_token") */
+            fs::write_file("{}", "ran");
+        "#,
+        marker.display()
+    );
+
+    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+
+    assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
+}
+
+#[test]
+fn execute_rhai_script_ignores_longer_identifiers_that_contain_secrets() {
+    let root = temp_root("rhai-secret-mysecrets-module");
+    let marker = root.join("ran.out");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[]);
+    fs::write(root.join("mysecrets.rhai"), "fn status() { () }\n").expect("write mysecrets module");
+    let script = format!(
+        r#"
+            import "mysecrets.rhai" as mysecrets;
+            mysecrets::status();
             fs::write_file("{}", "ran");
         "#,
         marker.display()

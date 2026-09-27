@@ -27,8 +27,9 @@ pub(crate) fn rhai_script_consumes_secrets(script: &str) -> bool {
     rhai_code_mentions_secrets_module(script.as_bytes(), 0, false).0
 }
 
-/// Scan executable Rhai source for `secrets::`, skipping comments and string
-/// literals. Interpolated `` `${...}` `` expressions are scanned as code.
+/// Scan executable Rhai source for the `secrets` module path, skipping
+/// comments and string literals. Interpolated `` `${...}` `` expressions are
+/// scanned as code. A longer identifier such as `mysecrets::` does not match.
 fn rhai_code_mentions_secrets_module(
     bytes: &[u8],
     mut index: usize,
@@ -74,7 +75,9 @@ fn rhai_code_mentions_secrets_module(
             }
             continue;
         }
-        if bytes[index..].starts_with(b"secrets::") {
+        if bytes[index..].starts_with(b"secrets::")
+            && (index == 0 || !rhai_ident_continue(bytes[index - 1]))
+        {
             return (true, index);
         }
         if stop_on_unmatched_brace {
@@ -88,6 +91,10 @@ fn rhai_code_mentions_secrets_module(
         index += 1;
     }
     (false, index)
+}
+
+fn rhai_ident_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 fn skip_rhai_double_quoted(bytes: &[u8], mut index: usize) -> usize {
