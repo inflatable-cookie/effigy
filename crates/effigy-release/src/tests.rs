@@ -1,11 +1,13 @@
 use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
     apply_release_mutations, build_release_prepare_plan, collect_release_gate_run,
-    compare_release_state_fingerprints, execute_release_prepare, format_release_tag, gate_blockers,
-    git_create_tag, git_modified_files, is_release_state_file, load_release_config,
+    collect_release_status, compare_release_state_fingerprints, execute_release_prepare,
+    format_release_tag, gate_blockers,
+    git_create_tag, git_modified_files, is_optional_next_version_blocker, is_release_state_file, load_release_config,
     load_release_context, load_release_prepared_state, normalized_expected_files,
     render_release_gate_run_json, render_release_gate_run_text, render_release_prepare_plan_text,
-    render_release_prepared_text, restore_mutation_snapshots, run_release_gates,
+    render_release_prepared_text, render_release_status_json, render_release_status_text,
+    restore_mutation_snapshots, run_release_gates,
     snapshot_mutation_paths, test_support, validate_planned_release_version,
     write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
     GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
@@ -971,4 +973,137 @@ fn redacted_environment_record_masks_token_like_keys() {
     assert_eq!(record["CARGO_HOME"], "/cargo");
     assert_eq!(record["CARGO_REGISTRY_TOKEN"], "<redacted>");
     assert!(record.get("IGNORED").is_none());
+}
+
+fn write_empty_unreleased_repo(name: &str) -> PathBuf {
+    let root = temp_repo(name);
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n",
+    )
+    .expect("manifest");
+    fs::write(root.join("VERSION"), "0.2.1\n").expect("version");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n## [0.2.1] - 2026-09-01\n\n### Fixed\n- Prior fix\n",
+    )
+    .expect("changelog");
+    root
+}
+
+#[test]
+fn status_gate_check_passes_with_empty_unreleased_and_reports_no_next_version() {
+    let root = write_empty_unreleased_repo("status-empty-unreleased");
+    let context = load_release_context(&root).expect("release context");
+    assert!(context.unreleased_empty);
+    assert_eq!(context.next_version, None);
+    assert!(
+        context
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("unreleased changelog section has no entries")),
+        "{:?}",
+        context.blockers
+    );
+
+    let report = run_release_gates(&root, &[shell_gate("ok", "true")], true);
+    assert!(report.results.iter().all(|gate| gate.passed));
+    let status = collect_release_status(&context, true, report);
+    assert!(status.gates_passed);
+    assert!(status.gate_check_passed());
+    assert!(!status.ready);
+    assert_eq!(status.next_version, None);
+    assert!(
+        status
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("unreleased changelog section has no entries")),
+        "{:?}",
+        status.blockers
+    );
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&render_release_status_json(&status)).expect("json");
+    assert_eq!(parsed["schema"], "effigy.release.status.v1");
+    assert_eq!(parsed["ready"], false);
+    assert_eq!(parsed["gates_passed"], true);
+    assert_eq!(parsed["gate_check_passed"], true);
+    assert_eq!(parsed["next_version"], serde_json::Value::Null);
+    assert_eq!(parsed["unreleased"]["empty"], true);
+
+    let text = render_release_status_text(&status);
+    assert!(text.starts_with("Release Status\n"), "{text}");
+    assert!(text.contains("Gate check: passed"), "{text}");
+    assert!(text.contains("Next version: unavailable"), "{text}");
+    assert!(text.contains("Ready to prepare and execute: no"), "{text}");
+}
+
+#[test]
+fn status_gate_check_fails_when_a_gate_fails() {
+    let root = write_empty_unreleased_repo("status-gate-fails");
+    let context = load_release_context(&root).expect("release context");
+
+    let report = run_release_gates(&root, &[shell_gate("smoke", "exit 1")], true);
+    assert!(!report.results[0].passed);
+    let status = collect_release_status(&context, true, report);
+    assert!(!status.gates_passed);
+    assert!(!status.gate_check_passed());
+    assert!(!status.ready);
+
+    let text = render_release_status_text(&status);
+    assert!(text.starts_with("Release Status Blocked\n"), "{text}");
+    assert!(text.contains("Gate check: failed"), "{text}");
+}
+
+#[test]
+fn status_gate_check_still_fails_for_non_version_blockers() {
+    // A version mismatch is a real release-input failure, not an absent
+    // proposal: passing gates must not excuse it.
+    let root = write_empty_unreleased_repo("status-version-mismatch");
+    fs::write(root.join("VERSION"), "0.2.2\n").expect("version");
+    let context = load_release_context(&root).expect("release context");
+    assert!(
+        context
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("version file reports")),
+        "{:?}",
+        context.blockers
+    );
+
+    let report = run_release_gates(&root, &[shell_gate("ok", "true")], true);
+    let status = collect_release_status(&context, true, report);
+    assert!(status.gates_passed);
+    assert!(!status.gate_check_passed());
+    assert!(!status.ready);
+}
+
+#[test]
+fn version_requiring_operations_still_reject_empty_unreleased() {
+    let root = write_empty_unreleased_repo("prepare-empty-unreleased");
+    let context = load_release_context(&root).expect("release context");
+    let plan = build_release_prepare_plan(&context, true, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    assert!(!plan.ready);
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|blocker| blocker.contains("unreleased changelog section has no entries")),
+        "{:?}",
+        plan.blockers
+    );
+}
+
+#[test]
+fn optional_next_version_blocker_matches_only_absent_proposals() {
+    assert!(is_optional_next_version_blocker(
+        "unreleased changelog section has no entries"
+    ));
+    assert!(is_optional_next_version_blocker(
+        "no next version could be derived from changelog content"
+    ));
+    assert!(!is_optional_next_version_blocker("gate `smoke` failed"));
+    assert!(!is_optional_next_version_blocker(
+        "version file reports 0.2.2 but latest changelog release is 0.2.1"
+    ));
 }

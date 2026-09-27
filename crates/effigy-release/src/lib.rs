@@ -642,6 +642,36 @@ pub fn validate_planned_release_version(
     Ok(())
 }
 
+/// Blockers that describe an absent next-version proposal rather than a failed
+/// release input.
+///
+/// An empty `[Unreleased]` section means there is nothing to release, not that
+/// the repository is unhealthy. `release status --check-gates` reports the
+/// configured gate verdict independently of this optional proposal, so these
+/// blockers stay visible in `blockers` but do not fail the gate check. The
+/// version-requiring operations (`simulate`, `prepare`, `execute`) still
+/// reject a missing version through their own readiness rules.
+pub fn is_optional_next_version_blocker(blocker: &str) -> bool {
+    blocker.contains("unreleased changelog section has no entries")
+        || blocker.contains("no next version could be derived")
+}
+
+impl ReleaseStatus {
+    /// Whether `release status --check-gates` reports success.
+    ///
+    /// True when every executed gate passed and no blocker other than an
+    /// absent next-version proposal remains. A failed gate or any other
+    /// release-input blocker (invalid changelog, version mismatch, existing
+    /// tag) still fails the check.
+    pub fn gate_check_passed(&self) -> bool {
+        self.gates_passed
+            && self
+                .blockers
+                .iter()
+                .all(|blocker| is_optional_next_version_blocker(blocker))
+    }
+}
+
 pub fn collect_release_status(
     context: &ReleaseContext,
     check_gates: bool,
@@ -651,6 +681,7 @@ pub fn collect_release_status(
     if check_gates {
         blockers.extend(gate_blockers(&gate_report.results));
     }
+    let gates_passed = gate_blockers(&gate_report.results).is_empty();
 
     ReleaseStatus {
         repo_root: context.repo_root.clone(),
@@ -665,6 +696,7 @@ pub fn collect_release_status(
         next_version: context.next_version.clone(),
         tag: context.tag.clone(),
         gates_checked: check_gates,
+        gates_passed,
         configured_gate_count: context.config.gates.len(),
         gate_results: gate_report.results,
         environment_path: gate_report.environment_path,

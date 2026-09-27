@@ -53,6 +53,15 @@ During v0.x, MINOR bumps may include breaking changes.
   healthy; transport failures stay unhealthy.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
+### Fixed
+- `effigy release status --check-gates` reports the configured gate verdict
+  independently of the optional next-version proposal. An empty
+  `[Unreleased]` section keeps `ready: false`, `next_version: null`, and the
+  explicit unreleased-entries blocker, but no longer turns passed gates into
+  a failed gate check. The status payload adds `gates_passed` and
+  `gate_check_passed`; `simulate`, `prepare`, and `execute` still require a
+  derivable next version.
+
 ## [0.13.1] - 2026-09-25
 
 ### Added
