@@ -143,14 +143,21 @@ fn prepare_container_up(
 ) -> Result<ContainerUpPlan, RunnerError> {
     let stop_flag = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
-    let _operation_plan = lifecycle_operation_plan(
+    let operation_plan = lifecycle_operation_plan(
         repo_root,
         &policy,
         ContainerLifecycleOperation::up(attach, detach),
     );
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    let secret_runtime = resolve_container_secret_runtime(repo_root, &policy, secrets_required())?;
+    let secret_runtime = if operation_plan.consumes_declared_container_secrets() {
+        resolve_container_secret_runtime(repo_root, &policy, secrets_required())?
+    } else {
+        ResolvedContainerSecretRuntime {
+            delivery: policy.secret_delivery,
+            env: Vec::new(),
+        }
+    };
     let compose_secret_env = match secret_runtime.delivery {
         effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv => secret_runtime
             .env
@@ -864,6 +871,7 @@ mod tests {
         assert_eq!(plan.request.policy_name, "web");
         assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
         assert_eq!(plan.side_effect, ContainerSideEffectClass::StartsRuntime);
+        assert!(plan.consumes_declared_container_secrets());
     }
 
     #[test]
@@ -878,6 +886,7 @@ mod tests {
             keep_data.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
         );
+        assert!(!keep_data.consumes_declared_container_secrets());
 
         let wipe_data = lifecycle_operation_plan(
             Path::new("/tmp/repo"),
@@ -890,6 +899,7 @@ mod tests {
                 reason: "reset removes runtime data",
             }
         );
+        assert!(!wipe_data.consumes_declared_container_secrets());
     }
 
     #[test]
@@ -913,6 +923,7 @@ mod tests {
             plan.side_effect,
             ContainerSideEffectClass::InteractsWithRuntime
         );
+        assert!(!plan.consumes_declared_container_secrets());
         match plan.request.kind {
             ContainerOperationKind::Exec(ContainerExecOperation::Captured(operation)) => {
                 assert_eq!(operation.service.as_deref(), Some("db"));

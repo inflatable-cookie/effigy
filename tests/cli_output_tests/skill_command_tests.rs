@@ -715,6 +715,10 @@ run_in = "host"
 [tasks.consumer-rhai-secret]
 run = [{ rhai = "scripts/read.rhai" }]
 run_in = "host"
+
+[tasks.consumer-secret-free]
+run = [{ rhai = "scripts/free.rhai" }]
+run_in = "host"
 "#,
     )
     .expect("write secret consumer manifest");
@@ -724,6 +728,11 @@ run_in = "host"
         "log(`consumer-rhai=${secrets::has(\"PRODUCT_TOKEN\")}`);\n",
     )
     .expect("write consumer script");
+    std::fs::write(
+        consumer.join("scripts/free.rhai"),
+        "log(\"consumer-secret-free\");\n",
+    )
+    .expect("write secret-free consumer script");
 
     let init = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "init"])
@@ -933,6 +942,26 @@ run_in = "host"
     );
 
     std::fs::remove_dir_all(&root).expect("remove task secret env fixture");
+}
+
+#[test]
+fn consumer_secret_free_rhai_tasks_ignore_unrelated_required_secrets() {
+    let root = secret_consumer("consumer-secret-free");
+    let consumer = root.join("consumer");
+
+    let output = run_skill(&consumer, &["consumer-secret-free"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("consumer-secret-free"),
+        "{output:?}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr)
+            .contains("Rhai secrets require an unlocked vault passphrase"),
+        "{output:?}"
+    );
+
+    std::fs::remove_dir_all(&root).expect("remove consumer secret-free fixture");
 }
 
 #[test]
