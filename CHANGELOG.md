@@ -48,6 +48,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Local operations classify the minimum secret scope before any vault
+  prompt. Secret-free installed skill tasks and read-only container
+  checks (`status`, `logs`, `stats`) no longer unlock an unrelated
+  required project vault. Secret-consuming tasks, Rhai scripts that
+  call `secrets::`, and `container up` / `container reset` still fail
+  closed with a precise missing-secret diagnostic.
 - Generated Nginx health checks keep the wget exit-code shell variable
   after Compose interpolation. A site whose root returns 404 can become
   healthy; transport failures stay unhealthy.

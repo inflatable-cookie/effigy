@@ -276,7 +276,11 @@ fn execute_rhai_script_inner(
     callbacks: &HostCallbacks,
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<(), RhaiHostError> {
-    let secret_store = resolve_rhai_secret_store(&context.repo_root, secret_targets)?;
+    let secret_store = resolve_rhai_secret_store(
+        &context.repo_root,
+        secret_targets,
+        rhai_secrets::rhai_script_consumes_secrets(script),
+    )?;
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = configured_rhai_engine();
@@ -404,8 +408,9 @@ fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce() -> T) ->
 fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
+    consume_secrets: bool,
 ) -> Result<RhaiSecretStore, RhaiHostError> {
-    rhai_secrets::resolve_rhai_secret_store(repo_root, secret_targets)
+    rhai_secrets::resolve_rhai_secret_store(repo_root, secret_targets, consume_secrets)
 }
 
 fn active_rhai_secret(repo_root: &Path, name: &str) -> Result<String, Box<EvalAltResult>> {

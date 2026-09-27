@@ -1,4 +1,16 @@
 use super::*;
+use crate::rhai_secrets::rhai_script_consumes_secrets;
+
+#[test]
+fn rhai_script_consumes_secrets_detects_the_secrets_module() {
+    assert!(rhai_script_consumes_secrets(
+        r#"let token = secrets::get("api_token");"#
+    ));
+    assert!(rhai_script_consumes_secrets(
+        r#"if secrets::has("api_token") { 1 }"#
+    ));
+    assert!(!rhai_script_consumes_secrets(r#"log("container status");"#));
+}
 
 #[test]
 fn execute_rhai_script_exposes_declared_rhai_secrets() {
@@ -219,6 +231,19 @@ targets = ["rhai"]
 }
 
 #[test]
+fn execute_rhai_script_skips_unrelated_required_secrets_when_script_is_secret_free() {
+    let root = temp_root("rhai-secret-free-unrelated-required");
+    let marker = root.join("ran.out");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let script = format!(r#"fs::write_file("{}", "ran");"#, marker.display());
+
+    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+
+    assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
+}
+
+#[test]
 fn execute_rhai_script_blocks_missing_required_rhai_secret_before_side_effects() {
     let root = temp_root("rhai-secret-missing-required");
     let marker = root.join("should-not-run.out");
@@ -228,7 +253,13 @@ fn execute_rhai_script_blocks_missing_required_rhai_secret_before_side_effects()
         "EFFIGY_TEST_SECRETS_PASSPHRASE",
         "vault-passphrase".to_owned(),
     )]);
-    let script = format!(r#"fs::write_file("{}", "ran");"#, marker.display());
+    let script = format!(
+        r#"
+            fs::write_file("{}", "ran");
+            secrets::get("api_token");
+        "#,
+        marker.display()
+    );
 
     let error = execute_rhai_script(&script_context(&root), &script, &[], &callbacks())
         .expect_err("script should fail");

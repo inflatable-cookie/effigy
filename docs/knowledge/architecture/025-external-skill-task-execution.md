@@ -78,7 +78,8 @@ Rhai steps execute in child `effigy script run` processes, so the marker
 travels through the inherited environment rather than the in-process runtime
 context. Under the marker, `resolve_rhai_secret_store` returns an isolated
 store instead of reading the consumer manifest, and `resolve_task_secret_env`
-injects nothing.
+injects nothing. Outside skill isolation, a selected Rhai script still skips
+the consumer vault when its source does not use `secrets::`.
 
 ## Implementation Map
 

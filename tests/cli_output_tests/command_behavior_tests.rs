@@ -7529,6 +7529,50 @@ mounts = ["{mount}"]
     .expect("write container manifest");
 }
 
+fn append_required_container_secret(root: &std::path::Path) {
+    let manifest_path = root.join("effigy.toml");
+    let mut manifest = fs::read_to_string(&manifest_path).expect("read container manifest");
+    manifest.push_str(
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["containers"]
+"#,
+    );
+    fs::write(manifest_path, manifest).expect("append container secrets");
+}
+
+fn write_locked_test_vault(root: &std::path::Path, passphrase: &str, records: &[(&str, &str)]) {
+    use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase)
+        .expect("encrypt locked test vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        &vault_path,
+        envelope
+            .to_json_pretty()
+            .expect("serialize locked test vault"),
+    )
+    .expect("write locked test vault");
+}
+
 fn install_fake_container_runtime(
     root: &std::path::Path,
 ) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -7842,6 +7886,47 @@ fn cli_container_status_json_reports_default_container_contract() {
             .display()
     );
     assert_eq!(parsed["result"]["mounts"][0], expected_mount);
+}
+
+#[test]
+fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
+    let root = temp_workspace("container-status-unrelated-secrets");
+    write_container_fixture(&root, None, "./app:/workspace");
+    append_required_container_secret(&root);
+    write_locked_test_vault(&root, "vault-passphrase", &[]);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "status failed: {output:?}");
+    assert!(
+        !stderr.contains("container secrets require an unlocked vault passphrase"),
+        "{stderr}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_eq!(parsed["result"]["container"], "web");
 }
 
 #[test]

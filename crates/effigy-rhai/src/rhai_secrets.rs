@@ -23,9 +23,14 @@ pub(crate) fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce
     })
 }
 
+pub(crate) fn rhai_script_consumes_secrets(script: &str) -> bool {
+    script.contains("secrets::")
+}
+
 pub(crate) fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
+    consume_secrets: bool,
 ) -> Result<RhaiSecretStore, RhaiHostError> {
     if external_task_source_isolation_active() {
         return Ok(isolated_rhai_secret_store());
@@ -56,7 +61,7 @@ pub(crate) fn resolve_rhai_secret_store(
             store.declared_other_target.insert(name.clone());
         }
     }
-    if store.declared_rhai.is_empty() {
+    if store.declared_rhai.is_empty() || !consume_secrets {
         return Ok(store);
     }
 

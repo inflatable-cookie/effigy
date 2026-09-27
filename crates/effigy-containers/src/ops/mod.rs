@@ -79,6 +79,10 @@ impl ContainerOperationPlan {
         }
     }
 
+    pub fn consumes_declared_container_secrets(&self) -> bool {
+        self.side_effect.consumes_declared_container_secrets()
+    }
+
     pub fn report(self, result: ContainerOperationResult) -> ContainerOperationReport {
         ContainerOperationReport {
             repo_root: self.request.repo_root,
@@ -183,6 +187,7 @@ mod tests {
         .plan();
 
         assert_eq!(plan.side_effect, ContainerSideEffectClass::StartsRuntime);
+        assert!(plan.consumes_declared_container_secrets());
         assert_eq!(
             plan.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
@@ -225,6 +230,7 @@ mod tests {
         .plan();
 
         assert_eq!(plan.side_effect, ContainerSideEffectClass::RecreatesRuntime);
+        assert!(plan.consumes_declared_container_secrets());
         assert_eq!(
             plan.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
@@ -259,6 +265,7 @@ mod tests {
         .plan();
 
         assert_eq!(plan.side_effect, ContainerSideEffectClass::ReadsRuntime);
+        assert!(!plan.consumes_declared_container_secrets());
         assert_eq!(
             plan.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
