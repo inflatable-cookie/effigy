@@ -44,8 +44,19 @@ fn builtin_unlock_parser_contracts_are_stable() {
         ])
     );
 
+    let parsed = parse_unlock_contract_request(&task, &string_args(&["validate:activity-routing"]))
+        .expect("unlock parse");
+    assert_eq!(
+        parsed.scopes,
+        string_args(&["task:validate:activity-routing"])
+    );
+
     assert_parser_task_invocation_error(
         parse_unlock_contract_request(&task, &string_args(&[])),
         "`tasks unlock` requires at least one scope (or `--all`)",
+    );
+    assert_parser_task_invocation_error(
+        parse_unlock_contract_request(&task, &string_args(&["profile:foo"])),
+        "task:validate:activity-routing",
     );
 }

@@ -377,15 +377,27 @@ effigy tasks unlock --all --yes
 
 ### Symptom: `lock conflict for <scope> ...`
 
+Diagnosis:
+
+```sh
+effigy tasks status <selector>
+```
+
+A timed-out waiter (`--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`) names the live
+owner and this status command. Retry after that owner releases. Do not unlock a
+live owner unless you intend to interrupt it.
+
 Fix:
 
 ```sh
+effigy tasks unlock task:<selector>
+effigy tasks unlock validate:activity-routing
 effigy tasks unlock shared:<name>
-effigy tasks unlock task:<name>
 effigy tasks unlock profile:<task>/<profile>
 ```
 
-Use `--all` only when you cannot isolate a safe scope.
+A bare task selector unlocks the matching `task:<selector>` scope. Use `--all`
+only when you cannot isolate a safe scope.
 
 ## 6) Managed TUI and Argument Errors
 

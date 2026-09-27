@@ -61,17 +61,23 @@ pub(crate) fn scope_project_name(
     share_runtime_identity: bool,
 ) -> Result<String, ContainerPolicyError> {
     if share_runtime_identity {
-        Ok(project_name)
-    } else if let Some(scope) = worktree_scope::load_or_create(repo_root).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "cannot establish linked-worktree runtime identity for {}: {error}",
-            repo_root.display()
-        ))
-    })? {
-        Ok(format!("{project_name}-wt-{}", &scope[..12]))
-    } else {
-        Ok(project_name)
+        return Ok(project_name);
     }
+    let Some((kind, scope)) =
+        worktree_scope::load_or_create_scoped(repo_root).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "cannot establish checkout runtime scope for {}: {error}",
+                repo_root.display()
+            ))
+        })?
+    else {
+        return Ok(project_name);
+    };
+    Ok(format!(
+        "{project_name}-{}-{}",
+        kind.project_tag(),
+        &scope[..12]
+    ))
 }
 
 fn default_project_name(
@@ -205,6 +211,50 @@ mod tests {
         assert_eq!(
             resolve_project_name(&shared, "app", "dev", 1, &root.path().join("one")).unwrap(),
             "app-dev"
+        );
+    }
+
+    #[test]
+    fn marked_ephemeral_clone_gets_stable_distinct_name_and_unmarked_clone_keeps_base() {
+        let root = tempfile::tempdir().unwrap();
+        let config: ManifestContainerConfig = toml::from_str("project_name = 'app-dev'").unwrap();
+
+        // Unmarked full clone: primary-checkout behavior, no suffix.
+        let plain = root.path().join("plain");
+        std::fs::create_dir_all(plain.join(".git")).unwrap();
+        std::fs::write(plain.join(".git/config"), "[core]\n").unwrap();
+        assert_eq!(
+            resolve_project_name(&config, "app", "dev", 1, &plain).unwrap(),
+            "app-dev"
+        );
+
+        // Marked clone: stable `-ec-` suffixed name, distinct per token.
+        let marked = root.path().join("marked");
+        std::fs::create_dir_all(marked.join(".git")).unwrap();
+        std::fs::write(
+            marked.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        let first = resolve_project_name(&config, "app", "dev", 1, &marked).unwrap();
+        assert_eq!(
+            first,
+            resolve_project_name(&config, "app", "dev", 1, &marked).unwrap()
+        );
+        assert!(first.starts_with("app-dev-ec-"));
+        assert_ne!(first, "app-dev");
+
+        // Recreating the clone at the same path yields a new generation.
+        std::fs::remove_dir_all(marked.join(".git")).unwrap();
+        std::fs::create_dir_all(marked.join(".git")).unwrap();
+        std::fs::write(
+            marked.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        assert_ne!(
+            first,
+            resolve_project_name(&config, "app", "dev", 1, &marked).unwrap()
         );
     }
 }

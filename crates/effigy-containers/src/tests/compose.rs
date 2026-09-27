@@ -122,6 +122,129 @@ catalog = "workspace-rust-bun"
 }
 
 #[test]
+fn marked_ephemeral_clones_get_distinct_compose_resources_alongside_unmarked_checkout() {
+    with_temp_effigy_home("ephemeral-clone-resources", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("ephemeral-clone-resources");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "shared-dev"
+primary_service = "app"
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+host_ports = ["41001:41001"]
+"#;
+        // The operator's own unmarked checkout keeps primary behavior.
+        let operator = root.join("operator");
+        fs::create_dir_all(operator.join(".git")).unwrap();
+        fs::write(operator.join(".git/config"), "[core]\n").unwrap();
+        fs::write(operator.join("effigy.toml"), manifest).unwrap();
+        let operator_policy = load_container_policy(&operator, None).unwrap();
+        assert_eq!(operator_policy.project_name, "shared-dev");
+
+        let mut identities = Vec::new();
+        for name in ["clone-one", "clone-two"] {
+            let checkout = root.join(name);
+            fs::create_dir_all(checkout.join(".git")).unwrap();
+            fs::write(
+                checkout.join(".git/config"),
+                "[effigy]\n\truntimeScope = ephemeral\n",
+            )
+            .unwrap();
+            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            let policy = load_container_policy(&checkout, None).unwrap();
+            assert!(
+                policy.project_name.starts_with("shared-dev-ec-"),
+                "{}",
+                policy.project_name
+            );
+            assert!(policy
+                .managed_volumes
+                .iter()
+                .all(|volume| volume.name.starts_with(&policy.project_name)));
+            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(compose.contains("com.effigy.scope"), "{compose}");
+            identities.push((policy.project_name.clone(), policy.declared_ports.clone()));
+        }
+        // Distinct from the operator checkout and from each other.
+        assert_ne!(identities[0].0, identities[1].0);
+        assert_ne!(identities[0].0, "shared-dev");
+        assert_ne!(identities[0].1, identities[1].1);
+        assert_ne!(identities[0].1, vec!["41001:41001".to_owned()]);
+
+        // Repeated commands reuse the identity; a recreated clone gets a new
+        // generation with its own name and ports.
+        let again = load_container_policy(&root.join("clone-one"), None).unwrap();
+        assert_eq!(again.project_name, identities[0].0);
+        assert_eq!(again.declared_ports, identities[0].1);
+        fs::remove_dir_all(root.join("clone-one").join(".git")).unwrap();
+        fs::create_dir_all(root.join("clone-one").join(".git")).unwrap();
+        fs::write(
+            root.join("clone-one").join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        let recreated = load_container_policy(&root.join("clone-one"), None).unwrap();
+        assert_ne!(recreated.project_name, identities[0].0);
+        assert_ne!(recreated.declared_ports, identities[0].1);
+    });
+}
+
+#[test]
+fn marked_ephemeral_clones_get_distinct_effective_hosts_and_unmarked_keeps_declared() {
+    with_temp_effigy_home("ephemeral-clone-hosts", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("ephemeral-clone-hosts");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
+primary_service = "app"
+[containers.web.dns]
+routes = [
+  { domain = "app.test", tls = true, service = "web" },
+  { domain = "mail.app.test", tls = false, service = "mail" },
+]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+"#;
+        let operator = root.join("operator");
+        fs::create_dir_all(operator.join(".git")).unwrap();
+        fs::write(operator.join(".git/config"), "[core]\n").unwrap();
+        fs::write(operator.join("effigy.toml"), manifest).unwrap();
+        let operator_policy = load_container_policy(&operator, None).unwrap();
+        assert_eq!(operator_policy.dns_routes[0].declared(), "app.test");
+        assert_eq!(operator_policy.dns_routes[0].domain, "app.test");
+
+        let mut effective = Vec::new();
+        for name in ["clone-one", "clone-two"] {
+            let checkout = root.join(name);
+            fs::create_dir_all(checkout.join(".git")).unwrap();
+            fs::write(
+                checkout.join(".git/config"),
+                "[effigy]\n\truntimeScope = ephemeral\n",
+            )
+            .unwrap();
+            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            let policy = load_container_policy(&checkout, None).unwrap();
+            assert_eq!(policy.dns_routes[0].declared(), "app.test");
+            assert_ne!(policy.dns_routes[0].domain, "app.test");
+            assert!(policy.dns_routes[0].domain.contains("-w"));
+            assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
+            assert!(policy.compose_files[0].is_file());
+            let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
+            assert!(compose.contains("com.effigy.scope"), "{compose}");
+            effective.push(policy.dns_routes[0].domain.clone());
+        }
+        assert_ne!(effective[0], effective[1]);
+        assert_ne!(effective[0], "app.test");
+    });
+}
+
+#[test]
 fn linked_direct_compose_with_fixed_port_fails_closed() {
     let root = temp_repo("linked-direct-fixed-port");
     let checkout = root.join("worker");
@@ -154,6 +277,64 @@ primary_service = "app"
         .unwrap_err()
         .to_string();
     assert!(error.contains("services.app.ports"), "{error}");
+}
+
+#[test]
+fn marked_clone_direct_compose_with_fixed_port_fails_closed() {
+    let root = temp_repo("clone-direct-fixed-port");
+    let checkout = root.join("clone");
+    fs::create_dir_all(checkout.join(".git")).unwrap();
+    fs::write(
+        checkout.join(".git/config"),
+        "[effigy]\n\truntimeScope = ephemeral\n",
+    )
+    .unwrap();
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
+    )
+    .unwrap();
+    fs::write(
+        checkout.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+"#,
+    )
+    .unwrap();
+    let error = load_container_policy(&checkout, None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("services.app.ports"), "{error}");
+}
+
+#[test]
+fn unmarked_clone_direct_compose_keeps_primary_fixed_port_behavior() {
+    let root = temp_repo("unmarked-clone-direct-fixed-port");
+    let checkout = root.join("clone");
+    fs::create_dir_all(checkout.join(".git")).unwrap();
+    fs::write(checkout.join(".git/config"), "[core]\n").unwrap();
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
+    )
+    .unwrap();
+    fs::write(
+        checkout.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+"#,
+    )
+    .unwrap();
+    let policy = load_container_policy(&checkout, None).unwrap();
+    assert!(policy.declared_ports.contains(&"8080:80".to_owned()));
 }
 
 #[test]

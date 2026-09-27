@@ -171,15 +171,20 @@ Definition:
 - Runtime lock key used to avoid conflicting executions.
 
 Common scopes:
-- `task:<name>` by default
+- `task:<selector>` by default, using the full rendered selector
 - `shared:<name>` for explicit cross-task serialization
 - `profile:<task>/<profile>`
+
+Independent selectors do not share a default task lock. Wait for a live owner
+with `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`; a timed-out waiter inspects
+that owner with `effigy tasks status <selector>`.
 
 Recovery command:
 
 ```sh
 effigy tasks unlock shared:dev-stack
 effigy tasks unlock task:watch:test
+effigy tasks unlock validate:activity-routing
 ```
 
 ## Explain Mode

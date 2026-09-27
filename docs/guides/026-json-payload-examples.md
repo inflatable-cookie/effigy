@@ -2421,6 +2421,34 @@ Starter list / starter emission still use the starter-oriented init contracts.
 }
 ```
 
+### 17b) Lock wait timeout (`effigy.lock-wait.v1`)
+
+Returned as `error.details` when `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`
+expires against a live owner.
+
+```json
+{
+  "schema": "effigy.lock-wait.v1",
+  "schema_version": 1,
+  "scope": "task:dev",
+  "lock_path": "/workspace/app/.effigy/locks/task-dev.lock",
+  "holder_pid": 1234,
+  "holder_started_at_epoch_ms": 1710000000000,
+  "holder_heartbeat_at_epoch_ms": 1710000000500,
+  "holder_hostname": "dev-host",
+  "holder_workspace_root": "/workspace/app",
+  "wait_timeout_ms": 150,
+  "waited_ms": 150,
+  "status_command": "effigy tasks status dev",
+  "unlock_command": "effigy tasks unlock task:dev",
+  "next": [
+    "inspect the live owner with `effigy tasks status dev`",
+    "retry after that owner releases the lock",
+    "or clear the scope with `effigy tasks unlock task:dev`"
+  ]
+}
+```
+
 ## Completion
 
 ### 18) Completion (`effigy.completion.v2`)
@@ -3938,6 +3966,10 @@ An `--only` handle that resolves to nothing is reported rather than ignored:
 ```
 
 ### Container Hosts (`effigy.container.hosts.v1`)
+
+`scope.kind` is `primary`, `worktree` (linked Git worktree), or
+`ephemeral-clone` (full clone marked `effigy.runtimeScope = ephemeral`).
+Worktree and ephemeral-clone scopes rewrite declared domains the same way.
 
 ```json
 {

@@ -32,6 +32,7 @@ fn runtime_args_parse_is_stable() {
     assert_eq!(parsed.repo_override, Some(PathBuf::from("/tmp/repo")));
     assert_eq!(parsed.env_schema_override, Some(PathBuf::from("env.toml")));
     assert!(parsed.verbose_root);
+    assert_eq!(parsed.lock_wait_ms, None);
     assert_eq!(parsed.passthrough, vec!["--watch".to_owned()]);
 }
 
@@ -80,6 +81,25 @@ fn runtime_args_keep_repo_override_before_passthrough_delimiter() {
             "/tmp/task-repo".to_owned(),
         ]
     );
+}
+
+#[test]
+fn runtime_args_parse_lock_wait_ms() {
+    let parsed = parse_task_runtime_args(&[
+        "--lock-wait-ms".to_owned(),
+        "150".to_owned(),
+        "--verbose-root".to_owned(),
+    ])
+    .expect("runtime args");
+    assert_eq!(parsed.lock_wait_ms, Some(150));
+    assert!(parsed.verbose_root);
+}
+
+#[test]
+fn runtime_args_reject_invalid_lock_wait_ms() {
+    let err = parse_task_runtime_args(&["--lock-wait-ms".to_owned(), "-1".to_owned()])
+        .expect_err("invalid lock wait");
+    assert!(err.contains("--lock-wait-ms must be a non-negative integer"));
 }
 
 #[test]

@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(super) struct LockWaitEvidence {
+    pub timeout_ms: u64,
+    pub waited_ms: u64,
+}
+
 use nix::errno::Errno;
 use nix::sys::signal;
 use nix::unistd::Pid;
@@ -68,6 +73,7 @@ pub(super) fn lock_conflict(
     lock_path: PathBuf,
     workspace_root: &Path,
     existing: Option<super::LockRecord>,
+    wait: Option<LockWaitEvidence>,
 ) -> RunnerError {
     let (holder_pid, started_at, heartbeat_at, holder_hostname, holder_workspace_root) = existing
         .map(|record| {
@@ -81,19 +87,70 @@ pub(super) fn lock_conflict(
         })
         .unwrap_or((None, None, None, None, None));
 
+    let status_command = scope_label
+        .strip_prefix("task:")
+        .map(|selector| format!("effigy tasks status {selector}"));
+    let unlock_command = format!("effigy tasks unlock {scope_label}");
+    let remediation = match (&wait, &status_command) {
+        (Some(wait), Some(status_command)) => format!(
+            "Waited {}ms (timeout {}ms) for a live owner. Inspect with `{status_command}`, then retry after release, or clear lock manually with `{unlock_command}` (or `effigy tasks unlock --all`) in {}",
+            wait.waited_ms,
+            wait.timeout_ms,
+            workspace_root.display()
+        ),
+        (Some(wait), None) => format!(
+            "Waited {}ms (timeout {}ms) for a live owner. Retry after that owner releases, or clear lock manually with `{unlock_command}` (or `effigy tasks unlock --all`) in {}",
+            wait.waited_ms,
+            wait.timeout_ms,
+            workspace_root.display()
+        ),
+        (None, _) => format!(
+            "Resolve the conflicting run or clear lock manually with `{unlock_command}` (or `effigy tasks unlock --all`) in {}",
+            workspace_root.display()
+        ),
+    };
+    let details_json = wait.as_ref().map(|wait| {
+        serde_json::json!({
+            "schema": "effigy.lock-wait.v1",
+            "schema_version": 1,
+            "scope": scope_label,
+            "lock_path": lock_path.display().to_string(),
+            "holder_pid": holder_pid,
+            "holder_started_at_epoch_ms": started_at,
+            "holder_heartbeat_at_epoch_ms": heartbeat_at,
+            "holder_hostname": holder_hostname,
+            "holder_workspace_root": holder_workspace_root,
+            "wait_timeout_ms": wait.timeout_ms,
+            "waited_ms": wait.waited_ms,
+            "status_command": status_command,
+            "unlock_command": unlock_command,
+            "next": status_command.as_ref().map(|status_command| {
+                vec![
+                    format!("inspect the live owner with `{status_command}`"),
+                    "retry after that owner releases the lock".to_owned(),
+                    format!("or clear the scope with `{unlock_command}`"),
+                ]
+            }).unwrap_or_else(|| vec![
+                "retry after the live owner releases the lock".to_owned(),
+                format!("or clear the scope with `{unlock_command}`"),
+            ]),
+        })
+        .to_string()
+    });
+
     RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
-        scope: scope_label.clone(),
+        scope: scope_label,
         lock_path,
         holder_pid,
         holder_started_at_epoch_ms: started_at,
         holder_heartbeat_at_epoch_ms: heartbeat_at,
         holder_hostname,
         holder_workspace_root,
-        remediation: format!(
-            "Resolve the conflicting run or clear lock manually with `effigy tasks unlock {}` (or `effigy tasks unlock --all`) in {}",
-            scope_label,
-            workspace_root.display()
-        ),
+        wait_timeout_ms: wait.as_ref().map(|wait| wait.timeout_ms),
+        waited_ms: wait.as_ref().map(|wait| wait.waited_ms),
+        status_command,
+        details_json,
+        remediation,
     }))
 }
 

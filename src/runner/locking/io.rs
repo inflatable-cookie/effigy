@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,28 @@ mod paths;
 mod stale;
 
 const LOCKS_DIR: &str = ".effigy/locks";
+pub(in crate::runner) const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
+const LOCK_WAIT_POLL_MS: u64 = 50;
+
+pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u64, RunnerError> {
+    if let Some(value) = explicit {
+        return Ok(value);
+    }
+    match std::env::var(LOCK_WAIT_ENV) {
+        Ok(raw) => {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                return Ok(0);
+            }
+            raw.parse::<u64>().map_err(|_| {
+                RunnerError::task_invocation(format!(
+                    "`{LOCK_WAIT_ENV}` must be a non-negative integer millisecond count"
+                ))
+            })
+        }
+        Err(_) => Ok(0),
+    }
+}
 
 #[derive(Debug)]
 pub(in crate::runner) struct LockGuard {
@@ -57,6 +79,14 @@ pub(in crate::runner) fn acquire_scopes(
     workspace_root: &Path,
     scopes: &[LockScope],
 ) -> Result<Vec<LockGuard>, RunnerError> {
+    acquire_scopes_with_wait(workspace_root, scopes, 0)
+}
+
+pub(in crate::runner) fn acquire_scopes_with_wait(
+    workspace_root: &Path,
+    scopes: &[LockScope],
+    wait_timeout_ms: u64,
+) -> Result<Vec<LockGuard>, RunnerError> {
     let mut unique_scopes = scopes.to_vec();
     unique_scopes.sort();
     unique_scopes.dedup();
@@ -65,7 +95,12 @@ pub(in crate::runner) fn acquire_scopes(
 
     let mut guards = Vec::with_capacity(unique_scopes.len());
     for scope in unique_scopes {
-        guards.push(acquire_scope_lock(&locks_root, scope, workspace_root)?);
+        guards.push(acquire_scope_lock(
+            &locks_root,
+            scope,
+            workspace_root,
+            wait_timeout_ms,
+        )?);
     }
     Ok(guards)
 }
@@ -123,6 +158,7 @@ fn acquire_scope_lock(
     locks_root: &Path,
     scope: LockScope,
     workspace_root: &Path,
+    wait_timeout_ms: u64,
 ) -> Result<LockGuard, RunnerError> {
     let path = locks_root.join(scope.file_name());
     let scope_label = scope.label();
@@ -137,6 +173,8 @@ fn acquire_scope_lock(
     };
     let body = serde_json::to_vec(&record)
         .map_err(|error| RunnerError::Ui(format!("failed to encode lock record: {error}")))?;
+    let wait_started_at = Instant::now();
+    let deadline = wait_started_at + Duration::from_millis(wait_timeout_ms);
 
     loop {
         match OpenOptions::new().create_new(true).write(true).open(&path) {
@@ -166,11 +204,31 @@ fn acquire_scope_lock(
                     }
                 }
 
+                if wait_timeout_ms > 0 {
+                    let now = Instant::now();
+                    if now < deadline {
+                        let remaining = deadline.saturating_duration_since(now);
+                        thread::sleep(remaining.min(Duration::from_millis(LOCK_WAIT_POLL_MS)));
+                        continue;
+                    }
+                    return Err(stale::lock_conflict(
+                        scope_label,
+                        path,
+                        workspace_root,
+                        existing,
+                        Some(stale::LockWaitEvidence {
+                            timeout_ms: wait_timeout_ms,
+                            waited_ms: elapsed_wait_ms(wait_started_at),
+                        }),
+                    ));
+                }
+
                 return Err(stale::lock_conflict(
                     scope_label,
                     path,
                     workspace_root,
                     existing,
+                    None,
                 ));
             }
             Err(error) => {
@@ -178,6 +236,10 @@ fn acquire_scope_lock(
             }
         }
     }
+}
+
+fn elapsed_wait_ms(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 impl LockGuard {

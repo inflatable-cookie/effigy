@@ -13,6 +13,14 @@ During v0.x, MINOR bumps may include breaking changes.
   gates still run locally. Missing, pending, failed, ambiguous,
   wrong-repository, or wrong-SHA evidence fails closed. The release record
   names each reused gate and links to its run.
+- Task lock waits are bounded by `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`.
+  Independent selectors keep distinct `task:<selector>` locks. A timed-out
+  waiter names the live owner and `effigy tasks status <selector>`; that
+  query keeps the still-running owner, including in-process sequence tasks,
+  so the caller can retry after release.
+  Lock-wait JSON stays in `--json` `error.details`. `effigy tasks unlock`
+  accepts a task selector such as `validate:activity-routing` as
+  `task:validate:activity-routing`.
 - `effigy <selector> --plan` and `effigy draft <selector> --plan` resolve the
   task, catalog, and command without starting a task process. `--plan` is
   consumed by Effigy and is not passed through to the task. Unresolved
@@ -45,6 +53,17 @@ During v0.x, MINOR bumps may include breaking changes.
 - Linked worktrees expose one effective host map (`effigy container hosts`)
   that rewrites declared HTTP routes and TCP aliases onto
   `<apex>-w<scope>.test` while the primary checkout keeps declared names.
+- A full clone marked `effigy.runtimeScope = ephemeral` in its local Git
+  config now receives the same isolated runtime identity as a linked Git
+  worktree: a token in the clone's own `.git/effigy-runtime-scope`, distinct
+  generated Compose names (`-ec-` tag) and allocated ports, the same
+  effective gateway hosts (`scope.kind = "ephemeral-clone"` in `container
+  hosts --json`), gateway route ownership, and `container retire` with
+  retry-by-token after the clone is deleted. The marker is read from the
+  checkout's own `.git/config` only — no global or system Git config, no
+  include expansion — and no shared-Git-directory mount is added because a
+  marked clone is self-contained. Unmarked clones keep primary-checkout
+  behavior; recreated clones get a new generation token.
 - `effigy container retire` removes one runtime scope's owned containers,
   networks, mutable volumes, isolated routes and ports using label proofs
   and a durable record under `~/.effigy/runtime-scopes/`, so cleanup can

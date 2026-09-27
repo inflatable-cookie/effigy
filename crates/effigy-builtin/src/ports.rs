@@ -66,6 +66,26 @@ impl LockScope {
         None
     }
 
+    /// Parse an unlock target. Typed scopes keep their current meaning.
+    /// A task selector such as `validate:activity-routing` maps to
+    /// `task:validate:activity-routing` instead of silently targeting a
+    /// different lock family.
+    pub fn parse_unlock_target(value: &str) -> Result<Self, String> {
+        let raw = value.trim();
+        if let Some(scope) = Self::parse(raw) {
+            return Ok(scope);
+        }
+        if incomplete_typed_unlock_scope(raw)
+            || raw.is_empty()
+            || raw.chars().any(char::is_whitespace)
+        {
+            return Err(format!(
+                "unlock target `{raw}` is invalid; expected `workspace`, `shared:<name>`, `task:<name>`, `profile:<task>/<profile>`, or a task selector such as `validate:activity-routing` (unlocks `task:validate:activity-routing`)"
+            ));
+        }
+        Ok(Self::Task(raw.to_owned()))
+    }
+
     pub fn label(&self) -> String {
         match self {
             Self::Workspace => "workspace".to_owned(),
@@ -88,6 +108,22 @@ fn sanitize_for_file_name(value: &str) -> String {
             _ => '-',
         })
         .collect::<String>()
+}
+
+fn incomplete_typed_unlock_scope(raw: &str) -> bool {
+    raw == "shared"
+        || raw
+            .strip_prefix("shared:")
+            .is_some_and(|name| name.trim().is_empty())
+        || raw
+            .strip_prefix("task:")
+            .is_some_and(|name| name.trim().is_empty())
+        || raw == "profile"
+        || raw.strip_prefix("profile:").is_some_and(|rest| {
+            rest.split_once('/')
+                .map(|(task, profile)| task.trim().is_empty() || profile.trim().is_empty())
+                .unwrap_or(true)
+        })
 }
 
 /// Outcome of releasing one or more lock scopes. Moved from
@@ -192,4 +228,32 @@ pub trait BuiltinRuntimePorts {
         catalogs: &[LoadedCatalog],
         resolved_root: &Path,
     ) -> BTreeSet<String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LockScope;
+
+    #[test]
+    fn parse_unlock_target_maps_task_selectors_to_task_scopes() {
+        assert_eq!(
+            LockScope::parse_unlock_target("validate:activity-routing").expect("selector"),
+            LockScope::Task("validate:activity-routing".to_owned())
+        );
+        assert_eq!(
+            LockScope::parse_unlock_target("dev").expect("selector"),
+            LockScope::Task("dev".to_owned())
+        );
+        assert_eq!(
+            LockScope::parse_unlock_target("task:dev").expect("typed"),
+            LockScope::Task("dev".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_unlock_target_rejects_incomplete_typed_scopes_with_selector_example() {
+        let err = LockScope::parse_unlock_target("profile:foo").expect_err("incomplete");
+        assert!(err.contains("profile:<task>/<profile>"));
+        assert!(err.contains("task:validate:activity-routing"));
+    }
 }

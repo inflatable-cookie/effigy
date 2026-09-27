@@ -1,8 +1,9 @@
 //! Effective gateway hostnames for one runtime scope.
 //!
-//! The primary checkout keeps declared domains. A linked worktree that does
-//! not share runtime identity rewrites the apex so every declared HTTP route
-//! and TCP alias stays together under `<apex>-w<host-key>.<tld>`.
+//! The primary checkout keeps declared domains. A linked worktree or a marked
+//! ephemeral clone that does not share runtime identity rewrites the apex so
+//! every declared HTTP route and TCP alias stays together under
+//! `<apex>-w<host-key>.<tld>`.
 
 use super::model::{EffectiveDnsRoute, EffectiveServiceAlias, SharedServiceBinding};
 use effigy_core::worktree_scope;
@@ -13,6 +14,8 @@ pub const HOST_KEY_LEN: usize = 8;
 pub enum HostScopeKind {
     Primary,
     Worktree,
+    /// Full clone marked `effigy.runtimeScope = ephemeral` in local config.
+    EphemeralClone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +52,15 @@ impl EffectiveHostMap {
 
     pub fn relying_party_id(&self) -> Option<&str> {
         self.effective_base.as_deref()
+    }
+
+    /// Presentational override for which checkout shape owns the token.
+    /// Route rewriting depends on the token, not the kind; callers that
+    /// resolved the kind from the checkout call this so reports stay honest
+    /// about ephemeral clones versus linked worktrees.
+    pub fn with_scope_kind(mut self, kind: HostScopeKind) -> Self {
+        self.kind = kind;
+        self
     }
 }
 
@@ -193,7 +205,7 @@ pub fn scope_token(
     }
     worktree_scope::load_or_create(repo_root).map_err(|error| {
         super::model::ContainerPolicyError::TaskInvocation(format!(
-            "cannot establish linked-worktree runtime identity for {}: {error}",
+            "cannot establish checkout runtime scope for {}: {error}",
             repo_root.display()
         ))
     })
@@ -331,5 +343,21 @@ mod tests {
         assert_eq!(map.effective_base.as_deref(), Some("app.test"));
         assert_eq!(map.routes[0].effective, "app.test");
         assert!(map.shared_runtime_identity);
+    }
+
+    #[test]
+    fn scope_kind_override_relabels_clone_without_touching_routes() {
+        let token = "abcdef0123456789abcdef0123456789";
+        let map = build_host_map(
+            &[http("app.test", false, None)],
+            &[],
+            &[],
+            Some(token),
+            false,
+        )
+        .with_scope_kind(HostScopeKind::EphemeralClone);
+        assert_eq!(map.kind, HostScopeKind::EphemeralClone);
+        assert_eq!(map.routes[0].effective, "app-wabcdef01.test");
+        assert_eq!(map.host_key.as_deref(), Some("abcdef01"));
     }
 }

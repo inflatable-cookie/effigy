@@ -219,6 +219,7 @@ pub struct ExecutionRuntimeArgsPlan {
     pub repo_override: Option<PathBuf>,
     pub verbose_root: bool,
     pub env_schema_override: Option<PathBuf>,
+    pub lock_wait_ms: Option<u64>,
     pub output_json: bool,
     pub plan: bool,
 }
@@ -235,6 +236,7 @@ impl ExecutionRuntimeArgsPlan {
             repo_override: raw.repo_override,
             verbose_root: raw.verbose_root,
             env_schema_override: raw.env_schema_override,
+            lock_wait_ms: raw.lock_wait_ms,
             output_json,
             plan,
         })
@@ -245,6 +247,7 @@ impl ExecutionRuntimeArgsPlan {
             repo_override: self.repo_override.clone(),
             verbose_root: self.verbose_root,
             env_schema_override: self.env_schema_override.clone(),
+            lock_wait_ms: self.lock_wait_ms,
             passthrough: self.raw_args.clone(),
         }
     }
@@ -254,6 +257,7 @@ impl ExecutionRuntimeArgsPlan {
             repo_override: self.repo_override.clone(),
             verbose_root: self.verbose_root,
             env_schema_override: self.env_schema_override.clone(),
+            lock_wait_ms: self.lock_wait_ms,
             passthrough: self.exec_args.clone(),
         }
     }

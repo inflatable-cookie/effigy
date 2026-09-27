@@ -157,13 +157,13 @@ through the help route.
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup for deterministic apply/check/repair, wider setup inventory via checklist mode, or explicit named starter emission when requested | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, including the optional repository-defined `[docs_policy.graph]` profile, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
-| `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
+| `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json`; typed scopes or a task selector such as `validate:activity-routing` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
 | `effigy tasks cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy config completion` | Prompt for shell completion setup on a real TTY, export raw shell completion scripts, install user-local completion files, wire bash/zsh startup automatically when needed, and surface selector candidates | `bash\|zsh\|fish`, `--install`, `--export`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v2`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--repo`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `plan --manifest <PATH>`, `plan --stack <NAME>`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `capture --role ... --source-env ... --key ...`, `history [<STACK>]`, `--write-report`, `--yes`, `--push`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | `073-state-stack-guide.md`, [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../knowledge/contracts/016-state-stack-and-layered-seed-framework-contract.md) |
-| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`; `--plan`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1`, `effigy.task.plan.v1` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
+| `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules; `--plan` inspects the resolved task, catalog, and command without executing; managed tasks also support a concurrent headless supervisor selected by flag or environment | leading `--repo`, `--verbose-root`, `--env-schema`, `--lock-wait-ms`; `EFFIGY_LOCK_WAIT_MS`; `--plan`; managed `--headless` / `EFFIGY_MANAGED_HEADLESS=1`, `status`, `logs [process] [--follow]`, `stop`; passthrough args; task-local `--json` where supported | `effigy.task.run.v1`, `effigy.task.plan.v1`; lock-wait timeout details use `effigy.lock-wait.v1` | `012-dev-process-manager-tui.md`, `016-task-routing-precedence.md`, `020-dag-lock-policy-baseline.md`, `022-manifest-cookbook.md`, `050-env-schema-integration.md` |
 
 ## JSON Envelope
 
@@ -362,8 +362,8 @@ effigy init --apply-actions <ID>[,<ID>...] [--json]
 effigy init <name> [--dry-run] [--force] [--json]
 effigy init --list [--json]
 effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
-effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--plan] [--json] [task args]
-effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--plan] [--json] [task args]
+effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
+effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 ```
 
 Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
@@ -500,9 +500,11 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - managed headless runs keep task-local state and logs under
   `.effigy/runtime/managed/`; `EFFIGY_MANAGED_HEADLESS=1` is equivalent to
   `--headless`
-- `--verbose-root` and `--env-schema` apply to manifest task invocations; the
-  passthrough-style built-ins `doctor`, `watch`, and `scan` reject them on the
-  built-in invocation itself (use `effigy <builtin> --help` and
+- `--verbose-root`, `--env-schema`, and `--lock-wait-ms` apply to manifest task
+  invocations; `EFFIGY_LOCK_WAIT_MS` is the env fallback when the flag is
+  omitted. The passthrough-style built-ins `doctor`, `watch`, and `scan` reject
+  `--verbose-root` and `--env-schema` on the built-in invocation itself (use
+  `effigy <builtin> --help` and
   [`050-env-schema-integration.md`](050-env-schema-integration.md))
 - `effigy <selector> --plan` inspects the resolved task, catalog, and command
   without starting a task process. `--json` is output format only:
@@ -520,6 +522,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `config --path` requires `--inspect`
 - `config --runner` requires `--schema --target test`
 - `tasks unlock` accepts either explicit scopes or `--all`, not both
+- `tasks unlock` accepts a task selector such as `validate:activity-routing` as
+  `task:validate:activity-routing`; incomplete typed scopes fail with that example
 - `tasks cache invalidate` accepts selectors or `--all`, not both
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts

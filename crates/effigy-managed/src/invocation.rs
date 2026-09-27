@@ -138,6 +138,7 @@ mod tests {
             repo_override: None,
             verbose_root: false,
             env_schema_override: None,
+            lock_wait_ms: None,
             passthrough: values.iter().map(|value| (*value).to_owned()).collect(),
         }
     }
