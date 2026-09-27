@@ -2,16 +2,15 @@ use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
     apply_release_mutations, build_release_prepare_plan, collect_release_gate_run,
     collect_release_status, compare_release_state_fingerprints, execute_release_prepare,
-    format_release_tag, gate_blockers,
-    git_create_tag, git_modified_files, is_optional_next_version_blocker, is_release_state_file, load_release_config,
+    format_release_tag, gate_blockers, git_create_tag, git_modified_files,
+    is_optional_next_version_blocker, is_release_state_file, load_release_config,
     load_release_context, load_release_prepared_state, normalized_expected_files,
     render_release_gate_run_json, render_release_gate_run_text, render_release_prepare_plan_text,
     render_release_prepared_text, render_release_status_json, render_release_status_text,
-    restore_mutation_snapshots, run_release_gates,
-    snapshot_mutation_paths, test_support, validate_planned_release_version,
-    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
-    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
-    ResolvedVersionSource, VersionFileKind,
+    restore_mutation_snapshots, run_release_gates, snapshot_mutation_paths, test_support,
+    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
+    FileMutationPlan, GateExecutionReport, GateResult, ReleasePreparedFileFingerprint,
+    ReleasePreparedSourceFingerprints, ResolvedGate, ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
 use std::fs;
