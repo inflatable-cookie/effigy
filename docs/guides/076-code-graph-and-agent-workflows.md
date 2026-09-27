@@ -19,6 +19,7 @@ Use the graph in this order:
 
 ```sh
 effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+effigy graph explore "trace release orchestrator" --stale-index --json
 effigy graph status --json
 ```
 
@@ -85,9 +86,11 @@ reindex step. On git repos whose indexed HEAD still matches with a clean
 working tree, freshness is verified via `git status` without a full scan;
 non-git repos and any git failure (no `.git`, missing `git`, unborn HEAD) fall
 back to the per-file scan-state walk. Refreshes run under a cross-process lock
-(`.effigy/graph/refresh.lock`); concurrent queries wait a short budget and then
-report the true trust state. Plain `graph status` is report-only and never
-mutates graph state; `--refresh` is the explicit mutating exception.
+(`.effigy/graph/refresh.lock`); concurrent queries wait a short budget, name the
+holder pid and age when recorded, and then serve the last complete snapshot as
+`stale-index` rather than a partial rebuild. Pass `--stale-index` to read that
+snapshot without waiting or refreshing. Plain `graph status` is report-only and
+never mutates graph state; `--refresh` is the explicit mutating exception.
 
 Graph data queries have a 120000ms wall-clock budget by default. Set
 `EFFIGY_GRAPH_TIMEOUT_MS=<MS>` to override it; `EFFIGY_GRAPH_TIMEOUT_MS=0`
@@ -204,7 +207,8 @@ Trust states:
 | `ready` | Index is current enough for navigation |
 | `refresh-recommended` | Stale paths exist; status reports it — queries refresh on demand |
 | `degraded` | Partial index problems; treat output as bounded guidance |
-| `missing-index` | No files indexed yet; queries build on demand |
+| `missing-index` | No complete index to serve; run `effigy graph index --json` |
+| `stale-index` | Last complete snapshot, read-only and not current |
 
 Query payloads are refreshed before they are served, so a stale index no
 longer poisons `explore`, `affected`, or `context` output. The
@@ -238,9 +242,13 @@ results, each query makes the index current first. The lifecycle:
    detection `graph status` reports.
 3. **Refresh on demand.** A stale or missing index is rebuilt incrementally
    (only changed files are re-extracted) under a cross-process lock.
-4. **Serve with honest trust state.** If another process is mid-refresh and
-   the wait budget expires, the query serves what exists and marks it
-   `refresh-recommended` — it never claims freshness it does not have.
+4. **Serve with honest trust state.** If another process is mid-refresh, the
+   query names the lock holder and age when available. It serves the last
+   complete snapshot as `stale-index` when one exists, and never reads a
+   partial live rebuild or claims that snapshot is current. `--stale-index`
+   skips the wait and reads that snapshot on purpose. A cold checkout with no
+   complete snapshot returns `missing-index` under `--stale-index` instead of
+   spending the query budget on the first index.
 
 ### The git fast path
 
@@ -268,10 +276,14 @@ queries never require git.
 A cross-process lock (`.effigy/graph/refresh.lock`) guarantees only one
 process re-indexes at a time. `graph index`, `graph watch` batches, the gated
 scans, `graph status --refresh`, and lazy query refreshes all take the same
-lock. When a query finds the lock held it waits a short budget (2.5s), then
-re-checks: if the other process finished, it serves fresh data; otherwise it
-serves what exists with the honest trust state. Two processes never race to
-rebuild the same graph.
+lock. The lock file records the holder pid and acquire time. When a query
+finds the lock held it names that holder and age, waits a short budget (2.5s,
+or less for a stale dead pid), then re-checks: if the other process finished,
+it serves fresh data; if a last-complete snapshot exists, it serves that as
+`stale-index`; otherwise it returns `missing-index` with the next action.
+Two processes never race to rebuild the same graph. Default query latency is
+not increased to hide a cold first index; pay that cost with
+`effigy graph index --json`.
 
 ### Surface summary
 
@@ -293,9 +305,12 @@ pays the incremental reindex, and that is proportional to what actually
 changed.
 
 The exception is the first query ever on a large repo: no index exists, so
-the query builds the whole thing. That is a one-time cost — warm the index
-ahead with `effigy graph index` when onboarding a big repository, or rely on
-`effigy graph watch` during long sessions.
+the query builds the whole thing inside the existing 120s bound, or times out
+with phase progress and the next action. Do not raise that bound to hide
+cold-start cost. Warm the index ahead with `effigy graph index` when
+onboarding a big repository, pass `--stale-index` to fail fast with
+`missing-index` instead of starting the build, or rely on `effigy graph watch`
+during long sessions.
 
 ### Trust states after a query
 

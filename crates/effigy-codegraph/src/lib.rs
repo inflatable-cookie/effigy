@@ -85,7 +85,10 @@ pub use query::{
 };
 /// Lazy on-query graph refresh (rebuilds stale indexes on demand) and the
 /// progress verdict reported while it runs.
-pub use refresh::{ensure_fresh, RefreshOutcome, RefreshPending};
+pub use refresh::{
+    ensure_fresh, inspect_refresh_lock, open_query_store, RefreshOutcome, RefreshPending,
+    RefreshPolicy, RefreshSource,
+};
 /// Catalog-derived graph scopes: selection, pruning, and storage posture.
 pub use scope::{
     build_scopes, select_scopes, GraphScope, GraphScopePlan, GraphScopeRequest, GraphScopeSelection,

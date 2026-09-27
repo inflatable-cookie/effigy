@@ -194,6 +194,7 @@ fn command_for_job(id: &str, target_root: &Path) -> Option<Command> {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })),
         "graph_index.build" => Some(Command::Graph(GraphArgs {
             subcommand: GraphSubcommand::Index,
@@ -201,6 +202,7 @@ fn command_for_job(id: &str, target_root: &Path) -> Option<Command> {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })),
         "secrets_surface.inspect" => Some(Command::Secrets(SecretsArgs {
             subcommand: SecretsSubcommand::Doctor,

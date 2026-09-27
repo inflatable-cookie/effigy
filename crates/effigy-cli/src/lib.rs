@@ -323,6 +323,8 @@ pub struct GraphArgs {
     pub catalog: Option<String>,
     /// Explicit fan-out selector (`--all-catalogs`).
     pub all_catalogs: bool,
+    /// Read the last complete graph snapshot without waiting for or starting a refresh.
+    pub stale_index: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

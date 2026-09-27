@@ -13,6 +13,15 @@ During v0.x, MINOR bumps may include breaking changes.
   selectors do not run deferral, exec aliases, or other builtins;
   `effigy test --plan` keeps the test builtin. `--json` remains an output
   format: `effigy --json <selector>` still executes.
+- Graph lookups name a live refresh-lock holder (pid and age) and serve the
+  last complete snapshot as `stale-index` instead of reading a partial rebuild
+  or spending the query budget on the lock. Without a snapshot they return
+  `missing-index` and do not query the live database. The snapshot is published
+  after the search index is rebuilt, via an atomic replace that keeps the prior
+  file until the new copy is complete. `--stale-index` reads that snapshot
+  without waiting or refreshing; a cold checkout returns `missing-index` and
+  names `effigy graph index --json`. A dead lock pid is a stale holder and does
+  not consume the full in-flight wait.
 - Container-routed worktree tasks verify the live checkout mount and refresh
   changed Cargo inputs before execution. Built-in Bun tests report the frozen
   `bootstrap deps sync` route when a fresh worktree lacks dependencies.

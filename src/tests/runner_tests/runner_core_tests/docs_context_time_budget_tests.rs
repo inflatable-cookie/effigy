@@ -254,6 +254,7 @@ fn graph_search_timeout_behavior_is_unchanged() {
         output_json: true,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
     .expect_err("cold graph search must stay bounded");
 
@@ -267,6 +268,7 @@ fn run_graph_index(root: &std::path::Path) {
         output_json: true,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
     .expect("graph index should succeed");
 }
