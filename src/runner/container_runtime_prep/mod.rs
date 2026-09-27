@@ -211,9 +211,207 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                 Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
             })
         },
-        || ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir),
+        || {
+            ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
+            if effigy_core::worktree_scope::load_or_create(repo_root)
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!("cannot identify checkout scope: {error}"))
+                })?
+                .is_some()
+            {
+                verify_live_checkout_mount(repo_root, policy, &working_dir)?;
+                refresh_changed_cargo_inputs(repo_root, policy, &working_dir)?;
+            }
+            Ok(())
+        },
         || reconcile_runtime_aliases_stage(repo_root, policy),
     )
+}
+
+fn refresh_changed_cargo_inputs(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+) -> Result<(), RunnerError> {
+    refresh_changed_cargo_inputs_using(repo_root, |changed| {
+        for batch in changed.chunks(128) {
+            let workdir = working_dir.to_string_lossy();
+            let mut args = vec![
+                "exec".to_owned(),
+                "-T".to_owned(),
+                "-w".to_owned(),
+                workdir.into_owned(),
+                policy.primary_service.clone(),
+                "touch".to_owned(),
+                "-c".to_owned(),
+                "--".to_owned(),
+            ];
+            args.extend(batch.iter().map(|path| path.to_string_lossy().into_owned()));
+            run_compose_capture(
+                repo_root,
+                policy,
+                &compose_args(policy, args.iter().map(String::as_str)),
+                "refresh changed Cargo inputs",
+            )
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot refresh changed Cargo inputs in selected checkout: {error}"
+                ))
+            })?;
+        }
+        Ok(())
+    })
+}
+
+fn refresh_changed_cargo_inputs_using(
+    repo_root: &Path,
+    touch_in_container: impl FnOnce(&[PathBuf]) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    let output = std::process::Command::new("git")
+        .args(["diff", "--name-only", "-z", "HEAD", "--"])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!("cannot list changed Cargo inputs: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "cannot list changed Cargo inputs in {}: {}",
+            repo_root.display(),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let changed = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|bytes| !bytes.is_empty())
+        .map(|bytes| std::path::PathBuf::from(String::from_utf8_lossy(bytes).as_ref()))
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "rs")
+                || matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("Cargo.toml" | "Cargo.lock")
+                )
+        })
+        .filter(|path| repo_root.join(path).is_file())
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        return Ok(());
+    }
+    touch_in_container(&changed)
+}
+
+/// A running Compose service can be healthy while its bind mount still points
+/// at an earlier checkout. Prove the selected checkout is visible before a
+/// task lease is refreshed or any user command runs.
+fn verify_live_checkout_mount(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+) -> Result<(), RunnerError> {
+    verify_live_checkout_mount_using(
+        repo_root,
+        working_dir,
+        |probe_path| {
+            let workdir = working_dir.to_string_lossy();
+            let args = compose_args(
+                policy,
+                [
+                    "exec",
+                    "-T",
+                    "-w",
+                    workdir.as_ref(),
+                    policy.primary_service.as_str(),
+                    "cat",
+                    probe_path,
+                ],
+            );
+            let output = run_compose_capture(repo_root, policy, &args, "checkout mount read probe")
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            Ok(output.stdout)
+        },
+        |probe_path| {
+            let workdir = working_dir.to_string_lossy();
+            let args = compose_args(
+                policy,
+                [
+                    "exec",
+                    "-T",
+                    "-w",
+                    workdir.as_ref(),
+                    policy.primary_service.as_str(),
+                    "touch",
+                    "--",
+                    probe_path,
+                ],
+            );
+            run_compose_capture(repo_root, policy, &args, "checkout mount write probe")
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            Ok(())
+        },
+    )
+}
+
+fn verify_live_checkout_mount_using(
+    repo_root: &Path,
+    working_dir: &Path,
+    read_in_container: impl FnOnce(&str) -> Result<Vec<u8>, RunnerError>,
+    write_in_container: impl FnOnce(&str) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    use std::io::Write;
+    // The probe must live in the checkout, at the same relative location as
+    // the container working directory. A fresh name also defeats stale copies.
+    let name = format!(
+        ".effigy-checkout-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+            .as_nanos()
+    );
+    let host_path = repo_root.join(&name);
+    let write_name = format!("{name}-write");
+    let host_write_path = repo_root.join(&write_name);
+    let payload = format!("{}:{name}", repo_root.display());
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&host_path)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!("cannot create checkout mount probe: {error}"))
+        })?;
+    let result = (|| {
+        file.write_all(payload.as_bytes()).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot write checkout mount probe: {error}"))
+        })?;
+        file.sync_all().map_err(|error| {
+            RunnerError::task_invocation(format!("cannot sync checkout mount probe: {error}"))
+        })?;
+        let container_path = working_dir.join(&name);
+        let actual = read_in_container(&container_path.to_string_lossy())?;
+        if actual != payload.as_bytes() {
+            return Err(RunnerError::task_invocation(format!(
+                "container checkout mount at {} does not match selected checkout {}; refusing task execution",
+                working_dir.display(), repo_root.display()
+            )));
+        }
+        write_in_container(&working_dir.join(&write_name).to_string_lossy())?;
+        if !host_write_path.is_file() {
+            return Err(RunnerError::task_invocation(format!(
+                "container checkout mount at {} did not write to selected checkout {}; refusing task execution",
+                working_dir.display(), repo_root.display()
+            )));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&host_path);
+    let _ = std::fs::remove_file(&host_write_path);
+    result.map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot verify container checkout mount for {}: {error}",
+            repo_root.display()
+        ))
+    })
 }
 
 pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(

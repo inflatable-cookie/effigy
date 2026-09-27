@@ -4,10 +4,11 @@ use super::{
     ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
     ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
     prepare_runtime_mounts_stage, reconcile_runtime_aliases_stage_using,
-    refresh_runtime_lease_stage, restart_primary_service_using, run_runtime_compose_up_stage,
-    run_runtime_prep_steps, runtime_activation_plan_from_request,
+    refresh_changed_cargo_inputs_using, refresh_runtime_lease_stage, restart_primary_service_using,
+    run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
     runtime_activation_report_for_result, service_depends_on_primary, validate_policy_runtime,
-    validate_runtime_activation_stage, ActivationRequest, ContainerTaskActivation,
+    validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
+    ContainerTaskActivation,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
@@ -74,6 +75,94 @@ fn temp_test_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).expect("create temp test dir");
     dir
+}
+
+#[test]
+fn checkout_mount_probe_accepts_selected_checkout_and_rejects_sibling() {
+    let first = temp_test_dir("checkout-first");
+    let sibling = temp_test_dir("checkout-sibling");
+    let working_dir = Path::new("/workspace/root");
+    verify_live_checkout_mount_using(
+        &first,
+        working_dir,
+        |path| {
+            let name = Path::new(path).file_name().unwrap();
+            Ok(fs::read(first.join(name)).unwrap())
+        },
+        |path| {
+            let name = Path::new(path).file_name().unwrap();
+            fs::write(first.join(name), "generated").unwrap();
+            Ok(())
+        },
+    )
+    .expect("selected checkout must be visible");
+    let error = verify_live_checkout_mount_using(
+        &first,
+        working_dir,
+        |path| {
+            let name = Path::new(path).file_name().unwrap();
+            Ok(fs::read(sibling.join(name)).unwrap_or_default())
+        },
+        |_| Ok(()),
+    )
+    .expect_err("sibling mount must fail closed");
+    assert!(error
+        .to_string()
+        .contains("does not match selected checkout"));
+    assert_eq!(fs::read_dir(&first).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&sibling).unwrap().count(), 0);
+    fs::remove_dir_all(first).unwrap();
+    fs::remove_dir_all(sibling).unwrap();
+}
+
+#[test]
+fn host_edit_refreshes_cargo_input_before_container_check() {
+    let root = temp_test_dir("cargo-host-edit");
+    let run_git = |args: &[&str]| {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+    };
+    run_git(&["init", "-q"]);
+    fs::write(root.join("lib.rs"), "pub fn answer() -> u8 { 1 }\n").unwrap();
+    run_git(&["add", "lib.rs"]);
+    run_git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-qm",
+        "base",
+    ]);
+    fs::write(root.join("lib.rs"), "pub fn answer() -> u8 { 2 }\n").unwrap();
+    let source = fs::File::open(root.join("lib.rs")).unwrap();
+    source
+        .set_modified(UNIX_EPOCH + Duration::from_secs(1))
+        .unwrap();
+    let artifact = root.join("artifact");
+    fs::write(&artifact, "old").unwrap();
+    fs::File::open(&artifact)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(2))
+        .unwrap();
+    refresh_changed_cargo_inputs_using(&root, |changed| {
+        assert_eq!(changed, &[PathBuf::from("lib.rs")]);
+        source.set_modified(SystemTime::now()).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        fs::metadata(root.join("lib.rs"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            > fs::metadata(artifact).unwrap().modified().unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

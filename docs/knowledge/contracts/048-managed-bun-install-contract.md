@@ -31,6 +31,12 @@ preparation. It does not change `deps pin bun`: pinning edits the consumer
 manifest only, and its install workflow remains owned by contract
 [`040`](040-bun-committed-dependency-pinning-contract.md).
 
+Before executing a selected built-in Bun test suite, Effigy checks whether its
+locked workspace has `node_modules`. A fresh checkout without that directory
+fails with a bounded diagnostic naming `effigy bootstrap deps sync <path>`.
+Suites with an explicit `bun install` setup step handle their own hydration;
+workspaces without a committed Bun lock do not receive this frozen route hint.
+
 ## Local File Dependency Metadata
 
 After a successful managed Bun install, Effigy removes entries named

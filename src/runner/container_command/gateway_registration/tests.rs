@@ -956,6 +956,57 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 }
 
 #[test]
+fn two_live_worktrees_cannot_register_one_fixed_domain() {
+    with_test_home("live-sibling-fixed-domain", || {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for name in ["one", "two"] {
+            let checkout = root.path().join(name);
+            let private = root.path().join("primary/.git/worktrees").join(name);
+            std::fs::create_dir_all(&checkout).unwrap();
+            std::fs::create_dir_all(&private).unwrap();
+            std::fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", private.display()),
+            )
+            .unwrap();
+            std::fs::write(private.join("commondir"), "../..\n").unwrap();
+            paths.push(checkout);
+        }
+        let table_path = gateway_route_table_path().unwrap();
+        let route = |domain: &str| RegisteredGatewayRoute {
+            domain: domain.to_owned(),
+            target: Some("127.0.0.1:8100".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: false,
+            service: Some("web".to_owned()),
+            external_target: false,
+        };
+        reconcile_gateway_routes(&table_path, &paths[0], &[route("app.test")]).unwrap();
+        let error = reconcile_gateway_routes(&table_path, &paths[1], &[route("app.test")])
+            .expect_err("live sibling domain must remain owned");
+        assert!(error.to_string().contains("app.test"));
+        let first = RouteTable::load(&table_path).unwrap();
+        assert_eq!(
+            first.lookup("app.test").unwrap().project,
+            paths[0].display().to_string()
+        );
+        reconcile_gateway_routes(&table_path, &paths[1], &[route("app-wsecond.test")]).unwrap();
+        let both = RouteTable::load(&table_path).unwrap();
+        assert_eq!(
+            both.lookup("app.test").unwrap().project,
+            paths[0].display().to_string()
+        );
+        assert_eq!(
+            both.lookup("app-wsecond.test").unwrap().project,
+            paths[1].display().to_string()
+        );
+    });
+}
+
+#[test]
 fn stale_tcp_alias_can_be_reclaimed_without_live_listener_takeover() {
     with_test_home("stale-tcp-alias", || {
         let root = tempfile::tempdir().unwrap();

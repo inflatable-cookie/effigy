@@ -470,6 +470,10 @@ These use shared task activation instead of session ownership:
 
 - Effigy auto-starts the runtime when needed
 - sibling-service bring-up and exec-readiness recovery run before dispatch
+- a scoped worktree proves its selected checkout is readable and writable in
+  the primary service before dispatch; a mismatched mount stops the task before lease
+  refresh. Changed Cargo inputs are touched inside the container so host edits
+  invalidate stale build artifacts.
 - public gateway/runtime route registration is reconciled when the container
   declares a gateway surface
 - if the task had to start the runtime, or the runtime was already under an
@@ -485,6 +489,11 @@ Default lease behavior:
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.
+
+For a fresh Bun worktree, prepare dependencies with `effigy bootstrap deps
+sync <path>` before QA. The default path uses the committed lock with `bun
+install --frozen-lockfile`. Built-in tests report this route when a selected
+Bun suite has no installed dependencies, before reporting source test failures.
 
 ### Workspace Exec Identity
 
