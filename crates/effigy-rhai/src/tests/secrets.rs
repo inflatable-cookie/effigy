@@ -9,7 +9,20 @@ fn rhai_script_consumes_secrets_detects_the_secrets_module() {
     assert!(rhai_script_consumes_secrets(
         r#"if secrets::has("api_token") { 1 }"#
     ));
+    assert!(rhai_script_consumes_secrets(
+        r#"log(`token=${secrets::get("api_token")}`);"#
+    ));
     assert!(!rhai_script_consumes_secrets(r#"log("container status");"#));
+    assert!(!rhai_script_consumes_secrets(
+        r#"// secrets::get("api_token")
+log("ok");"#
+    ));
+    assert!(!rhai_script_consumes_secrets(
+        r#"/* secrets::has("api_token") */ log("ok");"#
+    ));
+    assert!(!rhai_script_consumes_secrets(
+        r#"log("do not call secrets::get here");"#
+    ));
 }
 
 #[test]
@@ -237,6 +250,26 @@ fn execute_rhai_script_skips_unrelated_required_secrets_when_script_is_secret_fr
     write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
     write_test_vault(&root, "vault-passphrase", &[]);
     let script = format!(r#"fs::write_file("{}", "ran");"#, marker.display());
+
+    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+
+    assert_eq!(fs::read_to_string(marker).expect("marker"), "ran");
+}
+
+#[test]
+fn execute_rhai_script_ignores_comment_mentions_of_secrets_module() {
+    let root = temp_root("rhai-secret-comment-mention");
+    let marker = root.join("ran.out");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let script = format!(
+        r#"
+            // later: secrets::get("api_token")
+            /* secrets::has("api_token") */
+            fs::write_file("{}", "ran");
+        "#,
+        marker.display()
+    );
 
     execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
 

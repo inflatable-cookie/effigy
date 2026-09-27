@@ -337,8 +337,10 @@ Rules:
 - `secrets::set(name, value)` and `secrets::set_many(map)` require each secret
   to be declared for the `rhai` target and write to the encrypted vault
 - `secrets::set_many(map)` batches validation, unlock, encryption, and write
-- Required Rhai secrets unlock only when the selected script uses `secrets::`.
-  A secret-free script does not prompt or fail for unrelated required values.
+- Required Rhai secrets unlock only when the selected script has an executable
+  `secrets::` path. Comments and string literals that mention the module do not
+  count. A secret-free script does not prompt or fail for unrelated required
+  values.
   A script that uses `secrets::` still fails closed before side effects when a
   required value is missing or the vault is locked.
 - Isolated `effigy skill run` tasks never resolve the consumer vault

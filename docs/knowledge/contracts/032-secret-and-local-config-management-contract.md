@@ -188,11 +188,13 @@ Injection rules:
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
 - a Rhai script unlocks required `targets = ["rhai"]` values only when the
-  selected source uses `secrets::`; secret-free scripts do not open the vault
+  selected source has an executable `secrets::` path; comments and string
+  literals that mention the module do not count. Secret-free scripts do not
+  open the vault
 - `eval` and imported modules that first call `secrets::` after other side
   effects stay fail-closed at the `secrets::*` call rather than at script
   start; classify those as secret-consuming when the selected source itself
-  names `secrets::`
+  has an executable `secrets::` path
 - isolated skill runs never resolve or unlock the consumer vault
 - a secret-consuming operation still fails closed with a precise missing-secret
   diagnostic when a required value in that scope is absent or the vault is
