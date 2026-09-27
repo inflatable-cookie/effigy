@@ -34,4 +34,4 @@ Tasks, briefs, status, and outcomes live in Queue. The repository holds product 
 
 ## Validate
 
-Run `effigy qa` before opening a PR. The command builds from this checkout with Cargo and does not require prepared local dependencies. Also run `effigy skill run northstar-lean/retired-concepts` when retiring concepts.
+Run `effigy qa` before opening a PR. The command builds from this checkout with Cargo and does not require prepared local dependencies. Also run `effigy skill run northstar/retired-concepts` when retiring concepts.
