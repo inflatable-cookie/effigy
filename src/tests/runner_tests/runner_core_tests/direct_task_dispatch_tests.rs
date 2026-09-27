@@ -260,6 +260,99 @@ fn json_selector_without_plan_still_executes() {
     assert_eq!(parsed["task"], "probe");
 }
 
+#[test]
+fn selector_plan_does_not_run_deferral_fallback() {
+    let root = temp_workspace("selector-plan-no-defer");
+    let marker = root.join("defer-must-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!("[defer]\nrun = \"printf ran > '{}'\"\n", marker.display()),
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let error = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "missing-task".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect_err("missing selector plan should not defer");
+
+    assert!(
+        !marker.exists(),
+        "plan must not start the deferral process: {}",
+        marker.display()
+    );
+    assert!(
+        matches!(error, RunnerError::TaskNotFoundAny { .. }),
+        "expected catalog miss, got {error}"
+    );
+}
+
+#[test]
+fn selector_plan_renders_managed_tui_process_shape() {
+    let root = temp_workspace("selector-plan-managed-tui");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "web", run = "vite dev", start = 2, tab = 2 }
+]
+"#,
+    );
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    let output = run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("managed tui plan");
+
+    assert!(output.contains("Selector: dev"), "{output}");
+    assert!(
+        output.contains("api: cargo run -p api"),
+        "tui plan should name process commands: {output}"
+    );
+    assert!(output.contains("web: vite dev"), "{output}");
+}
+
+#[test]
+fn selector_plan_does_not_resolve_env_schema_exec() {
+    let root = temp_workspace("selector-plan-no-env-exec");
+    let marker = root.join("env-exec-must-not-run.out");
+    write_root_manifest(
+        &root,
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+    fs::write(
+        root.join(".env.schema"),
+        format!("SIDE=exec('printf ran > {}')\n", marker.display()),
+    )
+    .expect("write env schema");
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    run_command_with_context(
+        Command::Task(TaskInvocation {
+            name: "build".to_owned(),
+            args: vec!["--plan".to_owned()],
+        }),
+        &context,
+    )
+    .expect("selector plan");
+
+    assert!(
+        !marker.exists(),
+        "plan must not run env-schema exec(): {}",
+        marker.display()
+    );
+}
+
 fn latest_task_status_record(root: &std::path::Path) -> TaskStatusCompletedRecord {
     let reports_root = root.join(".effigy/reports/tasks");
     let mut latest_paths = fs::read_dir(&reports_root)

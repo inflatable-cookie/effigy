@@ -8,8 +8,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 - `effigy <selector> --plan` and `effigy draft <selector> --plan` resolve the
-  task, catalog, and command without starting a task process. `--json` remains
-  an output format: `effigy --json <selector>` still executes.
+  task, catalog, and command without starting a task process. `--plan` is
+  consumed by Effigy and is not passed through to the task. Unresolved
+  selectors do not run deferral, exec aliases, or other builtins;
+  `effigy test --plan` keeps the test builtin. `--json` remains an output
+  format: `effigy --json <selector>` still executes.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and

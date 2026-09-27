@@ -11,6 +11,7 @@ use super::planning::ExecutionPreflight;
 use super::render::render_task_plan;
 use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
+use effigy_managed::resolve_managed_task_plan;
 
 pub(super) fn run_execution_pipeline(
     task: &TaskInvocation,
@@ -36,18 +37,7 @@ fn render_resolved_selector_plan(
     preflight: &ExecutionPreflight,
     selection: &effigy_manifest::TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
-    let env_schema_catalog = effigy_manifest::env_schema_declaring_catalog(
-        &preflight.catalogs,
-        &selection.catalog.catalog_root,
-    );
-    let env_schema_resolved = standard::resolve_env_schema_if_present(
-        env_schema_catalog.map_or(selection.catalog.catalog_root.as_path(), |catalog| {
-            catalog.catalog_root.as_path()
-        }),
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-        env_schema_catalog.and_then(|catalog| catalog.manifest.env_schema.as_ref()),
-    )?;
-    let command = command::build_task_command(preflight, selection, &env_schema_resolved)?;
+    let command = plan_command_shape(preflight, selection)?;
     render_task_plan(
         preflight.output_json,
         &preflight.selector,
@@ -55,4 +45,34 @@ fn render_resolved_selector_plan(
         &command,
         selection,
     )
+}
+
+fn plan_command_shape(
+    preflight: &ExecutionPreflight,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> Result<String, RunnerError> {
+    if selection.task.mode.as_deref() == Some("tui") {
+        let Some(plan) = resolve_managed_task_plan(
+            &preflight.selector,
+            selection.catalog,
+            selection.task,
+            &preflight.runtime_args_exec,
+            &preflight.catalogs,
+            &selection.catalog.catalog_root,
+            &effigy_routing::resolve_task_selection,
+        )?
+        else {
+            return Err(RunnerError::TaskMissingRunCommand {
+                task: preflight.selector.task_name.clone(),
+                path: selection.catalog.manifest_path.clone(),
+            });
+        };
+        return Ok(plan
+            .processes
+            .iter()
+            .map(|process| format!("{}: {}", process.name, process.run))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    command::build_task_command(preflight, selection, &None)
 }

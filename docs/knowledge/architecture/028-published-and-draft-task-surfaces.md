@@ -116,7 +116,8 @@ schemas. Existing `effigy tasks` and ordinary task-run JSON remain byte- and
 schema-compatible for repositories with no drafts. `effigy <selector> --plan`
 and `effigy draft <selector> --plan` share the non-executing selector plan
 (`effigy.task.plan.v1` under `--json`); `--json` does not itself prevent
-execution.
+execution. Unresolved published selectors with `--plan` do not defer or
+exec-alias.
 
 ## Failure Boundary
 

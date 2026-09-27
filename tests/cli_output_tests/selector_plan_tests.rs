@@ -149,3 +149,27 @@ fn cli_plan_after_passthrough_delimiter_still_executes() {
     );
     assert_eq!(fs::read_to_string(&marker).expect("read marker").trim(), "ran");
 }
+
+#[test]
+fn cli_selector_plan_does_not_run_deferral_fallback() {
+    let root = temp_workspace("cli-selector-plan-no-defer");
+    let marker = root.join("defer-must-not-run.out");
+    fs::write(
+        root.join("effigy.toml"),
+        format!("[defer]\nrun = \"printf ran > '{}'\"\n", marker.display()),
+    )
+    .expect("write manifest");
+
+    let output = run_cli_command(&root, &["missing-task", "--plan"]);
+    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr.clone()).expect("utf8 stderr");
+    assert!(
+        !output.status.success(),
+        "expected missing selector plan to fail, stdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        !marker.exists(),
+        "plan must not start the deferral process: {}",
+        marker.display()
+    );
+}

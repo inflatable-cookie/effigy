@@ -585,7 +585,8 @@ Fix:
 
 - use `effigy tasks --resolve <selector>` for routing evidence only,
 - use `effigy <selector> --plan` for the resolved task, catalog, and command
-  without starting a process; `--json` is output format, not a plan flag,
+  without starting a process; `--json` is output format, not a plan flag.
+  Unresolved selectors fail without deferral.
 - use `effigy doctor <selector> <args...>` for full explain output including selection and deferral reasoning.
 
 ## Expected Outcome

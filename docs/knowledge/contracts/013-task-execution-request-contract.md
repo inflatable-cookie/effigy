@@ -207,9 +207,13 @@ is not a public CLI payload.
 The public non-executing selector plan is a separate schema,
 `effigy.task.plan.v1`. `effigy <selector> --plan` and
 `effigy draft <selector> --plan` resolve the task, catalog, and command shape
-without starting a task process, acquiring locks, activating containers, or
-writing task-status records. `--json` only chooses the envelope. Builtin
-`--plan` surfaces such as `effigy test --plan` keep their own meaning.
+without starting a task process, acquiring locks, activating containers,
+resolving env-schema `exec()` values, or writing task-status records. `--plan`
+is consumed by Effigy and is not passed through to the task. `--json` only
+chooses the envelope. Unresolved selectors do not run deferral, exec aliases,
+or other builtins. Builtin `--plan` surfaces such as `effigy test --plan` keep
+their own meaning. A remapped `[defer].builtins` name still receives that
+command's own `--plan`.
 
 ## Drift Triggers
 
