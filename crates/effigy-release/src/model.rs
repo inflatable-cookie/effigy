@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use effigy_changelog::BumpKind;
 use effigy_manifest::ManifestError;
 
+use crate::hosted_evidence::HostedEvidenceSpec;
 use crate::{ResolvedGate, ResolvedSyncFile, ResolvedVersionSource};
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,7 @@ pub struct ReleaseConfig {
     pub sync_files: Vec<ResolvedSyncFile>,
     pub gates: Vec<ResolvedGate>,
     pub tag_format: String,
+    pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,18 @@ pub struct GateResult {
     pub launch_error: Option<String>,
     pub duration_ms: u128,
     pub log_path: Option<PathBuf>,
+    pub reused: bool,
+    pub hosted_run_url: Option<String>,
+    pub hosted_head_sha: Option<String>,
+    pub hosted_repository: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReusedGateRecord {
+    pub name: String,
+    pub run_url: String,
+    pub head_sha: String,
+    pub repository: String,
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +248,7 @@ pub struct ReleaseExecutePlan {
     pub unexpected_files: Vec<String>,
     pub source_fingerprint_available: bool,
     pub fingerprint_drift: Vec<String>,
+    pub reused_gates: Vec<ReusedGateRecord>,
     pub warnings: Vec<String>,
     pub blockers: Vec<String>,
     pub ready: bool,
@@ -302,6 +317,7 @@ pub struct ReleasePreparedState {
     pub gates_passed: bool,
     pub files_modified: Vec<PathBuf>,
     pub source_fingerprints: Option<ReleasePreparedSourceFingerprints>,
+    pub reused_gates: Vec<ReusedGateRecord>,
 }
 
 #[derive(Debug, Clone)]

@@ -206,7 +206,8 @@ selection plus channel metadata.
 ## Release And Distribution
 
 Effigy core owns release readiness, exact-SHA identity, gate evaluation,
-ordered mutation, irreversible-action safety, and evidence.
+named GitHub Actions hosted-evidence reuse, ordered mutation,
+irreversible-action safety, and evidence.
 
 Effigy-specific repository, Homebrew, documentation, file, and self-hosting
 recipes belong to this repository or an installed extension. Provider-neutral

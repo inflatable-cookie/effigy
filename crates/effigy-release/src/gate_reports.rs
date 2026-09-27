@@ -127,11 +127,15 @@ fn write_gate_log(
         .unwrap_or_else(|| "none".to_owned());
     let launch_error = result.launch_error.as_deref().unwrap_or("none");
     let contents = format!(
-        "command: {}\ncwd: {}\nstarted-at: {}\nexit_code: {exit_code}\nduration_ms: {}\nlaunch_error: {launch_error}\n\nstdout:\n{}\n\nstderr:\n{}\n",
+        "command: {}\ncwd: {}\nstarted-at: {}\nexit_code: {exit_code}\nduration_ms: {}\nlaunch_error: {launch_error}\nreused: {}\nhosted_run_url: {}\nhosted_head_sha: {}\nhosted_repository: {}\n\nstdout:\n{}\n\nstderr:\n{}\n",
         result.command,
         root.display(),
         started_at,
         result.duration_ms,
+        result.reused,
+        result.hosted_run_url.as_deref().unwrap_or("none"),
+        result.hosted_head_sha.as_deref().unwrap_or("none"),
+        result.hosted_repository.as_deref().unwrap_or("none"),
         result.stdout,
         result.stderr
     );

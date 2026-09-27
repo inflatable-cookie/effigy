@@ -140,9 +140,12 @@ tag-format = "v{version}"
 initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
 
+[release.hosted-evidence]
+workflow = "ci.yml"
+
 [release.gates]
 qa = "cargo test"
-smoke = { command = "printf ok", description = "smoke gate" }
+smoke = { command = "printf ok", description = "smoke gate", reuse-hosted-evidence = true }
 "###,
     )
     .expect("parse manifest");

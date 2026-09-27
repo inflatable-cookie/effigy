@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy release prepare` can satisfy a gate marked
+  `reuse-hosted-evidence = true` with a successful GitHub Actions run for this
+  repository's exact `HEAD` SHA, verified through authenticated `gh`. Unlisted
+  gates still run locally. Missing, pending, failed, ambiguous,
+  wrong-repository, or wrong-SHA evidence fails closed. The release record
+  names each reused gate and links to its run.
 - `effigy bootstrap deps sync` runs Bun installs frozen against a committed
   `bun.lock` or `bun.lockb`. Use `--refresh-lock` to explicitly generate or
   refresh `bun.lock`; successful managed Bun installs also remove Finder and

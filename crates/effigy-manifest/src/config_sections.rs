@@ -51,7 +51,10 @@ pub use docs_policy::{
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicyIndexConfig,
     ManifestDocsPolicyNextActionConfig, ManifestDocsPolicySourcesConfig,
 };
-pub use release::{ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails};
+pub use release::{
+    ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails,
+    ManifestReleaseHostedEvidenceConfig,
+};
 pub use secrets::{
     ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
     ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy, ManifestSecretsVaultConfig,

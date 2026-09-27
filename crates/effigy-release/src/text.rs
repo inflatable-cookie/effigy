@@ -139,6 +139,30 @@ pub fn format_counts(counts: &BTreeMap<String, usize>) -> String {
     format!("{total} ({details})")
 }
 
+fn format_gate_outcome_line(gate: &GateResult) -> String {
+    let outcome = if gate.reused {
+        "reused"
+    } else if gate.passed {
+        "pass"
+    } else {
+        "fail"
+    };
+    let detail = if gate.reused {
+        gate.hosted_run_url
+            .clone()
+            .unwrap_or_else(|| "hosted evidence".to_owned())
+    } else {
+        gate.exit_code
+            .map(|code| format!("exit {code}"))
+            .or_else(|| gate.launch_error.clone())
+            .unwrap_or_else(|| "ok".to_owned())
+    };
+    format!(
+        "{}: {} ({}; {}ms)",
+        gate.name, outcome, detail, gate.duration_ms
+    )
+}
+
 fn append_gate_status_lines(
     lines: &mut Vec<String>,
     gates_checked: bool,
@@ -151,16 +175,12 @@ fn append_gate_status_lines(
         } else {
             lines.push("  Gates:".to_owned());
             for gate in gate_results {
-                let outcome = if gate.passed { "pass" } else { "fail" };
-                let detail = gate
-                    .exit_code
-                    .map(|code| format!("exit {code}"))
-                    .or_else(|| gate.launch_error.clone())
-                    .unwrap_or_else(|| "ok".to_owned());
-                lines.push(format!(
-                    "    {}: {} ({}; {}ms)",
-                    gate.name, outcome, detail, gate.duration_ms
-                ));
+                lines.push(format!("    {}", format_gate_outcome_line(gate)));
+                if gate.reused {
+                    if let Some(url) = &gate.hosted_run_url {
+                        lines.push(format!("      hosted run: {url}"));
+                    }
+                }
                 if !gate.passed {
                     for line in failed_gate_tail_lines(gate) {
                         lines.push(format!("      {line}"));
@@ -717,6 +737,15 @@ pub fn render_release_execute_plan_text(plan: &ReleaseExecutePlan) -> String {
             " (not checked during prepare)"
         }
     ));
+    if !plan.reused_gates.is_empty() {
+        lines.push("  Reused hosted gates:".to_owned());
+        for gate in &plan.reused_gates {
+            lines.push(format!(
+                "    {}: {} ({})",
+                gate.name, gate.run_url, gate.head_sha
+            ));
+        }
+    }
     if let Some(prepared_branch) = &plan.prepared_branch {
         lines.push(format!("  Prepared branch: {prepared_branch}"));
     }
@@ -840,20 +869,16 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
         lines.push(String::new());
         lines.push("Gate Results".to_owned());
         for (index, gate) in run.gate_results.iter().enumerate() {
-            let outcome = if gate.passed { "pass" } else { "fail" };
-            let detail = gate
-                .exit_code
-                .map(|code| format!("exit {code}"))
-                .or_else(|| gate.launch_error.clone())
-                .unwrap_or_else(|| "ok".to_owned());
             lines.push(format!(
-                "  [{}] {}: {} ({}; {}ms)",
+                "  [{}] {}",
                 index + 1,
-                gate.name,
-                outcome,
-                detail,
-                gate.duration_ms
+                format_gate_outcome_line(gate)
             ));
+            if gate.reused {
+                if let Some(url) = &gate.hosted_run_url {
+                    lines.push(format!("    hosted run: {url}"));
+                }
+            }
             if !gate.passed {
                 if !gate.stdout.is_empty() {
                     lines.push(format!("    stdout: {}", gate.stdout));

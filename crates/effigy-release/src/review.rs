@@ -166,12 +166,23 @@ pub fn render_prepare_gate_review_lines(plan: &ReleasePreparePlan) -> Vec<String
     }
 
     for (index, gate) in plan.gate_results.iter().enumerate() {
-        let outcome = if gate.passed { "pass" } else { "fail" };
-        let detail = gate
-            .exit_code
-            .map(|code| format!("exit {code}"))
-            .or_else(|| gate.launch_error.clone())
-            .unwrap_or_else(|| "ok".to_owned());
+        let outcome = if gate.reused {
+            "reused"
+        } else if gate.passed {
+            "pass"
+        } else {
+            "fail"
+        };
+        let detail = if gate.reused {
+            gate.hosted_run_url
+                .clone()
+                .unwrap_or_else(|| "hosted evidence".to_owned())
+        } else {
+            gate.exit_code
+                .map(|code| format!("exit {code}"))
+                .or_else(|| gate.launch_error.clone())
+                .unwrap_or_else(|| "ok".to_owned())
+        };
         lines.push(format!(
             "  [{}] {}: {} ({}; {}ms)",
             index + 1,

@@ -418,8 +418,11 @@ Rule of thumb:
 - Release gate JSON (`effigy.release.gates.v1`, `effigy.release.status.v1`,
   `effigy.release.prepare.v1`, and the matching plan/simulate payloads) may
   include additive optional `log_path` on each gate result and
-  `environment_path` for the run. Progress and configured-gate inventory stay
-  on stderr and never on JSON stdout. Schema ids are unchanged.
+  `environment_path` for the run. Named hosted reuse may add optional
+  `reused`, `hosted_run_url`, `hosted_head_sha`, and `hosted_repository` on a
+  gate result, and `gates.reused_gates` on execute/resume payloads. Progress
+  and configured-gate inventory stay on stderr and never on JSON stdout.
+  Schema ids are unchanged.
 - Breaking envelope changes require a new top-level schema/version.
 
 ## Expected Outcome

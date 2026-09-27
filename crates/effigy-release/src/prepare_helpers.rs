@@ -12,7 +12,7 @@ use super::{
     render_updated_version_contents, render_version_preview_line, FileMutationApply,
     FileMutationPlan, GateResult, ReleaseError, ReleasePreparedFileFingerprint,
     ReleasePreparedSourceFingerprints, ReleasePreparedState, ResolvedSyncFile,
-    ResolvedVersionSource, SyncFileKind, VersionFileKind,
+    ResolvedVersionSource, ReusedGateRecord, SyncFileKind, VersionFileKind,
 };
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +30,8 @@ struct RawReleasePreparedState {
     gates_passed: Option<bool>,
     files_modified: Vec<String>,
     source_fingerprints: Option<RawReleasePreparedSourceFingerprints>,
+    #[serde(default)]
+    reused_gates: Vec<RawReusedGateRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +45,14 @@ struct RawReleasePreparedSourceFingerprints {
 struct RawReleasePreparedFileFingerprint {
     path: String,
     digest: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawReusedGateRecord {
+    name: String,
+    run_url: String,
+    head_sha: String,
+    repository: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,6 +393,7 @@ pub struct ReleasePreparedStateWrite<'a> {
     pub files_modified: &'a [PathBuf],
     pub prepared_branch: Option<&'a str>,
     pub prepared_head: Option<&'a str>,
+    pub reused_gates: &'a [ReusedGateRecord],
 }
 
 pub fn write_release_prepared_state(
@@ -402,6 +413,7 @@ pub fn write_release_prepared_state(
         files_modified,
         prepared_branch,
         prepared_head,
+        reused_gates,
     } = state;
     let source_fingerprints = capture_release_prepared_source_fingerprints(
         repo_root,
@@ -440,6 +452,17 @@ pub fn write_release_prepared_state(
                 })
                 .collect::<Vec<_>>(),
         },
+        "reused_gates": reused_gates
+            .iter()
+            .map(|gate| {
+                json!({
+                    "name": gate.name,
+                    "run_url": gate.run_url,
+                    "head_sha": gate.head_sha,
+                    "repository": gate.repository,
+                })
+            })
+            .collect::<Vec<_>>(),
     });
     let rendered = serde_json::to_string_pretty(&payload).map_err(|error| {
         ReleaseError::TaskInvocation(format!(
@@ -548,6 +571,16 @@ pub fn load_release_prepared_state(path: &Path) -> Result<ReleasePreparedState, 
                     .collect(),
             }
         }),
+        reused_gates: parsed
+            .reused_gates
+            .into_iter()
+            .map(|gate| ReusedGateRecord {
+                name: gate.name,
+                run_url: gate.run_url,
+                head_sha: gate.head_sha,
+                repository: gate.repository,
+            })
+            .collect(),
     })
 }
 

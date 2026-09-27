@@ -4,7 +4,7 @@ use crate::text::{remediation_hints_for_blockers, ReleaseBlockedStage};
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
-    ResolvedVersionSource, VerificationStepResult,
+    ResolvedVersionSource, ReusedGateRecord, VerificationStepResult,
 };
 
 pub fn render_release_status_json(status: &ReleaseStatus) -> String {
@@ -81,6 +81,10 @@ fn optional_path(path: &Option<std::path::PathBuf>) -> Option<String> {
     path.as_ref().map(|value| value.display().to_string())
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Serialize)]
 struct VersionSourcePayload {
     file: String,
@@ -133,6 +137,8 @@ struct SimulationGatesPayload {
 struct ExecuteGatesPayload {
     checked: bool,
     passed: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reused_gates: Vec<ReusedGatePayload>,
 }
 
 #[derive(Serialize)]
@@ -170,6 +176,14 @@ struct GateResultPayload {
     duration_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     log_path: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    reused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hosted_run_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hosted_head_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hosted_repository: Option<String>,
 }
 
 impl From<&GateResult> for GateResultPayload {
@@ -185,6 +199,29 @@ impl From<&GateResult> for GateResultPayload {
             launch_error: gate.launch_error.clone(),
             duration_ms: gate.duration_ms,
             log_path: optional_path(&gate.log_path),
+            reused: gate.reused,
+            hosted_run_url: gate.hosted_run_url.clone(),
+            hosted_head_sha: gate.hosted_head_sha.clone(),
+            hosted_repository: gate.hosted_repository.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReusedGatePayload {
+    name: String,
+    run_url: String,
+    head_sha: String,
+    repository: String,
+}
+
+impl From<&ReusedGateRecord> for ReusedGatePayload {
+    fn from(gate: &ReusedGateRecord) -> Self {
+        Self {
+            name: gate.name.clone(),
+            run_url: gate.run_url.clone(),
+            head_sha: gate.head_sha.clone(),
+            repository: gate.repository.clone(),
         }
     }
 }
@@ -629,6 +666,11 @@ impl From<&ReleaseExecutePlan> for ReleaseExecutePlanPayload {
             gates: ExecuteGatesPayload {
                 checked: plan.gates_checked,
                 passed: plan.gates_passed,
+                reused_gates: plan
+                    .reused_gates
+                    .iter()
+                    .map(ReusedGatePayload::from)
+                    .collect(),
             },
             source_fingerprints: SourceFingerprintsPayload {
                 available: plan.source_fingerprint_available,
@@ -712,6 +754,11 @@ impl ReleaseResumePayload {
             gates: ExecuteGatesPayload {
                 checked: plan.gates_checked,
                 passed: plan.gates_passed,
+                reused_gates: plan
+                    .reused_gates
+                    .iter()
+                    .map(ReusedGatePayload::from)
+                    .collect(),
             },
             source_fingerprints: SourceFingerprintsPayload {
                 available: plan.source_fingerprint_available,
