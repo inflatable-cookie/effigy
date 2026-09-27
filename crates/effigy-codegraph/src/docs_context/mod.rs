@@ -99,8 +99,7 @@ pub fn docs_context_with_progress(
     let applied = validate_docs_context_request(query, request)?;
     let query = query.trim();
 
-    let store = GraphStore::open(repo_root)?;
-    let freshness = ensure_freshness(repo_root, &store, progress)?;
+    let (store, freshness) = ensure_freshness(repo_root, progress)?;
     phase::enter(GraphPhase::DocsScope);
     let profile_state = load_docs_profile_state(repo_root)?;
     let scope = collect_scope(&store, &profile_state)?;
@@ -223,19 +222,30 @@ fn bounded(
 
 fn ensure_freshness(
     repo_root: &Path,
-    store: &GraphStore,
     progress: impl FnMut(RefreshPending),
-) -> Result<GraphFreshnessPayload, CodeGraphError> {
+) -> Result<(GraphStore, GraphFreshnessPayload), CodeGraphError> {
     // Documentation context owns its corpus: it indexes the whole repository
     // corpus and never prunes a configured documentation root or opens an
     // independent catalog database. Catalog scopes stay untouched.
     let scope = GraphScope::workspace(repo_root)?;
-    let outcome = crate::refresh::ensure_fresh_with_progress(&scope, store, progress)?;
+    let live = GraphStore::open(repo_root)?;
+    let outcome = crate::refresh::ensure_fresh_with_progress(&scope, &live, progress)?;
     let mut freshness = outcome.freshness;
     if !outcome.notes.is_empty() {
         freshness.summary = format!("{} ({})", freshness.summary, outcome.notes.join("; "));
     }
-    Ok(freshness)
+    let store = match outcome.source {
+        crate::refresh::RefreshSource::Live => live,
+        crate::refresh::RefreshSource::CompleteSnapshot => GraphStore::open_complete_snapshot(
+            &scope,
+        )?
+        .ok_or_else(|| {
+            CodeGraphError::validation(
+                "last complete graph snapshot was reported but is missing; run `effigy graph index --json`",
+            )
+        })?,
+    };
+    Ok((store, freshness))
 }
 
 /// Drop any candidate whose span is already covered by a higher-ranked

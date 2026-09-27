@@ -292,7 +292,11 @@ Consume one JSON object per line. Current event kinds:
   pre-refresh gate; when its `payload.freshness.state` is `missing-index`,
   `refresh-recommended`, or `degraded`, reindex with
   `graph status --refresh --json` (or let the next query refresh on demand).
-  Path lists (`stale_paths`, `failed_paths`) are supporting detail.
+  `stale-index` means the lookup served the last complete snapshot on purpose
+  (`--stale-index` or a held refresh lock) and must not be treated as current.
+  Additive `freshness.lock` names the holder pid, age, and `stale_holder` when
+  a refresh lock was involved. Path lists (`stale_paths`, `failed_paths`) are
+  supporting detail.
 - In a monorepo, `[catalog.graph]` marks an existing catalog as a graph scope.
   Every graph command payload carries additive catalog evidence at
   `catalog.alias`, `catalog.root`, `catalog.selection` (`explicit`, `cwd`, or

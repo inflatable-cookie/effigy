@@ -15,6 +15,7 @@ where
     let mut positional = Vec::new();
     let mut catalog = None;
     let mut all_catalogs = false;
+    let mut stale_index = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -32,6 +33,7 @@ where
                 )?);
             }
             "--all-catalogs" => all_catalogs = true,
+            "--stale-index" => stale_index = true,
             _ => positional.push(arg),
         }
     }
@@ -70,8 +72,25 @@ where
                     .to_owned(),
             ));
         }
+        if stale_index
+            && matches!(
+                graph.subcommand,
+                GraphSubcommand::Index | GraphSubcommand::Watch { .. }
+            )
+        {
+            return Err(CliParseError::InvalidArguments(
+                "`--stale-index` is a read-only lookup option and cannot be combined with `graph index` or `graph watch`"
+                    .to_owned(),
+            ));
+        }
+        if stale_index && matches!(graph.subcommand, GraphSubcommand::Status { refresh: true }) {
+            return Err(CliParseError::InvalidArguments(
+                "`--stale-index` cannot be combined with `graph status --refresh`".to_owned(),
+            ));
+        }
         graph.catalog = catalog;
         graph.all_catalogs = all_catalogs;
+        graph.stale_index = stale_index;
     }
     Ok(command)
 }
@@ -87,6 +106,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -114,6 +134,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -143,6 +164,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -179,6 +201,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -206,6 +229,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -241,6 +265,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -281,6 +306,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -319,6 +345,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -361,6 +388,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 
@@ -444,6 +472,7 @@ where
         output_json,
         catalog: None,
         all_catalogs: false,
+        stale_index: false,
     }))
 }
 

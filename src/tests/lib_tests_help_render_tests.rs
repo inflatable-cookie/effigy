@@ -286,6 +286,7 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("--debounce-ms <MS>"));
     assert!(rendered.contains("--refresh"));
+    assert!(rendered.contains("--stale-index"));
     assert!(rendered.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
     assert!(rendered.contains("--language <ID>"));
     assert!(rendered.contains("--path <PREFIX>"));

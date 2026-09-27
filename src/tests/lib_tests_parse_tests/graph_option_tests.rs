@@ -21,6 +21,7 @@ fn parse_graph_status_accepts_repo_and_json_flags() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }
@@ -43,6 +44,7 @@ fn parse_graph_status_accepts_refresh_flag() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }
@@ -82,6 +84,7 @@ fn parse_graph_context_accumulates_language_and_path_filters() {
             output_json: false,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }
@@ -118,8 +121,50 @@ fn parse_graph_explore_accepts_context_filters() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
+}
+
+#[test]
+fn parse_graph_explore_accepts_stale_index() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "explore".to_owned(),
+        "trace graph watch implementation".to_owned(),
+        "--stale-index".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        command,
+        Command::Graph(GraphArgs {
+            subcommand: GraphSubcommand::Explore {
+                request: "trace graph watch implementation".to_owned(),
+                max_files: None,
+                max_bytes: None,
+                languages: vec![],
+                paths: vec![],
+            },
+            repo_override: None,
+            output_json: true,
+            catalog: None,
+            all_catalogs: false,
+            stale_index: true,
+        })
+    );
+}
+
+#[test]
+fn parse_graph_index_rejects_stale_index() {
+    let error = parse_command(vec![
+        "graph".to_owned(),
+        "index".to_owned(),
+        "--stale-index".to_owned(),
+    ])
+    .expect_err("index cannot take --stale-index");
+    assert!(error.to_string().contains("--stale-index"));
 }
 
 #[test]
@@ -145,6 +190,7 @@ fn parse_graph_search_accepts_flags_after_query() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }
@@ -170,6 +216,7 @@ fn parse_graph_watch_accepts_debounce_repo_and_json_flags() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }
@@ -202,6 +249,7 @@ fn parse_graph_affected_accepts_depth_limit_and_stdin() {
             output_json: true,
             catalog: None,
             all_catalogs: false,
+            stale_index: false,
         })
     );
 }

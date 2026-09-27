@@ -635,6 +635,7 @@ fn graph_affected_large_unresolved_slice_does_not_rescan_edges_per_changed_symbo
         stale_path_count: 0,
         failed_path_count: 0,
         stale_paths: vec![],
+        lock: None,
     };
 
     let files = vec![file];

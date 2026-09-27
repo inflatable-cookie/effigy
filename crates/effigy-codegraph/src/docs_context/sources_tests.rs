@@ -137,6 +137,7 @@ fn ready_freshness() -> GraphFreshnessPayload {
         stale_path_count: 0,
         failed_path_count: 0,
         stale_paths: Vec::new(),
+        lock: None,
     }
 }
 

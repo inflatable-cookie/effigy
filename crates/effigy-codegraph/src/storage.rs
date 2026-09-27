@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::types::Value;
-use rusqlite::{params, Connection, MappedRows, OptionalExtension};
+use rusqlite::{params, Connection, MappedRows, OpenFlags, OptionalExtension};
 
 use crate::error::CodeGraphError;
 use crate::json::GraphCountsPayload;
@@ -57,6 +57,67 @@ impl GraphStore {
         let store = Self { paths, connection };
         store.initialize()?;
         Ok(store)
+    }
+
+    /// Open the last complete snapshot for read-only navigation.
+    ///
+    /// Returns `None` when no snapshot has been published. The snapshot is a
+    /// self-contained copy taken at the end of a finished index run, so a
+    /// concurrent refresh cannot expose a partial live database through it.
+    pub fn open_complete_snapshot(scope: &GraphScope) -> Result<Option<Self>, CodeGraphError> {
+        let paths = scope.paths();
+        if !paths.complete_db_path.is_file() {
+            return Ok(None);
+        }
+        let connection =
+            Connection::open_with_flags(&paths.complete_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_secs(1))?;
+        Ok(Some(Self { paths, connection }))
+    }
+
+    /// Copy the live database to the complete-snapshot path when a finished
+    /// index already exists and no snapshot has been published yet.
+    ///
+    /// Called under the refresh lock before mutation so concurrent readers can
+    /// keep using the last complete corpus.
+    pub(crate) fn preserve_complete_snapshot(&self) -> Result<(), CodeGraphError> {
+        if self.paths.complete_db_path.is_file() {
+            return Ok(());
+        }
+        if self.counts()?.files == 0 || !self.has_finished_index_run()? {
+            return Ok(());
+        }
+        self.snapshot_complete_index()
+    }
+
+    /// Replace the complete snapshot with a consistent copy of the live database.
+    pub(crate) fn snapshot_complete_index(&self) -> Result<(), CodeGraphError> {
+        if self.counts()?.files == 0 || !self.has_finished_index_run()? {
+            return Ok(());
+        }
+        let dest = &self.paths.complete_db_path;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        remove_sqlite_sidecars(dest);
+        let _ = std::fs::remove_file(dest);
+        let _ = self
+            .connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let dest_str = dest.to_str().ok_or_else(|| {
+            CodeGraphError::validation("complete graph snapshot path is not valid UTF-8")
+        })?;
+        self.connection.execute("VACUUM INTO ?1", [dest_str])?;
+        Ok(())
+    }
+
+    pub(crate) fn has_finished_index_run(&self) -> Result<bool, CodeGraphError> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM index_runs WHERE finished_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     pub fn paths(&self) -> &GraphPaths {
@@ -1241,6 +1302,16 @@ fn scope_record_predicate(scope: &GraphScope) -> (String, Vec<Value>) {
         "record_id IN (SELECT id FROM files WHERE {files_clause})\n          OR record_id IN (SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE {symbols_clause})\n          OR record_id IN (SELECT d.id FROM diagnostics d JOIN files f ON f.id = d.file_id WHERE {diagnostics_clause})"
     );
     (predicate, params)
+}
+
+fn remove_sqlite_sidecars(db_path: &Path) {
+    let Some(name) = db_path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_file(parent.join(format!("{name}-wal")));
+        let _ = std::fs::remove_file(parent.join(format!("{name}-shm")));
+    }
 }
 
 fn collect_rows<T, F>(rows: MappedRows<'_, F>) -> Result<Vec<T>, CodeGraphError>
