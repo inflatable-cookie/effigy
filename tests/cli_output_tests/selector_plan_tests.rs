@@ -116,7 +116,10 @@ fn cli_json_selector_without_plan_still_executes() {
         output.status.success(),
         "expected json selector execution, stdout={stdout}\nstderr={stderr}"
     );
-    assert_eq!(fs::read_to_string(&marker).expect("read marker").trim(), "ran");
+    assert_eq!(
+        fs::read_to_string(&marker).expect("read marker").trim(),
+        "ran"
+    );
     let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
     assert_eq!(parsed["result"]["schema"], "effigy.task.run.v1");
     assert_eq!(parsed["result"]["ok"], true);
@@ -147,7 +150,10 @@ fn cli_plan_after_passthrough_delimiter_still_executes() {
         output.status.success(),
         "expected passthrough --plan to execute, stdout={stdout}\nstderr={stderr}"
     );
-    assert_eq!(fs::read_to_string(&marker).expect("read marker").trim(), "ran");
+    assert_eq!(
+        fs::read_to_string(&marker).expect("read marker").trim(),
+        "ran"
+    );
 }
 
 #[test]

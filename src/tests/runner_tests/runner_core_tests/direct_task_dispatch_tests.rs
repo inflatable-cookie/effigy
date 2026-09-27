@@ -326,10 +326,7 @@ concurrent = [
 fn selector_plan_does_not_resolve_env_schema_exec() {
     let root = temp_workspace("selector-plan-no-env-exec");
     let marker = root.join("env-exec-must-not-run.out");
-    write_root_manifest(
-        &root,
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
+    write_root_manifest(&root, "[tasks.build]\nrun = \"printf ok\"\n");
     fs::write(
         root.join(".env.schema"),
         format!("SIDE=exec('printf ran > {}')\n", marker.display()),

@@ -14,7 +14,9 @@ fn catalog_task_plan_json_contract_has_versioned_shape() {
     assert_eq!(parsed["executed"], false);
     assert_eq!(parsed["task"], "build");
     assert_eq!(parsed["selector"], "build");
-    assert!(parsed["command"].as_str().is_some_and(|command| command.contains("printf build-ok")));
+    assert!(parsed["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("printf build-ok")));
     assert!(parsed["catalog"]["root"].is_string());
     assert!(parsed["catalog"]["manifest"].is_string());
 }
