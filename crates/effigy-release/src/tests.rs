@@ -1107,3 +1107,24 @@ fn optional_next_version_blocker_matches_only_absent_proposals() {
         "version file reports 0.2.2 but latest changelog release is 0.2.1"
     ));
 }
+
+#[test]
+fn status_gate_check_is_not_passed_when_gates_were_not_checked() {
+    let root = write_empty_unreleased_repo("status-gates-unchecked");
+    let context = load_release_context(&root).expect("release context");
+
+    let status = collect_release_status(&context, false, GateExecutionReport::empty());
+    assert!(!status.gates_checked);
+    assert!(!status.gates_passed);
+    assert!(!status.gate_check_passed());
+    assert!(!status.ready);
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&render_release_status_json(&status)).expect("json");
+    assert_eq!(parsed["gates_passed"], false);
+    assert_eq!(parsed["gate_check_passed"], false);
+
+    let text = render_release_status_text(&status);
+    assert!(text.starts_with("Release Status Blocked\n"), "{text}");
+    assert!(!text.contains("Gate check: passed"), "{text}");
+}

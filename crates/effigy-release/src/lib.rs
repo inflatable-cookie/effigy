@@ -659,10 +659,11 @@ pub fn is_optional_next_version_blocker(blocker: &str) -> bool {
 impl ReleaseStatus {
     /// Whether `release status --check-gates` reports success.
     ///
-    /// True when every executed gate passed and no blocker other than an
-    /// absent next-version proposal remains. A failed gate or any other
-    /// release-input blocker (invalid changelog, version mismatch, existing
-    /// tag) still fails the check.
+    /// True when gates were checked, every executed gate passed, and no
+    /// blocker other than an absent next-version proposal remains. A failed
+    /// gate or any other release-input blocker (invalid changelog, version
+    /// mismatch, existing tag) still fails the check, as does skipping the
+    /// gate run entirely: an unchecked status never reports a passed check.
     pub fn gate_check_passed(&self) -> bool {
         self.gates_passed
             && self
@@ -681,7 +682,9 @@ pub fn collect_release_status(
     if check_gates {
         blockers.extend(gate_blockers(&gate_report.results));
     }
-    let gates_passed = gate_blockers(&gate_report.results).is_empty();
+    // No failures observed is only a pass when gates actually ran: an
+    // unchecked report carries no results, which must not read as passed.
+    let gates_passed = check_gates && gate_blockers(&gate_report.results).is_empty();
 
     ReleaseStatus {
         repo_root: context.repo_root.clone(),
