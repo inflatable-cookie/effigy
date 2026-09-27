@@ -1298,6 +1298,7 @@ pub fn hosts_report(
     let kind = match host_map.kind {
         crate::HostScopeKind::Primary => "primary",
         crate::HostScopeKind::Worktree => "worktree",
+        crate::HostScopeKind::EphemeralClone => "ephemeral-clone",
     };
     let routes = host_map
         .routes
@@ -1337,9 +1338,13 @@ pub fn hosts_report(
     });
     let mut lines = Vec::new();
     match host_map.effective_base.as_deref() {
-        Some(base) if host_map.kind == crate::HostScopeKind::Worktree => {
+        Some(base) if host_map.kind != crate::HostScopeKind::Primary => {
+            let label = match host_map.kind {
+                crate::HostScopeKind::EphemeralClone => "ephemeral clone",
+                _ => "worktree",
+            };
             lines.push(format!(
-                "[ok] effective hosts for worktree scope {}",
+                "[ok] effective hosts for {label} scope {}",
                 host_map.host_key.as_deref().unwrap_or("unknown")
             ));
             if let Some(declared) = host_map.declared_base.as_deref() {

@@ -140,7 +140,7 @@ Useful flags:
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
 - `hosts` prints the effective HTTP and TCP host map for this checkout
-- `retire --yes` removes only this runtime scope's owned resources; `--scope <TOKEN>` retries after the worktree directory is gone
+- `retire --yes` removes only this runtime scope's owned resources; `--scope <TOKEN>` retries after the checkout directory is gone
 
 ## QA Recipe
 
@@ -282,35 +282,46 @@ Effigy generates runtime-owned compose output under:
 
 Treat that directory as runtime output, not repo-owned source.
 
-In a linked Git worktree, Effigy adds a stable generation suffix to generated
-Compose project names. Containers, networks and managed volumes therefore use
-different identities from the primary checkout and other worktrees. Generated
-host ports are allocated separately, even if `host.ports` declares fixed
-numbers. The primary checkout keeps its existing name and ports. Repeated
-commands in one worktree reach the same stack; a recreated worktree gets a new
-identity. To intentionally share one Compose stack, set
+Runtime-scoped checkouts — linked Git worktrees and full clones whose local
+Git config sets `effigy.runtimeScope = ephemeral` — get a stable generation
+suffix on generated Compose project names (`-wt-` for a worktree, `-ec-` for
+a marked clone). Containers, networks and managed volumes therefore use
+different identities from the primary checkout, other worktrees and other
+clones. Generated host ports are allocated separately, even if `host.ports`
+declares fixed numbers. The primary checkout and any unmarked clone keep
+their existing name and ports. Repeated commands in one scoped checkout
+reach the same stack; deleting and recreating it at the same path gets a
+new identity. To intentionally share one Compose stack, set
 `share_runtime_identity = true` under `[containers.<name>]`.
 
-Linked worktrees also get a distinct gateway host map. Declared
-`app.test` becomes `app-w<host-key>.test`; helpers such as
-`mail.app.test` stay under that apex. The primary checkout keeps the
-declared names. `effigy container hosts --json` is the machine-readable
-map for public URLs, origins, cookie scope, WebAuthn and test selectors.
-Effigy does not rewrite application configuration. `effigy container
-retire --yes` removes that scope's owned containers, networks, mutable
-volumes, isolated routes and ports using `com.effigy.scope` or the exact
-Compose project label, and only on the runtime profile that produced each
-observation. Shared services, persistent volumes, external
-volumes, and shared-identity routes stay. Repo-owned Compose volumes stay
-unless labelled `com.effigy.persist=false`. A record under
-`~/.effigy/runtime-scopes/` survives a deleted checkout and aggregates
-every environment and runtime profile in that worktree so the same command
-can retry. Record writes are locked and atomic; corrupt JSON fails closed.
-A backend that cannot list resources, or that returns malformed inspect
-output, fails instead of reporting an empty stack. TLS certificates for
-isolated routes are removed under the route lock after an owner check;
-failure leaves the route and a pending-cert list on the record. A pending
-certificate whose domain now has a foreign owner stays.
+The clone marker is read from that checkout's own `.git/config` only — never
+from global or system Git configuration, and `[include]` directives are not
+followed. Only the tool that created the clone (Nucleus sets this marker on
+every task workspace clone) can scope it. A marked clone owns its `.git`
+directory outright, so no linked-worktree shared-Git-directory mount is
+added to its container.
+
+Scoped checkouts also get a distinct gateway host map. Declared `app.test`
+becomes `app-w<host-key>.test`; helpers such as `mail.app.test` stay under
+that apex. The primary checkout and unmarked clones keep the declared
+names. `effigy container hosts --json` is the machine-readable map for
+public URLs, origins, cookie scope, WebAuthn and test selectors, and
+reports scope kind `worktree` or `ephemeral-clone`. Effigy does not
+rewrite application configuration. `effigy container retire --yes` removes
+that scope's owned containers, networks, mutable volumes, isolated routes
+and ports using `com.effigy.scope` or the exact Compose project label, and
+only on the runtime profile that produced each observation. Shared
+services, persistent volumes, external volumes, and shared-identity routes
+stay. Repo-owned Compose volumes stay unless labelled
+`com.effigy.persist=false`. A record under `~/.effigy/runtime-scopes/`
+survives a deleted checkout and aggregates every environment and runtime
+profile in that scope so the same command can retry. Record writes are
+locked and atomic; corrupt JSON fails closed. A backend that cannot list
+resources, or that returns malformed inspect output, fails instead of
+reporting an empty stack. TLS certificates for isolated routes are removed
+under the route lock after an owner check; failure leaves the route and a
+pending-cert list on the record. A pending certificate whose domain now has
+a foreign owner stays.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
@@ -346,12 +357,12 @@ Use this when:
 - the repo has taken local ownership through `effigy container <name> eject`
 - the generated catalog path is not sufficient
 
-Linked worktrees using a repo-owned Compose file still get a scoped project
-name. Effigy refuses fixed published ports, `container_name`, and named or
-external top-level volumes and networks in that file because it cannot safely
-rewrite repo-owned Compose resources. Remove those fixed resources, use
-generated Compose, or explicitly opt into a shared runtime with
-`share_runtime_identity = true`.
+Runtime-scoped checkouts using a repo-owned Compose file still get a scoped
+project name. Effigy refuses fixed published ports, `container_name`, and
+named or external top-level volumes and networks in that file because it
+cannot safely rewrite repo-owned Compose resources. Remove those fixed
+resources, use generated Compose, or explicitly opt into a shared runtime
+with `share_runtime_identity = true`.
 
 ## Core Rules
 
@@ -470,8 +481,9 @@ These use shared task activation instead of session ownership:
 
 - Effigy auto-starts the runtime when needed
 - sibling-service bring-up and exec-readiness recovery run before dispatch
-- a scoped worktree proves its selected checkout is readable and writable in
-  the primary service before dispatch; a mismatched mount stops the task before lease
+- a runtime-scoped checkout (linked worktree or marked ephemeral clone)
+  proves its selected checkout is readable and writable in the primary
+  service before dispatch; a mismatched mount stops the task before lease
   refresh. Changed Cargo inputs are touched inside the container so host edits
   invalidate stale build artifacts.
 - public gateway/runtime route registration is reconciled when the container
@@ -688,13 +700,14 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
-Linked worktrees register the effective host map from `effigy container
-hosts`, not the raw declared domains. If another live worktree already owns a
-name, registration fails and names the owning checkout. This also protects TLS
-certificates and TCP service aliases: stopping one worktree never removes a
-sibling's current route. A route from a retired worktree generation can be
-reclaimed on the next registration. `effigy gateway repair --yes` can clean
-stale TCP alias conflicts, but leaves live worktree routes alone.
+Scoped checkouts — linked worktrees and marked ephemeral clones — register
+the effective host map from `effigy container hosts`, not the raw declared
+domains. If another live checkout already owns a name, registration fails
+and names the owning checkout. This also protects TLS certificates and TCP
+service aliases: stopping one scope never removes a sibling's current
+route. A route from a retired checkout generation can be reclaimed on the
+next registration. `effigy gateway repair --yes` can clean stale TCP alias
+conflicts, but leaves live checkout routes alone.
 
 ### Route-table trust
 

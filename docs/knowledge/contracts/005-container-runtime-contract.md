@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-09-26
+Last Updated: 2026-09-27
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -107,13 +107,25 @@ has a foreign owner is left in place.
 
 Tom approved the same runtime scope for a full clone whose local Git config
 sets `effigy.runtimeScope = ephemeral`. The orchestrator sets this marker when
-it creates the clone. Effigy will store that clone's token in its own
+it creates the clone. Effigy stores that clone's token in its own
 `.git/effigy-runtime-scope`; deleting and recreating the clone creates a new
 generation. `is_live`, effective hosts, route ownership and `container retire`
 must use the same scope behavior as linked worktrees. An unmarked full clone
 keeps primary-checkout behavior. A marked clone has its own Git directory and
-needs no linked-worktree shared-Git-directory mount in the container. Until
-this extension lands, only linked worktrees receive isolated runtime scopes.
+needs no linked-worktree shared-Git-directory mount in the container.
+
+The marker read is local-only: Effigy parses the checkout's own `.git/config`
+without a `git` subprocess and without following `[include]`/`[includeIf]`
+directives, consulting `--system`/`--global` scope, or reading `GIT_CONFIG_*`
+environment. Only a writer that puts the marker inside the checkout's own Git
+directory can scope it, so inherited or global configuration can never mark
+an unmarked checkout. Section and key names compare case-insensitively as
+Git does; the value must be exactly `ephemeral`.
+
+Generated Compose project names carry the token behind a scope-shape tag:
+`-wt-` for linked worktrees, `-ec-` for marked ephemeral clones. `effigy
+container hosts` reports scope kind `ephemeral-clone` for a marked clone and
+`worktree` for a linked worktree; host rewriting is identical for both.
 
 ## Contract goals
 

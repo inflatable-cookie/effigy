@@ -3915,6 +3915,10 @@ An `--only` handle that resolves to nothing is reported rather than ignored:
 
 ### Container Hosts (`effigy.container.hosts.v1`)
 
+`scope.kind` is `primary`, `worktree` (linked Git worktree), or
+`ephemeral-clone` (full clone marked `effigy.runtimeScope = ephemeral`).
+Worktree and ephemeral-clone scopes rewrite declared domains the same way.
+
 ```json
 {
   "schema": "effigy.container.hosts.v1",
