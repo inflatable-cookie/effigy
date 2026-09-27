@@ -24,13 +24,6 @@ const LIVE_CASE_FRAGMENTS: &[&str] = &[
                 extra_args: [],
                 expected_path: "docs/guides/archive/032-docs-consistency-sweep-and-changelog.md",
                 max_rank: 8,"#,
-    r#"id: "effigy-plan",
-                dimension: "plan",
-                expect: "live-authority",
-                query: "Choose the next Effigy product outcome with Tom",
-                extra_args: [],
-                expected_path: "docs/plan.md",
-                max_rank: 3,"#,
 ];
 
 fn benchmark_script_path() -> PathBuf {

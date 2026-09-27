@@ -51,11 +51,6 @@ include = ["docs/knowledge/*.md", "docs/knowledge/domain/*.md", "docs/knowledge/
 authority = 85
 default-currentness = "current"
 
-[docs_policy.graph.kinds.plan]
-include = ["docs/plan.md"]
-authority = 65
-default-currentness = "current"
-
 [docs_policy.graph.kinds.guide]
 include = ["docs/guides/*.md"]
 authority = 50
@@ -70,10 +65,6 @@ default-currentness = "historical"
 include = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs/README.md"]
 authority = 40
 default-currentness = "current"
-
-[docs_policy.graph.kinds.triage]
-include = ["docs/triage/*.md"]
-authority = 20
 
 # ---- Relations ---------------------------------------------------------------
 # Labels match `Label: [link](target)` metadata lines; headings match links found

@@ -544,8 +544,6 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
             "Created docs/README.md",
             "Created docs/knowledge/README.md",
             "Created docs/knowledge/vision.md",
-            "Created docs/plan.md",
-            "Created docs/triage/README.md",
             "Created docs/knowledge/contracts/release.md",
             "Fill in AGENTS.md",
             "docs/knowledge/vision.md",
@@ -556,10 +554,6 @@ fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_gui
     assert_path_exists(
         &root.join("docs/knowledge/vision.md"),
         "northstar first vision document (nested dirs must be created)",
-    );
-    assert_path_exists(
-        &root.join("docs/triage/README.md"),
-        "northstar triage intake anchor (non-authoritative candidates)",
     );
     // The lean starter keeps its graph profile and QA in the emitted manifest.
     assert_file_text_contains_all(

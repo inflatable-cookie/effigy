@@ -72,7 +72,7 @@ pub(super) fn classify_file_role(
     {
         return FileRole::Test;
     }
-    if lower == "docs/plan.md" || lower.starts_with("docs/plans/") {
+    if lower.starts_with("docs/plans/") {
         return FileRole::Planning;
     }
     if language_id == "markdown" || lower.starts_with("docs/") || lower.ends_with(".md") {

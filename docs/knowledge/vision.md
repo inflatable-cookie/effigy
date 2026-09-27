@@ -60,7 +60,7 @@ not a production deployment topology.
 
 Those rules outlive their former vision decision records. Planning selections
 about past governance and consumer cohorts remain in Git history; current
-intent lives in [plan.md](../plan.md).
+intent lives in the Queue plan.
 
 ## Quality Knowledge
 

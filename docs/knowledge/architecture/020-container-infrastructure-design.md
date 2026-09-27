@@ -343,7 +343,7 @@ worktrees that do not share runtime identity rewrite the declared apex to
 `<apex>-w<host-key>.<tld>` so HTTP routes and TCP aliases stay one set.
 `effigy container hosts` exposes that map. The primary checkout keeps declared
 names. Consumer apps still feed those names into public URLs, origins, cookies
-and selectors; see the [worktree isolation lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
+and selectors; see Queue lead `af3ab7c7-b631-4d4f-9da7-f2949ded82f3`
 for remaining consumer wiring.
 
 The route table at `~/.effigy/gateway/routes.json` maps domain names to

@@ -8,11 +8,9 @@ Effigy is a Rust task runner for monorepos. Its CLI and `effigy.toml` give agent
 - Current knowledge: `docs/knowledge/README.md`
 - Retired concepts: `docs/knowledge/retired.toml`
 - Open questions: `docs/knowledge/questions.md`
-- Intent: `docs/plan.md`
-- Unresolved leads: `docs/triage/`
 - User documentation: `docs/guides/README.md`
 
-Tasks, briefs, status, and outcomes live in Queue. The repository holds product knowledge and code.
+The plan (lanes, their documents and their order), leads, papercuts, brief drafts, tasks and status live in Queue. Read what's next with `plan.get` (see the `northstar` skill). The repository holds product knowledge and code.
 
 ## Commands
 
@@ -29,7 +27,7 @@ Tasks, briefs, status, and outcomes live in Queue. The repository holds product 
 - Do not add package scripts that re-export Effigy tasks.
 - Update the owning knowledge file when product truth changes. Record operator rulings there before handing over.
 - Dispatch product implementation and retirement work as Queue tasks with approved briefs. Chatterbox owns planning and knowledge maintenance.
-- File small recurring friction in Queue; leave unresolved leads in `docs/triage/` until planned.
+- File small recurring friction with Queue `papercut.add`; record unplanned ideas and observations with `lead.add`.
 - Add user-facing changes under `CHANGELOG.md` `[Unreleased]`.
 
 ## Validate

@@ -7,12 +7,12 @@ This guide's path stays stable for consumers. A new repository can start with `e
 - `AGENTS.md` orients agents and names `effigy qa` as validation.
 - `docs/README.md` describes the current state and links by topic.
 - `docs/knowledge/` owns current vision, architecture, contracts, release procedure, retired concepts, and open questions.
-- `docs/plan.md` holds prioritized intent; `docs/triage/` holds unresolved leads.
+- Queue holds the plan (lanes, lane documents and order), leads, papercuts and draft briefs.
 - `docs/guides/` remains product documentation at stable consumer paths.
 - Queue closeout is the default. New lean repositories carry no Queue files.
   Repository-specific overrides belong in Queue project settings (`project.set`).
 
-Queue owns briefs, task status, review, closeout, and outcomes. A repository's committed `[docs_policy.graph]` profile is the only authority for `effigy docs context`; neither the starter nor an installed skill is read at query time.
+Queue also owns task status, review, closeout, and outcomes. A repository's committed `[docs_policy.graph]` profile is the only authority for `effigy docs context`; neither the starter nor an installed skill is read at query time.
 
 ## Effigy commands
 

@@ -274,15 +274,6 @@ let targets = [
                 max_rank: 8,
             },
             #{
-                id: "effigy-plan",
-                dimension: "plan",
-                expect: "live-authority",
-                query: "Choose the next Effigy product outcome with Tom",
-                extra_args: [],
-                expected_path: "docs/plan.md",
-                max_rank: 3,
-            },
-            #{
                 id: "effigy-exact-identifier",
                 dimension: "exact-identifier",
                 expect: "live-authority",

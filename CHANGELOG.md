@@ -91,6 +91,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- `effigy init northstar` now directs planning and leads to Queue and omits
+  repository plan and triage files. Effigy's own planning records moved there too.
 - Task and draft text runs send the framed CLI header to stderr so stdout is
   only the task's own bytes. Command substitution no longer needs to strip the
   banner.

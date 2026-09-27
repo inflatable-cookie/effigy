@@ -1,6 +1,6 @@
 [starter]
 name = "northstar"
-description = "Lean Northstar: current knowledge, intent, triage, and a repository-owned docs check."
+description = "Northstar: current knowledge in Git, planning and leads in Queue, and a repository-owned docs check."
 
 [[files]]
 target = "AGENTS.md"
@@ -36,15 +36,9 @@ target = "docs/knowledge/retired.toml"
 target = "docs/knowledge/vision.md"
 
 [[files]]
-target = "docs/plan.md"
-
-[[files]]
-target = "docs/triage/README.md"
-
-[[files]]
 target = "effigy.toml"
 
 [guidance]
 text = """
-Fill in AGENTS.md, docs/knowledge/vision.md, and the release procedure. Keep task briefs and outcomes in Queue. Run `effigy qa` before the first PR. The committed `[docs_policy.graph]` profile is the repository's own documentation authority.
+Fill in AGENTS.md, docs/knowledge/vision.md, and the release procedure. Keep the plan, leads, papercuts, brief drafts, tasks and outcomes in Queue. Run `effigy qa` before the first PR. The committed `[docs_policy.graph]` profile is the repository's own documentation authority.
 """

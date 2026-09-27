@@ -18,6 +18,5 @@ planning response. A contract or release gate failure calls for immediate
 repair before promotion. Historical risk reviews and stage scorecards stay in
 Git history; no periodic status mirror is maintained here.
 
-The [per-worktree gateway hostname lead](../../triage/20260917-230600-per-worktree-container-identity-default.md)
-still tracks consumer application wiring. Effigy now owns scoped host discovery
+Queue lead `af3ab7c7-b631-4d4f-9da7-f2949ded82f3` still tracks consumer application wiring. Effigy now owns scoped host discovery
 and labelled retirement for worker worktrees.

@@ -1,7 +1,7 @@
 [tasks]
 "qa:docs" = [
   "effigy docs check links",
-  "effigy docs check paths README.md AGENTS.md docs/README.md docs/plan.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
+  "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
 ]
 qa = [{ task = "qa:docs" }]
 
@@ -11,11 +11,6 @@ roots = ["README.md", "AGENTS.md", "docs"]
 [docs_policy.graph.kinds.knowledge]
 include = ["docs/knowledge/*.md", "docs/knowledge/contracts/*.md", "docs/knowledge/domain/*.md"]
 authority = 100
-default-currentness = "current"
-
-[docs_policy.graph.kinds.plan]
-include = ["docs/plan.md"]
-authority = 70
 default-currentness = "current"
 
 [docs_policy.graph.kinds.guide]

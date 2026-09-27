@@ -66,8 +66,7 @@ query work. Field cardinality, exact spans, currentness ordering, relation
 matching, and command budgets are fixed by [contract 041](../contracts/041-documentation-graph-profile-contract.md).
 
 Effigy's own [profile](../../effigy.docs.toml) ranks contracts, architecture,
-knowledge, plan, guides, and triage separately. `docs/plan.md` is the plan
-surface. The profile is one repository choice, not a built-in Northstar rule.
+knowledge and guides separately. Queue owns the plan and leads. The profile is one repository choice, not a built-in Northstar rule.
 `effigy init northstar` supplies a lean example; the consumer owns its copied
 bytes thereafter.
 

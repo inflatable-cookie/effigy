@@ -28,7 +28,7 @@
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'"
 "qa:docs:knowledge" = [
-  "cargo run --bin effigy -- docs check paths README.md AGENTS.md docs/README.md docs/plan.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
+  "cargo run --bin effigy -- docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
   "cargo run --bin effigy -- docs check workflow-paths",
 ]
 "qa:docs" = [

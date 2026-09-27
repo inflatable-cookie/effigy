@@ -289,7 +289,6 @@ mod tests {
             "README.md",
             "AGENTS.md",
             "docs/README.md",
-            "docs/plan.md",
             "docs/knowledge/README.md",
             "docs/knowledge/architecture.md",
             "docs/knowledge/contracts/README.md",
@@ -298,7 +297,6 @@ mod tests {
             "docs/knowledge/contracts/release.md",
             "docs/knowledge/retired.toml",
             "docs/knowledge/questions.md",
-            "docs/triage/README.md",
         ];
         for expected in expected_targets {
             assert!(

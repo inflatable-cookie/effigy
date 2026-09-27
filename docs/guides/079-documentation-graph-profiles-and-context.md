@@ -142,7 +142,7 @@ effigy docs context "docs consistency sweep and changelog"
 effigy docs context "catalog_tasks"
 ```
 
-Effigy's current profile ranks [knowledge](../knowledge/README.md) as product authority and [the plan](../plan.md) as intent. Queue owns live task state, so a docs-context query does not answer which task is running. Historical process records remain in Git history.
+Effigy's current profile ranks [knowledge](../knowledge/README.md) as product authority. Queue owns the plan and live task state, so a docs-context query does not answer what is next or which task is running. Historical process records remain in Git history.
 
 The same shape in the arbitrary vocabulary of
 `tests/fixtures/docs-context-benchmark/generic-handbook/`, where a live and a
