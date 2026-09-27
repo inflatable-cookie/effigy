@@ -335,6 +335,48 @@ run = "sleep 1"
 }
 
 #[test]
+fn lock_wait_timeout_keeps_sequence_owner_on_status() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-wait-timeout-sequence-owner");
+    write_root_manifest(
+        &root,
+        r#"[tasks.validate]
+run = [{ task = "work" }]
+
+[tasks.work]
+run = "sleep 1"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_task_with_repo(&root_for_thread, "validate", &[]));
+    std::thread::sleep(Duration::from_millis(150));
+
+    let err = run_task_with_repo(&root, "validate", &["--lock-wait-ms", "150"])
+        .expect_err("live sequence owner should survive a bounded wait");
+    crate::runner::tests::prelude::assert_lock_conflict(
+        err,
+        "task:validate",
+        "effigy tasks status validate",
+    );
+
+    let status = run_task_status_from_repo(&root, "validate", true);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v1", 1);
+    assert_eq!(
+        parsed["state"], "running",
+        "sequence owner missing: {parsed}"
+    );
+    assert!(
+        parsed["active"].is_object(),
+        "live sequence owner missing: {parsed}"
+    );
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
 fn lock_wait_acquires_after_live_owner_releases() {
     let _guard = lock_test();
     let root = temp_workspace("lock-wait-retry-after-release");

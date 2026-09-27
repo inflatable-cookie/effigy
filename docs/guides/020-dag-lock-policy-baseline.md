@@ -70,8 +70,8 @@ A live owner is never stolen.
 Callers may wait for a live owner with `--lock-wait-ms <N>` or
 `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately. When the wait
 expires, the error names the live owner and the status command to inspect it.
-`effigy tasks status <selector>` keeps the still-running owner; retry after
-that owner releases. Lock-wait JSON (`effigy.lock-wait.v1`) is `error.details`
+`effigy tasks status <selector>` keeps the still-running owner, including
+in-process sequence tasks; retry after that owner releases. Lock-wait JSON (`effigy.lock-wait.v1`) is `error.details`
 in `--json` mode, not text stdout.
 
 ## 4) Manual Unlock

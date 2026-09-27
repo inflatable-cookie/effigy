@@ -118,6 +118,7 @@ fn run_standard_task_inner(
         std::slice::from_ref(lock_scope),
         wait_timeout_ms,
     )?;
+    status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
 
     let cache_check = check_task_cache(
         &preflight.resolved.resolved_root,
