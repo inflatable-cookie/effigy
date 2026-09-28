@@ -15,6 +15,28 @@ fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plan_keeps_configured_dir_with_package_manager() {
+    let root = temp_workspace("builtin-test-plan-package-manager-dir");
+    write_js_package_manager_manifest(&root, "pnpm");
+    write_package_json_with_vitest_dev_dependency(&root);
+    fs::write(
+        root.join("vitest.config.ts"),
+        "export default { test: { dir: 'src' } };\n",
+    )
+    .expect("write config");
+
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "pnpm exec vitest run --dir 'src'",
+            "package_manager.js=pnpm",
+            "test.dir is `src`",
+        ],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-exec-package-manager");

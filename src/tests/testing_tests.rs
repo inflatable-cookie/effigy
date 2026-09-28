@@ -40,6 +40,245 @@ fn detect_test_runner_detects_vitest_from_config_file() {
 }
 
 #[test]
+fn detect_test_runner_skips_vitest_when_only_a_transitive_binary_exists() {
+    let root = temp_workspace("test-detect-vitest-transitive-bin");
+    fs::write(
+        root.join("package.json"),
+        r#"{ "name": "app", "dependencies": { "left-pad": "1.0.0" } }"#,
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(&vitest, "#!/bin/sh\nexit 0\n").expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let report = detect_test_runner_detailed(&root);
+    assert!(report.selected.is_none());
+    assert_eq!(report.candidates[0].runner, TestRunner::Vitest);
+    assert!(!report.candidates[0].available);
+    assert!(report.candidates[0]
+        .reason
+        .contains("installed `node_modules/.bin/vitest` is not package intent"));
+}
+
+#[test]
+fn detect_test_runner_does_not_use_parent_package_json_as_vitest_evidence() {
+    let root = temp_workspace("test-detect-vitest-no-parent-manifest");
+    fs::write(
+        root.join("package.json"),
+        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
+    )
+    .expect("write parent package");
+    let child = root.join("packages/app");
+    fs::create_dir_all(&child).expect("mkdir child");
+    fs::write(
+        child.join("package.json"),
+        r#"{ "name": "app", "dependencies": { "left-pad": "1.0.0" } }"#,
+    )
+    .expect("write child package");
+    let local_bin = child.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    fs::write(local_bin.join("vitest"), "#!/bin/sh\nexit 0\n").expect("write vitest");
+
+    assert!(detect_test_runner(&child).is_none());
+}
+
+#[test]
+fn detect_test_runner_uses_configured_vitest_test_dir() {
+    let root = temp_workspace("test-detect-vitest-configured-dir");
+    fs::write(
+        root.join("package.json"),
+        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("vitest.config.ts"),
+        "export default { test: { dir: 'src', include: ['**/*.test.ts'] } };\n",
+    )
+    .expect("write config");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/example.test.ts"), "test('ok', () => {});\n").expect("write test");
+    fs::write(root.join("decoy.test.ts"), "test('outside', () => {});\n").expect("write decoy");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("test.dir is `src`")));
+}
+
+#[test]
+fn detect_test_runner_detects_vitest_from_vite_config_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-config");
+    fs::write(
+        root.join("vite.config.ts"),
+        "export default { test: { dir: './tests' } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir './tests'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("vite.config.ts") && line.contains("test` block")));
+}
+
+#[test]
+fn detect_test_runner_ignores_vite_config_without_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-no-test");
+    fs::write(
+        root.join("vite.config.ts"),
+        "export default { plugins: [] };\n",
+    )
+    .expect("write config");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    fs::write(local_bin.join("vitest"), "#!/bin/sh\nexit 0\n").expect("write vitest");
+
+    assert!(detect_test_runner(&root).is_none());
+}
+
+#[test]
+fn detect_test_runner_ignores_commented_out_vite_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-commented-test");
+    fs::write(root.join("package.json"), r#"{ "name": "app" }"#).expect("write package");
+    fs::write(
+        root.join("vite.config.ts"),
+        "// test: { dir: 'src' }\nexport default { plugins: [] };\n",
+    )
+    .expect("write config");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    fs::write(local_bin.join("vitest"), "#!/bin/sh\nexit 0\n").expect("write vitest");
+
+    assert!(detect_test_runner(&root).is_none());
+}
+
+#[test]
+fn detect_test_runner_ignores_commented_out_test_dir() {
+    let root = temp_workspace("test-detect-vitest-commented-dir");
+    fs::write(
+        root.join("vitest.config.ts"),
+        "export default { test: { /* dir: 'old' */ include: ['**/*.test.ts'] } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run");
+    assert!(plan.evidence.iter().all(|line| !line.contains("test.dir")));
+}
+
+#[test]
+fn detect_test_runner_detects_vitest_from_cts_config_file() {
+    let root = temp_workspace("test-detect-vitest-cts");
+    fs::write(
+        root.join("vitest.config.cts"),
+        "export default { test: { dir: 'src' } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("vitest.config.cts")));
+}
+
+#[test]
+fn detect_test_runner_detects_vitest_from_vite_cts_config_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-cts");
+    fs::write(
+        root.join("vite.config.cts"),
+        "export default { test: { dir: './tests' } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir './tests'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("vite.config.cts")));
+}
+
+#[test]
+fn detect_test_runner_uses_quoted_test_keys_for_configured_dir() {
+    let root = temp_workspace("test-detect-vitest-quoted-keys");
+    fs::write(
+        root.join("package.json"),
+        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("vite.config.ts"),
+        r#"export default { "test": { "dir": "src" } };"#,
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+}
+
+#[test]
+fn detect_test_runner_detects_quoted_vite_test_block_without_package_json() {
+    let root = temp_workspace("test-detect-vitest-quoted-vite-only");
+    fs::write(
+        root.join("vite.config.ts"),
+        r#"export default { "test": { "dir": "src" } };"#,
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+}
+
+#[test]
+fn detect_test_runner_keeps_test_dir_after_regex_with_slashes() {
+    let root = temp_workspace("test-detect-vitest-regex-slashes");
+    fs::write(
+        root.join("package.json"),
+        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("vitest.config.ts"),
+        r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+}
+
+#[test]
+fn detect_test_runner_detects_vite_test_block_after_regex_with_slashes() {
+    let root = temp_workspace("test-detect-vitest-vite-regex-slashes");
+    fs::write(
+        root.join("vite.config.ts"),
+        r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+}
+
+#[test]
 fn detect_test_runner_uses_nextest_when_available() {
     let _guard = lock_test();
     let root = temp_workspace("test-detect-nextest");
@@ -145,6 +384,27 @@ fn detect_test_runner_prefers_vitest_when_js_and_rust_markers_both_exist() {
     let plan = detect_test_runner(&root).expect("plan");
     assert_eq!(plan.runner, TestRunner::Vitest);
     assert_eq!(plan.command, "vitest run");
+}
+
+#[test]
+fn detect_test_runner_prefers_rust_when_only_a_transitive_vitest_binary_exists() {
+    let _guard = lock_test();
+    let root = temp_workspace("test-detect-rust-not-transitive-vitest");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+    fs::write(root.join("package.json"), r#"{ "name": "app" }"#).expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    fs::write(local_bin.join("vitest"), "#!/bin/sh\nexit 0\n").expect("write vitest");
+    let empty_bin = root.join("empty-bin");
+    fs::create_dir_all(&empty_bin).expect("mkdir empty");
+    let _env = EnvGuard::set_many(&[("PATH", Some(empty_bin.display().to_string()))]);
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::CargoTest);
 }
 
 #[test]

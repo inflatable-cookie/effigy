@@ -91,6 +91,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Vitest auto-detection requires package-owned evidence (`package.json`
+  dependency/script, `vitest.config.*`, or `vite.config.*` with a `test`
+  block, including `.cts`). A transitive `node_modules/.bin/vitest` is not
+  enough. Commented-out or string-embedded `test` / `dir` syntax is not
+  active. Quoted `test` / `dir` keys and regex literals that contain `//`
+  stay active. When the selected package's config sets `test.dir`, the
+  detected command includes that root. Explicit `[test.suites]` and
+  `[test.runners]` stay authoritative.
 - `effigy container cache list` (repo and `--global`) now reports reclaimable
   size totals in text and JSON, plus in-use size on the global report.
   Unknown per-volume sizes keep `size_complete` false instead of inflating
