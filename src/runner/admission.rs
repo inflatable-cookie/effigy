@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
@@ -66,7 +66,7 @@ struct RunRecord {
     log_reference: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Store {
     schema: String,
     schema_version: u8,
@@ -142,42 +142,57 @@ pub(super) struct AdmissionLease {
 
 pub(super) struct ProcessGroupRssMonitor {
     stop: Arc<AtomicBool>,
-    peak: Arc<AtomicU64>,
+    metrics: Arc<Mutex<ProcessGroupMetrics>>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct ProcessGroupMetrics {
+    pub(super) rss_bytes: Option<u64>,
+    pub(super) cpu_user_ms: Option<u128>,
+    pub(super) cpu_system_ms: Option<u128>,
 }
 
 impl ProcessGroupRssMonitor {
     pub(super) fn start(process_group: u32) -> Option<Self> {
         scoped_lease_id()?;
         let stop = Arc::new(AtomicBool::new(false));
-        let peak = Arc::new(AtomicU64::new(0));
+        let metrics = Arc::new(Mutex::new(ProcessGroupMetrics::default()));
         let stop_thread = stop.clone();
-        let peak_thread = peak.clone();
+        let metrics_thread = metrics.clone();
         let thread = std::thread::spawn(move || {
             while !stop_thread.load(Ordering::Relaxed) {
-                if let Some(bytes) = process_group_rss_bytes(process_group as i32) {
-                    peak_thread.fetch_max(bytes, Ordering::Relaxed);
-                }
+                update_process_group_metrics(
+                    &metrics_thread,
+                    process_group_sample(process_group as i32),
+                );
                 std::thread::sleep(RSS_POLL_INTERVAL);
             }
-            if let Some(bytes) = process_group_rss_bytes(process_group as i32) {
-                peak_thread.fetch_max(bytes, Ordering::Relaxed);
-            }
+            update_process_group_metrics(
+                &metrics_thread,
+                process_group_sample(process_group as i32),
+            );
         });
         Some(Self {
             stop,
-            peak,
+            metrics,
             thread: Some(thread),
         })
     }
 
-    pub(super) fn finish(mut self) -> Option<u64> {
+    pub(super) fn finish(mut self) -> Option<ProcessGroupMetrics> {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        let peak = self.peak.load(Ordering::Relaxed);
-        (peak > 0).then_some(peak)
+        let metrics = *self
+            .metrics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (metrics.rss_bytes.is_some()
+            || metrics.cpu_user_ms.is_some()
+            || metrics.cpu_system_ms.is_some())
+        .then_some(metrics)
     }
 }
 
@@ -187,6 +202,27 @@ impl Drop for ProcessGroupRssMonitor {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+fn update_process_group_metrics(
+    metrics: &Mutex<ProcessGroupMetrics>,
+    sample: Option<ProcessGroupMetrics>,
+) {
+    let Some(sample) = sample else { return };
+    let mut metrics = metrics
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    metrics.rss_bytes = max_option(metrics.rss_bytes, sample.rss_bytes);
+    metrics.cpu_user_ms = max_option(metrics.cpu_user_ms, sample.cpu_user_ms);
+    metrics.cpu_system_ms = max_option(metrics.cpu_system_ms, sample.cpu_system_ms);
+}
+
+fn max_option<T: Ord>(left: Option<T>, right: Option<T>) -> Option<T> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }
 
@@ -521,7 +557,7 @@ pub(super) fn unregister_process_group(pid: u32) {
     });
 }
 
-pub(super) fn record_process_group_peak(bytes: u64) {
+pub(super) fn record_process_group_metrics(metrics: ProcessGroupMetrics) {
     let Some(lease_id) = current_lease_id() else {
         return;
     };
@@ -533,7 +569,24 @@ pub(super) fn record_process_group_peak(bytes: u64) {
             .iter_mut()
             .find(|run| run.lease_id == lease_id && is_capacity_holder(&run.state))
         {
-            run.peak_rss_bytes = Some(run.peak_rss_bytes.unwrap_or_default().max(bytes));
+            run.peak_rss_bytes = max_option(run.peak_rss_bytes, metrics.rss_bytes);
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(cpu_user_ms) = metrics.cpu_user_ms {
+                    run.cpu_user_ms = Some(
+                        run.cpu_user_ms
+                            .unwrap_or_default()
+                            .saturating_add(cpu_user_ms),
+                    );
+                }
+                if let Some(cpu_system_ms) = metrics.cpu_system_ms {
+                    run.cpu_system_ms = Some(
+                        run.cpu_system_ms
+                            .unwrap_or_default()
+                            .saturating_add(cpu_system_ms),
+                    );
+                }
+            }
         }
         Ok(())
     });
@@ -543,7 +596,11 @@ pub(super) fn status_json() -> Result<String, String> {
     let root = state_root()?;
     ensure_secure_root(&root)?;
     let budget = host_budget()?;
-    let store = with_store_read(&root, &budget)?;
+    status_json_at(&root, &budget)
+}
+
+fn status_json_at(root: &Path, budget: &Budget) -> Result<String, String> {
+    let store = cleaned_store(root, budget)?;
     let mut queued = store
         .runs
         .iter()
@@ -596,7 +653,15 @@ pub(super) fn run_json(run_id: &str) -> Result<Option<String>, String> {
 
 fn run_json_at(root: &Path, run_id: &str) -> Result<Option<String>, String> {
     let budget = host_budget()?;
-    let store = with_store_read(root, &budget)?;
+    run_json_at_with_budget(root, &budget, run_id)
+}
+
+fn run_json_at_with_budget(
+    root: &Path,
+    budget: &Budget,
+    run_id: &str,
+) -> Result<Option<String>, String> {
+    let store = cleaned_store(root, budget)?;
     let Some(run) = store.runs.iter().find(|run| run.run_id == run_id) else {
         return Ok(None);
     };
@@ -624,7 +689,17 @@ pub(super) fn runs_json(caller: &str, offset: usize, limit: usize) -> Result<Str
     let root = state_root()?;
     ensure_secure_root(&root)?;
     let budget = host_budget()?;
-    let store = with_store_read(&root, &budget)?;
+    runs_json_at(&root, &budget, caller, offset, limit)
+}
+
+fn runs_json_at(
+    root: &Path,
+    budget: &Budget,
+    caller: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<String, String> {
+    let store = cleaned_store(root, budget)?;
     let mut runs = store
         .runs
         .iter()
@@ -663,7 +738,7 @@ fn finish_record(
     state: &str,
     classification: &str,
     start: Instant,
-    cpu_before: Option<(u128, u128)>,
+    _cpu_before: Option<(u128, u128)>,
 ) {
     let Ok(budget) = host_budget() else { return };
     let _ = transact(root, &budget, |store| {
@@ -676,16 +751,18 @@ fn finish_record(
             let wall_ms = start.elapsed().as_millis();
             run.wall_ms = Some(wall_ms);
             run.exit_classification = Some(classification.to_owned());
-            if let (Some(before), Some(after)) = (cpu_before, child_cpu_snapshot()) {
+            #[cfg(not(target_os = "macos"))]
+            if let (Some(before), Some(after)) = (_cpu_before, child_cpu_snapshot()) {
                 run.cpu_user_ms = Some(after.0.saturating_sub(before.0));
                 run.cpu_system_ms = Some(after.1.saturating_sub(before.1));
-                let cpu_ms = run
-                    .cpu_user_ms
-                    .unwrap_or_default()
-                    .saturating_add(run.cpu_system_ms.unwrap_or_default());
-                run.cpu_overrun =
-                    Some(cpu_ms > u128::from(run.reservation.cpu_units).saturating_mul(wall_ms));
             }
+            let cpu_ms = run
+                .cpu_user_ms
+                .zip(run.cpu_system_ms)
+                .map(|(user, system)| user.saturating_add(system));
+            run.cpu_overrun = cpu_ms.map(|cpu_ms| {
+                cpu_ms > u128::from(run.reservation.cpu_units).saturating_mul(wall_ms)
+            });
             if let Some(peak) = run.peak_rss_bytes {
                 run.memory_overrun = Some(
                     u128::from(peak)
@@ -820,6 +897,10 @@ fn schedule(store: &mut Store) {
             run.position = None;
         }
     }
+    refresh_waiting_positions(store);
+}
+
+fn refresh_waiting_positions(store: &mut Store) {
     let mut queued = store
         .runs
         .iter_mut()
@@ -986,6 +1067,14 @@ fn transact<T>(
 
 fn with_store_read(root: &Path, fallback_budget: &Budget) -> Result<Store, String> {
     with_store(root, fallback_budget)
+}
+
+fn cleaned_store(root: &Path, budget: &Budget) -> Result<Store, String> {
+    transact(root, budget, |store| {
+        cleanup_stale(store);
+        refresh_waiting_positions(store);
+        Ok(store.clone())
+    })
 }
 
 fn save_store_unlocked(root: &Path, store: &Store) -> Result<(), String> {
@@ -1380,7 +1469,7 @@ fn child_cpu_snapshot() -> Option<(u128, u128)> {
     }
 }
 
-fn process_group_rss_bytes(process_group: i32) -> Option<u64> {
+fn process_group_sample(process_group: i32) -> Option<ProcessGroupMetrics> {
     #[cfg(target_os = "linux")]
     {
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -1415,33 +1504,93 @@ fn process_group_rss_bytes(process_group: i32) -> Option<u64> {
                 total_pages = total_pages.saturating_add(pages as u64);
             }
         }
-        Some(total_pages.saturating_mul(page_size as u64))
+        Some(ProcessGroupMetrics {
+            rss_bytes: Some(total_pages.saturating_mul(page_size as u64)),
+            ..ProcessGroupMetrics::default()
+        })
     }
     #[cfg(target_os = "macos")]
     {
+        // Keep the ps helper outside the measured group so its CPU is not charged to the run.
         let output = Command::new("ps")
-            .args(["-Ao", "pgid=,rss="])
+            .args(["-Ao", "pgid=,rss=,utime=,stime="])
             .output()
             .ok()?;
         if !output.status.success() {
             return None;
         }
-        let kib = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split_whitespace();
-                let group = parts.next()?.parse::<i32>().ok()?;
-                let rss = parts.next()?.parse::<u64>().ok()?;
-                (group == process_group).then_some(rss)
-            })
-            .sum::<u64>();
-        Some(kib.saturating_mul(1024))
+        let mut kib = 0u64;
+        let mut user_ms = 0u128;
+        let mut system_ms = 0u128;
+        let mut cpu_times_complete = true;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut parts = line.split_whitespace();
+            let Some(group) = parts.next().and_then(|value| value.parse::<i32>().ok()) else {
+                continue;
+            };
+            if group != process_group {
+                continue;
+            }
+            let Some(rss) = parts.next().and_then(|value| value.parse::<u64>().ok()) else {
+                continue;
+            };
+            kib = kib.saturating_add(rss);
+            match (parts.next(), parts.next()) {
+                (Some(user), Some(system)) => {
+                    if let (Some(user), Some(system)) =
+                        (parse_ps_cpu_time_ms(user), parse_ps_cpu_time_ms(system))
+                    {
+                        user_ms = user_ms.saturating_add(user);
+                        system_ms = system_ms.saturating_add(system);
+                    } else {
+                        cpu_times_complete = false;
+                    }
+                }
+                _ => cpu_times_complete = false,
+            }
+        }
+        Some(ProcessGroupMetrics {
+            rss_bytes: Some(kib.saturating_mul(1024)),
+            cpu_user_ms: cpu_times_complete.then_some(user_ms),
+            cpu_system_ms: cpu_times_complete.then_some(system_ms),
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = process_group;
         None
     }
+}
+
+#[cfg(target_os = "macos")]
+fn parse_ps_cpu_time_ms(value: &str) -> Option<u128> {
+    let (days, clock) = match value.split_once('-') {
+        Some((days, clock)) => (days.parse::<u128>().ok()?, clock),
+        None => (0, value),
+    };
+    let parts = clock.split(':').collect::<Vec<_>>();
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [seconds] => (0u128, 0u128, seconds.parse::<f64>().ok()?),
+        [minutes, seconds] => (
+            0,
+            minutes.parse::<u128>().ok()?,
+            seconds.parse::<f64>().ok()?,
+        ),
+        [hours, minutes, seconds] => (
+            hours.parse::<u128>().ok()?,
+            minutes.parse::<u128>().ok()?,
+            seconds.parse::<f64>().ok()?,
+        ),
+        _ => return None,
+    };
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    let total_seconds = days
+        .saturating_mul(24 * 60 * 60)
+        .saturating_add(hours.saturating_mul(60 * 60))
+        .saturating_add(minutes.saturating_mul(60));
+    Some(total_seconds.saturating_mul(1000) + (seconds * 1000.0).round() as u128)
 }
 
 fn unique_id() -> String {
@@ -1508,8 +1657,9 @@ fn prune_history(store: &mut Store) {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire, boot_identity, cleanup_stale, prune_history, run_json_at, save_store_unlocked,
-        schedule, Budget, Request, Reservation, RunRecord, Store, HISTORY_LIMIT,
+        acquire, boot_identity, cleanup_stale, prune_history, run_json_at, run_json_at_with_budget,
+        runs_json_at, save_store_unlocked, schedule, status_json_at, Budget, Request, Reservation,
+        RunRecord, Store, HISTORY_LIMIT,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1798,6 +1948,104 @@ mod tests {
         assert!(waiter_run.queue_wait_ms.unwrap_or_default() >= 100);
         assert_eq!(waiter_run.reservation.cpu_units, 1);
         assert_eq!(waiter_run.reservation.memory_mib, 64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_queries_reap_sigterm_waiters_without_an_acquisition() {
+        let root = tempfile::tempdir().expect("temp root");
+        let state_dir = root.path().join("admission");
+        let owner_repo = root.path().join("owner-repo");
+        let waiter_repo = root.path().join("waiter-repo");
+        fs::create_dir(&owner_repo).expect("owner repo");
+        fs::create_dir(&waiter_repo).expect("waiter repo");
+        let owner_ready = root.path().join("owner.ready");
+        let waiter_ready = root.path().join("waiter.ready");
+        let release_owner = root.path().join("release-owner");
+        let release_waiter = root.path().join("release-waiter");
+        let exe = std::env::current_exe().expect("test executable");
+
+        let mut owner = fixture_process(
+            &exe,
+            "owner",
+            &state_dir,
+            &owner_repo,
+            &owner_ready,
+            &release_owner,
+        );
+        wait_for_file(&owner_ready, &mut owner);
+        let mut waiter = fixture_process(
+            &exe,
+            "waiter",
+            &state_dir,
+            &waiter_repo,
+            &waiter_ready,
+            &release_waiter,
+        );
+        wait_for_queued_run(&state_dir, &mut waiter);
+
+        let before: Store =
+            serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("state file"))
+                .expect("valid state");
+        let waiter_run_id = before
+            .runs
+            .iter()
+            .find(|run| run.caller == "waiter")
+            .expect("waiter record")
+            .run_id
+            .clone();
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(waiter.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        )
+        .expect("terminate queued waiter");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let waiter_status = loop {
+            if let Some(status) = waiter.try_wait().expect("poll terminated waiter") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "waiter did not exit after SIGTERM"
+            );
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert!(!waiter_status.success());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o700))
+                .expect("make fixture state private for queries");
+            for file in ["state.lock", "state.json"] {
+                fs::set_permissions(state_dir.join(file), fs::Permissions::from_mode(0o600))
+                    .expect("make fixture state file private for queries");
+            }
+        }
+
+        let budget = Budget {
+            cpu_units: 1,
+            memory_mib: 64,
+        };
+        let status: serde_json::Value =
+            serde_json::from_str(&status_json_at(&state_dir, &budget).expect("status query"))
+                .expect("status JSON");
+        assert!(status["queued"].as_array().unwrap().is_empty());
+        let run: serde_json::Value = serde_json::from_str(
+            &run_json_at_with_budget(&state_dir, &budget, &waiter_run_id)
+                .expect("run query")
+                .expect("waiter run exists"),
+        )
+        .expect("run JSON");
+        assert_eq!(run["state"], "cancelled");
+        let runs: serde_json::Value = serde_json::from_str(
+            &runs_json_at(&state_dir, &budget, "waiter", 0, 10).expect("runs query"),
+        )
+        .expect("runs JSON");
+        assert_eq!(runs["runs"][0]["state"], "cancelled");
+
+        fs::write(&release_owner, "release").expect("release owner");
+        wait_child(owner);
     }
 
     #[test]

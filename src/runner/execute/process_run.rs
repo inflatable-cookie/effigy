@@ -38,8 +38,8 @@ fn run_task_process_json(
     let output = child
         .wait_with_output()
         .map_err(|error| command_launch_error(context, error))?;
-    if let Some(peak) = rss_monitor.and_then(|monitor| monitor.finish()) {
-        crate::runner::admission::record_process_group_peak(peak);
+    if let Some(metrics) = rss_monitor.and_then(|monitor| monitor.finish()) {
+        crate::runner::admission::record_process_group_metrics(metrics);
     }
     crate::runner::admission::unregister_process_group(child_pid);
     let stdout = redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_env);
@@ -79,8 +79,8 @@ fn run_task_process_text(
     let status = child
         .wait()
         .map_err(|error| command_launch_error(context, error))?;
-    if let Some(peak) = rss_monitor.and_then(|monitor| monitor.finish()) {
-        crate::runner::admission::record_process_group_peak(peak);
+    if let Some(metrics) = rss_monitor.and_then(|monitor| monitor.finish()) {
+        crate::runner::admission::record_process_group_metrics(metrics);
     }
     crate::runner::admission::unregister_process_group(child_pid);
 

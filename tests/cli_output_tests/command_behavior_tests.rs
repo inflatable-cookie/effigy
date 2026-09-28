@@ -8723,6 +8723,59 @@ run = '''trap 'printf interrupted > "$EFFIGY_TEST_CANCEL_MARKER"; exit 130' INT;
     assert!(runs[0]["process_groups"].as_array().unwrap().is_empty());
 }
 
+#[test]
+fn cli_heavy_idle_task_cpu_telemetry_excludes_rss_sampler_processes() {
+    let _guard = lock_cli_process_tests();
+    let root = temp_workspace("heavy-task-admission-idle-cpu");
+    let state_dir = root.join("admission");
+    fs::create_dir(&state_dir).expect("create test admission state");
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o2770))
+        .expect("secure test admission state");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.heavy]
+admission = "heavy"
+run = "sleep 3"
+"#,
+    )
+    .expect("write heavy task manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("heavy")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_ADMISSION_DIR", &state_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_CALLER", "test:heavy-task-idle-cpu")
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .output()
+        .expect("run idle heavy task");
+    assert!(
+        output.status.success(),
+        "idle heavy task failed: {output:?}"
+    );
+
+    let state: Value =
+        serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("admission state"))
+            .expect("parse admission state");
+    let runs = state["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1);
+    let cpu_user_ms = runs[0]["cpu_user_ms"]
+        .as_u64()
+        .expect("sampled user CPU telemetry");
+    let cpu_system_ms = runs[0]["cpu_system_ms"]
+        .as_u64()
+        .expect("sampled system CPU telemetry");
+    assert!(
+        cpu_user_ms + cpu_system_ms < 500,
+        "idle task CPU must exclude RSS sampler work: user={cpu_user_ms}ms system={cpu_system_ms}ms"
+    );
+}
+
 fn wait_for_heavy_task_child(
     child: &mut std::process::Child,
     ready: &std::path::Path,
