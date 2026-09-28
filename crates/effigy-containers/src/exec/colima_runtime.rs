@@ -245,7 +245,7 @@ fn wait_for_colima_runtime_ready(
         timeout,
         COLIMA_RUNTIME_PROBE_INTERVAL,
         |probe_timeout| probe_colima_runtime(policy, repo_root, probe_timeout),
-        |delay| thread::sleep(delay),
+        thread::sleep,
     )
 }
 

@@ -97,7 +97,7 @@ fn wait_for_gateway_service_ports_ready(
             )
             .map_err(|error| error.to_string())
         },
-        |delay| thread::sleep(delay),
+        thread::sleep,
     )
 }
 
