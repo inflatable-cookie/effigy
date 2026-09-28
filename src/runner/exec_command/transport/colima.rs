@@ -388,6 +388,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: Some("/tmp/repo".to_owned()),
                 service: Some("pma".to_owned()),
+                oneoff: false,
             },
             effigy_containers::exec::RunningComposeContainer {
                 container_name: "other-app-1".to_owned(),
@@ -396,6 +397,7 @@ mod tests {
                 project_name: Some("other".to_owned()),
                 working_dir: Some("/tmp/repo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             },
             effigy_containers::exec::RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
@@ -404,6 +406,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: Some("/tmp/repo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             },
         ];
 

@@ -12,6 +12,7 @@ pub struct RunningComposeContainer {
     pub project_name: Option<String>,
     pub working_dir: Option<String>,
     pub service: Option<String>,
+    pub oneoff: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,12 +53,34 @@ pub(super) fn docker_failure_looks_like_colima_runtime_state_loss(
         || (combined.contains("current runtime") && combined.contains("empty value"))
 }
 
+pub(crate) fn looks_like_stale_healthcheck_timer(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    let timer_or_systemd = combined.contains(".timer")
+        || combined.contains("systemd-run")
+        || combined.contains("healthcheck");
+    let stale = combined.contains("already loaded") || combined.contains("has a fragment file");
+    timer_or_systemd && stale
+}
+
+pub fn compose_status_is_running(status: &str) -> bool {
+    let lowered = status.to_ascii_lowercase();
+    if compose_status_needs_start(status) || lowered.contains("paused") {
+        return false;
+    }
+    lowered.contains("up") || lowered.contains("running")
+}
+
+pub(crate) fn compose_status_needs_start(status: &str) -> bool {
+    let lowered = status.to_ascii_lowercase();
+    lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead")
+}
+
 pub(super) fn parse_running_compose_containers(
     stdout: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let mut rows = Vec::new();
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
-        let Some((container_name, status, ports, project_name, working_dir, service)) =
+        let Some((container_name, status, ports, project_name, working_dir, service, oneoff)) =
             parse_running_compose_container_row(line)
         else {
             continue;
@@ -79,6 +102,7 @@ pub(super) fn parse_running_compose_containers(
             project_name,
             working_dir,
             service,
+            oneoff,
         });
     }
 
@@ -92,6 +116,7 @@ type RunningComposeContainerRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    bool,
 );
 
 fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeContainerRow> {
@@ -101,7 +126,7 @@ fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeConta
     }
 
     if line.contains('\t') {
-        let mut parts = line.splitn(6, '\t');
+        let mut parts = line.splitn(7, '\t');
         let container_name = parts.next().unwrap_or_default().trim().to_owned();
         let status = parts.next().unwrap_or_default().trim().to_owned();
         let ports = parts
@@ -127,6 +152,10 @@ fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeConta
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
+        let oneoff = parts
+            .next()
+            .map(str::trim)
+            .is_some_and(compose_oneoff_label);
 
         return Some((
             container_name,
@@ -135,13 +164,18 @@ fn parse_running_compose_container_row(line: &str) -> Option<RunningComposeConta
             project_name,
             working_dir,
             service,
+            oneoff,
         ));
     }
 
     let mut parts = trimmed.split_whitespace();
     let container_name = parts.next()?.to_owned();
     let status = parts.collect::<Vec<_>>().join(" ");
-    Some((container_name, status, Vec::new(), None, None, None))
+    Some((container_name, status, Vec::new(), None, None, None, false))
+}
+
+fn compose_oneoff_label(value: &str) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "true" | "1" | "yes")
 }
 
 pub(super) fn parse_running_container_stats(
@@ -279,7 +313,20 @@ mod tests {
         assert_eq!(parsed[0].project_name.as_deref(), Some("demo-web-dev"));
         assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
         assert_eq!(parsed[0].service.as_deref(), Some("app"));
+        assert_eq!(parsed[0].oneoff, false);
         assert_eq!(parsed[0].ports.len(), 2);
+    }
+
+    #[test]
+    fn parse_running_compose_containers_reads_oneoff_label() {
+        let parsed = parse_running_compose_containers(
+            "demo-app-run-deadbeef\tExited (0) 1 second ago\t\tdemo-web-dev\t/tmp/demo\tapp\tTrue\n",
+        )
+        .expect("parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].container_name, "demo-app-run-deadbeef");
+        assert_eq!(parsed[0].service.as_deref(), Some("app"));
+        assert!(parsed[0].oneoff);
     }
 
     #[test]
@@ -408,5 +455,31 @@ mod tests {
             "",
             r#"time="2026-04-20T00:14:42+01:00" level=fatal msg="error retrieving current runtime: empty value""#
         ));
+    }
+
+    #[test]
+    fn stale_healthcheck_timer_matches_nerdctl_systemd_run_warning() {
+        assert!(looks_like_stale_healthcheck_timer(
+            "",
+            r#"systemd-run --unit=dd94022f7dd0.timer: Unit dd94022f7dd0.timer was already loaded or has a fragment file"#
+        ));
+        assert!(!looks_like_stale_healthcheck_timer(
+            "",
+            "service workspace depends on undefined service redis"
+        ));
+    }
+
+    #[test]
+    fn compose_status_classifies_running_versus_startable() {
+        assert!(compose_status_is_running("Up 10 seconds"));
+        assert!(compose_status_is_running("Up (healthy)"));
+        assert!(compose_status_is_running("running"));
+        assert!(!compose_status_is_running("Exited (255) 2 minutes ago"));
+        assert!(!compose_status_is_running("Created"));
+        assert!(!compose_status_is_running("Paused"));
+        assert!(compose_status_needs_start("Exited (0) 1 second ago"));
+        assert!(compose_status_needs_start("Created"));
+        assert!(compose_status_needs_start("Dead"));
+        assert!(!compose_status_needs_start("Up 2 minutes"));
     }
 }

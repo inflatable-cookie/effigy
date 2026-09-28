@@ -190,7 +190,7 @@ These are the current `effigy-containers` ownership seams that matter most to
 | [`crates/effigy-containers/src/runtime/`](../../../crates/effigy-containers/src/runtime/mod.rs) | runtime DNS override materialization and generated compose eject helpers |
 | [`crates/effigy-containers/src/compose.rs`](../../../crates/effigy-containers/src/compose.rs) | lower-level compose backend compatibility wrappers and compose invocation argument building |
 | [`crates/effigy-containers/src/exec.rs`](../../../crates/effigy-containers/src/exec.rs) | exec compatibility facade for process, parsing, Colima runtime, and runtime-inspection helpers |
-| [`crates/effigy-containers/src/exec/`](../../../crates/effigy-containers/src/exec/) | process spawning/capture, runtime output parsing, Colima runtime repair, and low-level runtime inspection helpers |
+| [`crates/effigy-containers/src/exec/`](../../../crates/effigy-containers/src/exec/) | process spawning/capture, runtime output parsing, Colima runtime repair, owned-service start after VM restart, and low-level runtime inspection helpers |
 | [`crates/effigy-containers/src/session.rs`](../../../crates/effigy-containers/src/session.rs) | container-local Effigy invocation prefix and session-related shell helpers |
 | [`crates/effigy-containers/src/report.rs`](../../../crates/effigy-containers/src/report.rs) | container command report rendering models |
 

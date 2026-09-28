@@ -7,7 +7,8 @@ use std::path::Path;
 use effigy_containers::{
     exec::{
         capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
-        list_running_compose_containers_for_policy, run_compose_invocation_capture,
+        compose_status_is_running, list_compose_containers_for_policy_including_stopped,
+        list_compose_containers_for_project_including_stopped, run_compose_invocation_capture,
         runtime_backend_is_running, selected_backend_label, ContainerExecError,
     },
     health::probe_health_status,
@@ -338,28 +339,40 @@ fn discover_running_services_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<ContainerStatusService>, EffigyRuntimeError> {
-    Ok(
-        list_running_compose_containers_for_policy(repo_root, policy)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
-            .into_iter()
-            .map(|service| ContainerStatusService {
-                name: service
-                    .service
-                    .clone()
-                    .unwrap_or_else(|| service.container_name.clone()),
-                container_name: service.container_name,
-                status: service.status,
-                ports: service.ports,
-            })
-            .collect(),
-    )
+    let mut rows = list_compose_containers_for_policy_including_stopped(repo_root, policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    for shared in &policy.shared_services {
+        rows.extend(
+            list_compose_containers_for_project_including_stopped(
+                repo_root,
+                policy,
+                &shared.project_name,
+            )
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?,
+        );
+    }
+    Ok(rows
+        .into_iter()
+        .map(|service| ContainerStatusService {
+            name: service
+                .service
+                .clone()
+                .unwrap_or_else(|| service.container_name.clone()),
+            container_name: service.container_name,
+            status: service.status,
+            ports: service.ports,
+        })
+        .collect())
 }
 
 fn should_probe_primary_service_exec(
     runtime_running: bool,
     services: &[ContainerStatusService],
 ) -> bool {
-    runtime_running && !services.is_empty()
+    runtime_running
+        && services
+            .iter()
+            .any(|service| compose_status_is_running(&service.status))
 }
 
 fn probe_primary_service_exec_ready(
@@ -527,5 +540,13 @@ mod tests {
             ports: Vec::new(),
         }];
         assert!(should_probe_primary_service_exec(true, &services));
+
+        let exited = [ContainerStatusService {
+            name: "postgres".to_owned(),
+            container_name: "acme-postgres-1".to_owned(),
+            status: "Exited (255) 2 minutes ago".to_owned(),
+            ports: Vec::new(),
+        }];
+        assert!(!should_probe_primary_service_exec(true, &exited));
     }
 }

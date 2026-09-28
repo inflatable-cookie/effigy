@@ -5,7 +5,9 @@ use std::process::Output;
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
 use effigy_containers::{
     exec::{
-        list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
+        list_running_compose_containers_for_policy,
+        recover_exited_owned_compose_services_for_project, ContainerExecError,
+        RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
@@ -344,6 +346,14 @@ pub(super) fn ensure_shared_services_running(
             &shared_compose_args(service, ["up", "-d"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
+        let recovery = recover_exited_owned_compose_services_for_project(
+            &policy.repo_root,
+            policy,
+            &service.project_name,
+        )?;
+        for warning in recovery.warnings {
+            eprintln!("[warn] {warning}");
+        }
         notes.push(format!(
             "{} [{}] -> {}:{}",
             service.service_name, service.catalog, service.host, service.host_port
@@ -880,6 +890,7 @@ mod tests {
                 project_name: Some("demo-web-old".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             }],
         )
         .expect("mismatch");
@@ -900,6 +911,7 @@ mod tests {
                 project_name: Some("demo-web-renamed".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             }],
         );
 

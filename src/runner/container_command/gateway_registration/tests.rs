@@ -391,6 +391,7 @@ fn validates_gateway_route_against_matching_runtime_port() {
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp/repo".to_owned()),
         service: Some("app".to_owned()),
+        oneoff: false,
     }];
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
@@ -411,6 +412,7 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
                 project_name: Some("demo-web-dev".to_owned()),
                 working_dir: Some("/tmp".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             },
             RunningComposeContainer {
                 container_name: "demo-web-dev-db-1".to_owned(),
@@ -419,6 +421,7 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
                 project_name: Some("demo-web-dev".to_owned()),
                 working_dir: Some("/tmp".to_owned()),
                 service: Some("db".to_owned()),
+                oneoff: false,
             },
         ],
     ];
@@ -460,6 +463,7 @@ fn gateway_readiness_reports_a_declared_service_exit() {
                 project_name: Some("demo-web-dev".to_owned()),
                 working_dir: Some("/tmp".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             }])
         },
         |_| {},
@@ -510,6 +514,7 @@ fn validates_gateway_route_against_matching_runtime_service_when_declared() {
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp/repo".to_owned()),
         service: Some("app".to_owned()),
+        oneoff: false,
     }];
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
@@ -529,6 +534,7 @@ fn rejects_gateway_route_when_declared_service_does_not_match_runtime_service() 
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp/repo".to_owned()),
         service: Some("app".to_owned()),
+        oneoff: false,
     }];
 
     let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
@@ -553,6 +559,7 @@ fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp/repo".to_owned()),
         service: Some("app".to_owned()),
+        oneoff: false,
     }];
 
     let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
@@ -604,6 +611,7 @@ fn resolves_gateway_routes_from_runtime_ephemeral_host_port() {
         project_name: Some("demo-web-dev".to_owned()),
         working_dir: Some("/tmp/repo".to_owned()),
         service: Some("app".to_owned()),
+        oneoff: false,
     }];
 
     let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows).expect("routes");
@@ -625,6 +633,7 @@ fn resolves_gateway_routes_from_runtime_service_specific_ephemeral_host_port() {
             project_name: Some("demo-web-dev".to_owned()),
             working_dir: Some("/tmp/repo".to_owned()),
             service: Some("admin".to_owned()),
+            oneoff: false,
         },
         RunningComposeContainer {
             container_name: "demo-web-dev-web-1".to_owned(),
@@ -633,6 +642,7 @@ fn resolves_gateway_routes_from_runtime_service_specific_ephemeral_host_port() {
             project_name: Some("demo-web-dev".to_owned()),
             working_dir: Some("/tmp/repo".to_owned()),
             service: Some("web".to_owned()),
+            oneoff: false,
         },
     ];
 
@@ -1301,6 +1311,7 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
         project_name: Some("active-project".to_owned()),
         working_dir: Some("/tmp/active".to_owned()),
         service: Some("db".to_owned()),
+        oneoff: false,
     }];
 
     let changed = prune_stale_loopback_assignments_with_runtime(&mut registry, &route_table, &rows);
@@ -1326,6 +1337,7 @@ fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
         project_name: Some("active-project".to_owned()),
         working_dir: None,
         service: Some("db".to_owned()),
+        oneoff: false,
     }];
 
     let changed =

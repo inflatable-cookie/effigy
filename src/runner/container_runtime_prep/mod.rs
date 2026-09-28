@@ -11,7 +11,9 @@ mod running;
 mod validation;
 
 use effigy_containers::compose::compose_args;
-use effigy_containers::exec::{ensure_colima_running, run_compose_capture};
+use effigy_containers::exec::{
+    ensure_colima_running, recover_exited_owned_compose_services, run_compose_capture,
+};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 use effigy_runtime_plan::{
     RuntimeActivationPlan, RuntimeActivationRequest, RuntimeActivationRoute, RuntimeLeasePolicy,
@@ -212,6 +214,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
             })
         },
         || {
+            recover_exited_owned_compose_services(repo_root, policy).map(|_| ())?;
             ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
             if effigy_core::worktree_scope::load_or_create(repo_root)
                 .map_err(|error| {

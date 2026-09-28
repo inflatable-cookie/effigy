@@ -55,6 +55,8 @@ does not provide them directly:
 
 - missing host bind-mount directory creation before `compose up`
 - sibling-service bring-up after a partial or failed runtime start
+- owned `Exited`/`Created` containers after a Colima VM restart, started by
+  name without recreating volumes or deleting systemd units
 - primary-service exec readiness after recreate or restart churn
 - container-local TCP alias visibility inside Effigy-owned execution targets
 - generated Compose values that need a literal `$` for the container shell
@@ -120,6 +122,46 @@ Effigy ownership:
 Target compatibility case:
 
 - `runtime_prep_recovers_missing_sibling_services_before_dispatch`
+
+### Owned service start after Colima restart
+
+Expected product guarantee:
+
+- after Compose up, owned services that are still `Exited` or `Created` are
+  started or the failure names the live status and a start command
+- persistent volumes stay; systemd health-check timer units are not deleted
+
+Backend status:
+
+- Colima + `nerdctl compose up` may return success while containers stay
+  stopped after a VM restart
+- `nerdctl start` of an owned container can succeed while logging
+  `Unit <id>.timer was already loaded or has a fragment file`
+
+Effigy ownership:
+
+- inspect owned Compose projects including stopped rows
+- start only currently declared services whose project label matches an
+  owned project; skip one-off `compose run` containers and undeclared
+  orphans
+- never rerun a one-time `compose run` command
+- bound inspect and start so a hung nerdctl command still names live status
+- treat a stale timer warning as a warning only after inspect shows the
+  container running; start exit 0 is not readiness
+- if the container stays stopped or post-start inspect fails, keep the start
+  backend text (including a stale-timer warning) in the bounded failure with
+  `colima nerdctl --profile <profile> -- start <container>`
+
+Contract detail: `005-container-runtime-contract.md`.
+
+Target compatibility cases:
+
+- `recoverable_exited_service_is_started_despite_stale_timer`
+- `persistent_exited_service_is_a_bounded_backend_failure`
+- `successful_start_with_stale_timer_still_exited_is_a_bounded_failure`
+- `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
+- `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
+- `start_timeout_reports_observed_exited_status`
 
 ### Primary-service exec readiness
 
@@ -197,6 +239,8 @@ The first useful coverage set is:
 - one proof that bind-mount preparation happens before exec runtime dispatch
 - one proof that exec-readiness recovery is attempted after recreate-style
   failure
+- one proof that owned Exited services after a Colima restart are started or
+  diagnosed without deleting systemd units
 - one proof that container-local alias reconciliation runs on the supported
   Colima-sensitive path
 

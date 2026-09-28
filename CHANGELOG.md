@@ -152,6 +152,18 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- After a Colima VM restart, `effigy container up` starts owned Compose
+  services that stayed `Exited` or `Created` instead of treating compose
+  success as readiness. Start keeps volumes, including Postgres
+  crash-recovery data, and does not delete systemd units. A nerdctl stale
+  health-check timer warning is recorded when the owned container is
+  running; a still-stopped service fails with its status, the start
+  backend text, and
+  `colima nerdctl --profile <profile> -- start <container>`.
+  Inspect and start are bounded so a hung nerdctl command cannot hide that
+  diagnosis. Recovery starts only currently declared Compose services;
+  one-off `compose run` containers and undeclared orphans stay stopped.
+  `effigy container status` lists those stopped owned rows.
 - Recursive `effigy docs check` walks skip `target/` and `node_modules/` at
   directory entry, so a parallel Cargo or package-manager build cannot fail
   the check when a generated path vanishes. Default scope is still

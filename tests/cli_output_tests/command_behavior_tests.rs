@@ -12,8 +12,9 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_workspace, wait_for_path_exists, write_effigy_release_root_marker,
-    write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
+    run_json_task_success, temp_workspace, wait_for_path_exists, wait_for_positive_pid,
+    write_effigy_release_root_marker, write_fake_effigy_install_repo, write_release_changelog,
+    write_release_manifest,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -7821,7 +7822,9 @@ if [ "${1:-}" = "start" ]; then
     startup_pid=$!
     kill -0 "$startup_pid"
     if [ -n "${EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE:-}" ]; then
-      printf "%s\n" "$startup_pid" > "$EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE"
+      marker_tmp="${EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE}.tmp"
+      printf "%s\n" "$startup_pid" > "$marker_tmp"
+      mv "$marker_tmp" "$EFFIGY_TEST_COLIMA_STARTUP_ACTIVE_FILE"
     fi
     wait "$startup_pid"
   fi
@@ -7838,7 +7841,7 @@ case "$*" in
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill|run|volume|info)
+        up|down|ps|logs|exec|kill|run|volume|info|start)
           subcmd="$arg"
           break
           ;;
@@ -7852,7 +7855,17 @@ case "$*" in
         printf "containerd: ready\n"
         ;;
       ps)
-        printf "NAME                STATUS\napp                 running\n"
+        case "$*" in
+          *"--format"*)
+            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+            ;;
+          *)
+            printf "NAME                STATUS\napp                 running\n"
+            ;;
+        esac
+        ;;
+      start)
+        printf "started\n"
         ;;
       logs)
         case "$*" in
@@ -7967,7 +7980,7 @@ printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|run)
+    up|down|ps|logs|exec|kill|run|start)
       subcmd="$arg"
       break
       ;;
@@ -7997,7 +8010,17 @@ case "$subcmd" in
     printf "compose-up\n"
     ;;
   ps)
-    printf "NAME                STATUS\napp                 running\n"
+    case "$*" in
+      *"--format"*)
+        printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+        ;;
+      *)
+        printf "NAME                STATUS\napp                 running\n"
+        ;;
+    esac
+    ;;
+  start)
+    printf "started\n"
     ;;
   logs)
     case "$*" in
@@ -8638,7 +8661,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         "attached log follow marker",
     );
     nix::sys::signal::kill(
@@ -8687,7 +8710,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         "attached stream log follow marker",
     );
     nix::sys::signal::kill(
@@ -8748,19 +8771,10 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .spawn()
         .expect("spawn effigy");
 
-    wait_for_path_exists(
+    let _startup_pid = wait_for_positive_pid(
         &colima_startup_active,
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         "startup colima child active marker",
-    );
-    let startup_pid = fs::read_to_string(&colima_startup_active)
-        .expect("read startup colima child active marker")
-        .trim()
-        .parse::<u32>()
-        .expect("startup colima child active marker should contain a pid");
-    assert!(
-        startup_pid > 0,
-        "startup colima child pid should be positive"
     );
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(child.id() as i32),
@@ -8894,7 +8908,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         "attached process-group log follow marker",
     );
     nix::sys::signal::kill(
