@@ -258,10 +258,12 @@ health-check timers named after container ids.
 
 If start succeeds, `container up` continues. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded; it
-is not treated as readiness. If the owned container stays stopped, Effigy
-fails and names the service, its status, the backend text, and the exact
+is not treated as readiness. If the owned container stays stopped, or inspect/start times out, Effigy
+fails and names the service, its last observed status, the backend text
+(including a hang timeout), and the exact
 `colima nerdctl --profile <profile> -- start <container>` command (or
-`docker start <container>` on Docker). `container status` lists those
+`docker start <container>` on Docker). Inspect and start are bounded so a
+hung nerdctl command cannot present a partial stack as ready. `container status` lists those
 stopped owned rows instead of omitting them or reporting success by
 assumption.
 

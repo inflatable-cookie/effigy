@@ -801,7 +801,9 @@ defect, not proof that Effigy owns those units.
 
 Fix: re-run `effigy container up`. Effigy starts only owned Exited/Created
 containers (Compose project label match), keeps volumes, and does not
-delete systemd units. If start still fails, the error names:
+delete systemd units. Inspect and start are bounded; a hung nerdctl
+command still names the last observed status. If start still fails, the
+error names:
 
 ```bash
 colima nerdctl --profile <profile> -- start <container>

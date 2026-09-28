@@ -156,7 +156,8 @@ During v0.x, MINOR bumps may include breaking changes.
   health-check timer warning is recorded when the owned container is
   running; a still-stopped service fails with its status and
   `colima nerdctl --profile <profile> -- start <container>`.
-  `effigy container status` lists those stopped owned rows.
+  Inspect and start are bounded so a hung nerdctl command cannot hide that
+  diagnosis. `effigy container status` lists those stopped owned rows.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.

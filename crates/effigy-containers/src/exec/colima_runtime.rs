@@ -9,7 +9,8 @@ use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
     error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
-    run_command_capture_os, run_command_capture_with_timeout,
+    run_command_capture_allow_failure_with_timeout, run_command_capture_os,
+    run_command_capture_with_timeout,
 };
 use crate::{
     colima::{
@@ -444,6 +445,31 @@ pub(super) fn run_runtime_command_capture_for_policy_allow_failure(
             command: format!("{program} {}", format_args(&args)),
             error,
         })
+}
+
+pub(super) fn run_runtime_command_capture_for_policy_allow_failure_with_timeout(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    docker_args: &[OsString],
+    label: &str,
+    timeout: Duration,
+) -> Result<Output, ContainerExecError> {
+    let detection = runtime_detection_for_policy(repo_root, policy);
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    run_command_capture_allow_failure_with_timeout(
+        repo_root,
+        &program,
+        &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
+        label,
+        timeout,
+    )
 }
 
 pub(super) fn repair_colima_runtime(

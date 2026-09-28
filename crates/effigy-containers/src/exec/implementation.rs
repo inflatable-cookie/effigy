@@ -18,7 +18,8 @@ use super::parse::{
     RunningComposeContainerProfiled, RunningContainerStatsCapture,
 };
 use super::process::{
-    run_command_capture_os, run_command_capture_os_with_env, run_command_capture_with_timeout,
+    error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
+    run_command_capture_with_timeout,
 };
 
 use crate::{
@@ -29,6 +30,7 @@ use crate::{
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
 const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
 const CONTAINER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
+const COMPOSE_PS_TIMEOUT: Duration = Duration::from_secs(30);
 const DOCKER_GLOBAL_RUNTIME_LABEL: &str = "docker";
 
 #[derive(Debug)]
@@ -144,6 +146,7 @@ pub fn list_running_compose_containers_for_policy(
             OsString::from(DOCKER_PS_FORMAT),
         ],
         "runtime ps",
+        None,
     )?;
 
     Ok(
@@ -193,6 +196,7 @@ pub fn list_compose_containers_for_project_including_stopped(
             OsString::from(DOCKER_PS_FORMAT),
         ],
         "runtime ps --all",
+        Some(COMPOSE_PS_TIMEOUT),
     )?;
     Ok(
         parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
@@ -243,19 +247,13 @@ fn run_runtime_command_capture_with_repair(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
+    timeout: Option<Duration>,
 ) -> Result<Output, ContainerExecError> {
-    match run_runtime_command_capture_for_policy(repo_root, policy, args, label) {
+    match capture_runtime_command(repo_root, policy, args, label, timeout) {
         Ok(output) => Ok(output),
-        Err(ContainerExecError::Failure {
-            command: _,
-            code: _,
-            stdout,
-            stderr,
-        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
-            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
-        {
+        Err(error) if runtime_failure_should_repair(&error) => {
             repair_colima_runtime(policy, repo_root)?;
-            run_runtime_command_capture_for_policy(repo_root, policy, args, label).map_err(
+            capture_runtime_command(repo_root, policy, args, label, timeout).map_err(
                 |retry_error| match retry_error {
                     ContainerExecError::Failure {
                         command,
@@ -276,6 +274,32 @@ fn run_runtime_command_capture_with_repair(
             )
         }
         Err(error) => Err(error),
+    }
+}
+
+fn capture_runtime_command(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    label: &str,
+    timeout: Option<Duration>,
+) -> Result<Output, ContainerExecError> {
+    match timeout {
+        Some(timeout) => run_runtime_command_capture_for_policy_with_timeout(
+            repo_root, policy, args, label, timeout,
+        ),
+        None => run_runtime_command_capture_for_policy(repo_root, policy, args, label),
+    }
+}
+
+fn runtime_failure_should_repair(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stdout, stderr, .. } => {
+            !error_is_timeout(error)
+                && (docker_failure_looks_like_colima_dns_outage(stdout, stderr)
+                    || docker_failure_looks_like_colima_runtime_state_loss(stdout, stderr))
+        }
+        ContainerExecError::Launch { .. } => false,
     }
 }
 

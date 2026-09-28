@@ -142,6 +142,7 @@ Effigy ownership:
 
 - inspect owned Compose projects including stopped rows
 - start only containers whose project label matches an owned project
+- bound inspect and start so a hung nerdctl command still names live status
 - treat a stale timer warning as a warning when the container is running,
   otherwise fail with the backend text and `colima nerdctl --profile
   <profile> -- start <container>`
@@ -152,6 +153,7 @@ Target compatibility cases:
 
 - `recoverable_exited_service_is_started_despite_stale_timer`
 - `persistent_exited_service_is_a_bounded_backend_failure`
+- `start_timeout_reports_observed_exited_status`
 
 ### Primary-service exec readiness
 

@@ -132,18 +132,7 @@ pub(super) fn run_command_capture_with_timeout(
                             command: format!("{program} {}", args.join(" ")),
                             error,
                         })?;
-                return Err(ContainerExecError::Failure {
-                    command: label.to_owned(),
-                    code: output.status.code(),
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: format!(
-                        "{}\n[effigy] command timed out after {}s",
-                        String::from_utf8_lossy(&output.stderr).trim_end(),
-                        timeout.as_secs()
-                    )
-                    .trim()
-                    .to_owned(),
-                });
+                return timeout_failure(label, timeout, output);
             }
             Err(error) => {
                 terminate_child_process_tree(&mut child);
@@ -155,6 +144,74 @@ pub(super) fn run_command_capture_with_timeout(
             }
         }
     }
+}
+
+pub(super) fn run_command_capture_allow_failure_with_timeout(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    timeout: Duration,
+) -> Result<Output, ContainerExecError> {
+    let mut child = spawn_capture_child(repo_root, program, args).map_err(|error| {
+        ContainerExecError::Launch {
+            command: format!("{program} {}", args.join(" ")),
+            error,
+        }
+    })?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|error| ContainerExecError::Launch {
+                        command: format!("{program} {}", args.join(" ")),
+                        error,
+                    });
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                terminate_child_process_tree(&mut child);
+                let output =
+                    child
+                        .wait_with_output()
+                        .map_err(|error| ContainerExecError::Launch {
+                            command: format!("{program} {}", args.join(" ")),
+                            error,
+                        })?;
+                return timeout_failure(label, timeout, output);
+            }
+            Err(error) => {
+                terminate_child_process_tree(&mut child);
+                let _ = child.wait();
+                return Err(ContainerExecError::Launch {
+                    command: format!("{program} {}", args.join(" ")),
+                    error,
+                });
+            }
+        }
+    }
+}
+
+fn timeout_failure(
+    label: &str,
+    timeout: Duration,
+    output: Output,
+) -> Result<Output, ContainerExecError> {
+    Err(ContainerExecError::Failure {
+        command: label.to_owned(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: format!(
+            "{}\n[effigy] command timed out after {}s",
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            timeout.as_secs()
+        )
+        .trim()
+        .to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -313,6 +370,46 @@ mod tests {
                 command, stderr, ..
             } => {
                 assert_eq!(command, "sleep test");
+                assert!(stderr.contains("command timed out"), "got: {stderr}");
+            }
+            other => panic!("expected failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn allow_failure_timeout_keeps_nonzero_exit_as_output() {
+        let output = run_command_capture_allow_failure_with_timeout(
+            Path::new("."),
+            "/bin/sh",
+            &["-c", "printf 'warn\\n' >&2; exit 7"],
+            "start test",
+            Duration::from_secs(2),
+        )
+        .expect("nonzero start should be captured");
+        assert_eq!(output.status.code(), Some(7));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("warn"),
+            "got: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn allow_failure_timeout_reports_elapsed_seconds() {
+        let error = run_command_capture_allow_failure_with_timeout(
+            Path::new("."),
+            "/bin/sh",
+            &["-c", "/bin/sleep 2"],
+            "start hang",
+            Duration::from_millis(200),
+        )
+        .expect_err("sleep should time out");
+
+        match error {
+            ContainerExecError::Failure {
+                command, stderr, ..
+            } => {
+                assert_eq!(command, "start hang");
                 assert!(stderr.contains("command timed out"), "got: {stderr}");
             }
             other => panic!("expected failure, got {other:?}"),

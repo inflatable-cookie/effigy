@@ -8,8 +8,9 @@
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
-use super::colima_runtime::run_runtime_command_capture_for_policy_allow_failure;
+use super::colima_runtime::run_runtime_command_capture_for_policy_allow_failure_with_timeout;
 use super::implementation::{
     list_compose_containers_for_project_including_stopped, ContainerExecError,
 };
@@ -19,6 +20,8 @@ use super::parse::{
 };
 use crate::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use crate::EffectiveContainerPolicy;
+
+const OWNED_SERVICE_START_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OwnedServiceStartRecovery {
@@ -68,10 +71,12 @@ pub fn recover_exited_owned_compose_services_for_project(
         backend,
         || list_compose_containers_for_project_including_stopped(repo_root, policy, project_name),
         |container_name| {
-            let output = run_runtime_command_capture_for_policy_allow_failure(
+            let output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
                 repo_root,
                 policy,
                 &[OsString::from("start"), OsString::from(container_name)],
+                &format!("start owned container `{container_name}`"),
+                OWNED_SERVICE_START_TIMEOUT,
             )?;
             Ok(RuntimeStartResult {
                 success: output.status.success(),
@@ -125,7 +130,20 @@ pub fn recover_exited_owned_services_with(
         }
     }
 
-    let after = inspect()?;
+    let after = match inspect() {
+        Ok(rows) => rows,
+        Err(error) => {
+            return Err(failure_from_last_observed_state(
+                project_name,
+                profile,
+                backend,
+                &targets,
+                &before,
+                &start_errors,
+                error,
+            ));
+        }
+    };
     if let Some(error) = persistent_start_failure(
         project_name,
         profile,
@@ -187,6 +205,49 @@ fn persistent_start_failure(
         ));
     }
     None
+}
+
+fn failure_from_last_observed_state(
+    project_name: &str,
+    profile: &str,
+    backend: ComposeBackend,
+    targets: &[RunningComposeContainer],
+    before: &[RunningComposeContainer],
+    start_errors: &[(RunningComposeContainer, RuntimeStartResult)],
+    inspect_error: ContainerExecError,
+) -> ContainerExecError {
+    let inspect_text = inspect_error.to_string();
+    let mut start_errors = start_errors.to_vec();
+    for target in targets {
+        match start_errors
+            .iter_mut()
+            .find(|(row, _)| row.container_name == target.container_name)
+        {
+            Some((_, result)) => {
+                if !result.stderr.is_empty() {
+                    result.stderr.push('\n');
+                }
+                result.stderr.push_str(&inspect_text);
+            }
+            None => start_errors.push((
+                target.clone(),
+                RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: inspect_text.clone(),
+                },
+            )),
+        }
+    }
+    persistent_start_failure(
+        project_name,
+        profile,
+        backend,
+        targets,
+        before,
+        &start_errors,
+    )
+    .unwrap_or(inspect_error)
 }
 
 fn persistent_exited_service_error(
@@ -528,5 +589,103 @@ mod tests {
         )
         .expect("unlabeled rows are skipped");
         assert!(recovery.started.is_empty());
+    }
+
+    #[test]
+    fn start_timeout_reports_observed_exited_status() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-pg",
+                "postgres",
+                "acowtancy-postgres-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-pg",
+                "postgres",
+                "acowtancy-postgres-1",
+                "Exited (255) 2 minutes ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with(
+            "acowtancy-shared-pg",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |_| {
+                Err(ContainerExecError::Failure {
+                    command: "start owned container `acowtancy-postgres-1`".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: "[effigy] command timed out after 30s".to_owned(),
+                })
+            },
+        )
+        .expect_err("timed-out start must fail with observed status");
+
+        let detail = error.to_string();
+        assert!(detail.contains("service `postgres`"), "got: {detail}");
+        assert!(detail.contains("Exited (255)"), "got: {detail}");
+        assert!(
+            detail.contains("command timed out after 30s"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("colima nerdctl --profile effigy -- start acowtancy-postgres-1"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn inspect_timeout_after_start_keeps_last_observed_status() {
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with(
+            "acowtancy-shared-pg",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            || {
+                inspect_calls += 1;
+                if inspect_calls == 1 {
+                    Ok(vec![row(
+                        "acowtancy-shared-pg",
+                        "postgres",
+                        "acowtancy-postgres-1",
+                        "Exited (255) 2 minutes ago",
+                    )])
+                } else {
+                    Err(ContainerExecError::Failure {
+                        command: "runtime ps --all".to_owned(),
+                        code: None,
+                        stdout: String::new(),
+                        stderr: "[effigy] command timed out after 30s".to_owned(),
+                    })
+                }
+            },
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+        )
+        .expect_err("inspect timeout after start must keep last observed status");
+
+        let detail = error.to_string();
+        assert!(detail.contains("service `postgres`"), "got: {detail}");
+        assert!(detail.contains("Exited (255)"), "got: {detail}");
+        assert!(
+            detail.contains("command timed out after 30s"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("colima nerdctl --profile effigy -- start acowtancy-postgres-1"),
+            "got: {detail}"
+        );
     }
 }
