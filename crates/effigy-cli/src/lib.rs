@@ -948,6 +948,7 @@ pub enum ContainerSubcommand {
     Eject {
         name: Option<String>,
     },
+    Scope,
     Hosts {
         name: Option<String>,
     },

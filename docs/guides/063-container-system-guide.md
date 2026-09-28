@@ -119,6 +119,7 @@ effigy container <NAME> data pull-production
 effigy container <NAME> reset --keep-data
 effigy container <NAME> eject
 effigy container hosts
+effigy container scope [--repo <PATH>] [--json]
 effigy container retire --yes
 effigy container cache list --global
 effigy container volume list --dormant
@@ -323,6 +324,15 @@ reporting an empty stack. TLS certificates for isolated routes are removed
 under the route lock after an owner check; failure leaves the route and a
 pending-cert list on the record. A pending certificate whose domain now has
 a foreign owner stays.
+
+Archive callers that need the identity before the checkout disappears should
+run `effigy container scope --json`. It reports the absolute checkout path,
+scope kind and full generation token without loading a container policy or
+contacting a backend. A scoped checkout with no token yet creates it in the
+private Git directory; a primary checkout or unmarked clone returns kind
+`none` and a null token. Persist the token before archive, then pass it to
+`effigy container retire --scope <token> --yes` if cleanup must be retried
+after the checkout is gone.
 
 Paseo worktree archive should call retire from `paseo.json`
 `worktree.teardown` before the checkout disappears. After the directory is

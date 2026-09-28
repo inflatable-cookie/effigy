@@ -24,6 +24,12 @@ ts = "bun x vitest run"
 Configured suites replace auto-detection for their catalog. With no configured
 suites, Effigy detects every supported ecosystem present at that catalog root:
 Vitest plus one Rust runner (`cargo nextest` preferred, `cargo test` fallback).
+Vitest requires package-owned evidence: a `package.json` dependency or script,
+a `vitest.config.*` file, or a `vite.config.*` with a `test` block. An
+installed `node_modules/.bin/vitest` alone is not intent. Detection does not
+search parent or sibling manifests. When the package config sets `test.dir`,
+the detected command includes that root. Explicit `[test.suites]` and
+`[test.runners]` remain authoritative.
 
 ## Command Grammar
 

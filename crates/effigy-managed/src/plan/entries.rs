@@ -59,6 +59,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 name: process_name,
                 role: normalized.role,
                 run,
+                secret_env: Default::default(),
                 setup,
                 setup_steps: entry.setup.clone(),
                 cwd,

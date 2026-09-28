@@ -58,6 +58,24 @@ query for archive callers. It resolves the selected checkout before deletion
 without loading a container declaration, starting a backend, or inspecting
 containers. Its versioned result reports the absolute checkout path, scope
 kind (`worktree`, `ephemeral-clone`, or `none`), and the full token or `null`.
+The exact success payload is:
+
+```json
+{
+  "schema": "effigy.container.scope.v1",
+  "schema_version": 1,
+  "ok": true,
+  "checkout": "/absolute/path/to/checkout",
+  "scope": {
+    "kind": "worktree",
+    "token": "0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+For an unscoped checkout, `scope.kind` is `none` and `scope.token` is JSON
+`null`. The token is always the full 32-character generation identity, never
+the shortened host key.
 For a scoped checkout with no token yet, the query creates that generation's
 token in its private Git directory; it does not create runtime resources.
 Primary checkouts and unmarked clones return `none` and `null`. Invalid Git

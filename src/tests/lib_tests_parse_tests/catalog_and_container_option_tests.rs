@@ -376,6 +376,26 @@ fn parse_container_hosts_is_supported() {
 }
 
 #[test]
+fn parse_container_scope_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "scope".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Scope,
+            repo_override: Some(std::path::PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_container_retire_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),

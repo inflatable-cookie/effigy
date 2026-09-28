@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use effigy_core::widgets::{KeyValue, NoticeLevel, SummaryCounts, TableSpec};
@@ -22,7 +21,7 @@ where
             start_after_ms: process.start_after_ms,
             shutdown_on_exit: process.shutdown_on_exit,
             pty: process.role != ManagedProcessRole::Lifecycle,
-            env: BTreeMap::new(),
+            env: process.secret_env,
         })
         .collect()
 }
@@ -243,6 +242,7 @@ fn managed_gateway_auto_start_label(enabled: bool) -> &'static str {
 mod tests {
     use super::managed_process_specs;
     use crate::{ManagedProcessRole, ManagedProcessSpec};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[test]
@@ -253,6 +253,7 @@ mod tests {
                 role: ManagedProcessRole::Lifecycle,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "printf lifecycle".to_owned(),
+                secret_env: BTreeMap::new(),
                 setup: None,
                 setup_steps: Vec::new(),
                 start_after_ms: 0,
@@ -265,6 +266,10 @@ mod tests {
                 role: ManagedProcessRole::Standard,
                 cwd: PathBuf::from("/tmp/repo/api"),
                 run: "printf api".to_owned(),
+                secret_env: BTreeMap::from([(
+                    "API_TOKEN".to_owned(),
+                    "synthetic-secret".to_owned(),
+                )]),
                 setup: None,
                 setup_steps: Vec::new(),
                 start_after_ms: 0,
@@ -277,6 +282,7 @@ mod tests {
                 role: ManagedProcessRole::Shell,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "sh".to_owned(),
+                secret_env: BTreeMap::new(),
                 setup: None,
                 setup_steps: Vec::new(),
                 start_after_ms: 0,
@@ -290,5 +296,9 @@ mod tests {
         assert!(!specs[0].pty, "lifecycle should use plain pipes");
         assert!(specs[1].pty, "standard tabs should use PTY transport");
         assert!(specs[2].pty, "shell tab should keep PTY transport");
+        assert_eq!(
+            specs[1].env.get("API_TOKEN"),
+            Some(&"synthetic-secret".to_owned())
+        );
     }
 }

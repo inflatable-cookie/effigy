@@ -84,7 +84,7 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 
 #[test]
 fn stream_state_records_stdout_and_stderr_lines() {
-    let mut state = StreamState::new(&[]);
+    let mut state = StreamState::new(&[], &[]);
     let mut renderer = RecordingRenderer::default();
 
     state
@@ -110,8 +110,23 @@ fn stream_state_records_stdout_and_stderr_lines() {
 }
 
 #[test]
+fn stream_state_redacts_secret_values_from_captured_output() {
+    let mut state = StreamState::new(&[], &["synthetic-secret".to_owned()]);
+    let mut renderer = RecordingRenderer::default();
+
+    state
+        .record_event(
+            event("api", ProcessEventKind::Stdout, "received synthetic-secret"),
+            &mut renderer,
+        )
+        .expect("stdout should render");
+
+    assert_eq!(renderer.lines, vec!["[api] received [REDACTED]"]);
+}
+
+#[test]
 fn stream_state_records_non_zero_exits_and_exit_notices() {
-    let mut state = StreamState::new(&[]);
+    let mut state = StreamState::new(&[], &[]);
     let mut renderer = RecordingRenderer::default();
 
     state
@@ -143,7 +158,7 @@ fn stream_state_records_non_zero_exits_and_exit_notices() {
 
 #[test]
 fn stream_state_only_drains_after_all_expected_exits() {
-    let mut state = StreamState::new(&[]);
+    let mut state = StreamState::new(&[], &[]);
 
     state.record_idle_tick(1);
     assert_eq!(state.drained_after_exit, 0);
@@ -155,7 +170,7 @@ fn stream_state_only_drains_after_all_expected_exits() {
 
 #[test]
 fn stream_state_marks_shutdown_when_flagged_process_exits() {
-    let mut state = StreamState::new(&["window".to_owned()]);
+    let mut state = StreamState::new(&["window".to_owned()], &[]);
     let mut renderer = RecordingRenderer::default();
 
     state
@@ -177,7 +192,7 @@ fn stream_state_marks_shutdown_when_flagged_process_exits() {
 
 #[test]
 fn stream_state_drains_briefly_after_shutdown_trigger() {
-    let mut state = StreamState::new(&["window".to_owned()]);
+    let mut state = StreamState::new(&["window".to_owned()], &[]);
 
     assert!(!state.is_complete(2));
 

@@ -77,3 +77,19 @@ pub fn detect_test_runner_detailed(repo_root: &Path) -> TestRunnerDetection {
         candidates: vec![vitest_candidate, nextest_candidate, fallback_candidate],
     }
 }
+
+/// Plan note when Vitest is skipped despite an installed binary.
+pub fn vitest_transitive_bin_skip_reason(repo_root: &Path) -> Option<String> {
+    let (_, candidate) = detect_vitest(repo_root);
+    if candidate.available {
+        return None;
+    }
+    if candidate
+        .reason
+        .contains("installed `node_modules/.bin/vitest` is not package intent")
+    {
+        Some(candidate.reason)
+    } else {
+        None
+    }
+}

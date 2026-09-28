@@ -12,6 +12,10 @@ During v0.x, MINOR bumps may include breaking changes.
   owner recovery, caller-linked run telemetry, and `effigy admission` queries.
   Configure per-invocation `EFFIGY_CALLER` identity and reservation values;
   standard task commands receive the reserved CPU units as `CARGO_BUILD_JOBS`.
+- `effigy container scope --json` reports the selected checkout's absolute
+  path, scope kind and full generation token before archive without loading a
+  container policy or contacting a runtime backend. It creates a missing
+  token only for linked worktrees and locally marked ephemeral clones.
 - `effigy release prepare` can satisfy a gate marked
   `reuse-hosted-evidence = true` with a successful GitHub Actions run for this
   repository's exact `HEAD` SHA, verified through authenticated `gh`. Unlisted
@@ -86,6 +90,11 @@ During v0.x, MINOR bumps may include breaking changes.
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.
 
+### Security
+- Managed host task secrets now reach child processes through their
+  environment, stay out of command arguments, and are redacted from managed
+  stream and headless logs.
+
 ### Breaking
 - Lean Northstar repositories no longer carry a Queue manifest. `effigy init
   northstar` omits it; Queue closeout is the default, and overrides live in
@@ -96,6 +105,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Vitest auto-detection requires package-owned evidence (`package.json`
+  dependency/script, `vitest.config.*`, or `vite.config.*` with a `test`
+  block, including `.cts`). A transitive `node_modules/.bin/vitest` is not
+  enough. Commented-out or string-embedded `test` / `dir` syntax is not
+  active. Quoted `test` / `dir` keys and regex literals that contain `//`
+  stay active. When the selected package's config sets `test.dir`, the
+  detected command includes that root. Explicit `[test.suites]` and
+  `[test.runners]` stay authoritative.
 - `effigy container cache list` (repo and `--global`) now reports reclaimable
   size totals in text and JSON, plus in-use size on the global report.
   Unknown per-volume sizes keep `size_complete` false instead of inflating
@@ -137,6 +154,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Recursive `effigy docs check` walks skip `target/` and `node_modules/` at
+  directory entry, so a parallel Cargo or package-manager build cannot fail
+  the check when a generated path vanishes. Default scope is still
+  `README.md` plus Markdown under `docs/`. An explicit file path is still
+  checked; a missing or unreadable owned Markdown file still fails.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.

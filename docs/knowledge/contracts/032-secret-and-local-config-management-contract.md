@@ -177,6 +177,9 @@ Injection rules:
 - managed tasks that set `secrets = "required"` receive declared
   `targets = ["tasks"]` values across their child process launches, even when
   the child shell commands do not spell out the env names directly
+- managed host process launches receive those task secrets through the child
+  process environment, outside the rendered shell command and argv; captured
+  managed stream and headless log output redacts the resolved values
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting

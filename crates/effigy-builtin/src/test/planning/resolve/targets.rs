@@ -6,6 +6,7 @@ use crate::BuiltinError;
 use effigy_manifest::LoadedCatalog;
 
 use super::plan_resolution::resolve_target_test_plans;
+use effigy_tasks::testing::vitest_transitive_bin_skip_reason;
 
 pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
@@ -44,7 +45,7 @@ fn resolve_prefixed_target(
         targets: vec![BuiltinTestTarget {
             name: catalog.alias.clone(),
             root: catalog.catalog_root.clone(),
-            fallback_chain: render_fallback_chain(&plans),
+            fallback_chain: render_fallback_chain(&plans, &suite_source, &catalog.catalog_root),
             plans,
             suite_source,
             cargo_env,
@@ -72,7 +73,7 @@ fn collect_workspace_targets(
         }
         targets.push(BuiltinTestTarget {
             name,
-            fallback_chain: render_fallback_chain(&plans),
+            fallback_chain: render_fallback_chain(&plans, &suite_source, &root),
             root,
             plans,
             suite_source,
@@ -161,8 +162,12 @@ fn collect_target_roots(
     roots
 }
 
-fn render_fallback_chain(plans: &[BuiltinResolvedPlan]) -> Vec<String> {
-    plans
+fn render_fallback_chain(
+    plans: &[BuiltinResolvedPlan],
+    suite_source: &str,
+    target_root: &Path,
+) -> Vec<String> {
+    let mut chain = plans
         .iter()
         .map(|plan| {
             format!(
@@ -172,5 +177,11 @@ fn render_fallback_chain(plans: &[BuiltinResolvedPlan]) -> Vec<String> {
                 plan.evidence.join("; ")
             )
         })
-        .collect()
+        .collect::<Vec<String>>();
+    if suite_source == "auto-detected" && !plans.iter().any(|plan| plan.suite == "vitest") {
+        if let Some(reason) = vitest_transitive_bin_skip_reason(target_root) {
+            chain.push(format!("vitest skipped: {reason}"));
+        }
+    }
+    chain
 }

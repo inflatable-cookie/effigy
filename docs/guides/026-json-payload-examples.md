@@ -1666,8 +1666,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
           "suite": "vitest",
           "command": "bun x vitest run",
           "evidence": [
-            "package marker: package.json",
-            "local binary detected: node_modules/.bin/vitest"
+            "package.json includes vitest dependency/script evidence"
           ]
         }
       ]
