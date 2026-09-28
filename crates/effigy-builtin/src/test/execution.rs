@@ -178,15 +178,16 @@ pub(super) fn run_builtin_test_targets_parallel(
                                     command: execution_command.clone(),
                                     error,
                                 })?;
-                        effigy_process::notify_process_group_started(child.id());
+                        let child_pid = child.id();
+                        effigy_process::notify_process_group_started(child_pid);
                         let status = if capture_output {
                             child
                                 .wait_with_output()
+                                .map(|output| output.status)
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,
-                                })?
-                                .status
+                                })
                         } else {
                             let mut child = child;
                             child
@@ -194,8 +195,10 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,
-                                })?
+                                })
                         };
+                        effigy_process::notify_process_group_stopped(child_pid);
+                        let status = status?;
                         local.push(BuiltinTestExecResult {
                             name,
                             runner,

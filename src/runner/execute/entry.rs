@@ -89,6 +89,9 @@ fn run_selected_task_with_admission(
     selection: &TaskSelection<'_>,
     execute: impl FnOnce() -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
+    if crate::runner::admission::scoped_lease_id().is_some() {
+        return execute();
+    }
     let task_name = preflight.selector.task_name.as_str();
     if is_managed_control_invocation(selection.task.mode.as_deref(), &preflight.runtime_args_exec)?
     {
@@ -111,7 +114,11 @@ fn run_selected_task_with_admission(
         selector: &selector,
     })
     .map_err(RunnerError::task_invocation)?;
-    let scope = crate::runner::admission::LeaseScope::enter(lease.id());
+    let scope = crate::runner::admission::LeaseScope::enter(lease.id()).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot install heavy-run signal forwarding: {error}"
+        ))
+    })?;
     let result = execute();
     lease.finish(&result);
     drop(scope);

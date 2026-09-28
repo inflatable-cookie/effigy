@@ -18,7 +18,13 @@ use diagnostics::collect_exit_diagnostics;
 pub use signal::{process_is_descendant_of, process_is_running, terminate_process_tree};
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 
-pub type ProcessGroupObserver = Arc<dyn Fn(u32) + Send + Sync + 'static>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessGroupEvent {
+    Started(u32),
+    Stopped(u32),
+}
+
+pub type ProcessGroupObserver = Arc<dyn Fn(ProcessGroupEvent) + Send + Sync + 'static>;
 
 static PROCESS_GROUP_OBSERVER: OnceLock<Mutex<Option<ProcessGroupObserver>>> = OnceLock::new();
 
@@ -41,13 +47,21 @@ pub fn process_group_observer_active() -> bool {
 }
 
 pub fn notify_process_group_started(pid: u32) -> bool {
+    notify_process_group_event(ProcessGroupEvent::Started(pid))
+}
+
+pub fn notify_process_group_stopped(pid: u32) -> bool {
+    notify_process_group_event(ProcessGroupEvent::Stopped(pid))
+}
+
+fn notify_process_group_event(event: ProcessGroupEvent) -> bool {
     let observer = PROCESS_GROUP_OBSERVER
         .get_or_init(|| Mutex::new(None))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     if let Some(observer) = observer {
-        observer(pid);
+        observer(event);
         true
     } else {
         false

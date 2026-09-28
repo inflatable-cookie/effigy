@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -471,25 +472,44 @@ thread_local! {
     static CURRENT_LEASE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+static CURRENT_SIGNAL_STATE: OnceLock<Mutex<Option<Arc<Mutex<LeaseSignalState>>>>> =
+    OnceLock::new();
+
 pub(super) struct LeaseScope {
     previous_lease: Option<String>,
+    previous_signal_state: Option<Arc<Mutex<LeaseSignalState>>>,
     previous_observer: Option<effigy_process::ProcessGroupObserver>,
+    _signal_forwarder: LeaseSignalForwarder,
 }
 
 impl LeaseScope {
-    pub(super) fn enter(id: &str) -> Self {
+    pub(super) fn enter(id: &str) -> io::Result<Self> {
+        let signal_forwarder = LeaseSignalForwarder::install()?;
         let previous = CURRENT_LEASE.with(|value| value.replace(Some(id.to_owned())));
+        let previous_signal_state =
+            replace_current_signal_state(Some(signal_forwarder.state.clone()));
         let observer: Option<effigy_process::ProcessGroupObserver> =
             state_root().ok().map(|root| {
                 let lease_id = id.to_owned();
-                Arc::new(move |pid| register_process_group_for(&root, &lease_id, pid))
-                    as effigy_process::ProcessGroupObserver
+                let signal_state = signal_forwarder.state.clone();
+                Arc::new(move |event| match event {
+                    effigy_process::ProcessGroupEvent::Started(pid) => {
+                        register_process_group_for(&root, &lease_id, pid);
+                        signal_state_register(&signal_state, pid);
+                    }
+                    effigy_process::ProcessGroupEvent::Stopped(pid) => {
+                        unregister_process_group_for(&root, &lease_id, pid);
+                        signal_state_unregister_if_gone(&signal_state, pid);
+                    }
+                }) as effigy_process::ProcessGroupObserver
             });
         let previous_observer = effigy_process::replace_process_group_observer(observer);
-        Self {
+        Ok(Self {
             previous_lease: previous,
+            previous_signal_state,
             previous_observer,
-        }
+            _signal_forwarder: signal_forwarder,
+        })
     }
 }
 
@@ -499,6 +519,7 @@ impl Drop for LeaseScope {
         CURRENT_LEASE.with(|value| {
             value.replace(self.previous_lease.take());
         });
+        replace_current_signal_state(self.previous_signal_state.take());
     }
 }
 
@@ -508,6 +529,9 @@ pub(super) fn register_process_group(pid: u32) {
     };
     let Ok(root) = state_root() else { return };
     register_process_group_for(&root, &lease_id, pid);
+    if let Some(state) = current_signal_state() {
+        signal_state_register(&state, pid);
+    }
 }
 
 fn register_process_group_for(root: &Path, lease_id: &str, pid: u32) {
@@ -540,12 +564,22 @@ pub(super) fn unregister_process_group(pid: u32) {
     if process_group_is_live(pid as i32) != Some(false) {
         return;
     }
+    if let Some(state) = current_signal_state() {
+        signal_state_unregister_if_gone(&state, pid);
+    }
     let Some(lease_id) = current_lease_id() else {
         return;
     };
     let Ok(root) = state_root() else { return };
+    unregister_process_group_for(&root, &lease_id, pid);
+}
+
+fn unregister_process_group_for(root: &Path, lease_id: &str, pid: u32) {
+    if process_group_is_live(pid as i32) != Some(false) {
+        return;
+    }
     let Ok(budget) = host_budget() else { return };
-    let _ = transact(&root, &budget, |store| {
+    let _ = transact(root, &budget, |store| {
         if let Some(run) = store
             .runs
             .iter_mut()
@@ -556,6 +590,149 @@ pub(super) fn unregister_process_group(pid: u32) {
         Ok(())
     });
 }
+
+#[derive(Default)]
+struct LeaseSignalState {
+    process_groups: BTreeSet<i32>,
+    cancellation_signals: Vec<i32>,
+}
+
+struct LeaseSignalForwarder {
+    state: Arc<Mutex<LeaseSignalState>>,
+    #[cfg(unix)]
+    _listener: LeaseSignalListener,
+}
+
+fn current_signal_state() -> Option<Arc<Mutex<LeaseSignalState>>> {
+    CURRENT_SIGNAL_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn replace_current_signal_state(
+    state: Option<Arc<Mutex<LeaseSignalState>>>,
+) -> Option<Arc<Mutex<LeaseSignalState>>> {
+    let mut current = CURRENT_SIGNAL_STATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::mem::replace(&mut *current, state)
+}
+
+#[cfg(unix)]
+struct LeaseSignalListener {
+    handle: signal_hook::iterator::Handle,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LeaseSignalForwarder {
+    fn install() -> io::Result<Self> {
+        let state = Arc::new(Mutex::new(LeaseSignalState::default()));
+        #[cfg(unix)]
+        let listener = LeaseSignalListener::install(Arc::clone(&state))?;
+        Ok(Self {
+            state,
+            #[cfg(unix)]
+            _listener: listener,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl LeaseSignalListener {
+    fn install(state: Arc<Mutex<LeaseSignalState>>) -> io::Result<Self> {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+        use signal_hook::iterator::Signals;
+
+        let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM])?;
+        let handle = signals.handle();
+        let thread = std::thread::Builder::new()
+            .name("effigy-heavy-signal-forwarder".to_owned())
+            .spawn(move || {
+                for signal in signals.forever() {
+                    let process_groups = {
+                        let mut state = state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        state
+                            .process_groups
+                            .retain(|group| process_group_is_live(*group) != Some(false));
+                        if !state.cancellation_signals.contains(&signal) {
+                            state.cancellation_signals.push(signal);
+                        }
+                        state.process_groups.iter().copied().collect::<Vec<_>>()
+                    };
+                    for process_group in process_groups {
+                        forward_signal_to_process_group(process_group, signal);
+                    }
+                }
+            })?;
+        Ok(Self {
+            handle,
+            thread: Some(thread),
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for LeaseSignalListener {
+    fn drop(&mut self) {
+        self.handle.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn signal_state_register(state: &Arc<Mutex<LeaseSignalState>>, pid: u32) {
+    let process_group = pid as i32;
+    let cancellation_signals = {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .process_groups
+            .retain(|group| process_group_is_live(*group) != Some(false));
+        if state.process_groups.insert(process_group) {
+            state.cancellation_signals.clone()
+        } else {
+            Vec::new()
+        }
+    };
+    for signal in cancellation_signals {
+        forward_signal_to_process_group(process_group, signal);
+    }
+}
+
+fn signal_state_unregister_if_gone(state: &Arc<Mutex<LeaseSignalState>>, pid: u32) {
+    if process_group_is_live(pid as i32) == Some(false) {
+        state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .process_groups
+            .remove(&(pid as i32));
+    }
+}
+
+#[cfg(unix)]
+fn forward_signal_to_process_group(process_group: i32, signal: i32) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+
+    let signal = match signal {
+        SIGHUP => Signal::SIGHUP,
+        SIGINT => Signal::SIGINT,
+        SIGTERM => Signal::SIGTERM,
+        _ => return,
+    };
+    let _ = kill(Pid::from_raw(-process_group), signal);
+}
+
+#[cfg(not(unix))]
+fn forward_signal_to_process_group(_process_group: i32, _signal: i32) {}
 
 pub(super) fn record_process_group_metrics(metrics: ProcessGroupMetrics) {
     let Some(lease_id) = current_lease_id() else {
