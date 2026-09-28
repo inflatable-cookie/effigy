@@ -36,6 +36,25 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
     }
 }
 
+pub(super) fn wait_for_positive_pid(path: &Path, timeout: Duration, label: &str) -> u32 {
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(path) {
+            if let Ok(pid) = contents.trim().parse::<u32>() {
+                if pid > 0 {
+                    return pid;
+                }
+            }
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "{label} did not contain a pid in time: {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 pub(super) fn run_json_task_success(name: &str, task: &str, run: &str) -> Value {
     let root = temp_workspace(name);
     write_manifest_task(&root, task, run);
