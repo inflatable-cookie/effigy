@@ -350,3 +350,77 @@ fn find_version_works() {
 
     assert!(changelog.find_version("0.3.0").is_none());
 }
+
+#[test]
+fn em_dash_release_separator_is_rejected_with_the_ascii_rule() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Fixed
+- Prior fix
+
+## [0.2.0] — 2026-03-09
+
+### Added
+- Feature
+";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+            assert_eq!(errors[0].line, 8);
+            assert!(
+                errors[0].message.contains("ASCII ` - `"),
+                "message should name the canonical separator: {}",
+                errors[0].message
+            );
+            assert!(
+                errors[0].message.contains('—'),
+                "message should name the offending character: {}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn em_dash_release_separator_in_category_reports_the_header_rule() {
+    let input = "# Changelog\n\n## [Unreleased]\n\n### Added\n- One\n\n## [0.2.0] — 2026-03-09\n";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+            assert!(errors[0].message.contains("ASCII ` - `"));
+            assert!(!errors[0].message.contains("unexpected content in category"));
+        }
+        _ => panic!("expected Parse error"),
+    }
+}
+
+#[test]
+fn ascii_release_separator_still_parses() {
+    let input = "# Changelog\n\n## [0.2.0] - 2026-03-09\n\n### Added\n- Feature\n";
+    let changelog = parse_changelog(input).expect("ASCII separator should parse");
+    assert_eq!(
+        changelog.releases[0].version.as_ref().unwrap().to_string(),
+        "0.2.0"
+    );
+}
+
+#[test]
+fn long_non_ascii_headers_do_not_panic_when_truncated() {
+    // Truncation used to slice at a byte offset, which panics on a multi-byte
+    // boundary. The em dash sits right at the 60-character limit here.
+    let heading = format!("## [0.2.0] — {}", "x".repeat(80));
+    let input = format!("# Changelog\n\n{heading}\n");
+    let err = parse_changelog(&input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert!(!errors.is_empty());
+        }
+        _ => panic!("expected Parse error"),
+    }
+}

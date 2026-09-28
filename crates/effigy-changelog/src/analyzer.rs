@@ -37,15 +37,18 @@ pub enum BumpKind {
 /// The bump logic follows the Northstar Changelog Profile:
 ///
 /// **Pre-1.0** (`current_version < 1.0.0`):
-/// - Breaking entries → MINOR
+/// - Breaking or Removed entries → MINOR
 /// - Any other entries → PATCH
 /// - Empty → None
 ///
 /// **Post-1.0** (`current_version >= 1.0.0`):
-/// - Breaking entries → MAJOR
-/// - Added entries (no Breaking) → MINOR
+/// - Breaking or Removed entries → MAJOR
+/// - Added entries (no Breaking/Removed) → MINOR
 /// - Any other entries → PATCH
 /// - Empty → None
+///
+/// `Removed` is treated as breaking because removing a public API breaks
+/// callers; PATCH is reserved for compatible fixes.
 pub(super) fn analyze_changelog(changelog: &Changelog) -> Analysis {
     let mut unreleased_counts = BTreeMap::new();
     let mut has_breaking = false;
@@ -62,7 +65,7 @@ pub(super) fn analyze_changelog(changelog: &Changelog) -> Analysis {
                 has_any = true;
 
                 match cat.kind {
-                    CategoryKind::Breaking => has_breaking = true,
+                    CategoryKind::Breaking | CategoryKind::Removed => has_breaking = true,
                     CategoryKind::Added => has_added = true,
                     _ => {}
                 }

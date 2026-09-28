@@ -1473,3 +1473,74 @@ fn status_gate_check_is_not_passed_when_gates_were_not_checked() {
     assert!(text.starts_with("Release Status Blocked\n"), "{text}");
     assert!(!text.contains("Gate check: passed"), "{text}");
 }
+
+fn suggested_bump_for(
+    changelog_markdown: &str,
+    current_version: &str,
+    pre_1_0: bool,
+) -> super::BumpKind {
+    let changelog =
+        effigy_changelog::parse(changelog_markdown).expect("fixture changelog should parse");
+    super::prepare_helpers::suggested_bump(
+        &changelog,
+        &semver::Version::parse(current_version).expect("fixture version"),
+        pre_1_0,
+    )
+}
+
+#[test]
+fn proposed_bump_removed_category_is_minor_under_pre_1_0() {
+    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(changelog, "0.2.4", true),
+        super::BumpKind::Minor
+    );
+}
+
+#[test]
+fn proposed_bump_fixed_only_category_stays_patch() {
+    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Compatible fix\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(changelog, "0.2.4", true),
+        super::BumpKind::Patch
+    );
+}
+
+#[test]
+fn proposed_bump_mixed_removed_and_fixed_is_minor() {
+    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n### Fixed\n- Compatible fix\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(changelog, "0.2.4", true),
+        super::BumpKind::Minor
+    );
+}
+
+#[test]
+fn proposed_bump_removed_outside_pre_1_0_forces_major() {
+    let changelog = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(changelog, "0.2.4", false),
+        super::BumpKind::Major
+    );
+}
+
+#[test]
+fn proposed_bump_normal_1_x_release_is_unchanged() {
+    let added = "# Changelog\n\n## [Unreleased]\n\n### Added\n- New feature\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(added, "1.4.2", true),
+        super::BumpKind::Minor
+    );
+
+    let fixed = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Compatible fix\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(fixed, "1.4.2", true),
+        super::BumpKind::Patch
+    );
+
+    let removed = "# Changelog\n\n## [Unreleased]\n\n### Removed\n- Removed public API\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    assert_eq!(
+        suggested_bump_for(removed, "1.4.2", true),
+        super::BumpKind::Major
+    );
+}

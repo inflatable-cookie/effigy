@@ -88,6 +88,8 @@ Key rules:
 
 - top-level title is `# Changelog`
 - releases use `## [Unreleased]` or `## [X.Y.Z] - YYYY-MM-DD`
+- the only release-heading separator is ASCII ` - ` (U+002D): a Unicode em dash
+  or en dash is malformed, not an accepted spelling
 - categories use fixed headings such as `Breaking`, `Added`, `Changed`,
   `Deprecated`, `Removed`, `Fixed`, `Security`
 - entries are bullet items
@@ -144,12 +146,17 @@ effigy --json changelog analyze CHANGELOG.md
 Semver behavior:
 
 - post-`1.0.0`:
-  - `Breaking` -> major
-  - `Added` without `Breaking` -> minor
+  - `Breaking` or `Removed` -> major
+  - `Added` without `Breaking`/`Removed` -> minor
   - any other non-empty release -> patch
 - pre-`1.0.0`:
-  - `Breaking` -> minor
+  - `Breaking` or `Removed` -> minor
   - any other non-empty release -> patch
+
+`Removed` counts as breaking because deleting a public API breaks callers;
+PATCH stays reserved for compatible fixes. The release surface (`release
+status`, `release simulate`) applies the same `Removed`-is-breaking rule under
+its `pre-1-0` policy.
 
 ### Extract
 

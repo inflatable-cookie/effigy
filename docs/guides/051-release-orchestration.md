@@ -158,6 +158,8 @@ Supported `[release]` fields:
   - optional boolean
   - when `true`, breaking unreleased changes in `0.x` releases produce a minor
     bump policy instead of forcing a major bump
+  - `Breaking` and `Removed` entries both count as breaking; `Removed` names a
+    deleted public API, so it is not routed to PATCH
 - `initial-tag-current-version`
   - optional boolean; defaults to `false`
   - permits the first changelog release to tag the version already declared in

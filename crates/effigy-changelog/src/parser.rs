@@ -132,13 +132,8 @@ impl<'a> Parser<'a> {
 
         // Check if it looks like a header we should not be seeing
         if trimmed.starts_with("## ") {
-            self.errors.push(ParseDiagnostic {
-                line: self.line_num(),
-                message: format!(
-                    "invalid release header: {}",
-                    truncate_for_display(trimmed, 60)
-                ),
-            });
+            self.errors
+                .push(release_header_diagnostic(trimmed, self.line_num()));
             return;
         }
 
@@ -225,13 +220,8 @@ impl<'a> Parser<'a> {
                 });
             }
         } else {
-            self.errors.push(ParseDiagnostic {
-                line: self.line_num(),
-                message: format!(
-                    "invalid release header: {}",
-                    truncate_for_display(trimmed, 60)
-                ),
-            });
+            self.errors
+                .push(release_header_diagnostic(trimmed, self.line_num()));
         }
     }
 
@@ -312,6 +302,13 @@ impl<'a> Parser<'a> {
                     return;
                 }
             }
+        }
+
+        // A malformed `## ` line is a release-header problem, not stray prose.
+        if trimmed.starts_with("## ") {
+            self.errors
+                .push(release_header_diagnostic(trimmed, self.line_num()));
+            return;
         }
 
         // Unexpected content
@@ -425,13 +422,72 @@ fn try_parse_link_reference(trimmed: &str, line_num: usize) -> Option<LinkRefere
     })
 }
 
-/// Truncate a string for display in error messages.
-fn truncate_for_display(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_owned()
-    } else {
-        format!("{}...", &s[..max_len])
+/// Diagnostics for a `## ` line that is not a valid release header.
+///
+/// The Northstar profile separates the version and the date with ASCII ` - `.
+/// The old message was only "invalid release header", so an em dash read as
+/// an unexplained rejection. Naming the offending separator makes docs QA and
+/// `release status` agree on what to change without widening what parses.
+fn release_header_diagnostic(trimmed: &str, line_num: usize) -> ParseDiagnostic {
+    let display = truncate_for_display(trimmed, 60);
+    if let Some(separator) = non_ascii_release_separator(trimmed) {
+        return ParseDiagnostic {
+            line: line_num,
+            message: format!(
+                "invalid release header: {display} (separate the version and date with ASCII \
+                 ` - `, not `{separator}`)"
+            ),
+        };
     }
+    ParseDiagnostic {
+        line: line_num,
+        message: format!(
+            "invalid release header: {display} (expected `## [Unreleased]` or \
+             `## [X.Y.Z] - YYYY-MM-DD`)"
+        ),
+    }
+}
+
+/// Return the separator when a bracketed release header uses a non-ASCII dash
+/// where the profile requires ASCII ` - `.
+fn non_ascii_release_separator(trimmed: &str) -> Option<char> {
+    let rest = trimmed.strip_prefix("## ")?;
+    let inner = rest.trim().strip_prefix('[')?;
+    let close_bracket = inner.find(']')?;
+    if semver::Version::parse(&inner[..close_bracket]).is_err() {
+        return None;
+    }
+    let separator = inner[close_bracket + 1..].trim_start().chars().next()?;
+    is_dash_like(separator).then_some(separator)
+}
+
+/// Whether `c` is dash-like enough to be mistaken for the ASCII `-` separator.
+fn is_dash_like(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2010}' // hyphen
+            | '\u{2011}' // non-breaking hyphen
+            | '\u{2012}' // figure dash
+            | '\u{2013}' // en dash
+            | '\u{2014}' // em dash
+            | '\u{2015}' // horizontal bar
+            | '\u{2212}' // minus sign
+            | '\u{fe58}'
+            | '\u{fe63}'
+            | '\u{ff0d}'
+    )
+}
+
+/// Truncate a string for display in error messages.
+///
+/// Counts characters rather than bytes: slicing a multi-byte boundary would
+/// panic on exactly the non-ASCII input these messages describe.
+fn truncate_for_display(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        return s.to_owned();
+    }
+    let truncated: String = s.chars().take(max_len).collect();
+    format!("{truncated}...")
 }
 
 #[cfg(test)]
