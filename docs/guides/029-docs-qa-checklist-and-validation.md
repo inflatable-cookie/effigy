@@ -10,4 +10,4 @@ Use `effigy qa:docs` after a coherent documentation edit. It checks links, JSON 
 - Turn links to removed process records into plain references to Git history.
 - Record unresolved leads with Queue `lead.add`; use lanes, lane documents and `plan.set` for prioritized intent.
 
-`effigy docs check links`, `json-examples`, `paths`, and `workflow-paths` can run separately when diagnosing one failure. [JSON contracts](../knowledge/contracts/README.md) have their own `effigy qa:json` check. The CI docs job runs the same `qa:docs` selector.
+`effigy docs check links` with no paths checks `README.md` and Markdown under `docs/`. Recursive checks skip `target/` and `node_modules/` at directory entry; an explicit file path is still checked. A missing or unreadable owned Markdown file fails. `json-examples`, `paths`, and `workflow-paths` can run separately when diagnosing one failure. [JSON contracts](../knowledge/contracts/README.md) have their own `effigy qa:json` check. The CI docs job runs the same `qa:docs` selector. Traversal rules: [docs-check source traversal](../knowledge/architecture/030-docs-check-source-traversal.md).
