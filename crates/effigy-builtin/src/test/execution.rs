@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex};
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
@@ -170,6 +170,9 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 use std::os::unix::process::CommandExt;
                                 process.process_group(0);
                             }
+                        }
+                        if capture_output {
+                            process.stdout(Stdio::piped()).stderr(Stdio::piped());
                         }
                         let child =
                             process

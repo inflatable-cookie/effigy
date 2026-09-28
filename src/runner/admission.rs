@@ -2110,6 +2110,161 @@ mod tests {
         assert!(store.runs[0].ended_at.is_none());
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn reused_pid_with_a_different_process_generation_keeps_capacity_reserved() {
+        let pid = std::process::id();
+        let current_boot = boot_identity().expect("supported host boot identity");
+        let current_start = super::process_start_identity(pid).expect("current process identity");
+        let mut reused_pid = run("reused-pid", "repo-a", 1, "running", 1, 50);
+        reused_pid.owner_pid = pid;
+        reused_pid.owner_start_identity = Some(format!("{current_start}-previous-generation"));
+        reused_pid.boot_identity = Some(current_boot);
+        let mut store = store(Budget {
+            cpu_units: 2,
+            memory_mib: 100,
+        });
+        store.runs.push(reused_pid);
+
+        cleanup_stale(&mut store);
+
+        assert_eq!(state(&store, "reused-pid"), "stale_owner_unknown");
+        assert!(super::is_capacity_holder(
+            state_run(&store, "reused-pid").state.as_str()
+        ));
+        assert!(state_run(&store, "reused-pid").ended_at.is_none());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn stale_boot_identity_recovers_a_prior_host_lease() {
+        let pid = std::process::id();
+        let current_boot = boot_identity().expect("supported host boot identity");
+        let mut stale_boot = run("stale-boot", "repo-a", 1, "running", 1, 50);
+        stale_boot.owner_pid = pid;
+        stale_boot.owner_start_identity = super::process_start_identity(pid);
+        stale_boot.boot_identity = Some(format!("{current_boot}-previous-boot"));
+        let mut store = store(Budget {
+            cpu_units: 2,
+            memory_mib: 100,
+        });
+        store.runs.push(stale_boot);
+
+        cleanup_stale(&mut store);
+
+        assert_eq!(state(&store, "stale-boot"), "recovered_stale_owner");
+        assert_eq!(
+            state_run(&store, "stale-boot")
+                .exit_classification
+                .as_deref(),
+            Some("stale_owner_recovered")
+        );
+        assert!(state_run(&store, "stale-boot").ended_at.is_some());
+    }
+
+    #[test]
+    fn capacity_deadline_is_distinct_from_validation_failure() {
+        let root = tempfile::tempdir().expect("temp root");
+        let state_dir = root.path().join("admission");
+        let owner_repo = root.path().join("owner-repo");
+        fs::create_dir(&owner_repo).expect("owner repository");
+        let owner_ready = root.path().join("owner.ready");
+        let release_owner = root.path().join("release-owner");
+        let exe = std::env::current_exe().expect("test executable");
+
+        let mut owner = fixture_process(
+            &exe,
+            "owner",
+            &state_dir,
+            &owner_repo,
+            &owner_ready,
+            &release_owner,
+        );
+        wait_for_file(&owner_ready, &mut owner);
+
+        let timeout = capacity_outcome_fixture(&exe, "capacity-timeout", root.path(), &state_dir);
+        wait_child(timeout);
+        let timeout_message = fs::read_to_string(root.path().join("capacity-timeout.message"))
+            .expect("capacity timeout evidence");
+        assert!(timeout_message.contains("capacity timeout, not a validation failure"));
+
+        let timed_out_store = read_store(&state_dir);
+        let timed_out = timed_out_store
+            .runs
+            .iter()
+            .find(|run| run.caller == "capacity-timeout")
+            .expect("capacity timeout record");
+        assert_eq!(timed_out.state, "capacity_timeout");
+        assert_eq!(
+            timed_out.exit_classification.as_deref(),
+            Some("capacity_timeout")
+        );
+        assert!(timed_out.queue_wait_ms.is_some());
+        assert_eq!(
+            timed_out_store
+                .runs
+                .iter()
+                .find(|run| run.caller == "owner")
+                .expect("capacity holder record")
+                .state,
+            "running"
+        );
+
+        fs::write(&release_owner, "release").expect("release owner");
+        wait_child(owner);
+
+        let validation_failure =
+            capacity_outcome_fixture(&exe, "validation-failure", root.path(), &state_dir);
+        wait_child(validation_failure);
+        let finished_store = read_store(&state_dir);
+        let failed = finished_store
+            .runs
+            .iter()
+            .find(|run| run.caller == "validation-failure")
+            .expect("validation failure record");
+        assert_eq!(failed.state, "failed");
+        assert_eq!(failed.exit_classification.as_deref(), Some("failed"));
+    }
+
+    #[test]
+    fn capacity_outcome_process_fixture() {
+        let Ok(role) = std::env::var("EFFIGY_ADMISSION_TEST_ROLE") else {
+            return;
+        };
+        let root =
+            PathBuf::from(std::env::var_os("EFFIGY_ADMISSION_TEST_ROOT").expect("fixture root"));
+        let repository = root.join(format!("{role}-repo"));
+        fs::create_dir_all(&repository).expect("fixture repository");
+        let lease = acquire(Request {
+            caller: &role,
+            repository: &repository,
+            selector: "qa",
+        });
+        match role.as_str() {
+            "capacity-timeout" => {
+                let error = match lease {
+                    Err(error) => error,
+                    Ok(lease) => {
+                        lease.finish(&Ok(String::new()));
+                        panic!("occupied budget unexpectedly admitted the waiter");
+                    }
+                };
+                fs::write(root.join("capacity-timeout.message"), error)
+                    .expect("write timeout result");
+            }
+            "validation-failure" => {
+                let lease = lease.expect("available budget grants a lease");
+                lease.finish(&Err(super::super::error::RunnerError::TaskCommandFailure {
+                    command: "fixture validation".to_owned(),
+                    code: Some(1),
+                    stdout: String::new(),
+                    stderr: "validation failed".to_owned(),
+                }));
+            }
+            other => panic!("unknown capacity outcome fixture role: {other}"),
+        }
+    }
+
     #[test]
     fn admission_is_shared_by_independent_processes_and_records_wait_time() {
         let root = tempfile::tempdir().expect("temp root");
@@ -2563,6 +2718,35 @@ mod tests {
         }
     }
 
+    fn capacity_outcome_fixture(exe: &Path, role: &str, root: &Path, state_dir: &Path) -> Child {
+        let timeout = if role == "capacity-timeout" {
+            "0"
+        } else {
+            "10"
+        };
+        Command::new(exe)
+            .args([
+                "--exact",
+                "runner::admission::tests::capacity_outcome_process_fixture",
+                "--nocapture",
+            ])
+            .env("EFFIGY_ADMISSION_TEST_ROLE", role)
+            .env("EFFIGY_ADMISSION_TEST_ROOT", root)
+            .env("EFFIGY_ADMISSION_DIR", state_dir)
+            .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+            .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+            .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+            .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+            .env("EFFIGY_ADMISSION_TIMEOUT_SECS", timeout)
+            .spawn()
+            .expect("spawn capacity outcome fixture")
+    }
+
+    fn read_store(state_dir: &Path) -> Store {
+        serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("state file"))
+            .expect("valid admission state")
+    }
+
     fn store(budget: Budget) -> Store {
         Store {
             schema: "effigy.admission.state.v1".to_owned(),
@@ -2629,5 +2813,13 @@ mod tests {
             .find(|run| run.run_id == run_id)
             .expect("run record")
             .state
+    }
+
+    fn state_run<'a>(store: &'a Store, run_id: &str) -> &'a RunRecord {
+        store
+            .runs
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .expect("run record")
     }
 }

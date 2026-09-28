@@ -30,7 +30,7 @@ pub(crate) fn render_admission_help(renderer: &mut dyn HelpRenderer) -> HelpResu
             ],
             vec![
                 "EFFIGY_ADMISSION_DIR".to_owned(),
-                "Private host state directory (default: ~/.cache/effigy/admission)".to_owned(),
+                "Shared path: absolute root/user-owned mode-2770 dir, group you belong to; state files mode 660 (default: private ~/.cache/effigy/admission)".to_owned(),
             ],
             vec![
                 "EFFIGY_ADMISSION_TIMEOUT_SECS".to_owned(),

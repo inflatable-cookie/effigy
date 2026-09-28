@@ -7344,6 +7344,46 @@ fn cli_test_json_mode_wraps_test_failure_payload() {
 }
 
 #[test]
+fn cli_test_json_keeps_builtin_suite_output_out_of_the_json_envelope() {
+    let root = temp_workspace("cli-json-test-captures-suite-output");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(
+        &vitest,
+        "#!/bin/sh\nprintf 'EFFIGY_TEST_STDOUT_MARKER\\n'\nprintf 'EFFIGY_TEST_STDERR_MARKER\\n' >&2\nexit 0\n",
+    )
+    .expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("test")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["result"]["schema"], "effigy.test.results.v1");
+    assert!(!stdout.contains("EFFIGY_TEST_STDOUT_MARKER"), "{stdout}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(!stderr.contains("EFFIGY_TEST_STDERR_MARKER"), "{stderr}");
+}
+
+#[test]
 fn cli_deferral_outputs_runner_result_with_cli_preamble_header() {
     let root = temp_workspace("cli-defer-header");
     fs::write(
