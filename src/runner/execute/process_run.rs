@@ -1,7 +1,7 @@
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::pipeline::standard::redact_task_secret_values;
-use super::process::{build_shell_process, command_launch_error};
+use super::process::{build_shell_process, command_launch_error, ChildProcessGroupSignalForwarder};
 use crate::runner::error::RunnerError;
 use effigy_env::secret::SecretString;
 use std::process::Stdio;
@@ -22,12 +22,17 @@ fn run_task_process_json(
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
+    let mut signal_forwarder = ChildProcessGroupSignalForwarder::install()
+        .map_err(|error| command_launch_error(context, error))?;
     let mut process = build_shell_process(context, secret_env);
     process.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = process
         .spawn()
         .map_err(|error| command_launch_error(context, error))?;
     let child_pid = child.id();
+    if let Some(signal_forwarder) = &mut signal_forwarder {
+        signal_forwarder.attach(child_pid);
+    }
     crate::runner::admission::register_process_group(child_pid);
     let rss_monitor = crate::runner::admission::ProcessGroupRssMonitor::start(child_pid);
     let output = child
@@ -60,10 +65,15 @@ fn run_task_process_text(
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
+    let mut signal_forwarder = ChildProcessGroupSignalForwarder::install()
+        .map_err(|error| command_launch_error(context, error))?;
     let mut child = build_shell_process(context, secret_env)
         .spawn()
         .map_err(|error| command_launch_error(context, error))?;
     let child_pid = child.id();
+    if let Some(signal_forwarder) = &mut signal_forwarder {
+        signal_forwarder.attach(child_pid);
+    }
     crate::runner::admission::register_process_group(child_pid);
     let rss_monitor = crate::runner::admission::ProcessGroupRssMonitor::start(child_pid);
     let status = child

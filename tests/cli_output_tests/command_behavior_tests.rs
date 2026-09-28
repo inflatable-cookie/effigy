@@ -8640,6 +8640,129 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 }
 
 #[test]
+fn cli_heavy_task_sigint_reaches_detached_child_and_releases_admission() {
+    let _guard = lock_cli_process_tests();
+    let root = temp_workspace("heavy-task-admission-sigint");
+    let state_dir = root.join("admission");
+    fs::create_dir(&state_dir).expect("create test admission state");
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o2770))
+        .expect("secure test admission state");
+    let ready = root.join("child-ready.marker");
+    let interrupted = root.join("child-interrupted.marker");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.heavy]
+admission = "heavy"
+run = '''trap 'printf interrupted > "$EFFIGY_TEST_CANCEL_MARKER"; exit 130' INT; printf '%s' "$$" > "$EFFIGY_TEST_READY_MARKER"; while :; do sleep 1; done'''
+"#,
+    )
+    .expect("write heavy task manifest");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("heavy")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_ADMISSION_DIR", &state_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "10")
+        .env("EFFIGY_CALLER", "test:heavy-task-sigint")
+        .env("EFFIGY_TEST_READY_MARKER", &ready)
+        .env("EFFIGY_TEST_CANCEL_MARKER", &interrupted)
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy heavy task");
+    let child_pid = child.id();
+
+    wait_for_heavy_task_child(&mut child, &ready, &state_dir);
+    let process_group = fs::read_to_string(&ready)
+        .expect("read heavy task child pid")
+        .parse::<i32>()
+        .expect("heavy task child pid should be an integer");
+    assert!(process_group > 0);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child_pid as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send SIGINT to effigy only");
+
+    let output = child.wait_with_output().expect("wait for effigy");
+    let child_group = nix::unistd::Pid::from_raw(-process_group);
+    let child_group_survived = nix::sys::signal::kill(child_group, None).is_ok();
+    if child_group_survived {
+        let _ = nix::sys::signal::kill(child_group, nix::sys::signal::Signal::SIGKILL);
+    }
+
+    assert!(
+        !output.status.success(),
+        "cancelled task must fail: {output:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("code=Some(130)"),
+        "the task must receive SIGINT and exit with status 130: {output:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&interrupted).expect("child handled SIGINT"),
+        "interrupted"
+    );
+    assert!(
+        !child_group_survived,
+        "the admitted child process group must exit before Effigy releases its lease"
+    );
+    let state: Value =
+        serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("admission state"))
+            .expect("parse admission state");
+    let runs = state["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["state"], "cancelled");
+    assert!(runs[0]["process_groups"].as_array().unwrap().is_empty());
+}
+
+fn wait_for_heavy_task_child(
+    child: &mut std::process::Child,
+    ready: &std::path::Path,
+    state_dir: &std::path::Path,
+) {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while !ready.exists() {
+        if let Some(status) = child.try_wait().expect("poll Effigy process") {
+            terminate_admission_test_child_groups(state_dir);
+            panic!("Effigy exited before starting its heavy child: {status}");
+        }
+        if Instant::now() >= deadline {
+            terminate_admission_test_child_groups(state_dir);
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("heavy task child ready marker was not created in time");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn terminate_admission_test_child_groups(state_dir: &std::path::Path) {
+    let Ok(bytes) = fs::read(state_dir.join("state.json")) else {
+        return;
+    };
+    let Ok(state) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    let Some(groups) = state["runs"][0]["process_groups"].as_array() else {
+        return;
+    };
+    for group in groups.iter().filter_map(Value::as_i64) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-(group as i32)),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+}
+
+#[test]
 #[ignore = "workspace handoff flow replaced the compose-logs-follow path; SIGINT propagation to \
             the handoff exec child needs a redesign before this test can run headlessly"]
 fn cli_task_workspace_binding_stops_environment_on_sigint() {

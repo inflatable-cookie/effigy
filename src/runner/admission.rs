@@ -223,17 +223,19 @@ impl AdmissionLease {
     }
 
     pub(super) fn finish(mut self, result: &Result<String, super::error::RunnerError>) {
-        let state = if result.is_ok() {
-            "succeeded"
-        } else {
-            "failed"
+        let (state, classification) = match result {
+            Ok(_) => ("succeeded", "succeeded"),
+            Err(super::error::RunnerError::TaskCommandFailure {
+                code: Some(130), ..
+            }) => ("cancelled", "cancelled"),
+            Err(_) => ("failed", "failed"),
         };
         if !self.completed {
             finish_record(
                 &self.root,
                 &self.run_id,
                 state,
-                state,
+                classification,
                 self.start,
                 self.cpu_before,
             );
@@ -1486,12 +1488,7 @@ fn prune_history(store: &mut Store) {
         .runs
         .iter()
         .enumerate()
-        .filter(|(_, run)| {
-            !matches!(
-                run.state.as_str(),
-                "running" | "waiting_for_capacity" | "stale_owner_unknown"
-            )
-        })
+        .filter(|(_, run)| run.state != "waiting_for_capacity" && !is_capacity_holder(&run.state))
         .map(|(index, run)| (index, run.ticket))
         .collect::<Vec<_>>();
     completed.sort_by_key(|(_, ticket)| *ticket);
@@ -1511,8 +1508,8 @@ fn prune_history(store: &mut Store) {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire, boot_identity, cleanup_stale, run_json_at, save_store_unlocked, schedule, Budget,
-        Request, Reservation, RunRecord, Store,
+        acquire, boot_identity, cleanup_stale, prune_history, run_json_at, save_store_unlocked,
+        schedule, Budget, Request, Reservation, RunRecord, Store, HISTORY_LIMIT,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1571,6 +1568,45 @@ mod tests {
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["run_id"], "run-1");
         assert_eq!(value["state"], "succeeded");
+    }
+
+    #[test]
+    fn prune_history_preserves_live_capacity_holders() {
+        let mut coordinator = store(Budget {
+            cpu_units: 2,
+            memory_mib: 100,
+        });
+        let mut active_child = run(
+            "active-child",
+            "repo-active",
+            1,
+            "owner_exited_waiting_children",
+            1,
+            50,
+        );
+        active_child.process_groups.push(42);
+        coordinator.runs.push(active_child);
+        for ticket in 2..=(HISTORY_LIMIT as u64 + 1) {
+            coordinator.runs.push(run(
+                &format!("completed-{ticket}"),
+                "repo-completed",
+                ticket,
+                "succeeded",
+                1,
+                50,
+            ));
+        }
+
+        prune_history(&mut coordinator);
+
+        assert_eq!(coordinator.runs.len(), HISTORY_LIMIT);
+        let active = coordinator
+            .runs
+            .iter()
+            .find(|run| run.run_id == "active-child")
+            .expect("active child lease remains in history");
+        assert_eq!(active.state, "owner_exited_waiting_children");
+        assert_eq!(active.process_groups, [42]);
     }
 
     #[test]
