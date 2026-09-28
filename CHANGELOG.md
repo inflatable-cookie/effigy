@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy container scope --json` reports the selected checkout's absolute
+  path, scope kind and full generation token before archive without loading a
+  container policy or contacting a runtime backend. It creates a missing
+  token only for linked worktrees and locally marked ephemeral clones.
 - `effigy release prepare` can satisfy a gate marked
   `reuse-hosted-evidence = true` with a successful GitHub Actions run for this
   repository's exact `HEAD` SHA, verified through authenticated `gh`. Unlisted
