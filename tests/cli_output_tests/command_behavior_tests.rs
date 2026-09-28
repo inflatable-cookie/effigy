@@ -2534,6 +2534,75 @@ fn cli_docs_check_links_without_paths_scans_full_docs_tree() {
 }
 
 #[test]
+fn cli_docs_check_links_skips_generated_build_trees() {
+    let root = temp_workspace("docs-check-links-skip-generated");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::create_dir_all(root.join("docs/packages/gpui/preview/target/debug/incremental"))
+        .expect("mkdir generated");
+    fs::create_dir_all(root.join("docs/node_modules/pkg")).expect("mkdir node_modules");
+    fs::write(
+        root.join("README.md"),
+        "[Guide](./docs/guides/example.md)\n",
+    )
+    .expect("write readme");
+    fs::write(root.join("docs/guides/example.md"), "# Guide\n").expect("write guide");
+    fs::write(
+        root.join("docs/packages/gpui/preview/target/debug/incremental/out.md"),
+        "[Broken](./missing.md)\n",
+    )
+    .expect("write generated markdown");
+    fs::write(
+        root.join("docs/node_modules/pkg/README.md"),
+        "[Broken](./missing.md)\n",
+    )
+    .expect("write package markdown");
+
+    let output = run_json_cli_command(&root, &["docs", "check", "links"]);
+    assert!(
+        output.status.success(),
+        "generated markdown should not fail the default docs link check: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    let checked = parsed["result"]["checked_files"]
+        .as_array()
+        .expect("checked files")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(checked
+        .iter()
+        .any(|path| path.ends_with("docs/guides/example.md")));
+    assert!(!checked.iter().any(|path| path.contains("/target/")));
+    assert!(!checked.iter().any(|path| path.contains("/node_modules/")));
+}
+
+#[test]
+fn cli_docs_check_links_reports_missing_explicit_owned_file() {
+    let root = temp_workspace("docs-check-links-missing-owned");
+    let output = run_json_cli_command(&root, &["docs", "check", "links", "docs/gone.md"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["ok"], false);
+    let file = details["broken_links"][0]["file"]
+        .as_str()
+        .expect("broken link file");
+    assert!(
+        file.ends_with("docs/gone.md"),
+        "expected explicit missing file in findings, got {file}"
+    );
+    assert!(!details["broken_links"][0]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty());
+}
+
+#[test]
 fn cli_docs_check_json_examples_json_uses_default_completion_policy() {
     let root = temp_workspace("docs-check-json-examples");
     fs::create_dir_all(root.join("docs/guides")).expect("mkdir docs");

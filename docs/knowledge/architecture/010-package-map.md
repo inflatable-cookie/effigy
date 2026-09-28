@@ -91,7 +91,7 @@ Current authority surfaces:
 | `effigy-release` | release orchestration helpers |
 | `effigy-changelog` | changelog parsing, extraction, and release-note support |
 | `effigy-contracts` | contract file loading and contract-surface helpers |
-| `effigy-docs-policy` | docs checks and policy validation helpers |
+| `effigy-docs-policy` | docs checks and policy validation helpers; recursive walks skip generated `target/` and `node_modules/` at entry ([030](030-docs-check-source-traversal.md)) |
 | `effigy-doctor` | doctor findings and diagnostics model |
 | `effigy-env` | env-schema integration and env contract helpers |
 | `effigy-demo` | demo model and execution helpers |

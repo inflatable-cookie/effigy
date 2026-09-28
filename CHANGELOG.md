@@ -159,6 +159,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `colima nerdctl --profile <profile> -- start <container>`.
   Inspect and start are bounded so a hung nerdctl command cannot hide that
   diagnosis. `effigy container status` lists those stopped owned rows.
+- Recursive `effigy docs check` walks skip `target/` and `node_modules/` at
+  directory entry, so a parallel Cargo or package-manager build cannot fail
+  the check when a generated path vanishes. Default scope is still
+  `README.md` plus Markdown under `docs/`. An explicit file path is still
+  checked; a missing or unreadable owned Markdown file still fails.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.

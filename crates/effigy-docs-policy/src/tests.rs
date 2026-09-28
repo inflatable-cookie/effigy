@@ -94,6 +94,14 @@ fn scan_markdown_links_ignores_fenced_code_blocks() {
     assert!(failures.is_empty());
 }
 
+fn rendered_relative_paths(root: &Path, files: &[PathBuf]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|path| path.strip_prefix(root).ok())
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect()
+}
+
 #[test]
 fn collect_link_check_files_defaults_to_full_docs_tree() {
     let fixture = DocsFixture::new("link-defaults");
@@ -105,16 +113,113 @@ fn collect_link_check_files_defaults_to_full_docs_tree() {
     fixture.write("docs/research/example.md", "# Research\n");
 
     let files = collect_link_check_files(fixture.root(), &[]);
-    let rendered = files
-        .iter()
-        .filter_map(|path| path.strip_prefix(fixture.root()).ok())
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .collect::<Vec<_>>();
+    let rendered = rendered_relative_paths(fixture.root(), &files);
 
     assert!(rendered.contains(&"README.md".to_owned()));
     assert!(rendered.contains(&"docs/README.md".to_owned()));
     assert!(rendered.contains(&"docs/notes/2026-03/example.md".to_owned()));
     assert!(rendered.contains(&"docs/research/example.md".to_owned()));
+}
+
+#[test]
+fn collect_link_check_files_skips_nested_generated_build_trees() {
+    let fixture = DocsFixture::new("link-generated");
+    fixture.write("README.md", "# Root\n");
+    fixture.write("docs/guide.md", "# Guide\n");
+    fixture.write(
+        "docs/packages/gpui/preview/target/debug/incremental/out.md",
+        "# Cargo output\n",
+    );
+    fixture.write("docs/node_modules/pkg/README.md", "# Package\n");
+
+    let files = collect_link_check_files(fixture.root(), &[]);
+    let rendered = rendered_relative_paths(fixture.root(), &files);
+
+    assert!(rendered.contains(&"docs/guide.md".to_owned()));
+    assert!(!rendered.iter().any(|path| path.contains("/target/")));
+    assert!(!rendered.iter().any(|path| path.contains("/node_modules/")));
+}
+
+#[test]
+fn collect_link_check_files_ignores_disappearing_generated_entries() {
+    let fixture = DocsFixture::new("link-vanish");
+    fixture.write("README.md", "# Root\n");
+    fixture.write("docs/guide.md", "# Guide\n");
+    fixture.write(
+        "docs/packages/gpui/preview/target/debug/incremental/out.md",
+        "# Cargo output\n",
+    );
+    let vanish = fixture
+        .root()
+        .join("docs/packages/gpui/preview/target/debug/rmeta-tmp");
+    fs::create_dir_all(&vanish).expect("mkdir vanishing generated dir");
+
+    let vanish_for_thread = vanish.clone();
+    let walker = std::thread::spawn({
+        let root = fixture.root().to_path_buf();
+        move || {
+            let mut collected = Vec::new();
+            for _ in 0..32 {
+                collected.push(collect_link_check_files(&root, &[]));
+            }
+            collected
+        }
+    });
+    for _ in 0..32 {
+        let _ = fs::remove_dir_all(&vanish_for_thread);
+        let _ = fs::create_dir_all(&vanish_for_thread);
+    }
+    let walks = walker.join().expect("walker thread");
+    for files in walks {
+        let rendered = rendered_relative_paths(fixture.root(), &files);
+        assert!(rendered.contains(&"docs/guide.md".to_owned()));
+        assert!(!rendered.iter().any(|path| path.contains("/target/")));
+    }
+}
+
+#[test]
+fn collect_link_check_files_keeps_explicit_file_inside_generated_tree() {
+    let fixture = DocsFixture::new("link-explicit-target");
+    fixture.write("docs/target/notes.md", "# Notes\n");
+
+    let files = collect_link_check_files(fixture.root(), &[PathBuf::from("docs/target/notes.md")]);
+    let rendered = rendered_relative_paths(fixture.root(), &files);
+    assert_eq!(rendered, vec!["docs/target/notes.md".to_owned()]);
+}
+
+#[test]
+fn collect_link_check_files_keeps_explicit_missing_owned_file() {
+    let fixture = DocsFixture::new("link-missing-owned");
+    let files = collect_link_check_files(fixture.root(), &[PathBuf::from("docs/gone.md")]);
+    assert_eq!(files, vec![fixture.root().join("docs/gone.md")]);
+}
+
+#[test]
+fn scan_markdown_links_reports_missing_owned_file() {
+    let fixture = DocsFixture::new("missing-owned");
+    fixture.write("docs/owned.md", "# Owned\n");
+    let path = fixture.root().join("docs/owned.md");
+    fs::remove_file(&path).expect("remove owned markdown");
+
+    let failure = scan_markdown_links(&path).expect_err("missing owned file");
+    assert_eq!(failure.file, path);
+    assert!(!failure.reason.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_markdown_links_reports_unreadable_owned_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = DocsFixture::new("unreadable-owned");
+    fixture.write("docs/owned.md", "# Owned\n");
+    let path = fixture.root().join("docs/owned.md");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let result = scan_markdown_links(&path);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("restore chmod");
+    let failure = result.expect_err("unreadable owned file");
+    assert_eq!(failure.file, path);
+    assert!(!failure.reason.is_empty());
 }
 
 #[test]
@@ -219,6 +324,37 @@ fn collect_markdown_children_respects_excludes() {
     let files = collect_markdown_children(fixture.root(), &[String::from("history/**")]);
     assert!(files.contains("active.md"));
     assert!(!files.contains("history/old.md"));
+}
+
+#[test]
+fn collect_markdown_children_skips_generated_trees_but_scans_root_named_target() {
+    let fixture = DocsFixture::new("index-target-root");
+    fixture.write("target/owned.md", "# Owned\n");
+    fixture.write("target/node_modules/pkg/README.md", "# Package\n");
+    fixture.write("target/nested/target/debug/out.md", "# Nested cargo\n");
+
+    let files = collect_markdown_children(&fixture.root().join("target"), &[]);
+    assert!(files.contains("owned.md"));
+    assert!(!files.contains("node_modules/pkg/README.md"));
+    assert!(!files.iter().any(|path| path.contains("/target/")));
+}
+
+#[test]
+fn collect_workflow_check_files_skips_generated_build_trees() {
+    let fixture = DocsFixture::new("workflow-generated");
+    fixture.write("docs/guides/example.md", "# Guide\n");
+    fixture.write("docs/target/debug/out.md", "# Cargo\n");
+    fixture.write("docs/node_modules/pkg/README.md", "# Package\n");
+
+    let files = collect_workflow_check_files(
+        &fixture.root().join("docs"),
+        &fixture.root().join("docs/notes"),
+        true,
+    );
+    let rendered = rendered_relative_paths(fixture.root(), &files);
+    assert!(rendered.contains(&"docs/guides/example.md".to_owned()));
+    assert!(!rendered.iter().any(|path| path.contains("/target/")));
+    assert!(!rendered.iter().any(|path| path.contains("/node_modules/")));
 }
 
 #[test]
