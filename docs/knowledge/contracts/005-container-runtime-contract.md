@@ -242,6 +242,29 @@ exit status. The existing project, service, published-port and host-listener
 ownership checks still gate every route claim. No route is claimed from a
 fallback port while the declared runtime binding is absent.
 
+## Owned service start after Colima restart
+
+A running Colima VM can still leave Effigy-owned Compose containers `Exited`
+or `Created` after the VM restarts. `nerdctl compose up` may return success
+in that state; `nerdctl start` of the same owned container is the recovery
+that preserves volumes, including Postgres crash-recovery data.
+
+After Compose up, Effigy inspects owned projects including stopped
+containers. A container is owned when its Compose project label matches the
+selected environment or a declared shared-service project. Those stopped
+owned containers are started by name. Effigy does not recreate them, does
+not delete volumes, and does not delete systemd units, including nerdctl
+health-check timers named after container ids.
+
+If start succeeds, `container up` continues. A nerdctl warning that
+`Unit <id>.timer was already loaded or has a fragment file` is recorded; it
+is not treated as readiness. If the owned container stays stopped, Effigy
+fails and names the service, its status, the backend text, and the exact
+`colima nerdctl --profile <profile> -- start <container>` command (or
+`docker start <container>` on Docker). `container status` lists those
+stopped owned rows instead of omitting them or reporting success by
+assumption.
+
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and refresh
@@ -460,6 +483,8 @@ The minimum proof set should cover:
 - workspace handoff and bootstrap-backed task execution sharing the same alias
   guarantees
 - runtime prep repairing backend-sensitive gaps before the user command runs
+- owned Exited services after a Colima restart started or diagnosed without
+  deleting systemd units
 - compatibility behavior on the supported Colima + `nerdctl compose` path
 - runner container commands routing through `ContainerManager`
 - container-targeted execution plans consuming captured runtime context instead
@@ -476,6 +501,8 @@ Update this contract when Effigy changes:
 - which execution targets receive container-local alias guarantees
 - the boundary between gateway-owned and runtime-owned alias behavior
 - the runtime-prep steps required before exec or handoff
+- owned-service start after a Colima VM restart, including the boundary
+  against systemd unit deletion
 - the supported backend fallback model
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution

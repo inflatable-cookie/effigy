@@ -149,6 +149,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- After a Colima VM restart, `effigy container up` starts owned Compose
+  services that stayed `Exited` or `Created` instead of treating compose
+  success as readiness. Start keeps volumes, including Postgres
+  crash-recovery data, and does not delete systemd units. A nerdctl stale
+  health-check timer warning is recorded when the owned container is
+  running; a still-stopped service fails with its status and
+  `colima nerdctl --profile <profile> -- start <container>`.
+  `effigy container status` lists those stopped owned rows.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.

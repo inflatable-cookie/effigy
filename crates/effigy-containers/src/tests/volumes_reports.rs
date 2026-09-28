@@ -960,6 +960,52 @@ primary_service = "app"
 }
 
 #[test]
+fn status_report_renders_exited_owned_services() {
+    let root = temp_repo("status-exited");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let services = vec![ContainerStatusService {
+        name: "postgres".to_owned(),
+        container_name: "demo-postgres-1".to_owned(),
+        status: "Exited (255) 2 minutes ago".to_owned(),
+        ports: Vec::new(),
+    }];
+
+    let report = status_report(
+        &policy,
+        "containerd",
+        true,
+        None,
+        None,
+        Some(services.as_slice()),
+        None,
+    );
+
+    assert!(report
+        .success_text
+        .contains("- postgres: Exited (255) 2 minutes ago"));
+    assert_eq!(
+        report.json["services"][0]["status"],
+        "Exited (255) 2 minutes ago"
+    );
+    assert_eq!(report.json["runtime_running"], true);
+}
+
+#[test]
 fn status_report_includes_primary_service_exec_ready_state() {
     let root = temp_repo("status-exec-ready");
     fs::write(

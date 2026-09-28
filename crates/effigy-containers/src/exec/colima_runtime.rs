@@ -425,7 +425,7 @@ pub(super) fn run_runtime_command_capture_for_policy_with_timeout(
     )
 }
 
-fn run_runtime_command_capture_for_policy_allow_failure(
+pub(super) fn run_runtime_command_capture_for_policy_allow_failure(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     docker_args: &[OsString],

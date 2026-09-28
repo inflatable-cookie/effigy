@@ -178,6 +178,41 @@ pub fn list_running_compose_containers_for_policy_with_timeout(
     )
 }
 
+pub fn list_compose_containers_for_project_including_stopped(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_policy(
+        repo_root,
+        policy,
+        &[
+            OsString::from("ps"),
+            OsString::from("--all"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps --all",
+    )?;
+    Ok(
+        parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
+            .into_iter()
+            .filter(|row| row.project_name.as_deref() == Some(project_name))
+            .collect(),
+    )
+}
+
+pub fn list_compose_containers_for_policy_including_stopped(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    list_compose_containers_for_project_including_stopped(
+        repo_root,
+        policy,
+        policy.project_name.as_str(),
+    )
+}
+
 pub fn list_compose_containers_for_policy_including_stopped_with_timeout(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

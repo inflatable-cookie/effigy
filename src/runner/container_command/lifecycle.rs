@@ -44,7 +44,8 @@ use effigy_containers::{
     effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
-        shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
+        recover_exited_owned_compose_services, shutdown_container as shutdown_container_via_exec,
+        SshAgentSocketHealth,
     },
     load_container_exec_working_dir, load_container_policy, up_detached_report,
     validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
@@ -114,12 +115,20 @@ pub(super) fn run_container_up(
         return render_container_up_interrupted(repo_root, &plan);
     }
 
+    let recovery = recover_exited_owned_compose_services(repo_root, &plan.policy)?;
+    emit_warning_lines(&recovery.warnings);
+
+    if container_up_stop_requested(&plan) {
+        return render_container_up_interrupted(repo_root, &plan);
+    }
+
     let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag))?;
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
 
-    let integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
+    let mut integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
+    integrations.warnings.extend(recovery.warnings);
 
     clear_host_container_lease(repo_root, &plan.policy)?;
 

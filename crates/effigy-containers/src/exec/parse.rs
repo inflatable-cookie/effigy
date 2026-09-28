@@ -52,6 +52,28 @@ pub(super) fn docker_failure_looks_like_colima_runtime_state_loss(
         || (combined.contains("current runtime") && combined.contains("empty value"))
 }
 
+pub(crate) fn looks_like_stale_healthcheck_timer(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    let timer_or_systemd = combined.contains(".timer")
+        || combined.contains("systemd-run")
+        || combined.contains("healthcheck");
+    let stale = combined.contains("already loaded") || combined.contains("has a fragment file");
+    timer_or_systemd && stale
+}
+
+pub fn compose_status_is_running(status: &str) -> bool {
+    let lowered = status.to_ascii_lowercase();
+    if compose_status_needs_start(status) || lowered.contains("paused") {
+        return false;
+    }
+    lowered.contains("up") || lowered.contains("running")
+}
+
+pub(crate) fn compose_status_needs_start(status: &str) -> bool {
+    let lowered = status.to_ascii_lowercase();
+    lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead")
+}
+
 pub(super) fn parse_running_compose_containers(
     stdout: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
@@ -408,5 +430,31 @@ mod tests {
             "",
             r#"time="2026-04-20T00:14:42+01:00" level=fatal msg="error retrieving current runtime: empty value""#
         ));
+    }
+
+    #[test]
+    fn stale_healthcheck_timer_matches_nerdctl_systemd_run_warning() {
+        assert!(looks_like_stale_healthcheck_timer(
+            "",
+            r#"systemd-run --unit=dd94022f7dd0.timer: Unit dd94022f7dd0.timer was already loaded or has a fragment file"#
+        ));
+        assert!(!looks_like_stale_healthcheck_timer(
+            "",
+            "service workspace depends on undefined service redis"
+        ));
+    }
+
+    #[test]
+    fn compose_status_classifies_running_versus_startable() {
+        assert!(compose_status_is_running("Up 10 seconds"));
+        assert!(compose_status_is_running("Up (healthy)"));
+        assert!(compose_status_is_running("running"));
+        assert!(!compose_status_is_running("Exited (255) 2 minutes ago"));
+        assert!(!compose_status_is_running("Created"));
+        assert!(!compose_status_is_running("Paused"));
+        assert!(compose_status_needs_start("Exited (0) 1 second ago"));
+        assert!(compose_status_needs_start("Created"));
+        assert!(compose_status_needs_start("Dead"));
+        assert!(!compose_status_needs_start("Up 2 minutes"));
     }
 }

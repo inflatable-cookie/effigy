@@ -433,14 +433,22 @@ Use this with `effigy.local.toml` for per-machine mounts.
    for profile-scoped `nerdctl info` and BuildKit workers, and can repair a
    running but incomplete profile once
 2. bring the compose environment up
-3. wait for declared environment readiness when present
-4. wait for each declared gateway service port to appear on the matching
+3. inspect owned Compose projects including stopped containers and `start`
+   any that are still `Exited` or `Created`; this keeps volumes, including
+   Postgres crash-recovery data, and does not delete systemd units
+4. wait for declared environment readiness when present
+5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
-5. either return immediately or attach, based on startup mode
+6. either return immediately or attach, based on startup mode
 
 These waits are bounded. A timeout names the runtime or gateway readiness
-stage; a stopped Compose service is reported with its exit status. Gateway
-registration keeps the project, service, published-port and host-listener
+stage; a stopped Compose service is reported with its exit status. After a
+Colima VM restart, a stale nerdctl health-check timer warning is recorded
+when an owned container actually starts; if it stays Exited, `container up`
+fails with that backend text and
+`colima nerdctl --profile <profile> -- start <container>`.
+`container status` lists stopped owned services instead of omitting them.
+Gateway registration keeps the project, service, published-port and host-listener
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.
 
@@ -779,6 +787,28 @@ effigy container up
 Effigy pre-empts this: `container up` warns when the forwarded socket is stale
 before attempting the mount, and `effigy doctor` flags it for any running colima
 profile — both naming the `colima restart <profile>` remediation.
+
+## Troubleshooting: services stay Exited after Colima restart
+
+Symptom: after the Colima VM restarts, Postgres or MySQL may stay `Exited`
+while `nerdctl compose up` returns success. Manual `nerdctl start` works and
+may log `Unit <id>.timer was already loaded or has a fragment file`.
+
+Cause: `nerdctl compose up` can succeed without starting persisted
+containers. nerdctl health-check systemd timers are named after container
+ids; leftover timer units produce that warning. The warning is a nerdctl
+defect, not proof that Effigy owns those units.
+
+Fix: re-run `effigy container up`. Effigy starts only owned Exited/Created
+containers (Compose project label match), keeps volumes, and does not
+delete systemd units. If start still fails, the error names:
+
+```bash
+colima nerdctl --profile <profile> -- start <container>
+```
+
+`effigy container status` shows the live `Exited` row rather than an empty
+or assumed-running service list.
 
 ## Host Runtime Fallback
 

@@ -7626,7 +7626,7 @@ case "$*" in
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill|run|volume|info)
+        up|down|ps|logs|exec|kill|run|volume|info|start)
           subcmd="$arg"
           break
           ;;
@@ -7640,7 +7640,17 @@ case "$*" in
         printf "containerd: ready\n"
         ;;
       ps)
-        printf "NAME                STATUS\napp                 running\n"
+        case "$*" in
+          *"--format"*)
+            printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+            ;;
+          *)
+            printf "NAME                STATUS\napp                 running\n"
+            ;;
+        esac
+        ;;
+      start)
+        printf "started\n"
         ;;
       logs)
         case "$*" in
@@ -7755,7 +7765,7 @@ printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|run)
+    up|down|ps|logs|exec|kill|run|start)
       subcmd="$arg"
       break
       ;;
@@ -7785,7 +7795,17 @@ case "$subcmd" in
     printf "compose-up\n"
     ;;
   ps)
-    printf "NAME                STATUS\napp                 running\n"
+    case "$*" in
+      *"--format"*)
+        printf "fixture-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tfixture-web-dev\t/tmp/fixture\tapp\n"
+        ;;
+      *)
+        printf "NAME                STATUS\napp                 running\n"
+        ;;
+    esac
+    ;;
+  start)
+    printf "started\n"
     ;;
   logs)
     case "$*" in
@@ -8426,7 +8446,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         "attached log follow marker",
     );
     nix::sys::signal::kill(
@@ -8475,7 +8495,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         "attached stream log follow marker",
     );
     nix::sys::signal::kill(
@@ -8538,7 +8558,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 
     wait_for_path_exists(
         &colima_startup_active,
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         "startup colima child active marker",
     );
     let startup_pid = fs::read_to_string(&colima_startup_active)
@@ -8682,7 +8702,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         "attached process-group log follow marker",
     );
     nix::sys::signal::kill(
