@@ -153,19 +153,19 @@ fn find_test_object(source: &str) -> Option<&str> {
     let bytes = source.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
+        if let Some(after_key) = key_at(source, index, "test") {
+            let rest = source[after_key..].trim_start();
+            if let Some(after_colon) = rest.strip_prefix(':') {
+                let after_colon = after_colon.trim_start();
+                if after_colon.starts_with('{') {
+                    return extract_balanced_object(after_colon);
+                }
+            }
+            index = after_key;
+            continue;
+        }
         match bytes[index] {
             b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
-            _ if ident_at(source, index, "test") => {
-                let after = index + 4;
-                let rest = source[after..].trim_start();
-                if let Some(after_colon) = rest.strip_prefix(':') {
-                    let after_colon = after_colon.trim_start();
-                    if after_colon.starts_with('{') {
-                        return extract_balanced_object(after_colon);
-                    }
-                }
-                index = after;
-            }
             _ => index += 1,
         }
     }
@@ -176,20 +176,40 @@ fn object_string_field(object: &str, field: &str) -> Option<String> {
     let bytes = object.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
+        if let Some(after_key) = key_at(object, index, field) {
+            let rest = object[after_key..].trim_start();
+            if let Some(after_colon) = rest.strip_prefix(':') {
+                return parse_string_literal(after_colon.trim_start());
+            }
+            index = after_key;
+            continue;
+        }
         match bytes[index] {
             b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
-            _ if ident_at(object, index, field) => {
-                let after = index + field.len();
-                let rest = object[after..].trim_start();
-                if let Some(after_colon) = rest.strip_prefix(':') {
-                    return parse_string_literal(after_colon.trim_start());
-                }
-                index = after;
-            }
             _ => index += 1,
         }
     }
     None
+}
+
+fn key_at(source: &str, index: usize, field: &str) -> Option<usize> {
+    if ident_at(source, index, field) {
+        return Some(index + field.len());
+    }
+    let bytes = source.as_bytes();
+    let quote = *bytes.get(index)?;
+    if quote != b'\'' && quote != b'"' && quote != b'`' {
+        return None;
+    }
+    let value = parse_string_literal(&source[index..])?;
+    if value != field {
+        return None;
+    }
+    let after = skip_string(bytes, index)?;
+    source[after..]
+        .trim_start()
+        .starts_with(':')
+        .then_some(after)
 }
 
 fn parse_string_literal(source: &str) -> Option<String> {
@@ -288,6 +308,50 @@ fn skip_string(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
+fn skip_regex_literal(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'/') {
+        return None;
+    }
+    let mut index = start + 1;
+    let mut in_class = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\n' {
+            return None;
+        }
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'[' && !in_class {
+            in_class = true;
+            index += 1;
+            continue;
+        }
+        if byte == b']' && in_class {
+            in_class = false;
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && !in_class {
+            index += 1;
+            while index < bytes.len() && bytes[index].is_ascii_alphabetic() {
+                index += 1;
+            }
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
 fn strip_js_comments(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
@@ -295,6 +359,7 @@ fn strip_js_comments(source: &str) -> String {
     let mut span_start = 0;
     let mut in_string: Option<u8> = None;
     let mut escaped = false;
+    let mut can_start_regex = true;
     while index < bytes.len() {
         let byte = bytes[index];
         if let Some(quote) = in_string {
@@ -304,6 +369,7 @@ fn strip_js_comments(source: &str) -> String {
                 escaped = true;
             } else if byte == quote {
                 in_string = None;
+                can_start_regex = false;
             }
             index += 1;
             continue;
@@ -313,8 +379,12 @@ fn strip_js_comments(source: &str) -> String {
             index += 1;
             continue;
         }
-        if byte == b'/' && index + 1 < bytes.len() {
-            if bytes[index + 1] == b'/' {
+        if byte.is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if byte == b'/' {
+            if index + 1 < bytes.len() && bytes[index + 1] == b'/' {
                 out.push_str(&source[span_start..index]);
                 index += 2;
                 while index < bytes.len() && bytes[index] != b'\n' {
@@ -323,7 +393,7 @@ fn strip_js_comments(source: &str) -> String {
                 span_start = index;
                 continue;
             }
-            if bytes[index + 1] == b'*' {
+            if index + 1 < bytes.len() && bytes[index + 1] == b'*' {
                 out.push_str(&source[span_start..index]);
                 index += 2;
                 while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
@@ -341,11 +411,71 @@ fn strip_js_comments(source: &str) -> String {
                 span_start = index;
                 continue;
             }
+            if can_start_regex {
+                if let Some(end) = skip_regex_literal(bytes, index) {
+                    can_start_regex = false;
+                    index = end;
+                    continue;
+                }
+            }
+            can_start_regex = true;
+            index += 1;
+            continue;
         }
+        if is_ident_start(byte) {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && is_ident_byte(bytes[index]) {
+                index += 1;
+            }
+            can_start_regex = matches!(
+                &source[start..index],
+                "return"
+                    | "case"
+                    | "throw"
+                    | "else"
+                    | "new"
+                    | "typeof"
+                    | "void"
+                    | "delete"
+                    | "await"
+                    | "yield"
+                    | "in"
+                    | "of"
+                    | "instanceof"
+                    | "extends"
+            );
+            continue;
+        }
+        can_start_regex = matches!(
+            byte,
+            b'{' | b'('
+                | b'['
+                | b','
+                | b';'
+                | b':'
+                | b'?'
+                | b'='
+                | b'!'
+                | b'~'
+                | b'&'
+                | b'|'
+                | b'^'
+                | b'%'
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'<'
+                | b'>'
+        );
         index += 1;
     }
     out.push_str(&source[span_start..]);
     out
+}
+
+fn is_ident_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -437,5 +567,40 @@ export default {
     fn find_test_object_ignores_string_embedded_test_block() {
         let source = r#"export default { define: { "test: { dir: 'src' }": true } }"#;
         assert_eq!(find_test_object(source), None);
+    }
+
+    #[test]
+    fn configured_test_dir_reads_quoted_property_keys() {
+        let source = r#"export default { "test": { "dir": "src" } };"#;
+        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn find_test_object_reads_quoted_test_key() {
+        let source = r#"export default { 'test': { dir: 'src' } };"#;
+        let object = find_test_object(source).expect("test object");
+        assert!(object.contains("dir: 'src'"));
+    }
+
+    #[test]
+    fn configured_test_dir_keeps_dir_after_regex_with_slashes() {
+        let source = r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#;
+        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn find_test_object_ignores_comment_after_regex_with_slashes() {
+        let source = strip_js_comments(
+            r#"const matcher = /\/\//; // test: { dir: 'src' }
+export default { plugins: [] };
+"#,
+        );
+        assert_eq!(find_test_object(&source), None);
+    }
+
+    #[test]
+    fn configured_test_dir_still_reads_dir_after_division() {
+        let source = "const ratio = a / b;\nexport default { test: { dir: 'src' } };\n";
+        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
     }
 }
