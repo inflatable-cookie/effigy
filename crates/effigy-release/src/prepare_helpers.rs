@@ -113,10 +113,10 @@ pub(super) fn unreleased_counts(changelog: &changelog::Changelog) -> BTreeMap<St
 /// Suggest the next release bump from the changelog's `Unreleased` categories.
 ///
 /// `Removed` counts as breaking, not as a compatible change. Removing a public
-/// API breaks callers, so [`docs/knowledge/contracts/release.md`] reserves
-/// PATCH for compatible fixes only: under `pre-1-0` a `0.x` break routes to
-/// MINOR, and outside that policy a break forces MAJOR. Added, Changed and
-/// Deprecated stay on the compatible-fix path.
+/// API breaks callers, so `docs/knowledge/contracts/release.md` reserves PATCH
+/// for compatible fixes only: under `pre-1-0` a `0.x` break routes to MINOR,
+/// and outside that policy a break forces MAJOR. Added, Changed and Deprecated
+/// stay on the compatible-fix path.
 pub fn suggested_bump(
     changelog: &changelog::Changelog,
     current_version: &semver::Version,
