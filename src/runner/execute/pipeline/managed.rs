@@ -668,15 +668,10 @@ fn materialize_special_managed_processes(
     container_handoff: bool,
     managed_task_secret_pairs: &[(String, SecretString)],
 ) -> Result<(), RunnerError> {
-    if !plan
+    let has_lifecycle = plan
         .processes
         .iter()
-        .any(|process| process.role == ManagedProcessRole::Lifecycle)
-    {
-        return Ok(());
-    }
-
-    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+        .any(|process| process.role == ManagedProcessRole::Lifecycle);
     let repo_root = selection.catalog.catalog_root.as_path();
     let binding_resolution = resolve_execution_binding_resolution(
         selection
@@ -692,6 +687,22 @@ fn materialize_special_managed_processes(
         "managed process materialization",
     )?;
     let container_binding = binding_resolution.binding();
+    if !has_lifecycle {
+        for process in &mut plan.processes {
+            let runs_on_host = process.run_on_host
+                || container_handoff
+                || matches!(
+                    container_binding,
+                    ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+                );
+            if process.role == ManagedProcessRole::Standard && runs_on_host {
+                inject_managed_secret_env(process, managed_task_secret_pairs);
+            }
+        }
+        return Ok(());
+    }
+
+    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let inline_policy = if binding_resolution.is_inline_container() {
         binding_resolution.effective_policy(repo_root)?
     } else {
@@ -803,26 +814,44 @@ fn materialize_special_managed_processes(
                 };
             }
             ManagedProcessRole::Standard => {
-                let wrapped_run = wrap_with_managed_secret_env(
+                let injected_run =
                     crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
                         process.run.clone(),
-                    ),
-                    managed_task_secret_pairs,
-                    repo_root,
-                );
-                let wrapped_setup = process.setup.as_ref().map(|setup| {
-                    wrap_with_managed_secret_env(
-                        crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
-                            setup.clone(),
-                        ),
-                        managed_task_secret_pairs,
-                        repo_root,
+                    );
+                let injected_setup = process.setup.as_ref().map(|setup| {
+                    crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
+                        setup.clone(),
                     )
                 });
-                if process.run_on_host {
-                    // Entry opts out of the parent task's container wrap —
-                    // run the raw command on the host. The setup script,
-                    // if any, runs in the same shell before the run.
+                let runs_on_host = process.run_on_host
+                    || container_handoff
+                    || matches!(
+                        container_binding,
+                        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+                    );
+                if runs_on_host {
+                    inject_managed_secret_env(process, managed_task_secret_pairs);
+                }
+                let wrapped_run = if runs_on_host {
+                    injected_run
+                } else {
+                    wrap_with_managed_secret_env(injected_run, managed_task_secret_pairs, repo_root)
+                };
+                let wrapped_setup = injected_setup.map(|setup| {
+                    if runs_on_host {
+                        setup
+                    } else {
+                        wrap_with_managed_secret_env(setup, managed_task_secret_pairs, repo_root)
+                    }
+                });
+                if process.run_on_host
+                    || matches!(
+                        container_binding,
+                        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+                    )
+                {
+                    // Host entries receive secrets through ProcessSpec.env.
+                    // The setup script, if any, runs in that same environment.
                     if let Some(setup) = wrapped_setup.as_deref() {
                         process.run = format!("{setup}\n{wrapped_run}");
                     } else {
@@ -863,6 +892,17 @@ fn materialize_special_managed_processes(
         }
     }
     Ok(())
+}
+
+fn inject_managed_secret_env(
+    process: &mut effigy_managed::ManagedProcessSpec,
+    managed_task_secret_pairs: &[(String, SecretString)],
+) {
+    process.secret_env.extend(
+        managed_task_secret_pairs
+            .iter()
+            .map(|(key, value)| (key.clone(), value.expose().to_owned())),
+    );
 }
 
 fn wrap_with_managed_secret_env(
@@ -1384,6 +1424,7 @@ mod tests {
             name: name.to_owned(),
             role,
             run: run.to_owned(),
+            secret_env: BTreeMap::new(),
             setup: None,
             setup_steps: Vec::new(),
             cwd: PathBuf::from("/tmp/repo"),

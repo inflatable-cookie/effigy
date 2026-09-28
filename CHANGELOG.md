@@ -81,6 +81,11 @@ During v0.x, MINOR bumps may include breaking changes.
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.
 
+### Security
+- Managed host task secrets now reach child processes through their
+  environment, stay out of command arguments, and are redacted from managed
+  stream and headless logs.
+
 ### Breaking
 - Lean Northstar repositories no longer carry a Queue manifest. `effigy init
   northstar` omits it; Queue closeout is the default, and overrides live in

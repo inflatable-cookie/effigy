@@ -5,6 +5,7 @@ use effigy_core::widgets::NoticeLevel;
 use effigy_process::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
 use effigy_ui::Renderer;
 
+use super::redaction::redact_managed_output;
 use crate::ManagedError;
 
 const STREAM_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -14,9 +15,10 @@ pub fn collect_stream_non_zero_exits(
     supervisor: &ProcessSupervisor,
     expected: usize,
     shutdown_on_exit_processes: &[String],
+    secret_values: &[String],
     renderer: &mut impl Renderer,
 ) -> Result<Vec<(String, String)>, ManagedError> {
-    let mut state = StreamState::new(shutdown_on_exit_processes);
+    let mut state = StreamState::new(shutdown_on_exit_processes, secret_values);
     while !state.is_complete(expected) {
         if let Some(event) = supervisor.next_event_timeout(STREAM_EVENT_POLL_INTERVAL) {
             state.record_event(event, renderer)?;
@@ -33,11 +35,12 @@ struct StreamState {
     drained_after_exit: usize,
     non_zero_exits: Vec<(String, String)>,
     shutdown_on_exit_processes: HashSet<String>,
+    secret_values: Vec<String>,
     shutdown_triggered: bool,
 }
 
 impl StreamState {
-    fn new(shutdown_on_exit_processes: &[String]) -> Self {
+    fn new(shutdown_on_exit_processes: &[String], secret_values: &[String]) -> Self {
         Self {
             exit_count: 0,
             drained_after_exit: 0,
@@ -46,6 +49,7 @@ impl StreamState {
                 .iter()
                 .cloned()
                 .collect::<HashSet<String>>(),
+            secret_values: secret_values.to_vec(),
             shutdown_triggered: false,
         }
     }
@@ -60,10 +64,12 @@ impl StreamState {
         }
         match event.kind {
             ProcessEventKind::Stdout => {
-                renderer.text(&format!("[{}] {}", event.process, event.payload))?;
+                let payload = redact_managed_output(&event.payload, &self.secret_values);
+                renderer.text(&format!("[{}] {}", event.process, payload))?;
             }
             ProcessEventKind::Stderr => {
-                renderer.text(&format!("[{} stderr] {}", event.process, event.payload))?;
+                let payload = redact_managed_output(&event.payload, &self.secret_values);
+                renderer.text(&format!("[{} stderr] {}", event.process, payload))?;
             }
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
             ProcessEventKind::Exit => self.record_exit(event, renderer)?,
