@@ -208,3 +208,67 @@ fn analyze_effigy_changelog() {
         assert!(analysis.next_version.is_some());
     }
 }
+
+#[test]
+fn pre_1_0_removed_suggests_minor() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Removed
+- Removed public API
+
+## [0.5.0] - 2026-03-09
+
+### Added
+- Feature
+";
+    let analysis = analyze_str(input);
+    // Removing a public API breaks callers, so pre-1.0 it is a MINOR change.
+    assert_eq!(analysis.suggested_bump, BumpKind::Minor);
+    assert_eq!(analysis.next_version.as_ref().unwrap().to_string(), "0.6.0");
+}
+
+#[test]
+fn post_1_0_removed_suggests_major() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Removed
+- Removed public API
+
+## [1.2.0] - 2026-03-09
+
+### Added
+- Feature
+";
+    let analysis = analyze_str(input);
+    assert_eq!(analysis.suggested_bump, BumpKind::Major);
+    assert_eq!(analysis.next_version.as_ref().unwrap().to_string(), "2.0.0");
+}
+
+#[test]
+fn pre_1_0_mixed_removed_and_fixed_suggests_minor() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Removed
+- Removed public API
+
+### Fixed
+- Compatible fix
+
+## [0.5.0] - 2026-03-09
+
+### Added
+- Feature
+";
+    let analysis = analyze_str(input);
+    assert_eq!(analysis.suggested_bump, BumpKind::Minor);
+    assert_eq!(analysis.next_version.as_ref().unwrap().to_string(), "0.6.0");
+}

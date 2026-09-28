@@ -4257,6 +4257,149 @@ fn cli_changelog_extract_fails_for_missing_version() {
     );
 }
 
+fn write_release_changelog_fixture(root: &std::path::Path, version: &str, changelog: &str) {
+    fs::write(root.join("VERSION"), format!("{version}\n")).expect("write version");
+    fs::write(root.join("CHANGELOG.md"), changelog).expect("write changelog");
+    write_release_manifest(
+        root,
+        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"v{version}\"\npre-1-0 = true\n",
+    );
+}
+
+fn write_release_bump_fixture(root: &std::path::Path, version: &str, unreleased_body: &str) {
+    let changelog = format!(
+        "# Changelog\n\n## [Unreleased]\n\n{unreleased_body}\n## [{version}] - 2026-03-10\n\n### Fixed\n- Prior release\n"
+    );
+    write_release_changelog_fixture(root, version, &changelog);
+}
+
+#[test]
+fn cli_release_status_and_simulate_cover_the_removed_bump_matrix() {
+    let cases = [
+        (
+            "removed",
+            "0.2.4",
+            "### Removed\n- Removed public API\n",
+            "minor",
+            "0.3.0",
+        ),
+        (
+            "fixed",
+            "0.2.4",
+            "### Fixed\n- Compatible fix\n",
+            "patch",
+            "0.2.5",
+        ),
+        (
+            "mixed",
+            "0.2.4",
+            "### Removed\n- Removed public API\n\n### Fixed\n- Compatible fix\n",
+            "minor",
+            "0.3.0",
+        ),
+        (
+            "normal-1x",
+            "1.4.2",
+            "### Added\n- New feature\n",
+            "minor",
+            "1.5.0",
+        ),
+    ];
+
+    for (name, version, unreleased_body, bump, next) in cases {
+        let root = temp_workspace(&format!("cli-release-bump-{name}"));
+        write_release_bump_fixture(&root, version, unreleased_body);
+
+        let status = run_json_cli_command(&root, &["release", "status"]);
+        assert!(
+            status.status.success(),
+            "status failed for {name}: {status:?}"
+        );
+        let status_json = parse_stdout_json(&status);
+        assert_eq!(
+            status_json["result"]["suggested_bump"], bump,
+            "status bump for {name}"
+        );
+        assert_eq!(
+            status_json["result"]["next_version"], next,
+            "status next version for {name}"
+        );
+
+        let simulate = run_json_cli_command(&root, &["release", "simulate"]);
+        assert!(
+            simulate.status.success(),
+            "simulate failed for {name}: {simulate:?}"
+        );
+        let simulate_json = parse_stdout_json(&simulate);
+        assert_eq!(
+            simulate_json["result"]["suggested_version"], next,
+            "simulated version for {name}"
+        );
+        assert_eq!(
+            simulate_json["result"]["planned_version"], next,
+            "planned version for {name}"
+        );
+    }
+}
+
+#[test]
+fn cli_changelog_validate_and_release_status_agree_on_heading_separator() {
+    let root = temp_workspace("cli-changelog-heading-separator");
+    let em_dash = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Pending fix\n\n## [0.2.4] — 2026-03-10\n\n### Fixed\n- Prior release\n";
+    write_release_changelog_fixture(&root, "0.2.4", em_dash);
+
+    // The changelog validation docs QA runs must reject the em dash with the
+    // same rule and message that release status uses.
+    let validate = run_cli_command(&root, &["changelog", "validate", "CHANGELOG.md"]);
+    assert!(
+        !validate.status.success(),
+        "em dash must fail changelog validate: {validate:?}"
+    );
+    let validate_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    assert!(
+        validate_output.contains("ASCII ` - `"),
+        "got: {validate_output}"
+    );
+    assert!(validate_output.contains('—'), "got: {validate_output}");
+
+    let status = run_json_cli_command(&root, &["release", "status"]);
+    assert!(
+        !status.status.success(),
+        "em dash must fail release status: {status:?}"
+    );
+    let status_json = parse_stdout_json(&status);
+    let status_message = status_json["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        status_message.contains("ASCII ` - `"),
+        "got: {status_message}"
+    );
+    assert!(status_message.contains('—'), "got: {status_message}");
+
+    // Same grammar, same acceptance: the ASCII separator passes both surfaces.
+    let ascii = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Pending fix\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n";
+    fs::write(root.join("CHANGELOG.md"), ascii).expect("rewrite changelog");
+
+    let validate = run_cli_command(&root, &["changelog", "validate", "CHANGELOG.md"]);
+    assert!(
+        validate.status.success(),
+        "ascii must pass changelog validate: {validate:?}"
+    );
+
+    let status = run_json_cli_command(&root, &["release", "status"]);
+    assert!(
+        status.status.success(),
+        "ascii must pass release status: {status:?}"
+    );
+    let status_json = parse_stdout_json(&status);
+    assert_eq!(status_json["result"]["ready"], true);
+    assert_eq!(status_json["result"]["suggested_bump"], "patch");
+    assert_eq!(status_json["result"]["next_version"], "0.2.5");
+}
+
 #[test]
 fn cli_release_status_json_mode_reports_ready_release_candidate() {
     let root = temp_workspace("cli-release-status-json-success");

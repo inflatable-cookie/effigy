@@ -84,6 +84,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.
+- `qa:docs` now runs `effigy changelog validate CHANGELOG.md`, so docs QA
+  applies the same strict changelog heading grammar as release status and an
+  em-dash release heading fails before review.
 
 ### Security
 - Managed host task secrets now reach child processes through their
@@ -157,6 +160,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.
+- `effigy release status`, `effigy release simulate`, and `effigy changelog
+  analyze` treat a `Removed` changelog entry as a breaking change instead of a
+  compatible fix. Under `pre-1-0 = true` a `0.x` removal now proposes MINOR,
+  matching the documented pre-1.0 compatibility policy; PATCH stays reserved
+  for `Fixed` and `Security` entries.
+- A release heading that separates the version and date with a Unicode em dash
+  (or any non-ASCII dash) now reports that the separator must be ASCII ` - `.
+  `effigy changelog validate` and `effigy release status` reject it with the
+  same actionable message instead of an unexplained "invalid release header".
 - `effigy release status --check-gates` reports the configured gate verdict
   independently of the optional next-version proposal. An empty
   `[Unreleased]` section keeps `ready: false`, `next_version: null`, and the

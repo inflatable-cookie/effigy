@@ -31,11 +31,15 @@
   "cargo run --bin effigy -- docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
   "cargo run --bin effigy -- docs check workflow-paths",
 ]
+# The changelog is documentation: validate its release headings with the same
+# parser `release status` uses, so an em-dash separator fails both surfaces.
+"qa:docs:changelog" = "cargo run --bin effigy -- changelog validate CHANGELOG.md"
 "qa:docs" = [
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },
   { task = "qa:docs:agent-defaults" },
   { task = "qa:docs:knowledge" },
+  { task = "qa:docs:changelog" },
 ]
 
 # JSON contract QA
