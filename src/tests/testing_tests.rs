@@ -146,6 +146,73 @@ fn detect_test_runner_ignores_vite_config_without_test_block() {
 }
 
 #[test]
+fn detect_test_runner_ignores_commented_out_vite_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-commented-test");
+    fs::write(root.join("package.json"), r#"{ "name": "app" }"#).expect("write package");
+    fs::write(
+        root.join("vite.config.ts"),
+        "// test: { dir: 'src' }\nexport default { plugins: [] };\n",
+    )
+    .expect("write config");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    fs::write(local_bin.join("vitest"), "#!/bin/sh\nexit 0\n").expect("write vitest");
+
+    assert!(detect_test_runner(&root).is_none());
+}
+
+#[test]
+fn detect_test_runner_ignores_commented_out_test_dir() {
+    let root = temp_workspace("test-detect-vitest-commented-dir");
+    fs::write(
+        root.join("vitest.config.ts"),
+        "export default { test: { /* dir: 'old' */ include: ['**/*.test.ts'] } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run");
+    assert!(plan.evidence.iter().all(|line| !line.contains("test.dir")));
+}
+
+#[test]
+fn detect_test_runner_detects_vitest_from_cts_config_file() {
+    let root = temp_workspace("test-detect-vitest-cts");
+    fs::write(
+        root.join("vitest.config.cts"),
+        "export default { test: { dir: 'src' } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir 'src'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("vitest.config.cts")));
+}
+
+#[test]
+fn detect_test_runner_detects_vitest_from_vite_cts_config_test_block() {
+    let root = temp_workspace("test-detect-vitest-vite-cts");
+    fs::write(
+        root.join("vite.config.cts"),
+        "export default { test: { dir: './tests' } };\n",
+    )
+    .expect("write config");
+
+    let plan = detect_test_runner(&root).expect("plan");
+    assert_eq!(plan.runner, TestRunner::Vitest);
+    assert_eq!(plan.command, "vitest run --dir './tests'");
+    assert!(plan
+        .evidence
+        .iter()
+        .any(|line| line.contains("vite.config.cts")));
+}
+
+#[test]
 fn detect_test_runner_uses_nextest_when_available() {
     let _guard = lock_test();
     let root = temp_workspace("test-detect-nextest");

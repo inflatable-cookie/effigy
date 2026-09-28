@@ -93,9 +93,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 - Vitest auto-detection requires package-owned evidence (`package.json`
   dependency/script, `vitest.config.*`, or `vite.config.*` with a `test`
-  block). A transitive `node_modules/.bin/vitest` is not enough. When the
-  selected package's config sets `test.dir`, the detected command includes
-  that root. Explicit `[test.suites]` and `[test.runners]` stay authoritative.
+  block, including `.cts`). A transitive `node_modules/.bin/vitest` is not
+  enough. Commented-out or string-embedded `test` / `dir` syntax is not
+  active. When the selected package's config sets `test.dir`, the detected
+  command includes that root. Explicit `[test.suites]` and `[test.runners]`
+  stay authoritative.
 - `effigy container cache list` (repo and `--global`) now reports reclaimable
   size totals in text and JSON, plus in-use size on the global report.
   Unknown per-volume sizes keep `size_complete` false instead of inflating

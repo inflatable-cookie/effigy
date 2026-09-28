@@ -10,6 +10,7 @@ use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 const VITEST_CONFIG_FILES: &[&str] = &[
     "vitest.config.ts",
     "vitest.config.mts",
+    "vitest.config.cts",
     "vitest.config.js",
     "vitest.config.mjs",
     "vitest.config.cjs",
@@ -18,6 +19,7 @@ const VITEST_CONFIG_FILES: &[&str] = &[
 const VITE_CONFIG_FILES: &[&str] = &[
     "vite.config.ts",
     "vite.config.mts",
+    "vite.config.cts",
     "vite.config.js",
     "vite.config.mjs",
     "vite.config.cjs",
@@ -41,7 +43,7 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
             evidence.push(format!("found `{filename}`"));
             if preferred_config.is_none() {
                 if let Ok(raw) = fs::read_to_string(repo_root.join(filename)) {
-                    preferred_config = Some(((*filename).to_owned(), raw));
+                    preferred_config = Some(((*filename).to_owned(), strip_js_comments(&raw)));
                 }
             }
         }
@@ -55,11 +57,12 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
             let Ok(raw) = fs::read_to_string(repo_root.join(filename)) else {
                 continue;
             };
-            if find_test_object(&raw).is_none() {
+            let stripped = strip_js_comments(&raw);
+            if find_test_object(&stripped).is_none() {
                 continue;
             }
             evidence.push(format!("found `{filename}` with a Vitest `test` block"));
-            preferred_config = Some(((*filename).to_owned(), raw));
+            preferred_config = Some(((*filename).to_owned(), stripped));
             break;
         }
     }
@@ -133,7 +136,8 @@ fn scripts_contain_vitest(json: &Value) -> bool {
 }
 
 fn configured_test_dir(source: &str) -> Option<String> {
-    let object = find_test_object(source)?;
+    let stripped = strip_js_comments(source);
+    let object = find_test_object(&stripped)?;
     let dir = object_string_field(object, "dir")?;
     let trimmed = dir.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == "./" {
@@ -149,12 +153,10 @@ fn find_test_object(source: &str) -> Option<&str> {
     let bytes = source.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if let Some(rel) = source[index..].find("test") {
-            let start = index + rel;
-            let after = start + 4;
-            let prev_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
-            let next_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
-            if prev_ok && next_ok {
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
+            _ if ident_at(source, index, "test") => {
+                let after = index + 4;
                 let rest = source[after..].trim_start();
                 if let Some(after_colon) = rest.strip_prefix(':') {
                     let after_colon = after_colon.trim_start();
@@ -162,10 +164,9 @@ fn find_test_object(source: &str) -> Option<&str> {
                         return extract_balanced_object(after_colon);
                     }
                 }
+                index = after;
             }
-            index = after;
-        } else {
-            break;
+            _ => index += 1,
         }
     }
     None
@@ -175,20 +176,17 @@ fn object_string_field(object: &str, field: &str) -> Option<String> {
     let bytes = object.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if let Some(rel) = object[index..].find(field) {
-            let start = index + rel;
-            let after = start + field.len();
-            let prev_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
-            let next_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
-            if prev_ok && next_ok {
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => index = skip_string(bytes, index)?,
+            _ if ident_at(object, index, field) => {
+                let after = index + field.len();
                 let rest = object[after..].trim_start();
                 if let Some(after_colon) = rest.strip_prefix(':') {
                     return parse_string_literal(after_colon.trim_start());
                 }
+                index = after;
             }
-            index = after.max(start + 1);
-        } else {
-            break;
+            _ => index += 1,
         }
     }
     None
@@ -260,13 +258,103 @@ fn extract_balanced_object(source: &str) -> Option<&str> {
     None
 }
 
+fn ident_at(source: &str, index: usize, ident: &str) -> bool {
+    let bytes = source.as_bytes();
+    let ident_bytes = ident.as_bytes();
+    let after = index + ident_bytes.len();
+    if bytes.get(index..after) != Some(ident_bytes) {
+        return false;
+    }
+    let prev_ok = index == 0 || !is_ident_byte(bytes[index - 1]);
+    let next_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
+    prev_ok && next_ok
+}
+
+fn skip_string(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = *bytes.get(start)?;
+    let mut index = start + 1;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            return Some(index + 1);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn strip_js_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut index = 0;
+    let mut span_start = 0;
+    let mut in_string: Option<u8> = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(quote) = in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                in_string = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' || byte == b'`' {
+            in_string = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && index + 1 < bytes.len() {
+            if bytes[index + 1] == b'/' {
+                out.push_str(&source[span_start..index]);
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                span_start = index;
+                continue;
+            }
+            if bytes[index + 1] == b'*' {
+                out.push_str(&source[span_start..index]);
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    if bytes[index] == b'\n' {
+                        out.push('\n');
+                    }
+                    index += 1;
+                }
+                index = if index + 1 < bytes.len() {
+                    index + 2
+                } else {
+                    bytes.len()
+                };
+                span_start = index;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    out.push_str(&source[span_start..]);
+    out
+}
+
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_test_dir, find_test_object};
+    use super::{configured_test_dir, find_test_object, strip_js_comments};
 
     #[test]
     fn configured_test_dir_reads_define_config_object() {
@@ -304,5 +392,50 @@ export default defineConfig({
         let source = "const latest = 1;\nexport default { test: { dir: 'src' } }\n";
         let object = find_test_object(source).expect("test object");
         assert!(object.contains("dir: 'src'"));
+    }
+
+    #[test]
+    fn configured_test_dir_ignores_commented_out_dir() {
+        let source = r#"
+export default {
+  test: {
+    // dir: 'old',
+    include: ['**/*.test.ts'],
+  },
+};
+"#;
+        assert_eq!(configured_test_dir(source), None);
+    }
+
+    #[test]
+    fn configured_test_dir_uses_active_dir_not_commented_one() {
+        let source = r#"
+export default {
+  test: {
+    // dir: 'old',
+    dir: 'src',
+  },
+};
+"#;
+        assert_eq!(configured_test_dir(source).as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn find_test_object_ignores_commented_out_test_block() {
+        let source = strip_js_comments("// test: { dir: 'src' }\nexport default { plugins: [] }\n");
+        assert_eq!(find_test_object(&source), None);
+    }
+
+    #[test]
+    fn find_test_object_ignores_block_commented_test_block() {
+        let source =
+            strip_js_comments("/* test: { dir: 'src' } */\nexport default { plugins: [] }\n");
+        assert_eq!(find_test_object(&source), None);
+    }
+
+    #[test]
+    fn find_test_object_ignores_string_embedded_test_block() {
+        let source = r#"export default { define: { "test: { dir: 'src' }": true } }"#;
+        assert_eq!(find_test_object(source), None);
     }
 }
