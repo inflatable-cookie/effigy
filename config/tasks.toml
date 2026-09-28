@@ -65,13 +65,15 @@
 
 # CI mirrors and release gates
 "qa:released-surface" = "cargo test --test cli_output_tests released_surface_ -- --nocapture"
-"qa:ci:fast" = [
+"qa:ci:fast".admission = "heavy"
+"qa:ci:fast".run = [
   "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --workspace --no-fail-fast\" >&2; cargo test --workspace --no-fail-fast; fi'",
   "cargo test --workspace --doc",
   { task = "qa:released-surface" },
   { task = "qa:ci:json" },
 ]
-"qa:ci:local" = [
+"qa:ci:local".admission = "heavy"
+"qa:ci:local".run = [
   { task = "fmt:check" },
   "cargo clippy --workspace --all-targets -- -D warnings",
   "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --workspace --no-fail-fast\" >&2; cargo test --workspace --no-fail-fast; fi'",

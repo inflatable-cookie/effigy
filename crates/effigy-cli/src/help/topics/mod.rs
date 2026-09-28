@@ -1,3 +1,4 @@
+mod admission;
 mod artifact;
 mod bootstrap;
 mod bundle;
@@ -32,6 +33,7 @@ mod uninstall;
 mod watch;
 mod workspace;
 
+pub(crate) use admission::render_admission_help;
 pub(crate) use artifact::render_artifact_help;
 pub(crate) use bootstrap::render_bootstrap_help;
 pub(crate) use bundle::render_bundle_help;

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex};
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
@@ -164,22 +164,44 @@ pub(super) fn run_builtin_test_targets_parallel(
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
+                        if effigy_process::process_group_observer_active() {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::CommandExt;
+                                process.process_group(0);
+                            }
+                        }
+                        if capture_output {
+                            process.stdout(Stdio::piped()).stderr(Stdio::piped());
+                        }
+                        let child =
+                            process
+                                .spawn()
+                                .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                    command: execution_command.clone(),
+                                    error,
+                                })?;
+                        let child_pid = child.id();
+                        effigy_process::notify_process_group_started(child_pid);
                         let status = if capture_output {
-                            process
-                                .output()
+                            child
+                                .wait_with_output()
+                                .map(|output| output.status)
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,
-                                })?
-                                .status
+                                })
                         } else {
-                            process
-                                .status()
+                            let mut child = child;
+                            child
+                                .wait()
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,
-                                })?
+                                })
                         };
+                        effigy_process::notify_process_group_stopped(child_pid);
+                        let status = status?;
                         local.push(BuiltinTestExecResult {
                             name,
                             runner,

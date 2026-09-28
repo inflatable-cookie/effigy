@@ -4,6 +4,7 @@ use super::pipeline::standard::redact_task_secret_values;
 use super::process::{build_shell_process, command_launch_error};
 use crate::runner::error::RunnerError;
 use effigy_env::secret::SecretString;
+use std::process::Stdio;
 
 pub(super) fn run_task_process(
     output_json: bool,
@@ -21,9 +22,21 @@ fn run_task_process_json(
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
-    let output = build_shell_process(context, secret_env)
-        .output()
+    let mut process = build_shell_process(context, secret_env);
+    process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = process
+        .spawn()
         .map_err(|error| command_launch_error(context, error))?;
+    let child_pid = child.id();
+    crate::runner::admission::register_process_group(child_pid);
+    let rss_monitor = crate::runner::admission::ProcessGroupRssMonitor::start(child_pid);
+    let output = child
+        .wait_with_output()
+        .map_err(|error| command_launch_error(context, error))?;
+    if let Some(metrics) = rss_monitor.and_then(|monitor| monitor.finish()) {
+        crate::runner::admission::record_process_group_metrics(metrics);
+    }
+    crate::runner::admission::unregister_process_group(child_pid);
     let stdout = redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_env);
     let stderr = redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_env);
     let rendered = super::json_payload::render_task_command_json(
@@ -47,9 +60,19 @@ fn run_task_process_text(
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
-    let status = build_shell_process(context, secret_env)
-        .status()
+    let mut child = build_shell_process(context, secret_env)
+        .spawn()
         .map_err(|error| command_launch_error(context, error))?;
+    let child_pid = child.id();
+    crate::runner::admission::register_process_group(child_pid);
+    let rss_monitor = crate::runner::admission::ProcessGroupRssMonitor::start(child_pid);
+    let status = child
+        .wait()
+        .map_err(|error| command_launch_error(context, error))?;
+    if let Some(metrics) = rss_monitor.and_then(|monitor| monitor.finish()) {
+        crate::runner::admission::record_process_group_metrics(metrics);
+    }
+    crate::runner::admission::unregister_process_group(child_pid);
 
     if status.success() {
         update_cache(context)?;

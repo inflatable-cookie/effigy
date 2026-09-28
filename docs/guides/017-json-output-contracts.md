@@ -110,6 +110,9 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.tasks.filtered.v1`
 - `effigy.tasks-status.v1`
 - `effigy.tasks-status-all.v1`
+- `effigy.admission.status.v1`
+- `effigy.admission.run.v1`
+- `effigy.admission.runs.v1`
 - `effigy.drafts.v1`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`

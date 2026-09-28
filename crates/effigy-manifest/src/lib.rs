@@ -78,8 +78,8 @@ pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestInlineTaskDefinition,
     ManifestManagedConcurrentEntry, ManifestManagedProfile, ManifestManagedRun,
     ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask,
-    ManifestTaskCache, ManifestTaskLikeDefinition, ManifestTaskOrReferenceDefinition,
-    ManifestTaskRunIn, ManifestTaskSecretsMode,
+    ManifestTaskAdmission, ManifestTaskCache, ManifestTaskLikeDefinition,
+    ManifestTaskOrReferenceDefinition, ManifestTaskRunIn, ManifestTaskSecretsMode,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{

@@ -8,6 +8,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub run_in: Option<ManifestTaskRunIn>,
     #[serde(default)]
+    pub admission: Option<ManifestTaskAdmission>,
+    #[serde(default)]
     pub system: Option<String>,
     #[serde(default)]
     pub workspace: Option<String>,
@@ -51,6 +53,12 @@ pub enum ManifestTaskRunIn {
     Host,
     Container,
     Either,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestTaskAdmission {
+    Heavy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]

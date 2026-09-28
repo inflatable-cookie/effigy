@@ -7488,6 +7488,46 @@ fn cli_test_json_mode_wraps_test_failure_payload() {
 }
 
 #[test]
+fn cli_test_json_keeps_builtin_suite_output_out_of_the_json_envelope() {
+    let root = temp_workspace("cli-json-test-captures-suite-output");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(
+        &vitest,
+        "#!/bin/sh\nprintf 'EFFIGY_TEST_STDOUT_MARKER\\n'\nprintf 'EFFIGY_TEST_STDERR_MARKER\\n' >&2\nexit 0\n",
+    )
+    .expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("test")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["result"]["schema"], "effigy.test.results.v1");
+    assert!(!stdout.contains("EFFIGY_TEST_STDOUT_MARKER"), "{stdout}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(!stderr.contains("EFFIGY_TEST_STDERR_MARKER"), "{stderr}");
+}
+
+#[test]
 fn cli_deferral_outputs_runner_result_with_cli_preamble_header() {
     let root = temp_workspace("cli-defer-header");
     fs::write(
@@ -8794,6 +8834,329 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         !docker_invocations.contains("logs --follow"),
         "startup stop should happen before log attach"
     );
+}
+
+#[test]
+fn cli_heavy_task_sigint_reaches_detached_child_and_releases_admission() {
+    let _guard = lock_cli_process_tests();
+    let root = temp_workspace("heavy-task-admission-sigint");
+    let state_dir = root.join("admission");
+    fs::create_dir(&state_dir).expect("create test admission state");
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o2770))
+        .expect("secure test admission state");
+    let ready = root.join("child-ready.marker");
+    let interrupted = root.join("child-interrupted.marker");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.heavy]
+admission = "heavy"
+run = '''trap 'printf interrupted > "$EFFIGY_TEST_CANCEL_MARKER"; exit 130' INT; printf '%s' "$$" > "$EFFIGY_TEST_READY_MARKER"; while :; do sleep 1; done'''
+"#,
+    )
+    .expect("write heavy task manifest");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("heavy")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_ADMISSION_DIR", &state_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "10")
+        .env("EFFIGY_CALLER", "test:heavy-task-sigint")
+        .env("EFFIGY_TEST_READY_MARKER", &ready)
+        .env("EFFIGY_TEST_CANCEL_MARKER", &interrupted)
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy heavy task");
+    let child_pid = child.id();
+
+    wait_for_heavy_task_child(&mut child, &ready, &state_dir);
+    let process_group = fs::read_to_string(&ready)
+        .expect("read heavy task child pid")
+        .parse::<i32>()
+        .expect("heavy task child pid should be an integer");
+    assert!(process_group > 0);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child_pid as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send SIGINT to effigy only");
+
+    let output = child.wait_with_output().expect("wait for effigy");
+    let child_group = nix::unistd::Pid::from_raw(-process_group);
+    let child_group_survived = nix::sys::signal::kill(child_group, None).is_ok();
+    if child_group_survived {
+        let _ = nix::sys::signal::kill(child_group, nix::sys::signal::Signal::SIGKILL);
+    }
+
+    assert!(
+        !output.status.success(),
+        "cancelled task must fail: {output:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("code=Some(130)"),
+        "the task must receive SIGINT and exit with status 130: {output:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&interrupted).expect("child handled SIGINT"),
+        "interrupted"
+    );
+    assert!(
+        !child_group_survived,
+        "the admitted child process group must exit before Effigy releases its lease"
+    );
+    let state: Value =
+        serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("admission state"))
+            .expect("parse admission state");
+    let runs = state["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["state"], "cancelled");
+    assert!(runs[0]["process_groups"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn cli_heavy_builtin_test_child_stops_on_sigint_and_sigterm() {
+    let _guard = lock_cli_process_tests();
+    for (label, signal) in [
+        ("sigint", nix::sys::signal::Signal::SIGINT),
+        ("sigterm", nix::sys::signal::Signal::SIGTERM),
+    ] {
+        let root = temp_workspace(&format!("heavy-builtin-test-{label}"));
+        let state_dir = root.join("admission");
+        fs::create_dir(&state_dir).expect("create test admission state");
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o2770))
+            .expect("secure test admission state");
+        let ready = root.join("builtin-test-child-ready.marker");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"[test.suites]
+unit = '''printf '%s' "$$" > "$EFFIGY_TEST_READY_MARKER"; exec sleep 30'''
+
+[tasks.heavy]
+admission = "heavy"
+run = [{ task = "test" }]
+"#,
+        )
+        .expect("write heavy task manifest");
+        init_git_repo(&root);
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("heavy")
+            .current_dir(&root)
+            .env("NO_COLOR", "1")
+            .env("EFFIGY_ADMISSION_DIR", &state_dir)
+            .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+            .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+            .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+            .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+            .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "10")
+            .env("EFFIGY_CALLER", format!("test:heavy-builtin-{label}"))
+            .env("EFFIGY_TEST_READY_MARKER", &ready)
+            .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn effigy heavy task");
+        let child_pid = child.id();
+
+        wait_for_heavy_task_child(&mut child, &ready, &state_dir);
+        let process_group = fs::read_to_string(&ready)
+            .expect("read builtin test child pid")
+            .parse::<i32>()
+            .expect("builtin test child pid should be an integer");
+        assert!(process_group > 0);
+
+        let registration_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let state: Value = serde_json::from_slice(
+                &fs::read(state_dir.join("state.json")).expect("admission state"),
+            )
+            .expect("parse admission state");
+            let registered = state["runs"][0]["process_groups"]
+                .as_array()
+                .is_some_and(|groups| {
+                    groups
+                        .iter()
+                        .any(|group| group.as_i64() == Some(i64::from(process_group)))
+                });
+            if registered {
+                break;
+            }
+            assert!(
+                Instant::now() < registration_deadline,
+                "built-in test child process group was not registered: {state}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(child_pid as i32), signal)
+            .expect("signal Effigy only");
+        let exit_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if child.try_wait().expect("poll Effigy process").is_some() {
+                break;
+            }
+            if Instant::now() >= exit_deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                terminate_admission_test_child_groups(&state_dir);
+                panic!("Effigy did not exit after forwarding {label}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let output = child.wait_with_output().expect("wait for effigy output");
+        assert!(
+            !output.status.success(),
+            "cancelled built-in test task must fail: {output:?}"
+        );
+
+        let process_group_pid = nix::unistd::Pid::from_raw(-process_group);
+        let group_deadline = Instant::now() + Duration::from_secs(5);
+        while nix::sys::signal::kill(process_group_pid, None).is_ok()
+            && Instant::now() < group_deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let process_group_survived = nix::sys::signal::kill(process_group_pid, None).is_ok();
+        if process_group_survived {
+            let _ = nix::sys::signal::kill(process_group_pid, nix::sys::signal::Signal::SIGKILL);
+        }
+        assert!(
+            !process_group_survived,
+            "built-in test process group survived forwarded {label}"
+        );
+
+        let state: Value = serde_json::from_slice(
+            &fs::read(state_dir.join("state.json")).expect("admission state"),
+        )
+        .expect("parse admission state");
+        let runs = state["runs"].as_array().expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert!(
+            matches!(runs[0]["state"].as_str(), Some("cancelled" | "failed")),
+            "the task must release its capacity reservation: {}",
+            runs[0]["state"]
+        );
+        assert!(runs[0]["process_groups"].as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn cli_heavy_idle_task_cpu_telemetry_excludes_rss_sampler_processes() {
+    let _guard = lock_cli_process_tests();
+    let root = temp_workspace("heavy-task-admission-idle-cpu");
+    let state_dir = root.join("admission");
+    fs::create_dir(&state_dir).expect("create test admission state");
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o2770))
+        .expect("secure test admission state");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.heavy]
+admission = "heavy"
+run = "sleep 3"
+"#,
+    )
+    .expect("write heavy task manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("heavy")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_ADMISSION_DIR", &state_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+        .env("EFFIGY_CALLER", "test:heavy-task-idle-cpu")
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .output()
+        .expect("run idle heavy task");
+    assert!(
+        output.status.success(),
+        "idle heavy task failed: {output:?}"
+    );
+
+    let state: Value =
+        serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("admission state"))
+            .expect("parse admission state");
+    let runs = state["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1);
+    let cpu_user_ms = runs[0]["cpu_user_ms"]
+        .as_u64()
+        .expect("sampled user CPU telemetry");
+    let cpu_system_ms = runs[0]["cpu_system_ms"]
+        .as_u64()
+        .expect("sampled system CPU telemetry");
+    assert!(
+        cpu_user_ms + cpu_system_ms < 500,
+        "idle task CPU must exclude RSS sampler work: user={cpu_user_ms}ms system={cpu_system_ms}ms"
+    );
+}
+
+fn wait_for_heavy_task_child(
+    child: &mut std::process::Child,
+    ready: &std::path::Path,
+    state_dir: &std::path::Path,
+) {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        let process_group = fs::read_to_string(ready)
+            .ok()
+            .and_then(|contents| contents.trim().parse::<i32>().ok())
+            .filter(|group| *group > 0);
+        let registered = process_group.is_some_and(|process_group| {
+            fs::read(state_dir.join("state.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|state| {
+                    state["runs"][0]["process_groups"].as_array().map(|groups| {
+                        groups
+                            .iter()
+                            .any(|group| group.as_i64() == Some(i64::from(process_group)))
+                    })
+                })
+                .unwrap_or(false)
+        });
+        if registered {
+            break;
+        }
+        if let Some(status) = child.try_wait().expect("poll Effigy process") {
+            terminate_admission_test_child_groups(state_dir);
+            panic!("Effigy exited before starting its heavy child: {status}");
+        }
+        if Instant::now() >= deadline {
+            terminate_admission_test_child_groups(state_dir);
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("heavy task child ready marker was not created in time");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn terminate_admission_test_child_groups(state_dir: &std::path::Path) {
+    let Ok(bytes) = fs::read(state_dir.join("state.json")) else {
+        return;
+    };
+    let Ok(state) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    let Some(groups) = state["runs"][0]["process_groups"].as_array() else {
+        return;
+    };
+    for group in groups.iter().filter_map(Value::as_i64) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-(group as i32)),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
 }
 
 #[test]

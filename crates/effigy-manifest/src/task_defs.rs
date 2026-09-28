@@ -112,4 +112,41 @@ concurrent = [
         let task = parsed.tasks.get("dev").expect("missing dev task");
         assert_eq!(task.secrets, Some(ManifestTaskSecretsMode::Required));
     }
+
+    #[test]
+    fn task_table_accepts_the_declared_heavy_admission_class() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks.qa]
+admission = "heavy"
+run = "cargo test"
+"#,
+        )
+        .expect("parse heavy task");
+
+        let task = parsed.tasks.get("qa").expect("qa task");
+        assert_eq!(task.admission, Some(crate::ManifestTaskAdmission::Heavy));
+    }
+
+    #[test]
+    fn task_table_rejects_unknown_admission_classes() {
+        let error = toml::from_str::<crate::ManifestTask>("admission = \"urgent\"")
+            .expect_err("unknown admission class must fail closed");
+
+        assert!(error.to_string().contains("urgent"));
+    }
+
+    #[test]
+    fn repository_task_config_parses_heavy_task_tables() {
+        let parsed: TasksEnvelope = toml::from_str(include_str!("../../../config/tasks.toml"))
+            .expect("parse repository tasks config");
+
+        for name in ["qa:ci:fast", "qa:ci:local"] {
+            assert_eq!(
+                parsed.tasks.get(name).and_then(|task| task.admission),
+                Some(crate::ManifestTaskAdmission::Heavy),
+                "{name} should be declared heavy"
+            );
+        }
+    }
 }

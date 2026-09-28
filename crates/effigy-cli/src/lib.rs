@@ -46,6 +46,7 @@ pub enum Command {
     Uninstall(UninstallArgs),
     Release(ReleaseArgs),
     Doctor(DoctorArgs),
+    Admission(AdmissionArgs),
     Tasks(TasksArgs),
     Drafts(DraftsArgs),
     Draft(DraftArgs),
@@ -136,6 +137,7 @@ pub enum HelpTopic {
     Bootstrap,
     Release,
     Doctor,
+    Admission,
     Tasks,
     Test,
     Watch,
@@ -1172,6 +1174,25 @@ pub struct DoctorArgs {
     pub all_catalogs: bool,
     pub refresh: bool,
     pub explain: Option<TaskInvocation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionArgs {
+    pub subcommand: AdmissionSubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdmissionSubcommand {
+    Status,
+    Run {
+        run_id: String,
+    },
+    Runs {
+        caller: String,
+        offset: usize,
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

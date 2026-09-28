@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Heavy validation tasks share a measured host-wide CPU and memory admission
+  budget with repository round-robin scheduling, bounded capacity waits, stale
+  owner recovery, caller-linked run telemetry, and `effigy admission` queries.
+  Configure per-invocation `EFFIGY_CALLER` identity and reservation values;
+  standard task commands receive the reserved CPU units as `CARGO_BUILD_JOBS`.
 - `effigy container scope --json` reports the selected checkout's absolute
   path, scope kind and full generation token before archive without loading a
   container policy or contacting a runtime backend. It creates a missing

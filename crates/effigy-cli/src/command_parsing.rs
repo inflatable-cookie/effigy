@@ -29,9 +29,9 @@ mod state;
 
 use crate::command_surface;
 use crate::{
-    BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
+    AdmissionArgs, AdmissionSubcommand, BundleArgs, BundleSubcommand, Command, ContractsArgs,
+    ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs,
+    DepsManager, DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
     InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
     SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
@@ -95,6 +95,7 @@ where
         "uninstall" => parse_uninstall_command(args),
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
+        "admission" => parse_admission_command(args),
         "tasks" => parse_tasks(args),
         "drafts" => parse_drafts(args),
         "draft" => parse_draft(args),
@@ -106,6 +107,96 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_admission_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcommand) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy admission` requires a subcommand: status, run, or runs".to_owned(),
+        ));
+    };
+    if matches!(subcommand.as_str(), "--help" | "-h") {
+        return Ok(Command::Help(HelpTopic::Admission));
+    }
+    let mut output_json = false;
+    let mut run_id = None;
+    let mut caller = None;
+    let mut offset = 0usize;
+    let mut limit = 50usize;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--caller" if subcommand == "runs" => {
+                caller = Some(args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--caller".to_owned(),
+                })?);
+            }
+            "--offset" if subcommand == "runs" => {
+                let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--offset".to_owned(),
+                })?;
+                offset = value.parse().map_err(|_| CliParseError::InvalidFlagValue {
+                    flag: "--offset".to_owned(),
+                    value,
+                    expected: "a non-negative integer".to_owned(),
+                })?;
+            }
+            "--limit" if subcommand == "runs" => {
+                let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
+                    flag: "--limit".to_owned(),
+                })?;
+                limit = value.parse().map_err(|_| CliParseError::InvalidFlagValue {
+                    flag: "--limit".to_owned(),
+                    value,
+                    expected: "a positive integer".to_owned(),
+                })?;
+                if limit == 0 {
+                    return Err(CliParseError::InvalidFlagValue {
+                        flag: "--limit".to_owned(),
+                        value: "0".to_owned(),
+                        expected: "a positive integer".to_owned(),
+                    });
+                }
+            }
+            value if subcommand == "run" && run_id.is_none() && !value.starts_with('-') => {
+                run_id = Some(value.to_owned());
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Admission)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    let subcommand = match subcommand.as_str() {
+        "status" => AdmissionSubcommand::Status,
+        "run" => AdmissionSubcommand::Run {
+            run_id: run_id.ok_or_else(|| {
+                CliParseError::InvalidArguments(
+                    "`effigy admission run` requires a run ID".to_owned(),
+                )
+            })?,
+        },
+        "runs" => AdmissionSubcommand::Runs {
+            caller: caller.ok_or_else(|| {
+                CliParseError::InvalidArguments(
+                    "`effigy admission runs` requires --caller <IDENTITY>".to_owned(),
+                )
+            })?,
+            offset,
+            limit,
+        },
+        other => {
+            return Err(CliParseError::InvalidArguments(format!(
+                "unknown admission subcommand `{other}` (expected status, run, or runs)"
+            )))
+        }
+    };
+    Ok(Command::Admission(AdmissionArgs {
+        subcommand,
+        output_json,
+    }))
 }
 
 fn parse_skill_command<I>(args: I) -> Result<Command, CliParseError>
@@ -1374,4 +1465,64 @@ where
         name,
         args: task_args,
     }))
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::parse_command;
+    use crate::{AdmissionSubcommand, Command, HelpTopic};
+
+    #[test]
+    fn parses_admission_status_run_and_caller_history_queries() {
+        assert_eq!(
+            parse_command(["admission", "status", "--json"].map(str::to_owned)).unwrap(),
+            Command::Admission(crate::AdmissionArgs {
+                subcommand: AdmissionSubcommand::Status,
+                output_json: true,
+            })
+        );
+        assert_eq!(
+            parse_command(["admission", "run", "run-1"].map(str::to_owned)).unwrap(),
+            Command::Admission(crate::AdmissionArgs {
+                subcommand: AdmissionSubcommand::Run {
+                    run_id: "run-1".to_owned()
+                },
+                output_json: false,
+            })
+        );
+        assert_eq!(
+            parse_command(
+                [
+                    "admission",
+                    "runs",
+                    "--caller",
+                    "queue:task:run",
+                    "--offset",
+                    "5",
+                    "--limit",
+                    "10",
+                    "--json"
+                ]
+                .map(str::to_owned)
+            )
+            .unwrap(),
+            Command::Admission(crate::AdmissionArgs {
+                subcommand: AdmissionSubcommand::Runs {
+                    caller: "queue:task:run".to_owned(),
+                    offset: 5,
+                    limit: 10,
+                },
+                output_json: true,
+            })
+        );
+    }
+
+    #[test]
+    fn admission_help_routes_to_its_topic_and_requires_query_identity() {
+        assert_eq!(
+            parse_command(["admission", "--help"].map(str::to_owned)).unwrap(),
+            Command::Help(HelpTopic::Admission)
+        );
+        assert!(parse_command(["admission", "runs"].map(str::to_owned)).is_err());
+    }
 }

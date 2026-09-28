@@ -1,3 +1,5 @@
+mod admission;
+mod admission_command;
 mod artifact_command;
 mod artifact_transport;
 mod bootstrap_command;
@@ -54,6 +56,7 @@ mod test_support;
 mod uninstall_command;
 mod util;
 
+pub(in crate::runner) use admission_command::run_admission;
 pub(in crate::runner) use artifact_command::run_artifact;
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
