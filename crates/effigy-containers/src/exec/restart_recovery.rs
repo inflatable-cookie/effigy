@@ -101,24 +101,15 @@ pub fn recover_exited_owned_services_with(
     }
 
     let mut recovery = OwnedServiceStartRecovery::default();
-    let mut start_errors = Vec::new();
+    let mut start_results = Vec::new();
     for row in &targets {
         match start(&row.container_name) {
             Ok(result) => {
                 recovery.started.push(row.container_name.clone());
-                if looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr) {
-                    recovery.warnings.push(stale_timer_warning(
-                        row,
-                        &result.stderr,
-                        result.success,
-                    ));
-                }
-                if !result.success {
-                    start_errors.push((row.clone(), result));
-                }
+                start_results.push((row.clone(), result));
             }
             Err(error) => {
-                start_errors.push((
+                start_results.push((
                     row.clone(),
                     RuntimeStartResult {
                         success: false,
@@ -139,7 +130,7 @@ pub fn recover_exited_owned_services_with(
                 backend,
                 &targets,
                 &before,
-                &start_errors,
+                &start_results,
                 error,
             ));
         }
@@ -150,9 +141,22 @@ pub fn recover_exited_owned_services_with(
         backend,
         &targets,
         &after,
-        &start_errors,
+        &start_results,
     ) {
         return Err(error);
+    }
+    for (row, result) in &start_results {
+        if looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr)
+            && after.iter().any(|current| {
+                current.container_name == row.container_name
+                    && current.project_name.as_deref() == Some(project_name)
+                    && compose_status_is_running(&current.status)
+            })
+        {
+            recovery
+                .warnings
+                .push(stale_timer_warning(row, &result.stderr, result.success));
+        }
     }
     Ok(recovery)
 }
@@ -174,7 +178,7 @@ fn persistent_start_failure(
     backend: ComposeBackend,
     targets: &[RunningComposeContainer],
     after: &[RunningComposeContainer],
-    start_errors: &[(RunningComposeContainer, RuntimeStartResult)],
+    start_results: &[(RunningComposeContainer, RuntimeStartResult)],
 ) -> Option<ContainerExecError> {
     for target in targets {
         let current = after.iter().find(|row| {
@@ -190,7 +194,7 @@ fn persistent_start_failure(
         let status = current
             .map(|row| row.status.as_str())
             .unwrap_or(target.status.as_str());
-        let backend_text = start_errors
+        let backend_text = start_results
             .iter()
             .find(|(row, _)| row.container_name == target.container_name)
             .map(|(_, result)| format!("{}\n{}", result.stdout.trim(), result.stderr.trim()))
@@ -213,13 +217,13 @@ fn failure_from_last_observed_state(
     backend: ComposeBackend,
     targets: &[RunningComposeContainer],
     before: &[RunningComposeContainer],
-    start_errors: &[(RunningComposeContainer, RuntimeStartResult)],
+    start_results: &[(RunningComposeContainer, RuntimeStartResult)],
     inspect_error: ContainerExecError,
 ) -> ContainerExecError {
     let inspect_text = inspect_error.to_string();
-    let mut start_errors = start_errors.to_vec();
+    let mut start_results = start_results.to_vec();
     for target in targets {
-        match start_errors
+        match start_results
             .iter_mut()
             .find(|(row, _)| row.container_name == target.container_name)
         {
@@ -229,7 +233,7 @@ fn failure_from_last_observed_state(
                 }
                 result.stderr.push_str(&inspect_text);
             }
-            None => start_errors.push((
+            None => start_results.push((
                 target.clone(),
                 RuntimeStartResult {
                     success: false,
@@ -245,7 +249,7 @@ fn failure_from_last_observed_state(
         backend,
         targets,
         before,
-        &start_errors,
+        &start_results,
     )
     .unwrap_or(inspect_error)
 }
@@ -453,6 +457,69 @@ mod tests {
         );
         assert!(
             detail.contains("will not delete timer units"),
+            "got: {detail}"
+        );
+        assert!(!detail.contains("systemctl"), "got: {detail}");
+        assert!(!detail.contains("rm -f"), "got: {detail}");
+    }
+
+    #[test]
+    fn successful_start_with_stale_timer_still_exited_is_a_bounded_failure() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Created",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 1 second ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+        )
+        .expect_err("start exit 0 is not readiness when the service stays down");
+
+        let detail = error.to_string();
+        assert!(detail.contains("service `mysql`"), "got: {detail}");
+        assert!(detail.contains("Exited (255)"), "got: {detail}");
+        assert!(
+            detail.contains("colima nerdctl --profile effigy -- start acowtancy-mysql-1"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("stale nerdctl health-check timer"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("Unit dd94022f7dd0.timer was already loaded or has a fragment file"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("will not delete timer units"),
+            "got: {detail}"
+        );
+        assert!(
+            !detail.contains("the container is running"),
             "got: {detail}"
         );
         assert!(!detail.contains("systemctl"), "got: {detail}");
@@ -685,6 +752,70 @@ mod tests {
         );
         assert!(
             detail.contains("colima nerdctl --profile effigy -- start acowtancy-postgres-1"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("stale nerdctl health-check timer"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis() {
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with(
+            "acowtancy-shared-pg",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            || {
+                inspect_calls += 1;
+                if inspect_calls == 1 {
+                    Ok(vec![row(
+                        "acowtancy-shared-pg",
+                        "postgres",
+                        "acowtancy-postgres-1",
+                        "Exited (255) 2 minutes ago",
+                    )])
+                } else {
+                    Err(ContainerExecError::Failure {
+                        command: "runtime ps --all".to_owned(),
+                        code: None,
+                        stdout: String::new(),
+                        stderr: "[effigy] command timed out after 30s".to_owned(),
+                    })
+                }
+            },
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+        )
+        .expect_err("inspect timeout after start exit 0 must keep the start diagnosis");
+
+        let detail = error.to_string();
+        assert!(detail.contains("service `postgres`"), "got: {detail}");
+        assert!(detail.contains("Exited (255)"), "got: {detail}");
+        assert!(
+            detail.contains("command timed out after 30s"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("stale nerdctl health-check timer"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("Unit dd94022f7dd0.timer was already loaded or has a fragment file"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("colima nerdctl --profile effigy -- start acowtancy-postgres-1"),
+            "got: {detail}"
+        );
+        assert!(
+            !detail.contains("the container is running"),
             "got: {detail}"
         );
     }

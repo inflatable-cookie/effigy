@@ -256,12 +256,13 @@ owned containers are started by name. Effigy does not recreate them, does
 not delete volumes, and does not delete systemd units, including nerdctl
 health-check timers named after container ids.
 
-If start succeeds, `container up` continues. A nerdctl warning that
-`Unit <id>.timer was already loaded or has a fragment file` is recorded; it
-is not treated as readiness. If the owned container stays stopped, or inspect/start times out, Effigy
-fails and names the service, its last observed status, the backend text
-(including a hang timeout), and the exact
-`colima nerdctl --profile <profile> -- start <container>` command (or
+Start exit 0 is not readiness. A nerdctl warning that
+`Unit <id>.timer was already loaded or has a fragment file` is recorded when
+inspect then shows the owned container running; systemd units are not
+deleted. If the owned container stays stopped, or inspect/start times out,
+Effigy fails and names the service, its last observed status, the start
+backend text (including that stale-timer warning or a hang timeout), and the
+exact `colima nerdctl --profile <profile> -- start <container>` command (or
 `docker start <container>` on Docker). Inspect and start are bounded so a
 hung nerdctl command cannot present a partial stack as ready. `container status` lists those
 stopped owned rows instead of omitting them or reporting success by

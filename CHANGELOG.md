@@ -154,7 +154,8 @@ During v0.x, MINOR bumps may include breaking changes.
   success as readiness. Start keeps volumes, including Postgres
   crash-recovery data, and does not delete systemd units. A nerdctl stale
   health-check timer warning is recorded when the owned container is
-  running; a still-stopped service fails with its status and
+  running; a still-stopped service fails with its status, the start
+  backend text, and
   `colima nerdctl --profile <profile> -- start <container>`.
   Inspect and start are bounded so a hung nerdctl command cannot hide that
   diagnosis. `effigy container status` lists those stopped owned rows.
