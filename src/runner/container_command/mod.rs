@@ -35,6 +35,7 @@ mod hosts;
 mod lifecycle;
 mod profile;
 mod retire;
+mod scope;
 mod secret_env;
 mod shell_prep;
 pub(in crate::runner) mod support;
@@ -169,6 +170,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name.as_deref(),
             args.output_json,
         ),
+        ContainerSubcommand::Scope => {
+            scope::run_container_scope(args.repo_override.clone(), args.output_json)
+        }
         ContainerSubcommand::Retire { name, scope, yes } => retire::run_container_retire(
             args.repo_override.clone(),
             name.as_deref(),

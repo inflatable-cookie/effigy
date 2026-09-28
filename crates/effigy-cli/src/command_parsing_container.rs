@@ -14,9 +14,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 14] = [
+    const ACTIONS: [&str; 15] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject", "hosts", "retire",
+        "profile", "eject", "hosts", "retire", "scope",
     ];
 
     let mut args = args.into_iter();
@@ -50,6 +50,7 @@ where
         "profile" => parse_container_profile(name, args),
         "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
+        "scope" => parse_container_scope(name, args),
         "hosts" => parse_container_hosts(name, args),
         "retire" => parse_container_retire(name, args),
         other => Err(unknown_argument(other)),
@@ -242,6 +243,36 @@ where
     I: IntoIterator<Item = String>,
 {
     parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Hosts { name })
+}
+
+fn parse_container_scope<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> scope` is not supported; use `effigy container scope` for checkout identity".to_owned(),
+        ));
+    }
+
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Scope,
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_retire<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
