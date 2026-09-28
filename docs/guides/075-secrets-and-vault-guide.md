@@ -244,9 +244,12 @@ mode = "tui"
 secrets = "required"
 ```
 
-That forces declared `targets = ["tasks"]` values into the managed child
-process environment before launch, which is useful when the child commands
-expect runtime auth/env keys without spelling them out in the shell command.
+That makes declared `targets = ["tasks"]` values available to managed child
+processes before launch, which is useful when the child commands expect
+runtime auth/env keys without spelling them out in the shell command. Host
+process entries, including entries with `run_in = "host"`, receive those
+values through the child environment. The values stay out of the rendered
+shell command and argv, and managed stream and headless logs redact matches.
 The same startup eagerly unlocks container-targeted values, but it does not
 promote optional keys: a container key with `required = false` may be absent
 without blocking the managed task.
@@ -357,8 +360,8 @@ context automatically.
 
 - Values are never printed in JSON or text output
 - Values are redacted in logs, errors, and provider reports
-- Injection uses `Command::env()` instead of shell command strings to avoid `ps`
-  exposure
+- Host task injection uses `Command::env()` instead of shell command strings
+  to avoid `ps` exposure
 - Direct vault access requires a human-gated unlock factor
 - `effigy dev` uses an ignored, mode-`0600` local-dev key and never writes
   plaintext secret values to that key file

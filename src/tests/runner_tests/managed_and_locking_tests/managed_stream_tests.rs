@@ -580,6 +580,63 @@ fn run_manifest_task_managed_stream_injects_task_secrets_into_container_processe
 }
 
 #[test]
+fn run_manifest_task_managed_host_secrets_stay_out_of_argv_and_stream_output() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let _passphrase = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        Some("vault-passphrase".to_owned()),
+    )]);
+    let root = crate::runner::tests::prelude::temp_workspace("managed-host-secret-argv");
+    write_root_manifest(
+        &root,
+        r#"[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = true
+targets = ["tasks"]
+
+[tasks.dev]
+mode = "tui"
+secrets = "required"
+concurrent = [
+  { name = "api", run_in = "host", run = "argv=$(ps -o command= -p $$); case \"$argv\" in *\"$API_TOKEN\"*) exit 21;; esac; actual=$(printf %s \"$API_TOKEN\" | shasum -a 256 | cut -d ' ' -f1); test \"$actual\" = 525c1ce029dbf530bade85e01d47975f08dace1004986f360ea5c63d6403987a || exit 22; printf 'argv-clean; received=%s\\n' \"$API_TOKEN\"" }
+]
+"#,
+    );
+    write_test_vault(
+        &root,
+        "vault-passphrase",
+        &[("api_token", "synthetic-managed-secret-value")],
+    );
+
+    let preview = crate::runner::tests::prelude::run_dev(&root, &["--plan"])
+        .expect("managed host task plan should render without unlocking secrets");
+    assert!(
+        !preview.contains("synthetic-managed-secret-value"),
+        "managed plan leaked the secret: {preview}"
+    );
+
+    let output = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect("managed host task should receive the secret");
+
+    assert!(
+        output.contains("argv-clean; received=[REDACTED]"),
+        "got: {output}"
+    );
+    assert!(
+        !output.contains("synthetic-managed-secret-value"),
+        "managed output leaked the secret: {output}"
+    );
+}
+
+#[test]
 fn run_manifest_task_managed_headless_uses_local_dev_unlock_for_task_and_container_secrets() {
     let _guard = lock_test();
     let _mode = EnvGuard::set_many(&[

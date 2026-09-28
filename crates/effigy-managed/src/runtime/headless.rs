@@ -16,6 +16,7 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 use super::policy;
+use super::redaction::SecretStreamRedactor;
 use crate::render_support::managed_process_specs;
 use crate::{ManagedError, ManagedTaskPlan};
 
@@ -55,6 +56,13 @@ pub fn run_managed_task_headless(
         .processes
         .iter()
         .map(|process| process.name.clone())
+        .collect::<Vec<_>>();
+    let secret_values = plan
+        .processes
+        .iter()
+        .flat_map(|process| process.secret_env.values())
+        .filter(|value| !value.is_empty())
+        .cloned()
         .collect::<Vec<_>>();
     let mut log_files = open_process_logs(&runtime_dir, &process_names)?;
     let specs = managed_process_specs(plan.processes.iter().cloned());
@@ -105,6 +113,7 @@ pub fn run_managed_task_headless(
         &mut state,
         &mut log_files,
         &shutdown_on_exit,
+        &secret_values,
         &shutdown_requested,
         &stop_path,
     );
@@ -235,11 +244,23 @@ fn supervise_headless(
     state: &mut HeadlessSessionState,
     logs: &mut HashMap<String, File>,
     shutdown_on_exit: &HashSet<String>,
+    secret_values: &[String],
     shutdown_requested: &AtomicBool,
     stop_path: &Path,
 ) -> Result<HashSet<String>, ManagedError> {
     let mut exited = HashSet::new();
     let mut non_zero = HashSet::new();
+    let mut redactors = HashMap::new();
+    for process in &state.processes {
+        redactors.insert(
+            (process.name.clone(), false),
+            SecretStreamRedactor::new(secret_values),
+        );
+        redactors.insert(
+            (process.name.clone(), true),
+            SecretStreamRedactor::new(secret_values),
+        );
+    }
     while exited.len() < state.processes.len() && !shutdown_requested.load(Ordering::Relaxed) {
         if stop_path.exists() {
             break;
@@ -252,14 +273,19 @@ fn supervise_headless(
         }
         match event.kind {
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
+                let stderr = event.kind == ProcessEventKind::StderrChunk;
+                let chunk = event.chunk.as_deref().unwrap_or(event.payload.as_bytes());
+                let redacted = redactors
+                    .get_mut(&(event.process.clone(), stderr))
+                    .map(|redactor| redactor.push(chunk))
+                    .unwrap_or_else(|| chunk.to_vec());
                 if let Some(file) = logs.get_mut(&event.process) {
-                    file.write_all(event.chunk.as_deref().unwrap_or(event.payload.as_bytes()))
-                        .map_err(|error| {
-                            ManagedError::task_invocation(format!(
-                                "failed to write managed log for `{}`: {error}",
-                                event.process
-                            ))
-                        })?;
+                    file.write_all(&redacted).map_err(|error| {
+                        ManagedError::task_invocation(format!(
+                            "failed to write managed log for `{}`: {error}",
+                            event.process
+                        ))
+                    })?;
                     file.flush().map_err(|error| {
                         ManagedError::task_invocation(format!(
                             "failed to flush managed log for `{}`: {error}",
@@ -300,6 +326,24 @@ fn supervise_headless(
                 }
             }
             ProcessEventKind::Stdout | ProcessEventKind::Stderr => {}
+        }
+    }
+    for ((process, _), redactor) in redactors {
+        let remaining = redactor.finish();
+        if remaining.is_empty() {
+            continue;
+        }
+        if let Some(file) = logs.get_mut(&process) {
+            file.write_all(&remaining).map_err(|error| {
+                ManagedError::task_invocation(format!(
+                    "failed to write managed log for `{process}`: {error}"
+                ))
+            })?;
+            file.flush().map_err(|error| {
+                ManagedError::task_invocation(format!(
+                    "failed to flush managed log for `{process}`: {error}"
+                ))
+            })?;
         }
     }
     Ok(non_zero)

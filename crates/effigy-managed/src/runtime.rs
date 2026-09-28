@@ -14,6 +14,8 @@ use crate::{render_utf8, text_renderer};
 mod headless;
 #[path = "runtime/policy.rs"]
 mod policy;
+#[path = "runtime/redaction.rs"]
+mod redaction;
 #[path = "runtime/stream.rs"]
 mod stream;
 
@@ -67,6 +69,7 @@ pub fn run_managed_task_runtime(
         .map(|process| process.name.clone())
         .collect::<Vec<String>>();
     let readiness_fields = managed_runtime_readiness_fields(&plan);
+    let secret_values = managed_secret_values(&plan);
     let specs = managed_process_specs(plan.processes.iter().cloned());
     let expected = specs.len();
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
@@ -85,6 +88,7 @@ pub fn run_managed_task_runtime(
         &supervisor,
         expected,
         &shutdown_on_exit_processes,
+        &secret_values,
         &mut renderer,
     )?;
 
@@ -102,6 +106,15 @@ pub fn run_managed_task_runtime(
         err: 0,
     })?;
     render_utf8(renderer.into_inner())
+}
+
+fn managed_secret_values(plan: &ManagedTaskPlan) -> Vec<String> {
+    plan.processes
+        .iter()
+        .flat_map(|process| process.secret_env.values())
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect()
 }
 
 fn managed_runtime_readiness_fields(plan: &ManagedTaskPlan) -> Vec<KeyValue> {

@@ -59,6 +59,9 @@ pub struct ManagedProcessSpec {
     pub name: String,
     pub role: ManagedProcessRole,
     pub run: String,
+    /// Secret values injected through the child environment for host process
+    /// launches. Kept separate from `run` so they never enter command argv.
+    pub secret_env: std::collections::BTreeMap<String, String>,
     pub setup: Option<String>,
     pub setup_steps: Vec<ManifestManagedRunStep>,
     pub cwd: PathBuf,
