@@ -183,7 +183,7 @@ pub fn list_compose_containers_for_project_including_stopped(
     policy: &EffectiveContainerPolicy,
     project_name: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_for_policy(
+    let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
         &[
