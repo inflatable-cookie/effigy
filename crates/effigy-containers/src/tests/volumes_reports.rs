@@ -598,11 +598,53 @@ fn cache_list_global_report_groups_by_project_in_text() {
     );
     assert_eq!(report.json["scope"], "profile-wide cache inventory");
     assert_eq!(report.json["projects"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report.json["reclaimable_size_bytes"], 4096);
+    assert_eq!(report.json["in_use_size_bytes"], 2048);
+    assert_eq!(report.json["unknown_size_count"], 0);
+    assert_eq!(report.json["size_complete"], true);
+    assert!(report.success_text.contains("reclaimable=4.0 KiB"));
+    assert!(report.success_text.contains("in_use_size=2.0 KiB"));
     assert!(report.success_text.contains("contact-patch-dev:\n- "));
     assert!(report
         .success_text
         .contains("\n\nworkspace-app-reference-dev:\n- "));
     assert!(!report.success_text.contains("project="));
+}
+
+#[test]
+fn cache_list_global_report_keeps_incomplete_size_totals_honest() {
+    let report = crate::cache_list_global_report(
+        "effigy",
+        "profile-wide cache inventory",
+        &[
+            crate::ContainerCacheGlobalEntry {
+                name: "dead-wt-target".to_owned(),
+                kind: "rust-target".to_owned(),
+                size_bytes: Some(28 * 1024 * 1024 * 1024),
+                mount_point: Some("/var/lib/mock/dead-target".to_owned()),
+                project_name: Some("acowtancy-dev-wt-dead".to_owned()),
+                in_use: false,
+            },
+            crate::ContainerCacheGlobalEntry {
+                name: "efv-legacy".to_owned(),
+                kind: "rust-target".to_owned(),
+                size_bytes: None,
+                mount_point: None,
+                project_name: Some("acowtancy-dev".to_owned()),
+                in_use: true,
+            },
+        ],
+    );
+
+    assert_eq!(
+        report.json["reclaimable_size_bytes"],
+        28u64 * 1024 * 1024 * 1024
+    );
+    assert_eq!(report.json["in_use_size_bytes"], 0);
+    assert_eq!(report.json["unknown_size_count"], 1);
+    assert_eq!(report.json["size_complete"], false);
+    assert!(report.success_text.contains("reclaimable=28.0 GiB"));
+    assert!(report.success_text.contains("1 size unavailable"));
 }
 
 #[test]

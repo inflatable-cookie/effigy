@@ -23,6 +23,10 @@ use crate::{
 };
 
 const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(90);
+const COLIMA_RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(90);
+const COLIMA_RUNNING_PROFILE_GRACE: Duration = Duration::from_secs(30);
+const COLIMA_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const COLIMA_RUNTIME_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
 const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -47,7 +51,12 @@ pub fn ensure_colima_running(
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {
     if colima_is_running(policy, repo_root)? {
-        return Ok(false);
+        return ensure_running_profile_runtime_ready(
+            COLIMA_RUNNING_PROFILE_GRACE,
+            COLIMA_RUNTIME_READY_TIMEOUT,
+            |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
+            || repair_colima_runtime(policy, repo_root),
+        );
     }
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
         command: "colima profile config".to_owned(),
@@ -64,7 +73,27 @@ pub fn ensure_colima_running(
         &cmd.label,
         COLIMA_START_TIMEOUT,
     )?;
+    wait_for_colima_runtime_ready(policy, repo_root, COLIMA_RUNTIME_READY_TIMEOUT)
+        .map_err(|error| runtime_readiness_error(&error))?;
     Ok(true)
+}
+
+fn ensure_running_profile_runtime_ready(
+    grace: Duration,
+    recovery_timeout: Duration,
+    mut wait_for_runtime: impl FnMut(Duration) -> Result<(), String>,
+    mut repair: impl FnMut() -> Result<(), ContainerExecError>,
+) -> Result<bool, ContainerExecError> {
+    match wait_for_runtime(grace) {
+        Ok(()) => Ok(false),
+        Err(readiness_error) => {
+            repair().map_err(|recovery_error| {
+                runtime_readiness_recovery_error(&readiness_error, &recovery_error)
+            })?;
+            wait_for_runtime(recovery_timeout).map_err(|error| runtime_readiness_error(&error))?;
+            Ok(true)
+        }
+    }
 }
 
 pub fn runtime_backend_is_running(
@@ -138,6 +167,137 @@ pub fn colima_is_running(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     Ok(parse_colima_running(&stdout, &stderr))
+}
+
+fn colima_runtime_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    detection.backend_override = Some(BackendId::colima_nerdctl());
+    let args = [OsString::from("info")];
+    ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", &args)
+        .map(|(_, args)| args)
+        .unwrap_or_else(|_| {
+            vec![
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from(policy.profile.as_str()),
+                OsString::from("--"),
+                OsString::from("info"),
+            ]
+        })
+}
+
+fn colima_buildkit_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
+    vec![
+        OsString::from("ssh"),
+        OsString::from("--profile"),
+        OsString::from(policy.profile.as_str()),
+        OsString::from("--"),
+        OsString::from("sudo"),
+        OsString::from("buildctl"),
+        OsString::from("debug"),
+        OsString::from("workers"),
+    ]
+}
+
+fn probe_colima_runtime(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let per_probe_timeout = (timeout / 2).min(COLIMA_RUNTIME_PROBE_TIMEOUT);
+    run_colima_readiness_command(
+        repo_root,
+        &colima_runtime_probe_args(policy),
+        "Colima containerd readiness probe",
+        per_probe_timeout,
+    )?;
+    run_colima_readiness_command(
+        repo_root,
+        &colima_buildkit_probe_args(policy),
+        "Colima BuildKit readiness probe",
+        per_probe_timeout,
+    )
+}
+
+fn run_colima_readiness_command(
+    repo_root: &Path,
+    args: &[OsString],
+    label: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let borrowed = rendered.iter().map(String::as_str).collect::<Vec<_>>();
+    run_command_capture_with_timeout(repo_root, "colima", &borrowed, label, timeout)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn wait_for_colima_runtime_ready(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    wait_for_runtime_readiness(
+        timeout,
+        COLIMA_RUNTIME_PROBE_INTERVAL,
+        |probe_timeout| probe_colima_runtime(policy, repo_root, probe_timeout),
+        thread::sleep,
+    )
+}
+
+fn wait_for_runtime_readiness(
+    timeout: Duration,
+    interval: Duration,
+    mut probe: impl FnMut(Duration) -> Result<(), String>,
+    mut pause: impl FnMut(Duration),
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let mut last_error = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match probe(remaining) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        pause(interval.min(remaining));
+    }
+    Err(format!(
+        "Colima containerd and BuildKit did not become ready within {}s; last runtime probe: {}",
+        timeout.as_secs(),
+        last_error.as_deref().unwrap_or("no probe completed")
+    ))
+}
+
+fn runtime_readiness_error(detail: &str) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: "Colima runtime readiness".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: detail.to_owned(),
+    }
+}
+
+fn runtime_readiness_recovery_error(
+    readiness_error: &str,
+    recovery_error: &ContainerExecError,
+) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: "Colima containerd readiness recovery".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!("{readiness_error}\nfailed to recover Colima profile: {recovery_error}"),
+    }
 }
 
 pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Path) -> Vec<String> {
@@ -238,6 +398,31 @@ pub(super) fn run_runtime_command_capture_for_policy(
         .map_err(container_manager_error)?;
     let program = program.to_string_lossy().into_owned();
     run_command_capture_os(repo_root, &program, &args, label)
+}
+
+pub(super) fn run_runtime_command_capture_for_policy_with_timeout(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    docker_args: &[OsString],
+    label: &str,
+    timeout: Duration,
+) -> Result<Output, ContainerExecError> {
+    let detection = runtime_detection_for_policy(repo_root, policy);
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    run_command_capture_with_timeout(
+        repo_root,
+        &program,
+        &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
+        label,
+        timeout,
+    )
 }
 
 fn run_runtime_command_capture_for_policy_allow_failure(
@@ -714,6 +899,127 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "effigy");
         assert_eq!(entries[0].disk, 300 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn runtime_readiness_waits_through_delayed_containerd_and_buildkit_startup() {
+        let mut attempts = 0;
+        wait_for_runtime_readiness(
+            Duration::from_secs(1),
+            Duration::from_millis(1),
+            |_| {
+                attempts += 1;
+                match attempts {
+                    1 => Err("nerdctl info cannot reach containerd yet".to_owned()),
+                    2 => Err("buildctl workers cannot reach BuildKit yet".to_owned()),
+                    _ => Ok(()),
+                }
+            },
+            |_| {},
+        )
+        .expect("runtime should become ready");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn runtime_readiness_permanent_failure_is_bounded_and_keeps_last_diagnostic() {
+        let started = std::time::Instant::now();
+        let error = wait_for_runtime_readiness(
+            Duration::from_millis(10),
+            Duration::from_millis(1),
+            |_| Err("containerd endpoint unavailable".to_owned()),
+            |_| {},
+        )
+        .expect_err("permanent runtime failure should time out");
+
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(error.contains("did not become ready"));
+        assert!(error.contains("containerd endpoint unavailable"));
+    }
+
+    #[test]
+    fn warm_colima_profile_is_reused_without_repair() {
+        let mut wait_timeouts = Vec::new();
+        let mut repairs = 0;
+        let started = ensure_running_profile_runtime_ready(
+            Duration::from_secs(30),
+            Duration::from_secs(90),
+            |timeout| {
+                wait_timeouts.push(timeout);
+                Ok(())
+            },
+            || {
+                repairs += 1;
+                Ok(())
+            },
+        )
+        .expect("warm profile should be reusable");
+
+        assert!(!started);
+        assert_eq!(wait_timeouts, vec![Duration::from_secs(30)]);
+        assert_eq!(repairs, 0);
+    }
+
+    #[test]
+    fn incomplete_running_profile_is_repaired_and_reprobed() {
+        let mut attempts = 0;
+        let mut repairs = 0;
+        let started = ensure_running_profile_runtime_ready(
+            Duration::from_secs(30),
+            Duration::from_secs(90),
+            |_| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("nerdctl info cannot reach containerd".to_owned())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                repairs += 1;
+                Ok(())
+            },
+        )
+        .expect("repaired profile should pass runtime readiness");
+
+        assert!(started);
+        assert_eq!(attempts, 2);
+        assert_eq!(repairs, 1);
+    }
+
+    #[test]
+    fn runtime_readiness_probe_is_profile_scoped_nerdctl_info() {
+        let args = colima_runtime_probe_args(&test_policy());
+        let rendered = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec!["nerdctl", "--profile", "effigy", "--", "info"]
+        );
+    }
+
+    #[test]
+    fn buildkit_readiness_probe_uses_profile_scoped_buildctl_workers() {
+        let args = colima_buildkit_probe_args(&test_policy());
+        let rendered = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                "ssh",
+                "--profile",
+                "effigy",
+                "--",
+                "sudo",
+                "buildctl",
+                "debug",
+                "workers"
+            ]
+        );
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

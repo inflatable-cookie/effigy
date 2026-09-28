@@ -326,7 +326,7 @@ mod tests {
         for expected in [
             "[docs_policy.graph]",
             "[docs_policy.graph.kinds.knowledge]",
-            "[docs_policy.graph.kinds.plan]",
+            "[docs_policy.graph.kinds.guide]",
             "docs/knowledge/contracts/release.md",
             "qa = [{ task = \"qa:docs\" }]",
         ] {

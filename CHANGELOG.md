@@ -96,6 +96,25 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- `effigy container cache list` (repo and `--global`) now reports reclaimable
+  size totals in text and JSON, plus in-use size on the global report.
+  Unknown per-volume sizes keep `size_complete` false instead of inflating
+  the total. Prune still uses the same cache inventory; it does not widen
+  which volumes can be removed.
+- `effigy container retire` lists Created and stopped containers with
+  running ones, discovers owned resources by `com.effigy.project` as well as
+  scope and Compose project labels, and removes disposable scoped caches
+  while retaining persistent data. This repository's `paseo.json` worktree
+  teardown now calls `effigy container retire --yes` before unlink. Archive
+  callers outside Effigy must invoke that command (or `--scope` after the
+  checkout is gone) and must not treat `bootstrap teardown` or a zero exit
+  on residue as success.
+- Container startup now waits for profile-scoped Colima containerd and
+  BuildKit probes, repairs a running but incomplete profile once, and waits
+  for declared Compose gateway ports to appear in the matching runtime
+  project before claiming routes. Bounded failures identify the runtime stage
+  or exited service while preserving project, service, port and host-listener
+  checks.
 - `effigy init northstar` now directs planning and leads to Queue and omits
   repository plan and triage files. Effigy's own planning records moved there too.
 - Task and draft text runs send the framed CLI header to stderr so stdout is
@@ -118,6 +137,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
+  and single run-step tables using the same command and task reference forms as
+  `effigy test`; empty or malformed suite runs include their manifest paths.
 - `effigy release status --check-gates` reports the configured gate verdict
   independently of the optional next-version proposal. An empty
   `[Unreleased]` section keeps `ready: false`, `next_version: null`, and the

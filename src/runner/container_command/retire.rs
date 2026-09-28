@@ -176,36 +176,15 @@ fn observe_scope(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerEr
 
 fn observe_labeled_containers(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
     let mut found = Vec::new();
-    found.extend(list_named_resources(
-        record,
-        ObservedKind::Container,
-        "ps",
-        &[
-            "-a".to_owned(),
-            "--filter".to_owned(),
-            format!("label={SCOPE_LABEL}={}", record.token),
-            "--format".to_owned(),
-            "{{.Names}}".to_owned(),
-        ],
-        "list containers by runtime scope label",
-        Some(record.token.as_str()),
-        record.project_names.first().cloned(),
-    )?);
-    for project in &record.project_names {
+    for filter in ownership_label_filters(record) {
         found.extend(list_named_resources(
             record,
             ObservedKind::Container,
             "ps",
-            &[
-                "-a".to_owned(),
-                "--filter".to_owned(),
-                format!("label={COMPOSE_PROJECT_LABEL}={project}"),
-                "--format".to_owned(),
-                "{{.Names}}".to_owned(),
-            ],
-            &format!("list containers for compose project {project}"),
-            None,
-            Some(project.clone()),
+            &container_ps_args(&filter.label),
+            &filter.description("containers"),
+            filter.scope_label.as_deref(),
+            filter.project_label.clone(),
         )?);
     }
     Ok(unique_resources(found))
@@ -213,22 +192,7 @@ fn observe_labeled_containers(record: &ScopeRecord) -> Result<Vec<ObservedResour
 
 fn observe_networks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
     let mut found = Vec::new();
-    found.extend(list_named_resources(
-        record,
-        ObservedKind::Network,
-        "network",
-        &[
-            "ls".to_owned(),
-            "--filter".to_owned(),
-            format!("label={SCOPE_LABEL}={}", record.token),
-            "--format".to_owned(),
-            "{{.Name}}".to_owned(),
-        ],
-        "list networks by runtime scope label",
-        Some(record.token.as_str()),
-        record.project_names.first().cloned(),
-    )?);
-    for project in &record.project_names {
+    for filter in ownership_label_filters(record) {
         found.extend(list_named_resources(
             record,
             ObservedKind::Network,
@@ -236,13 +200,13 @@ fn observe_networks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runne
             &[
                 "ls".to_owned(),
                 "--filter".to_owned(),
-                format!("label={COMPOSE_PROJECT_LABEL}={project}"),
+                format!("label={}", filter.label),
                 "--format".to_owned(),
                 "{{.Name}}".to_owned(),
             ],
-            &format!("list networks for compose project {project}"),
-            None,
-            Some(project.clone()),
+            &filter.description("networks"),
+            filter.scope_label.as_deref(),
+            filter.project_label.clone(),
         )?);
     }
     found.retain(|resource| !is_builtin_network(&resource.name));
@@ -262,20 +226,7 @@ fn observe_volumes_for_profile(
     profile: &str,
 ) -> Result<Vec<ObservedResource>, RunnerError> {
     let mut names = Vec::new();
-    names.extend(list_names(
-        record,
-        profile,
-        "volume",
-        &[
-            "ls".to_owned(),
-            "--filter".to_owned(),
-            format!("label={SCOPE_LABEL}={}", record.token),
-            "--format".to_owned(),
-            "{{.Name}}".to_owned(),
-        ],
-        "list volumes by runtime scope label",
-    )?);
-    for project in &record.project_names {
+    for filter in ownership_label_filters(record) {
         names.extend(list_names(
             record,
             profile,
@@ -283,11 +234,11 @@ fn observe_volumes_for_profile(
             &[
                 "ls".to_owned(),
                 "--filter".to_owned(),
-                format!("label={COMPOSE_PROJECT_LABEL}={project}"),
+                format!("label={}", filter.label),
                 "--format".to_owned(),
                 "{{.Name}}".to_owned(),
             ],
-            &format!("list volumes for compose project {project}"),
+            &filter.description("volumes"),
         )?);
     }
     names.sort();
@@ -396,6 +347,64 @@ fn unique_resources(mut found: Vec<ObservedResource>) -> Vec<ObservedResource> {
 
 fn is_builtin_network(name: &str) -> bool {
     matches!(name, "bridge" | "host" | "none")
+}
+
+struct OwnershipLabelFilter {
+    label: String,
+    scope_label: Option<String>,
+    project_label: Option<String>,
+    kind: &'static str,
+}
+
+impl OwnershipLabelFilter {
+    fn description(&self, resource: &str) -> String {
+        match self.kind {
+            "scope" => format!("list {resource} by runtime scope label"),
+            "compose" => format!(
+                "list {resource} for compose project {}",
+                self.project_label.as_deref().unwrap_or("unknown")
+            ),
+            _ => format!(
+                "list {resource} for project {}",
+                self.project_label.as_deref().unwrap_or("unknown")
+            ),
+        }
+    }
+}
+
+fn ownership_label_filters(record: &ScopeRecord) -> Vec<OwnershipLabelFilter> {
+    let mut filters = vec![OwnershipLabelFilter {
+        label: format!("{SCOPE_LABEL}={}", record.token),
+        scope_label: Some(record.token.clone()),
+        project_label: record.project_names.first().cloned(),
+        kind: "scope",
+    }];
+    for project in &record.project_names {
+        filters.push(OwnershipLabelFilter {
+            label: format!("{COMPOSE_PROJECT_LABEL}={project}"),
+            scope_label: None,
+            project_label: Some(project.clone()),
+            kind: "compose",
+        });
+        filters.push(OwnershipLabelFilter {
+            label: format!("{PROJECT_LABEL}={project}"),
+            scope_label: None,
+            project_label: Some(project.clone()),
+            kind: "project",
+        });
+    }
+    filters
+}
+
+/// `docker ps -a` so Created and exited containers are retired with running ones.
+fn container_ps_args(label: &str) -> Vec<String> {
+    vec![
+        "-a".to_owned(),
+        "--filter".to_owned(),
+        format!("label={label}"),
+        "--format".to_owned(),
+        "{{.Names}}".to_owned(),
+    ]
 }
 
 fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
@@ -669,5 +678,61 @@ fn observation_cwd(record: &ScopeRecord) -> PathBuf {
         path
     } else {
         std::env::temp_dir()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_record() -> ScopeRecord {
+        ScopeRecord {
+            schema: "effigy.runtime-scope.v1".to_owned(),
+            schema_version: 1,
+            token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            host_key: "aaaaaaaa".to_owned(),
+            checkout: "/tmp/missing-worker".to_owned(),
+            updated_unix: 1,
+            compose_kind: ScopeComposeKind::Generated,
+            profile: "effigy".to_owned(),
+            profiles: vec!["effigy".to_owned(), "jobs".to_owned()],
+            project_names: vec!["app-dev-wt-aaaaaaaaaaaa".to_owned()],
+            retain_project_names: vec![],
+            repo_owned_projects: vec![],
+            owned_volumes: vec![],
+            retain_volumes: vec![],
+            routes: vec![],
+            retain_routes: vec![],
+            loopback_identities: vec![],
+            retain_loopback_identities: vec![],
+            pending_tls_certs: vec![],
+        }
+    }
+
+    #[test]
+    fn container_listing_includes_created_and_stopped() {
+        let args = container_ps_args("com.effigy.scope=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(args[0], "-a");
+        assert!(args.contains(&"--filter".to_owned()));
+        assert!(args.iter().any(|arg| arg.starts_with("label=")));
+    }
+
+    #[test]
+    fn ownership_filters_cover_scope_compose_and_project_labels() {
+        let filters = ownership_label_filters(&sample_record());
+        let labels = filters
+            .iter()
+            .map(|filter| filter.label.as_str())
+            .collect::<Vec<_>>();
+        assert!(labels.contains(&"com.effigy.scope=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(labels.contains(&"com.docker.compose.project=app-dev-wt-aaaaaaaaaaaa"));
+        assert!(labels.contains(&"com.effigy.project=app-dev-wt-aaaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn missing_checkout_still_has_an_observation_cwd() {
+        let cwd = observation_cwd(&sample_record());
+        assert!(cwd.is_dir());
+        assert_ne!(cwd, PathBuf::from("/tmp/missing-worker"));
     }
 }

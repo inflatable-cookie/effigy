@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-09-27
+Last Updated: 2026-09-28
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -53,6 +53,20 @@ the manifest names a fixed host port. Repeated commands in one worktree reuse
 the token. Recreating a worktree at the same path creates a new token. The
 primary checkout keeps its existing project name and port behavior.
 
+`effigy container scope --json` is the policy-independent checkout identity
+query for archive callers. It resolves the selected checkout before deletion
+without loading a container declaration, starting a backend, or inspecting
+containers. Its versioned result reports the absolute checkout path, scope
+kind (`worktree`, `ephemeral-clone`, or `none`), and the full token or `null`.
+For a scoped checkout with no token yet, the query creates that generation's
+token in its private Git directory; it does not create runtime resources.
+Primary checkouts and unmarked clones return `none` and `null`. Invalid Git
+metadata is an error, not an unscoped result. Queue persists the token before
+archive and uses the same value with `container retire --scope <token> --yes`
+afterward. `container hosts --json` also exposes a scope token when a container
+policy loads, but it is a host-map query rather than this general identity
+contract.
+
 `share_runtime_identity = true` is an explicit opt-in to one Compose identity
 across worktrees. It must not arise merely from equal `project_name` values.
 Repo-owned Compose files keep their own resource rules: linked worktrees fail
@@ -77,23 +91,36 @@ declared names. `effigy container hosts` returns declared and effective names,
 origins, cookie domain and WebAuthn relying-party id. Effigy registers those
 effective names on the gateway. It does not rewrite application configuration.
 
-Owned mutable resources for that generation carry `com.effigy.scope` or the
-exact Compose project label. `effigy container retire` deletes only resources
-those proofs still attribute to the recorded token, and only on the runtime
-profile that produced the labelled observation. Same-named resources in
-another profile stay. Shared services, persistent
-and external volumes, and foreign-owned resources stay. Shared-identity
-routes and loopbacks stay even when the same worktree also has isolated
-stacks. Compose networks are part of the owned inventory. A durable record
-under `~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can
-retry; one record per generation token aggregates every container environment
-and every runtime profile in that worktree. Record writes take a lock and
-replace the file atomically; a corrupt record is an error, not an empty
-scope. Backend discovery failures, including malformed inspect or listing
-JSON, keep the record and do not report success. Success requires that no
-owned container, mutable volume, network, isolated route, port, loopback, or
-TLS certificate remains. A second retire with nothing left is success,
-including a shared-only scope whose durable record is then removed.
+Owned mutable resources for that generation carry `com.effigy.scope`,
+`com.effigy.project`, or the exact Compose project label. `effigy container
+retire` deletes only resources those proofs still attribute to the recorded
+token, and only on the runtime profile that produced the labelled
+observation. Listing uses `ps -a`, so Created and exited containers retire
+with running ones. Disposable scoped build-cache volumes, including legacy
+`efv-*` caches that still carry an ownership label, are removed; persistent
+application data is not. Same-named resources in another profile stay.
+Shared services, persistent and external volumes, and foreign-owned
+resources stay. Shared-identity routes and loopbacks stay even when the
+same worktree also has isolated stacks. Compose networks are part of the
+owned inventory. A durable record under `~/.effigy/runtime-scopes/` survives
+checkout deletion so cleanup can retry; one record per generation token
+aggregates every container environment and every runtime profile in that
+worktree. Record writes take a lock and replace the file atomically; a
+corrupt record is an error, not an empty scope. Backend discovery failures,
+including malformed inspect or listing JSON, keep the record and do not
+report success. Success requires that no owned container, mutable volume,
+network, isolated route, port, loopback, or TLS certificate remains. A
+second retire with nothing left is success, including a shared-only scope
+whose durable record is then removed.
+
+Workspace archive must invoke `effigy container retire --yes` while the
+checkout still exists. After the checkout is gone, retry with
+`effigy container retire --scope <token> --yes`. Failure is non-zero and
+leaves the durable record. `bootstrap teardown` is only for `--fresh`
+bootstrap sessions, not worker scopes. The intended Paseo hook is
+`paseo.json` `worktree.teardown`; Queue `workspace.archive` does not call
+retire itself. A consumer that still calls `bootstrap teardown`, checks
+only running containers, or returns 0 on residue needs its own change.
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
@@ -178,6 +205,24 @@ Surface-specific presentation may differ. The prep contract must not.
 
 Runtime prep must consume captured context facts and typed execution policy. It
 must not rediscover invocation cwd or handoff state after request construction.
+
+## Cold container launch readiness
+
+For Colima-backed `effigy container up`, Compose must not start until the
+runtime is usable. A running VM is not enough: both a profile-scoped
+`nerdctl info` and `buildctl debug workers` inside that profile must succeed.
+A warm profile returns after those probes. If a running profile stays
+unavailable through the bounded grace period, Effigy repairs that profile once
+and probes again; a newly started profile also waits for both probes. Failures
+identify the runtime stage and include the last probe result.
+
+After Compose up, Effigy waits before registering gateway routes until the
+runtime reports the matching project and declared service publishing each
+selected port. The same wait covers declared TCP service aliases. Stopped
+runtime rows are inspected on timeout so an exited service is named with its
+exit status. The existing project, service, published-port and host-listener
+ownership checks still gate every route claim. No route is claimed from a
+fallback port while the declared runtime binding is absent.
 
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start

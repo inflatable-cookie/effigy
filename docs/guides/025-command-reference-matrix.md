@@ -297,7 +297,11 @@ and stays on the generated-compose path.
 `effigy container cache list` inventories purge-safe isolated build caches such
 as Rust `target`, `node_modules`, `pnpm-store`, and Cargo caches. `--global`
 uses machine-level runtime inventory, including stopped project caches where the
-runtime metadata allows it.
+runtime metadata allows it. Text and JSON include reclaimable and in-use size
+totals; unknown sizes are counted instead of guessed.
+`effigy container retire` removes one scoped worker stack, including Created
+and stopped containers and disposable caches. Call it from worktree teardown,
+or retry with `--scope` after the checkout is gone.
 `effigy container volume list` inventories Effigy-managed named volumes. `--dormant`
 shows repo-scoped superseded volumes; `--global` shows machine-level volumes
 across available runtimes and `--orphans` narrows that global view to ownerless
