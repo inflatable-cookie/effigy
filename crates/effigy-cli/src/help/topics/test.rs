@@ -65,7 +65,7 @@ pub(crate) fn render_test_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         "Detection Order",
         "runners",
         &[
-            "vitest (package/config/bin markers)",
+            "vitest (package.json or config; not a transitive binary)",
             "cargo nextest run (when Cargo.toml exists and cargo-nextest is available)",
             "cargo test (Rust fallback)",
         ],

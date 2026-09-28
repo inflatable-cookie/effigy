@@ -15,7 +15,10 @@ not. In polyglot roots, detection can schedule both JavaScript and Rust suites.
 
 Per target root:
 
-1. `vitest` when package/config/bin markers are present.
+1. `vitest` when the selected package declares it in `package.json` or owns a
+   `vitest.config.*` file, or a `vite.config.*` with a `test` block. A
+   transitive `node_modules/.bin/vitest` is not package intent. When that
+   config sets `test.dir`, the detected command includes `--dir`.
 2. `cargo nextest run` when `Cargo.toml` exists and `cargo-nextest` is available.
 3. `cargo test` when `Cargo.toml` exists and `cargo-nextest` is unavailable.
 

@@ -28,7 +28,7 @@ pub(super) fn apply_builtin_test_runner_config(
     if plan.runner == effigy_tasks::testing::TestRunner::Vitest {
         if let Some(manager) = package_manager {
             let (command, manager_label) = manager.vitest_command();
-            plan.command = command.to_owned();
+            plan.command = merge_vitest_command(command, &plan.command);
             plan.evidence
                 .push(format!("package_manager.js={manager_label}"));
         }
@@ -42,4 +42,16 @@ pub(super) fn apply_builtin_test_runner_config(
         ));
     }
     plan
+}
+
+fn merge_vitest_command(manager_command: &str, detected_command: &str) -> String {
+    let Some(suffix) = detected_command.strip_prefix("vitest run") else {
+        return manager_command.to_owned();
+    };
+    let suffix = suffix.trim_start();
+    if suffix.is_empty() {
+        manager_command.to_owned()
+    } else {
+        format!("{manager_command} {suffix}")
+    }
 }
