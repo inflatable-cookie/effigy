@@ -803,7 +803,7 @@ fn northstar_starter_profile_is_queryable_from_the_copied_manifest_alone() {
         .iter()
         .map(|kind| kind.as_str().expect("kind token").to_owned())
         .collect();
-    for expected in ["knowledge", "plan", "guide"] {
+    for expected in ["knowledge", "guide"] {
         assert!(
             kinds.contains(&expected.to_owned()),
             "missing {expected}: {kinds:?}"

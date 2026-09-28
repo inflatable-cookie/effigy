@@ -19,7 +19,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container profile status` reports Colima profile sizing against Effigy's managed targets, `container profile resize` applies managed sizing in place by stopping and restarting the profile, `container profile recreate --disk <GiB> --yes` rebuilds it, and `container profile purge --yes` deletes it without restart.",
         "`container volume list` now follows normal repo scope by default; add `--global` for cross-runtime inventory, use `--dormant` for repo-scoped superseded volumes, and use `--orphans` only with `--global` for true ownerless volumes.",
         "`container hosts` prints the effective HTTP and TCP host map for this checkout. Linked worktrees use `<apex>-w<scope>.test` while the primary checkout keeps declared names.",
-        "`container retire` removes only this runtime scope's owned containers, volumes, routes and ports. Cleanup is idempotent, uses backend labels, and keeps a durable record outside the worktree so a deleted checkout can still retry.",
+        "`container retire` removes only this runtime scope's owned containers (running, stopped, or Created), disposable caches, networks, routes and ports. Cleanup is idempotent, uses backend labels, and keeps a durable record outside the worktree so a deleted checkout can still retry. Call it from `paseo.json` worktree teardown, or retry with `--scope` after the checkout is gone.",
     ],
     usage: text_lines![
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",

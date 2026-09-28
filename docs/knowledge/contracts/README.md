@@ -53,6 +53,7 @@ schema artifacts live beside these files.
 | [046-published-and-draft-task-surface-contract.md](046-published-and-draft-task-surface-contract.md) | published/draft grammar, discovery isolation, lifecycle metadata, routing, reference direction, expiry evidence, and execution compatibility. |
 | [047-bounded-doctor-and-scan-cache-contract.md](047-bounded-doctor-and-scan-cache-contract.md) | bounded doctor tiers, catalog scope, shared inventory, exact cache trust, deadlines, cancellation, and incomplete-report evidence. |
 | [048-managed-bun-install-contract.md](048-managed-bun-install-contract.md) | frozen Bun preparation, explicit text-lock refresh, and local dependency metadata cleanup. |
+| [049-heavy-validation-admission-contract.md](049-heavy-validation-admission-contract.md) | host-wide heavy task admission, fair capacity scheduling, crash recovery, complete-input joins, and per-caller validation telemetry. |
 | [release.md](release.md) | Human-gated release sequence, verification, failure recovery, and no-retag rule. |
 | [writing-style.md](writing-style.md) | Glue-light internal writing rule and reply shape. |
 

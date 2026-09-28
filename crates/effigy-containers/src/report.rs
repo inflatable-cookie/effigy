@@ -724,6 +724,7 @@ pub fn cache_list_report(
     colima_running: bool,
     volumes: &[ContainerCacheVolumeEntry],
 ) -> ContainerCommandReport {
+    let size_totals = cache_size_totals(volumes.iter().map(|volume| (false, volume.size_bytes)));
     let json = json!({
         "schema": "effigy.container.cache-list.v1",
         "schema_version": 1,
@@ -737,6 +738,9 @@ pub fn cache_list_report(
         },
         "colima_running": colima_running,
         "cache_count": volumes.len(),
+        "reclaimable_size_bytes": size_totals.reclaimable_size_bytes,
+        "unknown_size_count": size_totals.unknown_size_count,
+        "size_complete": size_totals.size_complete,
         "caches": volumes.iter().map(|volume| {
             json!({
                 "name": volume.name,
@@ -763,10 +767,14 @@ pub fn cache_list_report(
 
     let mut lines = vec![
         format!(
-            "[ok] {} purge-safe cache volume{} for `{}`",
+            "[ok] {} purge-safe cache volume{} for `{}` (reclaimable={})",
             volumes.len(),
             if volumes.len() == 1 { "" } else { "s" },
-            policy.name
+            policy.name,
+            format_size_total(
+                size_totals.reclaimable_size_bytes,
+                size_totals.unknown_size_count
+            ),
         ),
         format!("project_name: {}", policy.project_name),
         format!(
@@ -801,6 +809,11 @@ pub fn cache_list_global_report(
     scope_label: &str,
     volumes: &[ContainerCacheGlobalEntry],
 ) -> ContainerCommandReport {
+    let size_totals = cache_size_totals(
+        volumes
+            .iter()
+            .map(|volume| (volume.in_use, volume.size_bytes)),
+    );
     let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
     let mut grouped = BTreeMap::<String, Vec<&ContainerCacheGlobalEntry>>::new();
     for volume in volumes {
@@ -823,6 +836,10 @@ pub fn cache_list_global_report(
         "cache_count": volumes.len(),
         "in_use_count": in_use_count,
         "available_count": volumes.len().saturating_sub(in_use_count),
+        "reclaimable_size_bytes": size_totals.reclaimable_size_bytes,
+        "in_use_size_bytes": size_totals.in_use_size_bytes,
+        "unknown_size_count": size_totals.unknown_size_count,
+        "size_complete": size_totals.size_complete,
         "projects": grouped.iter().map(|(project, caches)| {
             json!({
                 "project_name": project,
@@ -863,14 +880,28 @@ pub fn cache_list_global_report(
         };
     }
 
-    let mut lines = vec![format!(
-        "[ok] {} purge-safe cache volume{} in {} (in_use={}, purgeable={})",
+    let mut summary = format!(
+        "[ok] {} purge-safe cache volume{} in {} (in_use={}, purgeable={}, reclaimable={}, in_use_size={})",
         volumes.len(),
         if volumes.len() == 1 { "" } else { "s" },
         scope_label,
         in_use_count,
         volumes.len().saturating_sub(in_use_count),
-    )];
+        format_bytes(size_totals.reclaimable_size_bytes),
+        format_bytes(size_totals.in_use_size_bytes),
+    );
+    if size_totals.unknown_size_count > 0 {
+        summary.push_str(&format!(
+            "; {} size{} unavailable",
+            size_totals.unknown_size_count,
+            if size_totals.unknown_size_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+    let mut lines = vec![summary];
     for (index, (project, caches)) in grouped.into_iter().enumerate() {
         if index > 0 {
             lines.push(String::new());
@@ -1463,6 +1494,48 @@ fn kind_label(kind: crate::ObservedKind) -> &'static str {
         crate::ObservedKind::Port => "port",
         crate::ObservedKind::Loopback => "loopback",
         crate::ObservedKind::TlsCert => "tls_cert",
+    }
+}
+
+struct CacheSizeTotals {
+    reclaimable_size_bytes: u64,
+    in_use_size_bytes: u64,
+    unknown_size_count: usize,
+    size_complete: bool,
+}
+
+fn cache_size_totals<I>(entries: I) -> CacheSizeTotals
+where
+    I: IntoIterator<Item = (bool, Option<u64>)>,
+{
+    let mut reclaimable_size_bytes = 0;
+    let mut in_use_size_bytes = 0;
+    let mut unknown_size_count = 0;
+    for (in_use, size_bytes) in entries {
+        match size_bytes {
+            Some(bytes) if in_use => in_use_size_bytes += bytes,
+            Some(bytes) => reclaimable_size_bytes += bytes,
+            None => unknown_size_count += 1,
+        }
+    }
+    CacheSizeTotals {
+        reclaimable_size_bytes,
+        in_use_size_bytes,
+        unknown_size_count,
+        size_complete: unknown_size_count == 0,
+    }
+}
+
+fn format_size_total(bytes: u64, unknown_size_count: usize) -> String {
+    if unknown_size_count == 0 {
+        format_bytes(bytes)
+    } else {
+        format!(
+            "{} ({} size{} unavailable)",
+            format_bytes(bytes),
+            unknown_size_count,
+            if unknown_size_count == 1 { "" } else { "s" }
+        )
     }
 }
 

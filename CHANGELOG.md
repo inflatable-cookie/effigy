@@ -91,6 +91,19 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- `effigy container cache list` (repo and `--global`) now reports reclaimable
+  size totals in text and JSON, plus in-use size on the global report.
+  Unknown per-volume sizes keep `size_complete` false instead of inflating
+  the total. Prune still uses the same cache inventory; it does not widen
+  which volumes can be removed.
+- `effigy container retire` lists Created and stopped containers with
+  running ones, discovers owned resources by `com.effigy.project` as well as
+  scope and Compose project labels, and removes disposable scoped caches
+  while retaining persistent data. This repository's `paseo.json` worktree
+  teardown now calls `effigy container retire --yes` before unlink. Archive
+  callers outside Effigy must invoke that command (or `--scope` after the
+  checkout is gone) and must not treat `bootstrap teardown` or a zero exit
+  on residue as success.
 - Container startup now waits for profile-scoped Colima containerd and
   BuildKit probes, repairs a running but incomplete profile once, and waits
   for declared Compose gateway ports to appear in the matching runtime

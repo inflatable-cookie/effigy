@@ -308,11 +308,12 @@ names. `effigy container hosts --json` is the machine-readable map for
 public URLs, origins, cookie scope, WebAuthn and test selectors, and
 reports scope kind `worktree` or `ephemeral-clone`. Effigy does not
 rewrite application configuration. `effigy container retire --yes` removes
-that scope's owned containers, networks, mutable volumes, isolated routes
-and ports using `com.effigy.scope` or the exact Compose project label, and
-only on the runtime profile that produced each observation. Shared
-services, persistent volumes, external volumes, and shared-identity routes
-stay. Repo-owned Compose volumes stay unless labelled
+that scope's owned containers (running, stopped, or Created), networks,
+disposable caches, mutable volumes, isolated routes and ports using
+`com.effigy.scope`, `com.effigy.project`, or the exact Compose project
+label, and only on the runtime profile that produced each observation.
+Shared services, persistent volumes, external volumes, and shared-identity
+routes stay. Repo-owned Compose volumes stay unless labelled
 `com.effigy.persist=false`. A record under `~/.effigy/runtime-scopes/`
 survives a deleted checkout and aggregates every environment and runtime
 profile in that scope so the same command can retry. Record writes are
@@ -322,6 +323,13 @@ reporting an empty stack. TLS certificates for isolated routes are removed
 under the route lock after an owner check; failure leaves the route and a
 pending-cert list on the record. A pending certificate whose domain now has
 a foreign owner stays.
+
+Paseo worktree archive should call retire from `paseo.json`
+`worktree.teardown` before the checkout disappears. After the directory is
+gone, retry with `effigy container retire --scope <token> --yes`. Do not
+use `bootstrap teardown` for worker scopes; that command is only for
+`--fresh` bootstrap sessions. A failed retire must stay non-zero so the
+durable record remains and archive does not swallow residue.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
@@ -623,7 +631,10 @@ Cache volumes are created by catalog-generated compose files based on mount
 target heuristics. Legacy generated compose volumes with opaque `efv-*` names
 are also classified by their mounted contents, so old Rust target volumes show
 up as `rust-target` even when the volume name does not contain `target`.
-`cache list` inventories them; `cache prune` removes them.
+`cache list` inventories them and reports reclaimable and in-use size
+totals in text and JSON. Missing per-volume sizes keep `size_complete`
+false instead of pretending the total is complete. `cache prune` removes
+the same inventory and already reports removed/skipped size totals.
 
 Cache volume names include the container workspace path, so moving a mount from
 `/var/www/html` to `/var/www/inventors` gives a fresh `node_modules` volume
