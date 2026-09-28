@@ -370,6 +370,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("postgres".to_owned()),
+                oneoff: false,
             },
             RunningComposeContainer {
                 container_name: "other-workspace-1".to_owned(),
@@ -378,6 +379,7 @@ mod tests {
                 project_name: Some("other".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("workspace".to_owned()),
+                oneoff: false,
             },
             RunningComposeContainer {
                 container_name: "demo-workspace-1".to_owned(),
@@ -386,6 +388,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("workspace".to_owned()),
+                oneoff: false,
             },
         ];
 

@@ -27,7 +27,7 @@ use crate::{
     ContainerBackendDetection, ContainerManager, ContainerManagerError, EffectiveContainerPolicy,
 };
 
-const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
+const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}";
 const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
 const CONTAINER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 const COMPOSE_PS_TIMEOUT: Duration = Duration::from_secs(30);

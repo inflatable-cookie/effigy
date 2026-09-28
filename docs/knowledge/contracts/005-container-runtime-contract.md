@@ -250,11 +250,15 @@ in that state; `nerdctl start` of the same owned container is the recovery
 that preserves volumes, including Postgres crash-recovery data.
 
 After Compose up, Effigy inspects owned projects including stopped
-containers. A container is owned when its Compose project label matches the
-selected environment or a declared shared-service project. Those stopped
-owned containers are started by name. Effigy does not recreate them, does
-not delete volumes, and does not delete systemd units, including nerdctl
-health-check timers named after container ids.
+containers. A container is a recovery candidate when its Compose project
+label matches the selected environment or a declared shared-service
+project, its compose service is currently declared in that project's
+compose files, and it is not a one-off `compose run` container
+(`com.docker.compose.oneoff=True`, or a `-{service}-run-` name).
+Undeclared orphans are not started. Matching stopped containers are
+started by name. Effigy does not recreate them, does not delete volumes,
+and does not delete systemd units, including nerdctl health-check timers
+named after container ids.
 
 Start exit 0 is not readiness. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded when

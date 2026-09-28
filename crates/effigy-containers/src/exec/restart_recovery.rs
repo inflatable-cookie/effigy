@@ -2,12 +2,14 @@
 //!
 //! `nerdctl compose up` can return success while owned containers remain
 //! stopped. Manual `nerdctl start` brings them back and may log a stale
-//! health-check timer unit. Effigy starts only containers whose Compose
-//! project label matches an owned project, does not recreate them (volumes
-//! stay), and does not delete systemd units.
+//! health-check timer unit. Effigy starts only currently declared services
+//! whose Compose project label matches an owned project, skips one-off
+//! `compose run` containers and undeclared orphans, does not recreate them
+//! (volumes stay), and does not delete systemd units.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::colima_runtime::run_runtime_command_capture_for_policy_allow_failure_with_timeout;
@@ -65,10 +67,13 @@ pub fn recover_exited_owned_compose_services_for_project(
     project_name: &str,
 ) -> Result<OwnedServiceStartRecovery, ContainerExecError> {
     let backend = resolve_compose_backend_for_repo(repo_root, policy);
+    let declared = declared_service_names(&compose_files_for_project(policy, project_name))?;
+    let declared: Vec<&str> = declared.iter().map(String::as_str).collect();
     recover_exited_owned_services_with(
         project_name,
         &policy.profile,
         backend,
+        &declared,
         || list_compose_containers_for_project_including_stopped(repo_root, policy, project_name),
         |container_name| {
             let output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
@@ -91,11 +96,12 @@ pub fn recover_exited_owned_services_with(
     project_name: &str,
     profile: &str,
     backend: ComposeBackend,
+    declared_services: &[&str],
     mut inspect: impl FnMut() -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
     mut start: impl FnMut(&str) -> Result<RuntimeStartResult, ContainerExecError>,
 ) -> Result<OwnedServiceStartRecovery, ContainerExecError> {
     let before = inspect()?;
-    let targets = owned_services_needing_start(project_name, &before);
+    let targets = owned_services_needing_start(project_name, declared_services, &before);
     if targets.is_empty() {
         return Ok(OwnedServiceStartRecovery::default());
     }
@@ -163,13 +169,81 @@ pub fn recover_exited_owned_services_with(
 
 fn owned_services_needing_start(
     project_name: &str,
+    declared_services: &[&str],
     rows: &[RunningComposeContainer],
 ) -> Vec<RunningComposeContainer> {
+    let declared: BTreeSet<&str> = declared_services.iter().copied().collect();
     rows.iter()
         .filter(|row| row.project_name.as_deref() == Some(project_name))
+        .filter(|row| {
+            row.service
+                .as_deref()
+                .is_some_and(|service| declared.contains(service))
+        })
+        .filter(|row| !is_compose_oneoff(row))
         .filter(|row| compose_status_needs_start(&row.status))
         .cloned()
         .collect()
+}
+
+fn compose_files_for_project(
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+) -> Vec<PathBuf> {
+    if project_name == policy.project_name {
+        return policy.compose_files.clone();
+    }
+    policy
+        .shared_services
+        .iter()
+        .filter(|shared| shared.project_name == project_name)
+        .map(|shared| shared.compose_file.clone())
+        .collect()
+}
+
+fn declared_service_names(
+    compose_files: &[PathBuf],
+) -> Result<BTreeSet<String>, ContainerExecError> {
+    let mut names = BTreeSet::new();
+    for compose_file in compose_files {
+        let content =
+            std::fs::read_to_string(compose_file).map_err(|error| ContainerExecError::Failure {
+                command: format!("read compose file {}", compose_file.display()),
+                code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+            })?;
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&content).map_err(|error| ContainerExecError::Failure {
+                command: format!("parse compose file {}", compose_file.display()),
+                code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+            })?;
+        let Some(services) = parsed
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        for key in services.keys() {
+            if let Some(name) = key.as_str() {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    Ok(names)
+}
+
+fn is_compose_oneoff(row: &RunningComposeContainer) -> bool {
+    if row.oneoff {
+        return true;
+    }
+    let Some(service) = row.service.as_deref() else {
+        return false;
+    };
+    let name = row.container_name.as_str();
+    name.contains(&format!("-{service}-run-")) || name.contains(&format!("_{service}_run_"))
 }
 
 fn persistent_start_failure(
@@ -350,6 +424,24 @@ mod tests {
             project_name: Some(project.to_owned()),
             working_dir: Some("/tmp/acowtancy".to_owned()),
             service: Some(service.to_owned()),
+            oneoff: false,
+        }
+    }
+
+    fn oneoff_row(
+        project: &str,
+        service: &str,
+        container: &str,
+        status: &str,
+    ) -> RunningComposeContainer {
+        RunningComposeContainer {
+            container_name: container.to_owned(),
+            status: status.to_owned(),
+            ports: Vec::new(),
+            project_name: Some(project.to_owned()),
+            working_dir: Some("/tmp/acowtancy".to_owned()),
+            service: Some(service.to_owned()),
+            oneoff: true,
         }
     }
 
@@ -383,6 +475,7 @@ mod tests {
             "acowtancy-shared-pg",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["postgres"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -428,6 +521,7 @@ mod tests {
             "acowtancy-shared-mysql",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["mysql"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -484,6 +578,7 @@ mod tests {
             "acowtancy-shared-mysql",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["mysql"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -533,6 +628,7 @@ mod tests {
             "demo-web",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["app"],
             || {
                 Ok(vec![
                     row("demo-web", "app", "demo-app-1", "Up 10 seconds"),
@@ -557,6 +653,79 @@ mod tests {
     }
 
     #[test]
+    fn declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone() {
+        let inspect_states = [
+            vec![
+                row(
+                    "acowtancy-shared-pg",
+                    "postgres",
+                    "acowtancy-postgres-1",
+                    "Exited (255) 2 minutes ago",
+                ),
+                oneoff_row(
+                    "acowtancy-shared-pg",
+                    "postgres",
+                    "acowtancy-postgres-run-deadbeef",
+                    "Exited (0) 1 second ago",
+                ),
+                row(
+                    "acowtancy-shared-pg",
+                    "legacy-redis",
+                    "acowtancy-legacy-redis-1",
+                    "Exited (255) 2 minutes ago",
+                ),
+            ],
+            vec![
+                row(
+                    "acowtancy-shared-pg",
+                    "postgres",
+                    "acowtancy-postgres-1",
+                    "Up 1 second",
+                ),
+                oneoff_row(
+                    "acowtancy-shared-pg",
+                    "postgres",
+                    "acowtancy-postgres-run-deadbeef",
+                    "Exited (0) 1 second ago",
+                ),
+                row(
+                    "acowtancy-shared-pg",
+                    "legacy-redis",
+                    "acowtancy-legacy-redis-1",
+                    "Exited (255) 2 minutes ago",
+                ),
+            ],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let recovery = recover_exited_owned_services_with(
+            "acowtancy-shared-pg",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["postgres"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                started.push(container.to_owned());
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+        )
+        .expect("declared stopped service should recover");
+
+        assert_eq!(started, vec!["acowtancy-postgres-1".to_owned()]);
+        assert_eq!(recovery.started, vec!["acowtancy-postgres-1".to_owned()]);
+        assert!(!started.iter().any(|name| name.contains("-run-")));
+        assert!(!started.iter().any(|name| name.contains("legacy-redis")));
+    }
+
+    #[test]
     fn recovery_starts_by_container_name_not_recreate() {
         let inspect_states = [
             vec![row("demo-web", "postgres", "demo-postgres-1", "Created")],
@@ -573,6 +742,7 @@ mod tests {
             "demo-web",
             "effigy",
             ComposeBackend::Docker,
+            &["postgres"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -613,6 +783,7 @@ mod tests {
             "demo-web",
             "effigy",
             ComposeBackend::Docker,
+            &["app"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -642,6 +813,7 @@ mod tests {
             "demo-web",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["app"],
             || {
                 Ok(vec![RunningComposeContainer {
                     container_name: "mystery-1".to_owned(),
@@ -650,6 +822,7 @@ mod tests {
                     project_name: None,
                     working_dir: None,
                     service: None,
+                    oneoff: false,
                 }])
             },
             |container| panic!("unlabeled container {container} is not owned"),
@@ -679,6 +852,7 @@ mod tests {
             "acowtancy-shared-pg",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["postgres"],
             || {
                 let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
                 inspect_calls += 1;
@@ -715,6 +889,7 @@ mod tests {
             "acowtancy-shared-pg",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["postgres"],
             || {
                 inspect_calls += 1;
                 if inspect_calls == 1 {
@@ -767,6 +942,7 @@ mod tests {
             "acowtancy-shared-pg",
             "effigy",
             ComposeBackend::ColimaNerdctl,
+            &["postgres"],
             || {
                 inspect_calls += 1;
                 if inspect_calls == 1 {

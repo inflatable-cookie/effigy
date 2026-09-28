@@ -141,7 +141,10 @@ Backend status:
 Effigy ownership:
 
 - inspect owned Compose projects including stopped rows
-- start only containers whose project label matches an owned project
+- start only currently declared services whose project label matches an
+  owned project; skip one-off `compose run` containers and undeclared
+  orphans
+- never rerun a one-time `compose run` command
 - bound inspect and start so a hung nerdctl command still names live status
 - treat a stale timer warning as a warning only after inspect shows the
   container running; start exit 0 is not readiness
@@ -156,6 +159,7 @@ Target compatibility cases:
 - `recoverable_exited_service_is_started_despite_stale_timer`
 - `persistent_exited_service_is_a_bounded_backend_failure`
 - `successful_start_with_stale_timer_still_exited_is_a_bounded_failure`
+- `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
 - `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
 - `start_timeout_reports_observed_exited_status`
 

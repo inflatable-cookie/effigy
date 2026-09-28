@@ -890,6 +890,7 @@ mod tests {
                 project_name: Some("demo-web-old".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             }],
         )
         .expect("mismatch");
@@ -910,6 +911,7 @@ mod tests {
                 project_name: Some("demo-web-renamed".to_owned()),
                 working_dir: Some("/tmp/demo".to_owned()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             }],
         );
 

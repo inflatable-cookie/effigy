@@ -158,7 +158,9 @@ During v0.x, MINOR bumps may include breaking changes.
   backend text, and
   `colima nerdctl --profile <profile> -- start <container>`.
   Inspect and start are bounded so a hung nerdctl command cannot hide that
-  diagnosis. `effigy container status` lists those stopped owned rows.
+  diagnosis. Recovery starts only currently declared Compose services;
+  one-off `compose run` containers and undeclared orphans stay stopped.
+  `effigy container status` lists those stopped owned rows.
 - Recursive `effigy docs check` walks skip `target/` and `node_modules/` at
   directory entry, so a parallel Cargo or package-manager build cannot fail
   the check when a generated path vanishes. Default scope is still

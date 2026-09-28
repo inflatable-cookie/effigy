@@ -364,6 +364,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: None,
                 service: Some("db".to_owned()),
+                oneoff: false,
             },
             RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),
@@ -372,6 +373,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: Some(compose_dir.display().to_string()),
                 service: Some("app".to_owned()),
+                oneoff: false,
             },
         ];
 
@@ -396,6 +398,7 @@ mod tests {
                 project_name: Some("demo".to_owned()),
                 working_dir: None,
                 service: Some("app".to_owned()),
+                oneoff: false,
             }],
         }
     }

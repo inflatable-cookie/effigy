@@ -434,8 +434,10 @@ Use this with `effigy.local.toml` for per-machine mounts.
    running but incomplete profile once
 2. bring the compose environment up
 3. inspect owned Compose projects including stopped containers and `start`
-   any that are still `Exited` or `Created`; this keeps volumes, including
-   Postgres crash-recovery data, and does not delete systemd units
+   currently declared services that are still `Exited` or `Created`; this
+   skips one-off `compose run` containers and undeclared orphans, keeps
+   volumes, including Postgres crash-recovery data, and does not delete
+   systemd units
 4. wait for declared environment readiness when present
 5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
@@ -799,8 +801,9 @@ containers. nerdctl health-check systemd timers are named after container
 ids; leftover timer units produce that warning. The warning is a nerdctl
 defect, not proof that Effigy owns those units.
 
-Fix: re-run `effigy container up`. Effigy starts only owned Exited/Created
-containers (Compose project label match), keeps volumes, and does not
+Fix: re-run `effigy container up`. Effigy starts only currently declared
+Exited/Created services (Compose project label match), skips one-off
+`compose run` containers and undeclared orphans, keeps volumes, and does not
 delete systemd units. Inspect and start are bounded; a hung nerdctl
 command still names the last observed status. Start exit 0 is not
 readiness: if the service stays stopped, the error keeps the start
