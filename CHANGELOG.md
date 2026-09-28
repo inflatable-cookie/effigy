@@ -152,6 +152,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Recursive `effigy docs check` walks skip `target/` and `node_modules/` at
+  directory entry, so a parallel Cargo or package-manager build cannot fail
+  the check when a generated path vanishes. Default scope is still
+  `README.md` plus Markdown under `docs/`. An explicit file path is still
+  checked; a missing or unreadable owned Markdown file still fails.
 - `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
   and single run-step tables using the same command and task reference forms as
   `effigy test`; empty or malformed suite runs include their manifest paths.

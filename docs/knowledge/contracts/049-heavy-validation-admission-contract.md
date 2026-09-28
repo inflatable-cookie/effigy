@@ -70,7 +70,6 @@ not implement a second scheduler.
   execution phase normally begins and are not loosened by waiting.
 - The admitted lease covers the complete heavy run and its children. Normal
   exit and cancellation release it. A cancelled waiter leaves the queue.
-  A caller joining an existing run may detach without cancelling the owner.
   Effigy never kills another caller's run to free capacity.
 - Each lease records host boot identity, owner PID and process start identity,
   plus the supervised process group. After a crash, a lease is reclaimed only
@@ -79,6 +78,14 @@ not implement a second scheduler.
   produces an actionable stale/unknown status rather than unsafe admission.
 
 ## Result identity and joins
+
+Tom ruled on 2026-09-28 to ship host-wide admission before same-input joins.
+Each current invocation takes its own lease and runs every gate. Joining stays
+disabled until a separate task proves an enforceable input boundary and exact
+result and log replay on supported platforms. This is a delivery split, not a
+weaker identity rule for future joins.
+
+The deferred joining contract is:
 
 - Concurrent same-input calls may share execution only when Effigy proves a
   complete input identity. The digest covers the resolved selector and args;
@@ -102,10 +109,10 @@ not implement a second scheduler.
 Each invocation retains `queued_at`, `admitted_at`, `started_at`, `ended_at`,
 `queue_wait_ms`, `wall_ms`, CPU user and system time, and peak RSS when the
 platform can measure it. Null means unavailable, not zero. The record also
-contains caller, repository, selector, fairness key, run ID, lease or joined
-owner ID, state, budget/reservation, exit classification, and log reference.
-CPU and wall time identify the actual owner execution; a joiner reports its
-own wait plus the owner ID, not invented duplicate CPU use.
+contains caller, repository, selector, fairness key, run ID, lease, state,
+budget/reservation, exit classification, and log reference when available.
+Future joining adds an owner ID; a joiner must report its own wait plus that
+owner ID, not invented duplicate CPU use.
 
 `effigy admission status --json` exposes live budget, queued positions, and
 leases. `effigy admission run <id> --json` returns one durable record, and
@@ -126,8 +133,12 @@ environment contents.
   recovery without killing a foreign process or oversubscribing.
 - Tests prove capacity wait and deadline remain distinct from validation
   failure; task coverage, gate order, exit code, and run timeout stay intact.
-- A complete-input fixture joins with identical logs and result. Changing an
-  untracked file, lock, config, tool version, or relevant env value prevents
-  joining. Unknown inputs prevent joining.
+- For the admission release, two concurrent calls with identical apparent
+  inputs still execute separately and retain distinct leases and results.
+  No incomplete fingerprint enables joining.
 - Queue can correlate a caller identity with a live wait and a final record
   containing separate queue wait, wall, and CPU measures.
+
+The later joining task must prove an immutable input snapshot or equivalent
+read restriction, complete process-tree log capture and replay, and the
+complete-input mutation cases above before any task may opt in.

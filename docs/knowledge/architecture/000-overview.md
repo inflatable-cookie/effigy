@@ -57,6 +57,9 @@ Use these docs intentionally:
 - [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md)
   separates fast structural diagnosis from explicit catalog-scoped deep work
   with one shared inventory, exact incremental cache facts, and deadlines
+- [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md)
+  keeps recursive docs checks on owned Markdown and skips generated `target/`
+  and `node_modules/` trees at traversal entry
 - [`contract/037`](../contracts/037-explicit-catalog-membership-contract.md)
   defines catalog membership grammar, normalization, routing stability, and
   the ambient-discovery removal boundary
