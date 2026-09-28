@@ -53,6 +53,20 @@ the manifest names a fixed host port. Repeated commands in one worktree reuse
 the token. Recreating a worktree at the same path creates a new token. The
 primary checkout keeps its existing project name and port behavior.
 
+`effigy container scope --json` is the policy-independent checkout identity
+query for archive callers. It resolves the selected checkout before deletion
+without loading a container declaration, starting a backend, or inspecting
+containers. Its versioned result reports the absolute checkout path, scope
+kind (`worktree`, `ephemeral-clone`, or `none`), and the full token or `null`.
+For a scoped checkout with no token yet, the query creates that generation's
+token in its private Git directory; it does not create runtime resources.
+Primary checkouts and unmarked clones return `none` and `null`. Invalid Git
+metadata is an error, not an unscoped result. Queue persists the token before
+archive and uses the same value with `container retire --scope <token> --yes`
+afterward. `container hosts --json` also exposes a scope token when a container
+policy loads, but it is a host-map query rather than this general identity
+contract.
+
 `share_runtime_identity = true` is an explicit opt-in to one Compose identity
 across worktrees. It must not arise merely from equal `project_name` values.
 Repo-owned Compose files keep their own resource rules: linked worktrees fail
