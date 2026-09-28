@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-09-27
+Last Updated: 2026-09-28
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -77,23 +77,36 @@ declared names. `effigy container hosts` returns declared and effective names,
 origins, cookie domain and WebAuthn relying-party id. Effigy registers those
 effective names on the gateway. It does not rewrite application configuration.
 
-Owned mutable resources for that generation carry `com.effigy.scope` or the
-exact Compose project label. `effigy container retire` deletes only resources
-those proofs still attribute to the recorded token, and only on the runtime
-profile that produced the labelled observation. Same-named resources in
-another profile stay. Shared services, persistent
-and external volumes, and foreign-owned resources stay. Shared-identity
-routes and loopbacks stay even when the same worktree also has isolated
-stacks. Compose networks are part of the owned inventory. A durable record
-under `~/.effigy/runtime-scopes/` survives checkout deletion so cleanup can
-retry; one record per generation token aggregates every container environment
-and every runtime profile in that worktree. Record writes take a lock and
-replace the file atomically; a corrupt record is an error, not an empty
-scope. Backend discovery failures, including malformed inspect or listing
-JSON, keep the record and do not report success. Success requires that no
-owned container, mutable volume, network, isolated route, port, loopback, or
-TLS certificate remains. A second retire with nothing left is success,
-including a shared-only scope whose durable record is then removed.
+Owned mutable resources for that generation carry `com.effigy.scope`,
+`com.effigy.project`, or the exact Compose project label. `effigy container
+retire` deletes only resources those proofs still attribute to the recorded
+token, and only on the runtime profile that produced the labelled
+observation. Listing uses `ps -a`, so Created and exited containers retire
+with running ones. Disposable scoped build-cache volumes, including legacy
+`efv-*` caches that still carry an ownership label, are removed; persistent
+application data is not. Same-named resources in another profile stay.
+Shared services, persistent and external volumes, and foreign-owned
+resources stay. Shared-identity routes and loopbacks stay even when the
+same worktree also has isolated stacks. Compose networks are part of the
+owned inventory. A durable record under `~/.effigy/runtime-scopes/` survives
+checkout deletion so cleanup can retry; one record per generation token
+aggregates every container environment and every runtime profile in that
+worktree. Record writes take a lock and replace the file atomically; a
+corrupt record is an error, not an empty scope. Backend discovery failures,
+including malformed inspect or listing JSON, keep the record and do not
+report success. Success requires that no owned container, mutable volume,
+network, isolated route, port, loopback, or TLS certificate remains. A
+second retire with nothing left is success, including a shared-only scope
+whose durable record is then removed.
+
+Workspace archive must invoke `effigy container retire --yes` while the
+checkout still exists. After the checkout is gone, retry with
+`effigy container retire --scope <token> --yes`. Failure is non-zero and
+leaves the durable record. `bootstrap teardown` is only for `--fresh`
+bootstrap sessions, not worker scopes. The intended Paseo hook is
+`paseo.json` `worktree.teardown`; Queue `workspace.archive` does not call
+retire itself. A consumer that still calls `bootstrap teardown`, checks
+only running containers, or returns 0 on residue needs its own change.
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
