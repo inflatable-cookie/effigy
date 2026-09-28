@@ -9,11 +9,15 @@ pub use report::{
 };
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::ManifestDocsPolicyConfig;
 use regex::Regex;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
+
+/// Cargo and package-manager output skipped at recursive docs-check entry.
+const GENERATED_BUILD_DIR_NAMES: [&str; 2] = ["target", "node_modules"];
 
 #[derive(Debug)]
 pub enum DocsPolicyError {
@@ -99,7 +103,7 @@ pub fn collect_link_check_files(repo_root: &Path, paths: &[PathBuf]) -> Vec<Path
         return paths
             .iter()
             .map(|path| resolve_repo_input(repo_root, path.clone()))
-            .filter(|path| path.is_file())
+            .filter(|path| !path.is_dir())
             .collect();
     }
 
@@ -111,14 +115,7 @@ pub fn collect_link_check_files(repo_root: &Path, paths: &[PathBuf]) -> Vec<Path
 
     let docs_dir = repo_root.join("docs");
     if docs_dir.is_dir() {
-        defaults.extend(
-            WalkDir::new(docs_dir)
-                .min_depth(1)
-                .into_iter()
-                .filter_map(Result::ok)
-                .map(|entry| entry.into_path())
-                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md")),
-        );
+        defaults.extend(walk_markdown_paths(&docs_dir));
     }
     defaults.sort();
     defaults.dedup();
@@ -495,12 +492,8 @@ pub fn collect_workflow_check_files(
     logs_dir: &Path,
     exclude_logs: bool,
 ) -> Vec<PathBuf> {
-    let mut files = WalkDir::new(dir)
-        .min_depth(1)
+    let mut files = walk_markdown_paths(dir)
         .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
         .filter(|path| !(exclude_logs && path.starts_with(logs_dir)))
         .collect::<Vec<_>>();
     files.sort();
@@ -649,12 +642,8 @@ pub fn extract_lead_verb(line: &str) -> String {
 }
 
 pub fn collect_markdown_children(dir: &Path, exclude: &[String]) -> BTreeSet<String> {
-    WalkDir::new(dir)
-        .min_depth(1)
+    walk_markdown_paths(dir)
         .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
         .filter(|path| !path_matches_any_exclude(path, dir, exclude))
         .filter_map(|path| {
             path.strip_prefix(dir)
@@ -663,6 +652,29 @@ pub fn collect_markdown_children(dir: &Path, exclude: &[String]) -> BTreeSet<Str
         })
         .filter(|path| path.as_path() != Path::new("README.md"))
         .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect()
+}
+
+fn is_generated_build_dir_name(name: &OsStr) -> bool {
+    GENERATED_BUILD_DIR_NAMES
+        .iter()
+        .any(|generated| name == OsStr::new(generated))
+}
+
+fn enter_docs_source_dir(entry: &DirEntry) -> bool {
+    entry.depth() == 0
+        || !(entry.file_type().is_dir() && is_generated_build_dir_name(entry.file_name()))
+}
+
+fn walk_markdown_paths(dir: &Path) -> Vec<PathBuf> {
+    WalkDir::new(dir)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(enter_docs_source_dir)
+        .filter_map(Result::ok)
+        .map(|entry| entry.into_path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
         .collect()
 }
 

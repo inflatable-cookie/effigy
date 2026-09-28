@@ -244,6 +244,9 @@ Common values:
 
 - docs check kinds: `links`, `json-examples`, `headings`, `paths`,
   `contains`, `forbidden`, `index`, `next-action`, `workflow-paths`
+- `docs check links` default scope: `README.md` plus `docs/**/*.md`;
+  recursive walks skip `target/` and `node_modules/` at entry and still
+  check explicit file paths ([docs-check source traversal](../knowledge/architecture/030-docs-check-source-traversal.md))
 - docs context budgets: `--max-sections` default 8, maximum 32; `--max-bytes`
   default 24000, maximum 100000; `--max-hops` default 1, maximum 3
 - scanners: `god-files`, `boundary-violations`, `dead-code`,

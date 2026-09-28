@@ -9,6 +9,7 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "docs",
     notices: &[
         "Run reusable markdown/documentation validation checks without dropping into shell scripts.",
+        "`docs check links` with no paths checks `README.md` and Markdown under `docs/`. Recursive checks skip `target/` and `node_modules/` at directory entry; explicit file paths stay in scope.",
         "`docs context --sources` routes one query across the repositories that declare `[docs_policy.sources] share = true` under the named directories, grouped per repository and never merged into one ranked list.",
         "`docs context` retrieves bounded exact documentation sections with provenance from the shared graph; it returns source evidence, never a generated summary.",
         "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
