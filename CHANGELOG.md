@@ -113,6 +113,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `effigy doctor` accepts test-suite `run` commands, managed run-step arrays,
+  and single run-step tables using the same command and task reference forms as
+  `effigy test`; empty or malformed suite runs include their manifest paths.
 - `effigy release status --check-gates` reports the configured gate verdict
   independently of the optional next-version proposal. An empty
   `[Unreleased]` section keeps `ready: false`, `next_version: null`, and the

@@ -202,6 +202,88 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
 }
 
 #[test]
+fn validate_manifest_schema_accepts_supported_test_suite_run_forms() {
+    let manifest: Value = toml::from_str(
+        r#"
+[test.suites]
+legacy = "cargo test"
+
+[test.suites.integration]
+default = false
+run = [
+  { task = "db:test:prepare" },
+  "cargo nextest run --workspace",
+]
+
+[test.suites.single]
+run = { run = "cargo test -p app" }
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected supported suite run forms to validate, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_missing_empty_and_malformed_test_suite_runs() {
+    let manifest: Value = toml::from_str(
+        r#"
+[test.suites.empty_command]
+run = "  "
+
+[test.suites.empty_array]
+run = []
+
+[test.suites.missing_run]
+default = false
+
+[test.suites.bad_step]
+run = ["printf ok", 42]
+
+[test.suites.missing_route]
+run = [{}]
+
+[test.suites.multiple_routes]
+run = [{ run = "true", task = "validate" }]
+
+[test.suites.empty_route]
+run = [{ task = "" }]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
+    let evidence = sink
+        .findings
+        .iter()
+        .map(|finding| finding.evidence.as_str())
+        .collect::<Vec<_>>();
+
+    for expected_path in [
+        "test.suites.empty_command.run",
+        "test.suites.empty_array.run",
+        "test.suites.missing_run.run",
+        "test.suites.bad_step.run[1]",
+        "test.suites.missing_route.run[0]",
+        "test.suites.multiple_routes.run[0]",
+        "test.suites.empty_route.run[0].task",
+    ] {
+        assert!(
+            evidence.iter().any(|item| item.contains(expected_path)),
+            "expected a finding for {expected_path}, got: {evidence:?}"
+        );
+    }
+}
+
+#[test]
 fn validate_manifest_schema_checks_the_docs_policy_sources_membership_block() {
     let manifest: Value = toml::from_str(
         r#"

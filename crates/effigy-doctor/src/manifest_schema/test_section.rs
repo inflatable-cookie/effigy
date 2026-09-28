@@ -67,6 +67,7 @@ fn validate_test_suites(context: &mut SchemaContext<'_, '_>, suites: &Value) {
     for (suite_name, entry_value) in suites_table {
         let suite_path = format!("test.suites.{suite_name}");
         if entry_value.is_str() {
+            validate_optional_non_empty_string_field(context, Some(entry_value), &suite_path);
             continue;
         }
         let Some(suite_table) = entry_value.as_table() else {
@@ -83,6 +84,7 @@ fn validate_test_suites(context: &mut SchemaContext<'_, '_>, suites: &Value) {
             suite_table,
             &[
                 "run",
+                "default",
                 "env",
                 "env_file",
                 "setup",
@@ -90,11 +92,12 @@ fn validate_test_suites(context: &mut SchemaContext<'_, '_>, suites: &Value) {
                 "teardown_policy",
             ],
         );
-        validate_optional_non_empty_string_field(
+        validate_optional_boolean_field(
             context,
-            suite_table.get("run"),
-            &format!("{suite_path}.run"),
+            suite_table.get("default"),
+            &format!("{suite_path}.default"),
         );
+        validate_test_suite_run(context, &suite_path, suite_table.get("run"));
         validate_optional_non_empty_string_or_table_string_values_field(
             context,
             suite_table.get("env"),
@@ -122,6 +125,144 @@ fn validate_test_suites(context: &mut SchemaContext<'_, '_>, suites: &Value) {
             suite_table.get("teardown"),
         );
     }
+}
+
+fn validate_test_suite_run(
+    context: &mut SchemaContext<'_, '_>,
+    suite_path: &str,
+    value: Option<&Value>,
+) {
+    let path = format!("{suite_path}.run");
+    let Some(value) = value else {
+        context.unsupported_value(
+            &path,
+            "missing value",
+            "expected non-empty command or run-step value",
+        );
+        return;
+    };
+
+    if value.is_str() {
+        validate_optional_non_empty_string_field(context, Some(value), &path);
+        return;
+    }
+
+    if let Some(steps) = value.as_array() {
+        if steps.is_empty() {
+            context.unsupported_value(
+                &path,
+                "empty array",
+                "expected non-empty array of strings or tables",
+            );
+            return;
+        }
+        for (index, step) in steps.iter().enumerate() {
+            validate_test_suite_run_step(context, &format!("{path}[{index}]"), step);
+        }
+        return;
+    }
+
+    if value.is_table() {
+        validate_test_suite_run_step(context, &path, value);
+        return;
+    }
+
+    context.unsupported_value(
+        &path,
+        SchemaContext::value_type(value),
+        "expected non-empty command, run-step array, or run-step table",
+    );
+}
+
+fn validate_test_suite_run_step(context: &mut SchemaContext<'_, '_>, path: &str, step: &Value) {
+    if step.is_str() {
+        validate_optional_non_empty_string_field(context, Some(step), path);
+        return;
+    }
+    let Some(step_table) = step.as_table() else {
+        context.unsupported_value(
+            path,
+            SchemaContext::value_type(step),
+            "expected non-empty string command or table with one of `run`, `task`, `draft`, or `rhai`",
+        );
+        return;
+    };
+
+    validate_allowed_keys(
+        context,
+        path,
+        step_table,
+        &[
+            "run",
+            "task",
+            "draft",
+            "rhai",
+            "env",
+            "env_file",
+            "id",
+            "depends_on",
+            "timeout_ms",
+            "retry",
+            "retry_delay_ms",
+            "fail_fast",
+        ],
+    );
+
+    let route_fields = ["run", "task", "draft", "rhai"];
+    let selected_routes = route_fields
+        .iter()
+        .filter(|field| step_table.contains_key(**field))
+        .count();
+    let has_env_directive = step_table.contains_key("env") || step_table.contains_key("env_file");
+    if selected_routes > 1 {
+        context.unsupported_value(
+            path,
+            "multiple run-step commands",
+            "expected exactly one of `run`, `task`, `draft`, or `rhai`",
+        );
+    } else if selected_routes == 0 && !has_env_directive {
+        context.unsupported_value(
+            path,
+            "missing run-step command",
+            "expected one of `run`, `task`, `draft`, or `rhai`",
+        );
+    }
+
+    for field in route_fields.into_iter().chain(["id"]) {
+        validate_optional_non_empty_string_field(
+            context,
+            step_table.get(field),
+            &format!("{path}.{field}"),
+        );
+    }
+    if let Some(depends_on) = step_table.get("depends_on") {
+        validate_optional_string_array_field(
+            context,
+            Some(depends_on),
+            &format!("{path}.depends_on"),
+            "expected array of strings",
+        );
+    }
+    for field in ["timeout_ms", "retry", "retry_delay_ms"] {
+        validate_optional_integer_field(context, step_table.get(field), &format!("{path}.{field}"));
+    }
+    validate_optional_boolean_field(
+        context,
+        step_table.get("fail_fast"),
+        &format!("{path}.fail_fast"),
+    );
+    validate_optional_non_empty_string_or_table_string_values_field(
+        context,
+        step_table.get("env"),
+        &format!("{path}.env"),
+        "expected table of string values or string profile name",
+    );
+    validate_optional_non_empty_string_or_array_field(
+        context,
+        step_table.get("env_file"),
+        &format!("{path}.env_file"),
+        "expected string or array of strings",
+    );
 }
 
 fn validate_test_suite_run_steps(
