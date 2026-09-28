@@ -1517,7 +1517,7 @@ mod tests {
         Request, Reservation, RunRecord, Store,
     };
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::{Child, Command};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -1744,6 +1744,7 @@ mod tests {
             !waiter_ready.exists(),
             "the second process must wait for the same host budget"
         );
+        thread::sleep(Duration::from_millis(150));
 
         fs::write(&release_owner, "release").expect("release owner");
         wait_for_file(&waiter_ready, &mut waiter);
@@ -1763,6 +1764,113 @@ mod tests {
         assert!(waiter_run.queue_wait_ms.unwrap_or_default() >= 100);
         assert_eq!(waiter_run.reservation.cpu_units, 1);
         assert_eq!(waiter_run.reservation.memory_mib, 64);
+    }
+
+    #[test]
+    fn identical_concurrent_invocations_get_distinct_leases_and_execute() {
+        let root = tempfile::tempdir().expect("temp root");
+        let state_dir = root.path().join("admission");
+        fs::create_dir(&state_dir).expect("create shared test coordinator");
+        #[cfg(unix)]
+        fs::set_permissions(
+            &state_dir,
+            std::os::unix::fs::PermissionsExt::from_mode(0o2770),
+        )
+        .expect("secure shared test coordinator");
+        let repository = root.path().join("same-repo");
+        fs::create_dir(&repository).expect("repository");
+        let repository_identity = fs::canonicalize(&repository)
+            .expect("canonical repository")
+            .to_string_lossy()
+            .into_owned();
+        let release = root.path().join("release-identical-invocations");
+        let exe = std::env::current_exe().expect("test executable");
+
+        let mut first = identical_invocation_process(&exe, "first", root.path(), &state_dir);
+        let mut second = identical_invocation_process(&exe, "second", root.path(), &state_dir);
+        wait_for_file(&root.path().join("started-first"), &mut first);
+        wait_for_file(&root.path().join("started-second"), &mut second);
+
+        let running: Store =
+            serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("state file"))
+                .expect("valid state");
+        let runs = running
+            .runs
+            .iter()
+            .filter(|run| run.caller == "same-caller")
+            .collect::<Vec<_>>();
+        assert_eq!(runs.len(), 2, "identical calls keep separate run records");
+        assert_ne!(runs[0].run_id, runs[1].run_id);
+        assert_ne!(runs[0].lease_id, runs[1].lease_id);
+        assert!(runs.iter().all(|run| {
+            run.repository == repository_identity && run.selector == "qa" && run.state == "running"
+        }));
+
+        fs::write(&release, "release both").expect("release invocations");
+        wait_child(first);
+        wait_child(second);
+        assert!(root.path().join("executed-first").exists());
+        assert!(root.path().join("executed-second").exists());
+
+        let finished: Store =
+            serde_json::from_slice(&fs::read(state_dir.join("state.json")).expect("state file"))
+                .expect("valid state");
+        assert_eq!(
+            finished
+                .runs
+                .iter()
+                .filter(|run| run.caller == "same-caller" && run.state == "succeeded")
+                .count(),
+            2,
+            "both identical invocations execute and finish independently"
+        );
+    }
+
+    fn identical_invocation_process(
+        exe: &Path,
+        role: &str,
+        root: &Path,
+        state_dir: &Path,
+    ) -> Child {
+        Command::new(exe)
+            .args([
+                "--exact",
+                "runner::admission::tests::identical_invocation_process_fixture",
+                "--nocapture",
+            ])
+            .env("EFFIGY_ADMISSION_TEST_ROLE", role)
+            .env("EFFIGY_ADMISSION_TEST_ROOT", root)
+            .env("EFFIGY_ADMISSION_DIR", state_dir)
+            .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
+            .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
+            .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
+            .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
+            .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "10")
+            .spawn()
+            .expect("spawn identical invocation fixture")
+    }
+
+    #[test]
+    fn identical_invocation_process_fixture() {
+        let Ok(role) = std::env::var("EFFIGY_ADMISSION_TEST_ROLE") else {
+            return;
+        };
+        let root =
+            PathBuf::from(std::env::var_os("EFFIGY_ADMISSION_TEST_ROOT").expect("fixture root"));
+        let repository = root.join("same-repo");
+        let release = root.join("release-identical-invocations");
+        let lease = acquire(Request {
+            caller: "same-caller",
+            repository: &repository,
+            selector: "qa",
+        })
+        .expect("identical invocation receives its own lease");
+        fs::write(root.join(format!("started-{role}")), "started").expect("started marker");
+        while !release.exists() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        fs::write(root.join(format!("executed-{role}")), "executed").expect("executed marker");
+        lease.finish(&Ok(String::new()));
     }
 
     #[test]
