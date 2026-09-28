@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use super::colima_runtime::{
     default_runtime_profile, detect_container_backend, repair_colima_runtime,
-    run_runtime_command_capture_for_policy, running_colima_profiles,
+    run_runtime_command_capture_for_policy, run_runtime_command_capture_for_policy_with_timeout,
+    running_colima_profiles,
 };
 use super::parse::{
     docker_failure_looks_like_colima_dns_outage,
@@ -145,6 +146,55 @@ pub fn list_running_compose_containers_for_policy(
         "runtime ps",
     )?;
 
+    Ok(
+        parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
+            .into_iter()
+            .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
+            .collect(),
+    )
+}
+
+pub fn list_running_compose_containers_for_policy_with_timeout(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    timeout: Duration,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_policy_with_timeout(
+        repo_root,
+        policy,
+        &[
+            OsString::from("ps"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps",
+        timeout,
+    )?;
+    Ok(
+        parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
+            .into_iter()
+            .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
+            .collect(),
+    )
+}
+
+pub fn list_compose_containers_for_policy_including_stopped_with_timeout(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    timeout: Duration,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_policy_with_timeout(
+        repo_root,
+        policy,
+        &[
+            OsString::from("ps"),
+            OsString::from("--all"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps --all",
+        timeout,
+    )?;
     Ok(
         parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
             .into_iter()

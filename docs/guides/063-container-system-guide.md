@@ -419,10 +419,20 @@ Use this with `effigy.local.toml` for per-machine mounts.
 
 `effigy container up` means:
 
-1. ensure the named Colima profile is running
+1. ensure the selected runtime is usable; for Colima containerd, Effigy waits
+   for profile-scoped `nerdctl info` and BuildKit workers, and can repair a
+   running but incomplete profile once
 2. bring the compose environment up
 3. wait for declared environment readiness when present
-4. either return immediately or attach, based on startup mode
+4. wait for each declared gateway service port to appear on the matching
+   Compose project before registering its route
+5. either return immediately or attach, based on startup mode
+
+These waits are bounded. A timeout names the runtime or gateway readiness
+stage; a stopped Compose service is reported with its exit status. Gateway
+registration keeps the project, service, published-port and host-listener
+ownership checks, and does not claim a route while its declared runtime
+binding is missing.
 
 Attached mode behavior:
 

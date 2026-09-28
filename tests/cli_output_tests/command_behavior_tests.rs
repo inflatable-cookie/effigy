@@ -7617,12 +7617,16 @@ if [ "${1:-}" = "start" ]; then
   printf "started\n"
   exit 0
 fi
+if [ "${1:-}" = "ssh" ]; then
+  printf "worker:containerd\n"
+  exit 0
+fi
 case "$*" in
   *"nerdctl --profile "*)
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill|run|volume)
+        up|down|ps|logs|exec|kill|run|volume|info)
           subcmd="$arg"
           break
           ;;
@@ -7631,6 +7635,9 @@ case "$*" in
     case "$subcmd" in
       up)
         printf "compose-up\n"
+        ;;
+      info)
+        printf "containerd: ready\n"
         ;;
       ps)
         printf "NAME                STATUS\napp                 running\n"

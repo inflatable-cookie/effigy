@@ -398,6 +398,106 @@ fn validates_gateway_route_against_matching_runtime_port() {
 }
 
 #[test]
+fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let delayed_rows = [
+        Vec::new(),
+        vec![
+            RunningComposeContainer {
+                container_name: "demo-web-dev-app-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some("/tmp".to_owned()),
+                service: Some("app".to_owned()),
+            },
+            RunningComposeContainer {
+                container_name: "demo-web-dev-db-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some("/tmp".to_owned()),
+                service: Some("db".to_owned()),
+            },
+        ],
+    ];
+    let mut calls = 0;
+    let rows = wait_for_gateway_service_ports_ready_with(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_millis(1),
+        |_| {
+            let rows = delayed_rows[calls.min(delayed_rows.len() - 1)].clone();
+            calls += 1;
+            Ok(rows)
+        },
+        |_| Ok(Vec::new()),
+        |_| {},
+    )
+    .expect("published service ports should eventually become ready");
+
+    assert_eq!(calls, 2);
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn gateway_readiness_reports_a_declared_service_exit() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let error = wait_for_gateway_service_ports_ready_with(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_millis(5),
+        std::time::Duration::from_millis(1),
+        |_| Ok(Vec::new()),
+        |_| {
+            Ok(vec![RunningComposeContainer {
+                container_name: "demo-web-dev-app-1".to_owned(),
+                status: "Exited (1) 2 seconds ago".to_owned(),
+                ports: Vec::new(),
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some("/tmp".to_owned()),
+                service: Some("app".to_owned()),
+            }])
+        },
+        |_| {},
+    )
+    .expect_err("an exited declared service must fail readiness");
+
+    let detail = error.to_string();
+    assert!(detail.contains("service `app`"), "got: {detail}");
+    assert!(
+        detail.contains("exited with status `Exited (1)"),
+        "got: {detail}"
+    );
+}
+
+#[test]
+fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let started = std::time::Instant::now();
+    let error = wait_for_gateway_service_ports_ready_with(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_millis(10),
+        std::time::Duration::from_millis(1),
+        |_| Ok(Vec::new()),
+        |_| Ok(Vec::new()),
+        |_| {},
+    )
+    .expect_err("missing published ports must time out");
+    let elapsed = started.elapsed();
+
+    assert!(elapsed < std::time::Duration::from_millis(250));
+    let detail = error.to_string();
+    assert!(detail.contains("timed out after 0s"), "got: {detail}");
+    assert!(detail.contains("no running container"), "got: {detail}");
+}
+
+#[test]
 fn validates_gateway_route_against_matching_runtime_service_when_declared() {
     let mut policy = test_policy();
     policy.dns_routes[0].service = Some("app".to_owned());

@@ -206,6 +206,24 @@ Surface-specific presentation may differ. The prep contract must not.
 Runtime prep must consume captured context facts and typed execution policy. It
 must not rediscover invocation cwd or handoff state after request construction.
 
+## Cold container launch readiness
+
+For Colima-backed `effigy container up`, Compose must not start until the
+runtime is usable. A running VM is not enough: both a profile-scoped
+`nerdctl info` and `buildctl debug workers` inside that profile must succeed.
+A warm profile returns after those probes. If a running profile stays
+unavailable through the bounded grace period, Effigy repairs that profile once
+and probes again; a newly started profile also waits for both probes. Failures
+identify the runtime stage and include the last probe result.
+
+After Compose up, Effigy waits before registering gateway routes until the
+runtime reports the matching project and declared service publishing each
+selected port. The same wait covers declared TCP service aliases. Stopped
+runtime rows are inspected on timeout so an exited service is named with its
+exit status. The existing project, service, published-port and host-listener
+ownership checks still gate every route claim. No route is claimed from a
+fallback port while the declared runtime binding is absent.
+
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and refresh

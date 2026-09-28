@@ -104,6 +104,12 @@ During v0.x, MINOR bumps may include breaking changes.
   callers outside Effigy must invoke that command (or `--scope` after the
   checkout is gone) and must not treat `bootstrap teardown` or a zero exit
   on residue as success.
+- Container startup now waits for profile-scoped Colima containerd and
+  BuildKit probes, repairs a running but incomplete profile once, and waits
+  for declared Compose gateway ports to appear in the matching runtime
+  project before claiming routes. Bounded failures identify the runtime stage
+  or exited service while preserving project, service, port and host-listener
+  checks.
 - `effigy init northstar` now directs planning and leads to Queue and omits
   repository plan and triage files. Effigy's own planning records moved there too.
 - Task and draft text runs send the framed CLI header to stderr so stdout is

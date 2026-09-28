@@ -1,9 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
+    list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers, list_running_compose_containers_for_policy,
-    ContainerExecError, RunningComposeContainer,
+    list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
+    RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
 use effigy_gateway::loopback::LoopbackRegistry;
@@ -17,6 +21,10 @@ use crate::runner::error::RunnerError;
 use crate::runner::gateway_command::{
     ensure_gateway_tls_cert, gateway_dir, remove_gateway_tls_cert,
 };
+
+const GATEWAY_SERVICE_PORT_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const GATEWAY_SERVICE_PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn gateway_runtime_target_error(detail: impl Into<String>) -> RunnerError {
     RunnerError::gateway_runtime_target("validation", detail)
@@ -51,8 +59,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = list_running_compose_containers_for_policy(repo_root, policy)
-        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
+    let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
@@ -64,10 +71,158 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     )?;
     routes.extend(project_alias_routes);
     routes.extend(shared_alias_routes);
-    validate_gateway_routes_against_runtime(repo_root, policy, &routes)?;
+    validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
+    validate_gateway_routes_against_host_listeners(policy, &routes)?;
     let route_table_path = gateway_route_table_path()?;
     reconcile_gateway_routes(&route_table_path, repo_root, &routes)?;
     Ok(routes)
+}
+
+fn wait_for_gateway_service_ports_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    wait_for_gateway_service_ports_ready_with(
+        repo_root,
+        policy,
+        GATEWAY_SERVICE_PORT_READY_TIMEOUT,
+        GATEWAY_SERVICE_PORT_POLL_INTERVAL,
+        |timeout| {
+            list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+                .map_err(|error| error.to_string())
+        },
+        |timeout| {
+            list_compose_containers_for_policy_including_stopped_with_timeout(
+                repo_root, policy, timeout,
+            )
+            .map_err(|error| error.to_string())
+        },
+        thread::sleep,
+    )
+}
+
+fn wait_for_gateway_service_ports_ready_with(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    timeout: Duration,
+    poll_interval: Duration,
+    mut running_rows: impl FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    mut all_rows: impl FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    mut pause: impl FnMut(Duration),
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    let deadline = Instant::now() + timeout;
+    let mut last_detail = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let rows = match running_rows(remaining) {
+            Ok(rows) => rows,
+            Err(error) => {
+                last_detail = Some(format!(
+                    "could not inspect running Compose services: {error}"
+                ));
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                pause(poll_interval.min(remaining));
+                continue;
+            }
+        };
+        match gateway_routes_readiness_detail(repo_root, policy, &rows) {
+            Ok(None) => return Ok(rows),
+            Ok(Some(detail)) => last_detail = Some(detail),
+            Err(error) => return Err(error),
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        pause(poll_interval.min(remaining));
+    }
+
+    let exited = all_rows(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
+        .ok()
+        .and_then(|rows| exited_gateway_service_detail(policy, &rows));
+    let detail = exited.or(last_detail).unwrap_or_else(|| {
+        format!(
+            "project `{}` did not publish its declared gateway service ports",
+            policy.project_name
+        )
+    });
+    Err(RunnerError::gateway_runtime_target(
+        "readiness",
+        format!(
+            "timed out after {}s waiting for declared Compose gateway services: {detail}",
+            timeout.as_secs()
+        ),
+    ))
+}
+
+fn gateway_routes_readiness_detail(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Result<Option<String>, RunnerError> {
+    let routes = resolve_gateway_routes_against_rows(repo_root, policy, rows)?;
+    if let Err(error) = validate_gateway_routes_against_rows(repo_root, policy, &routes, rows) {
+        return Ok(Some(error.to_string()));
+    }
+
+    let project_alias_routes =
+        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(rows))?;
+    for alias in &project_alias_routes {
+        if alias.tcp_target.is_none() {
+            return Ok(Some(format!(
+                "service `{}` has not published its declared TCP alias port for gateway domain `{}`",
+                alias.service.as_deref().unwrap_or("<unknown>"),
+                alias.domain
+            )));
+        }
+    }
+    Ok(None)
+}
+
+fn exited_gateway_service_detail(
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Option<String> {
+    let mut services = policy
+        .dns_routes
+        .iter()
+        .filter(|route| route.target_host.is_none())
+        .map(|route| {
+            (
+                route.service.as_deref().unwrap_or(&policy.primary_service),
+                route.domain.as_str(),
+            )
+        })
+        .chain(
+            policy
+                .service_aliases
+                .iter()
+                .map(|alias| (alias.service.as_str(), alias.domain_label.as_str())),
+        )
+        .collect::<Vec<_>>();
+    services.sort_unstable();
+    services.dedup();
+    services.into_iter().find_map(|(service, domain)| {
+        rows.iter()
+            .find(|row| {
+                row.project_name.as_deref() == Some(policy.project_name.as_str())
+                    && row.service.as_deref() == Some(service)
+                    && (row.status.to_ascii_lowercase().contains("exited")
+                        || row.status.to_ascii_lowercase().contains("dead"))
+            })
+            .map(|row| {
+                format!(
+                    "service `{service}` for gateway domain `{domain}` exited with status `{}`",
+                    row.status
+                )
+            })
+    })
 }
 
 pub(in crate::runner) fn gateway_routes_registered_for_container(
@@ -566,20 +721,6 @@ fn declared_gateway_shared_service_alias_domains(
             (!occupied.contains(domain.as_str())).then_some(domain)
         })
         .collect()
-}
-
-fn validate_gateway_routes_against_runtime(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    routes: &[RegisteredGatewayRoute],
-) -> Result<(), RunnerError> {
-    if routes.is_empty() {
-        return Ok(());
-    }
-    let rows = list_running_compose_containers_for_policy(repo_root, policy)
-        .map_err(|error| RunnerError::gateway_runtime_target("runtime rows", error.to_string()))?;
-    validate_gateway_routes_against_rows(repo_root, policy, routes, &rows)?;
-    validate_gateway_routes_against_host_listeners(policy, routes)
 }
 
 fn runtime_host_port_for_route(
