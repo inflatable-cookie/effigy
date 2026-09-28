@@ -148,9 +148,7 @@ pub(super) struct ProcessGroupRssMonitor {
 
 impl ProcessGroupRssMonitor {
     pub(super) fn start(process_group: u32) -> Option<Self> {
-        if scoped_lease_id().is_none() {
-            return None;
-        }
+        scoped_lease_id()?;
         let stop = Arc::new(AtomicBool::new(false));
         let peak = Arc::new(AtomicU64::new(0));
         let stop_thread = stop.clone();
@@ -637,7 +635,7 @@ pub(super) fn runs_json(caller: &str, offset: usize, limit: usize) -> Result<Str
             run
         })
         .collect::<Vec<_>>();
-    runs.sort_by(|left, right| right.ticket.cmp(&left.ticket));
+    runs.sort_by_key(|run| std::cmp::Reverse(run.ticket));
     let total = runs.len();
     let bounded_limit = limit.clamp(1, 100);
     let selected = runs
@@ -1290,7 +1288,7 @@ fn physical_memory_bytes() -> Option<u64> {
             .lines()
             .find(|line| line.starts_with("MemTotal:"))?;
         let kib = line.split_whitespace().nth(1)?.parse::<u64>().ok()?;
-        return Some(kib * 1024);
+        Some(kib * 1024)
     }
     #[cfg(target_os = "macos")]
     {
@@ -1298,10 +1296,10 @@ fn physical_memory_bytes() -> Option<u64> {
             .args(["-n", "hw.memsize"])
             .output()
             .ok()?;
-        return String::from_utf8_lossy(&output.stdout)
+        String::from_utf8_lossy(&output.stdout)
             .trim()
             .parse::<u64>()
-            .ok();
+            .ok()
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -1316,9 +1314,9 @@ fn boot_identity() -> Option<String> {
 fn read_boot_identity() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        return fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        fs::read_to_string("/proc/sys/kernel/random/boot_id")
             .ok()
-            .map(|value| value.trim().to_owned());
+            .map(|value| value.trim().to_owned())
     }
     #[cfg(target_os = "macos")]
     {
@@ -1326,7 +1324,7 @@ fn read_boot_identity() -> Option<String> {
             .args(["-n", "kern.boottime"])
             .output()
             .ok()?;
-        return Some(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -1339,10 +1337,10 @@ fn process_start_identity(pid: u32) -> Option<String> {
     {
         let raw = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         let close = raw.rfind(')')?;
-        return raw[close + 1..]
+        raw[close + 1..]
             .split_whitespace()
             .nth(19)
-            .map(str::to_owned);
+            .map(str::to_owned)
     }
     #[cfg(target_os = "macos")]
     {
@@ -1350,10 +1348,10 @@ fn process_start_identity(pid: u32) -> Option<String> {
             .args(["-o", "lstart=", "-p", &pid.to_string()])
             .output()
             .ok()?;
-        return output
+        output
             .status
             .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -1372,7 +1370,7 @@ fn child_cpu_snapshot() -> Option<(u128, u128)> {
         let user = (usage.ru_utime.tv_sec as u128) * 1000 + (usage.ru_utime.tv_usec as u128) / 1000;
         let system =
             (usage.ru_stime.tv_sec as u128) * 1000 + (usage.ru_stime.tv_usec as u128) / 1000;
-        return Some((user, system));
+        Some((user, system))
     }
     #[cfg(not(unix))]
     {
@@ -1415,7 +1413,7 @@ fn process_group_rss_bytes(process_group: i32) -> Option<u64> {
                 total_pages = total_pages.saturating_add(pages as u64);
             }
         }
-        return Some(total_pages.saturating_mul(page_size as u64));
+        Some(total_pages.saturating_mul(page_size as u64))
     }
     #[cfg(target_os = "macos")]
     {
@@ -1435,7 +1433,7 @@ fn process_group_rss_bytes(process_group: i32) -> Option<u64> {
                 (group == process_group).then_some(rss)
             })
             .sum::<u64>();
-        return Some(kib.saturating_mul(1024));
+        Some(kib.saturating_mul(1024))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
