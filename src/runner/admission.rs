@@ -1038,12 +1038,12 @@ fn schedule(store: &mut Store) {
                 repo_heads.push(run.fairness_key.clone());
             }
         }
-        if !store.scheduler_after.is_empty() {
-            let split = repo_heads
-                .iter()
-                .position(|key| key > &store.scheduler_after)
-                .unwrap_or(0);
-            repo_heads.rotate_left(split);
+        if let Some(last_served) = repo_heads
+            .iter()
+            .position(|key| key == &store.scheduler_after)
+        {
+            let next = (last_served + 1) % repo_heads.len();
+            repo_heads.rotate_left(next);
         }
         let active_cpu: u32 = store
             .runs
@@ -1958,16 +1958,16 @@ mod tests {
 
         schedule(&mut store);
 
-        assert_eq!(state(&store, "b-1"), "running");
+        assert_eq!(state(&store, "b-1"), "waiting_for_capacity");
         assert_eq!(state(&store, "a-2"), "waiting_for_capacity");
-        assert_eq!(state(&store, "c-1"), "waiting_for_capacity");
+        assert_eq!(state(&store, "c-1"), "running");
         assert_eq!(
             store
                 .runs
                 .iter()
                 .find(|run| run.run_id == "a-2")
                 .and_then(|run| run.position),
-            Some(1)
+            Some(2)
         );
 
         store.budget.cpu_units = 4;
@@ -1976,6 +1976,47 @@ mod tests {
         assert_eq!(state(&store, "a-2"), "running");
         assert_eq!(state(&store, "c-1"), "running");
         assert_eq!(store.scheduler_after, "repo-a");
+    }
+
+    #[test]
+    fn scheduler_rotates_after_last_served_repository_without_sorting_fairness_keys() {
+        let mut store = store(Budget {
+            cpu_units: 1,
+            memory_mib: 100,
+        });
+        store
+            .runs
+            .push(run("z1", "zzz-repo", 1, "waiting_for_capacity", 1, 50));
+        store
+            .runs
+            .push(run("a1", "aaa-repo", 2, "waiting_for_capacity", 1, 50));
+        store
+            .runs
+            .push(run("z2", "zzz-repo", 3, "waiting_for_capacity", 1, 50));
+
+        schedule(&mut store);
+        assert_eq!(state(&store, "z1"), "running");
+        assert_eq!(state(&store, "a1"), "waiting_for_capacity");
+        assert_eq!(state(&store, "z2"), "waiting_for_capacity");
+
+        store
+            .runs
+            .iter_mut()
+            .find(|run| run.run_id == "z1")
+            .expect("first zzz run exists")
+            .state = "succeeded".to_owned();
+        schedule(&mut store);
+        assert_eq!(state(&store, "a1"), "running");
+        assert_eq!(state(&store, "z2"), "waiting_for_capacity");
+
+        store
+            .runs
+            .iter_mut()
+            .find(|run| run.run_id == "a1")
+            .expect("aaa run exists")
+            .state = "succeeded".to_owned();
+        schedule(&mut store);
+        assert_eq!(state(&store, "z2"), "running");
     }
 
     #[test]
