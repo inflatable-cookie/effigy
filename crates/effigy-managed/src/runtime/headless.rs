@@ -107,16 +107,16 @@ pub fn run_managed_task_headless(
         .map(|process| process.name.clone())
         .collect::<HashSet<_>>();
 
-    let loop_result = supervise_headless(
-        &supervisor,
-        &state_path,
-        &mut state,
-        &mut log_files,
-        &shutdown_on_exit,
-        &secret_values,
-        &shutdown_requested,
-        &stop_path,
-    );
+    let loop_result = supervise_headless(HeadlessSupervisionContext {
+        supervisor: &supervisor,
+        state_path: &state_path,
+        state: &mut state,
+        logs: &mut log_files,
+        shutdown_on_exit: &shutdown_on_exit,
+        secret_values: &secret_values,
+        shutdown_requested: &shutdown_requested,
+        stop_path: &stop_path,
+    });
     signal_handle.close();
     let _ = signal_thread.join();
     supervisor.terminate_all_graceful(SHUTDOWN_GRACE);
@@ -238,16 +238,30 @@ pub fn managed_headless_stop(
     ))
 }
 
+struct HeadlessSupervisionContext<'a> {
+    supervisor: &'a ProcessSupervisor,
+    state_path: &'a Path,
+    state: &'a mut HeadlessSessionState,
+    logs: &'a mut HashMap<String, File>,
+    shutdown_on_exit: &'a HashSet<String>,
+    secret_values: &'a [String],
+    shutdown_requested: &'a AtomicBool,
+    stop_path: &'a Path,
+}
+
 fn supervise_headless(
-    supervisor: &ProcessSupervisor,
-    state_path: &Path,
-    state: &mut HeadlessSessionState,
-    logs: &mut HashMap<String, File>,
-    shutdown_on_exit: &HashSet<String>,
-    secret_values: &[String],
-    shutdown_requested: &AtomicBool,
-    stop_path: &Path,
+    context: HeadlessSupervisionContext<'_>,
 ) -> Result<HashSet<String>, ManagedError> {
+    let HeadlessSupervisionContext {
+        supervisor,
+        state_path,
+        state,
+        logs,
+        shutdown_on_exit,
+        secret_values,
+        shutdown_requested,
+        stop_path,
+    } = context;
     let mut exited = HashSet::new();
     let mut non_zero = HashSet::new();
     let mut redactors = HashMap::new();
