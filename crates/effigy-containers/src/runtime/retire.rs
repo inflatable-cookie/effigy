@@ -453,6 +453,111 @@ mod tests {
         assert_eq!(plan.mismatch.len(), 1);
     }
 
+    fn container(name: &str, token: &str, profile: &str) -> ObservedResource {
+        ObservedResource {
+            kind: ObservedKind::Container,
+            name: name.to_owned(),
+            scope_label: Some(token.to_owned()),
+            project_label: Some("app-dev-wt-aaaaaaaaaaaa".to_owned()),
+            persist: false,
+            external: false,
+            profile: Some(profile.to_owned()),
+        }
+    }
+
+    #[test]
+    fn deletes_created_stopped_and_running_owned_containers() {
+        let token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let plan = plan_retirement(
+            &record(),
+            &[
+                container("app-dev-wt-aaaaaaaaaaaa-web-1", token, "effigy"),
+                container("app-dev-wt-aaaaaaaaaaaa-db-1", token, "effigy"),
+                container("app-dev-wt-aaaaaaaaaaaa-created-1", token, "effigy"),
+            ],
+        );
+        assert_eq!(plan.delete.len(), 3);
+        assert!(plan.retain.is_empty());
+    }
+
+    #[test]
+    fn deletes_disposable_scoped_caches_and_retains_persistent_data() {
+        let token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let project = "app-dev-wt-aaaaaaaaaaaa";
+        let plan = plan_retirement(
+            &record(),
+            &[
+                volume(
+                    "app-dev-wt-aaaaaaaaaaaa-target",
+                    Some(token),
+                    Some(project),
+                    false,
+                    false,
+                ),
+                volume(
+                    "efv-e2523d125410efb8",
+                    Some(token),
+                    Some(project),
+                    false,
+                    false,
+                ),
+                volume(
+                    "app-dev-wt-aaaaaaaaaaaa-db-data",
+                    Some(token),
+                    Some(project),
+                    true,
+                    false,
+                ),
+            ],
+        );
+        assert_eq!(
+            plan.delete
+                .iter()
+                .map(|resource| resource.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["app-dev-wt-aaaaaaaaaaaa-target", "efv-e2523d125410efb8"]
+        );
+        assert_eq!(plan.retain.len(), 1);
+        assert_eq!(plan.retain[0].name, "app-dev-wt-aaaaaaaaaaaa-db-data");
+    }
+
+    #[test]
+    fn retains_live_sibling_containers_and_volumes() {
+        let plan = plan_retirement(
+            &record(),
+            &[
+                ObservedResource {
+                    kind: ObservedKind::Container,
+                    name: "shared-redis-1".to_owned(),
+                    scope_label: None,
+                    project_label: Some("shared-redis".to_owned()),
+                    persist: false,
+                    external: false,
+                    profile: Some("effigy".to_owned()),
+                },
+                volume("shared-redis-data", None, Some("shared-redis"), true, false),
+                volume(
+                    "app-dev-wt-aaaaaaaaaaaa-target",
+                    Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                    Some("app-dev-wt-aaaaaaaaaaaa"),
+                    false,
+                    false,
+                ),
+            ],
+        );
+        assert_eq!(plan.delete.len(), 1);
+        assert_eq!(plan.delete[0].name, "app-dev-wt-aaaaaaaaaaaa-target");
+        assert_eq!(plan.retain.len(), 2);
+    }
+
+    #[test]
+    fn repeated_retire_after_empty_observation_is_success() {
+        let remaining = remaining_after(&record(), &[]);
+        assert!(remaining.is_empty());
+        let again = remaining_after(&record(), &[]);
+        assert!(again.is_empty());
+    }
+
     #[test]
     fn same_named_owned_resources_in_different_profiles_remain_independently() {
         let mut left = volume(
