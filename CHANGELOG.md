@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Heavy validation tasks share a measured host-wide CPU and memory admission
+  budget with repository round-robin scheduling, bounded capacity waits, stale
+  owner recovery, caller-linked run telemetry, and `effigy admission` queries.
+  Configure per-invocation `EFFIGY_CALLER` identity and reservation values;
+  standard task commands receive the reserved CPU units as `CARGO_BUILD_JOBS`.
 - `effigy release prepare` can satisfy a gate marked
   `reuse-hosted-evidence = true` with a successful GitHub Actions run for this
   repository's exact `HEAD` SHA, verified through authenticated `gh`. Unlisted

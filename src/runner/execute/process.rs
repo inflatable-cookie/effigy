@@ -20,6 +20,17 @@ pub(super) fn build_shell_process(
             process.env(key, secret.expose());
         }
     }
+    if let Some(lease_id) = super::super::admission::scoped_lease_id() {
+        process.env("EFFIGY_ADMISSION_LEASE_ID", lease_id);
+        if let Some(cpu_units) = super::super::admission::scoped_cpu_units() {
+            process.env("CARGO_BUILD_JOBS", cpu_units.to_string());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            process.process_group(0);
+        }
+    }
     process
 }
 

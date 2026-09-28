@@ -67,7 +67,7 @@ Primary ownership is fixed as follows:
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
 | `extend` | `skill`, `rhai` |
-| `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
+| `admin` | `admission`, `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 
 These names are help topics, not route prefixes. Canonical detail uses
 `effigy <command> --help`; `effigy help <command>` remains available where

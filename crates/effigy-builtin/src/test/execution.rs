@@ -164,17 +164,33 @@ pub(super) fn run_builtin_test_targets_parallel(
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
-                        let status = if capture_output {
+                        if effigy_process::process_group_observer_active() {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::CommandExt;
+                                process.process_group(0);
+                            }
+                        }
+                        let child =
                             process
-                                .output()
+                                .spawn()
+                                .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                    command: execution_command.clone(),
+                                    error,
+                                })?;
+                        effigy_process::notify_process_group_started(child.id());
+                        let status = if capture_output {
+                            child
+                                .wait_with_output()
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,
                                 })?
                                 .status
                         } else {
-                            process
-                                .status()
+                            let mut child = child;
+                            child
+                                .wait()
                                 .map_err(|error| BuiltinError::TaskCommandLaunch {
                                     command: execution_command.clone(),
                                     error,

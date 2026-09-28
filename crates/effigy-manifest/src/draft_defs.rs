@@ -168,6 +168,7 @@ impl ManifestDraftTable {
             task: ManifestTask {
                 run: self.run,
                 run_in: self.run_in,
+                admission: None,
                 system: self.system,
                 workspace: self.workspace,
                 stay_in_shell: self.stay_in_shell,

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
 use super::super::drafts_command::run_drafts;
+use super::super::run_admission;
 use super::super::run_artifact;
 use super::super::run_bundle;
 use super::super::run_changelog;
@@ -101,6 +102,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
         }
         Command::Tasks(args) => run_tasks(args),
+        Command::Admission(args) => run_admission(args),
         Command::Drafts(args) => run_drafts(args),
         Command::Draft(args) => {
             let runtime_context = crate::runner::command_context::active_runtime_context()

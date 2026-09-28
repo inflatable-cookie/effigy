@@ -8,6 +8,7 @@ use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 
 const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::General,
+    HelpTopic::Admission,
     HelpTopic::Bundle,
     HelpTopic::Changelog,
     HelpTopic::Deploy,
@@ -42,6 +43,7 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
 ];
 
 const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
+    ("admission", HelpTopic::Admission),
     ("version", HelpTopic::General),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),
@@ -135,6 +137,7 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     (
         HelpGroup::Admin,
         &[
+            "effigy admission",
             "effigy config",
             "effigy deps",
             "effigy secrets",

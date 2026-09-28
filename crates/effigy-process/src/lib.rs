@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 mod diagnostics;
@@ -17,6 +17,42 @@ mod supervisor_shutdown;
 use diagnostics::collect_exit_diagnostics;
 pub use signal::{process_is_descendant_of, process_is_running, terminate_process_tree};
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
+
+pub type ProcessGroupObserver = Arc<dyn Fn(u32) + Send + Sync + 'static>;
+
+static PROCESS_GROUP_OBSERVER: OnceLock<Mutex<Option<ProcessGroupObserver>>> = OnceLock::new();
+
+pub fn replace_process_group_observer(
+    observer: Option<ProcessGroupObserver>,
+) -> Option<ProcessGroupObserver> {
+    let mut active = PROCESS_GROUP_OBSERVER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::mem::replace(&mut *active, observer)
+}
+
+pub fn process_group_observer_active() -> bool {
+    PROCESS_GROUP_OBSERVER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+}
+
+pub fn notify_process_group_started(pid: u32) -> bool {
+    let observer = PROCESS_GROUP_OBSERVER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(observer) = observer {
+        observer(pid);
+        true
+    } else {
+        false
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
@@ -119,6 +155,8 @@ impl ProcessSupervisor {
 
         for spec in processes {
             let child = lifecycle::spawn_process_instance(&spec, &events_tx, true)?;
+            let child_pid = crate::locks::lock_tolerant(&child).id();
+            notify_process_group_started(child_pid);
             specs_map.insert(spec.name.clone(), spec.clone());
             process_map.insert(spec.name.clone(), child);
         }

@@ -17,6 +17,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_general,
     },
     HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Admission),
+        render: render_admission,
+    },
+    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Bundle),
         render: render_bundle,
     },
@@ -175,6 +179,10 @@ fn render_general(
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
     topics::render_general_help(renderer, deferred_builtins)
+}
+
+fn render_admission(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_admission_help(renderer)
 }
 
 fn render_bundle(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

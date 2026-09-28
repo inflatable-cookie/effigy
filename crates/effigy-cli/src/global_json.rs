@@ -176,6 +176,7 @@ pub fn apply_global_cli_options(
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
             }
+            Command::Admission(_) => return Err(unknown_argument("--repo")),
             Command::Tasks(args) => {
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
@@ -296,6 +297,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
             args.output_json = true;
         }
         Command::Doctor(args) => args.output_json = true,
+        Command::Admission(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
         Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
@@ -339,6 +341,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Drafts(args) => args.output_json,
         Command::Draft(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
+        Command::Admission(args) => args.output_json,
         Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalScriptRun(_) => false,

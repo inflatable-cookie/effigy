@@ -189,6 +189,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Release(_)
         | Command::Doctor(_)
         | Command::Tasks(_)
+        | Command::Admission(_)
         | Command::Drafts(_)
         | Command::Draft(_)
         | Command::InternalGateway(_)
