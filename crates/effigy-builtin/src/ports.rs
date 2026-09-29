@@ -228,6 +228,48 @@ pub trait BuiltinRuntimePorts {
         catalogs: &[LoadedCatalog],
         resolved_root: &Path,
     ) -> BTreeSet<String>;
+
+    // Container-routed test suite execution.
+    //
+    // Builtin test targets resolve their owning catalog's declared runtime
+    // target during planning (`BuiltinTargetRuntime`). When that target is a
+    // named container, these ports reach the runner's authoritative container
+    // machinery: activation before execution and a faithful container exec
+    // command line for each suite.
+
+    /// Ensure the target's declared container is running and return the
+    /// resolved suite target. `Ok(None)` means the runner treated the target
+    /// as host-scoped (for example inside a container handoff).
+    fn prepare_container_suite_target(
+        &self,
+        target_root: &Path,
+        container: &str,
+    ) -> Result<BuiltinContainerSuiteTarget, BuiltinError> {
+        let _ = (target_root, container);
+        Err(BuiltinError::task_invocation(
+            "container suite execution is not available in this runtime",
+        ))
+    }
+
+    /// Render one suite's lifecycle command as a container exec command line
+    /// against the resolved suite target.
+    fn render_container_suite_command(
+        &self,
+        target: &BuiltinContainerSuiteTarget,
+        suite_command: &str,
+    ) -> Result<String, BuiltinError> {
+        let _ = target;
+        Ok(suite_command.to_owned())
+    }
+}
+
+/// A resolved, activated container suite target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltinContainerSuiteTarget {
+    pub container: String,
+    pub service: String,
+    /// The catalog root that owns the container policy (compose project).
+    pub root: PathBuf,
 }
 
 #[cfg(test)]

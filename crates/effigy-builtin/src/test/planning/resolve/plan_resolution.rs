@@ -48,6 +48,7 @@ pub(super) fn resolve_target_test_plans(
                          teardown_steps,
                          teardown_policy,
                          is_default,
+                         nested_invocation,
                      }| BuiltinResolvedPlan {
                         suite: suite.clone(),
                         command,
@@ -61,6 +62,7 @@ pub(super) fn resolve_target_test_plans(
                         teardown_policy,
                         is_default,
                         evidence: vec![format!("test.suites.{suite}")],
+                        nested_invocation,
                     },
                 )
                 .collect::<Vec<BuiltinResolvedPlan>>(),
@@ -87,6 +89,7 @@ pub(super) fn resolve_target_test_plans(
                 teardown_policy: effigy_manifest::ManifestTestSuiteTeardownPolicy::OnSuccess,
                 is_default: true,
                 evidence: plan.evidence,
+                nested_invocation: false,
             })
             .collect::<Vec<BuiltinResolvedPlan>>(),
         "auto-detected".to_owned(),

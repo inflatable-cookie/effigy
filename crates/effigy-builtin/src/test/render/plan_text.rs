@@ -10,6 +10,15 @@ use effigy_ui::{render_utf8, text_renderer, Renderer};
 
 use super::plan_projection::project_target_plan;
 
+fn render_target_runtime_label(runtime: &crate::test::planning::BuiltinTargetRuntime) -> String {
+    use crate::test::planning::BuiltinTargetRuntime;
+    match runtime {
+        BuiltinTargetRuntime::Host => "host".to_owned(),
+        BuiltinTargetRuntime::Container { container } => format!("container `{container}`"),
+        BuiltinTargetRuntime::Unusable { reason } => format!("unusable ({reason})"),
+    }
+}
+
 pub(super) fn render_builtin_test_plan_text(
     task: &TaskInvocation,
     root: &Path,
@@ -72,6 +81,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("default-suites", default_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
                 KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
+                KeyValue::new("runtime", render_target_runtime_label(&target.runtime)),
             ])?;
             renderer.text("")?;
             renderer.bullet_list("command", &projection.commands)?;
@@ -105,6 +115,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("default-suites", default_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
                 KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
+                KeyValue::new("runtime", render_target_runtime_label(&target.runtime)),
                 KeyValue::new("command", "<none>".to_owned()),
             ])?;
             renderer.text("")?;

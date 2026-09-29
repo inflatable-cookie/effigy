@@ -16,8 +16,8 @@ mod resolve;
 mod runnable;
 
 pub(super) use model::{
-    BuiltinResolvedPlan, BuiltinTestCliFlags, BuiltinTestRunnable, BuiltinTestTarget,
-    BuiltinTestTargetSet,
+    BuiltinResolvedPlan, BuiltinTargetRuntime, BuiltinTestCliFlags, BuiltinTestRunnable,
+    BuiltinTestTarget, BuiltinTestTargetSet,
 };
 
 pub(super) fn extract_builtin_test_flags(

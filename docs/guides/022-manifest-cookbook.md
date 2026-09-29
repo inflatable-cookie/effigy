@@ -396,6 +396,67 @@ run = "bun run dev"
 `[task_defaults]` only applies to tasks defined in that manifest file. Task-level
 `run_in` still wins when both are present.
 
+### Container Runtime Targets Across Catalogs
+
+A catalog declares a container runtime target with a `[systems]` binding: the
+default system resolves a workspace, and the workspace names a container from
+`[containers]`:
+
+```toml
+[systems]
+default = "ranch"
+
+[systems.ranch]
+default_workspace = "main"
+
+[systems.ranch.workspaces.main]
+container = "cattle"
+
+[containers]
+default = "cattle"
+
+[containers.cattle]
+driver = "colima"
+compose_file = "docker-compose.yml"
+project_name = "child-cattle"
+primary_service = "cattle"
+working_dir = "/workspace"
+
+[tasks.check]
+run = "cargo test"
+run_in = "container"
+```
+
+The catalog that owns a task owns its routing. When a nested member declares
+its own `[systems]` table, `effigy <member>/<task>` runs on that member's
+declared container — its compose project, activation, and exec — even when it
+is invoked from the repository root and the root declares a different runtime
+target. The root workspace never replaces a selected catalog's declared
+target.
+
+A catalog that declares no `[systems]` table inherits the invocation-scope
+(ancestor) runtime. A `run_in = "container"` task with no resolvable target
+fails before execution instead of silently running on the host.
+
+Inspect the resolved target without executing:
+
+```bash
+effigy cattle-grid/check --plan
+```
+
+The plan prints the `runtime` target (`host`, `container`, or
+`inline-container` with the container, primary service, and owning root), and
+`effigy --json <selector> --plan` reports it under `result.runtime`.
+
+Builtin test suites follow the same ownership rule. `effigy test` resolves
+each target catalog's declared runtime target with the same binding grammar:
+suites of a catalog with a named-container target (and their setup/teardown
+steps) execute inside that container, while suites of a host-scoped catalog
+stay on the host. Suites whose run carries nested effigy re-entries (`task:`
+references) keep their own routing and are never wrapped into the target
+container a second time. `effigy test --plan` reports each target's resolved
+`runtime`.
+
 ### Validation and Run Arrays
 
 ```toml

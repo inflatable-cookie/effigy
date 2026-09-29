@@ -5,6 +5,8 @@ use serde_json::json;
 
 use effigy_ui::encode_json;
 
+pub(in crate::runner) use payload::PlannedRuntimeTarget;
+
 use crate::runner::error::RunnerError;
 use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;
@@ -52,13 +54,16 @@ pub(super) fn render_task_plan(
     cwd: &std::path::Path,
     command: &str,
     selection: &TaskSelection<'_>,
+    runtime: Option<&payload::PlannedRuntimeTarget>,
 ) -> Result<String, RunnerError> {
     if output_json {
         return encode_task_run_json(&payload::task_plan_payload(
-            selector, cwd, command, selection,
+            selector, cwd, command, selection, runtime,
         ));
     }
-    Ok(render_task_plan_text(selector, cwd, command, selection))
+    Ok(render_task_plan_text(
+        selector, cwd, command, selection, runtime,
+    ))
 }
 
 fn render_task_plan_text(
@@ -66,6 +71,7 @@ fn render_task_plan_text(
     cwd: &std::path::Path,
     command: &str,
     selection: &TaskSelection<'_>,
+    runtime: Option<&payload::PlannedRuntimeTarget>,
 ) -> String {
     let rendered_selector = selector
         .prefix
@@ -81,8 +87,22 @@ fn render_task_plan_text(
             selection.catalog.catalog_root.display()
         )
     };
+    let runtime_line = match runtime {
+        Some(payload::PlannedRuntimeTarget::Container {
+            container,
+            service,
+            root,
+        }) => format!(
+            "Runtime: container `{container}` (service `{service}`, root {})\n",
+            root.display()
+        ),
+        Some(payload::PlannedRuntimeTarget::InlineContainer) => {
+            "Runtime: inline workspace container\n".to_owned()
+        }
+        Some(payload::PlannedRuntimeTarget::Host) | None => String::new(),
+    };
     format!(
-        "Selector: {rendered_selector}\nTask: {}\nCatalog: {catalog}\nCommand: {command}\nCwd: {}\n",
+        "Selector: {rendered_selector}\nTask: {}\nCatalog: {catalog}\nCommand: {command}\nCwd: {}\n{runtime_line}",
         selector.task_name,
         cwd.display()
     )

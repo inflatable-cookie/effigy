@@ -108,6 +108,17 @@ fn resolve_routing_containers(
     Ok((target_container, target_primary_service))
 }
 
+/// Resolve the (container, primary service) pair a named-container selection
+/// routes to, mirroring `resolve_routing_containers` for non-executing plan
+/// surfaces. Returns `None` when no container target applies.
+pub(in crate::runner) fn planned_container_target(
+    containers: Option<&ManifestContainersConfig>,
+    requested_container: Option<&str>,
+) -> Result<Option<(String, String)>, RunnerError> {
+    let (container, service) = resolve_routing_containers(containers, requested_container)?;
+    Ok(container.zip(service))
+}
+
 fn primary_service_for(
     containers: &ManifestContainersConfig,
     container_name: &str,

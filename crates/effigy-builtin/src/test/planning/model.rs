@@ -17,6 +17,30 @@ pub(crate) struct BuiltinResolvedPlan {
     pub(crate) teardown_policy: ManifestTestSuiteTeardownPolicy,
     pub(crate) is_default: bool,
     pub(crate) evidence: Vec<String>,
+    /// True when the rendered suite carries a nested effigy re-entry
+    /// (`task:`/`draft:` reference). Those re-entries own their routing; the
+    /// owning catalog's container target must not wrap them again.
+    pub(crate) nested_invocation: bool,
+}
+
+/// The owning catalog's declared runtime target for a builtin test target.
+///
+/// Resolved with the same execution-binding grammar tasks use
+/// (`[systems]` default → workspace → named container). A target without a
+/// declared named-container runtime stays on the host; a declared but
+/// unusable target is surfaced instead of silently running on the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BuiltinTargetRuntime {
+    Host,
+    Container {
+        container: String,
+    },
+    /// The catalog declares a runtime target builtin test suites cannot
+    /// execute (inline workspace container, container-less workspace, or a
+    /// malformed binding). Execution fails instead of running on the host.
+    Unusable {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +52,7 @@ pub(crate) struct BuiltinTestTarget {
     pub(crate) suite_source: String,
     pub(crate) cargo_env: BTreeMap<String, String>,
     pub(crate) cargo_env_match: ManifestCargoEnvMatchMode,
+    pub(crate) runtime: BuiltinTargetRuntime,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +76,8 @@ pub(crate) struct BuiltinTestRunnable {
     pub(crate) teardown_command: Option<String>,
     pub(crate) teardown_policy: ManifestTestSuiteTeardownPolicy,
     pub(crate) is_default: bool,
+    pub(crate) runtime: BuiltinTargetRuntime,
+    pub(crate) nested_invocation: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -144,15 +144,29 @@ pub(in crate::runner) fn task_requires_container_runtime(
         ))
 }
 
-pub(in crate::runner) fn effective_task_binding_inputs<'a>(
+/// The runtime binding inputs for one selected task, plus the catalog root
+/// that owns the resolved runtime target.
+///
+/// `scope_root` is the manifest root that container policy loading, runtime
+/// activation, and container exec must use. When the selected catalog declares
+/// its own `[systems]` table it owns its runtime target, so `scope_root` is the
+/// selected catalog root — not the invocation-scope (workspace) root. This
+/// keeps a root-qualified nested selection (`cattle-grid/check` invoked from
+/// the repo root) on the nested catalog's declared container target instead of
+/// letting root workspace ownership replace it.
+#[derive(Debug, Clone)]
+pub(in crate::runner) struct EffectiveRuntimeInputs {
+    pub(in crate::runner) default_run_in: Option<ManifestTaskRunIn>,
+    pub(in crate::runner) systems: Option<ManifestSystemsConfig>,
+    pub(in crate::runner) containers: Option<ManifestContainersConfig>,
+    pub(in crate::runner) scope_root: PathBuf,
+}
+
+pub(in crate::runner) fn effective_runtime_inputs(
     invocation_cwd: &Path,
-    catalogs: &'a [LoadedCatalog],
-    selection: &TaskSelection<'a>,
-) -> (
-    Option<ManifestTaskRunIn>,
-    Option<ManifestSystemsConfig>,
-    Option<ManifestContainersConfig>,
-) {
+    catalogs: &[LoadedCatalog],
+    selection: &TaskSelection<'_>,
+) -> EffectiveRuntimeInputs {
     let scope_catalog = scope_root_catalog_from_catalogs(invocation_cwd, catalogs);
     let default_run_in = selection
         .catalog
@@ -169,15 +183,46 @@ pub(in crate::runner) fn effective_task_binding_inputs<'a>(
                     .and_then(|defaults| defaults.run_in)
             })
         });
-    let systems = merge_systems_config(
-        scope_catalog.and_then(|catalog| catalog.manifest.systems.as_ref()),
-        selection.catalog.manifest.systems.as_ref(),
-    );
+    // The selected catalog's declared `[systems]` table is authoritative for
+    // its tasks. The invocation-scope table is only a fallback for catalogs
+    // that declare no systems of their own; tables are never merged, so a
+    // root default system cannot capture tasks owned by a nested catalog.
+    let systems = selection.catalog.manifest.systems.clone().or_else(|| {
+        scope_catalog
+            .and_then(|catalog| catalog.manifest.systems.as_ref())
+            .cloned()
+    });
     let containers = merge_containers_config(
         scope_containers_config_from_catalogs(invocation_cwd, catalogs),
         selection.catalog.manifest.containers.as_ref(),
     );
-    (default_run_in, systems, containers)
+    let selected_catalog_owns_runtime_target = selection.catalog.manifest.systems.is_some();
+    let scope_root = if selected_catalog_owns_runtime_target {
+        selection.catalog.catalog_root.clone()
+    } else {
+        scope_catalog
+            .map(|catalog| catalog.catalog_root.clone())
+            .unwrap_or_else(|| selection.catalog.catalog_root.clone())
+    };
+    EffectiveRuntimeInputs {
+        default_run_in,
+        systems,
+        containers,
+        scope_root,
+    }
+}
+
+pub(in crate::runner) fn effective_task_binding_inputs<'a>(
+    invocation_cwd: &Path,
+    catalogs: &'a [LoadedCatalog],
+    selection: &TaskSelection<'a>,
+) -> (
+    Option<ManifestTaskRunIn>,
+    Option<ManifestSystemsConfig>,
+    Option<ManifestContainersConfig>,
+) {
+    let inputs = effective_runtime_inputs(invocation_cwd, catalogs, selection);
+    (inputs.default_run_in, inputs.systems, inputs.containers)
 }
 
 pub(in crate::runner) fn execution_scope_root<'a>(
@@ -185,6 +230,9 @@ pub(in crate::runner) fn execution_scope_root<'a>(
     catalogs: &'a [LoadedCatalog],
     selection: &TaskSelection<'a>,
 ) -> &'a Path {
+    if selection.catalog.manifest.systems.is_some() {
+        return &selection.catalog.catalog_root;
+    }
     scope_root_catalog_from_catalogs(invocation_cwd, catalogs)
         .map(|catalog| catalog.catalog_root.as_path())
         .unwrap_or(selection.catalog.catalog_root.as_path())
@@ -212,26 +260,6 @@ fn scope_containers_config_from_catalogs<'a>(
         })
         .max_by_key(|catalog| catalog.depth)
         .and_then(|catalog| catalog.manifest.containers.as_ref())
-}
-
-fn merge_systems_config(
-    scope: Option<&ManifestSystemsConfig>,
-    selected: Option<&ManifestSystemsConfig>,
-) -> Option<ManifestSystemsConfig> {
-    let mut merged = scope.cloned().unwrap_or_default();
-    if let Some(selected) = selected {
-        if selected.default.is_some() {
-            merged.default.clone_from(&selected.default);
-        }
-        for (name, config) in &selected.systems {
-            merged.systems.insert(name.clone(), config.clone());
-        }
-    }
-    if merged.default.is_none() && merged.systems.is_empty() {
-        None
-    } else {
-        Some(merged)
-    }
 }
 
 fn merge_containers_config(
@@ -554,5 +582,198 @@ run = "cargo test"
         let containers = containers.expect("ancestor containers should fill the child scope");
         assert_eq!(containers.default.as_deref(), Some("workspace"));
         assert!(containers.environments.contains_key("workspace"));
+    }
+
+    #[test]
+    fn effective_task_binding_inputs_prefer_selected_catalog_systems_table() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace-root/acowtancy",
+            manifest_from_toml(
+                r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "workspace"
+
+[containers]
+default = "workspace"
+
+[containers.workspace]
+primary_service = "workspace"
+"#,
+            ),
+            0,
+        );
+        let child = loaded_catalog(
+            "farmyard",
+            "/workspace-root/acowtancy/farmyard",
+            manifest_from_toml(
+                r#"
+[systems]
+default = "ranch"
+
+[systems.ranch]
+default_workspace = "main"
+
+[systems.ranch.workspaces.main]
+container = "cattle"
+
+[containers]
+default = "cattle"
+
+[containers.cattle]
+primary_service = "cattle"
+
+[tasks.check]
+run_in = "container"
+run = "cargo test"
+"#,
+            ),
+            1,
+        );
+        let catalogs = vec![root, child];
+        let selection = TaskSelection {
+            catalog: &catalogs[1],
+            task: catalogs[1]
+                .manifest
+                .tasks
+                .get("check")
+                .expect("child task exists"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        let (_default_run_in, systems, containers) = effective_task_binding_inputs(
+            Path::new("/workspace-root/acowtancy"),
+            &catalogs,
+            &selection,
+        );
+
+        let systems = systems.expect("selected catalog systems should be authoritative");
+        assert_eq!(systems.default.as_deref(), Some("ranch"));
+        assert!(!systems.systems.contains_key("dev"));
+        let containers = containers.expect("merged containers should exist");
+        assert_eq!(containers.default.as_deref(), Some("cattle"));
+    }
+
+    #[test]
+    fn execution_scope_root_follows_selected_catalog_when_it_declares_systems() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace-root/acowtancy",
+            manifest_from_toml(
+                r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "workspace"
+"#,
+            ),
+            0,
+        );
+        let child = loaded_catalog(
+            "farmyard",
+            "/workspace-root/acowtancy/farmyard",
+            manifest_from_toml(
+                r#"
+[systems]
+default = "ranch"
+
+[systems.ranch]
+default_workspace = "main"
+
+[systems.ranch.workspaces.main]
+container = "cattle"
+
+[tasks.check]
+run = "cargo test"
+"#,
+            ),
+            1,
+        );
+        let catalogs = vec![root, child];
+        let selection = TaskSelection {
+            catalog: &catalogs[1],
+            task: catalogs[1]
+                .manifest
+                .tasks
+                .get("check")
+                .expect("child task exists"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        assert_eq!(
+            execution_scope_root(
+                Path::new("/workspace-root/acowtancy"),
+                &catalogs,
+                &selection
+            ),
+            Path::new("/workspace-root/acowtancy/farmyard")
+        );
+    }
+
+    #[test]
+    fn execution_scope_root_falls_back_to_invocation_scope_without_selected_systems() {
+        let root = loaded_catalog(
+            "root",
+            "/workspace-root/acowtancy",
+            manifest_from_toml(
+                r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "workspace"
+"#,
+            ),
+            0,
+        );
+        let child = loaded_catalog(
+            "farmyard",
+            "/workspace-root/acowtancy/farmyard",
+            manifest_from_toml(
+                r#"
+[tasks.check]
+run = "cargo test"
+"#,
+            ),
+            1,
+        );
+        let catalogs = vec![root, child];
+        let selection = TaskSelection {
+            catalog: &catalogs[1],
+            task: catalogs[1]
+                .manifest
+                .tasks
+                .get("check")
+                .expect("child task exists"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["test".to_owned()],
+            surface: effigy_tasks::TaskSurface::Published,
+        };
+
+        assert_eq!(
+            execution_scope_root(
+                Path::new("/workspace-root/acowtancy"),
+                &catalogs,
+                &selection
+            ),
+            Path::new("/workspace-root/acowtancy")
+        );
     }
 }

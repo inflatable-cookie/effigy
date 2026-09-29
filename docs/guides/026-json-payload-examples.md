@@ -1653,6 +1653,10 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
       "root": "/workspace/app/services/api",
       "suite_source": "auto-detect",
       "cargo_env_match": "prefix-aware",
+      "runtime": {
+        "target": "container",
+        "container": "api-dev"
+      },
       "available_suites": [
         "vitest",
         "cargo-nextest"
@@ -1674,6 +1678,13 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
   ]
 }
 ```
+
+Each target's `runtime` resolves the owning catalog's declared container
+runtime with the same binding grammar tasks use: `target` is `host`,
+`container` (with `container` naming the target), or `unusable` (with
+`reason`) when a declared target cannot host suites. Catalogs without a
+declared runtime target report `host`, and suites carrying nested effigy
+re-entries keep their own routing.
 
 ### 6) Test Results (`effigy.test.results.v1`)
 
@@ -2703,6 +2714,12 @@ exact captured diagnostic:
     "alias": "api",
     "root": "/workspace/app/api",
     "manifest": "/workspace/app/api/effigy.toml"
+  },
+  "runtime": {
+    "target": "container",
+    "container": "api-dev",
+    "service": "api",
+    "root": "/workspace/app/api"
   }
 }
 ```
@@ -2710,6 +2727,11 @@ exact captured diagnostic:
 `executed` is always false. This payload is produced by
 `effigy --json <selector> --plan`. `effigy --json <selector>` without `--plan`
 still runs the task and returns `effigy.task.run.v1`.
+
+The `runtime` section is additive and resolves through the same binding path
+as execution. `target` is `host`, `container`, or `inline-container`; a
+container target carries the resolved `container`, primary `service`, and the
+owning catalog `root`. Host-scoped tasks report `"target": "host"`.
 
 ## Artifact Payloads
 

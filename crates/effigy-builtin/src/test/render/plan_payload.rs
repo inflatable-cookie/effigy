@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::test::planning::BuiltinTestTargetSet;
+use crate::test::planning::{BuiltinTargetRuntime, BuiltinTestTargetSet};
 use effigy_cli::TaskInvocation;
 
 use super::super::super::super::response::schema_payload_versioned;
@@ -27,6 +27,7 @@ pub(super) fn build_builtin_test_plan_payload(
                 "root": target.root.display().to_string(),
                 "suite_source": target.suite_source,
                 "cargo_env_match": projection.cargo_env_match,
+                "runtime": target_runtime_json(&target.runtime),
                 "available_suites": projection.available_suites,
                 "selected_suites": projection.selected_suites,
                 "default_suites": projection.default_suites,
@@ -59,6 +60,20 @@ pub(super) fn build_builtin_test_plan_payload(
             "recovery": serde_json::Value::Null,
         }),
     )
+}
+
+fn target_runtime_json(runtime: &BuiltinTargetRuntime) -> serde_json::Value {
+    match runtime {
+        BuiltinTargetRuntime::Host => json!({ "target": "host" }),
+        BuiltinTargetRuntime::Container { container } => json!({
+            "target": "container",
+            "container": container,
+        }),
+        BuiltinTargetRuntime::Unusable { reason } => json!({
+            "target": "unusable",
+            "reason": reason,
+        }),
+    }
 }
 
 pub(super) fn build_builtin_test_plan_recovery_payload(

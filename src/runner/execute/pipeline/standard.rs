@@ -274,11 +274,12 @@ fn run_standard_task_inner(
             TaskStatusStage::Executing,
             container_route_summary(container, service),
         )?;
+        let task_execution_cwd = preflight.task_execution_root(&selection.catalog.catalog_root);
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
                 RoutedTaskExecRequest {
                     repo_root: scope_root,
-                    invocation_cwd: &preflight.invocation_cwd,
+                    invocation_cwd: task_execution_cwd,
                     selector: &preflight.selector,
                     task_args: &preflight.runtime_args_exec.passthrough,
                     service,
@@ -315,7 +316,7 @@ fn run_standard_task_inner(
         run_routed_task_container_exec(
             RoutedTaskExecRequest {
                 repo_root: scope_root,
-                invocation_cwd: &preflight.invocation_cwd,
+                invocation_cwd: task_execution_cwd,
                 selector: &preflight.selector,
                 task_args: &preflight.runtime_args_exec.passthrough,
                 service,
@@ -722,70 +723,9 @@ fn activate_routed_container_runtime(
     repo_root: &Path,
     container_name: &str,
 ) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
-    activate_routed_container_runtime_with(
+    crate::runner::container_runtime_prep::activate_routed_container_runtime(
         repo_root,
         container_name,
-        |repo_root, container_name| {
-            load_container_policy(repo_root, Some(container_name))
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))
-        },
-        |repo_root, policy, request, _plan| {
-            activate_container_runtime_for_task(repo_root, policy, request)
-        },
-    )
-}
-
-fn activate_routed_container_runtime_with(
-    repo_root: &Path,
-    container_name: &str,
-    load_policy: impl FnOnce(
-        &Path,
-        &str,
-    ) -> Result<effigy_containers::EffectiveContainerPolicy, RunnerError>,
-    activate: impl FnOnce(
-        &Path,
-        &effigy_containers::EffectiveContainerPolicy,
-        ActivationRequest<'_>,
-        &RuntimeActivationPlan,
-    ) -> Result<
-        crate::runner::container_runtime_prep::ContainerTaskActivation,
-        RunnerError,
-    >,
-) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
-    let policy = load_policy(repo_root, container_name)?;
-    let session_context = current_runtime_session_context();
-    let plan = standard_runtime_activation_plan(
-        repo_root,
-        policy.name.as_str(),
-        Some(container_name.to_owned()),
-        session_context,
-    );
-    activate(
-        repo_root,
-        &policy,
-        ActivationRequest {
-            container_name: plan.request.container_name.as_deref(),
-            repo_override: plan.request.repo_override.clone(),
-            route: plan.route,
-            session_context,
-        },
-        &plan,
-    )
-}
-
-fn standard_runtime_activation_plan(
-    repo_root: &Path,
-    policy_name: &str,
-    container_name: Option<String>,
-    session_context: RuntimeSessionContext,
-) -> RuntimeActivationPlan {
-    build_runtime_activation_plan(
-        repo_root,
-        policy_name,
-        container_name.as_deref(),
-        Some(repo_root.to_path_buf()),
-        RuntimeActivationRoute::Task,
-        session_context,
     )
 }
 
@@ -898,6 +838,22 @@ fn run_inline_workspace_standard_task(
     exec_result
 }
 
+fn standard_runtime_activation_plan(
+    repo_root: &Path,
+    policy_name: &str,
+    container_name: Option<String>,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    build_runtime_activation_plan(
+        repo_root,
+        policy_name,
+        container_name.as_deref(),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Task,
+        session_context,
+    )
+}
+
 fn activate_inline_workspace_container_runtime(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
@@ -977,10 +933,11 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_inline_workspace_container_runtime_with, activate_routed_container_runtime_with,
-        should_stay_in_workspace_shell, ContainerExecutionBinding,
+        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell,
+        ContainerExecutionBinding,
     };
     use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
+    use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
