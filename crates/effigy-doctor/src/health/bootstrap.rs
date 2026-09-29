@@ -118,8 +118,8 @@ impl JsBootstrapGap {
 ///
 /// The check is driven by the selected catalog's declared `[package_manager].js`
 /// and the manager's committed lock evidence, never by a universal
-/// `node_modules` rule. A scope with a local `node_modules` is always
-/// considered bootstrapped. Otherwise, the scope's own lock requires a
+/// `node_modules` rule. A scope with every declared package installed locally
+/// is considered bootstrapped. Otherwise, the scope's own lock requires a
 /// scope-local install; an ancestor lock only satisfies the scope when it
 /// declares the scope as a manager-authoritative workspace member inside the
 /// same repository boundary; and a scope with no lock at all inside its own
@@ -178,10 +178,21 @@ pub(super) fn health_js_bootstrap_gap(
         Some(root) if is_declared_workspace_member(root, scope_root, manager) => {
             if member_requires_local_install(manager, root, scope_root) {
                 // Manager layouts that keep a member's dependencies below its
-                // own `node_modules` are not covered by the workspace install.
+                // own `node_modules` are not covered by root-only entries. Their
+                // package links may still target the verified workspace store.
+                if missing_declared_dependencies(
+                    scope_root,
+                    scope_root,
+                    &repository_boundary(root),
+                    &declared,
+                )
+                .is_empty()
+                {
+                    return None;
+                }
                 (
                     scope_root.to_path_buf(),
-                    scope_root.to_path_buf(),
+                    repository_boundary(root),
                     BootstrapReason::MissingLocalInstall,
                 )
             } else if missing_declared_dependencies(
@@ -277,26 +288,49 @@ fn node_modules_is_local(install_root: &Path, boundary: &Path) -> bool {
     target.is_dir() && target.starts_with(&boundary)
 }
 
-/// Whether a declared dependency resolves inside a `node_modules` directory.
-///
-/// Handles scoped names by walking each path segment, and follows install
-/// symlinks (pnpm and Bun isolated layouts) to their package directory.
-fn package_present(node_modules: &Path, name: &str) -> bool {
+/// Installed package metadata and its resolved directory must stay within the
+/// authorized install boundary. This accepts scoped packages and manager store
+/// links without assuming an index.js, main, exports, or runtime-only shape.
+fn package_present(node_modules: &Path, name: &str, boundary: &Path) -> bool {
     let mut path = node_modules.to_path_buf();
     for segment in name.split('/') {
-        if segment.is_empty() {
+        if segment.is_empty() || segment == "." || segment == ".." {
             return false;
         }
         path.push(segment);
     }
-    path.is_dir()
+    let Ok(boundary) = std::fs::canonicalize(boundary) else {
+        return false;
+    };
+    let Ok(package) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    if !package.is_dir() || !package.starts_with(&boundary) {
+        return false;
+    }
+    let Ok(metadata) = std::fs::canonicalize(package.join("package.json")) else {
+        return false;
+    };
+    if !metadata.starts_with(&boundary) {
+        return false;
+    }
+    let Ok(raw) = std::fs::read_to_string(metadata) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|name| !name.trim().is_empty())
 }
 
 /// Declared dependencies not present in a trustworthy local or shared install.
 ///
-/// The scope's own install counts only when its `node_modules` stays inside
-/// the scope, and the shared install counts only when its `node_modules` stays
-/// inside the shared boundary. A dependency may live in either directory, as
+/// Member `node_modules` stays member-local; package links may use a verified
+/// workspace store. Shared root entries count only for hoisted layouts.
+/// A dependency may live in either directory, as
 /// hoisted layouts keep direct dependencies at the shared root while a version
 /// conflict nests the member's copy under the member.
 fn missing_declared_dependencies(
@@ -306,14 +340,20 @@ fn missing_declared_dependencies(
     declared: &[String],
 ) -> Vec<String> {
     let scope_local = node_modules_is_local(scope_root, scope_root);
-    let install_local = node_modules_is_local(install_root, install_boundary);
+    let modules_boundary = if install_root == scope_root {
+        scope_root
+    } else {
+        install_boundary
+    };
+    let install_local = node_modules_is_local(install_root, modules_boundary);
     let scope_modules = scope_root.join("node_modules");
     let install_modules = install_root.join("node_modules");
     declared
         .iter()
         .filter(|name| {
-            let in_scope = scope_local && package_present(&scope_modules, name);
-            let in_install = install_local && package_present(&install_modules, name);
+            let in_scope = scope_local && package_present(&scope_modules, name, install_boundary);
+            let in_install =
+                install_local && package_present(&install_modules, name, install_boundary);
             !in_scope && !in_install
         })
         .cloned()
@@ -674,6 +714,54 @@ mod tests {
             path.push(segment);
         }
         std::fs::create_dir_all(&path).expect("install dependency");
+        write(
+            &path.join("package.json"),
+            &format!(r#"{{"name":"{name}","version":"1.0.0","main":"entry.cjs"}}"#),
+        );
+        write(&path.join("entry.cjs"), "module.exports = true;");
+    }
+
+    #[test]
+    fn package_metadata_accepts_type_only_shapes_and_rejects_invalid_entries() {
+        let root = temp_root("package-metadata");
+        let modules = root.join("node_modules");
+        let package = modules.join("@types/fixture");
+        write(
+            &package.join("package.json"),
+            r#"{"name":"@types/fixture","types":"index.d.ts"}"#,
+        );
+        write(&package.join("index.d.ts"), "export type Fixture = string;");
+        assert!(package_present(&modules, "@types/fixture", &root));
+        for metadata in ["", "{", "{}", r#"{"name":""}"#, r#"{"name":true}"#] {
+            write(&package.join("package.json"), metadata);
+            assert!(
+                !package_present(&modules, "@types/fixture", &root),
+                "{metadata}"
+            );
+        }
+        assert!(!package_present(&modules, "../escape", &root));
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_metadata_link_cannot_borrow_parent_evidence() {
+        let root = temp_root("metadata-link");
+        let child = root.join("child");
+        install_dependency(&root, "fixture");
+        let package = child.join("node_modules/fixture");
+        std::fs::create_dir_all(&package).expect("local package directory");
+        std::os::unix::fs::symlink(
+            root.join("node_modules/fixture/package.json"),
+            package.join("package.json"),
+        )
+        .expect("metadata link");
+        assert!(!package_present(
+            &child.join("node_modules"),
+            "fixture",
+            &child
+        ));
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
@@ -1236,7 +1324,8 @@ mod tests {
         // A symlink whose target stays inside the scope is a genuine local
         // install and must keep running health.
         let store = child.join(".local-store");
-        std::fs::create_dir_all(store.join("left-pad")).expect("local store");
+        install_dependency(&child, "left-pad");
+        std::fs::rename(child.join("node_modules"), &store).expect("local store");
         std::os::unix::fs::symlink(&store, child.join("node_modules"))
             .expect("symlink node_modules");
 

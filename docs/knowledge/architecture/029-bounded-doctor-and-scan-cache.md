@@ -76,6 +76,13 @@ install under `install-strategy = nested | shallow | linked`.
 An unverified ancestor lock is reported as a gap. Non-JS and dependency-free
 scopes are unaffected.
 
+Installed-package evidence is readable `package.json` metadata with a
+nonempty name, with both the package directory and metadata resolved inside
+the authorized install boundary. Empty package entries and parent-resolving
+package links fail the guard. No particular runtime entry point is required.
+Local manager store links remain valid, and verified workspace members may
+link into their workspace store even under isolated layouts.
+
 ## Shared inventory
 
 Each selected scope is walked once per deep invocation. The inventory applies

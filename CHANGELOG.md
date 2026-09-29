@@ -92,6 +92,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - `qa:docs` now runs `effigy changelog validate CHANGELOG.md`, so docs QA
   applies the same strict changelog heading grammar as release status and an
   em-dash release heading fails before review.
+- Doctor rejects empty dependency entries and package symlinks into a
+  standalone child's parent before running health. Installed packages require
+  readable, named package metadata within the authorized install boundary;
+  exports-only and type-only shapes remain valid. Local manager store links
+  and verified workspace store links remain supported, including isolated
+  workspace layouts.
 - `effigy doctor --deep` checks the selected catalog's declared
   `[package_manager].js` and local JS install posture before running its
   `health` task.

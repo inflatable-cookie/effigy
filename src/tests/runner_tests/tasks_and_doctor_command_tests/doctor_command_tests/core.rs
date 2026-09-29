@@ -160,6 +160,16 @@ fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
 
     fs::create_dir_all(member.join("node_modules")).expect("member install");
     fs::create_dir_all(member.join("node_modules").join("left-pad")).expect("member dependency");
+    fs::write(
+        member.join("node_modules/left-pad/package.json"),
+        r#"{"name":"left-pad","version":"1.3.0","main":"entry.cjs"}"#,
+    )
+    .expect("package metadata");
+    fs::write(
+        member.join("node_modules/left-pad/entry.cjs"),
+        "module.exports = true;",
+    )
+    .expect("package entry");
     // Doctor may still report unrelated environment findings (for example a
     // missing JS tool on a CI runner), so accept either a clean exit or a
     // non-zero doctor report here. The marker proves the guarded health task
@@ -313,8 +323,18 @@ fn run_deep_doctor_rejects_empty_child_install_resolved_from_parent() {
     fs::write(member.join("bun.lock"), "").expect("write member lock");
     // The member has a directory named node_modules but never installed the
     // package it declares; the parent has it.
-    fs::create_dir_all(member.join("node_modules")).expect("empty member install");
+    fs::create_dir_all(member.join("node_modules/left-pad")).expect("empty dependency entry");
     fs::create_dir_all(root.join("node_modules").join("left-pad")).expect("parent package");
+    fs::write(
+        root.join("node_modules/left-pad/package.json"),
+        r#"{"name":"left-pad","version":"1.3.0","main":"entry.cjs"}"#,
+    )
+    .expect("package metadata");
+    fs::write(
+        root.join("node_modules/left-pad/entry.cjs"),
+        "module.exports = true;",
+    )
+    .expect("package entry");
     write_manifest(
         &root.join("effigy.toml"),
         "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
@@ -335,8 +355,33 @@ fn run_deep_doctor_rejects_empty_child_install_resolved_from_parent() {
         "member health must not run while a declared dependency is only in the parent"
     );
 
+    #[cfg(unix)]
+    {
+        fs::remove_dir(member.join("node_modules/left-pad")).expect("remove empty entry");
+        std::os::unix::fs::symlink(
+            root.join("node_modules/left-pad"),
+            member.join("node_modules/left-pad"),
+        )
+        .expect("parent package link");
+        let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
+            .expect_err("parent package link must fail deep doctor");
+        assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing_deps=left-pad"]);
+        assert!(!marker.exists(), "parent link must not enable health");
+        fs::remove_file(member.join("node_modules/left-pad")).expect("remove parent link");
+    }
+
     // A real local install of the declared dependency clears the guard.
     fs::create_dir_all(member.join("node_modules").join("left-pad")).expect("member package");
+    fs::write(
+        member.join("node_modules/left-pad/package.json"),
+        r#"{"name":"left-pad","version":"1.3.0","main":"entry.cjs"}"#,
+    )
+    .expect("package metadata");
+    fs::write(
+        member.join("node_modules/left-pad/entry.cjs"),
+        "module.exports = true;",
+    )
+    .expect("package entry");
     let out = match run_deep_doctor_task(root, &["--catalog", "member"]) {
         Ok(out) => out,
         Err(crate::runner::error::RunnerError::DoctorNonZero { rendered, .. }) => rendered,
@@ -378,6 +423,16 @@ fn run_deep_doctor_runs_health_for_declared_workspace_member() {
     fs::write(root.join("bun.lock"), "").expect("write parent lock");
     fs::create_dir_all(root.join("node_modules")).expect("shared install");
     fs::create_dir_all(root.join("node_modules").join("left-pad")).expect("shared dependency");
+    fs::write(
+        root.join("node_modules/left-pad/package.json"),
+        r#"{"name":"left-pad","version":"1.3.0","main":"entry.cjs"}"#,
+    )
+    .expect("package metadata");
+    fs::write(
+        root.join("node_modules/left-pad/entry.cjs"),
+        "module.exports = true;",
+    )
+    .expect("package entry");
     write_manifest(
         &root.join("effigy.toml"),
         "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",

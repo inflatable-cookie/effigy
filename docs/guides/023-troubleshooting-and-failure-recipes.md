@@ -617,6 +617,13 @@ Diagnosis:
   root is missing, so running health would let Bun or Node resolve packages
   from an ancestor checkout and report a misleading task failure.
 
+Each declared package must have readable `package.json` metadata with a
+nonempty name, and its resolved directory and metadata must stay inside the
+install boundary. An empty package directory or a package symlink into a
+standalone child's parent does not count. Exports-only and type-only packages
+need no `index.js`. Local manager store links and verified workspace store
+links remain valid, including isolated member layouts.
+
 Fix:
 - prepare the named checkout with `effigy bootstrap deps sync <path>` (the
   frozen Bun install for a committed `bun.lock`). When the scope has no valid

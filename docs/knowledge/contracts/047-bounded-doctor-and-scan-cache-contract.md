@@ -48,6 +48,14 @@ cache and timeout behavior.
    its resolved target is a directory that stays inside the local install
    boundary; a link to an ancestor checkout or to an in-boundary file is
    treated as missing and cannot smuggle in a parent install.
+   Each declared package needs readable `package.json` metadata with a
+   nonempty package name. Both its resolved directory and metadata must stay
+   inside the authorized install boundary. Empty entries and package links
+   into a standalone child's parent are missing dependencies. No `index.js`
+   or runtime entry point is required: exports-only and type-only packages
+   are valid. Manager store links inside the local boundary remain valid;
+   verified workspace members may link into their workspace store, including
+   isolated layouts, without borrowing root-only dependency entries.
 2. When the scope has no valid local install, the required install root is the
    nearest ancestor with the selected manager's lock file, bounded by the
    scope's repository boundary and the workspace root. A lock outside those
