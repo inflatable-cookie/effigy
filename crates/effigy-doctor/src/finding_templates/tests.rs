@@ -97,6 +97,25 @@ fn manifest_parse_templates_preserve_message_contract() {
 }
 
 #[test]
+fn health_bootstrap_template_emits_actionable_error() {
+    let mut state = DoctorState::new();
+    HealthFinding::bootstrap_missing(
+        "observed=missing-local-install; manager=bun".to_owned(),
+        "run `effigy bootstrap deps sync child`".to_owned(),
+    )
+    .emit(&mut state);
+
+    assert_eq!(state.findings.len(), 1);
+    assert_eq!(state.findings[0].check_id, check_id::HEALTH_TASK_BOOTSTRAP);
+    assert_eq!(state.findings[0].severity, DoctorSeverity::Error);
+    assert_eq!(
+        state.findings[0].remediation,
+        "run `effigy bootstrap deps sync child`"
+    );
+    assert!(!state.findings[0].fixable);
+}
+
+#[test]
 fn health_templates_preserve_message_contract() {
     let mut state = DoctorState::new();
     HealthFinding::discovery_missing().emit(&mut state);
