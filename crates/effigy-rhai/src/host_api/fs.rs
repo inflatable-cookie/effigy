@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_env::dotenv::parse_dotenv_entries;
@@ -96,6 +98,16 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     );
     let file_context = context.clone();
     module.set_native_fn(
+        "write_file_if_absent",
+        move |path: ImmutableString,
+              contents: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            publish_absent_payload(&path, contents.as_bytes())
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
         "copy",
         move |source: ImmutableString,
               destination: ImmutableString|
@@ -132,6 +144,10 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
             Ok(true)
         },
     );
+    // `std::fs::rename` replaces whatever currently names the destination and
+    // never checks that it still matches an inode the caller read, so
+    // `move_path` is an atomic replacement, not an identity-checked conditional
+    // move. Use `write_file_if_absent` for create-if-absent publication.
     let file_context = context.clone();
     module.set_native_fn(
         "move_path",
@@ -434,6 +450,86 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
         },
     );
     module
+}
+
+/// Counter that keeps concurrent staged payload names inside one process
+/// distinct even when two publications start in the same nanosecond.
+static STAGED_PAYLOAD_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Publish a complete payload at `destination` only when no entry exists there.
+///
+/// The payload is first staged as a fresh file in the destination directory so
+/// it shares the destination's filesystem. `hard_link` then creates the
+/// destination name atomically and refuses to replace an entry that already
+/// exists, so concurrent publishers produce exactly one winner and a reader can
+/// never observe a partially written destination. Returns `Ok(true)` when this
+/// call published the payload and `Ok(false)` when the destination was already
+/// occupied (including by a symlink or directory).
+///
+/// The operation makes a complete payload visible atomically; it does not fsync
+/// the payload or its directory, so durability across power loss is not
+/// promised. Filesystems without hard-link support fail with the underlying OS
+/// error rather than falling back to a non-atomic write.
+fn publish_absent_payload(destination: &Path, contents: &[u8]) -> Result<bool, Box<EvalAltResult>> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+    }
+    let (staged, mut file) = create_staged_payload(destination)
+        .map_err(|error| rhai_runtime_error(failed_to_write_path(destination, error)))?;
+    use std::io::Write;
+    let write_result = file.write_all(contents).and_then(|()| file.flush());
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&staged);
+        return Err(rhai_runtime_error(failed_to_write_path(&staged, error)));
+    }
+    let published = match std::fs::hard_link(&staged, destination) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => {
+            let _ = std::fs::remove_file(&staged);
+            return Err(rhai_runtime_error(failed_to_write_path(destination, error)));
+        }
+    };
+    // The destination now names the complete payload; retire the staged name.
+    // A leftover stage cannot make the destination partial, so a cleanup
+    // failure here must not turn a successful publication into an error.
+    let _ = std::fs::remove_file(&staged);
+    Ok(published)
+}
+
+fn create_staged_payload(destination: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+    for _ in 0..256 {
+        let staged = staged_payload_path(destination);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staged)
+        {
+            Ok(file) => return Ok((staged, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "failed to allocate a unique staged payload name",
+    ))
+}
+
+fn staged_payload_path(destination: &Path) -> PathBuf {
+    let name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "payload".to_owned());
+    let nonce = STAGED_PAYLOAD_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    destination.with_file_name(format!(".{name}.effigy-publish-{pid}-{nanos}-{nonce}.tmp"))
 }
 
 fn list_recursive_paths(root: &Path, extension: Option<&str>) -> Result<Array, Box<EvalAltResult>> {

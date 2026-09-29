@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `fs::write_file_if_absent(path, contents)` publishes a complete Rhai file
+  payload to an absent destination with atomic create-if-absent semantics: the
+  payload is staged on the destination filesystem and linked into place, so
+  exactly one concurrent publisher wins and a reader never observes a partial
+  winner. A losing call returns `false` without altering the winner; an occupied
+  destination, including a dangling symlink, is never replaced. Failed staged
+  writes clean up their temporary file, unsupported filesystems fail clearly,
+  and `fs::move_path` now documents its replacement and race limits.
 - Heavy validation tasks share a measured host-wide CPU and memory admission
   budget with repository round-robin scheduling, bounded capacity waits, stale
   owner recovery, caller-linked run telemetry, and `effigy admission` queries.
