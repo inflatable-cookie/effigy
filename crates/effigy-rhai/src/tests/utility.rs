@@ -722,3 +722,211 @@ fn execute_rhai_script_can_capture_http_status_and_body_to_file() {
     execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
     server.join().expect("server");
 }
+
+fn staged_payload_leftovers(root: &Path) -> Vec<PathBuf> {
+    let mut leftovers = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.expect("walk staged payloads");
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .contains(".effigy-publish-")
+        {
+            leftovers.push(entry.path().to_path_buf());
+        }
+    }
+    leftovers
+}
+
+#[test]
+fn execute_rhai_script_write_file_if_absent_publishes_exactly_once() {
+    let root = temp_root("fs-write-if-absent");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+        if !fs::write_file_if_absent("published/complete.txt", "first payload") {
+            throw("first publish must win");
+        }
+        if fs::write_file_if_absent("published/complete.txt", "second payload") {
+            throw("second publish must lose");
+        }
+    "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    assert_eq!(
+        fs::read_to_string(root.join("published/complete.txt")).expect("read published"),
+        "first payload"
+    );
+    assert!(
+        staged_payload_leftovers(&root).is_empty(),
+        "a successful publish and a collision must both retire their staged file"
+    );
+}
+
+#[test]
+fn execute_rhai_script_write_file_if_absent_has_one_concurrent_winner() {
+    let root = temp_root("fs-write-if-absent-race");
+    let writers = 6_usize;
+    let payloads: Vec<String> = (0..writers)
+        .map(|index| {
+            let marker = char::from(b'a' + index as u8);
+            format!("writer-{index}:{}", marker.to_string().repeat(256 * 1024))
+        })
+        .collect();
+    let known: std::collections::BTreeSet<String> = payloads.iter().cloned().collect();
+    let context = Arc::new(ScriptContext {
+        cwd: root.clone(),
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    });
+
+    let start = Arc::new(std::sync::Barrier::new(writers + 1));
+    let mut writer_handles = Vec::new();
+    for (index, payload) in payloads.iter().enumerate() {
+        let context = Arc::clone(&context);
+        let start = Arc::clone(&start);
+        let payload = payload.clone();
+        writer_handles.push(thread::spawn(move || {
+            start.wait();
+            let script = format!(
+                r#"
+                let won = fs::write_file_if_absent("race/winner.txt", {payload});
+                if won {{ fs::write_file("race/result-{index}.txt", "won"); }}
+                else {{ fs::write_file("race/result-{index}.txt", "lost"); }}
+                "#,
+                payload = serde_json::to_string(&payload).expect("json payload"),
+                index = index,
+            );
+            execute_rhai_script(&context, &script, &[], &callbacks()).expect("writer execute");
+        }));
+    }
+
+    let writers_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader_root = root.clone();
+    let reader_known = known.clone();
+    let reader_done = Arc::clone(&writers_done);
+    let reader = thread::spawn(move || {
+        let destination = reader_root.join("race/winner.txt");
+        let mut observed = 0_usize;
+        loop {
+            match fs::read_to_string(&destination) {
+                Ok(contents) => {
+                    assert!(
+                        reader_known.contains(&contents),
+                        "reader observed a partial or foreign payload of length {}",
+                        contents.len()
+                    );
+                    observed += 1;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("reader failed: {error}"),
+            }
+            if reader_done.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Ok(contents) = fs::read_to_string(&destination) {
+                    assert!(
+                        reader_known.contains(&contents),
+                        "reader observed a partial winner after writers finished"
+                    );
+                    observed += 1;
+                }
+                break;
+            }
+            std::thread::yield_now();
+        }
+        observed
+    });
+
+    start.wait();
+    for handle in writer_handles {
+        handle.join().expect("writer join");
+    }
+    writers_done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let observed = reader.join().expect("reader join");
+    assert!(observed >= 1, "reader never observed the published winner");
+
+    let results: Vec<String> = (0..writers)
+        .map(|index| {
+            fs::read_to_string(root.join(format!("race/result-{index}.txt")))
+                .expect("read writer result")
+        })
+        .collect();
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| value.as_str() == "won")
+            .count(),
+        1,
+        "exactly one concurrent publisher must win: {results:?}"
+    );
+    let winner = fs::read_to_string(root.join("race/winner.txt")).expect("read winner");
+    assert!(
+        known.contains(&winner),
+        "published winner must be a complete payload"
+    );
+    assert!(
+        staged_payload_leftovers(&root).is_empty(),
+        "concurrent publishers must retire every staged file"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_rhai_script_write_file_if_absent_treats_symlink_as_occupied() {
+    let root = temp_root("fs-write-if-absent-symlink");
+    fs::write(root.join("target.txt"), "original").expect("target");
+    std::os::unix::fs::symlink(root.join("target.txt"), root.join("link.txt")).expect("symlink");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+        if fs::write_file_if_absent("link.txt", "replacement") {
+            throw("a symlink destination must count as occupied");
+        }
+    "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    assert_eq!(
+        fs::read_to_string(root.join("target.txt")).expect("read target"),
+        "original"
+    );
+    assert!(
+        fs::symlink_metadata(root.join("link.txt"))
+            .expect("link metadata")
+            .file_type()
+            .is_symlink(),
+        "the existing symlink must not be replaced"
+    );
+    assert!(staged_payload_leftovers(&root).is_empty());
+}
+
+#[test]
+fn execute_rhai_script_write_file_if_absent_fails_without_destination() {
+    let root = temp_root("fs-write-if-absent-failure");
+    fs::write(root.join("blocker"), "a file, not a directory").expect("blocker");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+        fs::write_file_if_absent("blocker/child.txt", "payload");
+    "#;
+
+    let error = execute_rhai_script(&context, script, &[], &callbacks())
+        .expect_err("publishing under a file parent must fail");
+    assert!(
+        error.to_string().contains("failed to write"),
+        "failure must name the write path clearly: {error}"
+    );
+    assert!(!root.join("blocker/child.txt").exists());
+    assert!(staged_payload_leftovers(&root).is_empty());
+}

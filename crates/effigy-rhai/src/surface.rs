@@ -721,6 +721,13 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
     },
     RhaiSurfaceFunction {
         module: MODULE_FS,
+        name: "write_file_if_absent",
+        signature: "fs::write_file_if_absent(path, contents)",
+        description: "Atomically publish a complete file only when the destination is absent.",
+        safety: "local-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FS,
         name: "copy",
         signature: "fs::copy(source, destination)",
         description: "Copy a file.",
