@@ -526,6 +526,111 @@ headings = ["See also"]
 }
 
 #[test]
+fn typed_relations_resolve_across_space_named_documents_and_recover_declared_dests() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
+    fs::write(
+        temp.path().join("handbook/source.md"),
+        "# Source\n\nSee also: [ops file](<my ops.md>)\nSee also: [ops heading](<my ops.md#ops-heading>)\n",
+    )
+    .expect("write source");
+    fs::write(
+        temp.path().join("handbook/my ops.md"),
+        "# My Ops\n\n## Ops Heading\n\nBody.\n",
+    )
+    .expect("write ops");
+    write_graph_manifest(
+        temp.path(),
+        r#"
+[docs_policy.graph]
+roots = ["handbook"]
+
+[docs_policy.graph.relations.contains]
+labels = ["See also"]
+headings = ["See also"]
+"#,
+    );
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("store");
+    let typed: Vec<_> = store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.kind == "doc-rel" && edge.provenance.detail.as_deref() == Some("contains")
+        })
+        .collect();
+    assert!(typed.iter().any(|edge| {
+        edge.to_id.as_ref().map(GraphId::as_str) == Some("file:handbook/my%20ops.md")
+            && edge.unresolved_target.is_none()
+    }));
+    assert!(typed.iter().any(|edge| {
+        edge.to_id.as_ref().map(GraphId::as_str)
+            == Some("symbol:doc:handbook/my%20ops.md:#ops-heading")
+            && edge.unresolved_target.is_none()
+    }));
+    let resolved = typed
+        .iter()
+        .find(|edge| {
+            edge.to_id.as_ref().map(GraphId::as_str)
+                == Some("symbol:doc:handbook/my%20ops.md:#ops-heading")
+        })
+        .expect("heading relation");
+    // Recovery from the record id keeps the declared destination byte-exact.
+    assert_eq!(
+        crate::language::markdown::typed_edge_dest(resolved).as_deref(),
+        Some("my ops.md#ops-heading")
+    );
+
+    let references = store.list_references().expect("references");
+    let reference = references
+        .iter()
+        .find(|reference| {
+            reference.kind == "doc-rel"
+                && reference.unresolved_target.is_none()
+                && reference.target_id.as_ref().map(GraphId::as_str)
+                    == Some("symbol:doc:handbook/my%20ops.md:#ops-heading")
+        })
+        .expect("resolved heading reference");
+    assert_eq!(
+        crate::language::markdown::typed_reference_dest(reference).as_deref(),
+        Some("my ops.md#ops-heading")
+    );
+
+    // The demote/resolve cycle rebuilds the same identity from the recovered
+    // destination instead of drifting.
+    let scope = crate::scope::GraphScope::repo_root(temp.path()).expect("scope");
+    assert!(crate::language::markdown::demote_typed_relations(&store, &scope).expect("demote"));
+    let demoted: Vec<_> = store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.kind == "doc-rel"
+                && edge.provenance.source_path == "handbook/source.md"
+                && edge.unresolved_target.is_some()
+        })
+        .collect();
+    assert!(demoted.iter().any(|edge| {
+        edge.to_id.is_none() && edge.unresolved_target.as_deref() == Some("my ops.md#ops-heading")
+    }));
+    assert!(crate::language::markdown::resolve_typed_relations(&store, &scope).expect("resolve"));
+    let resolved_again: Vec<_> = store
+        .list_edges()
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| {
+            edge.kind == "doc-rel" && edge.provenance.source_path == "handbook/source.md"
+        })
+        .collect();
+    assert!(resolved_again.iter().any(|edge| {
+        edge.to_id.as_ref().map(GraphId::as_str)
+            == Some("symbol:doc:handbook/my%20ops.md:#ops-heading")
+    }));
+}
+
+#[test]
 fn typed_relations_stay_visible_when_an_unchanged_source_loses_its_target() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("handbook")).expect("mkdir");
