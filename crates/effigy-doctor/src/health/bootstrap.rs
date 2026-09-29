@@ -47,12 +47,16 @@ impl JsBootstrapGap {
 
     pub(super) fn remediation(&self) -> String {
         if self.unverified_ancestor {
+            let bootstrap_command = if self.manager == "bun" {
+                format!("effigy bootstrap deps sync --refresh-lock {}", self.route)
+            } else {
+                format!("effigy bootstrap deps sync {}", self.route)
+            };
             return format!(
-                "The nearest {} lock at `{}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install with `effigy bootstrap deps sync --refresh-lock {}` (or add it to the owning workspace), then rerun `effigy doctor --deep`.",
+                "The nearest {} lock at `{}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install with `{bootstrap_command}` (or add it to the owning workspace), then rerun `effigy doctor --deep`.",
                 self.manager,
                 self.lock_root.display(),
                 self.scope_root.display(),
-                self.route,
             );
         }
         format!(
@@ -370,6 +374,9 @@ mod tests {
         assert!(gap
             .evidence()
             .contains("reason=ancestor-lock-without-workspace-membership"));
+        assert!(gap
+            .remediation()
+            .contains("effigy bootstrap deps sync --refresh-lock child"));
 
         std::fs::remove_dir_all(root).ok();
     }
