@@ -601,6 +601,59 @@ Fix:
   Unresolved selectors fail without deferral.
 - use `effigy doctor <selector> <args...>` for full explain output including selection and deferral reasoning.
 
+## 9) Doctor Deep Health Preconditions
+
+### Symptom: `doctor --deep` reports `health.task.bootstrap` and skips health
+
+Diagnosis:
+- the selected scope declares `[package_manager].js`, its `package.json`
+  declares dependencies, and it has no complete local `node_modules` (a
+  `node_modules` symlinked into an ancestor checkout, or to a file, does not
+  count, and neither does an empty or partial install that omits a declared
+  dependency). A complete child-local `node_modules` directory satisfies the
+  precondition even without a child lock. The finding names the missing
+  declared dependencies in its evidence,
+- the scope has its own git boundary (or no lock at all) and its own install
+  root is missing, so running health would let Bun or Node resolve packages
+  from an ancestor checkout and report a misleading task failure.
+
+Each declared package must have readable `package.json` metadata with a
+nonempty name, and its resolved directory and metadata must stay inside the
+install boundary. An empty package directory or a package symlink into a
+standalone child's parent does not count. Exports-only and type-only packages
+need no `index.js`. Local manager store links and verified workspace store
+links remain valid, including isolated member layouts.
+
+Fix:
+- prepare the named checkout with `effigy bootstrap deps sync <path>` (the
+  frozen Bun install for a committed `bun.lock`). When the scope has no valid
+  local install and no lock at all — `missing-local-lock`, typically a
+  standalone child repository — seed one first with `effigy bootstrap deps
+  sync --refresh-lock <path>` for Bun (pnpm and npm installs create their own
+  lock), then rerun `effigy doctor --deep`,
+- when the scope intentionally shares an ancestor locked workspace, declare it
+  as a member in the manager-authoritative source: that ancestor's
+  `package.json` `workspaces` patterns for Bun/npm, or its
+  `pnpm-workspace.yaml` `packages` list for pnpm. The sources are not unioned,
+  so a pnpm exclusion still applies; a scope with its own git boundary cannot
+  be satisfied by an ancestor install, and an ancestor lock without matching
+  workspace membership (or one that only matches a nested path below a
+  declared package) is reported as a foreign installation and does not
+  satisfy the scope,
+- membership alone is not enough when the manager's effective layout keeps
+  dependencies member-local:
+  - Bun uses the hoisted linker unless `bunfig.toml` `[install] linker =
+    "isolated"` or a `configVersion = 1` workspace lockfile selects isolated
+    installs; under hoisting, a member with `installConfig.hoistingLimits =
+    "workspaces"` in its own `package.json`, or one named in the root
+    `workspaces.selfContained` list, needs its own `node_modules`.
+  - pnpm's default isolated layout needs the member's own `node_modules`
+    unless `.npmrc` sets `node-linker=hoisted`.
+  - npm hoists by default; `.npmrc` `install-strategy = nested | shallow |
+    linked` needs the member's own `node_modules`.
+
+  Run `effigy bootstrap deps sync <member>` so the member install is created.
+
 ## Expected Outcome
 
 After this guide, you should be able to:

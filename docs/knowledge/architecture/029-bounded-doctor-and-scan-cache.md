@@ -41,6 +41,48 @@ monorepo topology:
 One-scope work must not walk, run health in, or write cache state for a sibling.
 Catalog aliases and canonical roots identify findings and cache ownership.
 
+Deep doctor guards each selected scope's `health` task with the scope's own JS
+bootstrap posture. A local `node_modules` satisfies the precondition only when
+it contains every declared runtime, development, and peer dependency; an empty
+or partial install does not, because a missing package could still resolve
+from an ancestor. A complete local install keeps running health, even without
+a child lock. Otherwise the selected
+manifest's declared `[package_manager].js` and the nearest in-boundary
+committed lock identify the required install root, and a scope that lacks a
+complete local or verified shared install emits a `health.task.bootstrap`
+finding and skips its health task, so Bun or Node cannot silently resolve a
+package
+from an ancestor checkout. A symlinked
+`node_modules` only counts as a local install when its resolved target is a
+directory inside the local install boundary, so a link into the parent or to
+an in-boundary file cannot bypass the guard. A scope with its own git boundary
+cannot be satisfied by an ancestor install; a standalone child repository with
+declared dependencies, no complete local install, and no in-boundary lock is
+reported as `missing-local-lock` even when an ancestor provides a lock and
+install. An
+ancestor lock or install only satisfies the scope when the ancestor declares
+the scope in the manager-authoritative workspace source (`package.json`
+`workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without
+matching nested paths below a declared package; the sources are never unioned.
+Even a verified member shares the ancestor install only when the manager's
+effective layout hoists member dependencies. Bun selects the isolated linker
+from `bunfig.toml` `[install] linker` or a `configVersion = 1` workspace
+lockfile, and under hoisting a self-contained member (`package.json`
+`installConfig.hoistingLimits = "workspaces"` or the root
+`workspaces.selfContained` list of member paths or names) needs its own
+install. pnpm's default isolated layout needs the member's own `node_modules`
+unless `.npmrc` sets `node-linker=hoisted`, and npm needs a member-local
+install under `install-strategy = nested | shallow | linked`.
+An unverified ancestor lock is reported as a gap. Non-JS and dependency-free
+scopes are unaffected.
+
+Installed-package evidence is readable `package.json` metadata with a
+nonempty name, with both the package directory and metadata resolved inside
+the authorized install boundary. Empty package entries and parent-resolving
+package links fail the guard. No particular runtime entry point is required.
+Local manager store links remain valid, and verified workspace members may
+link into their workspace store even under isolated layouts.
+
 ## Shared inventory
 
 Each selected scope is walked once per deep invocation. The inventory applies

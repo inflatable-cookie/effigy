@@ -18,12 +18,13 @@ pub mod check_id {
     pub const SCAN_STALE_SUPPRESSIONS: &str = "scan.stale-suppressions";
     pub const HEALTH_TASK_DISCOVERY: &str = "health.task.discovery";
     pub const HEALTH_TASK_POSTURE: &str = "health.task.posture";
+    pub const HEALTH_TASK_BOOTSTRAP: &str = "health.task.bootstrap";
     pub const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
     pub const CONTAINER_WORKSPACE_OWNERSHIP: &str = "container.workspace-ownership";
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 22] = [
+pub const ALL_CHECK_IDS: [&str; 23] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -43,6 +44,7 @@ pub const ALL_CHECK_IDS: [&str; 22] = [
     check_id::SCAN_STALE_SUPPRESSIONS,
     check_id::HEALTH_TASK_DISCOVERY,
     check_id::HEALTH_TASK_POSTURE,
+    check_id::HEALTH_TASK_BOOTSTRAP,
     check_id::HEALTH_TASK_EXECUTE,
     check_id::CONTAINER_WORKSPACE_OWNERSHIP,
     check_id::CATALOG_PACK_HEALTH,

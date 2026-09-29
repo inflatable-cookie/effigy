@@ -108,6 +108,44 @@ During v0.x, MINOR bumps may include breaking changes.
 - `qa:docs` now runs `effigy changelog validate CHANGELOG.md`, so docs QA
   applies the same strict changelog heading grammar as release status and an
   em-dash release heading fails before review.
+- Doctor rejects empty dependency entries and package symlinks into a
+  standalone child's parent before running health. Installed packages require
+  readable, named package metadata within the authorized install boundary;
+  exports-only and type-only shapes remain valid. Local manager store links
+  and verified workspace store links remain supported, including isolated
+  workspace layouts.
+- `effigy doctor --deep` checks the selected catalog's declared
+  `[package_manager].js` and local JS install posture before running its
+  `health` task.
+  A child scope with a declared JS dependency and no complete local
+  `node_modules` now reports `health.task.bootstrap` and names
+  `effigy bootstrap deps sync <path>` instead of running health and letting
+  Bun/Node resolve packages from an ancestor checkout. The guard verifies the
+  declared runtime, development, and peer dependencies are present, so an
+  empty or partial child install reports the missing dependency names too. A
+  `node_modules`
+  symlinked into an ancestor checkout or to a file is not a local install and
+  cannot bypass the guard; a complete child-local `node_modules` directory
+  satisfies the precondition even without a child lock. A scope with its own
+  git boundary cannot be satisfied by an ancestor install, so a standalone
+  child repository with no complete local install and no in-boundary lock is
+  reported as `missing-local-lock` even when an ancestor provides a lock and
+  install. An ancestor lock only satisfies the scope when the
+  ancestor declares it in the manager-authoritative workspace source
+  (`package.json` `workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages`
+  for pnpm) without matching a nested path below a declared package; the
+  sources are never unioned, and an unverified ancestor lock is reported as a
+  gap. A verified member also shares the ancestor install only when the
+  manager's effective layout hoists member dependencies: Bun uses the hoisted
+  linker unless `bunfig.toml` `[install] linker = "isolated"` or a
+  `configVersion = 1` workspace lockfile selects isolated installs, and under
+  hoisting a self-contained member (`installConfig.hoistingLimits =
+  "workspaces"` or the root `workspaces.selfContained` list of member paths
+  or names) needs its own `node_modules`; pnpm's default isolated layout and
+  npm's `.npmrc` `install-strategy = nested | shallow | linked` also need a
+  member-local install, while npm's default and pnpm's `node-linker=hoisted`
+  share the root. Non-JS catalogs and dependency-free children keep running
+  health unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their

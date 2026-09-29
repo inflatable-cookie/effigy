@@ -128,6 +128,7 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
             }
             crate::checks::run_health_check(
                 &selected.catalog_root,
+                resolved_root,
                 std::slice::from_ref(selected),
                 state,
                 self.progress.as_deref_mut(),

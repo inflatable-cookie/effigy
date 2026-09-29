@@ -45,6 +45,7 @@ pub(super) fn record_deep_checks_skipped(state: &mut DoctorState) {
 
 pub(super) fn run_health_check(
     scope_root: &Path,
+    workspace_root: &Path,
     catalogs: &[effigy_manifest::LoadedCatalog],
     state: &mut DoctorState,
     progress: Option<&mut DoctorProgressReporter>,
@@ -64,6 +65,7 @@ pub(super) fn run_health_check(
     let started = Instant::now();
     crate::health::check_health_task(
         scope_root,
+        workspace_root,
         catalogs,
         state,
         ports,
