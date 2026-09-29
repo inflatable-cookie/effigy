@@ -95,7 +95,10 @@ pub trait LanguageIndexer: Send + Sync {
 }
 
 pub fn file_graph_id(relative_path: &str) -> Result<GraphId, CodeGraphError> {
-    GraphId::new(format!("file:{relative_path}"))
+    GraphId::new(format!(
+        "file:{}",
+        crate::support::encode_graph_path(relative_path)
+    ))
 }
 
 pub fn extractor_id(value: &str) -> Result<ExtractorId, CodeGraphError> {

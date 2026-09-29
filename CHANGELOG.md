@@ -157,6 +157,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- The documentation graph indexes tracked Markdown files whose
+  repository-relative paths contain spaces. Graph record ids percent-encode
+  whitespace, control characters, and `%`, so `docs/my file.md` and a literal
+  `docs/my%20file.md` get distinct identities while every previously valid
+  path keeps its existing id. `docs context` output still shows original
+  paths and exact source text, and declared typed-relation destinations are
+  recovered byte-exact.
 - After a Colima VM restart, `effigy container up` starts owned Compose
   services that stayed `Exited` or `Created` instead of treating compose
   success as readiness. Start keeps volumes, including Postgres

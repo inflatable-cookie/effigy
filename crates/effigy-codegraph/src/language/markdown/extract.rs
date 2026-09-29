@@ -13,7 +13,7 @@ use crate::model::{
     Confidence, DiagnosticRecord, DiagnosticSeverity, EdgeRecord, FileRecord, ReferenceRecord,
     SymbolRecord,
 };
-use crate::support::{full_span, id_fragment, provenance_for_file, span_from_bytes};
+use crate::support::{encode_graph_path, full_span, provenance_for_file, span_from_bytes};
 use crate::{ExtractorId, GraphId};
 
 const DOC_REL_KIND: &str = "doc-rel";
@@ -53,7 +53,10 @@ pub(super) fn extract_markdown(
     sink: &mut GraphSink,
 ) -> Result<(), CodeGraphError> {
     let content = &file.content;
-    let file_symbol_id = GraphId::new(format!("symbol:doc:file:{}", file.relative_path))?;
+    let file_symbol_id = GraphId::new(format!(
+        "symbol:doc:file:{}",
+        encode_graph_path(&file.relative_path)
+    ))?;
     let source = MarkdownSource {
         extractor_id,
         extractor_version,
@@ -212,8 +215,8 @@ fn push_text_and_path_refs(
             sink.push_edge(EdgeRecord {
                 id: GraphId::new(format!(
                     "edge:doc-path-ref:{}:{}",
-                    file.relative_path,
-                    id_fragment(&path)
+                    encode_graph_path(&file.relative_path),
+                    encode_graph_path(&path)
                 ))?,
                 kind: "doc-path-ref".to_owned(),
                 from_id: file_symbol_id.clone(),
@@ -262,7 +265,11 @@ fn emit_headings(
             .find(|next| next.level <= heading.level)
             .map(|next| next.start_byte)
             .unwrap_or(content.len());
-        let symbol_id = GraphId::new(format!("symbol:doc:{}:#{}", file.relative_path, anchor))?;
+        let symbol_id = GraphId::new(format!(
+            "symbol:doc:{}:#{}",
+            encode_graph_path(&file.relative_path),
+            anchor
+        ))?;
         sink.push_symbol(SymbolRecord {
             id: symbol_id.clone(),
             kind: format!("heading-h{}", heading.level),
@@ -340,7 +347,8 @@ fn emit_fences(
         let code_fence_index = index + 1;
         let fence_id = GraphId::new(format!(
             "symbol:doc:{}:fence:{}",
-            file.relative_path, code_fence_index
+            encode_graph_path(&file.relative_path),
+            code_fence_index
         ))?;
         let language = code_fence_language(&fence.info);
         sink.push_symbol(SymbolRecord {
@@ -414,7 +422,8 @@ fn emit_links(
         sink.push_edge(EdgeRecord {
             id: GraphId::new(format!(
                 "edge:doc-link:{}:{}",
-                file.relative_path, link.dest
+                encode_graph_path(&file.relative_path),
+                encode_graph_path(&link.dest)
             ))?,
             kind: "doc-link".to_owned(),
             from_id: file_symbol_id.clone(),
@@ -433,8 +442,8 @@ fn emit_links(
                 sink.push_edge(EdgeRecord {
                     id: GraphId::new(format!(
                         "edge:doc-link-file:{}:{}",
-                        file.relative_path,
-                        id_fragment(&path)
+                        encode_graph_path(&file.relative_path),
+                        encode_graph_path(&path)
                     ))?,
                     kind: "doc-link-file".to_owned(),
                     from_id: file_symbol_id.clone(),
@@ -492,7 +501,8 @@ fn emit_field_facts(
                 sink.push_diagnostic(DiagnosticRecord {
                     id: GraphId::new(format!(
                         "diag:doc-field-duplicate:{}:{}",
-                        file.relative_path, field.token
+                        encode_graph_path(&file.relative_path),
+                        field.token
                     ))?,
                     severity: DiagnosticSeverity::Error,
                     message: format!(
@@ -513,7 +523,8 @@ fn emit_field_facts(
             sink.push_symbol(SymbolRecord {
                 id: GraphId::new(format!(
                     "symbol:doc-field:{}:{}:{occurrence}",
-                    file.relative_path, field.token
+                    encode_graph_path(&file.relative_path),
+                    field.token
                 ))?,
                 kind: "doc-field".to_owned(),
                 display_name: value.to_owned(),
@@ -580,9 +591,9 @@ fn emit_typed_relations(
                 sink.push_edge(EdgeRecord {
                     id: GraphId::new(format!(
                         "edge:doc-rel:{}:{}:{}",
-                        file.relative_path,
+                        encode_graph_path(&file.relative_path),
                         token,
-                        id_fragment(&link.dest)
+                        encode_graph_path(&link.dest)
                     ))?,
                     kind: DOC_REL_KIND.to_owned(),
                     from_id: file_symbol_id.clone(),
@@ -600,9 +611,9 @@ fn emit_typed_relations(
             sink.push_reference(ReferenceRecord {
                 id: GraphId::new(format!(
                     "ref:doc-rel:{}:{}:{index}:{}",
-                    file.relative_path,
+                    encode_graph_path(&file.relative_path),
                     token,
-                    id_fragment(&link.dest)
+                    encode_graph_path(&link.dest)
                 ))?,
                 file_id: file_record.id.clone(),
                 kind: DOC_REL_KIND.to_owned(),

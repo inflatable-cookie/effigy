@@ -7,6 +7,7 @@ use crate::extractor::file_graph_id;
 use crate::model::{EdgeRecord, ReferenceRecord};
 use crate::scope::GraphScope;
 use crate::storage::GraphStore;
+use crate::support::{decode_graph_path, encode_graph_path};
 use crate::GraphId;
 
 const DOC_REL_KIND: &str = "doc-rel";
@@ -109,8 +110,15 @@ pub(crate) fn typed_edge_dest(edge: &EdgeRecord) -> Option<String> {
         return Some(dest.clone());
     }
     let token = edge.provenance.detail.as_deref()?;
-    let prefix = format!("edge:doc-rel:{}:{}:", edge.provenance.source_path, token);
-    edge.id.as_str().strip_prefix(&prefix).map(str::to_owned)
+    let prefix = format!(
+        "edge:doc-rel:{}:{}:",
+        encode_graph_path(&edge.provenance.source_path),
+        token
+    );
+    edge.id
+        .as_str()
+        .strip_prefix(&prefix)
+        .map(decode_graph_path)
 }
 
 /// Reference-side counterpart of [`typed_edge_dest`].
@@ -121,11 +129,12 @@ pub(crate) fn typed_reference_dest(reference: &ReferenceRecord) -> Option<String
     let token = reference.provenance.detail.as_deref()?;
     let prefix = format!(
         "ref:doc-rel:{}:{}:",
-        reference.provenance.source_path, token
+        encode_graph_path(&reference.provenance.source_path),
+        token
     );
     let rest = reference.id.as_str().strip_prefix(&prefix)?;
     rest.split_once(':')
-        .map(|(_, dest)| dest.to_owned())
+        .map(|(_, dest)| decode_graph_path(dest))
         .filter(|dest| !dest.is_empty())
 }
 
@@ -150,7 +159,11 @@ fn resolve_dest(
             if anchor.is_empty() {
                 return Ok((None, Some(dest.to_owned())));
             }
-            let id = GraphId::new(format!("symbol:doc:{path}:#{anchor}"))?;
+            let id = GraphId::new(format!(
+                "symbol:doc:{}:#{}",
+                encode_graph_path(&path),
+                anchor
+            ))?;
             if live_ids.contains(id.as_str()) {
                 Ok((Some(id), None))
             } else {

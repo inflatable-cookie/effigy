@@ -1,5 +1,16 @@
 use super::*;
 
+use std::process::Command;
+
+fn git(repo_root: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .status()
+        .expect("git should run");
+    assert!(status.success(), "git {args:?} failed");
+}
+
 #[test]
 fn graph_rust_indexer_emits_module_import_and_syntactic_call_facts() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -84,6 +95,119 @@ pub fn render_docs() {}
                 .as_ref()
                 .is_some_and(|id| id.as_str() == "file:src/lib.rs")
     }));
+}
+
+#[test]
+fn graph_git_fixture_indexes_markdown_paths_with_spaces() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::write(
+        root.join("docs/my guide.md"),
+        "# My Guide\n\nThe space calibrator lives here.\n",
+    )
+    .expect("write space guide");
+    // Encoding the space path yields `docs/my%20guide.md`, which is also a
+    // legal literal name; both files must index under distinct identities.
+    fs::write(
+        root.join("docs/my%20guide.md"),
+        "# Percent Guide\n\nThe percent calibrator lives here.\n",
+    )
+    .expect("write percent guide");
+    fs::write(
+        root.join("docs/README.md"),
+        "# Docs\n\nSee [the space guide](my%20guide.md), [the raw form](<my guide.md>), and [the percent guide](my%2520guide.md).\n",
+    )
+    .expect("write readme");
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+    );
+
+    let report = run_index(root).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let store = GraphStore::open(root).expect("store");
+    let files = store.list_files().expect("files");
+    assert!(files.iter().any(
+        |file| file.path == "docs/my guide.md" && file.id.as_str() == "file:docs/my%20guide.md"
+    ));
+    assert!(files
+        .iter()
+        .any(|file| file.path == "docs/my%20guide.md"
+            && file.id.as_str() == "file:docs/my%2520guide.md"));
+
+    let symbols = store.list_symbols().expect("symbols");
+    let space_document = symbols
+        .iter()
+        .find(|symbol| symbol.kind == "document" && symbol.canonical_name == "docs/my guide.md")
+        .expect("space document");
+    let percent_document = symbols
+        .iter()
+        .find(|symbol| symbol.kind == "document" && symbol.canonical_name == "docs/my%20guide.md")
+        .expect("percent document");
+    assert_eq!(
+        space_document.id.as_str(),
+        "symbol:doc:file:docs/my%20guide.md"
+    );
+    assert_eq!(
+        percent_document.id.as_str(),
+        "symbol:doc:file:docs/my%2520guide.md"
+    );
+
+    let edges = store.list_edges().expect("edges");
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "doc-link-file"
+            && edge
+                .to_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "file:docs/my%20guide.md")
+            && edge.provenance.source_path == "docs/README.md"
+    }));
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "doc-link-file"
+            && edge
+                .to_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "file:docs/my%2520guide.md")
+            && edge.provenance.source_path == "docs/README.md"
+    }));
+
+    let payload = crate::docs_context(
+        root,
+        "space calibrator",
+        crate::docs_context::DocsContextRequest::default(),
+    )
+    .expect("docs context");
+    let result = payload
+        .results
+        .iter()
+        .find(|result| result.path == "docs/my guide.md")
+        .expect("space path in context results");
+    // The winning section is either the whole document record or its heading
+    // section; both carry the original path and exact source text.
+    assert!(
+        result.record_id == "symbol:doc:file:docs/my%20guide.md"
+            || result.record_id == "symbol:doc:docs/my%20guide.md:#my-guide",
+        "unexpected record id: {}",
+        result.record_id
+    );
+    assert_eq!(result.provenance.source_path, "docs/my guide.md");
+    assert_eq!(
+        result.source,
+        "# My Guide\n\nThe space calibrator lives here.\n"
+    );
 }
 
 #[test]

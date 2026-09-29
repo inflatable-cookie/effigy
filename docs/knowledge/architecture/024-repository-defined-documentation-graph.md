@@ -96,6 +96,20 @@ Currentness resolves in this order:
 Profile changes invalidate the documentation semantic layer even when Markdown
 bytes are unchanged.
 
+### Graph identity versus human paths
+
+Record ids embed repository-relative paths, so paths and declared link
+destinations are percent-encoded for whitespace, control characters, and `%`
+before they enter a record id (`docs/my file.md` becomes
+`symbol:doc:file:docs/my%20file.md`; a literal `docs/my%20file.md` becomes
+`.../my%2520file.md`, so the two never collide). The encoding is the identity
+transform for every path that never needed it, so ordinary paths keep their
+historical ids. Payload `path`, `canonical_name`, and `source` fields keep the
+raw bytes, and `docs context` output is unchanged. Recovery of a declared
+destination from a resolved `doc-rel` record id decodes back to the exact
+declared text; records written before this encoding existed only ever carried
+whitespace-free fragments, which decode unchanged.
+
 ## Retrieval Pipeline
 
 `effigy docs context <QUERY>` uses a deterministic bounded pipeline:
