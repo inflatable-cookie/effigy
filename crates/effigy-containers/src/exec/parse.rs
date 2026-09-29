@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(parsed[0].project_name.as_deref(), Some("demo-web-dev"));
         assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
         assert_eq!(parsed[0].service.as_deref(), Some("app"));
-        assert_eq!(parsed[0].oneoff, false);
+        assert!(!parsed[0].oneoff);
         assert_eq!(parsed[0].ports.len(), 2);
     }
 

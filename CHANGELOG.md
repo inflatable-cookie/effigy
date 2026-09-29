@@ -157,6 +157,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Failed task runs under `effigy --json` keep their captured output:
+  `effigy --json <task>` and `effigy --json draft <selector>` already attached
+  the `effigy.task.run.v1` payload — including Rhai script diagnostics written
+  before the failure — to `error.details`; nested built-in surfaces such as
+  `effigy --json watch --once <target>` now preserve the same payload instead
+  of reporting `error.details: null`. Envelope shape is unchanged; failures
+  still exit non-zero and text mode still streams script output untouched.
 - The documentation graph indexes tracked Markdown files whose
   repository-relative paths contain spaces. Graph record ids percent-encode
   whitespace, control characters, and `%`, so `docs/my file.md` and a literal

@@ -661,6 +661,7 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
                 error_count,
                 rendered,
             },
+            B::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
             B::Manifest(error) => map_manifest_error(error),
             B::Managed(error) => Self::from(error),
             B::Routing(error) => Self::from(error),
