@@ -3,6 +3,40 @@ use std::path::{Path, PathBuf};
 use effigy_manifest::{ManifestJsPackageManager, TaskManifest};
 use globset::GlobBuilder;
 
+/// Why the selected catalog scope has no usable local JS install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BootstrapReason {
+    /// No committed lock exists anywhere in the scope's repository boundary.
+    MissingLocalLock,
+    /// A lock exists but its required install root has no local install.
+    MissingLocalInstall,
+    /// The nearest lock belongs to an ancestor that does not declare this
+    /// scope as a workspace member.
+    UnverifiedAncestorLock,
+}
+
+impl BootstrapReason {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MissingLocalLock => "missing-local-lock",
+            Self::MissingLocalInstall => "missing-local-install",
+            Self::UnverifiedAncestorLock => "ancestor-lock-without-workspace-membership",
+        }
+    }
+
+    /// Bun needs an explicit lock seed through `--refresh-lock`; pnpm and npm
+    /// installs can create their own lock. Every other reason is a plain
+    /// frozen install into the named route.
+    fn bootstrap_command(self, manager: &str, route: &str) -> String {
+        match self {
+            Self::MissingLocalLock | Self::UnverifiedAncestorLock if manager == "bun" => {
+                format!("effigy bootstrap deps sync --refresh-lock {route}")
+            }
+            _ => format!("effigy bootstrap deps sync {route}"),
+        }
+    }
+}
+
 /// A JS dependency bootstrap gap for the selected catalog scope.
 ///
 /// The selected catalog declares a JS package manager and a `package.json`
@@ -19,50 +53,56 @@ pub(super) struct JsBootstrapGap {
     /// Directory that must carry the local `node_modules` install.
     pub(super) install_root: PathBuf,
     /// Nearest ancestor (or the scope itself) that carries the manager's lock.
-    pub(super) lock_root: PathBuf,
-    pub(super) lock_name: String,
-    /// `true` when the nearest lock belongs to an ancestor that does not
-    /// declare this scope as a workspace member.
-    pub(super) unverified_ancestor: bool,
+    pub(super) lock_root: Option<PathBuf>,
+    pub(super) lock_name: Option<String>,
+    pub(super) reason: BootstrapReason,
     route: String,
 }
 
 impl JsBootstrapGap {
     pub(super) fn evidence(&self) -> String {
-        let mut evidence = format!(
-            "observed=missing-local-install; manager={}; scope={}; install_root={}; lock_root={}; lock={}; package_json={}; node_modules={}",
+        let lock_root = self
+            .lock_root
+            .as_ref()
+            .map(|root| root.display().to_string())
+            .unwrap_or_else(|| "<none>".to_owned());
+        let lock_name = self.lock_name.as_deref().unwrap_or("<none>");
+        format!(
+            "observed=missing-local-install; reason={}; manager={}; scope={}; install_root={}; lock_root={lock_root}; lock={lock_name}; package_json={}; node_modules={}",
+            self.reason.label(),
             self.manager,
             self.scope_root.display(),
             self.install_root.display(),
-            self.lock_root.display(),
-            self.lock_name,
             self.package_json.display(),
             self.install_root.join("node_modules").display(),
-        );
-        if self.unverified_ancestor {
-            evidence.push_str("; reason=ancestor-lock-without-workspace-membership");
-        }
-        evidence
+        )
     }
 
     pub(super) fn remediation(&self) -> String {
-        if self.unverified_ancestor {
-            let bootstrap_command = if self.manager == "bun" {
-                format!("effigy bootstrap deps sync --refresh-lock {}", self.route)
-            } else {
-                format!("effigy bootstrap deps sync {}", self.route)
-            };
-            return format!(
-                "The nearest {} lock at `{}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install with `{bootstrap_command}` (or add it to the owning workspace), then rerun `effigy doctor --deep`.",
+        let bootstrap_command = self.reason.bootstrap_command(self.manager, &self.route);
+        match self.reason {
+            BootstrapReason::UnverifiedAncestorLock => {
+                let lock_root = self
+                    .lock_root
+                    .as_ref()
+                    .map(|root| root.display().to_string())
+                    .unwrap_or_else(|| "<none>".to_owned());
+                format!(
+                    "The nearest {} lock at `{lock_root}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install with `{bootstrap_command}` (or add it to the owning workspace), then rerun `effigy doctor --deep`.",
+                    self.manager,
+                    self.scope_root.display(),
+                )
+            }
+            BootstrapReason::MissingLocalLock => format!(
+                "No committed {} lock or local `node_modules` was found within this checkout. Create them with `{bootstrap_command}` for `{}`, then rerun `effigy doctor --deep`.",
                 self.manager,
-                self.lock_root.display(),
-                self.scope_root.display(),
-            );
+                self.route,
+            ),
+            BootstrapReason::MissingLocalInstall => format!(
+                "JavaScript dependencies are missing for `{}`; prepare this checkout with `{bootstrap_command}` ({} install), then rerun `effigy doctor --deep`.",
+                self.route, self.manager,
+            ),
         }
-        format!(
-            "JavaScript dependencies are missing for `{}`; prepare this checkout with `effigy bootstrap deps sync {}` ({} install), then rerun `effigy doctor --deep`.",
-            self.route, self.route, self.manager,
-        )
     }
 }
 
@@ -70,12 +110,14 @@ impl JsBootstrapGap {
 ///
 /// The check is driven by the selected catalog's declared `[package_manager].js`
 /// and the manager's committed lock evidence, never by a universal
-/// `node_modules` rule. A scope's own lock always requires a scope-local
-/// install. An ancestor lock only satisfies the scope when the ancestor's
-/// `package.json` declares the scope as a JS workspace member; otherwise the
-/// ancestor is a foreign install that Node/Bun must not be allowed to leak in.
-/// Both the lock search and the membership check stay inside the scope's
-/// repository boundary and never rise above the workspace root.
+/// `node_modules` rule. A scope with a local `node_modules` is always
+/// considered bootstrapped. Otherwise, the scope's own lock requires a
+/// scope-local install; an ancestor lock only satisfies the scope when it
+/// declares the scope as a manager-authoritative workspace member inside the
+/// same repository boundary; and a scope with no lock at all inside its own
+/// repository boundary is reported as missing its bootstrap. Both the lock
+/// search and the membership check stay inside the scope's repository boundary
+/// and never rise above the workspace root.
 pub(super) fn health_js_bootstrap_gap(
     scope_root: &Path,
     workspace_root: &Path,
@@ -93,34 +135,46 @@ pub(super) fn health_js_bootstrap_gap(
     if !package_json.is_file() || !declares_js_dependencies(&package_json) {
         return None;
     }
-
-    let (manager_label, lock_names) = manager_evidence(manager);
-    let lock_root = locked_install_root(scope_root, workspace_root, lock_names)?;
-    let lock_name = lock_names
-        .iter()
-        .find(|lock| lock_root.join(lock).is_file())?
-        .to_string();
-
-    let shared_member =
-        lock_root != scope_root && is_declared_workspace_member(lock_root, scope_root, manager);
-    let unverified_ancestor = lock_root != scope_root && !shared_member;
-    let install_root = if shared_member {
-        lock_root.to_path_buf()
-    } else {
-        scope_root.to_path_buf()
-    };
-    if install_root.join("node_modules").is_dir() {
+    if scope_root.join("node_modules").is_dir() {
         return None;
     }
+
+    let (manager_label, lock_names) = manager_evidence(manager);
+    let lock_root = locked_install_root(scope_root, workspace_root, lock_names);
+    let lock_name = match lock_root {
+        Some(root) => lock_names
+            .iter()
+            .find(|lock| root.join(*lock).is_file())
+            .map(|lock| (*lock).to_owned()),
+        None => None,
+    };
+
+    let (install_root, reason) = match lock_root {
+        None => (scope_root.to_path_buf(), BootstrapReason::MissingLocalLock),
+        Some(root) if root == scope_root => (
+            scope_root.to_path_buf(),
+            BootstrapReason::MissingLocalInstall,
+        ),
+        Some(root) if is_declared_workspace_member(root, scope_root, manager) => {
+            if root.join("node_modules").is_dir() {
+                return None;
+            }
+            (root.to_path_buf(), BootstrapReason::MissingLocalInstall)
+        }
+        Some(_) => (
+            scope_root.to_path_buf(),
+            BootstrapReason::UnverifiedAncestorLock,
+        ),
+    };
 
     Some(JsBootstrapGap {
         manager: manager_label,
         scope_root: scope_root.to_path_buf(),
         package_json,
         install_root: install_root.clone(),
-        lock_root: lock_root.to_path_buf(),
+        lock_root: lock_root.map(Path::to_path_buf),
         lock_name,
-        unverified_ancestor,
+        reason,
         route: bootstrap_route(&install_root, workspace_root),
     })
 }
@@ -348,8 +402,8 @@ mod tests {
         assert_eq!(gap.manager, "bun");
         assert_eq!(gap.route, "child");
         assert_eq!(gap.install_root, child);
-        assert_eq!(gap.lock_name, "bun.lock");
-        assert!(!gap.unverified_ancestor);
+        assert_eq!(gap.lock_name.as_deref(), Some("bun.lock"));
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
         assert!(gap
             .remediation()
             .contains("effigy bootstrap deps sync child"));
@@ -413,7 +467,7 @@ mod tests {
 
         let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
 
-        assert!(gap.unverified_ancestor);
+        assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
         assert_eq!(gap.install_root, child);
         assert_eq!(gap.route, "child");
         assert!(gap
@@ -441,7 +495,36 @@ mod tests {
 
         let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
 
-        assert!(gap.unverified_ancestor);
+        assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn standalone_child_with_its_own_git_boundary_needs_a_local_bootstrap() {
+        let root = temp_root("standalone");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = manifest(&child);
+        write_workspace_root(&workspace, None);
+        mark_repo(&child);
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        // The ancestor provides a lock and install, but the child is its own
+        // repository with no lock and must not borrow it.
+        std::fs::create_dir_all(workspace.join("node_modules")).expect("ancestor install");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
+        assert_eq!(gap.install_root, child);
+        assert_eq!(gap.route, "child");
+        assert!(gap.evidence().contains("reason=missing-local-lock"));
+        assert!(gap
+            .remediation()
+            .contains("effigy bootstrap deps sync --refresh-lock child"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -472,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn child_without_lock_evidence_is_not_a_gap() {
+    fn child_without_any_lock_or_install_is_a_gap() {
         let root = temp_root("no-lock");
         let workspace = root.join("workspace");
         let child = workspace.join("child");
@@ -483,7 +566,14 @@ mod tests {
             r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
         );
 
-        assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
+        assert_eq!(gap.install_root, child);
+        assert_eq!(gap.route, "child");
+        assert!(gap.lock_root.is_none());
+        assert!(gap.lock_name.is_none());
+        assert!(gap.evidence().contains("reason=missing-local-lock"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -599,7 +689,7 @@ mod tests {
         let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
 
         assert_eq!(gap.manager, "pnpm");
-        assert!(gap.unverified_ancestor);
+        assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -630,7 +720,7 @@ mod tests {
         let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
 
         assert_eq!(gap.manager, "pnpm");
-        assert!(gap.unverified_ancestor);
+        assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
         assert!(gap
             .remediation()
             .contains("effigy bootstrap deps sync child"));

@@ -607,22 +607,25 @@ Fix:
 
 Diagnosis:
 - the selected scope declares `[package_manager].js`, its `package.json`
-  declares dependencies, and its own locked install root has no local
-  `node_modules`,
-- running health from that scope would let Bun or Node resolve packages from an
-  ancestor checkout and report a misleading task failure.
+  declares dependencies, and it has no local `node_modules`,
+- the scope has its own git boundary (or no lock at all) and its own locked
+  install root is missing, so running health would let Bun or Node resolve
+  packages from an ancestor checkout and report a misleading task failure.
 
 Fix:
 - prepare the named checkout with `effigy bootstrap deps sync <path>` (the
-  frozen Bun install for a committed `bun.lock`), then rerun
-  `effigy doctor --deep`,
+  frozen Bun install for a committed `bun.lock`). When the scope has no lock at
+  all — `missing-local-lock`, typically a standalone child repository — seed one
+  first with `effigy bootstrap deps sync --refresh-lock <path>` for Bun (pnpm
+  and npm installs create their own lock), then rerun `effigy doctor --deep`,
 - when the scope intentionally shares an ancestor locked workspace, declare it
   as a member in the manager-authoritative source: that ancestor's
   `package.json` `workspaces` patterns for Bun/npm, or its
   `pnpm-workspace.yaml` `packages` list for pnpm. The sources are not unioned,
-  so a pnpm exclusion still applies; an ancestor lock without matching
-  workspace membership (or one that only matches a nested path below a
-  declared package) is reported as a foreign installation and does not
+  so a pnpm exclusion still applies; a scope with its own git boundary always
+  requires a scope-local lock and install, and an ancestor lock without
+  matching workspace membership (or one that only matches a nested path below
+  a declared package) is reported as a foreign installation and does not
   satisfy the scope.
 
 ## Expected Outcome

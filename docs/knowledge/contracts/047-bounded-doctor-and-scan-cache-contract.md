@@ -38,15 +38,20 @@ cache and timeout behavior.
 1. Before deep doctor runs a selected scope's `health` task, it checks that the
    scope's declared JS dependency bootstrap is present. The check uses the
    scope manifest's declared `[package_manager].js` and the manager's committed
-   lock evidence; it is never a universal `node_modules` rule.
-2. The owning locked install root is the nearest ancestor of the scope with the
+   lock evidence; it is never a universal `node_modules` rule. A scope with a
+   local `node_modules` is bootstrapped and keeps running `health`.
+2. The required install root is the nearest ancestor of the scope with the
    selected manager's lock file, bounded by the scope's repository boundary and
    the workspace root. A lock outside those boundaries never satisfies the
-   scope.
-3. A scope with no local `node_modules` at its required install root, whose
-   `package.json` declares dependencies, emits a `health.task.bootstrap` error
-   naming `effigy bootstrap deps sync <path>` and does not run that scope's
-   `health` task.
+   scope. A scope with its own repository boundary therefore requires a
+   scope-local lock and local install; an ancestor lock or install cannot
+   satisfy it.
+3. A scope whose `package.json` declares dependencies and whose required
+   install root has no local `node_modules` emits a `health.task.bootstrap`
+   error naming `effigy bootstrap deps sync <path>` and does not run that
+   scope's `health` task. A scope with no lock anywhere inside its repository
+   boundary is reported as `missing-local-lock`, including a standalone child
+   repository with no child lock.
 4. An ancestor lock or install only satisfies the scope when the ancestor
    declares the scope as a JS workspace member in the manager-authoritative
    source: `package.json` `workspaces` for Bun and npm, or
@@ -58,8 +63,6 @@ cache and timeout behavior.
    as the scope's local install.
 5. A scope whose `package.json` declares no dependencies and a catalog without
    a declared JS package manager keep running `health` unchanged.
-6. When the selected manifest provides no lock or manager evidence at all,
-   doctor does not treat parent resolution as invalid and does not guard.
 
 ## Budget contract
 
@@ -131,9 +134,12 @@ compatible unless this contract explicitly adds data.
   non-zero exit, no partial cache publication, and no surviving child process.
 - A child scope with its own lock and no local `node_modules` reports the
   missing bootstrap and never invokes its health sentinel; after a local
-  bootstrap install the same scope runs health. A declared workspace member
-  sharing an ancestor install, a scope whose ancestor lock lacks verified
-  membership, a non-JS catalog, and a dependency-free child are each covered.
+  bootstrap install the same scope runs health. A standalone child repository
+  with its own git boundary, no child lock, and an ancestor lock/install is
+  reported as `missing-local-lock` and never runs health. A declared workspace
+  member sharing an ancestor install still runs health, while a scope whose
+  ancestor lock lacks verified membership, a non-JS catalog, and a
+  dependency-free child are each covered.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.

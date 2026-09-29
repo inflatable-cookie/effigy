@@ -94,16 +94,19 @@ During v0.x, MINOR bumps may include breaking changes.
   em-dash release heading fails before review.
 - `effigy doctor --deep` checks the selected catalog's declared
   `[package_manager].js` and committed lock before running its `health` task.
-  A child scope whose own locked workspace has no local `node_modules` now
+  A child scope with a declared JS dependency and no local `node_modules` now
   reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
-  Bun/Node resolve packages from an ancestor checkout. An ancestor lock only
-  satisfies the scope when the ancestor declares it in the
-  manager-authoritative workspace source (`package.json` `workspaces` for
-  Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm) without matching a
-  nested path below a declared package; the sources are never unioned, and an
-  unverified ancestor lock is reported as a gap. Non-JS catalogs and
-  dependency-free children keep running health unchanged.
+  Bun/Node resolve packages from an ancestor checkout. A scope with its own
+  git boundary requires a scope-local lock and install, so a standalone child
+  repository with no child lock is reported as `missing-local-lock` even when
+  an ancestor provides a lock and install. An ancestor lock only satisfies the
+  scope when the ancestor declares it in the manager-authoritative workspace
+  source (`package.json` `workspaces` for Bun/npm, `pnpm-workspace.yaml`
+  `packages` for pnpm) without matching a nested path below a declared
+  package; the sources are never unioned, and an unverified ancestor lock is
+  reported as a gap. Non-JS catalogs and dependency-free children keep running
+  health unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their
