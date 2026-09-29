@@ -171,7 +171,7 @@ mod hydration_tests {
             teardown_policy: Default::default(),
             is_default: true,
         };
-        let error = check_js_hydration(&[suite.clone()], &root).unwrap_err();
+        let error = check_js_hydration(std::slice::from_ref(&suite), &root).unwrap_err();
         assert!(error.to_string().contains("effigy bootstrap deps sync ."));
         assert!(error.to_string().contains("frozen Bun install"));
         std::fs::create_dir(root.join("node_modules")).unwrap();
