@@ -617,9 +617,11 @@ Fix:
   frozen Bun install for a committed `bun.lock`), then rerun
   `effigy doctor --deep`,
 - when the scope intentionally shares an ancestor locked workspace, declare it
-  in that ancestor's `package.json` `workspaces` patterns; an ancestor lock
-  without matching workspace membership is reported as a foreign installation
-  and does not satisfy the scope.
+  as a member in that ancestor's `package.json` `workspaces` patterns or its
+  `pnpm-workspace.yaml` `packages` list; an ancestor lock without matching
+  workspace membership (or one that only matches a nested path below a
+  declared package) is reported as a foreign installation and does not
+  satisfy the scope.
 
 ## Expected Outcome
 

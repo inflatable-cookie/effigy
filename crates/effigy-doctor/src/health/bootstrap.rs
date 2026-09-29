@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{ManifestJsPackageManager, TaskManifest};
-use globset::Glob;
+use globset::GlobBuilder;
 
 /// A JS dependency bootstrap gap for the selected catalog scope.
 ///
@@ -158,18 +158,13 @@ fn locked_install_root<'a>(
     None
 }
 
-/// Whether `ancestor`'s `package.json` declares `scope_root` as a workspace
-/// member through a matching `workspaces` pattern.
+/// Whether the ancestor declares `scope_root` as a workspace member.
+///
+/// Membership comes from either `package.json` `workspaces` (npm/Bun and
+/// pnpm's compatibility form) or a sibling `pnpm-workspace.yaml` `packages`
+/// list, and supports `!` exclusions. A `*` never crosses a path separator,
+/// so a nested path under a matched workspace package is not itself a member.
 fn is_declared_workspace_member(ancestor: &Path, scope_root: &Path) -> bool {
-    let Ok(raw) = std::fs::read_to_string(ancestor.join("package.json")) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return false;
-    };
-    let Some(patterns) = workspace_patterns(&value) else {
-        return false;
-    };
     let Ok(relative) = scope_root.strip_prefix(ancestor) else {
         return false;
     };
@@ -177,21 +172,44 @@ fn is_declared_workspace_member(ancestor: &Path, scope_root: &Path) -> bool {
     if relative.is_empty() {
         return false;
     }
-    patterns.iter().any(|pattern| {
-        let pattern = pattern
-            .trim()
-            .trim_start_matches("./")
-            .trim_end_matches('/');
-        if pattern.is_empty() {
-            return false;
-        }
-        Glob::new(pattern)
-            .map(|glob| glob.compile_matcher().is_match(&relative))
-            .unwrap_or(false)
-    })
+    let patterns = workspace_membership_patterns(ancestor);
+    membership_matches(&patterns, &relative)
 }
 
-fn workspace_patterns(value: &serde_json::Value) -> Option<Vec<String>> {
+fn workspace_membership_patterns(ancestor: &Path) -> Vec<String> {
+    let mut patterns = package_json_workspace_patterns(ancestor).unwrap_or_default();
+    patterns.extend(pnpm_workspace_patterns(ancestor));
+    patterns
+}
+
+fn membership_matches(patterns: &[String], relative: &str) -> bool {
+    let mut included = false;
+    for raw in patterns {
+        let raw = raw.trim();
+        let (exclusion, pattern) = match raw.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, raw),
+        };
+        let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+        if pattern.is_empty() {
+            continue;
+        }
+        let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() else {
+            continue;
+        };
+        if glob.compile_matcher().is_match(relative) {
+            if exclusion {
+                return false;
+            }
+            included = true;
+        }
+    }
+    included
+}
+
+fn package_json_workspace_patterns(ancestor: &Path) -> Option<Vec<String>> {
+    let raw = std::fs::read_to_string(ancestor.join("package.json")).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
     let entries = match value.get("workspaces")? {
         serde_json::Value::Array(entries) => entries,
         serde_json::Value::Object(map) => map.get("packages")?.as_array()?,
@@ -206,6 +224,21 @@ fn workspace_patterns(value: &serde_json::Value) -> Option<Vec<String>> {
     } else {
         Some(patterns)
     }
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct PnpmWorkspaceManifest {
+    #[serde(default)]
+    packages: Vec<String>,
+}
+
+fn pnpm_workspace_patterns(ancestor: &Path) -> Vec<String> {
+    let Ok(raw) = std::fs::read_to_string(ancestor.join("pnpm-workspace.yaml")) else {
+        return Vec::new();
+    };
+    serde_yaml::from_str::<PnpmWorkspaceManifest>(&raw)
+        .map(|manifest| manifest.packages)
+        .unwrap_or_default()
 }
 
 fn bootstrap_route(install_root: &Path, workspace_root: &Path) -> String {
@@ -452,6 +485,84 @@ mod tests {
 
         assert!(is_declared_workspace_member(&workspace, &child));
         assert!(!is_declared_workspace_member(&workspace, &workspace));
+        // A nested path below a matched workspace package is not itself a
+        // declared member: `*` never crosses a path separator.
+        assert!(!is_declared_workspace_member(
+            &workspace,
+            &child.join("nested")
+        ));
+        assert!(!is_declared_workspace_member(
+            &workspace,
+            &workspace.join("tools").join("nested")
+        ));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pnpm_workspace_yaml_declares_membership() {
+        let root = temp_root("pnpm-membership");
+        let workspace = root.join("workspace");
+        let member = workspace.join("packages").join("core");
+        let outsider = workspace.join("packages").join("core").join("nested");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        write(
+            &workspace.join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n",
+        );
+
+        assert!(is_declared_workspace_member(&workspace, &member));
+        assert!(!is_declared_workspace_member(&workspace, &outsider));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pnpm_workspace_exclusion_removes_membership() {
+        let root = temp_root("pnpm-exclusion");
+        let workspace = root.join("workspace");
+        let member = workspace.join("packages").join("core");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        write(
+            &workspace.join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n  - '!packages/core'\n",
+        );
+
+        assert!(!is_declared_workspace_member(&workspace, &member));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pnpm_child_without_membership_is_a_gap() {
+        let root = temp_root("pnpm-gap");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = {
+            let path = child.join("effigy.toml");
+            write(&path, "[package_manager]\njs = \"pnpm\"\n");
+            load_task_manifest(&path).expect("manifest")
+        };
+        mark_repo(&workspace);
+        // A pnpm lock plus a pnpm-workspace.yaml that excludes the child.
+        write(&workspace.join("pnpm-lock.yaml"), "");
+        write(
+            &workspace.join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n",
+        );
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        std::fs::create_dir_all(workspace.join("node_modules")).expect("parent install");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.manager, "pnpm");
+        assert!(gap.unverified_ancestor);
+        assert!(gap
+            .remediation()
+            .contains("effigy bootstrap deps sync child"));
 
         std::fs::remove_dir_all(root).ok();
     }

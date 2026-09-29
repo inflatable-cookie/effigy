@@ -98,10 +98,11 @@ During v0.x, MINOR bumps may include breaking changes.
   reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
   Bun/Node resolve packages from an ancestor checkout. An ancestor lock only
-  satisfies the scope when the ancestor's `package.json` declares it as a
-  matching `workspaces` member; an unverified ancestor lock is reported as a
-  gap. Non-JS catalogs and dependency-free children keep running health
-  unchanged.
+  satisfies the scope when the ancestor declares it as a matching workspace
+  member (`package.json` `workspaces` or `pnpm-workspace.yaml` `packages`),
+  and a nested path below a declared package never counts; an unverified
+  ancestor lock is reported as a gap. Non-JS catalogs and dependency-free
+  children keep running health unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their
