@@ -47,11 +47,12 @@ the manager's committed lock identify the owning locked install root. A scope
 whose required install root has no local `node_modules` emits a
 `health.task.bootstrap` finding and skips its health task, so Bun or Node
 cannot silently resolve a package from an ancestor checkout. An ancestor lock
-or install only satisfies the scope when the ancestor declares the scope as a
-JS workspace member through a matching `workspaces` pattern (`package.json` or
-`pnpm-workspace.yaml`), without matching nested paths below a declared
-package; an unverified ancestor lock is reported as a gap. Non-JS and
-dependency-free scopes are unaffected.
+or install only satisfies the scope when the ancestor declares the scope in
+the manager-authoritative workspace source (`package.json` `workspaces` for
+Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without matching nested
+paths below a declared package; the sources are never unioned. An unverified
+ancestor lock is reported as a gap. Non-JS and dependency-free scopes are
+unaffected.
 
 ## Shared inventory
 

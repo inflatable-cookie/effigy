@@ -102,7 +102,7 @@ pub(super) fn health_js_bootstrap_gap(
         .to_string();
 
     let shared_member =
-        lock_root != scope_root && is_declared_workspace_member(lock_root, scope_root);
+        lock_root != scope_root && is_declared_workspace_member(lock_root, scope_root, manager);
     let unverified_ancestor = lock_root != scope_root && !shared_member;
     let install_root = if shared_member {
         lock_root.to_path_buf()
@@ -160,11 +160,16 @@ fn locked_install_root<'a>(
 
 /// Whether the ancestor declares `scope_root` as a workspace member.
 ///
-/// Membership comes from either `package.json` `workspaces` (npm/Bun and
-/// pnpm's compatibility form) or a sibling `pnpm-workspace.yaml` `packages`
-/// list, and supports `!` exclusions. A `*` never crosses a path separator,
-/// so a nested path under a matched workspace package is not itself a member.
-fn is_declared_workspace_member(ancestor: &Path, scope_root: &Path) -> bool {
+/// The declared manager selects the authoritative membership source rather
+/// than unioning them: pnpm reads only `pnpm-workspace.yaml` `packages`, while
+/// Bun and npm read only `package.json` `workspaces`. Both support `!`
+/// exclusions. A `*` never crosses a path separator, so a nested path under a
+/// matched workspace package is not itself a member.
+fn is_declared_workspace_member(
+    ancestor: &Path,
+    scope_root: &Path,
+    manager: ManifestJsPackageManager,
+) -> bool {
     let Ok(relative) = scope_root.strip_prefix(ancestor) else {
         return false;
     };
@@ -172,14 +177,21 @@ fn is_declared_workspace_member(ancestor: &Path, scope_root: &Path) -> bool {
     if relative.is_empty() {
         return false;
     }
-    let patterns = workspace_membership_patterns(ancestor);
+    let patterns = workspace_membership_patterns(ancestor, manager);
     membership_matches(&patterns, &relative)
 }
 
-fn workspace_membership_patterns(ancestor: &Path) -> Vec<String> {
-    let mut patterns = package_json_workspace_patterns(ancestor).unwrap_or_default();
-    patterns.extend(pnpm_workspace_patterns(ancestor));
-    patterns
+fn workspace_membership_patterns(
+    ancestor: &Path,
+    manager: ManifestJsPackageManager,
+) -> Vec<String> {
+    match manager {
+        // `pnpm-workspace.yaml` is the sole authority for pnpm workspaces;
+        // unioning `package.json` `workspaces` can re-include an excluded
+        // child and let it borrow a parent install.
+        ManifestJsPackageManager::Pnpm => pnpm_workspace_patterns(ancestor),
+        _ => package_json_workspace_patterns(ancestor).unwrap_or_default(),
+    }
 }
 
 fn membership_matches(patterns: &[String], relative: &str) -> bool {
@@ -483,17 +495,27 @@ mod tests {
         let child = workspace.join("packages").join("core");
         write_workspace_root(&workspace, Some(r#"["packages/*"]"#));
 
-        assert!(is_declared_workspace_member(&workspace, &child));
-        assert!(!is_declared_workspace_member(&workspace, &workspace));
+        assert!(is_declared_workspace_member(
+            &workspace,
+            &child,
+            ManifestJsPackageManager::Bun
+        ));
+        assert!(!is_declared_workspace_member(
+            &workspace,
+            &workspace,
+            ManifestJsPackageManager::Bun
+        ));
         // A nested path below a matched workspace package is not itself a
         // declared member: `*` never crosses a path separator.
         assert!(!is_declared_workspace_member(
             &workspace,
-            &child.join("nested")
+            &child.join("nested"),
+            ManifestJsPackageManager::Bun
         ));
         assert!(!is_declared_workspace_member(
             &workspace,
-            &workspace.join("tools").join("nested")
+            &workspace.join("tools").join("nested"),
+            ManifestJsPackageManager::Bun
         ));
 
         std::fs::remove_dir_all(root).ok();
@@ -511,8 +533,16 @@ mod tests {
             "packages:\n  - 'packages/*'\n",
         );
 
-        assert!(is_declared_workspace_member(&workspace, &member));
-        assert!(!is_declared_workspace_member(&workspace, &outsider));
+        assert!(is_declared_workspace_member(
+            &workspace,
+            &member,
+            ManifestJsPackageManager::Pnpm
+        ));
+        assert!(!is_declared_workspace_member(
+            &workspace,
+            &outsider,
+            ManifestJsPackageManager::Pnpm
+        ));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -528,7 +558,48 @@ mod tests {
             "packages:\n  - 'packages/*'\n  - '!packages/core'\n",
         );
 
-        assert!(!is_declared_workspace_member(&workspace, &member));
+        assert!(!is_declared_workspace_member(
+            &workspace,
+            &member,
+            ManifestJsPackageManager::Pnpm
+        ));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pnpm_workspace_yaml_exclusion_beats_package_json_workspaces() {
+        let root = temp_root("pnpm-union");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = {
+            let path = child.join("effigy.toml");
+            write(&path, "[package_manager]\njs = \"pnpm\"\n");
+            load_task_manifest(&path).expect("manifest")
+        };
+        mark_repo(&workspace);
+        write(&workspace.join("pnpm-lock.yaml"), "");
+        write(
+            &workspace.join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n",
+        );
+        // The compatibility `package.json` pattern lists the child, but the
+        // authoritative pnpm source excludes it. Membership must not union the
+        // two sources and let the excluded child borrow the parent install.
+        write(
+            &workspace.join("package.json"),
+            r#"{"private":true,"workspaces":["child"]}"#,
+        );
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        std::fs::create_dir_all(workspace.join("node_modules")).expect("parent install");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.manager, "pnpm");
+        assert!(gap.unverified_ancestor);
 
         std::fs::remove_dir_all(root).ok();
     }

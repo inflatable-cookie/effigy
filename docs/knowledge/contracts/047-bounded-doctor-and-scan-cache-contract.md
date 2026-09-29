@@ -48,12 +48,14 @@ cache and timeout behavior.
    naming `effigy bootstrap deps sync <path>` and does not run that scope's
    `health` task.
 4. An ancestor lock or install only satisfies the scope when the ancestor
-   declares the scope as a JS workspace member through a matching
-   `workspaces` pattern in `package.json` or a `pnpm-workspace.yaml`
-   `packages` list. Membership patterns do not match paths nested below a
-   declared workspace package. An ancestor lock without verified workspace
-   membership is reported as a gap that names the foreign lock; doctor never
-   treats it as the scope's local install.
+   declares the scope as a JS workspace member in the manager-authoritative
+   source: `package.json` `workspaces` for Bun and npm, or
+   `pnpm-workspace.yaml` `packages` for pnpm. The two sources are never
+   unioned, so a pnpm exclusion cannot be re-included by a `package.json`
+   pattern. Membership patterns do not match paths nested below a declared
+   workspace package. An ancestor lock without verified workspace membership
+   is reported as a gap that names the foreign lock; doctor never treats it
+   as the scope's local install.
 5. A scope whose `package.json` declares no dependencies and a catalog without
    a declared JS package manager keep running `health` unchanged.
 6. When the selected manifest provides no lock or manager evidence at all,
