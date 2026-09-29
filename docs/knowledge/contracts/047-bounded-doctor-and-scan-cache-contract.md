@@ -39,7 +39,10 @@ cache and timeout behavior.
    scope's declared JS dependency bootstrap is present. The check uses the
    scope manifest's declared `[package_manager].js` and the manager's committed
    lock evidence; it is never a universal `node_modules` rule. A scope with a
-   local `node_modules` is bootstrapped and keeps running `health`.
+   local `node_modules` is bootstrapped and keeps running `health`. A
+   symlinked `node_modules` counts only when its resolved target stays inside
+   the local install boundary; a link into an ancestor checkout is treated as
+   missing and cannot smuggle in a parent install.
 2. The required install root is the nearest ancestor of the scope with the
    selected manager's lock file, bounded by the scope's repository boundary and
    the workspace root. A lock outside those boundaries never satisfies the
@@ -136,10 +139,11 @@ compatible unless this contract explicitly adds data.
   missing bootstrap and never invokes its health sentinel; after a local
   bootstrap install the same scope runs health. A standalone child repository
   with its own git boundary, no child lock, and an ancestor lock/install is
-  reported as `missing-local-lock` and never runs health. A declared workspace
-  member sharing an ancestor install still runs health, while a scope whose
-  ancestor lock lacks verified membership, a non-JS catalog, and a
-  dependency-free child are each covered.
+  reported as `missing-local-lock` and never runs health; the same holds when
+  the child's `node_modules` is a symlink into that ancestor install. A
+  declared workspace member sharing an ancestor install still runs health,
+  while a scope whose ancestor lock lacks verified membership, a non-JS
+  catalog, and a dependency-free child are each covered.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.

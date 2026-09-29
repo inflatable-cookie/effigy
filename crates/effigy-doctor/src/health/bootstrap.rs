@@ -135,7 +135,11 @@ pub(super) fn health_js_bootstrap_gap(
     if !package_json.is_file() || !declares_js_dependencies(&package_json) {
         return None;
     }
-    if scope_root.join("node_modules").is_dir() {
+    // A symlinked `node_modules` only counts as a local install when its
+    // resolved target stays inside the scope itself. A link into an ancestor
+    // checkout is exactly the misleading parent resolution this guard exists
+    // to stop.
+    if local_install_present(scope_root, scope_root) {
         return None;
     }
 
@@ -156,7 +160,10 @@ pub(super) fn health_js_bootstrap_gap(
             BootstrapReason::MissingLocalInstall,
         ),
         Some(root) if is_declared_workspace_member(root, scope_root, manager) => {
-            if root.join("node_modules").is_dir() {
+            // A verified member may share the workspace's install, but a
+            // symlinked install that escapes the workspace repository is still
+            // rejected.
+            if local_install_present(root, &repository_boundary(root)) {
                 return None;
             }
             (root.to_path_buf(), BootstrapReason::MissingLocalInstall)
@@ -210,6 +217,34 @@ fn locked_install_root<'a>(
         }
     }
     None
+}
+
+/// Whether `install_root/node_modules` is a trustworthy local install.
+///
+/// A real directory always qualifies. A symlinked `node_modules` qualifies
+/// only when its resolved target stays inside `boundary`, so a child cannot
+/// borrow a parent installation through a link.
+fn local_install_present(install_root: &Path, boundary: &Path) -> bool {
+    let node_modules = install_root.join("node_modules");
+    let Ok(metadata) = std::fs::symlink_metadata(&node_modules) else {
+        return false;
+    };
+    if !metadata.file_type().is_symlink() {
+        return metadata.is_dir();
+    }
+    let Ok(target) = std::fs::canonicalize(&node_modules) else {
+        return false;
+    };
+    let boundary = std::fs::canonicalize(boundary).unwrap_or_else(|_| boundary.to_path_buf());
+    target.starts_with(&boundary)
+}
+
+/// Nearest ancestor of `path` that carries repository metadata, if any.
+fn repository_boundary(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// Whether the ancestor declares `scope_root` as a workspace member.
@@ -525,6 +560,57 @@ mod tests {
         assert!(gap
             .remediation()
             .contains("effigy bootstrap deps sync --refresh-lock child"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_child_with_node_modules_symlinked_to_parent_is_a_gap() {
+        let root = temp_root("standalone-symlink");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = manifest(&child);
+        write_workspace_root(&workspace, None);
+        mark_repo(&child);
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        std::fs::create_dir_all(workspace.join("node_modules")).expect("ancestor install");
+        // The child tries to borrow the parent install through a symlink.
+        std::os::unix::fs::symlink(workspace.join("node_modules"), child.join("node_modules"))
+            .expect("symlink node_modules");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalLock);
+        assert_eq!(gap.install_root, child);
+        assert!(gap.evidence().contains("reason=missing-local-lock"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scope_with_node_modules_symlinked_inside_itself_is_bootstrapped() {
+        let root = temp_root("inside-symlink");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = manifest(&child);
+        write_workspace_root(&workspace, None);
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        // A symlink whose target stays inside the scope is a genuine local
+        // install and must keep running health.
+        let store = child.join(".local-store");
+        std::fs::create_dir_all(&store).expect("local store");
+        std::os::unix::fs::symlink(&store, child.join("node_modules"))
+            .expect("symlink node_modules");
+
+        assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
 
         std::fs::remove_dir_all(root).ok();
     }

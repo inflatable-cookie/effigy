@@ -97,10 +97,11 @@ During v0.x, MINOR bumps may include breaking changes.
   A child scope with a declared JS dependency and no local `node_modules` now
   reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
-  Bun/Node resolve packages from an ancestor checkout. A scope with its own
-  git boundary requires a scope-local lock and install, so a standalone child
-  repository with no child lock is reported as `missing-local-lock` even when
-  an ancestor provides a lock and install. An ancestor lock only satisfies the
+  Bun/Node resolve packages from an ancestor checkout. A `node_modules`
+  symlinked into an ancestor checkout is not a local install and cannot bypass
+  the guard. A scope with its own git boundary requires a scope-local lock and
+  install, so a standalone child repository with no child lock is reported as
+  `missing-local-lock` even when an ancestor provides a lock and install. An ancestor lock only satisfies the
   scope when the ancestor declares it in the manager-authoritative workspace
   source (`package.json` `workspaces` for Bun/npm, `pnpm-workspace.yaml`
   `packages` for pnpm) without matching a nested path below a declared

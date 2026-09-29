@@ -46,16 +46,18 @@ bootstrap posture. The selected manifest's declared `[package_manager].js` and
 the manager's committed lock identify the owning locked install root. A scope
 whose required install root has no local `node_modules` emits a
 `health.task.bootstrap` finding and skips its health task, so Bun or Node
-cannot silently resolve a package from an ancestor checkout. A scope with its
-own git boundary requires a scope-local lock and install; a standalone child
-repository with no child lock is reported as `missing-local-lock` even when an
-ancestor provides a lock and install. An ancestor lock or install only
-satisfies the scope when the ancestor declares the scope in the
-manager-authoritative workspace source (`package.json` `workspaces` for
-Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without matching nested
-paths below a declared package; the sources are never unioned. An unverified
-ancestor lock is reported as a gap. Non-JS and dependency-free scopes are
-unaffected.
+cannot silently resolve a package from an ancestor checkout. A symlinked
+`node_modules` only counts as a local install when its resolved target stays
+inside the local install boundary, so a link into the parent cannot bypass the
+guard. A scope with its own git boundary requires a scope-local lock and
+install; a standalone child repository with no child lock is reported as
+`missing-local-lock` even when an ancestor provides a lock and install. An
+ancestor lock or install only satisfies the scope when the ancestor declares
+the scope in the manager-authoritative workspace source (`package.json`
+`workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without
+matching nested paths below a declared package; the sources are never unioned.
+An unverified ancestor lock is reported as a gap. Non-JS and dependency-free
+scopes are unaffected.
 
 ## Shared inventory
 

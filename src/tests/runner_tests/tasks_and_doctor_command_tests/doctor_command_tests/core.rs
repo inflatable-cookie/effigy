@@ -248,6 +248,47 @@ fn run_deep_doctor_rejects_ancestor_install_for_standalone_child_without_lock() 
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn run_deep_doctor_rejects_symlinked_ancestor_install_for_standalone_child() {
+    let root = temp_workspace("doctor-standalone-child-symlinked-install");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    fs::create_dir_all(member.join(".git")).expect("member git boundary");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // Ancestor lock and install, then the child points its own node_modules at
+    // the ancestor install. A resolving symlink must not satisfy the guard.
+    fs::write(root.join("bun.lock"), "").expect("write parent lock");
+    fs::create_dir_all(root.join("node_modules")).expect("parent install");
+    std::os::unix::fs::symlink(root.join("node_modules"), member.join("node_modules"))
+        .expect("symlink member node_modules");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect_err("symlinked ancestor install must fail deep doctor");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing-local-lock"]);
+    assert!(
+        !marker.exists(),
+        "member health must not run through a node_modules symlink into an ancestor install"
+    );
+}
+
 #[test]
 fn run_deep_doctor_runs_health_for_declared_workspace_member() {
     let root = temp_workspace("doctor-declared-workspace-member");

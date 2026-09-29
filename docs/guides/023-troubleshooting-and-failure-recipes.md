@@ -607,7 +607,8 @@ Fix:
 
 Diagnosis:
 - the selected scope declares `[package_manager].js`, its `package.json`
-  declares dependencies, and it has no local `node_modules`,
+  declares dependencies, and it has no local `node_modules` (a `node_modules`
+  symlinked into an ancestor checkout does not count),
 - the scope has its own git boundary (or no lock at all) and its own locked
   install root is missing, so running health would let Bun or Node resolve
   packages from an ancestor checkout and report a misleading task failure.
