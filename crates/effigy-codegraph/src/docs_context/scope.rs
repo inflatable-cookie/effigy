@@ -278,7 +278,10 @@ fn section_from_symbol(symbol: &SymbolRecord) -> ScopedSection {
 }
 
 fn document_record_id(path: &str) -> String {
-    format!("symbol:doc:file:{path}")
+    format!(
+        "symbol:doc:file:{}",
+        crate::support::encode_graph_path(path)
+    )
 }
 
 /// Currentness resolves from the configured field, then the kind default,
