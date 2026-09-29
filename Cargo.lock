@@ -1032,6 +1032,7 @@ dependencies = [
  "effigy-tasks",
  "effigy-ui",
  "globset",
+ "jsonc-parser",
  "serde",
  "serde_json",
  "serde_yaml",

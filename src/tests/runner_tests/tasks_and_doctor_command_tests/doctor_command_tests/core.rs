@@ -347,21 +347,16 @@ fn run_deep_doctor_rejects_missing_install_for_bun_self_contained_member() {
     .expect("write member manifest");
     fs::write(
         member.join("package.json"),
-        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        r#"{"dependencies":{"left-pad":"1.3.0"},"installConfig":{"hoistingLimits":"workspaces"}}"#,
     )
     .expect("write member package.json");
-    // A self-contained Bun workspace keeps member dependencies local, so the
-    // workspace root install must not cover this member.
+    // A self-contained Bun member keeps dependencies local, so the workspace
+    // root install must not cover this member.
     fs::write(
         root.join("package.json"),
         r#"{"private":true,"workspaces":["member"]}"#,
     )
     .expect("write parent package.json");
-    fs::write(
-        root.join("bunfig.toml"),
-        "[install]\nhoistingLimits = \"workspaces\"\n",
-    )
-    .expect("write bunfig");
     fs::write(root.join("bun.lock"), "").expect("write parent lock");
     fs::create_dir_all(root.join("node_modules")).expect("root install");
     write_manifest(
@@ -375,6 +370,94 @@ fn run_deep_doctor_rejects_missing_install_for_bun_self_contained_member() {
     assert!(
         !marker.exists(),
         "self-contained member health must not run on the shared root install"
+    );
+}
+
+#[test]
+fn run_deep_doctor_rejects_missing_install_for_bun_isolated_workspace_member() {
+    let root = temp_workspace("doctor-bun-isolated-member");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // A configVersion = 1 workspace lock selects Bun's isolated linker, which
+    // keeps member dependencies under the member's own node_modules.
+    fs::write(
+        root.join("package.json"),
+        r#"{"private":true,"workspaces":["member"]}"#,
+    )
+    .expect("write parent package.json");
+    fs::write(
+        root.join("bun.lock"),
+        "{\n  \"lockfileVersion\": 1,\n  \"configVersion\": 1,\n  \"workspaces\": {},\n  \"packages\": {}\n}\n",
+    )
+    .expect("write parent lock");
+    fs::create_dir_all(root.join("node_modules")).expect("root install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect_err("isolated member without a local install must fail");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing-local-install"]);
+    assert!(
+        !marker.exists(),
+        "isolated Bun member health must not run on the shared root install"
+    );
+}
+
+#[test]
+fn run_deep_doctor_rejects_missing_install_for_npm_nested_member() {
+    let root = temp_workspace("doctor-npm-nested-member");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"npm\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // npm's non-hoisted install strategies keep dependencies member-local.
+    fs::write(
+        root.join("package.json"),
+        r#"{"private":true,"workspaces":["member"]}"#,
+    )
+    .expect("write parent package.json");
+    fs::write(root.join("package-lock.json"), "").expect("write parent lock");
+    fs::write(root.join(".npmrc"), "install-strategy=nested\n").expect("write npmrc");
+    fs::create_dir_all(root.join("node_modules")).expect("root install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect_err("nested npm member without a local install must fail");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing-local-install"]);
+    assert!(
+        !marker.exists(),
+        "nested npm member health must not run on the shared root install"
     );
 }
 

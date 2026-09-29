@@ -608,7 +608,7 @@ Fix:
 Diagnosis:
 - the selected scope declares `[package_manager].js`, its `package.json`
   declares dependencies, and it has no local `node_modules` (a `node_modules`
-  symlinked into an ancestor checkout does not count),
+  symlinked into an ancestor checkout, or to a file, does not count),
 - the scope has its own git boundary (or no lock at all) and its own locked
   install root is missing, so running health would let Bun or Node resolve
   packages from an ancestor checkout and report a misleading task failure.
@@ -628,13 +628,19 @@ Fix:
   matching workspace membership (or one that only matches a nested path below
   a declared package) is reported as a foreign installation and does not
   satisfy the scope,
-- membership alone is not enough when the manager's layout keeps dependencies
-  member-local. A self-contained Bun workspace (`bunfig.toml`
-  `[install] hoistingLimits = "workspaces"` or `package.json`
-  `workspaces.selfContained = true`) and pnpm's default isolated layout each
-  need that member's own `node_modules`; run `effigy bootstrap deps sync
-  <member>` so the member install is created. pnpm shares a hoisted root only
-  when `.npmrc` sets `node-linker=hoisted`.
+- membership alone is not enough when the manager's effective layout keeps
+  dependencies member-local:
+  - Bun uses the hoisted linker unless `bunfig.toml` `[install] linker =
+    "isolated"` or a `configVersion = 1` workspace lockfile selects isolated
+    installs; under hoisting, a member with `installConfig.hoistingLimits =
+    "workspaces"` in its own `package.json`, or one named in the root
+    `workspaces.selfContained` list, needs its own `node_modules`.
+  - pnpm's default isolated layout needs the member's own `node_modules`
+    unless `.npmrc` sets `node-linker=hoisted`.
+  - npm hoists by default; `.npmrc` `install-strategy = nested | shallow |
+    linked` needs the member's own `node_modules`.
+
+  Run `effigy bootstrap deps sync <member>` so the member install is created.
 
 ## Expected Outcome
 

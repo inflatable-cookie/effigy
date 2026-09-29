@@ -47,20 +47,25 @@ the manager's committed lock identify the owning locked install root. A scope
 whose required install root has no local `node_modules` emits a
 `health.task.bootstrap` finding and skips its health task, so Bun or Node
 cannot silently resolve a package from an ancestor checkout. A symlinked
-`node_modules` only counts as a local install when its resolved target stays
-inside the local install boundary, so a link into the parent cannot bypass the
-guard. A scope with its own git boundary requires a scope-local lock and
-install; a standalone child repository with no child lock is reported as
-`missing-local-lock` even when an ancestor provides a lock and install. An
+`node_modules` only counts as a local install when its resolved target is a
+directory inside the local install boundary, so a link into the parent or to
+an in-boundary file cannot bypass the guard. A scope with its own git boundary
+requires a scope-local lock and install; a standalone child repository with no
+child lock is reported as `missing-local-lock` even when an ancestor provides
+a lock and install. An
 ancestor lock or install only satisfies the scope when the ancestor declares
 the scope in the manager-authoritative workspace source (`package.json`
 `workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without
 matching nested paths below a declared package; the sources are never unioned.
 Even a verified member shares the ancestor install only when the manager's
-checked-in layout hoists member dependencies: Bun self-contained (`bunfig.toml`
-`hoistingLimits = "workspaces"` or `package.json` `workspaces.selfContained`)
-and pnpm's default isolated layout both require the member's own
-`node_modules`, and pnpm shares only when `.npmrc` sets `node-linker=hoisted`.
+effective layout hoists member dependencies. Bun selects the isolated linker
+from `bunfig.toml` `[install] linker` or a `configVersion = 1` workspace
+lockfile, and under hoisting a self-contained member (`package.json`
+`installConfig.hoistingLimits = "workspaces"` or the root
+`workspaces.selfContained` list of member paths or names) needs its own
+install. pnpm's default isolated layout needs the member's own `node_modules`
+unless `.npmrc` sets `node-linker=hoisted`, and npm needs a member-local
+install under `install-strategy = nested | shallow | linked`.
 An unverified ancestor lock is reported as a gap. Non-JS and dependency-free
 scopes are unaffected.
 

@@ -40,9 +40,10 @@ cache and timeout behavior.
    scope manifest's declared `[package_manager].js` and the manager's committed
    lock evidence; it is never a universal `node_modules` rule. A scope with a
    local `node_modules` is bootstrapped and keeps running `health`. A
-   symlinked `node_modules` counts only when its resolved target stays inside
-   the local install boundary; a link into an ancestor checkout is treated as
-   missing and cannot smuggle in a parent install.
+   symlinked `node_modules` counts only when its resolved target is a
+   directory that stays inside the local install boundary; a link to an
+   ancestor checkout or to an in-boundary file is treated as missing and
+   cannot smuggle in a parent install.
 2. The required install root is the nearest ancestor of the scope with the
    selected manager's lock file, bounded by the scope's repository boundary and
    the workspace root. A lock outside those boundaries never satisfies the
@@ -65,14 +66,21 @@ cache and timeout behavior.
    is reported as a gap that names the foreign lock; doctor never treats it
    as the scope's local install.
 5. Even a verified workspace member only shares the ancestor install when the
-   selected manager's checked-in layout hoists member dependencies. npm hoists
-   to the workspace root; Bun hoists unless the workspace is self-contained
-   (`bunfig.toml` `[install] hoistingLimits = "workspaces"` or `package.json`
-   `workspaces.selfContained = true`); pnpm's default isolated layout keeps
-   each project's dependencies under that project's own `node_modules` unless
-   `.npmrc` sets `node-linker=hoisted`. A member whose layout requires a local
-   install and has none is reported as `missing-local-install` even when the
-   workspace root is installed.
+   selected manager's checked-in layout hoists member dependencies.
+   - npm hoists by default; `.npmrc` `install-strategy = nested | shallow |
+     linked` keeps dependencies member-local.
+   - Bun uses the hoisted linker unless the effective linker is isolated: an
+     explicit `bunfig.toml` `[install] linker`, or a `configVersion = 1`
+     lockfile in a workspace, selects isolated. Under hoisting, a
+     self-contained member keeps its own install via its `package.json`
+     `installConfig.hoistingLimits = "workspaces"` or the root
+     `workspaces.selfContained` list of member paths or package names.
+   - pnpm's default isolated layout keeps each project's dependencies under
+     that project's own `node_modules` unless `.npmrc` sets
+     `node-linker=hoisted`.
+
+   A member whose layout requires a local install and has none is reported as
+   `missing-local-install` even when the workspace root is installed.
 6. A scope whose `package.json` declares no dependencies and a catalog without
    a declared JS package manager keep running `health` unchanged.
 
@@ -149,12 +157,14 @@ compatible unless this contract explicitly adds data.
   bootstrap install the same scope runs health. A standalone child repository
   with its own git boundary, no child lock, and an ancestor lock/install is
   reported as `missing-local-lock` and never runs health; the same holds when
-  the child's `node_modules` is a symlink into that ancestor install. A
-  hoisted declared workspace member sharing an ancestor install still runs
-  health, while a self-contained Bun member and an isolated pnpm member
-  without their own install are reported as `missing-local-install`. A scope
-  whose ancestor lock lacks verified membership, a non-JS catalog, and a
-  dependency-free child are each covered.
+  the child's `node_modules` is a symlink into that ancestor install or to an
+  in-boundary file. A hoisted declared workspace member sharing an ancestor
+  install still runs health, while a self-contained Bun member, a Bun
+  `configVersion = 1` isolated member, a pnpm isolated member, and an npm
+  `install-strategy = nested | shallow | linked` member without their own
+  install are reported as `missing-local-install`. A scope whose ancestor lock
+  lacks verified membership, a non-JS catalog, and a dependency-free child are
+  each covered.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.
