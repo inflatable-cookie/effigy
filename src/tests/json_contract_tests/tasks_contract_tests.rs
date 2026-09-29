@@ -96,6 +96,7 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
             "resolve",
             "schema",
             "schema_version",
+            "selectors",
         ]
     );
 }
@@ -236,6 +237,129 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
     let builtin_tasks = parsed["builtin_tasks"].as_array().expect("builtin_tasks");
     assert!(!builtin_tasks.iter().any(|item| item["task"] == "release"));
     assert!(builtin_tasks.iter().any(|item| item["task"] == "doctor"));
+}
+
+#[test]
+fn tasks_json_contract_selectors_inventory_is_portable_and_deterministic() {
+    let root = temp_workspace("tasks-json-contract-selectors");
+    let catalog_a = root.join("catalog_a");
+    let emptycat = root.join("emptycat");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    fs::create_dir_all(&emptycat).expect("mkdir emptycat");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\nemptycat = \"emptycat\"\n\n\
+         [defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n\n\
+         [tasks.dev]\nrun = \"printf root\"\n\n\
+         [tasks.serve]\nmode = \"tui\"\nconcurrent = [{ run = \"printf api\" }]\n\n\
+         [tasks.serve.profiles.admin]\nconcurrent = [{ run = \"printf admin\" }]\n",
+    );
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+    write_manifest(
+        &emptycat.join("effigy.toml"),
+        "[catalog]\nalias = \"emptycat\"\n",
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            status_selector: None,
+            status_all: false,
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks.v1");
+    let selectors = parsed["selectors"].as_array().expect("selectors array");
+    assert!(
+        !selectors.is_empty(),
+        "selectors inventory must not be empty"
+    );
+
+    // Every entry is an invocation-ready selector with documented kind/source.
+    for entry in selectors {
+        let selector = entry["selector"].as_str().expect("selector string");
+        assert!(!selector.is_empty(), "selector must be invocation-ready");
+        assert!(
+            ["task", "managed-profile", "builtin"].contains(&entry["kind"].as_str().unwrap_or("")),
+            "unexpected selector kind for {selector}"
+        );
+        assert!(
+            ["catalog", "builtin"].contains(&entry["source"].as_str().unwrap_or("")),
+            "unexpected selector source for {selector}"
+        );
+    }
+
+    // Selectors are unique: one invocation-ready name appears exactly once.
+    let names = selectors
+        .iter()
+        .map(|entry| {
+            entry["selector"]
+                .as_str()
+                .expect("selector string")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    let unique = names.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(names.len(), unique.len(), "selectors must be unique");
+
+    // Catalog entries come first in listing order: bare root tasks,
+    // managed-profile invocations, then root-qualified nested tasks.
+    let catalog_entries = selectors
+        .iter()
+        .filter(|entry| entry["source"] == "catalog")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        catalog_entries
+            .iter()
+            .map(|entry| entry["selector"].as_str().unwrap_or("").to_owned())
+            .collect::<Vec<_>>(),
+        vec!["dev", "serve", "serve admin", "catalog_a/api"],
+    );
+    assert_eq!(catalog_entries[0]["kind"], "task");
+    assert_eq!(catalog_entries[2]["kind"], "managed-profile");
+    assert_eq!(catalog_entries[3]["kind"], "task");
+    assert_eq!(catalog_entries[3]["catalog"], "catalog_a");
+    for entry in &catalog_entries {
+        assert!(
+            entry["catalog"].is_string(),
+            "catalog entries name their alias"
+        );
+    }
+
+    // Display-only empty-catalog rows contribute no selector.
+    assert!(
+        !names
+            .iter()
+            .any(|name| name.is_empty() || name == "emptycat"),
+        "empty catalogs must not contribute selectors"
+    );
+
+    // Builtins follow catalog entries; deferred builtins stay excluded.
+    let builtin_entries = selectors
+        .iter()
+        .filter(|entry| entry["source"] == "builtin")
+        .collect::<Vec<_>>();
+    assert!(!builtin_entries.is_empty(), "expected builtin selectors");
+    let doctor = builtin_entries
+        .iter()
+        .find(|entry| entry["selector"] == "doctor")
+        .expect("doctor builtin selector");
+    assert_eq!(doctor["kind"], "builtin");
+    assert!(doctor["catalog"].is_null());
+    assert!(
+        !names.iter().any(|name| name == "release"),
+        "deferred builtins must not contribute selectors"
+    );
+    assert_eq!(names[0], "dev", "catalog entries precede builtins");
 }
 
 #[test]

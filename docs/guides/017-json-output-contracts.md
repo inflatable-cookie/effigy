@@ -343,6 +343,34 @@ Consume one JSON object per line. Current event kinds:
 
 See `026-json-payload-examples.md` for realistic sample responses for each schema.
 
+### Tasks selector inventory (`selectors`)
+
+`effigy.tasks.v1` keeps `catalog_tasks`, `managed_profiles`, and
+`builtin_tasks` stable and adds one additive `selectors` array, so tooling
+can inventory every runnable task with a single query instead of flattening
+unrelated envelope values:
+
+```bash
+effigy --json tasks | jq -r '.result.selectors[].selector'
+effigy --json tasks | jq '.result.selectors[] | select(.kind == "builtin")'
+```
+
+Each entry carries:
+
+- `selector`: the invocation-ready name (`effigy <selector>`). Catalog tasks
+  use bare names at the root and root-qualified names (`<catalog>/<task>`)
+  for nested catalogs; managed profiles use `"<task> <profile>"`; builtins
+  use bare builtin names.
+- `kind`: `task`, `managed-profile`, or `builtin`.
+- `source`: `catalog` or `builtin`.
+- `catalog`: the catalog alias for catalog-backed entries, `null` for builtins.
+
+Display-only rows (for example empty catalogs with no task) contribute no
+selector, deferred builtins stay excluded, and names are unique and
+`selectors`-ordered deterministically (catalog entries first, builtins last).
+Existing `catalog_tasks`, `managed_profiles`, and `builtin_tasks` consumers
+are unaffected.
+
 ### Completion Candidates Telemetry (`effigy.completion.candidates.v1`)
 
 `effigy --json config completion candidates` includes cache diagnostics for selector memoization:

@@ -1010,6 +1010,32 @@ outcome, including failures, and the command exits non-zero if any scope failed.
       "description": "Built-in remedial health checks for environment, manifests, and task references"
     }
   ],
+  "selectors": [
+    {
+      "selector": "build",
+      "kind": "task",
+      "source": "catalog",
+      "catalog": "root"
+    },
+    {
+      "selector": "api/build",
+      "kind": "task",
+      "source": "catalog",
+      "catalog": "api"
+    },
+    {
+      "selector": "dev admin",
+      "kind": "managed-profile",
+      "source": "catalog",
+      "catalog": "root"
+    },
+    {
+      "selector": "doctor",
+      "kind": "builtin",
+      "source": "builtin",
+      "catalog": null
+    }
+  ],
   "catalogs": [
     {
       "alias": "api",

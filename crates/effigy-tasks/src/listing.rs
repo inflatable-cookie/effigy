@@ -72,6 +72,7 @@ struct CatalogAliasProjection {
 struct CatalogTaskProjection {
     manifest: String,
     manifest_absolute: String,
+    catalog_alias: String,
     task_row: Option<TaskSignatureProjection>,
     managed_profiles: Vec<ManagedProfileDisplayRow>,
 }
@@ -86,6 +87,29 @@ struct CatalogTaskJsonRow {
     task: Option<String>,
     run: Option<String>,
     manifest: String,
+}
+
+#[derive(Clone, Serialize)]
+struct SelectorJsonRow {
+    selector: String,
+    kind: SelectorKind,
+    source: SelectorSource,
+    catalog: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum SelectorKind {
+    Task,
+    ManagedProfile,
+    Builtin,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum SelectorSource {
+    Catalog,
+    Builtin,
 }
 
 #[derive(Clone, Serialize)]
@@ -223,6 +247,7 @@ pub fn render_task_listing_json(
                 "catalog_tasks": catalog_task_rows_json(catalog_task_rows),
                 "managed_profiles": managed_profile_rows_json(catalog_task_rows),
                 "builtin_tasks": builtin_rows_json(builtin_rows),
+                "selectors": selector_inventory_json(catalog_task_rows, builtin_rows),
             }),
         ),
         ListingSelectionResult::Filtered {
@@ -309,7 +334,11 @@ fn prepare_catalog_listing(
             let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
             let manifest_absolute = catalog.manifest_path.display().to_string();
             if catalog.manifest.tasks.is_empty() {
-                vec![project_empty_catalog_row(manifest, manifest_absolute)]
+                vec![project_empty_catalog_row(
+                    manifest,
+                    manifest_absolute,
+                    catalog.alias.clone(),
+                )]
             } else {
                 catalog
                     .manifest
@@ -434,6 +463,7 @@ fn project_catalog_task_rows(
     CatalogTaskProjection {
         manifest,
         manifest_absolute,
+        catalog_alias: catalog.alias.clone(),
         task_row: Some(TaskSignatureProjection {
             task: catalog_task_label(catalog, task_name),
             run: task_run_preview(catalog, task_name, task),
@@ -442,10 +472,15 @@ fn project_catalog_task_rows(
     }
 }
 
-fn project_empty_catalog_row(manifest: String, manifest_absolute: String) -> CatalogTaskProjection {
+fn project_empty_catalog_row(
+    manifest: String,
+    manifest_absolute: String,
+    catalog_alias: String,
+) -> CatalogTaskProjection {
     CatalogTaskProjection {
         manifest,
         manifest_absolute,
+        catalog_alias,
         task_row: None,
         managed_profiles: Vec::new(),
     }
@@ -480,6 +515,61 @@ fn managed_profile_rows_json(rows: &[CatalogTaskProjection]) -> Vec<ManagedProfi
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Portable, invocation-ready selector inventory for `effigy.tasks.v1`.
+///
+/// Every entry names exactly what a caller appends to `effigy` to run it:
+/// root-qualified catalog tasks (`catalog/task`), bare root tasks, managed
+/// profile invocations (`task profile`), and bare builtin names. Display-only
+/// rows (empty catalogs with no task) contribute nothing. Entries follow the
+/// existing listing order (catalog rows first, builtins last) and are
+/// de-duplicated by selector string with first occurrence winning, so the
+/// array stays deterministic and every name is unique.
+fn selector_inventory_json(
+    catalog_task_rows: &[CatalogTaskProjection],
+    builtin_rows: &[BuiltinTaskProjection],
+) -> Vec<SelectorJsonRow> {
+    let mut seen = BTreeSet::new();
+    let mut inventory = Vec::new();
+    let mut push =
+        |selector: &str, kind: SelectorKind, source: SelectorSource, catalog: Option<&str>| {
+            if seen.insert(selector.to_owned()) {
+                inventory.push(SelectorJsonRow {
+                    selector: selector.to_owned(),
+                    kind,
+                    source,
+                    catalog: catalog.map(str::to_owned),
+                });
+            }
+        };
+    for row in catalog_task_rows {
+        if let Some(signature) = row.task_row.as_ref() {
+            push(
+                &signature.task,
+                SelectorKind::Task,
+                SelectorSource::Catalog,
+                Some(&row.catalog_alias),
+            );
+        }
+        for profile in &row.managed_profiles {
+            push(
+                &profile.invocation,
+                SelectorKind::ManagedProfile,
+                SelectorSource::Catalog,
+                Some(&row.catalog_alias),
+            );
+        }
+    }
+    for builtin in builtin_rows {
+        push(
+            &builtin.task,
+            SelectorKind::Builtin,
+            SelectorSource::Builtin,
+            None,
+        );
+    }
+    inventory
 }
 
 fn builtin_rows_json(rows: &[BuiltinTaskProjection]) -> Vec<Value> {
