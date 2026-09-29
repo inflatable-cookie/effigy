@@ -514,6 +514,9 @@ Non-interactive container-backed tasks include:
 - explicit tasks with `run_in = "container"`
 - deferred requests with `[defer].run_in = "container"`
 - bootstrap `run` steps that route into a container but do not open a shell
+- builtin `effigy test` suites of a catalog whose declared runtime target
+  resolves a named container (each target resolves with the same binding
+  grammar tasks use; host-scoped catalogs keep suites on the host)
 
 These use shared task activation instead of session ownership:
 

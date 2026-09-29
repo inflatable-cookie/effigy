@@ -190,7 +190,7 @@ mod hydration_tests {
             runtime: planning::BuiltinTargetRuntime::Host,
             nested_invocation: false,
         };
-        let error = check_js_hydration(&[suite.clone()], &root).unwrap_err();
+        let error = check_js_hydration(std::slice::from_ref(&suite), &root).unwrap_err();
         assert!(error.to_string().contains("effigy bootstrap deps sync ."));
         assert!(error.to_string().contains("frozen Bun install"));
         std::fs::create_dir(root.join("node_modules")).unwrap();

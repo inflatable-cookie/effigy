@@ -73,7 +73,7 @@ fn plan_runtime_target(
     let inputs =
         effective_runtime_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
     let binding = resolve_execution_binding_resolution(
-        inputs.default_run_in.clone(),
+        inputs.default_run_in,
         inputs.systems.as_ref(),
         inputs.containers.as_ref(),
         &preflight.selector.task_name,

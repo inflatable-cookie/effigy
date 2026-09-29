@@ -157,6 +157,27 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Nested catalog selections keep their declared container target. When a
+  nested member declares its own `[systems]` runtime target,
+  `effigy <member>/<task>` executes on that member's container — its compose
+  project, activation, and exec — even when invoked from the repository root;
+  root workspace ownership no longer replaces the selected catalog's declared
+  target. Container policy loading, runtime activation, and container exec
+  use the owning catalog root. A selected catalog without its own `[systems]`
+  table still inherits the invocation-scope (ancestor) runtime, and
+  `run_in = "container"` with no resolvable target fails before execution
+  instead of silently running on the host.
+- Builtin `effigy test` routes each target catalog's suites through that
+  catalog's declared container runtime, resolved with the same execution
+  binding grammar tasks use. Suites of a catalog with a named-container
+  target (and their setup/teardown steps) execute inside that container;
+  host-scoped catalogs keep running suites on the host; suites carrying
+  nested effigy re-entries keep their own routing; and a declared but
+  unusable target fails before execution instead of silently running on the
+  host. `effigy <selector> --plan` exposes the resolved runtime target
+  (additive `runtime` section in `effigy.task.plan.v1`), and
+  `effigy test --plan` reports `runtime` per target in
+  `effigy.test.plan.v1`.
 - After a Colima VM restart, `effigy container up` starts owned Compose
   services that stayed `Exited` or `Created` instead of treating compose
   success as readiness. Start keeps volumes, including Postgres

@@ -149,6 +149,9 @@ After effective membership loads:
 - built-in `test` fans out only across effective membership
 - task listings, resolution evidence, execution preflight, demos, task status,
   and doctor use the same normalized set
+- a selected catalog's declared runtime target owns execution routing for its
+  tasks and builtin test suites; root workspace ownership never replaces it
+  (`013` owns the resolution rules and the ancestor runtime fallback)
 - mounted producer isolation remains mount-driven and independent of catalog
   membership
 

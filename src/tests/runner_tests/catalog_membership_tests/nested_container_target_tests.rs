@@ -318,7 +318,7 @@ fn child_scope_nested_container_task_still_executes_in_declared_container() {
     let _lock = lock_test();
     let fixture = nested_container_fixture("nested-child-scope-container-exec");
 
-    let output = run_manifest_task_with_cwd(
+    run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "check".to_owned(),
             args: Vec::new(),

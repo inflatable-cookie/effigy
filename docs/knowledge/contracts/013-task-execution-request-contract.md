@@ -98,6 +98,15 @@ Rules:
 - when runtime context carries an explicit task source, task discovery uses
   that isolated source while the environment CWD and repo target remain the
   independently resolved consumer
+- the selected catalog's declared runtime target owns container routing: when
+  the selected task's manifest declares `[systems]`, the execution binding
+  resolves from that manifest, and container policy loading, runtime
+  activation, and container exec use that catalog root. Invocation-scope
+  (workspace) ownership never replaces a selected catalog's declared target.
+- a selected catalog that declares no runtime target inherits the
+  invocation-scope (ancestor) runtime. `run_in = "container"` with no
+  resolvable target fails before execution instead of silently running on the
+  host or choosing a container by location.
 
 No caller may decide host-versus-container execution by directly probing cwd,
 env vars, or process state after a request has been built.
@@ -215,6 +224,17 @@ or other builtins. Builtin `--plan` surfaces such as `effigy test --plan` keep
 their own meaning. A remapped `[defer].builtins` name still receives that
 command's own `--plan`.
 
+The selector plan exposes the resolved runtime target through an additive
+`runtime` section (`target`: `host`, `container`, or `inline-container`, plus
+`container`, `service`, and owning `root` when a container target resolves).
+It resolves through the same binding path as execution, so a plan cannot
+promise host execution for a task whose declared target is a container, and a
+missing or ambiguous declared target fails the plan instead of reporting a
+host route. `effigy.test.plan.v1` exposes the same resolution per target
+(`runtime.target`: `host`, `container`, or `unusable` with `reason`); suites
+that carry nested effigy re-entries keep their own routing and are never
+wrapped into the target container again.
+
 ## Drift Triggers
 
 Update this contract when Effigy changes:
@@ -222,6 +242,8 @@ Update this contract when Effigy changes:
 - execution request fields
 - execution surfaces
 - route selection rules
+- selected-catalog runtime-target ownership, the ancestor runtime fallback, or
+  container-suite routing through runtime ports
 - Rhai execution helper behavior
 - embedded task dispatch behavior
 - task-source propagation through preflight and nested dispatch
