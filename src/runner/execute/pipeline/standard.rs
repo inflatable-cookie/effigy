@@ -933,9 +933,10 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_inline_workspace_container_runtime_with, activate_routed_container_runtime_with,
-        should_stay_in_workspace_shell, ContainerExecutionBinding,
+        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell,
+        ContainerExecutionBinding,
     };
+    use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;

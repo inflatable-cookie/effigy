@@ -105,8 +105,32 @@ pub(in crate::runner) fn activate_routed_container_runtime(
     repo_root: &Path,
     container_name: &str,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    let policy = effigy_containers::load_container_policy(repo_root, Some(container_name))
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    activate_routed_container_runtime_with(
+        repo_root,
+        container_name,
+        |repo_root, container_name| {
+            effigy_containers::load_container_policy(repo_root, Some(container_name))
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        },
+        |repo_root, policy, request, _plan| {
+            activate_container_runtime_for_task(repo_root, policy, request)
+        },
+    )
+}
+
+/// Injectable form of [`activate_routed_container_runtime`] for tests.
+pub(in crate::runner) fn activate_routed_container_runtime_with(
+    repo_root: &Path,
+    container_name: &str,
+    load_policy: impl FnOnce(&Path, &str) -> Result<EffectiveContainerPolicy, RunnerError>,
+    activate: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        ActivationRequest<'_>,
+        &RuntimeActivationPlan,
+    ) -> Result<ContainerTaskActivation, RunnerError>,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    let policy = load_policy(repo_root, container_name)?;
     let session_context = crate::runner::runtime_session_context::current_runtime_session_context();
     let plan = build_runtime_activation_plan(
         repo_root,
@@ -116,7 +140,7 @@ pub(in crate::runner) fn activate_routed_container_runtime(
         RuntimeActivationRoute::Task,
         session_context,
     );
-    activate_container_runtime_for_task(
+    activate(
         repo_root,
         &policy,
         ActivationRequest {
@@ -125,6 +149,7 @@ pub(in crate::runner) fn activate_routed_container_runtime(
             route: plan.route,
             session_context,
         },
+        &plan,
     )
 }
 
