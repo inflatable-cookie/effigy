@@ -483,11 +483,7 @@ pub(in crate::runner) fn render_container_suite_command(
         effigy_containers::load_container_exec_working_dir(&target.root, Some(&target.container))
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mapped_cwd = working_dir.to_string_lossy().into_owned();
-    let raw_command = vec![
-        "sh".to_owned(),
-        "-lc".to_owned(),
-        suite_command.to_owned(),
-    ];
+    let raw_command = vec!["sh".to_owned(), "-lc".to_owned(), suite_command.to_owned()];
     let workspace_identity = if target.service == policy.primary_service {
         policy
             .workspace_user

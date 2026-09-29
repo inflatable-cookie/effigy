@@ -8,15 +8,15 @@ pub(super) mod standard;
 use effigy_cli::TaskInvocation;
 use effigy_manifest::ManifestTaskRunIn;
 
-use super::planning::ExecutionPreflight;
-use super::render::render_task_plan;
-use super::selection::{resolve_task_selection, SelectionResolution};
 use super::api::{
     effective_runtime_inputs, ensure_inline_workspace_supported,
     resolve_execution_binding_resolution, ExecutionBindingKind, InlineWorkspaceCapabilitySurface,
 };
 use super::json_payload::PlannedRuntimeTarget;
+use super::planning::ExecutionPreflight;
+use super::render::render_task_plan;
 use super::routing::planned_container_target;
+use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
 use effigy_managed::resolve_managed_task_plan;
 

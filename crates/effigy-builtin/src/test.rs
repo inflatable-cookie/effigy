@@ -67,7 +67,12 @@ pub(super) fn try_run_builtin_test(
     let results = if should_tui {
         execution::run_builtin_test_targets_tui(ports, runnable)?
     } else {
-        execution::run_builtin_test_targets_parallel(ports, runnable, max_parallel, flags.output_json)?
+        execution::run_builtin_test_targets_parallel(
+            ports,
+            runnable,
+            max_parallel,
+            flags.output_json,
+        )?
     };
     render::finalize_builtin_test_outcome(
         &results,

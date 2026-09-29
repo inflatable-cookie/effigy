@@ -14,11 +14,11 @@ use crate::contract_test_support::EnvGuard;
 use crate::runner::entrypoints::run_command_with_context;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
+use crate::runner::tests::prelude::TaskInvocation;
 use crate::runner::tests::prelude::{
     assert_task_invocation_error_contains, lock_test, run_builtin_ok, temp_workspace,
     write_manifest, write_root_manifest,
 };
-use crate::runner::tests::prelude::TaskInvocation;
 use effigy_cli::Command;
 use effigy_context::EffigyRuntimeContext;
 
@@ -200,7 +200,9 @@ exit 0
         ),
     )
     .expect("write fake docker");
-    let mut perms = fs::metadata(&docker).expect("stat fake docker").permissions();
+    let mut perms = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&docker, perms).expect("chmod fake docker");
 
@@ -210,7 +212,9 @@ exit 0
         "#!/bin/sh\ncase \"$1\" in\n  status) printf 'INFO[0000] status: Running\\n'; exit 0 ;;\n  start) exit 0 ;;\n  *) exit 0 ;;\nesac\n",
     )
     .expect("write fake colima");
-    let mut perms = fs::metadata(&colima).expect("stat fake colima").permissions();
+    let mut perms = fs::metadata(&colima)
+        .expect("stat fake colima")
+        .permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&colima, perms).expect("chmod fake colima");
 }
@@ -218,8 +222,7 @@ exit 0
 fn nested_container_fixture(name: &str) -> NestedContainerFixture {
     // Canonicalize so plan payloads and catalog roots compare equal on macOS
     // symlinked temp directories (/var -> /private/var).
-    let root =
-        fs::canonicalize(temp_workspace(name)).expect("canonicalize fixture root");
+    let root = fs::canonicalize(temp_workspace(name)).expect("canonicalize fixture root");
     write_root_manifest(&root, ROOT_MANIFEST);
     write_compose(&root, "workspace");
     let cattle = root.join("cattle-grid");
@@ -262,8 +265,8 @@ fn run_task_from_root(
     fixture: &NestedContainerFixture,
     selector: &str,
 ) -> Result<String, RunnerError> {
-    let context = EffigyRuntimeContext::capture(Some(fixture.root.clone()), None)
-        .expect("runtime context");
+    let context =
+        EffigyRuntimeContext::capture(Some(fixture.root.clone()), None).expect("runtime context");
     run_command_with_context(
         Command::Task(TaskInvocation {
             name: selector.to_owned(),
@@ -274,8 +277,8 @@ fn run_task_from_root(
 }
 
 fn plan_task_from_root(fixture: &NestedContainerFixture, selector: &str) -> serde_json::Value {
-    let context = EffigyRuntimeContext::capture(Some(fixture.root.clone()), None)
-        .expect("runtime context");
+    let context =
+        EffigyRuntimeContext::capture(Some(fixture.root.clone()), None).expect("runtime context");
     let output = run_command_with_context(
         Command::Task(TaskInvocation {
             name: selector.to_owned(),
@@ -403,8 +406,7 @@ run = "printf barn-vet"
 run_in = "container"
 "#,
     );
-    let context =
-        EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
     let error = run_command_with_context(
         Command::Task(TaskInvocation {

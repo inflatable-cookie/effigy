@@ -38,7 +38,9 @@ pub(crate) enum BuiltinTargetRuntime {
     /// The catalog declares a runtime target builtin test suites cannot
     /// execute (inline workspace container, container-less workspace, or a
     /// malformed binding). Execution fails instead of running on the host.
-    Unusable { reason: String },
+    Unusable {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone)]

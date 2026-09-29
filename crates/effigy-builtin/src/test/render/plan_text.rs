@@ -10,9 +10,7 @@ use effigy_ui::{render_utf8, text_renderer, Renderer};
 
 use super::plan_projection::project_target_plan;
 
-fn render_target_runtime_label(
-    runtime: &crate::test::planning::BuiltinTargetRuntime,
-) -> String {
+fn render_target_runtime_label(runtime: &crate::test::planning::BuiltinTargetRuntime) -> String {
     use crate::test::planning::BuiltinTargetRuntime;
     match runtime {
         BuiltinTargetRuntime::Host => "host".to_owned(),

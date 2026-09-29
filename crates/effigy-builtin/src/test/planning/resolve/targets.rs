@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::test::planning::{BuiltinResolvedPlan, BuiltinTargetRuntime, BuiltinTestTarget, BuiltinTestTargetSet};
+use crate::test::planning::{
+    BuiltinResolvedPlan, BuiltinTargetRuntime, BuiltinTestTarget, BuiltinTestTargetSet,
+};
 use crate::BuiltinError;
 use effigy_manifest::{LoadedCatalog, ManifestTask};
 

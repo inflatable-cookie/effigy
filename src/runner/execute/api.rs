@@ -187,16 +187,11 @@ pub(in crate::runner) fn effective_runtime_inputs(
     // its tasks. The invocation-scope table is only a fallback for catalogs
     // that declare no systems of their own; tables are never merged, so a
     // root default system cannot capture tasks owned by a nested catalog.
-    let systems = selection
-        .catalog
-        .manifest
-        .systems
-        .clone()
-        .or_else(|| {
-            scope_catalog
-                .and_then(|catalog| catalog.manifest.systems.as_ref())
-                .cloned()
-        });
+    let systems = selection.catalog.manifest.systems.clone().or_else(|| {
+        scope_catalog
+            .and_then(|catalog| catalog.manifest.systems.as_ref())
+            .cloned()
+    });
     let containers = merge_containers_config(
         scope_containers_config_from_catalogs(invocation_cwd, catalogs),
         selection.catalog.manifest.containers.as_ref(),
@@ -227,11 +222,7 @@ pub(in crate::runner) fn effective_task_binding_inputs<'a>(
     Option<ManifestContainersConfig>,
 ) {
     let inputs = effective_runtime_inputs(invocation_cwd, catalogs, selection);
-    (
-        inputs.default_run_in,
-        inputs.systems,
-        inputs.containers,
-    )
+    (inputs.default_run_in, inputs.systems, inputs.containers)
 }
 
 pub(in crate::runner) fn execution_scope_root<'a>(
@@ -724,7 +715,11 @@ run = "cargo test"
         };
 
         assert_eq!(
-            execution_scope_root(Path::new("/workspace-root/acowtancy"), &catalogs, &selection),
+            execution_scope_root(
+                Path::new("/workspace-root/acowtancy"),
+                &catalogs,
+                &selection
+            ),
             Path::new("/workspace-root/acowtancy/farmyard")
         );
     }
@@ -773,7 +768,11 @@ run = "cargo test"
         };
 
         assert_eq!(
-            execution_scope_root(Path::new("/workspace-root/acowtancy"), &catalogs, &selection),
+            execution_scope_root(
+                Path::new("/workspace-root/acowtancy"),
+                &catalogs,
+                &selection
+            ),
             Path::new("/workspace-root/acowtancy")
         );
     }
