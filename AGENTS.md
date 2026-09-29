@@ -17,7 +17,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - `effigy graph` for code ownership and changed-file impact.
 - `effigy docs context "<question>"` for documentation authority.
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
-- `effigy test --plan` when test selection matters; `effigy qa` for PR validation.
+- `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
 - Without an installed binary, use `cargo run --bin effigy -- <command>`.
 
 ## Guardrails
@@ -32,4 +32,8 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 
 ## Validate
 
-Run `effigy qa` before opening a PR. The command builds from this checkout with Cargo and does not require prepared local dependencies. Also run `effigy skill run northstar/retired-concepts` when retiring concepts.
+Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior.
+
+The planner runs `effigy qa` on `main` after major batches and at release points, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
+
+Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).

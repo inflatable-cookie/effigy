@@ -14,6 +14,27 @@ Shorthand tasks keep their existing behavior. Unknown `admission` values fail
 manifest parsing. `--plan`, task discovery, and admission queries do not
 acquire a lease.
 
+## Binary and invocation coverage
+
+Every participating checkout must invoke an admission-capable Effigy binary.
+Probe the binary workers actually resolve, from the consumer checkout:
+
+```sh
+command -v effigy
+effigy admission status --json
+```
+
+The query must return the `effigy.admission.status.v1` result schema. An
+undefined `admission` task means the resolved binary predates the command;
+a version string alone does not prove capability. Effigy maintainers can
+refresh their existing local channel with the
+[local installation guide](010-path-installation-and-release.md).
+
+Admission covers Effigy task invocations. Direct `cargo`, `nextest`, or `vitest`
+commands do not acquire an Effigy lease. A heavy proof or test selector invoked
+outside `qa` needs its own `admission = "heavy"` task table. All participating
+invocations must use the same coordinator directory, as described below.
+
 ## Capacity and waiting
 
 Effigy measures logical CPU count and physical memory. The default reservation
