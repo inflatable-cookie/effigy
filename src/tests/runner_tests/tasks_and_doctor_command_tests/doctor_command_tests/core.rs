@@ -332,6 +332,95 @@ fn run_deep_doctor_runs_health_for_declared_workspace_member() {
 }
 
 #[test]
+fn run_deep_doctor_rejects_missing_install_for_bun_self_contained_member() {
+    let root = temp_workspace("doctor-bun-self-contained-member");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // A self-contained Bun workspace keeps member dependencies local, so the
+    // workspace root install must not cover this member.
+    fs::write(
+        root.join("package.json"),
+        r#"{"private":true,"workspaces":["member"]}"#,
+    )
+    .expect("write parent package.json");
+    fs::write(
+        root.join("bunfig.toml"),
+        "[install]\nhoistingLimits = \"workspaces\"\n",
+    )
+    .expect("write bunfig");
+    fs::write(root.join("bun.lock"), "").expect("write parent lock");
+    fs::create_dir_all(root.join("node_modules")).expect("root install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect_err("self-contained member without a local install must fail");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing-local-install"]);
+    assert!(
+        !marker.exists(),
+        "self-contained member health must not run on the shared root install"
+    );
+}
+
+#[test]
+fn run_deep_doctor_rejects_missing_install_for_pnpm_isolated_member() {
+    let root = temp_workspace("doctor-pnpm-isolated-member");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"pnpm\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // pnpm's default isolated layout links each project's dependencies under
+    // that project's own node_modules.
+    fs::write(root.join("pnpm-lock.yaml"), "").expect("write parent lock");
+    fs::write(
+        root.join("pnpm-workspace.yaml"),
+        "packages:\n  - 'member'\n",
+    )
+    .expect("write pnpm workspace");
+    fs::create_dir_all(root.join("node_modules")).expect("root install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect_err("isolated pnpm member without a local install must fail");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "missing-local-install"]);
+    assert!(
+        !marker.exists(),
+        "isolated pnpm member health must not run on the workspace root install"
+    );
+}
+
+#[test]
 fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
     let root = temp_workspace("doctor-stale-graph-index");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

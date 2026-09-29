@@ -64,7 +64,16 @@ cache and timeout behavior.
    workspace package. An ancestor lock without verified workspace membership
    is reported as a gap that names the foreign lock; doctor never treats it
    as the scope's local install.
-5. A scope whose `package.json` declares no dependencies and a catalog without
+5. Even a verified workspace member only shares the ancestor install when the
+   selected manager's checked-in layout hoists member dependencies. npm hoists
+   to the workspace root; Bun hoists unless the workspace is self-contained
+   (`bunfig.toml` `[install] hoistingLimits = "workspaces"` or `package.json`
+   `workspaces.selfContained = true`); pnpm's default isolated layout keeps
+   each project's dependencies under that project's own `node_modules` unless
+   `.npmrc` sets `node-linker=hoisted`. A member whose layout requires a local
+   install and has none is reported as `missing-local-install` even when the
+   workspace root is installed.
+6. A scope whose `package.json` declares no dependencies and a catalog without
    a declared JS package manager keep running `health` unchanged.
 
 ## Budget contract
@@ -141,9 +150,11 @@ compatible unless this contract explicitly adds data.
   with its own git boundary, no child lock, and an ancestor lock/install is
   reported as `missing-local-lock` and never runs health; the same holds when
   the child's `node_modules` is a symlink into that ancestor install. A
-  declared workspace member sharing an ancestor install still runs health,
-  while a scope whose ancestor lock lacks verified membership, a non-JS
-  catalog, and a dependency-free child are each covered.
+  hoisted declared workspace member sharing an ancestor install still runs
+  health, while a self-contained Bun member and an isolated pnpm member
+  without their own install are reported as `missing-local-install`. A scope
+  whose ancestor lock lacks verified membership, a non-JS catalog, and a
+  dependency-free child are each covered.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.

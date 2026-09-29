@@ -101,13 +101,18 @@ During v0.x, MINOR bumps may include breaking changes.
   symlinked into an ancestor checkout is not a local install and cannot bypass
   the guard. A scope with its own git boundary requires a scope-local lock and
   install, so a standalone child repository with no child lock is reported as
-  `missing-local-lock` even when an ancestor provides a lock and install. An ancestor lock only satisfies the
-  scope when the ancestor declares it in the manager-authoritative workspace
-  source (`package.json` `workspaces` for Bun/npm, `pnpm-workspace.yaml`
-  `packages` for pnpm) without matching a nested path below a declared
-  package; the sources are never unioned, and an unverified ancestor lock is
-  reported as a gap. Non-JS catalogs and dependency-free children keep running
-  health unchanged.
+  `missing-local-lock` even when an ancestor provides a lock and install. An
+  ancestor lock only satisfies the scope when the ancestor declares it in the
+  manager-authoritative workspace source (`package.json` `workspaces` for
+  Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm) without matching a nested
+  path below a declared package; the sources are never unioned, and an
+  unverified ancestor lock is reported as a gap. A verified member also shares
+  the ancestor install only when the manager's checked-in layout hoists member
+  dependencies: Bun self-contained (`bunfig.toml` `hoistingLimits =
+  "workspaces"` or `package.json` `workspaces.selfContained`) and pnpm's
+  default isolated layout require the member's own `node_modules`, and pnpm
+  shares only when `.npmrc` sets `node-linker=hoisted`. Non-JS catalogs and
+  dependency-free children keep running health unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their

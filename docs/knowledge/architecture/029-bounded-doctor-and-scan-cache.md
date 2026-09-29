@@ -56,6 +56,11 @@ ancestor lock or install only satisfies the scope when the ancestor declares
 the scope in the manager-authoritative workspace source (`package.json`
 `workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without
 matching nested paths below a declared package; the sources are never unioned.
+Even a verified member shares the ancestor install only when the manager's
+checked-in layout hoists member dependencies: Bun self-contained (`bunfig.toml`
+`hoistingLimits = "workspaces"` or `package.json` `workspaces.selfContained`)
+and pnpm's default isolated layout both require the member's own
+`node_modules`, and pnpm shares only when `.npmrc` sets `node-linker=hoisted`.
 An unverified ancestor lock is reported as a gap. Non-JS and dependency-free
 scopes are unaffected.
 
