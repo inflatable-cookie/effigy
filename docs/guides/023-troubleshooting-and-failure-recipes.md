@@ -607,26 +607,29 @@ Fix:
 
 Diagnosis:
 - the selected scope declares `[package_manager].js`, its `package.json`
-  declares dependencies, and it has no local `node_modules` (a `node_modules`
-  symlinked into an ancestor checkout, or to a file, does not count),
-- the scope has its own git boundary (or no lock at all) and its own locked
-  install root is missing, so running health would let Bun or Node resolve
-  packages from an ancestor checkout and report a misleading task failure.
+  declares dependencies, and it has no valid local `node_modules` (a
+  `node_modules` symlinked into an ancestor checkout, or to a file, does not
+  count). A valid child-local `node_modules` directory satisfies the
+  precondition even without a child lock,
+- the scope has its own git boundary (or no lock at all) and its own install
+  root is missing, so running health would let Bun or Node resolve packages
+  from an ancestor checkout and report a misleading task failure.
 
 Fix:
 - prepare the named checkout with `effigy bootstrap deps sync <path>` (the
-  frozen Bun install for a committed `bun.lock`). When the scope has no lock at
-  all — `missing-local-lock`, typically a standalone child repository — seed one
-  first with `effigy bootstrap deps sync --refresh-lock <path>` for Bun (pnpm
-  and npm installs create their own lock), then rerun `effigy doctor --deep`,
+  frozen Bun install for a committed `bun.lock`). When the scope has no valid
+  local install and no lock at all — `missing-local-lock`, typically a
+  standalone child repository — seed one first with `effigy bootstrap deps
+  sync --refresh-lock <path>` for Bun (pnpm and npm installs create their own
+  lock), then rerun `effigy doctor --deep`,
 - when the scope intentionally shares an ancestor locked workspace, declare it
   as a member in the manager-authoritative source: that ancestor's
   `package.json` `workspaces` patterns for Bun/npm, or its
   `pnpm-workspace.yaml` `packages` list for pnpm. The sources are not unioned,
-  so a pnpm exclusion still applies; a scope with its own git boundary always
-  requires a scope-local lock and install, and an ancestor lock without
-  matching workspace membership (or one that only matches a nested path below
-  a declared package) is reported as a foreign installation and does not
+  so a pnpm exclusion still applies; a scope with its own git boundary cannot
+  be satisfied by an ancestor install, and an ancestor lock without matching
+  workspace membership (or one that only matches a nested path below a
+  declared package) is reported as a foreign installation and does not
   satisfy the scope,
 - membership alone is not enough when the manager's effective layout keeps
   dependencies member-local:

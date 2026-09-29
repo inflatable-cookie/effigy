@@ -93,16 +93,19 @@ During v0.x, MINOR bumps may include breaking changes.
   applies the same strict changelog heading grammar as release status and an
   em-dash release heading fails before review.
 - `effigy doctor --deep` checks the selected catalog's declared
-  `[package_manager].js` and committed lock before running its `health` task.
-  A child scope with a declared JS dependency and no local `node_modules` now
-  reports `health.task.bootstrap` and names
+  `[package_manager].js` and local JS install posture before running its
+  `health` task.
+  A child scope with a declared JS dependency and no valid local
+  `node_modules` now reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
   Bun/Node resolve packages from an ancestor checkout. A `node_modules`
   symlinked into an ancestor checkout or to a file is not a local install and
-  cannot bypass the guard. A scope with its own git boundary requires a
-  scope-local lock and install, so a standalone child repository with no child
-  lock is reported as `missing-local-lock` even when an ancestor provides a
-  lock and install. An ancestor lock only satisfies the scope when the
+  cannot bypass the guard; a valid child-local `node_modules` directory
+  satisfies the precondition even without a child lock. A scope with its own
+  git boundary cannot be satisfied by an ancestor install, so a standalone
+  child repository with no valid local install and no in-boundary lock is
+  reported as `missing-local-lock` even when an ancestor provides a lock and
+  install. An ancestor lock only satisfies the scope when the
   ancestor declares it in the manager-authoritative workspace source
   (`package.json` `workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages`
   for pnpm) without matching a nested path below a declared package; the

@@ -42,17 +42,20 @@ One-scope work must not walk, run health in, or write cache state for a sibling.
 Catalog aliases and canonical roots identify findings and cache ownership.
 
 Deep doctor guards each selected scope's `health` task with the scope's own JS
-bootstrap posture. The selected manifest's declared `[package_manager].js` and
-the manager's committed lock identify the owning locked install root. A scope
-whose required install root has no local `node_modules` emits a
-`health.task.bootstrap` finding and skips its health task, so Bun or Node
-cannot silently resolve a package from an ancestor checkout. A symlinked
+bootstrap posture. A valid local `node_modules` satisfies the precondition and
+keeps running health, even without a child lock. Otherwise the selected
+manifest's declared `[package_manager].js` and the nearest in-boundary
+committed lock identify the required install root, and a scope that lacks a
+valid local or verified shared install emits a `health.task.bootstrap` finding
+and skips its health task, so Bun or Node cannot silently resolve a package
+from an ancestor checkout. A symlinked
 `node_modules` only counts as a local install when its resolved target is a
 directory inside the local install boundary, so a link into the parent or to
 an in-boundary file cannot bypass the guard. A scope with its own git boundary
-requires a scope-local lock and install; a standalone child repository with no
-child lock is reported as `missing-local-lock` even when an ancestor provides
-a lock and install. An
+cannot be satisfied by an ancestor install; a standalone child repository with
+declared dependencies, no valid local install, and no in-boundary lock is
+reported as `missing-local-lock` even when an ancestor provides a lock and
+install. An
 ancestor lock or install only satisfies the scope when the ancestor declares
 the scope in the manager-authoritative workspace source (`package.json`
 `workspaces` for Bun/npm, `pnpm-workspace.yaml` `packages` for pnpm), without

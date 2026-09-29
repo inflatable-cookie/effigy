@@ -39,23 +39,22 @@ cache and timeout behavior.
    scope's declared JS dependency bootstrap is present. The check uses the
    scope manifest's declared `[package_manager].js` and the manager's committed
    lock evidence; it is never a universal `node_modules` rule. A scope with a
-   local `node_modules` is bootstrapped and keeps running `health`. A
-   symlinked `node_modules` counts only when its resolved target is a
-   directory that stays inside the local install boundary; a link to an
-   ancestor checkout or to an in-boundary file is treated as missing and
-   cannot smuggle in a parent install.
-2. The required install root is the nearest ancestor of the scope with the
-   selected manager's lock file, bounded by the scope's repository boundary and
-   the workspace root. A lock outside those boundaries never satisfies the
-   scope. A scope with its own repository boundary therefore requires a
-   scope-local lock and local install; an ancestor lock or install cannot
-   satisfy it.
-3. A scope whose `package.json` declares dependencies and whose required
-   install root has no local `node_modules` emits a `health.task.bootstrap`
-   error naming `effigy bootstrap deps sync <path>` and does not run that
-   scope's `health` task. A scope with no lock anywhere inside its repository
-   boundary is reported as `missing-local-lock`, including a standalone child
-   repository with no child lock.
+   valid local `node_modules` is bootstrapped and keeps running `health`, even
+   when it has no lock of its own. A symlinked `node_modules` counts only when
+   its resolved target is a directory that stays inside the local install
+   boundary; a link to an ancestor checkout or to an in-boundary file is
+   treated as missing and cannot smuggle in a parent install.
+2. When the scope has no valid local install, the required install root is the
+   nearest ancestor with the selected manager's lock file, bounded by the
+   scope's repository boundary and the workspace root. A lock outside those
+   boundaries never satisfies the scope, so a scope with its own repository
+   boundary cannot be satisfied by an ancestor lock or install.
+3. A scope whose `package.json` declares dependencies and that has no valid
+   local install emits a `health.task.bootstrap` error naming
+   `effigy bootstrap deps sync <path>` and does not run that scope's `health`
+   task. The reported reason is `missing-local-lock` when no lock exists
+   anywhere inside the scope's repository boundary, including a standalone
+   child repository with no child lock.
 4. An ancestor lock or install only satisfies the scope when the ancestor
    declares the scope as a JS workspace member in the manager-authoritative
    source: `package.json` `workspaces` for Bun and npm, or
@@ -155,12 +154,14 @@ compatible unless this contract explicitly adds data.
 - A child scope with its own lock and no local `node_modules` reports the
   missing bootstrap and never invokes its health sentinel; after a local
   bootstrap install the same scope runs health. A standalone child repository
-  with its own git boundary, no child lock, and an ancestor lock/install is
-  reported as `missing-local-lock` and never runs health; the same holds when
-  the child's `node_modules` is a symlink into that ancestor install or to an
-  in-boundary file. A hoisted declared workspace member sharing an ancestor
-  install still runs health, while a self-contained Bun member, a Bun
-  `configVersion = 1` isolated member, a pnpm isolated member, and an npm
+  with its own git boundary, no child lock, no valid local install, and an
+  ancestor lock/install is reported as `missing-local-lock` and never runs
+  health; the same holds when the child's `node_modules` is a symlink into
+  that ancestor install or to an in-boundary file. A valid child-local
+  `node_modules` directory runs health even without a child lock. A hoisted
+  declared workspace member sharing an ancestor install still runs health,
+  while a self-contained Bun member, a Bun `configVersion = 1` isolated
+  member, a pnpm isolated member, and an npm
   `install-strategy = nested | shallow | linked` member without their own
   install are reported as `missing-local-install`. A scope whose ancestor lock
   lacks verified membership, a non-JS catalog, and a dependency-free child are
