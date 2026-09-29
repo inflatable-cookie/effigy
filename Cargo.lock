@@ -1031,6 +1031,7 @@ dependencies = [
  "effigy-scan",
  "effigy-tasks",
  "effigy-ui",
+ "globset",
  "serde",
  "serde_json",
  "toml",

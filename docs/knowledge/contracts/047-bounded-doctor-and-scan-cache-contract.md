@@ -43,16 +43,19 @@ cache and timeout behavior.
    selected manager's lock file, bounded by the scope's repository boundary and
    the workspace root. A lock outside those boundaries never satisfies the
    scope.
-3. A scope whose own locked install root has no local `node_modules` and whose
-   `package.json` declares dependencies emits a `health.task.bootstrap` error
+3. A scope with no local `node_modules` at its required install root, whose
+   `package.json` declares dependencies, emits a `health.task.bootstrap` error
    naming `effigy bootstrap deps sync <path>` and does not run that scope's
    `health` task.
-4. A scope that intentionally shares an ancestor locked workspace, a scope
-   whose `package.json` declares no dependencies, and a catalog without a
-   declared JS package manager keep running `health` unchanged.
-5. When the selected manifest provides no lock or manager evidence to
-   distinguish a required child-local install from an intentionally shared
-   workspace dependency, doctor does not treat parent resolution as invalid.
+4. An ancestor lock or install only satisfies the scope when the ancestor's
+   `package.json` declares the scope as a JS workspace member through a
+   matching `workspaces` pattern. An ancestor lock without verified workspace
+   membership is reported as a gap that names the foreign lock; doctor never
+   treats it as the scope's local install.
+5. A scope whose `package.json` declares no dependencies and a catalog without
+   a declared JS package manager keep running `health` unchanged.
+6. When the selected manifest provides no lock or manager evidence at all,
+   doctor does not treat parent resolution as invalid and does not guard.
 
 ## Budget contract
 
@@ -124,9 +127,9 @@ compatible unless this contract explicitly adds data.
   non-zero exit, no partial cache publication, and no surviving child process.
 - A child scope with its own lock and no local `node_modules` reports the
   missing bootstrap and never invokes its health sentinel; after a local
-  bootstrap install the same scope runs health. A scope sharing an ancestor
-  locked workspace, a non-JS catalog, and a dependency-free child are
-  unaffected.
+  bootstrap install the same scope runs health. A declared workspace member
+  sharing an ancestor install, a scope whose ancestor lock lacks verified
+  membership, a non-JS catalog, and a dependency-free child are each covered.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.

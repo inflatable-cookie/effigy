@@ -97,9 +97,11 @@ During v0.x, MINOR bumps may include breaking changes.
   A child scope whose own locked workspace has no local `node_modules` now
   reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
-  Bun/Node resolve packages from an ancestor checkout. Scopes that share an
-  ancestor locked workspace, non-JS catalogs, and dependency-free children
-  keep running health unchanged.
+  Bun/Node resolve packages from an ancestor checkout. An ancestor lock only
+  satisfies the scope when the ancestor's `package.json` declares it as a
+  matching `workspaces` member; an unverified ancestor lock is reported as a
+  gap. Non-JS catalogs and dependency-free children keep running health
+  unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their

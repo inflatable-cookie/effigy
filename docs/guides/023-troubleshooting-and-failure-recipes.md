@@ -616,8 +616,10 @@ Fix:
 - prepare the named checkout with `effigy bootstrap deps sync <path>` (the
   frozen Bun install for a committed `bun.lock`), then rerun
   `effigy doctor --deep`,
-- when the scope intentionally shares an ancestor locked workspace, keep the
-  lock and install at that shared root rather than adding a child-local lock.
+- when the scope intentionally shares an ancestor locked workspace, declare it
+  in that ancestor's `package.json` `workspaces` patterns; an ancestor lock
+  without matching workspace membership is reported as a foreign installation
+  and does not satisfy the scope.
 
 ## Expected Outcome
 

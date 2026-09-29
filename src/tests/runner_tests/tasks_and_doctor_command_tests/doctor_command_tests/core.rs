@@ -159,10 +159,54 @@ fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
     );
 
     fs::create_dir_all(member.join("node_modules")).expect("member install");
-    let out = run_deep_doctor_task(root, &["--catalog", "member"])
-        .expect("deep doctor after member bootstrap");
+    // Doctor may still report unrelated environment findings (for example a
+    // missing JS tool on a CI runner), so accept either a clean exit or a
+    // non-zero doctor report here. The marker proves the guarded health task
+    // actually ran once the local install existed.
+    let out = match run_deep_doctor_task(root, &["--catalog", "member"]) {
+        Ok(out) => out,
+        Err(crate::runner::error::RunnerError::DoctorNonZero { rendered, .. }) => rendered,
+        Err(other) => panic!("unexpected deep doctor error after bootstrap: {other}"),
+    };
     assert!(marker.exists(), "member health must run after bootstrap");
     assert_output_excludes_all(&out, &["health.task.bootstrap"]);
+}
+
+#[test]
+fn run_deep_doctor_rejects_unverified_ancestor_install_for_child() {
+    let root = temp_workspace("doctor-child-foreign-lock");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    // The parent has a lock and an install but never declares the member as a
+    // workspace member, so it must not satisfy the child requirement.
+    fs::write(root.join("bun.lock"), "").expect("write parent lock");
+    fs::create_dir_all(root.join("node_modules")).expect("parent install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
+        .expect_err("unverified ancestor install must fail deep doctor");
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "does not declare"]);
+    assert!(
+        !marker.exists(),
+        "member health must not run against a foreign ancestor install"
+    );
 }
 
 #[test]
