@@ -15,6 +15,14 @@ During v0.x, MINOR bumps may include breaking changes.
   `catalog_tasks`, `managed_profiles`, and `builtin_tasks`, which stay
   stable. Display-only empty-catalog rows contribute nothing and deferred
   builtins stay excluded.
+- `fs::write_file_if_absent(path, contents)` publishes a complete Rhai file
+  payload to an absent destination with atomic create-if-absent semantics: the
+  payload is staged on the destination filesystem and linked into place, so
+  exactly one concurrent publisher wins and a reader never observes a partial
+  winner. A losing call returns `false` without altering the winner; an occupied
+  destination, including a dangling symlink, is never replaced. Failed staged
+  writes clean up their temporary file, unsupported filesystems fail clearly,
+  and `fs::move_path` now documents its replacement and race limits.
 - Heavy validation tasks share a measured host-wide CPU and memory admission
   budget with repository round-robin scheduling, bounded capacity waits, stale
   owner recovery, caller-linked run telemetry, and `effigy admission` queries.
@@ -165,6 +173,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Reapplying an active Cargo link now recognizes its patched path resolutions
+  only after the desired-state ledger and the library's managed config block
+  agree on each package, workspace, source, and local path. This refreshes the
+  existing link without unlink/relink churn while unrelated path dependencies
+  and damaged ownership state still refuse.
 - Nested catalog selections keep their declared container target. When a
   nested member declares its own `[systems]` runtime target,
   `effigy <member>/<task>` executes on that member's container — its compose

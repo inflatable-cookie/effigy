@@ -99,6 +99,7 @@ Current v1 helpers:
   - `fs::read_lines(path)`
   - `fs::write_file(path, contents)`
   - `fs::write_lines(path, lines_array)`
+  - `fs::write_file_if_absent(path, contents)`
   - `fs::copy(source, destination)`
   - `fs::copy_if_missing(source, destination)`
   - `fs::env_file_entries(path)`
@@ -365,6 +366,36 @@ that do not yet have a typed helper. First-party scripts should use the typed
 helper when one exists. First-party shipped Rhai scripts currently use neither
 escape hatch; a regression test keeps that true. The maintained coverage matrix is in
 [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md).
+
+### File publication and `fs::move_path` limits
+
+Use `fs::write_file_if_absent(path, contents)` when one writer must win a race
+for an absent destination and readers must never observe a partial winner:
+
+- The payload is staged as a fresh file in the destination's directory, then
+  published with the filesystem's atomic no-clobber link operation, so the
+  destination name appears only after the whole payload is written.
+- The call returns `true` when it published the payload and `false` when the
+  destination was already occupied by a file, directory, or symlink. A losing
+  call does not alter the winner, and a symlink destination counts as occupied
+  rather than being followed or replaced.
+- Missing parent directories are created, matching the other write helpers. A
+  failed staged write or link removes the staged file and leaves the destination
+  absent.
+- The operation is atomic for visibility, not durable: it does not `fsync`, so
+  power loss can still lose a published file. Filesystems without hard links
+  fail with the underlying error instead of falling back to a partial write.
+- A staged file named `.<name>.effigy-publish-...tmp` can appear briefly in the
+  destination directory during publication, and a process killed at the wrong
+  moment can leave one behind. That file is not the destination payload.
+
+`fs::move_path(source, destination)` delegates to `std::fs::rename`. It
+atomically replaces whatever currently names `destination` and never checks that
+`destination` still matches an inode the caller read, so it is not an
+identity-checked conditional move. It fails across filesystems and on platforms
+that cannot rename over an existing destination. Use
+`write_file_if_absent(path, contents)` when an existing destination must make the
+operation fail instead of replacing it.
 
 Helpers that mirror CLI reports return the same JSON payload as the CLI
 `--json` mode, converted into Rhai maps/arrays. Process-like helpers such as

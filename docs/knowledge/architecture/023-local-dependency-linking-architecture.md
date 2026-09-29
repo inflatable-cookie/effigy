@@ -128,6 +128,9 @@ The adapter:
   when a compatible legacy patch makes the normal locked query stale
 - matches library crates present in the consumer graph and groups them by exact
   declared git source URL
+- accepts path-resolved crates during re-link only when the validated ledger
+  and exact owned patch block prove the same package, consumer root, local
+  crate path, and committed Git source
 - patches the full matching closure inside Effigy-managed marker blocks
 - adopts or directly removes a compatible pre-Effigy patch only when its table
   contains no unrelated crates and every path matches the requested checkout

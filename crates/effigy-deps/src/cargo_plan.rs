@@ -78,8 +78,6 @@ pub fn plan_cargo_link(
         consumer_repo: repo_root.clone(),
         library_path: library_root.clone(),
     };
-    let (consumer_roots, packages, patch_groups, expected_resolutions, version_transitions) =
-        cargo_closure(&repo_root, library, workspaces)?;
     let state_store = RepoLinkStateStore::for_checkout(&repo_root);
     let state = state_store.read()?;
     let lockfile_guard_packages = cargo_link_package_names(state.links.iter());
@@ -99,6 +97,20 @@ pub fn plan_cargo_link(
             ),
         ));
     }
+    let managed_path_resolutions = match (previous, own_block) {
+        (Some(previous), Some(block)) => managed_path_resolutions(
+            &repo_root,
+            library,
+            previous,
+            config_before.as_deref().unwrap_or(""),
+            block,
+            &config_path,
+        )?,
+        _ => BTreeMap::new(),
+    };
+    let workspaces = classify_managed_path_matches(workspaces, &managed_path_resolutions)?;
+    let (consumer_roots, packages, patch_groups, expected_resolutions, version_transitions) =
+        cargo_closure(&repo_root, library, &workspaces)?;
     let config_without_own = remove_block(config_before.as_deref().unwrap_or(""), own_block);
     let (config_without_adopted, adopted_patch_tables) = adopt_compatible_patch_tables(
         &repo_root,
@@ -494,6 +506,252 @@ type CargoClosure = (
     Vec<CargoExpectedResolution>,
     Vec<CargoVersionTransition>,
 );
+
+type ManagedPathResolutions = BTreeMap<(PathBuf, String, PathBuf), CommittedSource>;
+
+fn managed_path_resolutions(
+    repo_root: &Path,
+    library: &CargoLibraryInventory,
+    previous: &DesiredDependencyLink,
+    config: &str,
+    block: ManagedBlock<'_>,
+    config_path: &Path,
+) -> Result<ManagedPathResolutions, DepsError> {
+    let refuse = || {
+        DepsError::invalid(
+            config_path,
+            "managed Cargo patch block does not match a complete desired-state ledger entry; refusing to trust path resolutions",
+        )
+    };
+    if previous.mechanism != LinkMechanism::CargoPatch
+        || previous.key.consumer_repo != repo_root
+        || previous.key.library_path != library.root
+        || previous.cargo_ownership.is_none()
+        || previous.cargo_resolutions.is_empty()
+    {
+        return Err(refuse());
+    }
+
+    let mut local_packages = BTreeMap::new();
+    for package in &library.packages {
+        let package_path = package
+            .manifest_path
+            .parent()
+            .ok_or_else(refuse)
+            .and_then(canonical_existing_path)?;
+        if local_packages
+            .insert(package.name.as_str(), package_path)
+            .is_some()
+        {
+            return Err(refuse());
+        }
+    }
+
+    let roots = previous
+        .consumer_roots
+        .iter()
+        .map(|root| root.canonical_path.clone())
+        .collect::<BTreeSet<_>>();
+    let packages = previous
+        .packages
+        .iter()
+        .map(|package| (package.name.as_str(), package))
+        .collect::<BTreeMap<_, _>>();
+    if packages.len() != previous.packages.len() || packages.is_empty() {
+        return Err(refuse());
+    }
+
+    let mut groups = PatchGroups::new();
+    let mut path_sources = ManagedPathResolutions::new();
+    let mut source_sets = BTreeMap::<&str, BTreeSet<&CommittedSource>>::new();
+    let mut resolved_roots = BTreeSet::new();
+    for resolution in &previous.cargo_resolutions {
+        let Some(package) = packages.get(resolution.package.as_str()) else {
+            return Err(refuse());
+        };
+        if resolution.committed_source.kind != CommittedSourceKind::Git
+            || !roots.contains(&resolution.consumer_root)
+            || package.local_path != resolution.local_path
+            || !package
+                .committed_sources
+                .contains(&resolution.committed_source)
+            || local_packages.get(resolution.package.as_str()) != Some(&resolution.local_path)
+        {
+            return Err(refuse());
+        }
+
+        resolved_roots.insert(resolution.consumer_root.clone());
+        source_sets
+            .entry(resolution.package.as_str())
+            .or_default()
+            .insert(&resolution.committed_source);
+        let paths = groups
+            .entry(resolution.committed_source.identity.clone())
+            .or_default();
+        if paths
+            .insert(resolution.package.clone(), resolution.local_path.clone())
+            .is_some_and(|existing| existing != resolution.local_path)
+        {
+            return Err(refuse());
+        }
+        let key = (
+            resolution.consumer_root.clone(),
+            resolution.package.clone(),
+            resolution.local_path.clone(),
+        );
+        if path_sources
+            .insert(key, resolution.committed_source.clone())
+            .is_some_and(|existing| existing != resolution.committed_source)
+        {
+            return Err(refuse());
+        }
+    }
+
+    if resolved_roots != roots
+        || packages.iter().any(|(name, package)| {
+            let expected = package
+                .committed_sources
+                .iter()
+                .filter(|source| source.kind == CommittedSourceKind::Git)
+                .collect::<BTreeSet<_>>();
+            source_sets.get(name).cloned().unwrap_or_default() != expected
+                || package
+                    .committed_sources
+                    .iter()
+                    .any(|source| source.kind != CommittedSourceKind::Git)
+        })
+    {
+        return Err(refuse());
+    }
+
+    let observed_groups = parse_managed_patch_groups(config, block, repo_root, config_path)?;
+    if observed_groups != groups {
+        return Err(refuse());
+    }
+    Ok(path_sources)
+}
+
+fn parse_managed_patch_groups(
+    config: &str,
+    block: ManagedBlock<'_>,
+    repo_root: &Path,
+    config_path: &Path,
+) -> Result<PatchGroups, DepsError> {
+    let raw = &config[block.start..block.end];
+    let first_line_end = raw.find('\n').ok_or_else(|| {
+        DepsError::invalid(config_path, "managed Cargo patch block is incomplete")
+    })?;
+    let closing_marker_start = raw.rfind(CARGO_MARKER_END_PREFIX).ok_or_else(|| {
+        DepsError::invalid(config_path, "managed Cargo patch block is incomplete")
+    })?;
+    let body = &raw[first_line_end + 1..closing_marker_start];
+    let value: toml::Value = toml::from_str(body).map_err(|error| {
+        DepsError::invalid(
+            config_path,
+            format!("managed Cargo patch block is invalid TOML: {error}"),
+        )
+    })?;
+    let Some(root) = value.as_table() else {
+        return Err(DepsError::invalid(
+            config_path,
+            "managed Cargo patch block must contain only patch tables",
+        ));
+    };
+    let Some(patch) = root.get("patch").and_then(toml::Value::as_table) else {
+        return Err(DepsError::invalid(
+            config_path,
+            "managed Cargo patch block must contain only patch tables",
+        ));
+    };
+    if root.len() != 1 || patch.is_empty() {
+        return Err(DepsError::invalid(
+            config_path,
+            "managed Cargo patch block must contain only patch tables",
+        ));
+    }
+
+    let mut groups = PatchGroups::new();
+    for (source, raw_packages) in patch {
+        let Some(raw_packages) = raw_packages.as_table() else {
+            return Err(DepsError::invalid(
+                config_path,
+                "managed Cargo patch block contains an invalid source table",
+            ));
+        };
+        if raw_packages.is_empty() {
+            return Err(DepsError::invalid(
+                config_path,
+                "managed Cargo patch block contains an empty source table",
+            ));
+        }
+        let mut packages = BTreeMap::new();
+        for (name, raw_entry) in raw_packages {
+            let Some(entry) = raw_entry.as_table() else {
+                return Err(DepsError::invalid(
+                    config_path,
+                    format!("managed Cargo patch for `{name}` is invalid"),
+                ));
+            };
+            let Some(path) = entry.get("path").and_then(toml::Value::as_str) else {
+                return Err(DepsError::invalid(
+                    config_path,
+                    format!("managed Cargo patch for `{name}` has no path"),
+                ));
+            };
+            if entry.len() != 1 {
+                return Err(DepsError::invalid(
+                    config_path,
+                    format!("managed Cargo patch for `{name}` has unexpected fields"),
+                ));
+            }
+            let candidate = Path::new(path);
+            let candidate = if candidate.is_absolute() {
+                candidate.to_path_buf()
+            } else {
+                repo_root.join(candidate)
+            };
+            let candidate = canonical_existing_path(&candidate).map_err(|_| {
+                DepsError::invalid(
+                    config_path,
+                    format!("managed Cargo patch for `{name}` does not resolve to a local crate"),
+                )
+            })?;
+            packages.insert(name.clone(), candidate);
+        }
+        groups.insert(source.clone(), packages);
+    }
+    Ok(groups)
+}
+
+fn classify_managed_path_matches(
+    workspaces: &[CargoWorkspaceInventory],
+    managed_paths: &ManagedPathResolutions,
+) -> Result<Vec<CargoWorkspaceInventory>, DepsError> {
+    let mut workspaces = workspaces.to_vec();
+    for workspace in &mut workspaces {
+        for candidate in &mut workspace.library_matches {
+            if candidate.disposition != MatchDisposition::PreMigrationPath {
+                continue;
+            }
+            let Some(package_path) = candidate.package.manifest_path.parent() else {
+                continue;
+            };
+            let Ok(package_path) = canonical_existing_path(package_path) else {
+                continue;
+            };
+            let key = (
+                workspace.root.clone(),
+                candidate.package.name.clone(),
+                package_path,
+            );
+            if let Some(source) = managed_paths.get(&key) {
+                candidate.package.source = Some(source.clone());
+                candidate.disposition = MatchDisposition::Git;
+            }
+        }
+    }
+    Ok(workspaces)
+}
 
 fn cargo_closure(
     repo_root: &Path,
@@ -1253,6 +1511,23 @@ mod tests {
         }
     }
 
+    fn path_matched(name: &str, manifest_path: &Path) -> CargoPackageMatch {
+        CargoPackageMatch {
+            package: CargoPackageInventory {
+                id: format!("path+{}#{name}@0.1.0", manifest_path.display()),
+                name: name.to_owned(),
+                version: Some("0.1.0".to_owned()),
+                manifest_path: manifest_path.to_path_buf(),
+                source: Some(CommittedSource {
+                    kind: CommittedSourceKind::Path,
+                    identity: manifest_path.parent().unwrap().display().to_string(),
+                }),
+            },
+            depth: DependencyDepth::Direct,
+            disposition: MatchDisposition::PreMigrationPath,
+        }
+    }
+
     fn workspace(root: &Path, matches: Vec<CargoPackageMatch>) -> CargoWorkspaceInventory {
         CargoWorkspaceInventory {
             root: root.to_path_buf(),
@@ -1359,6 +1634,129 @@ mod tests {
 
         assert!(second.operation.changes.is_empty());
         assert_eq!(first.desired, second.desired);
+    }
+
+    #[test]
+    fn matching_managed_path_closure_is_idempotent_and_foreign_paths_still_refuse() {
+        let (_consumer, repo, _library, library) = setup();
+        let observer = FixtureObserver::default();
+        let first = plan_cargo_link(
+            &repo,
+            &library,
+            &[workspace(
+                &repo,
+                vec![matched("signal-core", SOURCE_A, DependencyDepth::Direct)],
+            )],
+            true,
+            &observer,
+        )
+        .unwrap();
+        apply_planned_files(&first);
+
+        let matching_path = workspace(
+            &repo,
+            vec![path_matched(
+                "signal-core",
+                &library.packages[0].manifest_path,
+            )],
+        );
+        let refreshed = plan_cargo_link(
+            &repo,
+            &library,
+            std::slice::from_ref(&matching_path),
+            true,
+            &observer,
+        )
+        .unwrap();
+        assert!(refreshed.operation.changes.is_empty());
+        assert_eq!(refreshed.desired, first.desired);
+
+        let foreign = TempDir::new().unwrap();
+        let foreign_manifest = foreign.path().join("Cargo.toml");
+        write(
+            &foreign_manifest,
+            "[package]\nname='signal-core'\nversion='0.1.0'\n",
+        );
+        let error = plan_cargo_link(
+            &repo,
+            &library,
+            &[workspace(
+                &repo,
+                vec![path_matched("signal-core", &foreign_manifest)],
+            )],
+            true,
+            &observer,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("pre-migration path dependency"));
+    }
+
+    #[test]
+    fn managed_path_refresh_requires_a_valid_ledger_and_matching_patch_block() {
+        for corrupt in ["ledger", "patch"] {
+            let (_consumer, repo, _library, library) = setup();
+            let observer = FixtureObserver::default();
+            let first = plan_cargo_link(
+                &repo,
+                &library,
+                &[workspace(
+                    &repo,
+                    vec![matched("signal-core", SOURCE_A, DependencyDepth::Direct)],
+                )],
+                true,
+                &observer,
+            )
+            .unwrap();
+            apply_planned_files(&first);
+
+            if corrupt == "ledger" {
+                write(
+                    RepoLinkStateStore::for_repo(&repo).path(),
+                    "{ malformed ledger",
+                );
+            } else {
+                write(
+                    &repo.join("foreign-library/Cargo.toml"),
+                    "[package]\nname='signal-core'\nversion='0.1.0'\n",
+                );
+                let config_path = repo.join(".cargo/config.toml");
+                let config = fs::read_to_string(&config_path).unwrap();
+                let local_path = library.packages[0]
+                    .manifest_path
+                    .parent()
+                    .unwrap()
+                    .display()
+                    .to_string();
+                let mismatched = config.replace(
+                    &local_path,
+                    &repo.join("foreign-library").display().to_string(),
+                );
+                assert_ne!(config, mismatched);
+                write(&config_path, &mismatched);
+            }
+
+            let error = plan_cargo_link(
+                &repo,
+                &library,
+                &[workspace(
+                    &repo,
+                    vec![path_matched(
+                        "signal-core",
+                        &library.packages[0].manifest_path,
+                    )],
+                )],
+                true,
+                &observer,
+            )
+            .unwrap_err();
+            if corrupt == "ledger" {
+                assert!(error.to_string().contains("parse JSON"));
+            } else {
+                assert!(error
+                    .to_string()
+                    .contains("does not match a complete desired-state ledger entry"));
+            }
+        }
     }
 
     #[test]
