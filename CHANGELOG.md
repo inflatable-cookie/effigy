@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `effigy tasks --json` (`effigy.tasks.v1`) carries an additive `selectors`
+  inventory: one deterministic array of invocation-ready names
+  (`effigy <selector>`) with `kind` (`task`, `managed-profile`, `builtin`),
+  `source` (`catalog`, `builtin`), and the catalog alias (`null` for
+  builtins). Query `.result.selectors[].selector` instead of flattening
+  `catalog_tasks`, `managed_profiles`, and `builtin_tasks`, which stay
+  stable. Display-only empty-catalog rows contribute nothing and deferred
+  builtins stay excluded.
 - Heavy validation tasks share a measured host-wide CPU and memory admission
   budget with repository round-robin scheduling, bounded capacity waits, stale
   owner recovery, caller-linked run telemetry, and `effigy admission` queries.

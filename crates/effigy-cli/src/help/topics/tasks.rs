@@ -7,7 +7,7 @@ pub(crate) fn render_tasks_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
 
 const TASKS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "tasks",
-    notices: &["List effective task catalogs and task commands, or inspect status for one resolved task; use routing probes only when debugging selector resolution."],
+    notices: &["List effective task catalogs and task commands, or inspect status for one resolved task; use routing probes only when debugging selector resolution.", "`tasks --json` also carries a portable `selectors` inventory: one deterministic array of invocation-ready names (`effigy <selector>`) with `kind` (`task`, `managed-profile`, `builtin`) and `source` (`catalog`, `builtin`), so tooling can query `.result.selectors` instead of flattening `catalog_tasks`, `managed_profiles`, and `builtin_tasks`."],
     usage: &[
         "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
         "effigy tasks status <SELECTOR> [--repo <PATH>] [--json]",

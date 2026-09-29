@@ -472,6 +472,7 @@ fn render_tasks_help_shows_resolve_and_json_options() {
     assert!(rendered.contains("--pretty <true|false>"));
     assert!(rendered.contains("effigy tasks --resolve <catalog>/<task>"));
     assert!(rendered.contains("effigy tasks --json --resolve test"));
+    assert!(rendered.contains("`selectors` inventory"));
 }
 
 #[test]
