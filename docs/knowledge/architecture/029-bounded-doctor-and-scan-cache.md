@@ -42,18 +42,22 @@ One-scope work must not walk, run health in, or write cache state for a sibling.
 Catalog aliases and canonical roots identify findings and cache ownership.
 
 Deep doctor guards each selected scope's `health` task with the scope's own JS
-bootstrap posture. A valid local `node_modules` satisfies the precondition and
-keeps running health, even without a child lock. Otherwise the selected
+bootstrap posture. A local `node_modules` satisfies the precondition only when
+it contains every declared runtime, development, and peer dependency; an empty
+or partial install does not, because a missing package could still resolve
+from an ancestor. A complete local install keeps running health, even without
+a child lock. Otherwise the selected
 manifest's declared `[package_manager].js` and the nearest in-boundary
 committed lock identify the required install root, and a scope that lacks a
-valid local or verified shared install emits a `health.task.bootstrap` finding
-and skips its health task, so Bun or Node cannot silently resolve a package
+complete local or verified shared install emits a `health.task.bootstrap`
+finding and skips its health task, so Bun or Node cannot silently resolve a
+package
 from an ancestor checkout. A symlinked
 `node_modules` only counts as a local install when its resolved target is a
 directory inside the local install boundary, so a link into the parent or to
 an in-boundary file cannot bypass the guard. A scope with its own git boundary
 cannot be satisfied by an ancestor install; a standalone child repository with
-declared dependencies, no valid local install, and no in-boundary lock is
+declared dependencies, no complete local install, and no in-boundary lock is
 reported as `missing-local-lock` even when an ancestor provides a lock and
 install. An
 ancestor lock or install only satisfies the scope when the ancestor declares

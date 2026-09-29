@@ -95,15 +95,18 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy doctor --deep` checks the selected catalog's declared
   `[package_manager].js` and local JS install posture before running its
   `health` task.
-  A child scope with a declared JS dependency and no valid local
+  A child scope with a declared JS dependency and no complete local
   `node_modules` now reports `health.task.bootstrap` and names
   `effigy bootstrap deps sync <path>` instead of running health and letting
-  Bun/Node resolve packages from an ancestor checkout. A `node_modules`
+  Bun/Node resolve packages from an ancestor checkout. The guard verifies the
+  declared runtime, development, and peer dependencies are present, so an
+  empty or partial child install reports the missing dependency names too. A
+  `node_modules`
   symlinked into an ancestor checkout or to a file is not a local install and
-  cannot bypass the guard; a valid child-local `node_modules` directory
+  cannot bypass the guard; a complete child-local `node_modules` directory
   satisfies the precondition even without a child lock. A scope with its own
   git boundary cannot be satisfied by an ancestor install, so a standalone
-  child repository with no valid local install and no in-boundary lock is
+  child repository with no complete local install and no in-boundary lock is
   reported as `missing-local-lock` even when an ancestor provides a lock and
   install. An ancestor lock only satisfies the scope when the
   ancestor declares it in the manager-authoritative workspace source

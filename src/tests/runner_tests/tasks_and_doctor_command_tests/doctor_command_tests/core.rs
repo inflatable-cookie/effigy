@@ -159,6 +159,7 @@ fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
     );
 
     fs::create_dir_all(member.join("node_modules")).expect("member install");
+    fs::create_dir_all(member.join("node_modules").join("left-pad")).expect("member dependency");
     // Doctor may still report unrelated environment findings (for example a
     // missing JS tool on a CI runner), so accept either a clean exit or a
     // non-zero doctor report here. The marker proves the guarded health task
@@ -290,6 +291,65 @@ fn run_deep_doctor_rejects_symlinked_ancestor_install_for_standalone_child() {
 }
 
 #[test]
+fn run_deep_doctor_rejects_empty_child_install_resolved_from_parent() {
+    let root = temp_workspace("doctor-empty-child-install");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    fs::create_dir_all(member.join(".git")).expect("member git boundary");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    fs::write(member.join("bun.lock"), "").expect("write member lock");
+    // The member has a directory named node_modules but never installed the
+    // package it declares; the parent has it.
+    fs::create_dir_all(member.join("node_modules")).expect("empty member install");
+    fs::create_dir_all(root.join("node_modules").join("left-pad")).expect("parent package");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
+        .expect_err("empty child install must fail deep doctor");
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "health.task.bootstrap",
+            "missing-local-install",
+            "missing_deps=left-pad",
+        ],
+    );
+    assert!(
+        !marker.exists(),
+        "member health must not run while a declared dependency is only in the parent"
+    );
+
+    // A real local install of the declared dependency clears the guard.
+    fs::create_dir_all(member.join("node_modules").join("left-pad")).expect("member package");
+    let out = match run_deep_doctor_task(root, &["--catalog", "member"]) {
+        Ok(out) => out,
+        Err(crate::runner::error::RunnerError::DoctorNonZero { rendered, .. }) => rendered,
+        Err(other) => panic!("unexpected deep doctor error after member install: {other}"),
+    };
+    assert!(
+        marker.exists(),
+        "member health must run after the declared dependency is installed"
+    );
+    assert_output_excludes_all(&out, &["health.task.bootstrap"]);
+}
+
+#[test]
 fn run_deep_doctor_runs_health_for_declared_workspace_member() {
     let root = temp_workspace("doctor-declared-workspace-member");
     let member = root.join("member");
@@ -317,6 +377,7 @@ fn run_deep_doctor_runs_health_for_declared_workspace_member() {
     .expect("write parent package.json");
     fs::write(root.join("bun.lock"), "").expect("write parent lock");
     fs::create_dir_all(root.join("node_modules")).expect("shared install");
+    fs::create_dir_all(root.join("node_modules").join("left-pad")).expect("shared dependency");
     write_manifest(
         &root.join("effigy.toml"),
         "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",

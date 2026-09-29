@@ -607,10 +607,12 @@ Fix:
 
 Diagnosis:
 - the selected scope declares `[package_manager].js`, its `package.json`
-  declares dependencies, and it has no valid local `node_modules` (a
+  declares dependencies, and it has no complete local `node_modules` (a
   `node_modules` symlinked into an ancestor checkout, or to a file, does not
-  count). A valid child-local `node_modules` directory satisfies the
-  precondition even without a child lock,
+  count, and neither does an empty or partial install that omits a declared
+  dependency). A complete child-local `node_modules` directory satisfies the
+  precondition even without a child lock. The finding names the missing
+  declared dependencies in its evidence,
 - the scope has its own git boundary (or no lock at all) and its own install
   root is missing, so running health would let Bun or Node resolve packages
   from an ancestor checkout and report a misleading task failure.

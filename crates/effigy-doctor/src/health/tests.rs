@@ -152,7 +152,7 @@ fn bootstrapped_child_runs_health() {
         r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
     );
     write(&child.join("bun.lock"), "");
-    std::fs::create_dir_all(child.join("node_modules")).expect("child install");
+    std::fs::create_dir_all(child.join("node_modules").join("left-pad")).expect("child install");
 
     let catalog = loaded_catalog(&child);
     let ports = RecordingPorts::new();

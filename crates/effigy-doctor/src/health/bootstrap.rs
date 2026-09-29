@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{ManifestJsPackageManager, TaskManifest};
@@ -55,6 +56,8 @@ pub(super) struct JsBootstrapGap {
     /// Nearest ancestor (or the scope itself) that carries the manager's lock.
     pub(super) lock_root: Option<PathBuf>,
     pub(super) lock_name: Option<String>,
+    /// Declared dependencies that are not present in the required install root.
+    pub(super) missing_dependencies: Vec<String>,
     pub(super) reason: BootstrapReason,
     route: String,
 }
@@ -67,8 +70,13 @@ impl JsBootstrapGap {
             .map(|root| root.display().to_string())
             .unwrap_or_else(|| "<none>".to_owned());
         let lock_name = self.lock_name.as_deref().unwrap_or("<none>");
+        let missing = if self.missing_dependencies.is_empty() {
+            "<none>".to_owned()
+        } else {
+            self.missing_dependencies.join(" | ")
+        };
         format!(
-            "observed=missing-local-install; reason={}; manager={}; scope={}; install_root={}; lock_root={lock_root}; lock={lock_name}; package_json={}; node_modules={}",
+            "observed=missing-local-install; reason={}; manager={}; scope={}; install_root={}; lock_root={lock_root}; lock={lock_name}; package_json={}; node_modules={}; missing_deps={missing}",
             self.reason.label(),
             self.manager,
             self.scope_root.display(),
@@ -132,14 +140,17 @@ pub(super) fn health_js_bootstrap_gap(
     }
 
     let package_json = scope_root.join("package.json");
-    if !package_json.is_file() || !declares_js_dependencies(&package_json) {
+    if !package_json.is_file() {
         return None;
     }
-    // A symlinked `node_modules` only counts as a local install when its
-    // resolved target stays inside the scope itself. A link into an ancestor
-    // checkout is exactly the misleading parent resolution this guard exists
-    // to stop.
-    if local_install_present(scope_root, scope_root) {
+    let declared = declared_dependency_names(&package_json);
+    if declared.is_empty() {
+        return None;
+    }
+    // A valid scope-local install must actually contain every declared
+    // dependency. An empty or partial `node_modules` can still let a missing
+    // package resolve from an ancestor, which is the failure this guard stops.
+    if missing_declared_dependencies(scope_root, scope_root, scope_root, &declared).is_empty() {
         return None;
     }
 
@@ -153,9 +164,14 @@ pub(super) fn health_js_bootstrap_gap(
         None => None,
     };
 
-    let (install_root, reason) = match lock_root {
-        None => (scope_root.to_path_buf(), BootstrapReason::MissingLocalLock),
+    let (install_root, install_boundary, reason) = match lock_root {
+        None => (
+            scope_root.to_path_buf(),
+            scope_root.to_path_buf(),
+            BootstrapReason::MissingLocalLock,
+        ),
         Some(root) if root == scope_root => (
+            scope_root.to_path_buf(),
             scope_root.to_path_buf(),
             BootstrapReason::MissingLocalInstall,
         ),
@@ -165,19 +181,35 @@ pub(super) fn health_js_bootstrap_gap(
                 // own `node_modules` are not covered by the workspace install.
                 (
                     scope_root.to_path_buf(),
+                    scope_root.to_path_buf(),
                     BootstrapReason::MissingLocalInstall,
                 )
-            } else if local_install_present(root, &repository_boundary(root)) {
+            } else if missing_declared_dependencies(
+                scope_root,
+                root,
+                &repository_boundary(root),
+                &declared,
+            )
+            .is_empty()
+            {
                 return None;
             } else {
-                (root.to_path_buf(), BootstrapReason::MissingLocalInstall)
+                (
+                    root.to_path_buf(),
+                    repository_boundary(root),
+                    BootstrapReason::MissingLocalInstall,
+                )
             }
         }
         Some(_) => (
             scope_root.to_path_buf(),
+            scope_root.to_path_buf(),
             BootstrapReason::UnverifiedAncestorLock,
         ),
     };
+
+    let missing_dependencies =
+        missing_declared_dependencies(scope_root, &install_root, &install_boundary, &declared);
 
     Some(JsBootstrapGap {
         manager: manager_label,
@@ -186,6 +218,7 @@ pub(super) fn health_js_bootstrap_gap(
         install_root: install_root.clone(),
         lock_root: lock_root.map(Path::to_path_buf),
         lock_name,
+        missing_dependencies,
         reason,
         route: bootstrap_route(&install_root, workspace_root),
     })
@@ -224,12 +257,12 @@ fn locked_install_root<'a>(
     None
 }
 
-/// Whether `install_root/node_modules` is a trustworthy local install.
+/// Whether `install_root/node_modules` is a trustworthy local directory.
 ///
 /// A real directory always qualifies. A symlinked `node_modules` qualifies
-/// only when its resolved target stays inside `boundary`, so a child cannot
-/// borrow a parent installation through a link.
-fn local_install_present(install_root: &Path, boundary: &Path) -> bool {
+/// only when its resolved target is a directory inside `boundary`, so a child
+/// cannot borrow a parent installation through a link.
+fn node_modules_is_local(install_root: &Path, boundary: &Path) -> bool {
     let node_modules = install_root.join("node_modules");
     let Ok(metadata) = std::fs::symlink_metadata(&node_modules) else {
         return false;
@@ -242,6 +275,69 @@ fn local_install_present(install_root: &Path, boundary: &Path) -> bool {
     };
     let boundary = std::fs::canonicalize(boundary).unwrap_or_else(|_| boundary.to_path_buf());
     target.is_dir() && target.starts_with(&boundary)
+}
+
+/// Whether a declared dependency resolves inside a `node_modules` directory.
+///
+/// Handles scoped names by walking each path segment, and follows install
+/// symlinks (pnpm and Bun isolated layouts) to their package directory.
+fn package_present(node_modules: &Path, name: &str) -> bool {
+    let mut path = node_modules.to_path_buf();
+    for segment in name.split('/') {
+        if segment.is_empty() {
+            return false;
+        }
+        path.push(segment);
+    }
+    path.is_dir()
+}
+
+/// Declared dependencies not present in a trustworthy local or shared install.
+///
+/// The scope's own install counts only when its `node_modules` stays inside
+/// the scope, and the shared install counts only when its `node_modules` stays
+/// inside the shared boundary. A dependency may live in either directory, as
+/// hoisted layouts keep direct dependencies at the shared root while a version
+/// conflict nests the member's copy under the member.
+fn missing_declared_dependencies(
+    scope_root: &Path,
+    install_root: &Path,
+    install_boundary: &Path,
+    declared: &[String],
+) -> Vec<String> {
+    let scope_local = node_modules_is_local(scope_root, scope_root);
+    let install_local = node_modules_is_local(install_root, install_boundary);
+    let scope_modules = scope_root.join("node_modules");
+    let install_modules = install_root.join("node_modules");
+    declared
+        .iter()
+        .filter(|name| {
+            let in_scope = scope_local && package_present(&scope_modules, name);
+            let in_install = install_local && package_present(&install_modules, name);
+            !in_scope && !in_install
+        })
+        .cloned()
+        .collect()
+}
+
+/// Declared runtime, development, and peer dependency names.
+///
+/// Optional dependencies stay out: their absence can be a valid platform
+/// outcome, so requiring them would create false bootstrap findings.
+fn declared_dependency_names(package_json: &Path) -> Vec<String> {
+    let Ok(raw) = std::fs::read_to_string(package_json) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    let mut names = BTreeSet::new();
+    for key in ["dependencies", "devDependencies", "peerDependencies"] {
+        if let Some(entries) = value.get(key).and_then(serde_json::Value::as_object) {
+            names.extend(entries.keys().cloned());
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// Nearest ancestor of `path` that carries repository metadata, if any.
@@ -514,28 +610,6 @@ fn bootstrap_route(install_root: &Path, workspace_root: &Path) -> String {
     }
 }
 
-fn declares_js_dependencies(package_json: &Path) -> bool {
-    let Ok(raw) = std::fs::read_to_string(package_json) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return false;
-    };
-    [
-        "dependencies",
-        "devDependencies",
-        "peerDependencies",
-        "optionalDependencies",
-    ]
-    .iter()
-    .any(|key| {
-        value
-            .get(key)
-            .and_then(|deps| deps.as_object())
-            .is_some_and(|deps| !deps.is_empty())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,6 +668,14 @@ mod tests {
         );
     }
 
+    fn install_dependency(install_root: &Path, name: &str) {
+        let mut path = install_root.join("node_modules");
+        for segment in name.split('/') {
+            path.push(segment);
+        }
+        std::fs::create_dir_all(&path).expect("install dependency");
+    }
+
     #[test]
     fn child_with_own_lock_and_no_local_install_is_a_gap() {
         let root = temp_root("gap");
@@ -637,8 +719,64 @@ mod tests {
         );
         write(&child.join("bun.lock"), "");
         std::fs::create_dir_all(child.join("node_modules")).expect("child install");
+        install_dependency(&child, "left-pad");
 
         assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn child_with_empty_local_install_is_a_gap() {
+        let root = temp_root("empty-install");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = manifest(&child);
+        write_workspace_root(&workspace, None);
+        mark_repo(&child);
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+        );
+        write(&child.join("bun.lock"), "");
+        std::fs::create_dir_all(child.join("node_modules")).expect("empty install");
+        // The parent provides the package the child never installed.
+        install_dependency(&workspace, "left-pad");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
+        assert_eq!(gap.install_root, child);
+        assert_eq!(gap.missing_dependencies, vec!["left-pad".to_owned()]);
+        assert!(gap.evidence().contains("missing_deps=left-pad"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn child_with_partial_local_install_missing_a_declared_dependency_is_a_gap() {
+        let root = temp_root("partial-install");
+        let workspace = root.join("workspace");
+        let child = workspace.join("child");
+        let manifest = manifest(&child);
+        write_workspace_root(&workspace, None);
+        mark_repo(&child);
+        write(
+            &child.join("package.json"),
+            r#"{"dependencies":{"left-pad":"1.3.0","right-pad":"1.0.0"}}"#,
+        );
+        write(&child.join("bun.lock"), "");
+        // The child installed one of its two declared dependencies.
+        install_dependency(&child, "right-pad");
+        // The parent provides the missing package.
+        install_dependency(&workspace, "left-pad");
+
+        let gap = health_js_bootstrap_gap(&child, &workspace, &manifest).expect("gap");
+
+        assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
+        assert_eq!(gap.install_root, child);
+        assert_eq!(gap.missing_dependencies, vec!["left-pad".to_owned()]);
+        assert!(gap.evidence().contains("missing_deps=left-pad"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -657,6 +795,7 @@ mod tests {
         // Only the workspace root locks and installs; the child is a declared
         // member and intentionally shares it.
         std::fs::create_dir_all(workspace.join("node_modules")).expect("shared install");
+        install_dependency(&workspace, "left-pad");
 
         assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
 
@@ -700,6 +839,7 @@ mod tests {
             r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
         );
         std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
+        install_dependency(&workspace, "left-pad");
 
         assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
 
@@ -835,6 +975,7 @@ mod tests {
             r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
         );
         std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
+        install_dependency(&workspace, "left-pad");
 
         assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
 
@@ -942,6 +1083,7 @@ mod tests {
             r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
         );
         std::fs::create_dir_all(workspace.join("node_modules")).expect("workspace install");
+        install_dependency(&workspace, "left-pad");
 
         assert!(health_js_bootstrap_gap(&child, &workspace, &manifest).is_none());
 
@@ -1094,7 +1236,7 @@ mod tests {
         // A symlink whose target stays inside the scope is a genuine local
         // install and must keep running health.
         let store = child.join(".local-store");
-        std::fs::create_dir_all(&store).expect("local store");
+        std::fs::create_dir_all(store.join("left-pad")).expect("local store");
         std::os::unix::fs::symlink(&store, child.join("node_modules"))
             .expect("symlink node_modules");
 
