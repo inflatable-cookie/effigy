@@ -1,3 +1,4 @@
 mod ambiguity_resolution_tests;
 mod membership_path_tests;
+mod nested_container_target_tests;
 mod prefix_resolution_tests;

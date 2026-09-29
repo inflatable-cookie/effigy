@@ -187,6 +187,8 @@ mod hydration_tests {
             teardown_command: None,
             teardown_policy: Default::default(),
             is_default: true,
+            runtime: planning::BuiltinTargetRuntime::Host,
+            nested_invocation: false,
         };
         let error = check_js_hydration(&[suite.clone()], &root).unwrap_err();
         assert!(error.to_string().contains("effigy bootstrap deps sync ."));
