@@ -152,7 +152,7 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
 /// cache / execute modules into `BuiltinError`. Only the shapes that
 /// can actually be produced by the port surface are mirrored; anything
 /// else collapses to `BuiltinError::TaskInvocation` via `Display`.
-fn runner_to_builtin(error: RunnerError) -> BuiltinError {
+pub(in crate::runner) fn runner_to_builtin(error: RunnerError) -> BuiltinError {
     match error {
         RunnerError::TaskInvocation(message) => BuiltinError::TaskInvocation(message),
         RunnerError::Ui(message) => BuiltinError::Ui(message),
@@ -171,6 +171,9 @@ fn runner_to_builtin(error: RunnerError) -> BuiltinError {
             error_count,
             rendered,
         },
+        RunnerError::CommandJsonFailure { rendered } => {
+            BuiltinError::CommandJsonFailure { rendered }
+        }
         other => BuiltinError::TaskInvocation(other.to_string()),
     }
 }

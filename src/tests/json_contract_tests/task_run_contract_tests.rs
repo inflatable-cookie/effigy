@@ -63,6 +63,47 @@ fn catalog_task_run_json_contract_success_has_versioned_shape() {
 }
 
 #[test]
+fn task_run_json_contract_failure_preserves_rhai_script_output() {
+    let root = temp_workspace("task-run-json-contract-rhai-failure");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/fail.rhai"),
+        "log(\"diagnostic line one\");\nlog_warn(\"warn diagnostic\");\nthrow(\"boom: deliberate failure\");\n",
+    )
+    .expect("write rhai script");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.fail-rhai]\nrhai = \"scripts/fail.rhai\"\nrun_in = \"host\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "fail-rhai".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected non-zero rhai task failure");
+
+    let rendered = match err {
+        RunnerError::CommandJsonFailure { rendered } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.task.run.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["task"], "fail-rhai");
+    assert_eq!(parsed["exit_code"], 1);
+    assert_eq!(parsed["stdout"], "diagnostic line one\n");
+    assert!(parsed["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("warn diagnostic")));
+    assert!(parsed["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("boom: deliberate failure")));
+}
+
+#[test]
 fn catalog_task_run_json_contract_failure_has_versioned_shape() {
     let root = temp_workspace("task-run-json-contract-failure");
     write_manifest(

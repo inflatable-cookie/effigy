@@ -178,6 +178,20 @@ During v0.x, MINOR bumps may include breaking changes.
   (additive `runtime` section in `effigy.task.plan.v1`), and
   `effigy test --plan` reports `runtime` per target in
   `effigy.test.plan.v1`.
+- Failed task runs under `effigy --json` keep their captured output:
+  `effigy --json <task>` and `effigy --json draft <selector>` already attached
+  the `effigy.task.run.v1` payload — including Rhai script diagnostics written
+  before the failure — to `error.details`; nested built-in surfaces such as
+  `effigy --json watch --once <target>` now preserve the same payload instead
+  of reporting `error.details: null`. Envelope shape is unchanged; failures
+  still exit non-zero and text mode still streams script output untouched.
+- The documentation graph indexes tracked Markdown files whose
+  repository-relative paths contain spaces. Graph record ids percent-encode
+  whitespace, control characters, and `%`, so `docs/my file.md` and a literal
+  `docs/my%20file.md` get distinct identities while every previously valid
+  path keeps its existing id. `docs context` output still shows original
+  paths and exact source text, and declared typed-relation destinations are
+  recovered byte-exact.
 - After a Colima VM restart, `effigy container up` starts owned Compose
   services that stayed `Exited` or `Created` instead of treating compose
   success as readiness. Start keeps volumes, including Postgres

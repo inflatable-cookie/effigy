@@ -295,6 +295,125 @@ fn cli_json_mode_watch_once_suppresses_target_stdout_for_machine_readable_output
     );
 }
 
+fn write_failing_rhai_fixture(root: &Path, script: &str) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(root.join("scripts/fail.rhai"), script).expect("write rhai script");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.fail-rhai]\nrhai = \"scripts/fail.rhai\"\nrun_in = \"host\"\n",
+    )
+    .expect("write manifest");
+}
+
+#[test]
+fn cli_json_mode_failing_rhai_task_preserves_script_output_in_error_details() {
+    let root = temp_workspace("cli-json-failing-rhai-task");
+    write_failing_rhai_fixture(
+        &root,
+        "log(\"diagnostic line one\");\nlog_warn(\"warn diagnostic\");\nthrow(\"boom: deliberate failure\");\n",
+    );
+
+    let output = run_json_cli_command(&root, &["fail-rhai"]);
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "fail-rhai");
+    assert_eq!(parsed["result"], Value::Null);
+    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    let details = &parsed["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["task"], "fail-rhai");
+    assert_eq!(details["exit_code"], 1);
+    assert_eq!(details["stdout"], "diagnostic line one\n");
+    assert!(details["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("warn diagnostic")));
+    assert!(details["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("boom: deliberate failure")));
+}
+
+#[test]
+fn cli_json_mode_watch_failed_rhai_target_preserves_script_output_in_error_details() {
+    let root = temp_workspace("cli-json-watch-failing-rhai");
+    write_failing_rhai_fixture(
+        &root,
+        "log(\"diagnostic line one\");\nlog_warn(\"warn diagnostic\");\nthrow(\"boom: deliberate failure\");\n",
+    );
+
+    let output = run_json_cli_command(
+        &root,
+        &["watch", "--owner", "effigy", "--once", "fail-rhai"],
+    );
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "watch");
+    assert_eq!(parsed["result"], Value::Null);
+    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    let details = &parsed["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["task"], "fail-rhai");
+    assert_eq!(details["stdout"], "diagnostic line one\n");
+    assert!(details["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("warn diagnostic")));
+    assert!(details["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("boom: deliberate failure")));
+}
+
+#[test]
+fn cli_json_mode_failing_rhai_task_without_output_still_carries_details() {
+    let root = temp_workspace("cli-json-failing-rhai-silent");
+    write_failing_rhai_fixture(&root, "throw(\"boom: silent failure\");\n");
+
+    let output = run_json_cli_command(&root, &["fail-rhai"]);
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["ok"], false);
+    let details = &parsed["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["stdout"], "");
+    assert!(details["stderr"]
+        .as_str()
+        .is_some_and(|stderr| stderr.contains("boom: silent failure")));
+}
+
+#[test]
+fn cli_text_mode_failing_rhai_task_streams_output_without_envelope() {
+    let root = temp_workspace("cli-text-failing-rhai-task");
+    write_failing_rhai_fixture(
+        &root,
+        "log(\"diagnostic line one\");\nlog_warn(\"warn diagnostic\");\nthrow(\"boom: deliberate failure\");\n",
+    );
+
+    let output = run_cli_command(&root, &["fail-rhai"]);
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stdout.contains("diagnostic line one"));
+    assert!(stderr.contains("warn diagnostic"));
+    assert!(stderr.contains("boom: deliberate failure"));
+    assert!(
+        !stdout.contains("effigy.command.v1"),
+        "text mode leaked a JSON envelope: {stdout}"
+    );
+}
+
 #[test]
 fn cli_json_mode_unlock_watch_lock_reports_unlock_payload() {
     let root = temp_workspace("cli-json-unlock-watch-lock");

@@ -614,11 +614,12 @@ fn extractor_failure_diagnostic(
     path: &str,
     error: CodeGraphError,
 ) -> Result<DiagnosticRecord, CodeGraphError> {
+    let encoded = crate::support::encode_graph_path(path);
     Ok(DiagnosticRecord {
-        id: GraphId::new(format!("diag:extract:{path}"))?,
+        id: GraphId::new(format!("diag:extract:{encoded}"))?,
         severity: DiagnosticSeverity::Error,
         message: error.to_string(),
-        file_id: Some(GraphId::new(format!("file:{path}"))?),
+        file_id: Some(crate::extractor::file_graph_id(path)?),
         span: None,
         provenance: Provenance {
             extractor_id: extractor.id.clone(),

@@ -2669,6 +2669,35 @@ Failure variant:
 }
 ```
 
+A failing task that already produced output — including a Rhai script that
+logs and then throws — keeps this same payload. The command envelope stays
+failed and carries the payload on `error.details`, so automation can read the
+exact captured diagnostic:
+
+```json
+{
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "ok": false,
+  "command": { "kind": "task", "name": "fail-rhai" },
+  "result": null,
+  "error": {
+    "kind": "RunnerError",
+    "message": "command failed (json output available)",
+    "details": {
+      "schema": "effigy.task.run.v1",
+      "schema_version": 1,
+      "ok": false,
+      "task": "fail-rhai",
+      "command": "env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' ... effigy script run --file 'scripts/fail.rhai'",
+      "exit_code": 1,
+      "stdout": "diagnostic line one\n",
+      "stderr": "[error] Task failed\n  Runtime error: boom (line 3, position 1)\n"
+    }
+  }
+}
+```
+
 ### 22b) Task Plan (`effigy.task.plan.v1`)
 
 ```json
