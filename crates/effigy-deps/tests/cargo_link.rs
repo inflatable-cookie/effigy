@@ -249,6 +249,75 @@ fn real_nested_git_dependencies_share_the_repo_root_patch_and_verify_per_workspa
 }
 
 #[test]
+fn managed_link_can_be_planned_and_applied_again_after_library_head_changes() {
+    let library = create_library();
+    let library_root = fs::canonicalize(library.path()).unwrap();
+    let git_url = format!("file://{}", library_root.display());
+    let repo_temp = TempDir::new().unwrap();
+    let repo = fs::canonicalize(repo_temp.path()).unwrap();
+    prepare_consumer(
+        &repo,
+        std::slice::from_ref(&repo),
+        &git_dependency(&git_url, "0.1.0"),
+    );
+
+    let first = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(first.outcome, CargoLinkOutcome::Applied, "{first:#?}");
+    assert_eq!(first.verification.status, VerificationStatus::Passed);
+    let config_path = repo.join(".cargo/config.toml");
+    let ledger_path = RepoLinkStateStore::for_repo(&repo).path().to_path_buf();
+    let lock_path = repo.join("Cargo.lock");
+    let ignore_path = repo.join(".gitignore");
+    let config_before = fs::read(&config_path).unwrap();
+    let ledger_before = fs::read(&ledger_path).unwrap();
+    let lock_before = fs::read(&lock_path).unwrap();
+    let ignore_before = fs::read(&ignore_path).unwrap();
+
+    let dry_run = execute_cargo_link(&repo, &library_root, true, &StdReadOnlyProcess).unwrap();
+    assert_eq!(dry_run.outcome, CargoLinkOutcome::DryRun, "{dry_run:#?}");
+    assert!(dry_run.plan.operation.changes.is_empty());
+    assert_eq!(fs::read(&config_path).unwrap(), config_before);
+    assert_eq!(fs::read(&ledger_path).unwrap(), ledger_before);
+    assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+    assert_eq!(fs::read(&ignore_path).unwrap(), ignore_before);
+
+    let repeated = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(repeated.outcome, CargoLinkOutcome::Applied, "{repeated:#?}");
+    assert_eq!(repeated.verification.status, VerificationStatus::Passed);
+    assert!(repeated.plan.operation.changes.is_empty());
+    assert_eq!(fs::read(&config_path).unwrap(), config_before);
+    assert_eq!(fs::read(&ledger_path).unwrap(), ledger_before);
+    assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+    assert_eq!(fs::read(&ignore_path).unwrap(), ignore_before);
+
+    let old_head = run(&library_root, "git", &["rev-parse", "HEAD"]);
+    write(
+        &library_root.join("crates/core/src/lib.rs"),
+        "pub const LINK_PROBE: u8 = 2;\npub fn value() -> u8 { effigy_link_fixture_protocol::value() }\n",
+    );
+    run(&library_root, "git", &["add", "crates/core/src/lib.rs"]);
+    run(
+        &library_root,
+        "git",
+        &["commit", "-qm", "update linked library source"],
+    );
+    assert_ne!(run(&library_root, "git", &["rev-parse", "HEAD"]), old_head);
+
+    let refreshed = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(
+        refreshed.outcome,
+        CargoLinkOutcome::Applied,
+        "{refreshed:#?}"
+    );
+    assert_eq!(refreshed.verification.status, VerificationStatus::Passed);
+    assert!(refreshed.plan.operation.changes.is_empty());
+    assert_eq!(fs::read(&config_path).unwrap(), config_before);
+    assert_eq!(fs::read(&ledger_path).unwrap(), ledger_before);
+    assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+    assert_eq!(fs::read(&ignore_path).unwrap(), ignore_before);
+}
+
+#[test]
 fn compatible_hand_managed_patch_is_adopted_without_dry_run_lock_churn() {
     let library = create_library();
     let library_root = fs::canonicalize(library.path()).unwrap();

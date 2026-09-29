@@ -122,6 +122,10 @@ Unix.
   the lockfile.
 - Match library crates against resolved consumer packages and their exact
   declared git source URLs.
+- Reapplying an active link may treat a path-resolved crate as managed only
+  after the ledger entry and that library's owned config block validate
+  together. The path, package, and consumer root must match the recorded Git
+  resolution. Unmanaged path dependencies and mismatched state remain refused.
 - Patch every matching crate from the library present in the graph. Partial
   patching is a correctness error.
 

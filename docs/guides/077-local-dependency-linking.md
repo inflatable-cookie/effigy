@@ -201,6 +201,12 @@ requires the source table to contain only crates from the requested library and
 every path to resolve into that checkout; mixed or mismatched tables are
 refused.
 
+Reapplying an active link refreshes the same managed block in place. Cargo may
+report its patched crates as path resolutions; Effigy accepts those only when
+the validated link ledger and that library's exact managed block prove the
+package, workspace, and local crate path. Unmanaged path dependencies,
+malformed ledgers, and mismatched blocks still fail planning.
+
 Linking across a package version bump works. Pointing a consumer pinned to a
 released tag at a local candidate carrying the next version is a version
 transition: Effigy detects it per package, reports it in the plan, and

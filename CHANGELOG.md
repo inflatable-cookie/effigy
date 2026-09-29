@@ -165,6 +165,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Reapplying an active Cargo link now recognizes its patched path resolutions
+  only after the desired-state ledger and the library's managed config block
+  agree on each package, workspace, source, and local path. This refreshes the
+  existing link without unlink/relink churn while unrelated path dependencies
+  and damaged ownership state still refuse.
 - Nested catalog selections keep their declared container target. When a
   nested member declares its own `[systems]` runtime target,
   `effigy <member>/<task>` executes on that member's container — its compose
