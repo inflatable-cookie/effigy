@@ -601,6 +601,24 @@ Fix:
   Unresolved selectors fail without deferral.
 - use `effigy doctor <selector> <args...>` for full explain output including selection and deferral reasoning.
 
+## 9) Doctor Deep Health Preconditions
+
+### Symptom: `doctor --deep` reports `health.task.bootstrap` and skips health
+
+Diagnosis:
+- the selected scope declares `[package_manager].js`, its `package.json`
+  declares dependencies, and its own locked install root has no local
+  `node_modules`,
+- running health from that scope would let Bun or Node resolve packages from an
+  ancestor checkout and report a misleading task failure.
+
+Fix:
+- prepare the named checkout with `effigy bootstrap deps sync <path>` (the
+  frozen Bun install for a committed `bun.lock`), then rerun
+  `effigy doctor --deep`,
+- when the scope intentionally shares an ancestor locked workspace, keep the
+  lock and install at that shared root rather than adding a child-local lock.
+
 ## Expected Outcome
 
 After this guide, you should be able to:

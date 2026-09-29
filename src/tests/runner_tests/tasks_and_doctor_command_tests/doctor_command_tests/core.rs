@@ -121,6 +121,51 @@ fn run_deep_doctor_catalog_selection_isolates_sibling_health() {
 }
 
 #[test]
+fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
+    let root = temp_workspace("doctor-child-bootstrap");
+    let member = root.join("member");
+    fs::create_dir_all(&member).expect("mkdir member");
+    let marker = root.join("member-health-ran");
+    fs::write(
+        member.join("effigy.toml"),
+        format!(
+            "[catalog]\nalias = \"member\"\n[package_manager]\njs = \"bun\"\n[tasks.health]\nrun = \"printf ran > {}\"\n",
+            marker.display()
+        ),
+    )
+    .expect("write member manifest");
+    fs::write(
+        member.join("package.json"),
+        r#"{"dependencies":{"left-pad":"1.3.0"}}"#,
+    )
+    .expect("write member package.json");
+    fs::write(member.join("bun.lock"), "").expect("write member lock");
+    // The parent workspace provides the same package.
+    fs::create_dir_all(root.join("node_modules")).expect("parent install");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[catalog.members]\nmember = \"member\"\n",
+    );
+
+    let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
+        .expect_err("missing child bootstrap must fail deep doctor");
+    assert_doctor_non_zero_contains(
+        err,
+        &["health.task.bootstrap", "effigy bootstrap deps sync member"],
+    );
+    assert!(
+        !marker.exists(),
+        "member health must not run before dependency bootstrap"
+    );
+
+    fs::create_dir_all(member.join("node_modules")).expect("member install");
+    let out = run_deep_doctor_task(root, &["--catalog", "member"])
+        .expect("deep doctor after member bootstrap");
+    assert!(marker.exists(), "member health must run after bootstrap");
+    assert_output_excludes_all(&out, &["health.task.bootstrap"]);
+}
+
+#[test]
 fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
     let root = temp_workspace("doctor-stale-graph-index");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

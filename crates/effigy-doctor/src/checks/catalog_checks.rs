@@ -36,6 +36,7 @@ pub(super) fn run_draft_lifecycle_check(context: &DoctorCheckContext<'_>, state:
 pub(super) fn run_health_task_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
     health::check_health_task(
         context.resolved_root,
+        context.resolved_root,
         &context.manifest.parsed_catalogs,
         state,
         context.ports,

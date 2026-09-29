@@ -92,6 +92,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - `qa:docs` now runs `effigy changelog validate CHANGELOG.md`, so docs QA
   applies the same strict changelog heading grammar as release status and an
   em-dash release heading fails before review.
+- `effigy doctor --deep` checks the selected catalog's declared
+  `[package_manager].js` and committed lock before running its `health` task.
+  A child scope whose own locked workspace has no local `node_modules` now
+  reports `health.task.bootstrap` and names
+  `effigy bootstrap deps sync <path>` instead of running health and letting
+  Bun/Node resolve packages from an ancestor checkout. Scopes that share an
+  ancestor locked workspace, non-JS catalogs, and dependency-free children
+  keep running health unchanged.
 
 ### Security
 - Managed host task secrets now reach child processes through their

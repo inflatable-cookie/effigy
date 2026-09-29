@@ -41,6 +41,14 @@ monorepo topology:
 One-scope work must not walk, run health in, or write cache state for a sibling.
 Catalog aliases and canonical roots identify findings and cache ownership.
 
+Deep doctor guards each selected scope's `health` task with the scope's own JS
+bootstrap posture. The selected manifest's declared `[package_manager].js` and
+the manager's committed lock identify the owning locked install root. A scope
+whose locked root has no local `node_modules` emits a `health.task.bootstrap`
+finding and skips its health task, so Bun or Node cannot silently resolve a
+package from an ancestor checkout. A scope that shares an ancestor locked
+workspace, a non-JS scope, and a dependency-free scope are unaffected.
+
 ## Shared inventory
 
 Each selected scope is walked once per deep invocation. The inventory applies

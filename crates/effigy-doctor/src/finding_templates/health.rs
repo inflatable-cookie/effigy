@@ -3,9 +3,19 @@ use crate::DoctorState;
 
 pub(crate) enum HealthFinding {
     DiscoveryMissing,
-    DiscoveryFound { catalogs: String },
-    ExecutionSuccess { summary: String },
-    ExecutionFailure { evidence: String },
+    DiscoveryFound {
+        catalogs: String,
+    },
+    BootstrapMissing {
+        evidence: String,
+        remediation: String,
+    },
+    ExecutionSuccess {
+        summary: String,
+    },
+    ExecutionFailure {
+        evidence: String,
+    },
 }
 
 impl HealthFinding {
@@ -16,6 +26,13 @@ impl HealthFinding {
     pub(crate) fn discovery_found(catalogs: &[String]) -> Self {
         Self::DiscoveryFound {
             catalogs: catalogs.join(", "),
+        }
+    }
+
+    pub(crate) fn bootstrap_missing(evidence: String, remediation: String) -> Self {
+        Self::BootstrapMissing {
+            evidence,
+            remediation,
         }
     }
 
@@ -42,6 +59,12 @@ impl HealthFinding {
                     format!("discovered `health` task in: {catalogs}"),
                     remediation::NO_ACTION_REQUIRED,
                 );
+            }
+            Self::BootstrapMissing {
+                evidence,
+                remediation,
+            } => {
+                state.add_check_error(check_id::HEALTH_TASK_BOOTSTRAP, evidence, remediation);
             }
             Self::ExecutionSuccess { summary } => {
                 state.add_check_info(

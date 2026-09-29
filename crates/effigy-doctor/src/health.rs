@@ -6,6 +6,8 @@ use effigy_manifest::LoadedCatalog;
 use super::finding_templates::HealthFinding;
 use crate::{DoctorError, DoctorRuntimePorts, DoctorState};
 
+#[path = "health/bootstrap.rs"]
+mod bootstrap;
 #[path = "health/invocation.rs"]
 mod invocation;
 #[path = "health/json_output.rs"]
@@ -13,8 +15,13 @@ mod json_output;
 #[path = "health/summarize.rs"]
 mod summarize;
 
+#[cfg(test)]
+#[path = "health/tests.rs"]
+mod tests;
+
 pub(crate) fn check_health_task(
-    resolved_root: &Path,
+    scope_root: &Path,
+    workspace_root: &Path,
     catalogs: &[LoadedCatalog],
     state: &mut DoctorState,
     ports: &dyn DoctorRuntimePorts,
@@ -28,7 +35,13 @@ pub(crate) fn check_health_task(
     }
 
     add_discovery_found_finding(&health_catalogs, state);
-    match invocation::run_health_task_json(resolved_root, ports, remaining_budget) {
+    if let Some(gap) = selected_catalog(catalogs, scope_root).and_then(|catalog| {
+        bootstrap::health_js_bootstrap_gap(scope_root, workspace_root, &catalog.manifest)
+    }) {
+        HealthFinding::bootstrap_missing(gap.evidence(), gap.remediation()).emit(state);
+        return;
+    }
+    match invocation::run_health_task_json(scope_root, ports, remaining_budget) {
         Ok(output) => {
             add_execute_success_finding(&output, state);
         }
@@ -36,6 +49,16 @@ pub(crate) fn check_health_task(
             add_execute_failure_finding(&error, state);
         }
     }
+}
+
+fn selected_catalog<'a>(
+    catalogs: &'a [LoadedCatalog],
+    scope_root: &Path,
+) -> Option<&'a LoadedCatalog> {
+    catalogs
+        .iter()
+        .find(|catalog| catalog.catalog_root == scope_root)
+        .or_else(|| catalogs.first())
 }
 
 fn catalogs_with_health_task(catalogs: &[LoadedCatalog]) -> Vec<String> {

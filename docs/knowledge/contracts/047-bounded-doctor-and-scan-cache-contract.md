@@ -33,6 +33,27 @@ cache and timeout behavior.
 6. A selected scope's inventory, cache, findings, and `health` execution cannot
    read or mutate a sibling scope.
 
+## Health precondition contract
+
+1. Before deep doctor runs a selected scope's `health` task, it checks that the
+   scope's declared JS dependency bootstrap is present. The check uses the
+   scope manifest's declared `[package_manager].js` and the manager's committed
+   lock evidence; it is never a universal `node_modules` rule.
+2. The owning locked install root is the nearest ancestor of the scope with the
+   selected manager's lock file, bounded by the scope's repository boundary and
+   the workspace root. A lock outside those boundaries never satisfies the
+   scope.
+3. A scope whose own locked install root has no local `node_modules` and whose
+   `package.json` declares dependencies emits a `health.task.bootstrap` error
+   naming `effigy bootstrap deps sync <path>` and does not run that scope's
+   `health` task.
+4. A scope that intentionally shares an ancestor locked workspace, a scope
+   whose `package.json` declares no dependencies, and a catalog without a
+   declared JS package manager keep running `health` unchanged.
+5. When the selected manifest provides no lock or manager evidence to
+   distinguish a required child-local install from an intentionally shared
+   workspace dependency, doctor does not treat parent resolution as invalid.
+
 ## Budget contract
 
 1. Fast mode defaults to 10,000 milliseconds overall. Deep mode defaults to
@@ -101,6 +122,11 @@ compatible unless this contract explicitly adds data.
   all-catalog fan-out visits each declared scope once.
 - Deadline expiry during inventory and health produces partial evidence,
   non-zero exit, no partial cache publication, and no surviving child process.
+- A child scope with its own lock and no local `node_modules` reports the
+  missing bootstrap and never invokes its health sentinel; after a local
+  bootstrap install the same scope runs health. A scope sharing an ancestor
+  locked workspace, a non-JS catalog, and a dependency-free child are
+  unaffected.
 - Corrupt cache input rebuilds safely with a useful warning.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.
