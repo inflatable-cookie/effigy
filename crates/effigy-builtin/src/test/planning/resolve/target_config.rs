@@ -9,8 +9,8 @@ use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::task_runtime::ManifestRunStepEnv;
 use effigy_manifest::LoadedCatalog;
 use effigy_manifest::{
-    ManifestCargoEnvMatchMode, ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep,
-    ManifestTestSuiteTeardownPolicy,
+    ManifestCargoEnvMatchMode, ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRun,
+    ManifestManagedRunStep, ManifestTestSuiteTeardownPolicy,
 };
 use effigy_tasks::normalize_builtin_test_suite;
 
@@ -28,6 +28,10 @@ pub(super) struct BuiltinConfiguredSuite {
     pub(super) teardown_steps: usize,
     pub(super) teardown_policy: ManifestTestSuiteTeardownPolicy,
     pub(super) is_default: bool,
+    /// True when the managed run carries a nested effigy re-entry
+    /// (`task:`/`draft:` reference). Re-entries own their routing; the
+    /// owning catalog's container target must not wrap them again.
+    pub(super) nested_invocation: bool,
 }
 
 pub(super) struct BuiltinTestTargetConfig {
@@ -155,6 +159,7 @@ fn resolve_configured_suites(
                 teardown_steps: suite.teardown().len(),
                 teardown_policy: suite.teardown_policy(),
                 is_default: suite.is_default(),
+                nested_invocation: managed_run_has_nested_invocation(suite.managed_run()),
             })
         })
         .collect::<Result<Vec<BuiltinConfiguredSuite>, BuiltinError>>()
@@ -232,6 +237,22 @@ fn render_suite_lifecycle_sequence(
     )
     .map(Some)
     .map_err(Into::into)
+}
+
+fn managed_run_has_nested_invocation(run: Option<&ManifestManagedRun>) -> bool {
+    let Some(run) = run else {
+        return false;
+    };
+    match run {
+        ManifestManagedRun::Command(_) => false,
+        ManifestManagedRun::Sequence(steps) => steps.iter().any(|step| match step {
+            ManifestManagedRunStep::Command(command) => command
+                .strip_prefix("task:")
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+            ManifestManagedRunStep::Step(table) => table.task.is_some() || table.draft.is_some(),
+        }),
+    }
 }
 
 fn render_suite_env_descriptor(env: Option<&ManifestRunStepEnv>) -> Option<String> {

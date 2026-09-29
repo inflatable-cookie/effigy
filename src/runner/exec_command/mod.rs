@@ -3,8 +3,11 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Output;
 
+use effigy_builtin::BuiltinContainerSuiteTarget;
 use effigy_cli::ExecArgs;
+use effigy_containers::load_container_policy;
 use effigy_containers::EffectiveContainerPolicy;
+use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::determine_strategy;
 use effigy_manifest::ManifestContainerConfig;
@@ -12,6 +15,7 @@ use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use effigy_tasks::{render_task_selector, TaskSelector};
 
 use super::command_context::resolve_active_command_context;
+use super::container_runtime::inside_container_handoff;
 use super::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
     ContainerTaskActivation,
@@ -423,6 +427,97 @@ fn map_host_cwd(
         .host_to_container(invocation_cwd)
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+/// Resolve the container suite target for one builtin test target.
+///
+/// Returns `None` when suites must stay on the local process surface (inside
+/// an effigy container handoff the local environment already is the
+/// container). The service resolves from the owning manifest's container
+/// policy, the same policy container task execution uses.
+pub(in crate::runner) fn resolve_container_suite_target(
+    target_root: &Path,
+    container: &str,
+) -> Result<Option<BuiltinContainerSuiteTarget>, RunnerError> {
+    if inside_container_handoff() {
+        return Ok(None);
+    }
+    let policy = load_container_policy(target_root, Some(container))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(Some(BuiltinContainerSuiteTarget {
+        container: container.to_owned(),
+        service: policy.primary_service.clone(),
+        root: target_root.to_path_buf(),
+    }))
+}
+
+/// Resolve and activate a container suite target so suite execs can assume
+/// the declared runtime is up. Shares the standard task activation path.
+pub(in crate::runner) fn prepare_container_suite_target(
+    target_root: &Path,
+    container: &str,
+) -> Result<Option<BuiltinContainerSuiteTarget>, RunnerError> {
+    let target = resolve_container_suite_target(target_root, container)?;
+    if target.is_some() {
+        crate::runner::container_runtime_prep::activate_routed_container_runtime(
+            target_root,
+            container,
+        )?;
+    }
+    Ok(target)
+}
+
+/// Render one builtin test suite's lifecycle command as a container exec
+/// command line against the resolved suite target.
+///
+/// The rendered line uses the same compose invocation and exec argument
+/// shape as routed task execution, so suite commands observe the same
+/// working-dir mapping and workspace identity as tasks.
+pub(in crate::runner) fn render_container_suite_command(
+    target: &BuiltinContainerSuiteTarget,
+    suite_command: &str,
+) -> Result<String, RunnerError> {
+    let policy = load_container_policy(&target.root, Some(&target.container))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let working_dir =
+        effigy_containers::load_container_exec_working_dir(&target.root, Some(&target.container))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mapped_cwd = working_dir.to_string_lossy().into_owned();
+    let raw_command = vec![
+        "sh".to_owned(),
+        "-lc".to_owned(),
+        suite_command.to_owned(),
+    ];
+    let workspace_identity = if target.service == policy.primary_service {
+        policy
+            .workspace_user
+            .as_deref()
+            .map(|user| (user, policy.workspace_home.as_deref()))
+    } else {
+        None
+    };
+    let strategy = effigy_exec::ExecStrategy::RawExec {
+        working_dir: mapped_cwd.clone(),
+        command: raw_command,
+    };
+    let exec_args = transport::build_routed_task_exec_args(
+        &strategy,
+        None,
+        None,
+        workspace_identity,
+        &target.service,
+        &mapped_cwd,
+    );
+    let (program, compose_args) =
+        effigy_containers::compose::compose_invocation_for_repo(&target.root, &policy, &exec_args);
+    let mut rendered = format!("cd {}", shell_quote(&target.root.display().to_string()));
+    rendered.push_str(" && ");
+    rendered.push_str(&shell_quote(program));
+    for arg in compose_args {
+        rendered.push(' ');
+        rendered.push_str(&shell_quote(&arg.to_string_lossy()));
+    }
+    Ok(rendered)
 }
 
 fn render_exec_result(

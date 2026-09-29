@@ -61,12 +61,13 @@ pub(super) fn try_run_builtin_test(
         &suite_selection.passthrough,
     );
     check_js_hydration(&runnable, resolved_root)?;
+    reject_unusable_suite_runtimes(&runnable)?;
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
     let should_tui = execution::should_run_builtin_test_tui(flags.tui, runnable.len());
     let results = if should_tui {
         execution::run_builtin_test_targets_tui(ports, runnable)?
     } else {
-        execution::run_builtin_test_targets_parallel(runnable, max_parallel, flags.output_json)?
+        execution::run_builtin_test_targets_parallel(ports, runnable, max_parallel, flags.output_json)?
     };
     render::finalize_builtin_test_outcome(
         &results,
@@ -76,6 +77,22 @@ pub(super) fn try_run_builtin_test(
         flags.verbose_results,
         flags.output_json,
     )
+}
+
+/// Fail before executing when a selected suite's owning catalog declares a
+/// runtime target builtin test suites cannot use. Without this the suite
+/// would silently run on the host despite the declared container target.
+fn reject_unusable_suite_runtimes(
+    runnable: &[planning::BuiltinTestRunnable],
+) -> Result<(), BuiltinError> {
+    for suite in runnable {
+        let crate::test::planning::BuiltinTargetRuntime::Unusable { reason } = &suite.runtime
+        else {
+            continue;
+        };
+        return Err(BuiltinError::task_invocation(reason.clone()));
+    }
+    Ok(())
 }
 
 fn check_js_hydration(

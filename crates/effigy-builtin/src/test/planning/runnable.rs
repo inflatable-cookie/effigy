@@ -28,6 +28,8 @@ pub(super) fn collect_builtin_test_runnable_targets(
                     teardown_command: plan.teardown_command,
                     teardown_policy: plan.teardown_policy,
                     is_default: plan.is_default,
+                    runtime: target.runtime.clone(),
+                    nested_invocation: plan.nested_invocation,
                 })
                 .collect::<Vec<BuiltinTestRunnable>>()
         })

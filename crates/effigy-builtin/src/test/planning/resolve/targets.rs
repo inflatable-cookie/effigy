@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget, BuiltinTestTargetSet};
+use crate::test::planning::{BuiltinResolvedPlan, BuiltinTargetRuntime, BuiltinTestTarget, BuiltinTestTargetSet};
 use crate::BuiltinError;
-use effigy_manifest::LoadedCatalog;
+use effigy_manifest::{LoadedCatalog, ManifestTask};
 
 use super::plan_resolution::resolve_target_test_plans;
 use effigy_tasks::testing::vitest_transitive_bin_skip_reason;
@@ -50,6 +50,7 @@ fn resolve_prefixed_target(
             suite_source,
             cargo_env,
             cargo_env_match,
+            runtime: resolve_target_runtime(&catalog.manifest, &catalog.catalog_root),
         }],
         excluded_targets: Vec::new(),
         warnings: Vec::new(),
@@ -74,11 +75,16 @@ fn collect_workspace_targets(
         targets.push(BuiltinTestTarget {
             name,
             fallback_chain: render_fallback_chain(&plans, &suite_source, &root),
-            root,
+            root: root.clone(),
             plans,
             suite_source,
             cargo_env,
             cargo_env_match,
+            runtime: catalogs
+                .iter()
+                .find(|catalog| catalog.catalog_root == root)
+                .map(|catalog| resolve_target_runtime(&catalog.manifest, &root))
+                .unwrap_or(BuiltinTargetRuntime::Host),
         });
     }
     let warnings = overlapping_cargo_target_warnings(&targets);
@@ -144,6 +150,54 @@ fn target_uses_cargo(target: &BuiltinTestTarget) -> bool {
         .plans
         .iter()
         .any(|plan| plan.command.contains("cargo ") || plan.command.contains("cargo-nextest"))
+}
+
+/// Resolve the owning catalog's declared runtime target for its test suites.
+///
+/// This is the same execution-binding grammar the task runner resolves
+/// (`[systems]` default → workspace → named container), so builtin test
+/// targets and named tasks share one authoritative resolved selection path.
+/// A catalog without a declared runtime target keeps its suites on the host;
+/// a declared but unusable target is surfaced instead of silently choosing a
+/// container by location or falling back to the host.
+pub(super) fn resolve_target_runtime(
+    manifest: &effigy_manifest::TaskManifest,
+    target_root: &Path,
+) -> BuiltinTargetRuntime {
+    match effigy_manifest::resolve_task_execution_binding(
+        manifest,
+        "builtin test target",
+        &ManifestTask::default(),
+    ) {
+        Ok(Some(effigy_manifest::ResolvedTaskExecutionBinding::Workspace(binding))) => {
+            match binding.container {
+                Some(effigy_manifest::ResolvedWorkspaceContainer::Named(container)) => {
+                    BuiltinTargetRuntime::Container { container }
+                }
+                Some(effigy_manifest::ResolvedWorkspaceContainer::Inline(_)) => {
+                    BuiltinTargetRuntime::Unusable {
+                        reason: format!(
+                            "test target {} declares an inline workspace container; builtin test suites require a named container target",
+                            target_root.display()
+                        ),
+                    }
+                }
+                None => BuiltinTargetRuntime::Unusable {
+                    reason: format!(
+                        "test target {} declares a workspace runtime without a backing container",
+                        target_root.display()
+                    ),
+                },
+            }
+        }
+        Ok(_) => BuiltinTargetRuntime::Host,
+        Err(error) => BuiltinTargetRuntime::Unusable {
+            reason: format!(
+                "test target {} declares an unusable runtime target: {error}",
+                target_root.display()
+            ),
+        },
+    }
 }
 
 fn collect_target_roots(

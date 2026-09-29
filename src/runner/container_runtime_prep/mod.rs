@@ -95,6 +95,39 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     )
 }
 
+/// Activate the named container of the manifest at `repo_root` for a routed
+/// task or suite execution.
+///
+/// This is the one activation path shared by the standard task pipeline and
+/// container-routed builtin test suites: the policy loads from the manifest
+/// that owns the declared runtime target.
+pub(in crate::runner) fn activate_routed_container_runtime(
+    repo_root: &Path,
+    container_name: &str,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    let policy = effigy_containers::load_container_policy(repo_root, Some(container_name))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let session_context = crate::runner::runtime_session_context::current_runtime_session_context();
+    let plan = build_runtime_activation_plan(
+        repo_root,
+        policy.name.as_str(),
+        Some(container_name),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Task,
+        session_context,
+    );
+    activate_container_runtime_for_task(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: plan.request.container_name.as_deref(),
+            repo_override: plan.request.repo_override.clone(),
+            route: plan.route,
+            session_context,
+        },
+    )
+}
+
 pub(in crate::runner) fn build_runtime_activation_plan(
     repo_root: &Path,
     policy_name: &str,

@@ -46,7 +46,10 @@ mod watch;
 
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;
-pub use ports::{BuiltinLockGuards, BuiltinRuntimePorts, LockScope, TaskCacheEntry, UnlockResult};
+pub use ports::{
+    BuiltinContainerSuiteTarget, BuiltinLockGuards, BuiltinRuntimePorts, LockScope,
+    TaskCacheEntry, UnlockResult,
+};
 pub use prompt_policy::{PromptDecision, PromptPolicy};
 
 pub(crate) use support::{

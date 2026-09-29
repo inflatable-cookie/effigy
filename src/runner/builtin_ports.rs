@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use effigy_builtin::{
-    BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts, LockScope as BuiltinLockScope,
-    TaskCacheEntry, UnlockResult,
+    BuiltinContainerSuiteTarget, BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts,
+    LockScope as BuiltinLockScope, TaskCacheEntry, UnlockResult,
 };
 use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_execution::ExecutionSurface;
@@ -81,6 +81,29 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
 
     fn run_tasks(&self, args: TasksArgs) -> Result<String, BuiltinError> {
         tasks_command::run_tasks(args).map_err(runner_to_builtin)
+    }
+
+    fn prepare_container_suite_target(
+        &self,
+        target_root: &Path,
+        container: &str,
+    ) -> Result<BuiltinContainerSuiteTarget, BuiltinError> {
+        crate::runner::exec_command::prepare_container_suite_target(target_root, container)
+            .map_err(runner_to_builtin)?
+            .ok_or_else(|| {
+                BuiltinError::task_invocation(
+                    "container suite target resolved during planning is unavailable at execution time",
+                )
+            })
+    }
+
+    fn render_container_suite_command(
+        &self,
+        target: &BuiltinContainerSuiteTarget,
+        suite_command: &str,
+    ) -> Result<String, BuiltinError> {
+        crate::runner::exec_command::render_container_suite_command(target, suite_command)
+            .map_err(runner_to_builtin)
     }
 
     fn run_command(&self, command: Command) -> Result<String, BuiltinError> {

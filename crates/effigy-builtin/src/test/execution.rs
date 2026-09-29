@@ -6,12 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_managed::run_spec::wrap_command_with_env;
-use effigy_manifest::ManifestCargoEnvMatchMode;
 use effigy_manifest::ManifestTestSuiteTeardownPolicy;
 use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
-use super::planning::BuiltinTestRunnable;
+use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::{BuiltinError, BuiltinTestExecResult};
 use crate::BuiltinRuntimePorts;
 #[path = "planning/runnable/cargo_env.rs"]
@@ -37,16 +36,24 @@ pub(super) fn run_builtin_test_targets_tui(
         .collect::<Vec<String>>();
     let specs = runnable
         .iter()
-        .map(|suite| ProcessSpec {
-            name: suite.name.clone(),
-            run: lifecycle_execution_command(suite),
-            cwd: suite.root.clone(),
-            start_after_ms: 0,
-            shutdown_on_exit: false,
-            pty: true,
-            env: std::collections::BTreeMap::new(),
+        .map(|suite| {
+            let execution_command = render_routed_suite_command(ports, suite)?;
+            Ok(ProcessSpec {
+                name: suite.name.clone(),
+                run: lifecycle_execution_command_from_parts(
+                    &execution_command,
+                    suite.setup_command.as_deref(),
+                    suite.teardown_command.as_deref(),
+                    suite.teardown_policy,
+                ),
+                cwd: suite.root.clone(),
+                start_after_ms: 0,
+                shutdown_on_exit: false,
+                pty: true,
+                env: std::collections::BTreeMap::new(),
+            })
         })
-        .collect::<Vec<ProcessSpec>>();
+        .collect::<Result<Vec<ProcessSpec>, BuiltinError>>()?;
     let outcome = run_multiprocess_tui(
         ports.current_working_dir()?,
         specs,
@@ -81,6 +88,7 @@ pub(super) fn run_builtin_test_targets_tui(
 }
 
 pub(super) fn run_builtin_test_targets_parallel(
+    ports: &dyn BuiltinRuntimePorts,
     runnable: Vec<BuiltinTestRunnable>,
     max_parallel: usize,
     capture_output: bool,
@@ -91,31 +99,38 @@ pub(super) fn run_builtin_test_targets_parallel(
     let jobs = runnable
         .into_iter()
         .map(|job| {
-            (
+            let env_wrapped_command = wrap_command_with_env(
+                cargo_env::maybe_wrap_with_cargo_env(
+                    job.command.clone(),
+                    &job.cargo_env,
+                    job.cargo_env_match,
+                    &job.root,
+                ),
+                &job.env,
+                &job.root,
+            );
+            let routed_command = route_suite_command(
+                ports,
+                &job.runtime,
+                job.nested_invocation,
+                &job.root,
+                &env_wrapped_command,
+            )?;
+            let execution_command = lifecycle_execution_command_from_parts(
+                &routed_command,
+                job.setup_command.as_deref(),
+                job.teardown_command.as_deref(),
+                job.teardown_policy,
+            );
+            Ok((
                 job.name,
                 job.root,
                 job.runner,
                 job.command,
-                job.cargo_env,
-                job.cargo_env_match,
-                job.env,
-                job.setup_command,
-                job.teardown_command,
-                job.teardown_policy,
-            )
+                execution_command,
+            ))
         })
-        .collect::<Vec<(
-            String,
-            PathBuf,
-            String,
-            String,
-            std::collections::BTreeMap<String, String>,
-            ManifestCargoEnvMatchMode,
-            std::collections::BTreeMap<String, String>,
-            Option<String>,
-            Option<String>,
-            ManifestTestSuiteTeardownPolicy,
-        )>>();
+        .collect::<Result<Vec<(String, PathBuf, String, String, String)>, BuiltinError>>()?;
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
 
@@ -131,36 +146,9 @@ pub(super) fn run_builtin_test_targets_parallel(
                             let mut queue = queue_ref.lock().expect("test queue lock poisoned");
                             queue.pop_front()
                         };
-                        let Some((
-                            name,
-                            root,
-                            runner,
-                            command,
-                            cargo_env,
-                            cargo_env_match,
-                            env,
-                            setup_command,
-                            teardown_command,
-                            teardown_policy,
-                        )) = job
-                        else {
+                        let Some((name, root, runner, command, execution_command)) = job else {
                             break;
                         };
-                        let execution_command = lifecycle_execution_command_from_parts(
-                            &wrap_command_with_env(
-                                cargo_env::maybe_wrap_with_cargo_env(
-                                    command.clone(),
-                                    &cargo_env,
-                                    cargo_env_match,
-                                    &root,
-                                ),
-                                &env,
-                                &root,
-                            ),
-                            setup_command.as_deref(),
-                            teardown_command.as_deref(),
-                            teardown_policy,
-                        );
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
@@ -227,12 +215,40 @@ pub(super) fn run_builtin_test_targets_parallel(
     )
 }
 
-fn lifecycle_execution_command(suite: &BuiltinTestRunnable) -> String {
-    lifecycle_execution_command_from_parts(
-        &render_wrapped_suite_command(suite),
-        suite.setup_command.as_deref(),
-        suite.teardown_command.as_deref(),
-        suite.teardown_policy,
+/// Route one rendered suite command to its owning catalog's declared
+/// runtime target.
+///
+/// Host targets run the command unchanged. Container targets execute through
+/// the runner's container machinery via the runtime ports; nested effigy
+/// re-entries keep their own routing and are never wrapped again.
+fn route_suite_command(
+    ports: &dyn BuiltinRuntimePorts,
+    runtime: &BuiltinTargetRuntime,
+    nested_invocation: bool,
+    root: &std::path::Path,
+    command: &str,
+) -> Result<String, BuiltinError> {
+    let BuiltinTargetRuntime::Container { container } = runtime else {
+        return Ok(command.to_owned());
+    };
+    if nested_invocation {
+        return Ok(command.to_owned());
+    }
+    let target = ports.prepare_container_suite_target(root, container)?;
+    ports.render_container_suite_command(&target, command)
+}
+
+fn render_routed_suite_command(
+    ports: &dyn BuiltinRuntimePorts,
+    suite: &BuiltinTestRunnable,
+) -> Result<String, BuiltinError> {
+    let wrapped = render_wrapped_suite_command(suite);
+    route_suite_command(
+        ports,
+        &suite.runtime,
+        suite.nested_invocation,
+        &suite.root,
+        &wrapped,
     )
 }
 
