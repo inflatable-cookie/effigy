@@ -52,6 +52,9 @@ pub enum BuiltinError {
         error_count: usize,
         rendered: String,
     },
+    CommandJsonFailure {
+        rendered: String,
+    },
     Manifest(ManifestError),
     Managed(ManagedError),
     Routing(RoutingError),
@@ -105,6 +108,9 @@ impl std::fmt::Display for BuiltinError {
             }
             BuiltinError::DoctorNonZero { error_count, .. } => {
                 write!(f, "doctor found {error_count} error finding(s)")
+            }
+            BuiltinError::CommandJsonFailure { .. } => {
+                write!(f, "command failed (json output available)")
             }
             BuiltinError::Manifest(error) => write!(f, "{error}"),
             BuiltinError::Managed(error) => write!(f, "{error}"),

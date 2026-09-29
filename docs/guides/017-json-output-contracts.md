@@ -97,6 +97,18 @@ Failure envelope shape:
 }
 ```
 
+### Failed Task Runs Keep Their Output Payload
+
+A failed task run does not drop captured task output. The JSON runner captures
+the task's stdout and stderr (including Rhai script output written before the
+failure), renders the normal `effigy.task.run.v1` payload, and attaches it to
+`error.details` while the top-level envelope stays failed (`ok: false`, non-zero
+exit). Automation reads captured diagnostics from
+`error.details.stdout`/`error.details.stderr` instead of scraping terminal
+text. Built-in surfaces that run a nested task — `effigy --json watch --once
+<target>` — preserve the same payload when the target fails. Capture honors
+existing redaction; secrets are removed before the payload is rendered.
+
 ## Result Payload Schemas
 
 `result` (or `error.details` for some failures) contains command-specific schemas.

@@ -157,6 +157,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Failed task runs under `effigy --json` keep their captured output: the
+  `effigy.task.run.v1` payload — including Rhai script diagnostics written
+  before the failure — is preserved on `error.details` instead of being
+  dropped, and `effigy --json watch --once <target>` propagates the same
+  payload when its target fails. Envelope shape is unchanged; failures still
+  exit non-zero and text mode still streams script output untouched.
 - After a Colima VM restart, `effigy container up` starts owned Compose
   services that stayed `Exited` or `Created` instead of treating compose
   success as readiness. Start keeps volumes, including Postgres

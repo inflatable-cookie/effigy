@@ -339,3 +339,36 @@ fn task_manifest_parse_error_with_stale_install_names_recovery() {
         "source-build recovery must be named: {rendered}"
     );
 }
+
+#[test]
+fn command_json_failure_survives_builtin_port_round_trip() {
+    let rendered = r#"{"schema":"effigy.task.run.v1","ok":false,"stdout":"diagnostic"}"#;
+    let error = RunnerError::CommandJsonFailure {
+        rendered: rendered.to_owned(),
+    };
+
+    let builtin = crate::runner::builtin_ports::runner_to_builtin(error);
+    match &builtin {
+        effigy_builtin::BuiltinError::CommandJsonFailure { rendered: carried } => {
+            assert_eq!(carried, rendered);
+        }
+        other => panic!("unexpected builtin error variant: {other:?}"),
+    }
+    assert_eq!(
+        builtin.to_string(),
+        "command failed (json output available)"
+    );
+
+    let round_tripped = RunnerError::from(builtin);
+    match &round_tripped {
+        RunnerError::CommandJsonFailure { rendered: carried } => {
+            assert_eq!(carried, rendered);
+        }
+        other => panic!("unexpected runner error variant: {other:?}"),
+    }
+    assert_eq!(
+        round_tripped.to_string(),
+        "command failed (json output available)"
+    );
+    assert_eq!(round_tripped.json_error_details(), Some(rendered));
+}
