@@ -274,11 +274,12 @@ fn run_standard_task_inner(
             TaskStatusStage::Executing,
             container_route_summary(container, service),
         )?;
+        let task_execution_cwd = preflight.task_execution_root(&selection.catalog.catalog_root);
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
                 RoutedTaskExecRequest {
                     repo_root: scope_root,
-                    invocation_cwd: &preflight.invocation_cwd,
+                    invocation_cwd: task_execution_cwd,
                     selector: &preflight.selector,
                     task_args: &preflight.runtime_args_exec.passthrough,
                     service,
@@ -315,7 +316,7 @@ fn run_standard_task_inner(
         run_routed_task_container_exec(
             RoutedTaskExecRequest {
                 repo_root: scope_root,
-                invocation_cwd: &preflight.invocation_cwd,
+                invocation_cwd: task_execution_cwd,
                 selector: &preflight.selector,
                 task_args: &preflight.runtime_args_exec.passthrough,
                 service,
