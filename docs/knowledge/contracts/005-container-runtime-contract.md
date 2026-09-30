@@ -131,6 +131,14 @@ network, isolated route, port, loopback, or TLS certificate remains. A
 second retire with nothing left is success, including a shared-only scope
 whose durable record is then removed.
 
+Loopback allocation and reclamation must follow the same ownership boundary.
+Tom's 2026-09-30 ruling requires one allocation across preparation and gateway
+registration, with legacy entries reclaimed only when their ownership is proven.
+Complete empty inventory and failed or partial discovery are different states:
+failed discovery must preserve uncertain owners and explain why reclamation was
+skipped. Increasing the pool cannot substitute for this identity and discovery
+repair. The existing allocator and prune paths do not yet meet these requirements.
+
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with
 `effigy container retire --scope <token> --yes`. Failure is non-zero and
