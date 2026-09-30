@@ -10,6 +10,7 @@ Effigy runs manifest tasks and built-in workflows across monorepos. Linked workt
 - [Release procedure](knowledge/contracts/release.md)
 - [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
 - [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (proposed; current selectors remain the executable path)
+- [Owned run supervision workflow](guides/082-owned-run-supervision-workflow.md) (proposed; current status, managed-session, and admission queries remain the executable path)
 
 ## What's next
 

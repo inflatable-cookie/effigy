@@ -19,5 +19,6 @@ Current technical authority for Effigy.
 | Bounded Doctor and Incremental Scan Architecture | [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md) |
 | Docs-check source traversal | [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md) |
 | Bounded QA groups runtime (proposed) | [031-bounded-qa-groups-runtime.md](031-bounded-qa-groups-runtime.md) |
+| Owned run supervision runtime (proposed) | [032-owned-run-supervision-runtime.md](032-owned-run-supervision-runtime.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |
