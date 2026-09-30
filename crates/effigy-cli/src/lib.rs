@@ -1204,6 +1204,57 @@ pub struct TasksArgs {
     pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
+    /// Explicit bounded-QA-group subcommand (`tasks qa-groups` /
+    /// `tasks qa-group`). Recognized only as the exact leading route so group
+    /// verbs never take over task names or top-level selectors.
+    pub qa: Option<TasksQaCommand>,
+}
+
+impl Default for TasksArgs {
+    fn default() -> Self {
+        Self {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            status_selector: None,
+            status_all: false,
+            output_json: false,
+            pretty_json: true,
+            qa: None,
+        }
+    }
+}
+
+/// Bounded QA-group surfaces under `effigy tasks` (contract 051).
+///
+/// The multiword `tasks qa-groups` / `tasks qa-group` forms reserve nothing
+/// in the top-level selector space, and no `effigy qa-groups` bare command
+/// exists. `GroupStop` parses so the runner can reject it before any side
+/// effect with the precise supervision prerequisite named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TasksQaCommand {
+    /// `tasks qa-groups list [FILTER] [--file PATH] [--json]`
+    GroupsList {
+        filter: Option<String>,
+        file: Option<PathBuf>,
+        output_json: bool,
+        pretty_json: bool,
+    },
+    /// `tasks qa-group run <SELECTOR> [--file PATH] [--scope TOKEN]... [--plan] [--json]`
+    GroupRun {
+        selector: String,
+        file: Option<PathBuf>,
+        scopes: Vec<String>,
+        plan: bool,
+        output_json: bool,
+    },
+    /// `tasks qa-group status <RUN_ID> [--json]`
+    GroupStatus { run_id: String, output_json: bool },
+    /// `tasks qa-group logs <RUN_ID> [--follow]`
+    GroupLogs { run_id: String, follow: bool },
+    /// `tasks qa-group stop <RUN_ID> [--json]` — always rejected before side
+    /// effects until run-scoped stop/signal attribution lands.
+    GroupStop { run_id: String, output_json: bool },
 }
 
 /// `effigy drafts [FILTER] [--json]`.
@@ -1292,6 +1343,11 @@ pub enum CliParseError {
     MissingResolveSelectorValue,
     MissingStatusSelectorValue,
     MissingPrettyValue,
+    MissingQaGroupAction,
+    MissingQaGroupFilePath,
+    MissingQaGroupSelector,
+    MissingQaGroupRunId,
+    MissingScopeTokenValue,
     MissingFlagValue {
         flag: String,
     },
@@ -1313,6 +1369,27 @@ impl std::fmt::Display for CliParseError {
             CliParseError::MissingResolveSelectorValue => write!(f, "--resolve requires a value"),
             CliParseError::MissingStatusSelectorValue => {
                 write!(f, "`tasks status` requires a selector")
+            }
+            CliParseError::MissingQaGroupAction => {
+                write!(
+                    f,
+                    "`tasks qa-group` requires an action (run, status, logs, or stop)"
+                )
+            }
+            CliParseError::MissingQaGroupFilePath => {
+                write!(f, "--file requires a path")
+            }
+            CliParseError::MissingQaGroupSelector => {
+                write!(f, "`tasks qa-group run` requires a group selector")
+            }
+            CliParseError::MissingQaGroupRunId => {
+                write!(f, "this qa-group command requires a run ID")
+            }
+            CliParseError::MissingScopeTokenValue => {
+                write!(
+                    f,
+                    "--scope requires a typed token (for example path:crates/x/src/lib.rs)"
+                )
             }
             CliParseError::MissingPrettyValue => {
                 write!(f, "--pretty requires a value (`true` or `false`)")

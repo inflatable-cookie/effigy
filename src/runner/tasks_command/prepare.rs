@@ -48,6 +48,9 @@ impl PreparedTasksCommand {
 }
 
 pub(in crate::runner) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
+    if let Some(qa) = args.qa.as_ref() {
+        return crate::runner::qa_group_command::run_tasks_qa(&args, qa);
+    }
     if args.status_all {
         return run_task_status_all(&args);
     }

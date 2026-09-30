@@ -30,6 +30,7 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run tasks json");
@@ -53,6 +54,7 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run filtered tasks json");
@@ -78,6 +80,7 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run tasks json");
@@ -113,6 +116,7 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run filtered tasks json");
@@ -160,6 +164,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run tasks json resolve");
@@ -197,6 +202,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run filtered tasks json resolve");
@@ -229,6 +235,7 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run tasks json");
@@ -272,6 +279,7 @@ fn tasks_json_contract_selectors_inventory_is_portable_and_deterministic() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run tasks json");
@@ -380,6 +388,7 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run task status json");
@@ -418,6 +427,7 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
             status_all: true,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     })
     .expect("run task status all json");

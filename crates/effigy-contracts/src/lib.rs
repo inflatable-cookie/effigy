@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
 use serde_json::{json, Value};
@@ -789,6 +790,11 @@ fn is_heavy_json_contract_schema(schema: &str) -> bool {
 
 fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
     let mut expanded = command.replace("<name>", "test");
+    if expanded.contains("<fixture_qa_groups>") || expanded.contains("<fixture_qa_groups_run_id>") {
+        let (fixture, run_id) = ensure_qa_groups_contract_fixture()?;
+        expanded = expanded.replace("<fixture_qa_groups>", fixture.to_string_lossy().as_ref());
+        expanded = expanded.replace("<fixture_qa_groups_run_id>", &run_id);
+    }
     if expanded.contains("<fixture_skill_source>") || expanded.contains("<fixture_skill_consumer>")
     {
         let (source, consumer) = create_skill_contract_fixtures()?;
@@ -824,6 +830,113 @@ fn expand_contract_fixture_tokens(command: &str) -> Result<String, String> {
     }
     Ok(expanded)
 }
+
+/// Cached QA-group contract fixture: one private temp repository with a
+/// maintained two-member group plus one genuine successful run record the
+/// status probe can read. Created at most once per checker process.
+static QA_GROUPS_CONTRACT_FIXTURE: OnceLock<Mutex<Option<(PathBuf, String)>>> = OnceLock::new();
+
+/// Create (or reuse) the QA-group contract fixture.
+///
+/// The fixture is a fresh private temp root in `std::env::temp_dir()` (the
+/// established contract-fixture convention; nothing is written to the real
+/// checkout). Setup executes the group once through the resolved Effigy
+/// binary so the status probe reads a genuine finalized successful run
+/// record rather than a fabricated file.
+fn ensure_qa_groups_contract_fixture() -> Result<(PathBuf, String), String> {
+    let cache = QA_GROUPS_CONTRACT_FIXTURE.get_or_init(|| Mutex::new(None));
+    let mut cached = cache.lock().map_err(|error| error.to_string())?;
+    if let Some((fixture, run_id)) = cached.as_ref() {
+        return Ok((fixture.clone(), run_id.clone()));
+    }
+
+    let fixture = create_qa_groups_contract_fixture_dir()?;
+    let executable = resolve_effigy_executable()?;
+    let output = Command::new(executable)
+        .args([
+            "--json",
+            "tasks",
+            "qa-group",
+            "run",
+            QA_GROUPS_CONTRACT_FIXTURE_GROUP,
+            "--repo",
+        ])
+        .arg(&fixture)
+        .env("NO_COLOR", "1")
+        .output()
+        .map_err(|error| format!("failed to execute fixture group run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture group run failed unexpectedly (status={}); stderr: {}",
+            output
+                .status
+                .code()
+                .map_or("signal".to_owned(), |code| code.to_string()),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let reports = fixture.join(".effigy/reports/qa-groups");
+    let mut runs: Vec<PathBuf> = std::fs::read_dir(&reports)
+        .map_err(|error| format!("failed to read fixture run reports: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|entry| entry.path())
+        .collect();
+    runs.sort();
+    let run_dir = runs
+        .into_iter()
+        .next()
+        .ok_or_else(|| "fixture group run produced no finalized run record".to_owned())?;
+    let run_id = run_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "fixture run directory is not valid UTF-8".to_owned())?
+        .to_owned();
+
+    *cached = Some((fixture.clone(), run_id.clone()));
+    Ok((fixture, run_id))
+}
+
+const QA_GROUPS_CONTRACT_FIXTURE_GROUP: &str = "release-probe";
+
+fn create_qa_groups_contract_fixture_dir() -> Result<PathBuf, String> {
+    let fixture = std::env::temp_dir().join(format!(
+        "effigy-qa-groups-contract-fixture-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&fixture).map_err(|error| error.to_string())?;
+    std::fs::write(fixture.join("package.json"), "{}\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.join("effigy.toml"),
+        QA_GROUPS_CONTRACT_FIXTURE_MANIFEST,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(fixture)
+}
+
+/// Host-only, admission-free fixture group: two deterministic printf members
+/// with an advisory scope policy, so the checker never touches containers or
+/// the host-wide heavy gate.
+const QA_GROUPS_CONTRACT_FIXTURE_MANIFEST: &str = concat!(
+    "[catalog]\nalias = \"qa-groups-contract\"\n\n",
+    "[tasks.probe-ok]\nrun = \"printf probe-ok\"\nrun_in = \"host\"\n\n",
+    "[qa.groups.release-probe]\n",
+    "lifecycle = \"maintained\"\n",
+    "purpose = \"Contract checker fixture group\"\n",
+    "scope_policy = \"advisory\"\n",
+    "expected_wall_ms = 600000\n",
+    "expectation_basis = \"Contract checker fixture with printf members\"\n",
+    "proof_limits = [\"Contract fixture only\"]\n",
+    "members = [\n",
+    "  { id = \"first\", kind = \"test\", surface = \"published\", task = \"probe-ok\", args = [], targets = [\"workspace:root\"], covers = [\"workspace:root\"], limits = [\"nothing\"] },\n",
+    "  { id = \"second\", kind = \"proof\", surface = \"published\", task = \"probe-ok\", args = [], targets = [\"workspace:root\"], limits = [\"nothing\"] },\n",
+    "]\n",
+);
 
 fn create_skill_contract_fixtures() -> Result<(PathBuf, PathBuf), String> {
     let fixture_root = std::env::temp_dir().join(format!(

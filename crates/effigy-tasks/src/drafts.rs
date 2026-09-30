@@ -38,6 +38,10 @@ pub struct DraftProjection {
     pub created: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
+    /// Additive heavy-admission metadata (contract 046 extension); absent
+    /// metadata keeps today's ordinary classification and omits the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admission: Option<String>,
     pub lifecycle: String,
 }
 
@@ -90,6 +94,10 @@ pub fn list_drafts(
                 purpose: draft.purpose.clone(),
                 created: draft.created.as_iso(),
                 expires: draft.expires.map(ManifestDraftDate::as_iso),
+                admission: draft
+                    .task
+                    .admission
+                    .map(|admission| admission.as_str().to_owned()),
                 lifecycle: if draft.is_expired_on(request.today.to_naive_date()) {
                     "expired".to_owned()
                 } else {
@@ -156,6 +164,12 @@ pub fn render_draft_listing_text(result: &ListDraftsResult) -> Result<String, Ef
             "      created: {}  expires: {}",
             draft.created, expiry
         ))?;
+        if let Some(admission) = &draft.admission {
+            renderer.text(&format!(
+                "      admission: {}",
+                style_text(color_enabled, theme.muted, admission),
+            ))?;
+        }
     }
     render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
 }

@@ -14,7 +14,7 @@ use chrono::NaiveDate;
 
 use super::task_runtime::{
     ManifestEnvFileDirective, ManifestManagedConcurrentEntry, ManifestManagedProfile,
-    ManifestManagedRun, ManifestTask, ManifestTaskCache, ManifestTaskRunIn,
+    ManifestManagedRun, ManifestTask, ManifestTaskAdmission, ManifestTaskCache, ManifestTaskRunIn,
     ManifestTaskSecretsMode,
 };
 
@@ -119,6 +119,8 @@ pub struct ManifestDraftTable {
     #[serde(default)]
     pub fail_on_non_zero: Option<bool>,
     #[serde(default)]
+    pub admission: Option<ManifestTaskAdmission>,
+    #[serde(default)]
     pub container_lifecycle: Option<bool>,
     #[serde(default)]
     pub secrets: Option<ManifestTaskSecretsMode>,
@@ -168,7 +170,7 @@ impl ManifestDraftTable {
             task: ManifestTask {
                 run: self.run,
                 run_in: self.run_in,
-                admission: None,
+                admission: self.admission,
                 system: self.system,
                 workspace: self.workspace,
                 stay_in_shell: self.stay_in_shell,
@@ -291,6 +293,47 @@ run_in = "host"
         );
         assert_eq!(draft.purpose, "Validate temporary provider integration");
         assert!(draft.task.run.is_some());
+        assert_eq!(draft.task.admission, None);
+    }
+
+    #[test]
+    fn draft_accepts_optional_heavy_admission_metadata() {
+        let parsed: DraftsEnvelope = toml::from_str(
+            r#"
+[drafts.heavy-probe]
+created = "2026-09-15"
+purpose = "Heavy temporary proof"
+admission = "heavy"
+run = "cargo test"
+"#,
+        )
+        .expect("parse draft with admission");
+
+        let draft = parsed.drafts.get("heavy-probe").expect("draft exists");
+        assert_eq!(
+            draft.task.admission,
+            Some(super::super::ManifestTaskAdmission::Heavy)
+        );
+    }
+
+    #[test]
+    fn draft_rejects_unknown_admission_class() {
+        let error = toml::from_str::<DraftsEnvelope>(
+            r#"
+[drafts.urgent]
+created = "2026-09-15"
+purpose = "Bad class"
+admission = "urgent"
+run = "cargo test"
+"#,
+        )
+        .expect_err("unknown admission class must fail closed");
+        let rendered = error.to_string();
+        assert!(
+            rendered.to_lowercase().contains("admission")
+                || rendered.contains("did not match any variant"),
+            "{rendered}"
+        );
     }
 
     #[test]

@@ -155,6 +155,34 @@ for generic repo orientation.
 
 Details: `references/workflow-shortcuts.md`.
 
+## Bounded QA groups
+
+A QA group names a deliberate set of existing selectors for one work context,
+with declared targets, proof limits, and an expected runtime. It is
+composition and evidence, not another runner, and a passing group proves only
+its members — never that the map is true or your scope list complete.
+
+| Goal | Command |
+|------|---------|
+| Inventory maintained groups | `effigy tasks qa-groups list` |
+| Include one temporary definition | append `--file <path>` (relative paths resolve inside the repo; no directory scan exists) |
+| Inspect before running | `effigy tasks qa-group run <GROUP> --scope <TOKEN> --plan` |
+| Run the declared members | `effigy tasks qa-group run <GROUP> --scope <TOKEN>...` |
+| Inspect a run | `effigy tasks qa-group status <RUN_ID> --json` / `logs <RUN_ID>` |
+
+Rules that keep group use honest:
+
+- Supply scope as repeatable typed tokens (`path:`, `cargo-package:`,
+  `bun-package:`, `workspace:`, `input:`, `external:`), including unchanged
+  inputs you know matter (lockfiles, generator dependencies). Effigy never
+  infers scope from a diff, status, or graph output.
+- `needs_planner` means stop and ask the planner with the printed token and
+  reason; it never means "run the full board". A `declared_match` runs every
+  member — scope never filters checks.
+- A group selector never falls through to a same-named task or draft.
+- `stop` and `hard_timeout_ms` are unavailable (owned-run supervision, contract 052); an
+  interrupted run reconciles to `unknown`, never a pass.
+
 ## Selector routing (60 seconds)
 
 1. **Alias prefix** (`qa:` → `qa:ci:fast`)

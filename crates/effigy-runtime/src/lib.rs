@@ -1,6 +1,7 @@
 pub mod container_manager;
 pub mod data;
 mod error;
+pub mod qa_group_status;
 pub mod read;
 pub mod session;
 pub mod shell;

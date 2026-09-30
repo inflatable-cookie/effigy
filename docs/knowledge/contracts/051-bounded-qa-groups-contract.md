@@ -1,8 +1,12 @@
 # 051 - Bounded QA Groups Contract
 
-Status: proposed. The grammar, commands, schemas, and run controls below are
-not implemented. Until they land, use existing task selectors and inspect
-their plans; `[drafts]` keeps the behavior defined by contract 046.
+Status: active. The grammar, commands, and schemas below are implemented
+through the `tasks qa-group` surfaces. Two reviewed controls remain
+unavailable and are rejected with precise prerequisite diagnostics:
+`hard_timeout_ms` and `qa-group stop` wait on owned-run supervision
+([052](052-owned-run-supervision-contract.md), proposed and unavailable until
+implementation). Until that lands, status records incomplete owner loss as
+`unknown`, never a pass.
 
 Owner: task selection and execution maintainers
 Architecture: [031](../architecture/031-bounded-qa-groups-runtime.md)
@@ -42,7 +46,7 @@ planner-owned through Queue on `main` at milestones and release points.
   members, timing, and per-member outcomes.
 
 Use the existing `tasks` command family so group verbs cannot take over a
-top-level repository selector. The proposed command grammar is:
+top-level repository selector. The command grammar is:
 
 ```text
 effigy tasks qa-groups list [FILTER] [--file PATH] [--json]
@@ -74,7 +78,7 @@ group fixes each member's argv so the plan and selected proof do not change at
 run time.
 
 This preserves `effigy qa`, `effigy validate`, existing selectors, hosted CI,
-and release routing. The proposed bare commands `effigy qa-groups` and
+and release routing. The rejected bare commands `effigy qa-groups` and
 `effigy qa-group` are not used: they would reserve names in the same top-level
 space where repositories already own selectors. A group name also does not
 become a task selector.
@@ -100,7 +104,7 @@ group cannot shadow or be shadowed by one.
 
 ## Definition grammar
 
-The proposed maintained grammar is keyed under `[qa.groups]` and composed only
+The maintained grammar is keyed under `[qa.groups]` and composed only
 through existing explicit manifest includes:
 
 ```toml
@@ -156,9 +160,10 @@ Required group fields are:
 
 `expected_wall_ms` and `expectation_basis` are a pair. Both may be absent,
 which means expected cost is `unknown`; one without the other is invalid.
-`hard_timeout_ms` is optional and separate from the expectation. It is
-unavailable until the run-control contract can safely enforce it for every
-resolved route.
+`hard_timeout_ms` would be a separate policy. It is unavailable until
+[052](052-owned-run-supervision-contract.md) can safely enforce it for every
+resolved route, so the grammar parses it only to reject the definition with
+the precise contract 052 prerequisite; no definition carrying it validates.
 
 Each member requires:
 
@@ -393,17 +398,17 @@ Heavy groups compose with host-wide admission contract
   timed and recorded; it does not receive machine-wide CPU or memory
   enforcement.
 
-Current availability and required follow-on work:
+Current availability after the contract 051 implementation:
 
-| Capability | Available now | Group requirement |
+| Capability | State | Notes |
 | --- | --- | --- |
-| Heavy admission and waiting | `effigy admission status/run` reports shared capacity and caller runs; nested tasks share a held lease under contract 049. | One group ID must cover all members and expose wait separately from execution. |
-| Draft admission | Current `[drafts]` definitions cannot declare `admission`; the body omits this task metadata. | Extend contract 046 and direct draft selection/JSON before group membership. Until then, reject draft members; never silently assume the group can classify them. |
-| Task status | `effigy tasks status` reads task-selector records under contracts 017/018. | A group run needs its own typed identity and aggregate/member states. |
-| Managed-session control | Managed headless/TUI tasks expose status, logs, and stop for their managed session. | Reuse the session/process supervisor when a member owns one; it is not generic group control. |
-| Ordinary process stop | No general run-scoped stop for non-heavy direct tasks or arbitrary nested children. | Requires the owned-run supervision contract [052](052-owned-run-supervision-contract.md); proposed and unavailable until implementation. |
-| Owner loss and PID reuse | Admission refuses unsafe lease reclamation when owner generation, process group, boot identity, or a live child is uncertain. | Preserve the same fail-closed evidence. Do not infer completion from a reused PID or stop a foreign process. |
-| Owner `SIGKILL` | A dead owner cannot print its own final message. | A surviving supervisor may record interruption; otherwise status is `unknown`/incomplete until reconciliation, never a fabricated complete receipt. |
+| Heavy admission and waiting | Implemented for groups. | One `qa-group:` lease covers all members, is acquired before setup, and is retained through cleanup; nested tasks reuse it through the existing scoped-lease mechanism. `admission_wait_ms` is reported separately from execution time. |
+| Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
+| Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
+| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-owned-run-supervision-contract.md), proposed and unavailable until implementation. |
+| `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
+| Owner loss and PID reuse | Preserved fail-closed. | Run records keep owner PID plus start/boot identity; a live record whose owner is gone reconciles to `unknown`, never a pass, and never credits a reused PID. |
+| Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete. Never a fabricated complete receipt. |
 
 `status`, `logs`, and `stop` address a run ID, not a selector or PID. Stop is
 scoped to that run and its supervised process generation. It records the
@@ -411,8 +416,8 @@ request, signal delivery, member that was active, and whether descendants were
 confirmed gone. Logs are run-scoped and redact secrets. A capacity waiter can
 be cancelled without stopping another lease owner.
 
-The independent supervision work in contract
-[052](052-owned-run-supervision-contract.md) remains a prerequisite for
+Owned-run supervision (contract
+[052](052-owned-run-supervision-contract.md)) remains the prerequisite for
 claiming control of ordinary non-heavy runs, nested children, or owner loss.
 It owns run identity and generation, supervisor placement, ordered stop and
 hard-timeout semantics, the interruption evidence taxonomy, and the
@@ -441,7 +446,7 @@ member role/selector/args/state, admission wait, execution wall time, expected
 time, budget state, and log/status commands. It labels unavailable timing
 `unknown`.
 
-Proposed result payloads use versioned schemas inside Effigy's existing JSON
+Result payloads use versioned schemas inside Effigy's existing JSON
 command envelope:
 
 - `effigy.qa-groups.v1` for inventory and definition provenance;
@@ -558,19 +563,21 @@ full board, or omit an uncertain member.
 
 Implementation sequence:
 
-1. Land the reviewed group parser, identity, `--plan`, inventory, pipeline
-   execution, records, and versioned JSON under an approved implementation
-   brief. No actual prerequisite task IDs exist in this design task.
-2. Land or adopt contract
-   [052](052-owned-run-supervision-contract.md) before claiming general
-   run-scoped stop, signal attribution, or safe cancellation of
-   non-heavy/nested runs.
+1. Landed: the group parser, identity, `--plan`, inventory, pipeline
+   execution, records, and versioned JSON shipped through the
+   `tasks qa-group` surfaces (task effigy#051), including the contract 046
+   draft `admission` metadata extension they depended on.
+2. Land contract [052](052-owned-run-supervision-contract.md) before claiming
+   general run-scoped stop, signal attribution, or safe cancellation of
+   non-heavy/nested runs. The `stop` command and `hard_timeout_ms` stay
+   refused with that prerequisite until then.
 3. Land or adopt lead `035b121a` (Cargo package-filter repair), or equivalent
    truly scoped selectors, before describing broad Rust workspace selectors as
    bounded package proof.
 4. Update and distribute the canonical Effigy skill with a separate approved
-   adoption cut. Preserve existing draft guidance until the group runtime is
-   implemented.
+   adoption cut. The canonical skill guidance for the landed group surface
+   ships with this repository's skill source; installed-copy distribution
+   and duplicate cleanup remain the adoption cut's work.
 5. Re-pin Longhorn adoption lead `0d3ff58c` against the landed API and actual
    dispatched prerequisite task IDs. It remains held until review and approval.
 

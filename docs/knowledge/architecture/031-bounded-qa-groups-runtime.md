@@ -3,7 +3,12 @@
 Contract: [051](../contracts/051-bounded-qa-groups-contract.md)
 Run supervision: [052](../contracts/052-owned-run-supervision-contract.md),
 [032](032-owned-run-supervision-runtime.md)
-Status: proposed and unavailable until implementation.
+Status: active. The resolver, plan surface, coordinator, and run records are
+implemented; stop/hard-timeout enforcement remains refused pending the
+owned-run supervision contract
+[052](../contracts/052-owned-run-supervision-contract.md) (proposed and
+unavailable until implementation), and status reconciliation reports
+interrupted owners as `unknown`, never a pass.
 
 ## Placement
 
@@ -41,7 +46,7 @@ responsibilities.
 
 No group member contains a raw command body. No group invokes a separate task
 runner, calls another QA group, or changes the meaning of an existing
-selector. The proposed commands live under `effigy tasks`, so the new
+selector. The commands live under `effigy tasks`, so the
 `qa-groups` / `qa-group` words do not take over top-level task names.
 
 ## Plan resolution

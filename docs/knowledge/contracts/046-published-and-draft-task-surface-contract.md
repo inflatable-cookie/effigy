@@ -34,6 +34,13 @@ Each draft requires:
 `created`. Compact string, compact sequence, and inline shorthand definitions
 are rejected under `[drafts]` because they cannot carry lifecycle metadata.
 
+`admission` is optional draft metadata with the same meaning as its
+`[tasks]` counterpart: `admission = "heavy"` opts the draft into heavy
+validation admission (contract 049) when run directly, and a bounded QA group
+(contract 051) may classify it as heavy when nested. Absent metadata keeps
+today's ordinary classification, payload shape, and identity; the inventory,
+plan, and run JSON carry the field only when a definition declares it.
+
 After metadata is separated, the remaining draft body uses the same typed task
 definition, profiles, runtime binding, environment, secrets, managed mode,
 locks, cache, readiness, and argument semantics as `[tasks]`.
