@@ -2,9 +2,9 @@
 //!
 //! List, plan, run, status, and logs live here; they compose the pure group
 //! surface in `effigy-tasks` with the canonical execution pipeline. Stop is
-//! parsed but always rejected before any side effect: run-scoped stop and
-//! signal attribution (lead `29e5f6f7`) has not landed, and faking it would
-//! be worse than refusing.
+//! parsed but always rejected before any side effect: owned-run supervision
+//! (contract 052) has not landed, and faking it would be worse than
+//! refusing.
 
 mod execute;
 
@@ -64,7 +64,7 @@ pub(super) fn run_tasks_qa(args: &TasksArgs, qa: &TasksQaCommand) -> Result<Stri
             run_qa_group_logs(args, run_id, *follow)
         }
         TasksQaCommand::GroupStop { run_id, .. } => Err(RunnerError::task_invocation(format!(
-            "`tasks qa-group stop {run_id}` is not available: run-scoped stop and signal attribution (lead 29e5f6f7) has not landed, so no supervisor can confirm the run's process tree stopped. Nothing was signalled and no state changed. Ask the planner if the run needs operator intervention."
+            "`tasks qa-group stop {run_id}` is not available: owned-run supervision (contract 052) has not landed, so no supervisor can confirm the run's process tree stopped. Nothing was signalled and no state changed. Ask the planner if the run needs operator intervention."
         ))),
     }
 }

@@ -99,7 +99,7 @@ pub fn list_qa_groups(
                 catalog: catalog.alias.clone(),
                 catalog_root: catalog.catalog_root.display().to_string(),
                 source: relative_display_path(request.resolved_root, &catalog.manifest_path),
-                definition_sha256: None,
+                definition_sha256: Some(super::canonical_definition_digest(group)),
                 file_tracking: None,
                 purpose: group.purpose.clone(),
                 scope_policy: group.scope_policy.as_str().to_owned(),

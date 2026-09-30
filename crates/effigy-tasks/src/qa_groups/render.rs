@@ -193,7 +193,7 @@ pub fn render_qa_group_plan_text(plan: &QaGroupPlan) -> Result<String, EffigyTas
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "hard_timeout_ms and stop are unavailable: run-scoped stop/signal attribution (lead 29e5f6f7) has not landed",
+        "hard_timeout_ms and stop are unavailable: owned-run supervision (contract 052) has not landed",
     )?;
     if !plan.executable {
         renderer.notice(
@@ -241,7 +241,7 @@ mod tests {
   "coverage_disclaimer": "Declared mappings do not establish map truth or caller scope completeness",
   "admission": { "required": false, "member_ids": [], "model": "one host-wide heavy lease per group run; serial members reserve the maximum serial requirement" },
   "members": [],
-  "capabilities": { "hard_timeout": false, "stop": false, "prerequisite_lead": "29e5f6f7" }
+  "capabilities": { "hard_timeout": false, "stop": false, "prerequisite": "owned-run supervision (contract 052)" }
 }
 "#,
         )
@@ -263,7 +263,7 @@ mod tests {
     fn plan_text_names_the_prerequisite_and_planner_verdict() {
         let rendered = render_qa_group_plan_text(&minimal_plan()).expect("render");
         assert!(rendered.contains("needs_planner"), "{rendered}");
-        assert!(rendered.contains("29e5f6f7"), "{rendered}");
+        assert!(rendered.contains("contract 052"), "{rendered}");
         assert!(rendered.contains("no run was created"), "{rendered}");
     }
 

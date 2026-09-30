@@ -2,10 +2,12 @@
 
 Status: active. QA-group commands are implemented through the
 `tasks qa-group` surfaces. `stop` and `hard_timeout_ms` stay unavailable:
-they are refused with the run-scoped supervision prerequisite (lead
-`29e5f6f7`) before any side effect. Installed-skill adoption/distribution is
-a separate approved cut; until it reaches your environment, verify capability
-with `effigy tasks qa-groups list --json` and fall back to plain selectors.
+they are refused with the owned-run supervision prerequisite
+([052](../knowledge/contracts/052-owned-run-supervision-contract.md),
+proposed and unavailable until implementation) before any side effect.
+Installed-skill adoption/distribution is a separate approved cut; until it
+reaches your environment, verify capability with
+`effigy tasks qa-groups list --json` and fall back to plain selectors.
 
 Contract: [051](../knowledge/contracts/051-bounded-qa-groups-contract.md)
 Architecture: [031](../knowledge/architecture/031-bounded-qa-groups-runtime.md)

@@ -52,6 +52,7 @@ pub(super) fn resolve_target_test_plans(
                      }| BuiltinResolvedPlan {
                         suite: suite.clone(),
                         command,
+                        auto_workspace_scope: false,
                         env,
                         suite_env,
                         suite_env_files,
@@ -75,10 +76,23 @@ pub(super) fn resolve_target_test_plans(
     Ok((
         detect_test_runner_plans(target_root)
             .into_iter()
-            .map(|plan| apply_builtin_test_runner_config(plan, package_manager, &runner_overrides))
-            .map(|plan| BuiltinResolvedPlan {
+            .map(|plan| {
+                // Mark the workspace flag before any runner override can
+                // replace the command: only detection-owned `--workspace`
+                // flags yield to explicit package scope.
+                let detected_workspace_scope = plan
+                    .command
+                    .split_whitespace()
+                    .any(|token| token == "--workspace");
+                let overridden = runner_overrides.contains_key(plan.runner.label());
+                let plan =
+                    apply_builtin_test_runner_config(plan, package_manager, &runner_overrides);
+                (plan, detected_workspace_scope && !overridden)
+            })
+            .map(|(plan, auto_workspace_scope)| BuiltinResolvedPlan {
                 suite: plan.runner.label().to_owned(),
                 command: plan.command,
+                auto_workspace_scope,
                 env: BTreeMap::new(),
                 suite_env: None,
                 suite_env_files: Vec::new(),

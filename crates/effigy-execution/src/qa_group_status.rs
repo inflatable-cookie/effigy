@@ -26,7 +26,7 @@ pub enum QaGroupOutcome {
     /// The owner or operator cancelled the run.
     Cancelled,
     /// An explicitly configured execution deadline fired. Unavailable until
-    /// run-scoped stop/signal attribution (lead `29e5f6f7`) lands.
+    /// owned-run supervision (contract 052) lands.
     TimedOut,
     /// Selection or a required runtime route failed before execution.
     Blocked,

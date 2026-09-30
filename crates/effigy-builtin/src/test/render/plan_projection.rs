@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
 
-use effigy_core::shell::shell_quote;
-
-use crate::test::planning::BuiltinTestTarget;
+use crate::test::planning::{compose_scoped_command, BuiltinTestTarget};
 use effigy_manifest::ManifestTestSuiteTeardownPolicy;
+
+/// Evidence line shown when passthrough package selection made the
+/// auto-added workspace flag yield, in text and JSON plan projections.
+const PACKAGE_SCOPE_NARROWED_EVIDENCE: &str =
+    "package selection in passthrough narrows the scope; the auto-added workspace flag was omitted";
 
 pub(super) struct ProjectedSuitePlan {
     pub(super) suite: String,
@@ -39,11 +42,6 @@ pub(super) fn project_target_plan(
         .collect::<BTreeSet<String>>()
         .into_iter()
         .collect::<Vec<String>>();
-    let args_rendered = passthrough
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
     let default_suites = target
         .plans
         .iter()
@@ -62,20 +60,23 @@ pub(super) fn project_target_plan(
         if requested_suite.is_none() && !plan.is_default {
             continue;
         }
-        let command = if args_rendered.is_empty() {
-            plan.command.clone()
-        } else {
-            format!("{} {}", plan.command, args_rendered)
-        };
+        let scoped = compose_scoped_command(&plan.command, plan.auto_workspace_scope, passthrough);
+        let command = scoped.command;
         selected_suites.push(plan.suite.clone());
         commands.push(command.clone());
         for line in &plan.evidence {
             evidence.push(format!("{}: {line}", plan.suite));
         }
+        let mut suite_evidence = plan.evidence.clone();
+        if scoped.package_scope_narrowed {
+            let narrowed = format!("{}: {}", plan.suite, PACKAGE_SCOPE_NARROWED_EVIDENCE);
+            evidence.push(narrowed);
+            suite_evidence.push(PACKAGE_SCOPE_NARROWED_EVIDENCE.to_owned());
+        }
         suite_details.push(ProjectedSuitePlan {
             suite: plan.suite.clone(),
             command,
-            evidence: plan.evidence.clone(),
+            evidence: suite_evidence,
             suite_env: plan.suite_env.clone(),
             suite_env_files: plan.suite_env_files.clone(),
             setup_steps: plan.setup_steps,

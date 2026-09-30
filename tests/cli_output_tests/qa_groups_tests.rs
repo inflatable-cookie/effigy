@@ -695,7 +695,7 @@ run = "echo nested-ok"
     );
     assert_eq!(
         body["capabilities"],
-        serde_json::json!({"hard_timeout": false, "stop": false, "prerequisite_lead": "29e5f6f7"})
+        serde_json::json!({"hard_timeout": false, "stop": false, "prerequisite": "owned-run supervision (contract 052)"})
     );
 
     // Execute against a private host admission store; one group lease must
@@ -985,7 +985,7 @@ fn stop_is_rejected_before_side_effects_with_the_supervision_prerequisite() {
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("29e5f6f7"), "{text}");
+    assert!(text.contains("contract 052"), "{text}");
     assert!(text.contains("Nothing was signalled"), "{text}");
 }
 
@@ -1011,7 +1011,7 @@ run = "echo ok"
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("29e5f6f7"), "{text}");
+    assert!(text.contains("contract 052"), "{text}");
     assert!(text.contains("hard_timeout_ms"), "{text}");
 }
 

@@ -385,7 +385,10 @@ pub fn load_temporary_qa_group(
     })?;
     let group = table
         .qa_group
-        .into_manifest_group(selector)
+        .into_manifest_group(
+            selector,
+            effigy_manifest::QaGroupDefinitionContext::TemporaryFile,
+        )
         .map_err(EffigyTasksError::message)?;
     let relative = canonical_file
         .strip_prefix(&canonical_root)
@@ -728,6 +731,31 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
     }
 
     #[test]
+    fn temporary_file_rejects_a_maintained_definition_end_to_end() {
+        let base = std::env::temp_dir().join(format!("effigy-qa-maint-file-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).expect("mkdir");
+        let file = base.join("wrong-place.toml");
+        fs::write(
+            &file,
+            r#"
+[qa_group]
+lifecycle = "maintained"
+purpose = "Maintained in a file"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [{ id = "m", kind = "test", surface = "published", task = "t", targets = ["workspace:root"], limits = ["nothing"] }]
+"#,
+        )
+        .expect("write fixture");
+        let error = load_temporary_qa_group(&file, &base, None)
+            .err()
+            .expect("maintained lifecycle in a file must fail");
+        assert!(error.to_string().contains("temporary groups only"), "{error}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn temporary_file_loader_rejects_outside_root_and_bad_shape() {
         let base = std::env::temp_dir().join(format!("effigy-qa-out-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -821,7 +849,12 @@ members = [{{ id = "m", kind = "test", surface = "published", task = "t", args =
 "#
         ))
         .expect("parse group fixture");
-        table.into_manifest_group(Some("dig")).expect("valid group")
+        table
+            .into_manifest_group(
+                Some("dig"),
+                effigy_manifest::QaGroupDefinitionContext::Manifest,
+            )
+            .expect("valid group")
     }
 
     #[test]

@@ -3,12 +3,14 @@
 Status: active. The grammar, commands, and schemas below are implemented
 through the `tasks qa-group` surfaces. Two reviewed controls remain
 unavailable and are rejected with precise prerequisite diagnostics:
-`hard_timeout_ms` and `qa-group stop` wait on run-scoped stop/signal
-attribution (lead `29e5f6f7`). Until that lands, status records incomplete
-owner loss as `unknown`, never a pass.
+`hard_timeout_ms` and `qa-group stop` wait on owned-run supervision
+([052](052-owned-run-supervision-contract.md), proposed and unavailable until
+implementation). Until that lands, status records incomplete owner loss as
+`unknown`, never a pass.
 
 Owner: task selection and execution maintainers
 Architecture: [031](../architecture/031-bounded-qa-groups-runtime.md)
+Run supervision: [052](052-owned-run-supervision-contract.md)
 Agent workflow: [081](../../guides/081-bounded-qa-groups-workflow.md)
 
 ## Purpose and proof boundary
@@ -158,10 +160,10 @@ Required group fields are:
 
 `expected_wall_ms` and `expectation_basis` are a pair. Both may be absent,
 which means expected cost is `unknown`; one without the other is invalid.
-`hard_timeout_ms` would be a separate policy. It is unavailable until the
-run-control contract can safely enforce it for every resolved route, so the
-grammar parses it only to reject the definition with the precise prerequisite
-(lead `29e5f6f7`); no definition carrying it validates.
+`hard_timeout_ms` would be a separate policy. It is unavailable until
+[052](052-owned-run-supervision-contract.md) can safely enforce it for every
+resolved route, so the grammar parses it only to reject the definition with
+the precise contract 052 prerequisite; no definition carrying it validates.
 
 Each member requires:
 
@@ -401,12 +403,25 @@ Current availability after the contract 051 implementation:
 | Capability | State | Notes |
 | --- | --- | --- |
 | Heavy admission and waiting | Implemented for groups. | One `qa-group:` lease covers all members, is acquired before setup, and is retained through cleanup; nested tasks reuse it through the existing scoped-lease mechanism. `admission_wait_ms` is reported separately from execution time. |
-| Draft admission | Implemented. | `[drafts]` accept the same optional `admission = \"heavy\"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
+| Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
-| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: run-scoped stop/signal attribution in lead `29e5f6f7`. |
-| `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same prerequisite diagnostic. |
+| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-owned-run-supervision-contract.md), proposed and unavailable until implementation. |
+| `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
 | Owner loss and PID reuse | Preserved fail-closed. | Run records keep owner PID plus start/boot identity; a live record whose owner is gone reconciles to `unknown`, never a pass, and never credits a reused PID. |
-| Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete until a later run reuses nothing. Never a fabricated complete receipt. |
+| Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete. Never a fabricated complete receipt. |
+
+`status`, `logs`, and `stop` address a run ID, not a selector or PID. Stop is
+scoped to that run and its supervised process generation. It records the
+request, signal delivery, member that was active, and whether descendants were
+confirmed gone. Logs are run-scoped and redact secrets. A capacity waiter can
+be cancelled without stopping another lease owner.
+
+Owned-run supervision (contract
+[052](052-owned-run-supervision-contract.md)) remains the prerequisite for
+claiming control of ordinary non-heavy runs, nested children, or owner loss.
+It owns run identity and generation, supervisor placement, ordered stop and
+hard-timeout semantics, the interruption evidence taxonomy, and the
+run-control JSON. Managed-session controls do not substitute for it.
 
 ## Outcome and JSON contract
 
@@ -552,10 +567,10 @@ Implementation sequence:
    execution, records, and versioned JSON shipped through the
    `tasks qa-group` surfaces (task effigy#051), including the contract 046
    draft `admission` metadata extension they depended on.
-2. Land or adopt lead `29e5f6f7` before claiming general run-scoped stop,
-   signal attribution, or safe cancellation of non-heavy/nested runs. The
-   `stop` command and `hard_timeout_ms` stay refused with that prerequisite
-   until then.
+2. Land contract [052](052-owned-run-supervision-contract.md) before claiming
+   general run-scoped stop, signal attribution, or safe cancellation of
+   non-heavy/nested runs. The `stop` command and `hard_timeout_ms` stay
+   refused with that prerequisite until then.
 3. Land or adopt lead `035b121a` (Cargo package-filter repair), or equivalent
    truly scoped selectors, before describing broad Rust workspace selectors as
    bounded package proof.

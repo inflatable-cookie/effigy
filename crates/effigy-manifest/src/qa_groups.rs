@@ -339,7 +339,7 @@ pub struct ManifestQaGroupTable {
     #[serde(default)]
     pub expectation_basis: Option<String>,
     /// Parsed only to reject it with the precise prerequisite diagnostic.
-    /// Run-scoped stop/signal attribution (lead `29e5f6f7`) has not landed.
+    /// Owned-run supervision (contract 052) has not landed.
     #[serde(default)]
     pub hard_timeout_ms: Option<u64>,
     pub members: Vec<ManifestQaMemberTable>,
@@ -372,16 +372,34 @@ pub struct ManifestQaMemberTable {
     pub limits: Vec<String>,
 }
 
+/// Where a raw group table is being converted.
+///
+/// The context is a trust boundary, not a default: `[qa.groups.<name>]`
+/// accepts maintained definitions only, so a temporary group cannot hide in
+/// the manifest and bypass the explicit `--file` route, and a `[qa_group]`
+/// file accepts temporary definitions only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QaGroupDefinitionContext {
+    /// The composed manifest's `[qa.groups]` section.
+    Manifest,
+    /// One caller-selected `[qa_group]` file.
+    TemporaryFile,
+}
+
 impl ManifestQaGroupTable {
     /// Validate and convert one raw table into a typed group definition.
     ///
     /// `name_key` is the `[qa.groups]` key for maintained groups; temporary
     /// groups must carry their own `name` and it must equal `name_key` when
     /// the caller supplied one.
-    pub fn into_manifest_group(self, name_key: Option<&str>) -> Result<ManifestQaGroup, String> {
+    pub fn into_manifest_group(
+        self,
+        name_key: Option<&str>,
+        context: QaGroupDefinitionContext,
+    ) -> Result<ManifestQaGroup, String> {
         if self.hard_timeout_ms.is_some() {
             return Err(
-                "`hard_timeout_ms` is not supported: run-scoped stop and signal attribution (lead 29e5f6f7) has not landed, so a group deadline could not be enforced safely; remove the field and rely on expected_wall_ms evidence"
+                "`hard_timeout_ms` is not supported: owned-run supervision (contract 052) has not landed, so a group deadline could not be enforced safely; remove the field and rely on expected_wall_ms evidence"
                     .to_owned(),
             );
         }
@@ -394,6 +412,21 @@ impl ManifestQaGroupTable {
                 ))
             }
         };
+        match (context, lifecycle) {
+            (QaGroupDefinitionContext::Manifest, ManifestQaLifecycle::Temporary) => {
+                return Err(
+                    "`[qa.groups.<name>]` accepts maintained groups only; a temporary group lives in its own `[qa_group]` file and is selected explicitly with `--file`"
+                        .to_owned(),
+                )
+            }
+            (QaGroupDefinitionContext::TemporaryFile, ManifestQaLifecycle::Maintained) => {
+                return Err(
+                    "a `[qa_group]` file accepts temporary groups only; maintained groups are declared under `[qa.groups.<name>]` in the manifest"
+                        .to_owned(),
+                )
+            }
+            _ => {}
+        }
 
         let name = match lifecycle {
             ManifestQaLifecycle::Maintained => {
@@ -685,7 +718,7 @@ impl<'de> serde::Deserialize<'de> for ManifestQaSection {
         let mut groups = BTreeMap::new();
         for (name, table) in raw.groups {
             let group = table
-                .into_manifest_group(Some(&name))
+                .into_manifest_group(Some(&name), QaGroupDefinitionContext::Manifest)
                 .map_err(serde::de::Error::custom)?;
             groups.insert(name, group);
         }
@@ -818,7 +851,7 @@ members = [{ id = "one", kind = "test", task = "t", targets = ["workspace:root"]
 "#,
         )
         .expect_err("hard timeout must fail");
-        assert!(error.to_string().contains("29e5f6f7"), "{error}");
+        assert!(error.to_string().contains("contract 052"), "{error}");
     }
 
     #[test]
@@ -854,6 +887,49 @@ members = [{ id = "one", kind = "test", task = "t", targets = ["workspace:root"]
     }
 
     #[test]
+    fn manifest_section_rejects_temporary_lifecycle() {
+        let error = toml::from_str::<crate::ManifestQaSection>(
+            r#"
+[groups.sneaky]
+lifecycle = "temporary"
+name = "sneaky"
+catalog = "root"
+created = "2026-10-02"
+expires = "2026-10-09"
+purpose = "Bypass the --file route"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [{ id = "m", kind = "test", surface = "published", task = "t", targets = ["workspace:root"], limits = ["nothing"] }]
+"#,
+        )
+        .expect_err("a manifest cannot embed a temporary group");
+        let rendered = error.to_string();
+        assert!(rendered.contains("maintained groups only"), "{rendered}");
+        assert!(rendered.contains("--file"), "{rendered}");
+    }
+
+    #[test]
+    fn temporary_file_rejects_maintained_lifecycle() {
+        let table: ManifestQaGroupTable = toml::from_str(
+            r#"
+lifecycle = "maintained"
+purpose = "Wrong place"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [{ id = "m", kind = "test", surface = "published", task = "t", targets = ["workspace:root"], limits = ["nothing"] }]
+"#,
+        )
+        .expect("parse raw table");
+        let error = table
+            .into_manifest_group(None, super::QaGroupDefinitionContext::TemporaryFile)
+            .expect_err("a [qa_group] file cannot embed a maintained group");
+        assert!(
+            error.contains("temporary groups only"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn temporary_grammar_requires_name_catalog_and_dates() {
         let table: ManifestQaGroupTable = toml::from_str(
             r#"
@@ -866,7 +942,10 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "check:x"
         )
         .expect("parse raw table");
         let error = table
-            .into_manifest_group(Some("binding-check"))
+            .into_manifest_group(
+                Some("binding-check"),
+                super::QaGroupDefinitionContext::TemporaryFile,
+            )
             .expect_err("missing temporary fields must fail");
         assert!(error.to_string().contains("must declare `name`"), "{error}");
     }

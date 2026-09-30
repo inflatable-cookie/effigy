@@ -180,7 +180,7 @@ Rules that keep group use honest:
   reason; it never means "run the full board". A `declared_match` runs every
   member — scope never filters checks.
 - A group selector never falls through to a same-named task or draft.
-- `stop` and `hard_timeout_ms` are unavailable (lead `29e5f6f7`); an
+- `stop` and `hard_timeout_ms` are unavailable (owned-run supervision, contract 052); an
   interrupted run reconciles to `unknown`, never a pass.
 
 ## Selector routing (60 seconds)

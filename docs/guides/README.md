@@ -164,7 +164,8 @@ Read:
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
-- [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md) — bounded QA groups through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on lead `29e5f6f7`.
+- [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md) — bounded QA groups through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052.
+- [`082-owned-run-supervision-workflow.md`](082-owned-run-supervision-workflow.md) — proposed design; run control unavailable until implementation.
 
 Use when:
 - you need built-in health flows
@@ -240,6 +241,7 @@ This section is inventory, not a recommended reading order.
 - [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
 - [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md)
+- [`082-owned-run-supervision-workflow.md`](082-owned-run-supervision-workflow.md)
 - [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](070-per-machine-overlays-and-external-mounts.md)

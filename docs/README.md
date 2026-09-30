@@ -9,7 +9,8 @@ Effigy runs manifest tasks and built-in workflows across monorepos. Linked workt
 - [Contracts and JSON schemas](knowledge/contracts/README.md)
 - [Release procedure](knowledge/contracts/release.md)
 - [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
-- [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on lead `29e5f6f7`)
+- [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052)
+- [Owned run supervision workflow](guides/082-owned-run-supervision-workflow.md) (proposed; current status, managed-session, and admission queries remain the executable path)
 
 ## What's next
 

@@ -56,7 +56,8 @@ pub struct QaGroupAdmissionPlan {
 pub struct QaGroupCapabilityLimits {
     pub hard_timeout: bool,
     pub stop: bool,
-    pub prerequisite_lead: &'static str,
+    /// The owning prerequisite, always the owned-run supervision contract.
+    pub prerequisite: &'static str,
 }
 
 /// One scope token's comparison result.
@@ -212,6 +213,10 @@ pub fn build_qa_group_plan(
     let scope = compare_scope(group, request.scope_tokens)?;
 
     let expired = group.is_expired_on(request.today.to_naive_date());
+    // Every group carries definition provenance: temporary groups digest
+    // their raw file bytes; maintained groups digest the canonical rendering
+    // of their validated definition, since the composed manifest is shared
+    // with unrelated content.
     let (file_tracking, definition_sha256) = match &selected.source {
         QaGroupDefinitionSource::Temporary {
             tracking,
@@ -221,7 +226,10 @@ pub fn build_qa_group_plan(
             Some(tracking.as_str().to_owned()),
             Some(definition_sha256.clone()),
         ),
-        QaGroupDefinitionSource::Maintained { .. } => (None, None),
+        QaGroupDefinitionSource::Maintained { .. } => (
+            None,
+            Some(super::canonical_definition_digest(group)),
+        ),
     };
     let catalog_root = selected_catalog_root(&selected.source, request.catalogs, &owning_alias);
 
@@ -271,7 +279,7 @@ pub fn build_qa_group_plan(
         capabilities: QaGroupCapabilityLimits {
             hard_timeout: false,
             stop: false,
-            prerequisite_lead: "29e5f6f7",
+            prerequisite: "owned-run supervision (contract 052)",
         },
     })
 }
@@ -727,7 +735,10 @@ members = [
         )
         .expect("parse fixture");
         let mut group = table
-            .into_manifest_group(Some("sample"))
+            .into_manifest_group(
+                Some("sample"),
+                effigy_manifest::QaGroupDefinitionContext::Manifest,
+            )
             .expect("valid group");
         group.scope_policy = scope_policy;
         group

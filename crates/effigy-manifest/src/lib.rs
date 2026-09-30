@@ -77,7 +77,8 @@ pub use loaded_catalog::{
 pub use qa_groups::{
     path_pattern_matches, validate_qa_name_grammar, ManifestQaCoverageGap, ManifestQaGroup,
     ManifestQaGroupMember, ManifestQaGroupTable, ManifestQaLifecycle, ManifestQaMemberKind,
-    ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaScopeToken,
+    ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
+    QaScopeToken,
 };
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
