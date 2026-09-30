@@ -56,6 +56,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
         status_all: false,
         output_json: false,
         pretty_json: true,
+        qa: None,
     })
     .expect("generated scaffold should parse and list tasks");
     assert_output_contains_all(&listed, &["ping"]);

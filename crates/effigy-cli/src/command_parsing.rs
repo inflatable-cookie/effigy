@@ -34,7 +34,7 @@ use crate::{
     DepsManager, DepsSubcommand, DoctorArgs, DraftArgs, DraftsArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
     InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, UninstallArgs,
+    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -1159,6 +1159,9 @@ where
                 args: passthrough,
             }));
         }
+        if arg == "qa-groups" || arg == "qa-group" {
+            return parse_tasks_qa(arg == "qa-groups", args, repo_override);
+        }
         match arg.as_str() {
             "status" => {
                 if task_name.is_some()
@@ -1255,7 +1258,275 @@ where
         status_all,
         output_json,
         pretty_json,
+        qa: None,
     }))
+}
+
+/// Parse the bounded QA-group leading routes (`tasks qa-groups` /
+/// `tasks qa-group`). These are exact multiword forms under `effigy tasks`
+/// only; a bare `effigy qa-groups` or `effigy qa-group` stays a repository
+/// selector and never reaches this parser.
+fn parse_tasks_qa<I>(
+    groups_form: bool,
+    args: I,
+    mut repo_override: Option<PathBuf>,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter().peekable();
+    if groups_form {
+        let action = args.next();
+        if action.as_deref() != Some("list") {
+            return Err(CliParseError::InvalidArguments(
+                "`tasks qa-groups` supports only `list` (contract 051)".to_owned(),
+            ));
+        }
+        let mut filter: Option<String> = None;
+        let mut file: Option<PathBuf> = None;
+        let mut output_json = false;
+        let mut pretty_json = true;
+        let mut pretty_seen = false;
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--file" => {
+                    let value = args.next().ok_or(CliParseError::MissingQaGroupFilePath)?;
+                    file = Some(PathBuf::from(value));
+                }
+                "--json" => output_json = true,
+                "--repo" => {
+                    // The caller may place --repo after the action.
+                    let value = args.next().ok_or(CliParseError::MissingRepoValue)?;
+                    return match finish_groups_list_with_repo(
+                        value,
+                        args,
+                        filter,
+                        file,
+                        output_json,
+                        pretty_json,
+                        pretty_seen,
+                    ) {
+                        Ok(command) => Ok(command),
+                        Err(error) => Err(error),
+                    };
+                }
+                "--pretty" => {
+                    let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
+                    pretty_json = parse_pretty_bool(value)?;
+                    pretty_seen = true;
+                }
+                "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
+                other if !other.starts_with('-') && filter.is_none() => {
+                    filter = Some(other.to_owned());
+                }
+                other => return Err(unknown_argument(other)),
+            }
+        }
+        if !output_json && pretty_seen {
+            return Err(CliParseError::InvalidArguments(
+                "`--pretty` is only supported together with `--json` for `tasks qa-groups list`"
+                    .to_owned(),
+            ));
+        }
+        return Ok(Command::Tasks(TasksArgs {
+            repo_override,
+            qa: Some(TasksQaCommand::GroupsList {
+                filter,
+                file,
+                output_json,
+                pretty_json,
+            }),
+            ..TasksArgs::default()
+        }));
+    }
+
+    let action = args
+        .next()
+        .ok_or(CliParseError::MissingQaGroupAction)?
+        .to_owned();
+    match action.as_str() {
+        "run" => {
+            let mut selector: Option<String> = None;
+            let mut file: Option<PathBuf> = None;
+            let mut scopes: Vec<String> = Vec::new();
+            let mut plan = false;
+            let mut output_json = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--file" => {
+                        let value = args.next().ok_or(CliParseError::MissingQaGroupFilePath)?;
+                        file = Some(PathBuf::from(value));
+                    }
+                    "--scope" => {
+                        let value = args.next().ok_or(CliParseError::MissingScopeTokenValue)?;
+                        scopes.push(value);
+                    }
+                    "--plan" => plan = true,
+                    "--json" => {
+                        output_json = true;
+                    }
+                    "--repo" => {
+                        let value = args.next().ok_or(CliParseError::MissingRepoValue)?;
+                        repo_override = Some(PathBuf::from(value));
+                    }
+                    "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
+                    other if !other.starts_with('-') && selector.is_none() => {
+                        selector = Some(other.to_owned());
+                    }
+                    other => return Err(unknown_argument(other)),
+                }
+            }
+            let selector = selector.ok_or(CliParseError::MissingQaGroupSelector)?;
+            Ok(Command::Tasks(TasksArgs {
+                repo_override,
+                qa: Some(TasksQaCommand::GroupRun {
+                    selector,
+                    file,
+                    scopes,
+                    plan,
+                    output_json,
+                }),
+                ..TasksArgs::default()
+            }))
+        }
+        "status" => {
+            let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
+            Ok(Command::Tasks(TasksArgs {
+                repo_override,
+                qa: Some(TasksQaCommand::GroupStatus { run_id, output_json }),
+                ..TasksArgs::default()
+            }))
+        }
+        "logs" => {
+            let mut run_id: Option<String> = None;
+            let mut follow = false;
+            let mut override_after = repo_override;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--follow" => follow = true,
+                    "--json" => {
+                        return Err(CliParseError::InvalidArguments(
+                            "`tasks qa-group logs` renders text; use `status --json` for the payload".to_owned(),
+                        ))
+                    }
+                    "--repo" => {
+                        let value = args.next().ok_or(CliParseError::MissingRepoValue)?;
+                        override_after = Some(PathBuf::from(value));
+                    }
+                    "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
+                    other if !other.starts_with('-') && run_id.is_none() => {
+                        run_id = Some(other.to_owned());
+                    }
+                    other => return Err(unknown_argument(other)),
+                }
+            }
+            let run_id = run_id.ok_or(CliParseError::MissingQaGroupRunId)?;
+            Ok(Command::Tasks(TasksArgs {
+                repo_override: override_after,
+                qa: Some(TasksQaCommand::GroupLogs { run_id, follow }),
+                ..TasksArgs::default()
+            }))
+        }
+        "stop" => {
+            let (run_id, output_json, repo_override) = parse_run_id_command(args, repo_override)?;
+            Ok(Command::Tasks(TasksArgs {
+                repo_override,
+                qa: Some(TasksQaCommand::GroupStop { run_id, output_json }),
+                ..TasksArgs::default()
+            }))
+        }
+        other => Err(CliParseError::InvalidArguments(format!(
+            "`tasks qa-group` supports run, status, logs, and stop; `{other}` is not a qa-group action"
+        ))),
+    }
+}
+
+fn finish_groups_list_with_repo<I>(
+    repo_value: String,
+    args: I,
+    filter: Option<String>,
+    file: Option<PathBuf>,
+    output_json: bool,
+    pretty_json: bool,
+    pretty_seen: bool,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut filter = filter;
+    let mut file = file;
+    let mut output_json = output_json;
+    let mut pretty_json = pretty_json;
+    let mut pretty_seen = pretty_seen;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--file" => {
+                let value = args.next().ok_or(CliParseError::MissingQaGroupFilePath)?;
+                file = Some(PathBuf::from(value));
+            }
+            "--json" => output_json = true,
+            "--pretty" => {
+                let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
+                pretty_json = parse_pretty_bool(value)?;
+                pretty_seen = true;
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
+            other if !other.starts_with('-') && filter.is_none() => {
+                filter = Some(other.to_owned());
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    if !output_json && pretty_seen {
+        return Err(CliParseError::InvalidArguments(
+            "`--pretty` is only supported together with `--json` for `tasks qa-groups list`"
+                .to_owned(),
+        ));
+    }
+    Ok(Command::Tasks(TasksArgs {
+        repo_override: Some(PathBuf::from(repo_value)),
+        qa: Some(TasksQaCommand::GroupsList {
+            filter,
+            file,
+            output_json,
+            pretty_json,
+        }),
+        ..TasksArgs::default()
+    }))
+}
+
+fn parse_run_id_command<I>(
+    args: I,
+    repo_override: Option<PathBuf>,
+) -> Result<(String, bool, Option<PathBuf>), CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut run_id: Option<String> = None;
+    let mut output_json = false;
+    let mut override_after = repo_override;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--repo" => {
+                let value = args.next().ok_or(CliParseError::MissingRepoValue)?;
+                override_after = Some(PathBuf::from(value));
+            }
+            "--help" | "-h" => {
+                return Err(CliParseError::InvalidArguments(
+                    "use `effigy help tasks` for qa-group command help".to_owned(),
+                ))
+            }
+            other if !other.starts_with('-') && run_id.is_none() => {
+                run_id = Some(other.to_owned());
+            }
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    let run_id = run_id.ok_or(CliParseError::MissingQaGroupRunId)?;
+    Ok((run_id, output_json, override_after))
 }
 
 fn parse_drafts<I>(args: I) -> Result<Command, CliParseError>

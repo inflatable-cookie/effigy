@@ -37,6 +37,7 @@ mod interactive_session;
 mod locking;
 mod managed_shell;
 mod manifest;
+mod qa_group_command;
 mod release_command;
 mod render;
 mod rhai_command;

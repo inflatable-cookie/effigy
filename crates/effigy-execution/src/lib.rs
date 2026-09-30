@@ -1,3 +1,4 @@
+mod qa_group_status;
 mod task_status;
 
 use std::collections::BTreeMap;
@@ -6,6 +7,13 @@ use std::path::PathBuf;
 
 use effigy_context::{EffigyRuntimeContext, TaskSourceContext};
 use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
+pub use qa_group_status::{
+    member_log_file_name, qa_group_log_dir, QaGroupBudgetState, QaGroupGapSnapshot,
+    QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities,
+    QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupScopeMatchRecord,
+    QaGroupRunState, QaGroupRunTiming, QaGroupStatusSnapshot, QaMemberExit, QA_GROUP_RUN_SCHEMA,
+    QA_GROUP_STATUS_SCHEMA,
+};
 use serde::{Deserialize, Serialize};
 pub use task_status::{
     TaskStatusActiveRecord, TaskStatusCompletedRecord, TaskStatusKey, TaskStatusOutcome,
@@ -531,6 +539,10 @@ pub enum ExecutionSurface {
     Managed,
     /// Explicit `effigy draft` selection over the draft surface.
     Draft,
+    /// One member of a bounded QA group run (contract 051). Members run
+    /// through the canonical pipeline; the label preserves caller identity
+    /// for diagnostics and policy without changing routing.
+    QaGroup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

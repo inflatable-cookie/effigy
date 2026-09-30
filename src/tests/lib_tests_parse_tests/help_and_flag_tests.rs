@@ -139,6 +139,7 @@ fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
             status_all: false,
             output_json: true,
             pretty_json: true,
+            qa: None,
         })
     );
 }

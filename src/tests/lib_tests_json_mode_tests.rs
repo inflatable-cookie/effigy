@@ -80,6 +80,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         status_all: false,
         output_json: true,
         pretty_json: true,
+        qa: None,
     });
     assert!(command_requests_json(&cmd_tasks, false));
 
@@ -149,6 +150,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         status_all: false,
         output_json: false,
         pretty_json: true,
+        qa: None,
     });
     let doctor_cmd = Command::Doctor(DoctorArgs {
         repo_override: None,

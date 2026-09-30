@@ -35,6 +35,7 @@ pub(super) fn run_rhai_feature(
                 status_all: false,
                 output_json: true,
                 pretty_json: false,
+                qa: None,
             }),
         ),
         FEATURE_CONFIG_EFFECTIVE => run_config_effective(repo_root),
@@ -70,6 +71,7 @@ pub(super) fn run_rhai_feature(
                 status_all: false,
                 output_json: true,
                 pretty_json: false,
+                qa: None,
             }),
         ),
         FEATURE_TASKS_INFO => run_typed_command(
@@ -82,6 +84,7 @@ pub(super) fn run_rhai_feature(
                 status_all: false,
                 output_json: true,
                 pretty_json: false,
+                qa: None,
             }),
         ),
         FEATURE_STATE_PLAN => run_typed_command(
