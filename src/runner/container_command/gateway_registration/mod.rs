@@ -13,8 +13,8 @@ use effigy_containers::exec::{
 #[cfg(test)]
 use effigy_containers::prune_loopback_assignments_with_rows;
 use effigy_containers::{
-    prune_loopback_assignments, EffectiveContainerPolicy, EffectiveDnsRoute, LoopbackPruneOutcome,
-    SharedServiceBinding,
+    prune_loopback_assignments, warn_skipped_reclamation, EffectiveContainerPolicy,
+    EffectiveDnsRoute, LoopbackPruneOutcome, SharedServiceBinding,
 };
 use effigy_gateway::loopback::{
     project_loopback_identity, shared_loopback_identity, LoopbackRegistry,
@@ -1116,7 +1116,7 @@ fn load_or_allocate_loopback_ip_with_inventory(
             .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     }
     if let Some(reason) = &prune.skipped_reason {
-        eprintln!("[warn] {reason}");
+        warn_skipped_reclamation(reason);
     }
     let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
     let migrated_legacy_identity = migrate_legacy_loopback_identity(

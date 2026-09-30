@@ -384,12 +384,22 @@ generated Compose and gateway registration:
 `project:<project-name>:<absolute-checkout>`. A legacy bare project key moves
 only when its saved scope matches that checkout and its IP is not assigned to
 another identity. Scope retirement removes qualified and attributable legacy
-keys; shared identities remain retained. Stale reclamation requires successful
-Docker and Colima profile inventory. A successful empty result is distinct from
-profile-list, `ps`, or parse failure. Incomplete discovery preserves uncertain
-assignments and reports the backend, profile, error, and skipped reclamation
-reason. If preservation leaves the bounded pool full, allocation reports
-capacity exhaustion with the discovery failure.
+keys; shared identities remain retained. Stale reclamation requires
+successful inventory across every participating runtime: Docker when it
+participates, and every running Colima profile. Participation is decided
+first, without launching a runtime. Docker considers every endpoint that could
+be effective (`DOCKER_CONTEXT`, `DOCKER_HOST`, the stored current context, then
+the platform default socket) and is inactive only when all of them are absent
+local Unix sockets; any remote, reachable, unresolvable, unreadable, or stale
+endpoint stays authoritative. Context names are case-sensitive, so a context
+named `DEFAULT` stays selectable. Colima is inactive only when its CLI is
+absent and its Colima home can be inspected with no Colima or Lima instance
+state remaining. A successful empty result is
+distinct from profile-list, `ps`, or parse failure. Incomplete discovery
+preserves uncertain assignments and reports the backend, profile, error, and
+skipped reclamation reason; identical warnings print once per process. If
+preservation leaves the bounded pool full, allocation reports capacity
+exhaustion with the discovery failure.
 
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 

@@ -149,15 +149,40 @@ Colima instance entries and explicit Docker environment overrides that cannot
 be decoded. Neither may be treated as an absent runtime; failed discovery
 must keep their owners protected.
 
-Stale reclamation requires a complete inventory across the Docker default
-backend and every running Colima profile. A successful empty inventory proves
-that no running owners were found and may release stale isolated assignments.
-A failed profile listing, runtime `ps`, or row parse makes the inventory
-incomplete; reclamation then preserves all uncertain assignments and reports
-the backend, profile, error, and skipped-prune reason. The allocator may use
-unassigned capacity, but a full pool remains a capacity error that includes the
-discovery failure. Increasing the pool cannot substitute for identity and
-discovery correctness.
+Stale reclamation requires a complete inventory across every participating
+runtime: Docker's default backend when Docker participates, and every running
+Colima profile. A successful empty inventory proves that no running owners
+were found and may release stale isolated assignments. A failed profile
+listing, runtime `ps`, or row parse makes the inventory incomplete;
+reclamation then preserves all uncertain assignments and reports the backend,
+profile, error, and skipped-prune reason. The allocator may use unassigned
+capacity, but a full pool remains a capacity error that includes the discovery
+failure. Increasing the pool cannot substitute for identity and discovery
+correctness.
+
+Participation is decided before any `ps` discovery, without launching Docker,
+Colima, or a container. A proven-inactive optional runtime is skipped rather
+than reported as a failed inventory. Docker considers every endpoint that could
+be effective — `DOCKER_CONTEXT`, then `DOCKER_HOST`, then the stored current
+context, then the platform default Unix sockets — so a remote context selected
+by `DOCKER_CONTEXT` is never omitted when `DOCKER_HOST` names an absent local
+socket. The `DOCKER_CONFIG` path and context names are read exactly as given,
+so normalization cannot hide a selected context. Docker is inactive only when
+every candidate is an absent local Unix
+endpoint, including a dangling `/var/run/docker.sock` symlink. A reachable local
+endpoint, any remote or unresolvable configured endpoint (`tcp://`, `ssh://`,
+`npipe://`, a missing context, unreadable or schema-invalid config, or
+`DOCKER_HOST`), and a socket that exists but cannot be connected are all
+ambiguous and stay authoritative, so a later failure remains actionable and
+fail-closed. Colima is
+inactive only when its CLI is absent, its Colima home can be inspected, and no
+Colima or Lima instance state remains, because a running Colima VM can outlive
+its client CLI. Docker context names are case-sensitive, so a context named
+`DEFAULT` is selectable and is not collapsed into the default context. Neither
+the preferred backend, CLI presence, CLI absence alongside remaining or
+uninspectable state, stderr text, nor an absent socket on its own proves that a
+runtime owns nothing. Identical skipped-reclamation warnings are emitted once
+per process; distinct failures still print.
 
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with

@@ -484,6 +484,31 @@ Repo-local cleanup views:
 Use `cache` for disposable build/install artifacts. Use `volume` for named
 volume ownership, dormant repo leftovers, and global orphan discovery.
 
+### Runtime inventory participation
+
+Loopback stale reclamation and the cross-project `--global` views read the
+running Compose inventory. Before any `ps`, Effigy decides whether each
+runtime is participating, without launching Docker, Colima, or a container:
+
+- Docker participates when any endpoint it could be using — `DOCKER_CONTEXT`,
+  `DOCKER_HOST`, the stored current context, or the platform default socket —
+  is remote or reachable. Docker is inactive only when every candidate is an
+  absent local Unix socket, so Docker Desktop not running means Docker is
+  skipped rather than reported as a failed inventory. A stale, unreadable,
+  schema-invalid, or unresolvable endpoint stays fail-closed, and a remote
+  context selected by `DOCKER_CONTEXT` is never omitted by an absent local
+  `DOCKER_HOST`. The `DOCKER_CONFIG` path and context names are read exactly
+  as given.
+- Colima participates when its CLI is installed, and also when its CLI is
+  missing but Colima or Lima instance state remains, because a running Colima
+  VM can outlive its client CLI. Only a host with neither is Colima-inactive.
+
+A proven-inactive runtime cannot poison an otherwise complete inventory, so a
+Colima-only host reclaims stale isolated loopback assignments without starting
+Docker Desktop. Genuine failures still make the inventory incomplete, preserve
+every uncertain assignment, and report the backend, profile, and error once
+per launch.
+
 ## Task Activation
 
 Container-backed tasks now use two distinct lifecycle models.

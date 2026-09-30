@@ -23,6 +23,19 @@
 "perf:graph-agent-benchmark" = { rhai = "scripts/benchmark-graph-agent-usage.rhai" }
 "perf:docs-context-benchmark" = { rhai = "scripts/benchmark-docs-context.rhai" }
 
+# Scoped runtime inventory, participation, backend selection and loopback
+"test:containers:runtime-inventory" = [
+  "cargo test -p effigy-containers inventory_tests:: -- --nocapture",
+  "cargo test -p effigy-containers participation::tests:: -- --nocapture",
+]
+"test:containers:loopback" = "cargo test -p effigy-containers runtime::loopback::tests:: -- --nocapture"
+"test:containers:loopback-policy" = [
+  "cargo test -p effigy-containers loopback_allocator_reclaims_complete_stale_pool_before_exhaustion -- --nocapture",
+  "cargo test -p effigy-containers full_pool_with_incomplete_inventory_fails_with_preservation_reason -- --nocapture",
+]
+"test:containers:backend-selection" = "cargo test -p effigy-containers manager::tests:: -- --nocapture"
+"test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+
 # Bounded QA-group proofs (contract 051 implementation)
 "test:qa-groups:manifest" = "cargo test -p effigy-manifest --lib qa_groups -- --nocapture"
 "test:qa-groups:surface" = "cargo test -p effigy-tasks --lib qa_groups -- --nocapture"

@@ -1,6 +1,7 @@
 mod colima_runtime;
 mod implementation;
 mod parse;
+mod participation;
 mod process;
 mod restart_recovery;
 mod ssh_agent_preflight;

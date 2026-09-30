@@ -182,6 +182,11 @@ During v0.x, MINOR bumps may include breaking changes.
   member-local install, while npm's default and pnpm's `node-linker=hoisted`
   share the root. Non-JS catalogs and dependency-free children keep running
   health unchanged.
+- Focused validation selectors cover runtime inventory participation
+  (`test:containers:runtime-inventory`), loopback reclamation
+  (`test:containers:loopback`, `test:containers:loopback-policy`), backend
+  selection (`test:containers:backend-selection`), and gateway registration
+  (`test:gateway:registration-loopback`).
 
 ### Security
 - Managed host task secrets now reach child processes through their
@@ -255,6 +260,22 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Running-Compose inventory decides runtime participation before any `ps`
+  probe, without launching Docker, Colima, or a container. Docker is inactive
+  only when every endpoint it could be using (`DOCKER_CONTEXT`, `DOCKER_HOST`,
+  the stored current context, and the platform default socket) is an absent
+  local Unix socket, so a Colima-only host whose Docker Desktop is stopped no
+  longer invokes the Docker CLI or reports its absent `/var/run/docker.sock`
+  as a failed authoritative inventory. A remote context selected by
+  `DOCKER_CONTEXT` is never omitted by an absent local `DOCKER_HOST`, the
+  `DOCKER_CONFIG` path and context names are read exactly as given, and any
+  remote, reachable, stale, unreadable, schema-invalid, or unresolvable
+  endpoint stays fail-closed. Colima participates when its CLI exists or when
+  Colima/Lima instance state remains or cannot be inspected, because a running
+  VM can outlive its client CLI; only a host with neither is Colima-inactive.
+  Those failures still preserve uncertain owners, and identical
+  skipped-reclamation warnings print once per launch while distinct failures
+  still print.
 - Built-in `test` honors explicit Cargo package scope. Passthrough that
   selects packages (`-p`, `--package`, including `--package=<package>`,
   attached `-p<package>`, and repeated selections) no longer widens to the

@@ -92,3 +92,81 @@ pub fn prune_loopback_assignments_with_rows(
     }
     changed
 }
+
+/// Report a skipped stale-loopback reclamation at most once per distinct
+/// reason in this process.
+///
+/// One launch can allocate several loopback identities and rediscover the same
+/// incomplete inventory each time. The first warning already names every failed
+/// backend, profile and error, so an identical repeat adds no diagnostic value.
+/// Distinct failures still print.
+pub fn warn_skipped_reclamation(reason: &str) {
+    static EMITTED: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+        std::sync::OnceLock::new();
+    let mut emitted = EMITTED
+        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if record_reclamation_warning(&mut emitted, reason) {
+        eprintln!("[warn] {reason}");
+    }
+}
+
+fn record_reclamation_warning(
+    emitted: &mut std::collections::BTreeSet<String>,
+    reason: &str,
+) -> bool {
+    emitted.insert(reason.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_reclamation_warning;
+    use super::{prune_loopback_assignments, RunningComposeContainerInventory};
+    use crate::exec::RuntimeInventoryFailure;
+    use effigy_gateway::loopback::LoopbackRegistry;
+    use effigy_gateway::routes::RouteTable;
+
+    #[test]
+    fn identical_skipped_reclamation_reasons_are_emitted_once() {
+        let mut emitted = std::collections::BTreeSet::new();
+
+        assert!(record_reclamation_warning(&mut emitted, "same reason"));
+        assert!(!record_reclamation_warning(&mut emitted, "same reason"));
+        assert!(record_reclamation_warning(&mut emitted, "different reason"));
+    }
+
+    #[test]
+    fn unknown_inventory_preserves_live_and_shared_assignments() {
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("project:live:/tmp/live", "/tmp/live")
+            .expect("allocate live project");
+        registry
+            .allocate("shared:shared:/tmp/live", "/tmp/live")
+            .expect("allocate shared identity");
+        registry
+            .allocate("project:stale:/tmp/stale", "/tmp/stale")
+            .expect("allocate stale project");
+        let before = registry.assignments.clone();
+        let inventory = RunningComposeContainerInventory {
+            rows: Vec::new(),
+            failures: vec![RuntimeInventoryFailure {
+                backend: "docker".to_owned(),
+                profile: "default".to_owned(),
+                error: "non-Unicode DOCKER_HOST is not a resolvable endpoint".to_owned(),
+            }],
+        };
+
+        let outcome = prune_loopback_assignments(&mut registry, &RouteTable::new(), &inventory);
+
+        assert!(!outcome.changed);
+        assert_eq!(registry.assignments, before);
+        assert!(registry.get("project:live:/tmp/live").is_some());
+        assert!(registry.get("shared:shared:/tmp/live").is_some());
+        assert!(registry.get("project:stale:/tmp/stale").is_some());
+        let reason = outcome.skipped_reason.expect("skipped-prune reason");
+        assert!(reason.contains("docker profile `default`"));
+        assert!(reason.contains("non-Unicode DOCKER_HOST"));
+    }
+}

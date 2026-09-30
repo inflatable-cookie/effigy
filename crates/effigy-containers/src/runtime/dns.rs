@@ -136,7 +136,7 @@ fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
         .or_else(|| Some("192.168.5.2".to_owned()))
 }
 
-fn colima_home_dir() -> Option<PathBuf> {
+pub(crate) fn colima_home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("COLIMA_HOME").map(PathBuf::from) {
         return Some(home);
     }
