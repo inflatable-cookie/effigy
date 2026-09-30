@@ -139,6 +139,13 @@ the checkout and its address is not already assigned elsewhere. Retirement
 clears qualified keys and legacy bare keys only when the recorded scope proves
 the same checkout owns them. Shared loopback identities remain retained.
 
+Tom’s 2026-09-30 ruling: Colima-only use must not require starting Docker
+Desktop to permit safe loopback reclamation. Runtime discovery must distinguish
+a proven inactive optional backend from a failed authoritative inventory.
+An executable on PATH or a missing socket alone does not prove ownership.
+The repair must preserve uncertain owners; it does not authorize live registry
+cleanup or pool expansion.
+
 Stale reclamation requires a complete inventory across the Docker default
 backend and every running Colima profile. A successful empty inventory proves
 that no running owners were found and may release stale isolated assignments.
