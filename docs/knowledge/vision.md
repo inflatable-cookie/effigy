@@ -43,6 +43,10 @@ complexity.
   and expected execution cost, reusing the task-draft runtime. Tom's
   2026-09-30 direction puts these groups before automatic diff selection.
   Workers use targeted checks; planners run milestone QA through Queue.
+  Tom's 2026-09-30 implementation ruling keeps group execution on the existing
+  pipeline and repairs explicit Cargo package scope. General stopping and hard
+  timeouts require a separately reviewed supervision contract and implementation;
+  unsupported controls must fail before execution.
 - **Portfolio proof:** bootstrap, bundles, dependency links, and consumer
   guidance need evidence from real sibling repositories, not fixtures alone.
 - **Sustainable internals:** semantic crate boundaries and clear command
