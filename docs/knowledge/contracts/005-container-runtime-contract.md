@@ -146,15 +146,32 @@ An executable on PATH or a missing socket alone does not prove ownership.
 The repair must preserve uncertain owners; it does not authorize live registry
 cleanup or pool expansion.
 
-Stale reclamation requires a complete inventory across the Docker default
-backend and every running Colima profile. A successful empty inventory proves
-that no running owners were found and may release stale isolated assignments.
-A failed profile listing, runtime `ps`, or row parse makes the inventory
-incomplete; reclamation then preserves all uncertain assignments and reports
-the backend, profile, error, and skipped-prune reason. The allocator may use
-unassigned capacity, but a full pool remains a capacity error that includes the
-discovery failure. Increasing the pool cannot substitute for identity and
-discovery correctness.
+Stale reclamation requires a complete inventory across every participating
+runtime: Docker's default backend when Docker participates, and every running
+Colima profile. A successful empty inventory proves that no running owners
+were found and may release stale isolated assignments. A failed profile
+listing, runtime `ps`, or row parse makes the inventory incomplete;
+reclamation then preserves all uncertain assignments and reports the backend,
+profile, error, and skipped-prune reason. The allocator may use unassigned
+capacity, but a full pool remains a capacity error that includes the discovery
+failure. Increasing the pool cannot substitute for identity and discovery
+correctness.
+
+Participation is decided before any `ps` discovery, without launching Docker,
+Colima, or a container. A proven-inactive optional runtime is skipped rather
+than reported as a failed inventory. Docker's effective endpoint comes from
+`DOCKER_HOST`, then `DOCKER_CONTEXT`, then the named context in the Docker
+config store, then the platform default Unix sockets. An absent local Unix
+endpoint — including a dangling `/var/run/docker.sock` symlink — proves
+inactivity. A reachable local endpoint, a remote or unresolvable configured
+context (`tcp://`, `ssh://`, `npipe://`, a missing context, or unreadable
+config), and a socket that exists but cannot be connected are all ambiguous
+and stay authoritative, so a later failure remains actionable and fail-closed.
+Colima participation follows from whether its CLI exists, because a Colima
+profile has no endpoint that can outlive its client. Neither the preferred
+backend, CLI presence, stderr text, nor an absent socket on its own proves that
+a runtime owns nothing. Identical skipped-reclamation warnings are emitted once
+per process; distinct failures still print.
 
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with

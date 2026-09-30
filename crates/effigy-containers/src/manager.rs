@@ -651,7 +651,7 @@ fn backend_override_from_env() -> Option<BackendId> {
         .and_then(|value| backend_override_from_env_value(&value))
 }
 
-fn command_exists(program: &str) -> bool {
+pub(crate) fn command_exists(program: &str) -> bool {
     resolve_host_cli_program_path(program).is_some()
 }
 

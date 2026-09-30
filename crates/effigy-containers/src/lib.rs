@@ -52,7 +52,8 @@ pub use report::{
 };
 pub use runtime::eject::eject_generated_compose;
 pub use runtime::loopback::{
-    prune_loopback_assignments, prune_loopback_assignments_with_rows, LoopbackPruneOutcome,
+    prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
+    LoopbackPruneOutcome,
 };
 pub use runtime::retire::{
     plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,

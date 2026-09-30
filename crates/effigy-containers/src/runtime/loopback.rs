@@ -92,3 +92,43 @@ pub fn prune_loopback_assignments_with_rows(
     }
     changed
 }
+
+/// Report a skipped stale-loopback reclamation at most once per distinct
+/// reason in this process.
+///
+/// One launch can allocate several loopback identities and rediscover the same
+/// incomplete inventory each time. The first warning already names every failed
+/// backend, profile and error, so an identical repeat adds no diagnostic value.
+/// Distinct failures still print.
+pub fn warn_skipped_reclamation(reason: &str) {
+    static EMITTED: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+        std::sync::OnceLock::new();
+    let mut emitted = EMITTED
+        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if record_reclamation_warning(&mut emitted, reason) {
+        eprintln!("[warn] {reason}");
+    }
+}
+
+fn record_reclamation_warning(
+    emitted: &mut std::collections::BTreeSet<String>,
+    reason: &str,
+) -> bool {
+    emitted.insert(reason.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_reclamation_warning;
+
+    #[test]
+    fn identical_skipped_reclamation_reasons_are_emitted_once() {
+        let mut emitted = std::collections::BTreeSet::new();
+
+        assert!(record_reclamation_warning(&mut emitted, "same reason"));
+        assert!(!record_reclamation_warning(&mut emitted, "same reason"));
+        assert!(record_reclamation_warning(&mut emitted, "different reason"));
+    }
+}

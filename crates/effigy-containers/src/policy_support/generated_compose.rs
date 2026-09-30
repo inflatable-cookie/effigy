@@ -17,8 +17,8 @@ use crate::exec::{discover_running_compose_containers, RunningComposeContainerIn
 use crate::runtime::scope::{MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     layered_catalog_resolver, mount_spec::resolve_host_mounts, prune_loopback_assignments,
-    resolve_catalog_network_contract, ContainerPolicyError, LoopbackPruneOutcome,
-    SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
+    resolve_catalog_network_contract, warn_skipped_reclamation, ContainerPolicyError,
+    LoopbackPruneOutcome, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
 };
 
 /// Host address used for generated compose port bindings when the manifest
@@ -1103,7 +1103,7 @@ fn load_or_allocate_loopback_ip_with_inventory(
             .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     }
     if let Some(reason) = &prune.skipped_reason {
-        eprintln!("[warn] {reason}");
+        warn_skipped_reclamation(reason);
     }
     let assignment = registry
         .allocate(identity, source)
