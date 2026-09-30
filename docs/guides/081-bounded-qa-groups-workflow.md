@@ -1,33 +1,24 @@
 # Bounded QA Groups Workflow
 
-Status: proposed. QA-group commands and grammar are not available yet. The
-current selector workflow below remains the executable path until the runtime
-and agent-skill adoption land.
+Status: active. QA-group commands are implemented through the
+`tasks qa-group` surfaces. `stop` and `hard_timeout_ms` stay unavailable:
+they are refused with the run-scoped supervision prerequisite (lead
+`29e5f6f7`) before any side effect. Installed-skill adoption/distribution is
+a separate approved cut; until it reaches your environment, verify capability
+with `effigy tasks qa-groups list --json` and fall back to plain selectors.
 
 Contract: [051](../knowledge/contracts/051-bounded-qa-groups-contract.md)
 Architecture: [031](../knowledge/architecture/031-bounded-qa-groups-runtime.md)
 
-## Current workflow
+## Group workflow
 
-Use the repo's existing Effigy tasks. Inspect a known selector before running
-it when the command shape matters:
-
-```sh
-effigy tasks
-effigy <selector> --plan
-effigy <selector>
-```
-
-`effigy drafts` and `effigy draft <name>` remain for temporary ordinary tasks
-and environments. They are not QA groups. `effigy qa`, CI, and release gates
-keep their current owners and meanings. A worker with uncertain coverage asks
-the planner which proof is needed; uncertainty does not mean “run the full
-board.”
-
-## Proposed group workflow
-
-After implementation, inventory maintained groups and run a selected group
-through the `tasks` dispatcher:
+Inventory maintained groups and run a selected group through the `tasks`
+dispatcher. Repositories (or environments) without groups keep the plain
+selector workflow — `effigy tasks`, `effigy <selector> --plan`,
+`effigy <selector>` — and `effigy drafts`/`effigy draft <name>` remain for
+temporary ordinary tasks and environments, not QA groups. `effigy qa`, CI,
+and release gates keep their current owners and meanings: uncertain coverage
+means ask the planner, never "run the full board."
 
 ```sh
 effigy tasks qa-groups list
@@ -44,14 +35,15 @@ effigy tasks qa-groups list --file config/qa-groups/2026-10-02-binding-check.tom
 effigy tasks qa-group run binding-check --file config/qa-groups/2026-10-02-binding-check.toml --scope path:crates/longhorn-bindings/src/lib.rs --plan
 ```
 
-The file path is part of definition identity. Effigy does not search its
-directory. A temporary group expires for inventory and cleanup purposes; an
-expired definition remains runnable when selected explicitly. Expected time
-and expiry answer different questions. The example's known bindings compile
-gap makes this plan return `needs_planner`; do not start a run until that gap
-has a reviewed proof mapping or the planner chooses the required evidence.
-The temporary definition also names its owning catalog alias explicitly; its
-file location never selects a catalog implicitly.
+The file path is part of definition identity; a relative path resolves inside
+the selected repository. Effigy does not search its directory. A temporary
+group expires for inventory and cleanup purposes; an expired definition
+remains runnable when selected explicitly. Expected time and expiry answer
+different questions. The example's known bindings compile gap makes this plan
+return `needs_planner`; do not start a run until that gap has a reviewed
+proof mapping or the planner chooses the required evidence. The temporary
+definition also names its owning catalog alias explicitly; its file location
+never selects a catalog implicitly.
 
 Read the plan for the exact selectors, fixed arguments, targets, companions,
 limits, admission class, and definition source. If a task is broad, its
@@ -99,7 +91,7 @@ Its `docs/knowledge/validation-input-map.md` is unchanged from reviewed PR61
 commit `58baccf8ec630557d51096241c85d9c8c211d46b`. The map is Longhorn's gate
 evidence, not an Effigy selector contract or proof of complete coverage.
 
-| Work context | Existing runnable selectors | Proposed bounded group or next selector | Boundary |
+| Work context | Existing runnable selectors | Candidate bounded group or next selector | Boundary |
 | --- | --- | --- | --- |
 | Docs-only, general knowledge/index prose | `qa:docs` currently runs all six checks: links, agent-defaults, paths, catalog-links, held-surface, and host-protocol. | Define `longhorn-docs` with exactly four individual members: `qa:docs:links`, `qa:docs:agent-defaults`, `qa:docs:paths`, and `qa:docs:catalog-links`. Do not include `qa:docs`, held-surface, or host-protocol. | The group proves only those four declared checks; held-surface and host-protocol remain outside it. The existing `qa:docs` aggregate is unchanged and still includes all six. Group expected runtime is unknown until these four members are measured; do not reuse the six-check aggregate's timing. |
 | Edit `docs/guides/getting-started.md` | `qa:docs` plus `proof:artifacts`. | Add a standalone `proof:guides-card126` selector and include it in `longhorn-getting-started-docs`. | The map's guide-content verifier is one of fourteen `proof:artifacts` members, not a runnable selector today. Current `proof:artifacts` is heavy and broad, so this is not yet a bounded docs group. |
@@ -152,7 +144,7 @@ name. Record the concrete uncertainty and request planner judgment.
 
 ## Reading a run
 
-The proposed run report keeps these measures separate:
+The run report keeps these measures separate:
 
 - selected group, definition digest, repository head/worktree state, and
   declared targets;
@@ -175,10 +167,12 @@ behavior. The report still makes no claim about unmapped inputs.
 
 ## Canonical skill adoption
 
-The future QA guidance belongs in the maintained distributed Effigy skill at
+QA guidance now lives in the maintained distributed Effigy skill source at
 `skills/effigy/`. Consumer repository facts stay in that repository's
-`AGENTS.md` and knowledge files. This design PR does not edit the skill,
-`effigy init`, installed copies, containers, or consumer repositories.
+`AGENTS.md` and knowledge files. Distributing it to installed copies,
+auditing discovery locations, and removing consumer duplicates remain the
+separately approved adoption cut's work; no consumer repository changes as
+part of the runtime implementation.
 
 An adoption brief should audit all supported discovery locations before
 removing any copy:

@@ -358,6 +358,9 @@ mod tests {
             scope_inputs: Vec::new(),
             scope_assessment: "not_requested".to_owned(),
             scope_matches: Vec::new(),
+            coverage_disclaimer:
+                "Declared mappings do not establish map truth or caller scope completeness"
+                    .to_owned(),
             state: QaGroupRunState::Running,
             outcome: None,
             budget_state: QaGroupBudgetState::Unknown,

@@ -1,7 +1,10 @@
 # 031 - Bounded QA Groups Runtime
 
 Contract: [051](../contracts/051-bounded-qa-groups-contract.md)
-Status: proposed and unavailable until implementation.
+Status: active. The resolver, plan surface, coordinator, and run records are
+implemented; stop/hard-timeout enforcement remains refused pending lead
+`29e5f6f7`, and status reconciliation reports interrupted owners as
+`unknown`, never a pass.
 
 ## Placement
 
@@ -39,7 +42,7 @@ responsibilities.
 
 No group member contains a raw command body. No group invokes a separate task
 runner, calls another QA group, or changes the meaning of an existing
-selector. The proposed commands live under `effigy tasks`, so the new
+selector. The commands live under `effigy tasks`, so the
 `qa-groups` / `qa-group` words do not take over top-level task names.
 
 ## Plan resolution

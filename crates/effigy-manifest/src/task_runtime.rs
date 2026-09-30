@@ -61,6 +61,15 @@ pub enum ManifestTaskAdmission {
     Heavy,
 }
 
+impl ManifestTaskAdmission {
+    /// Canonical kebab-case rendering used by inventory and run payloads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Heavy => "heavy",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ManifestTaskSecretsMode {

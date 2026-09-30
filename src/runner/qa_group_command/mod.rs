@@ -77,17 +77,22 @@ fn run_qa_groups_list(
     pretty_json: bool,
 ) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
-    let catalogs = load_effective_catalogs_allow_missing(&context.resolved.resolved_root)?;
+    let root = context.resolved.resolved_root;
+    let catalogs = load_effective_catalogs_allow_missing(&root)?;
+    // A relative `--file` resolves inside the selected repository, never
+    // against the process cwd.
+    let file = file.map(|path| resolve_file_inside_root(&root, path));
     let tracking = file
-        .map(|path| git_file_tracking(&context.resolved.resolved_root, path))
+        .as_deref()
+        .map(|path| git_file_tracking(&root, path))
         .unwrap_or(QaFileTracking::Unknown);
     let listing = list_qa_groups(
         ListQaGroupsRequest {
             filter,
-            file,
+            file: file.as_deref(),
             file_tracking: tracking,
             pretty_json,
-            resolved_root: &context.resolved.resolved_root,
+            resolved_root: &root,
             today: ManifestDraftDate::today_local(),
         },
         &catalogs,
@@ -112,12 +117,15 @@ fn resolve_run_plan(
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let root = context.resolved.resolved_root.clone();
     let catalogs = load_effective_catalogs_allow_missing(&root)?;
+    // A relative `--file` resolves inside the selected repository.
+    let file = file.map(|path| resolve_file_inside_root(&root, path));
     let tracking = file
+        .as_deref()
         .map(|path| git_file_tracking(&root, path))
         .unwrap_or(QaFileTracking::Unknown);
     let selected = select_qa_group(QaGroupSelectionRequest {
         selector,
-        file,
+        file: file.as_deref(),
         catalogs: &catalogs,
         invocation_cwd: &context.invocation_cwd,
         resolved_root: &root,
@@ -151,18 +159,25 @@ fn run_qa_group(
     let render_json = |plan: &effigy_tasks::QaGroupPlan| {
         render_qa_group_plan_json(plan, true).map_err(map_tasks_error)
     };
-    let render_text = |plan: &effigy_tasks::QaGroupPlan| {
-        render_qa_group_plan_text(plan).map_err(map_tasks_error)
-    };
+    let render_text =
+        |plan: &effigy_tasks::QaGroupPlan| render_qa_group_plan_text(plan).map_err(map_tasks_error);
 
     if plan.scope_assessment == ScopeAssessment::NeedsPlanner {
         // A needs_planner plan is not executable and has no run ID; an
         // attempted run returns the same plan with a failing exit.
-        let rendered = if output_json { render_json(&plan)? } else { render_text(&plan)? };
+        let rendered = if output_json {
+            render_json(&plan)?
+        } else {
+            render_text(&plan)?
+        };
         return Err(RunnerError::CommandJsonFailure { rendered });
     }
     if plan_only {
-        return if output_json { render_json(&plan) } else { render_text(&plan) };
+        return if output_json {
+            render_json(&plan)
+        } else {
+            render_text(&plan)
+        };
     }
     execute::execute_group_run(&root, &plan, output_json)
 }
@@ -194,7 +209,9 @@ fn run_qa_group_logs(args: &TasksArgs, run_id: &str, follow: bool) -> Result<Str
     let snapshot = load_qa_group_run_record(&root, run_id)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .ok_or_else(|| {
-            RunnerError::task_invocation(format!("no qa-group run named `{run_id}` in this repository"))
+            RunnerError::task_invocation(format!(
+                "no qa-group run named `{run_id}` in this repository"
+            ))
         })?;
     let mut output = String::new();
     output.push_str(&format!(
@@ -253,7 +270,8 @@ fn render_status_json(snapshot: &QaGroupStatusSnapshot) -> Result<String, Runner
         "warnings": snapshot.warnings,
         "run": snapshot.record,
     });
-    effigy_ui::encode_json(&payload, true).map_err(|error| RunnerError::task_invocation(error.to_string()))
+    effigy_ui::encode_json(&payload, true)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn render_status_text(snapshot: &QaGroupStatusSnapshot) -> Result<String, RunnerError> {
@@ -330,6 +348,17 @@ fn render_status_text(snapshot: &QaGroupStatusSnapshot) -> Result<String, Runner
     Ok(out)
 }
 
+/// Resolve `--file` inside the selected repository: absolute paths pass
+/// through (and are still containment-checked); relative paths join the
+/// resolved root so the process cwd never leaks into definition identity.
+fn resolve_file_inside_root(root: &Path, file: &Path) -> PathBuf {
+    if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        root.join(file)
+    }
+}
+
 fn map_tasks_error(error: effigy_tasks::EffigyTasksError) -> RunnerError {
     RunnerError::task_invocation(error.to_string())
 }
@@ -338,16 +367,18 @@ fn map_tasks_error(error: effigy_tasks::EffigyTasksError) -> RunnerError {
 /// context, never proof of clean inputs; failures degrade to `unknown`.
 pub(super) fn git_head_context(root: &Path) -> (Option<String>, String) {
     let commit = git_output(root, &["rev-parse", "HEAD"]).map(|value| value.trim().to_owned());
-    let dirty = git_output(root, &["status", "--porcelain"]).is_some_and(|value| {
-        !value.trim().is_empty()
-    });
+    let dirty =
+        git_output(root, &["status", "--porcelain"]).is_some_and(|value| !value.trim().is_empty());
     let worktree = if dirty { "modified" } else { "clean" }.to_owned();
     (commit.filter(|value| !value.is_empty()), worktree)
 }
 
 /// How Git sees one file, for temporary-definition provenance.
 pub(super) fn git_file_tracking(root: &Path, file: &Path) -> QaFileTracking {
-    match git_output(root, &["ls-files", "--error-unmatch", &file.display().to_string()]) {
+    match git_output(
+        root,
+        &["ls-files", "--error-unmatch", &file.display().to_string()],
+    ) {
         Some(_) => QaFileTracking::Tracked,
         None => match git_output(root, &["status", "--porcelain"]) {
             Some(_) => QaFileTracking::Untracked,
@@ -395,7 +426,10 @@ pub(super) fn known_run_ids(root: &Path) -> Result<Vec<String>, RunnerError> {
 
 /// Load helper used by tests of the command glue.
 #[allow(dead_code)]
-pub(super) fn load_record(root: &Path, run_id: &str) -> Result<Option<QaGroupStatusSnapshot>, RunnerError> {
+pub(super) fn load_record(
+    root: &Path,
+    run_id: &str,
+) -> Result<Option<QaGroupStatusSnapshot>, RunnerError> {
     load_qa_group_run_record(root, run_id)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }

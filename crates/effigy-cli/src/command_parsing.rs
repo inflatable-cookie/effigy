@@ -1596,6 +1596,12 @@ where
                 output_json = true;
                 passthrough.push(arg);
             }
+            "--plan" => {
+                // Contract 046: `draft <SELECTOR> --plan` inspects without
+                // executing. The flag travels with the invocation so the
+                // canonical preflight strips it and selects plan mode.
+                passthrough.push(arg);
+            }
             "--repo" => {
                 let value = args.next().ok_or_else(|| CliParseError::MissingFlagValue {
                     flag: "--repo".to_owned(),

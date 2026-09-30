@@ -35,8 +35,9 @@ use effigy_runtime::qa_group_status::{
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Captured output from one member attempt. The typed pipeline error travels
-/// unchanged so cancelled versus failed versus blocked stay distinguishable.
-type MemberAttempt = Result<(String, String), (RunnerError, String, String)>;
+/// unchanged so cancelled versus failed versus blocked stay distinguishable;
+/// the error is boxed to keep the `Err` variant small.
+type MemberAttempt = Result<(String, String), (Box<RunnerError>, String, String)>;
 
 pub(super) fn execute_group_run(
     root: &Path,
@@ -106,7 +107,8 @@ fn run_members(
                         lease = Some(acquired_lease);
                     }
                     Err(error) => {
-                        let message = format!("cannot install heavy-run signal forwarding: {error}");
+                        let message =
+                            format!("cannot install heavy-run signal forwarding: {error}");
                         record.warnings.push(message.clone());
                         record.state = QaGroupRunState::Completed;
                         record.outcome = Some(QaGroupOutcome::Blocked);
@@ -191,7 +193,8 @@ fn execute_member_loop(
     for (index, member) in plan.members.iter().enumerate() {
         let started_at = Utc::now().to_rfc3339();
         {
-            let entry = member_record_mut(record, &member.id).expect("plan members seed the ledger");
+            let entry =
+                member_record_mut(record, &member.id).expect("plan members seed the ledger");
             entry.started_at = Some(started_at.clone());
         }
         touch(record);
@@ -263,7 +266,7 @@ fn execute_member_loop(
 
         match attempt {
             Ok(_) => {}
-            Err((failure, _, _)) => return Err(failure),
+            Err((failure, _, _)) => return Err(*failure),
         }
     }
     Ok(())
@@ -277,7 +280,7 @@ fn execute_member_loop(
 fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
     let request = match build_member_request(root, member) {
         Ok(request) => request,
-        Err(error) => return Err((error, String::new(), String::new())),
+        Err(error) => return Err((Box::new(error), String::new(), String::new())),
     };
 
     match run_manifest_task_request(request) {
@@ -288,14 +291,14 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
         Err(RunnerError::CommandJsonFailure { rendered }) => {
             let (stdout, stderr, _exit_code) = extract_failure_payload(&rendered);
             Err((
-                RunnerError::CommandJsonFailure { rendered },
+                Box::new(RunnerError::CommandJsonFailure { rendered }),
                 stdout,
                 stderr,
             ))
         }
         Err(failure) => {
             let (stdout, stderr) = task_failure_output(&failure);
-            Err((failure, stdout, stderr))
+            Err((Box::new(failure), stdout, stderr))
         }
     }
 }
@@ -397,9 +400,7 @@ fn string_field(value: &serde_json::Value, key: &str) -> String {
 
 fn task_failure_output(error: &RunnerError) -> (String, String) {
     match error {
-        RunnerError::TaskCommandFailure { stdout, stderr, .. } => {
-            (stdout.clone(), stderr.clone())
-        }
+        RunnerError::TaskCommandFailure { stdout, stderr, .. } => (stdout.clone(), stderr.clone()),
         _ => (String::new(), String::new()),
     }
 }
@@ -457,7 +458,8 @@ fn short_message(error: &RunnerError) -> String {
         .to_owned()
 }
 
-fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRecord { // unchanged shape
+fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRecord {
+    // unchanged shape
     QaGroupRunRecord {
         schema: QA_GROUP_RUN_SCHEMA.to_owned(),
         schema_version: 1,
@@ -498,6 +500,7 @@ fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRe
             effigy_tasks::ScopeAssessment::NotRequested => "not_requested".to_owned(),
             effigy_tasks::ScopeAssessment::NeedsPlanner => "needs_planner".to_owned(),
         },
+        coverage_disclaimer: effigy_tasks::SCOPE_COVERAGE_DISCLAIMER.to_owned(),
         scope_matches: plan
             .scope_matches
             .iter()

@@ -164,7 +164,7 @@ Read:
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
-- [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md) — proposed design; commands unavailable until implementation.
+- [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md) — bounded QA groups through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on lead `29e5f6f7`.
 
 Use when:
 - you need built-in health flows

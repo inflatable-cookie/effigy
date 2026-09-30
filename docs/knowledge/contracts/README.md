@@ -55,7 +55,7 @@ schema artifacts live beside these files.
 | [048-managed-bun-install-contract.md](048-managed-bun-install-contract.md) | frozen Bun preparation, explicit text-lock refresh, and local dependency metadata cleanup. |
 | [049-heavy-validation-admission-contract.md](049-heavy-validation-admission-contract.md) | host-wide heavy task admission, fair capacity scheduling, crash recovery, complete-input joins, and per-caller validation telemetry. |
 | [050-rhai-fs-atomic-publish-contract.md](050-rhai-fs-atomic-publish-contract.md) | Atomic create-if-absent Rhai file publication, collision and cleanup semantics, and `move_path` replacement limits. |
-| [051-bounded-qa-groups-contract.md](051-bounded-qa-groups-contract.md) | Proposed named QA-group contract for explicit members, bounded proof, lifecycle, timing, admission, run evidence, and migration. |
+| [051-bounded-qa-groups-contract.md](051-bounded-qa-groups-contract.md) | Implemented bounded QA-group contract for explicit members, typed scope, lifecycle, admission, run evidence, and migration; `stop`/`hard_timeout_ms` wait on lead `29e5f6f7`. |
 | [release.md](release.md) | Human-gated release sequence, verification, failure recovery, and no-retag rule. |
 | [writing-style.md](writing-style.md) | Glue-light internal writing rule and reply shape. |
 

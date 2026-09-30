@@ -232,6 +232,9 @@ pub struct QaGroupRunRecord {
     /// result; `needs_planner` never creates a run.
     pub scope_assessment: String,
     pub scope_matches: Vec<QaGroupScopeMatchRecord>,
+    /// Repeated on every run record: declared mappings are not proof of map
+    /// truth or caller scope completeness.
+    pub coverage_disclaimer: String,
     pub state: QaGroupRunState,
     /// Null until the run reaches a terminal aggregate state.
     #[serde(default)]

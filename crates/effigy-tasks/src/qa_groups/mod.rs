@@ -515,8 +515,7 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "smoke",
         // `smoke` exists as a published task and a draft in the root catalog
         // but as no group; a group selector must fail closed.
         let error = select_qa_group(selection(&catalogs, &base, "smoke"))
-            .err()
-            .expect("task/draft names never satisfy a group selector");
+            .expect_err("task/draft names never satisfy a group selector");
         assert!(
             error.to_string().contains("no effective catalog declares"),
             "{error}"
@@ -577,9 +576,8 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "t", tar
 "#,
             1,
         );
-        let error = select_qa_group(selection(&[left, right], &base, "shared"))
-            .err()
-            .expect("tie must fail");
+        let error =
+            select_qa_group(selection(&[left, right], &base, "shared")).expect_err("tie must fail");
         let rendered = error.to_string();
         assert!(
             rendered.contains("left/shared") && rendered.contains("right/shared"),
@@ -632,8 +630,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
             resolved_root: &base,
             file_tracking: QaFileTracking::Untracked,
         })
-        .err()
-        .expect("mismatched name must fail");
+        .expect_err("mismatched name must fail");
         assert!(
             error
                 .to_string()
@@ -649,8 +646,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
             resolved_root: &base,
             file_tracking: QaFileTracking::Untracked,
         })
-        .err()
-        .expect("dotdot path must fail");
+        .expect_err("dotdot path must fail");
         assert!(error.to_string().contains("`..`"), "{error}");
         let _ = fs::remove_dir_all(&base);
     }
@@ -665,8 +661,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
         fs::write(&outside, "[qa_group]\nname = \"x\"\n").expect("write outside");
 
         let error = load_temporary_qa_group(&outside, &base, None)
-            .err()
-            .expect("outside-root file must fail");
+            .expect_err("outside-root file must fail");
         assert!(
             error
                 .to_string()
@@ -677,8 +672,7 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
         let inside = base.join("group.toml");
         fs::write(&inside, "[not_qa_group]\nname = \"x\"\n").expect("write bad shape");
         let error = load_temporary_qa_group(&inside, &base, None)
-            .err()
-            .expect("missing [qa_group] must fail");
+            .expect_err("missing [qa_group] must fail");
         assert!(error.to_string().contains("`[qa_group]`"), "{error}");
         let _ = fs::remove_dir_all(&base);
         let _ = fs::remove_file(&outside);
@@ -715,8 +709,7 @@ members = [{ id = "one", kind = "test", surface = "published", task = "t", targe
             resolved_root: &base,
             file_tracking: QaFileTracking::Unknown,
         })
-        .err()
-        .expect("unknown alias must fail");
+        .expect_err("unknown alias must fail");
         assert!(error.to_string().contains("ghost"), "{error}");
         let _ = fs::remove_dir_all(&base);
     }

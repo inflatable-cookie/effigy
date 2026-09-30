@@ -236,7 +236,7 @@ pub fn build_qa_group_plan(
             },
             name: group.name.clone(),
             catalog: owning_alias.clone(),
-            catalog_root: catalog_root,
+            catalog_root,
             source: selected.source.display(),
             definition_sha256,
             file_tracking,
