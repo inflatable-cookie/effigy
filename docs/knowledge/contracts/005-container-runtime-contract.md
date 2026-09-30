@@ -163,12 +163,15 @@ than reported as a failed inventory. Docker considers every endpoint that could
 be effective — `DOCKER_CONTEXT`, then `DOCKER_HOST`, then the stored current
 context, then the platform default Unix sockets — so a remote context selected
 by `DOCKER_CONTEXT` is never omitted when `DOCKER_HOST` names an absent local
-socket. Docker is inactive only when every candidate is an absent local Unix
+socket. The `DOCKER_CONFIG` path and context names are read exactly as given,
+so normalization cannot hide a selected context. Docker is inactive only when
+every candidate is an absent local Unix
 endpoint, including a dangling `/var/run/docker.sock` symlink. A reachable local
 endpoint, any remote or unresolvable configured endpoint (`tcp://`, `ssh://`,
-`npipe://`, a missing context, unreadable config, or `DOCKER_HOST`), and a
-socket that exists but cannot be connected are all ambiguous and stay
-authoritative, so a later failure remains actionable and fail-closed. Colima is
+`npipe://`, a missing context, unreadable or schema-invalid config, or
+`DOCKER_HOST`), and a socket that exists but cannot be connected are all
+ambiguous and stay authoritative, so a later failure remains actionable and
+fail-closed. Colima is
 inactive only when its CLI is absent, its Colima home can be inspected, and no
 Colima or Lima instance state remains, because a running Colima VM can outlive
 its client CLI. Docker context names are case-sensitive, so a context named

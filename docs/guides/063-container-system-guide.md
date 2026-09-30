@@ -494,9 +494,11 @@ runtime is participating, without launching Docker, Colima, or a container:
   `DOCKER_HOST`, the stored current context, or the platform default socket —
   is remote or reachable. Docker is inactive only when every candidate is an
   absent local Unix socket, so Docker Desktop not running means Docker is
-  skipped rather than reported as a failed inventory. A stale, unreadable, or
-  unresolvable endpoint stays fail-closed, and a remote context selected by
-  `DOCKER_CONTEXT` is never omitted by an absent local `DOCKER_HOST`.
+  skipped rather than reported as a failed inventory. A stale, unreadable,
+  schema-invalid, or unresolvable endpoint stays fail-closed, and a remote
+  context selected by `DOCKER_CONTEXT` is never omitted by an absent local
+  `DOCKER_HOST`. The `DOCKER_CONFIG` path and context names are read exactly
+  as given.
 - Colima participates when its CLI is installed, and also when its CLI is
   missing but Colima or Lima instance state remains, because a running Colima
   VM can outlive its client CLI. Only a host with neither is Colima-inactive.

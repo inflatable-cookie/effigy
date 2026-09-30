@@ -73,6 +73,14 @@ pub(super) fn docker_runtime_participation() -> RuntimeParticipation {
     classify_docker_participation(docker_endpoint_candidates(), probe_unix_socket)
 }
 
+/// Deterministic environment classification for tests. Local endpoints are
+/// treated as absent so the verdict depends only on the configured endpoints
+/// and never probes a live daemon.
+#[cfg(test)]
+pub(super) fn environment_participation_for_test() -> RuntimeParticipation {
+    classify_docker_participation(docker_endpoint_candidates(), |_| SocketProbe::Absent)
+}
+
 pub(super) fn colima_runtime_participation() -> RuntimeParticipation {
     classify_colima_participation(
         crate::manager::command_exists("colima"),
@@ -226,14 +234,17 @@ fn is_default_context_name(name: &str) -> bool {
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
+    // Preserve the value exactly. Trimming could turn an oddly named context
+    // or host into a different, resolvable one, and could hide a configured
+    // remote endpoint behind a normalized identifier.
+    std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 fn docker_config_dir() -> Option<PathBuf> {
-    if let Some(dir) = non_empty_env("DOCKER_CONFIG") {
+    // Keep the configured path byte-for-byte: Docker reads DOCKER_CONFIG
+    // literally, and a normalized path could select a different, or no,
+    // config directory and hide a stored remote context.
+    if let Some(dir) = std::env::var_os("DOCKER_CONFIG").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(dir));
     }
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker"))
@@ -252,12 +263,17 @@ fn config_context(config_dir: &Path) -> DockerConfigContext {
     let path = config_dir.join("config.json");
     match std::fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => DockerConfigContext::Named(
-                value
-                    .get("currentContext")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned),
-            ),
+            Ok(serde_json::Value::Object(map)) => match map.get("currentContext") {
+                None => DockerConfigContext::Named(None),
+                Some(serde_json::Value::String(name)) => {
+                    DockerConfigContext::Named(Some(name.clone()))
+                }
+                // A present but schema-invalid currentContext could hide a
+                // selected remote context, so it is never read as absent.
+                Some(_) => DockerConfigContext::Unreadable,
+            },
+            // A non-object root is not a valid Docker config.
+            Ok(_) => DockerConfigContext::Unreadable,
             Err(_) => DockerConfigContext::Unreadable,
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -686,6 +702,66 @@ mod tests {
             }),
             RuntimeParticipation::Participating
         );
+    }
+
+    #[test]
+    fn non_object_config_json_is_fail_closed() {
+        let dir = tempfile::tempdir().expect("create docker config fixture");
+        std::fs::write(dir.path().join("config.json"), "[1, 2, 3]").expect("write array config");
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("a non-object config must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn invalid_current_context_schema_is_fail_closed() {
+        for raw in [
+            "{\"currentContext\": 42}",
+            "{\"currentContext\": null}",
+            "{\"currentContext\": {\"name\": \"remote\"}}",
+        ] {
+            let dir = tempfile::tempdir().expect("create docker config fixture");
+            std::fs::write(dir.path().join("config.json"), raw).expect("write invalid config");
+            let candidates =
+                docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+
+            assert!(
+                candidates.contains(&DockerEndpoint::Unresolved),
+                "schema-invalid currentContext must stay unresolved: {raw}"
+            );
+            assert_eq!(
+                classify_docker_participation(candidates, |_| {
+                    panic!("an invalid currentContext must not be probed away")
+                }),
+                RuntimeParticipation::Participating,
+                "schema-invalid currentContext must stay participating: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn docker_config_dir_preserves_exact_bytes() {
+        let _lock = crate::test_env_lock();
+        let previous = std::env::var_os("DOCKER_CONFIG");
+        let root = tempfile::tempdir().expect("create fixture root");
+        let config_dir = root.path().join("config ");
+        std::fs::create_dir_all(&config_dir).expect("create trailing-space config dir");
+        std::env::set_var("DOCKER_CONFIG", config_dir.as_os_str());
+
+        let resolved = docker_config_dir();
+
+        match previous {
+            Some(value) => std::env::set_var("DOCKER_CONFIG", value),
+            None => std::env::remove_var("DOCKER_CONFIG"),
+        }
+        assert_eq!(resolved, Some(config_dir));
     }
 
     #[test]
