@@ -182,8 +182,8 @@ fn default_docker_unix_sockets() -> Vec<PathBuf> {
 
 fn docker_endpoint_candidates() -> Vec<DockerEndpoint> {
     docker_endpoint_candidates_from(
-        non_empty_env("DOCKER_HOST"),
-        non_empty_env("DOCKER_CONTEXT"),
+        docker_env_override("DOCKER_HOST"),
+        docker_env_override("DOCKER_CONTEXT"),
         docker_config_dir(),
     )
 }
@@ -195,19 +195,25 @@ fn docker_endpoint_candidates() -> Vec<DockerEndpoint> {
 /// all of them so a remote runtime selected by any of them is never omitted;
 /// only a host where every candidate is an absent local endpoint is inactive.
 fn docker_endpoint_candidates_from(
-    docker_host: Option<String>,
-    docker_context: Option<String>,
+    docker_host: DockerOverride,
+    docker_context: DockerOverride,
     config_dir: Option<PathBuf>,
 ) -> Vec<DockerEndpoint> {
     let mut candidates = Vec::new();
-    if let Some(name) = docker_context
-        .as_deref()
-        .filter(|name| !is_default_context_name(name))
-    {
-        candidates.push(resolve_context_endpoint_from(name, config_dir.as_deref()));
+    match &docker_context {
+        DockerOverride::Unset => {}
+        // A set-but-unreadable override is an explicit unknown endpoint, never
+        // an absent one: it could name any context, including a remote one.
+        DockerOverride::NonUnicode => candidates.push(DockerEndpoint::Unresolved),
+        DockerOverride::Text(name) if !is_default_context_name(name) => {
+            candidates.push(resolve_context_endpoint_from(name, config_dir.as_deref()));
+        }
+        DockerOverride::Text(_) => {}
     }
-    if let Some(host) = docker_host.as_deref() {
-        candidates.push(endpoint_from_host(host));
+    match &docker_host {
+        DockerOverride::Unset => {}
+        DockerOverride::NonUnicode => candidates.push(DockerEndpoint::Unresolved),
+        DockerOverride::Text(host) => candidates.push(endpoint_from_host(host)),
     }
     match config_dir.as_deref() {
         Some(dir) => match config_context(dir) {
@@ -233,11 +239,27 @@ fn is_default_context_name(name: &str) -> bool {
     name.is_empty() || name == "default"
 }
 
-fn non_empty_env(name: &str) -> Option<String> {
-    // Preserve the value exactly. Trimming could turn an oddly named context
-    // or host into a different, resolvable one, and could hide a configured
-    // remote endpoint behind a normalized identifier.
-    std::env::var(name).ok().filter(|value| !value.is_empty())
+/// A `DOCKER_HOST`/`DOCKER_CONTEXT` override as it can actually be set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DockerOverride {
+    /// The variable is unset, or set to an empty value.
+    Unset,
+    /// The variable holds interpretable text.
+    Text(String),
+    /// The variable is set but not valid Unicode. The effective endpoint is
+    /// unknown rather than absent, because Docker on Unix sees raw bytes.
+    NonUnicode,
+}
+
+fn docker_env_override(name: &str) -> DockerOverride {
+    match std::env::var_os(name) {
+        None => DockerOverride::Unset,
+        Some(value) if value.is_empty() => DockerOverride::Unset,
+        Some(value) => match value.into_string() {
+            Ok(text) => DockerOverride::Text(text),
+            Err(_) => DockerOverride::NonUnicode,
+        },
+    }
 }
 
 fn docker_config_dir() -> Option<PathBuf> {
@@ -361,10 +383,19 @@ fn colima_state_evidence(colima_home: Option<&Path>) -> ColimaStateEvidence {
         // Without a Colima home we cannot tell whether a VM is running.
         return ColimaStateEvidence::Unknown;
     };
-    let entries = match std::fs::read_dir(home.join("_lima")) {
+    let instances = home.join("_lima");
+    let entries = match std::fs::read_dir(&instances) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ColimaStateEvidence::None;
+            // A dangling symlink at `_lima` still records Colima state: it was
+            // created for an instance and must not be read as absent.
+            return match std::fs::symlink_metadata(&instances) {
+                Ok(_) => ColimaStateEvidence::Present,
+                Err(metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound => {
+                    ColimaStateEvidence::None
+                }
+                Err(_) => ColimaStateEvidence::Unknown,
+            };
         }
         // An inaccessible or malformed `_lima` path could still hold a running
         // instance, so it stays unknowable rather than absent.
@@ -377,7 +408,9 @@ fn colima_state_evidence(colima_home: Option<&Path>) -> ColimaStateEvidence {
             Err(_) => return ColimaStateEvidence::Unknown,
         };
         match entry.file_type() {
-            Ok(file_type) if file_type.is_dir() => present = true,
+            // A symlinked or dangling entry can still be a Lima instance
+            // directory, so it counts as present rather than absent.
+            Ok(file_type) if file_type.is_dir() || file_type.is_symlink() => present = true,
             Ok(_) => {}
             Err(_) => return ColimaStateEvidence::Unknown,
         }
@@ -600,8 +633,8 @@ mod tests {
         // must not be omitted because DOCKER_HOST points at an absent socket.
         let dir = docker_context_fixture(&[("remote", Some("tcp://10.0.0.5:2375"))]);
         let candidates = docker_endpoint_candidates_from(
-            Some("unix:///tmp/absent.sock".to_owned()),
-            Some("remote".to_owned()),
+            DockerOverride::Text("unix:///tmp/absent.sock".to_owned()),
+            DockerOverride::Text("remote".to_owned()),
             Some(dir.path().to_path_buf()),
         );
 
@@ -623,8 +656,8 @@ mod tests {
         )]);
         write_current_context(&dir, "desktop-linux");
         let candidates = docker_endpoint_candidates_from(
-            Some("ssh://builder".to_owned()),
-            None,
+            DockerOverride::Text("ssh://builder".to_owned()),
+            DockerOverride::Unset,
             Some(dir.path().to_path_buf()),
         );
 
@@ -644,8 +677,8 @@ mod tests {
             Some("unix:///Users/me/.docker/run/docker.sock"),
         )]);
         let candidates = docker_endpoint_candidates_from(
-            Some("unix:///tmp/other.sock".to_owned()),
-            Some("desktop-linux".to_owned()),
+            DockerOverride::Text("unix:///tmp/other.sock".to_owned()),
+            DockerOverride::Text("desktop-linux".to_owned()),
             Some(dir.path().to_path_buf()),
         );
 
@@ -664,7 +697,11 @@ mod tests {
         write_current_context(&dir, "desktop-linux");
 
         assert_eq!(
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            docker_endpoint_candidates_from(
+                DockerOverride::Unset,
+                DockerOverride::Unset,
+                Some(dir.path().to_path_buf())
+            ),
             vec![
                 DockerEndpoint::Unix(PathBuf::from("/Users/me/.docker/run/docker.sock")),
                 DockerEndpoint::DefaultLocal,
@@ -676,8 +713,11 @@ mod tests {
     fn configured_but_unresolvable_context_stays_fail_closed() {
         let dir = docker_context_fixture(&[]);
         write_current_context(&dir, "missing-context");
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -692,8 +732,11 @@ mod tests {
     fn unreadable_config_is_fail_closed() {
         let dir = docker_context_fixture(&[]);
         std::fs::write(dir.path().join("config.json"), "{ not json").expect("write bad config");
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -708,8 +751,11 @@ mod tests {
     fn non_object_config_json_is_fail_closed() {
         let dir = tempfile::tempdir().expect("create docker config fixture");
         std::fs::write(dir.path().join("config.json"), "[1, 2, 3]").expect("write array config");
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -729,8 +775,11 @@ mod tests {
         ] {
             let dir = tempfile::tempdir().expect("create docker config fixture");
             std::fs::write(dir.path().join("config.json"), raw).expect("write invalid config");
-            let candidates =
-                docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+            let candidates = docker_endpoint_candidates_from(
+                DockerOverride::Unset,
+                DockerOverride::Unset,
+                Some(dir.path().to_path_buf()),
+            );
 
             assert!(
                 candidates.contains(&DockerEndpoint::Unresolved),
@@ -768,8 +817,11 @@ mod tests {
     fn context_without_a_docker_endpoint_is_fail_closed() {
         let dir = docker_context_fixture(&[("bare", None)]);
         write_current_context(&dir, "bare");
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -785,7 +837,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("create empty docker config fixture");
 
         assert_eq!(
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            docker_endpoint_candidates_from(
+                DockerOverride::Unset,
+                DockerOverride::Unset,
+                Some(dir.path().to_path_buf())
+            ),
             vec![DockerEndpoint::DefaultLocal]
         );
     }
@@ -793,7 +849,8 @@ mod tests {
     #[test]
     fn unknown_config_directory_stays_fail_closed() {
         // Without a config directory we cannot inspect the stored context.
-        let candidates = docker_endpoint_candidates_from(None, None, None);
+        let candidates =
+            docker_endpoint_candidates_from(DockerOverride::Unset, DockerOverride::Unset, None);
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -812,7 +869,11 @@ mod tests {
         let blocking_file = dir.path().join("not-a-directory");
         std::fs::write(&blocking_file, "file").expect("write blocking file");
         let config_dir = blocking_file.join(".docker");
-        let candidates = docker_endpoint_candidates_from(None, None, Some(config_dir));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(config_dir),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
@@ -848,8 +909,11 @@ mod tests {
             return;
         }
 
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
         restore(0o700);
 
         assert!(candidates.contains(&DockerEndpoint::Unresolved));
@@ -867,7 +931,11 @@ mod tests {
         write_current_context(&dir, "default");
 
         assert_eq!(
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            docker_endpoint_candidates_from(
+                DockerOverride::Unset,
+                DockerOverride::Unset,
+                Some(dir.path().to_path_buf())
+            ),
             vec![DockerEndpoint::DefaultLocal]
         );
     }
@@ -878,8 +946,8 @@ mod tests {
         // `DEFAULT` is selectable and must keep a remote endpoint authoritative.
         let dir = docker_context_fixture(&[("DEFAULT", Some("tcp://10.0.0.5:2375"))]);
         let candidates = docker_endpoint_candidates_from(
-            None,
-            Some("DEFAULT".to_owned()),
+            DockerOverride::Unset,
+            DockerOverride::Text("DEFAULT".to_owned()),
             Some(dir.path().to_path_buf()),
         );
 
@@ -896,8 +964,11 @@ mod tests {
     fn uppercase_default_context_in_the_store_is_not_omitted() {
         let dir = docker_context_fixture(&[("DEFAULT", Some("ssh://builder"))]);
         write_current_context(&dir, "DEFAULT");
-        let candidates =
-            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::Unset,
+            DockerOverride::Unset,
+            Some(dir.path().to_path_buf()),
+        );
 
         assert!(candidates.contains(&DockerEndpoint::Remote));
         assert_eq!(
@@ -969,5 +1040,114 @@ mod tests {
         restore(0o700);
 
         assert_eq!(evidence, ColimaStateEvidence::Unknown);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_lima_instance_entries_stay_present() {
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+        let instances = dir.path().join("_lima");
+        std::fs::create_dir_all(&instances).expect("create lima home");
+        let target = dir.path().join("real-instance");
+        std::fs::create_dir_all(&target).expect("create symlink target");
+        std::os::unix::fs::symlink(&target, instances.join("colima-linked"))
+            .expect("create symlinked instance");
+
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::Present
+        );
+        assert_eq!(
+            classify_colima_participation(false, colima_state_evidence(Some(dir.path()))),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_lima_instance_entries_stay_present() {
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+        let instances = dir.path().join("_lima");
+        std::fs::create_dir_all(&instances).expect("create lima home");
+        std::os::unix::fs::symlink(
+            dir.path().join("missing-instance"),
+            instances.join("colima-dangling"),
+        )
+        .expect("create dangling instance link");
+
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::Present
+        );
+        assert_eq!(
+            classify_colima_participation(false, colima_state_evidence(Some(dir.path()))),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_lima_path_stays_present() {
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+        std::os::unix::fs::symlink(dir.path().join("missing-lima"), dir.path().join("_lima"))
+            .expect("create dangling _lima link");
+
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::Present
+        );
+        assert_eq!(
+            classify_colima_participation(false, colima_state_evidence(Some(dir.path()))),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn non_unicode_docker_overrides_are_unresolved_not_unset() {
+        let candidates = docker_endpoint_candidates_from(
+            DockerOverride::NonUnicode,
+            DockerOverride::NonUnicode,
+            None,
+        );
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("a non-Unicode override must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_docker_env_override_is_unresolved() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let _lock = crate::test_env_lock();
+        let previous_host = std::env::var_os("DOCKER_HOST");
+        let previous_context = std::env::var_os("DOCKER_CONTEXT");
+        std::env::set_var(
+            "DOCKER_HOST",
+            std::ffi::OsStr::from_bytes(b"unix:///tmp/\xff\xfe.sock"),
+        );
+        std::env::remove_var("DOCKER_CONTEXT");
+
+        let candidates = docker_endpoint_candidates();
+
+        match previous_host {
+            Some(value) => std::env::set_var("DOCKER_HOST", value),
+            None => std::env::remove_var("DOCKER_HOST"),
+        }
+        match previous_context {
+            Some(value) => std::env::set_var("DOCKER_CONTEXT", value),
+            None => std::env::remove_var("DOCKER_CONTEXT"),
+        }
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| SocketProbe::Absent),
+            RuntimeParticipation::Participating
+        );
     }
 }

@@ -1098,4 +1098,45 @@ mod inventory_tests {
                 .contains("Cannot connect to the Docker daemon"));
         }
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_docker_override_participates_and_reports_docker_failure() {
+        use super::super::participation::environment_participation_for_test;
+        use std::os::unix::ffi::OsStrExt;
+
+        let _lock = crate::test_env_lock();
+        let previous_config = std::env::var_os("DOCKER_CONFIG");
+        let previous_host = std::env::var_os("DOCKER_HOST");
+        let previous_context = std::env::var_os("DOCKER_CONTEXT");
+        std::env::remove_var("DOCKER_CONFIG");
+        std::env::set_var(
+            "DOCKER_HOST",
+            std::ffi::OsStr::from_bytes(b"unix:///tmp/\xff\xfe.sock"),
+        );
+        std::env::remove_var("DOCKER_CONTEXT");
+        let participation = environment_participation_for_test();
+        match previous_config {
+            Some(value) => std::env::set_var("DOCKER_CONFIG", value),
+            None => std::env::remove_var("DOCKER_CONFIG"),
+        }
+        match previous_host {
+            Some(value) => std::env::set_var("DOCKER_HOST", value),
+            None => std::env::remove_var("DOCKER_HOST"),
+        }
+        match previous_context {
+            Some(value) => std::env::set_var("DOCKER_CONTEXT", value),
+            None => std::env::remove_var("DOCKER_CONTEXT"),
+        }
+
+        assert_eq!(participation, RuntimeParticipation::Participating);
+
+        let (docker_probes, inventory) = collect_with_docker_failure(participation);
+        assert_eq!(docker_probes, 1);
+        assert!(!inventory.is_complete());
+        assert!(inventory
+            .failure_summary()
+            .expect("docker failure")
+            .contains("Cannot connect to the Docker daemon"));
+    }
 }
