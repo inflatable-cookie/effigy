@@ -1,6 +1,8 @@
 # 031 - Bounded QA Groups Runtime
 
 Contract: [051](../contracts/051-bounded-qa-groups-contract.md)
+Run supervision: [052](../contracts/052-owned-run-supervision-contract.md),
+[032](032-owned-run-supervision-runtime.md)
 Status: proposed and unavailable until implementation.
 
 ## Placement
@@ -166,9 +168,10 @@ confirms descendant cleanup before claiming cancellation.
 Current task status is selector-scoped; current managed-session status/logs/
 stop only cover the managed session; admission queries expose host-wide heavy
 wait and lease state. General stop attribution for ordinary and non-heavy runs,
-nested process trees, PID reuse, and owner loss is the separate supervision
-work tracked by lead `29e5f6f7`. Group controls must reuse that supervision
-boundary. They do not introduce a second cancellation system.
+nested process trees, PID reuse, and owner loss is owned by the separate
+[owned run supervision contract](../contracts/052-owned-run-supervision-contract.md)
+and [runtime](032-owned-run-supervision-runtime.md). Group controls must reuse
+that supervision boundary. They do not introduce a second cancellation system.
 
 If the coordinator survives an interrupted owner, it may record a cancelled
 or unknown member from supervisor evidence. If the owner itself is killed and

@@ -56,6 +56,7 @@ schema artifacts live beside these files.
 | [049-heavy-validation-admission-contract.md](049-heavy-validation-admission-contract.md) | host-wide heavy task admission, fair capacity scheduling, crash recovery, complete-input joins, and per-caller validation telemetry. |
 | [050-rhai-fs-atomic-publish-contract.md](050-rhai-fs-atomic-publish-contract.md) | Atomic create-if-absent Rhai file publication, collision and cleanup semantics, and `move_path` replacement limits. |
 | [051-bounded-qa-groups-contract.md](051-bounded-qa-groups-contract.md) | Proposed named QA-group contract for explicit members, bounded proof, lifecycle, timing, admission, run evidence, and migration. |
+| [052-owned-run-supervision-contract.md](052-owned-run-supervision-contract.md) | Proposed owned-run supervision contract for run identity and generation, supervisor placement, ordered stop and hard timeout, signal evidence, and run-control JSON. |
 | [release.md](release.md) | Human-gated release sequence, verification, failure recovery, and no-retag rule. |
 | [writing-style.md](writing-style.md) | Glue-light internal writing rule and reply shape. |
 

@@ -6,6 +6,7 @@ their plans; `[drafts]` keeps the behavior defined by contract 046.
 
 Owner: task selection and execution maintainers
 Architecture: [031](../architecture/031-bounded-qa-groups-runtime.md)
+Run supervision: [052](052-owned-run-supervision-contract.md)
 Agent workflow: [081](../../guides/081-bounded-qa-groups-workflow.md)
 
 ## Purpose and proof boundary
@@ -400,7 +401,7 @@ Current availability and required follow-on work:
 | Draft admission | Current `[drafts]` definitions cannot declare `admission`; the body omits this task metadata. | Extend contract 046 and direct draft selection/JSON before group membership. Until then, reject draft members; never silently assume the group can classify them. |
 | Task status | `effigy tasks status` reads task-selector records under contracts 017/018. | A group run needs its own typed identity and aggregate/member states. |
 | Managed-session control | Managed headless/TUI tasks expose status, logs, and stop for their managed session. | Reuse the session/process supervisor when a member owns one; it is not generic group control. |
-| Ordinary process stop | No general run-scoped stop for non-heavy direct tasks or arbitrary nested children. | Requires the scoped supervision and signal attribution work in lead `29e5f6f7`. |
+| Ordinary process stop | No general run-scoped stop for non-heavy direct tasks or arbitrary nested children. | Requires the owned-run supervision contract [052](052-owned-run-supervision-contract.md); proposed and unavailable until implementation. |
 | Owner loss and PID reuse | Admission refuses unsafe lease reclamation when owner generation, process group, boot identity, or a live child is uncertain. | Preserve the same fail-closed evidence. Do not infer completion from a reused PID or stop a foreign process. |
 | Owner `SIGKILL` | A dead owner cannot print its own final message. | A surviving supervisor may record interruption; otherwise status is `unknown`/incomplete until reconciliation, never a fabricated complete receipt. |
 
@@ -410,9 +411,12 @@ request, signal delivery, member that was active, and whether descendants were
 confirmed gone. Logs are run-scoped and redact secrets. A capacity waiter can
 be cancelled without stopping another lease owner.
 
-The independent stop/signal work in lead `29e5f6f7` remains a prerequisite for
+The independent supervision work in contract
+[052](052-owned-run-supervision-contract.md) remains a prerequisite for
 claiming control of ordinary non-heavy runs, nested children, or owner loss.
-Managed-session controls do not substitute for it.
+It owns run identity and generation, supervisor placement, ordered stop and
+hard-timeout semantics, the interruption evidence taxonomy, and the
+run-control JSON. Managed-session controls do not substitute for it.
 
 ## Outcome and JSON contract
 
@@ -557,8 +561,10 @@ Implementation sequence:
 1. Land the reviewed group parser, identity, `--plan`, inventory, pipeline
    execution, records, and versioned JSON under an approved implementation
    brief. No actual prerequisite task IDs exist in this design task.
-2. Land or adopt lead `29e5f6f7` before claiming general run-scoped stop,
-   signal attribution, or safe cancellation of non-heavy/nested runs.
+2. Land or adopt contract
+   [052](052-owned-run-supervision-contract.md) before claiming general
+   run-scoped stop, signal attribution, or safe cancellation of
+   non-heavy/nested runs.
 3. Land or adopt lead `035b121a` (Cargo package-filter repair), or equivalent
    truly scoped selectors, before describing broad Rust workspace selectors as
    bounded package proof.
