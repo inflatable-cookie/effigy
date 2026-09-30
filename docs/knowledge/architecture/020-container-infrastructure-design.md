@@ -379,6 +379,18 @@ route lifecycle remains tied to the owning environment. DNS-only TCP aliases
 for services such as Postgres, MariaDB, Redis, and Memcached use deterministic
 loopback targets, avoiding manual `/etc/hosts` edits.
 
+An isolated project's loopback assignment uses the same qualified identity in
+generated Compose and gateway registration:
+`project:<project-name>:<absolute-checkout>`. A legacy bare project key moves
+only when its saved scope matches that checkout and its IP is not assigned to
+another identity. Scope retirement removes qualified and attributable legacy
+keys; shared identities remain retained. Stale reclamation requires successful
+Docker and Colima profile inventory. A successful empty result is distinct from
+profile-list, `ps`, or parse failure. Incomplete discovery preserves uncertain
+assignments and reports the backend, profile, error, and skipped reclamation
+reason. If preservation leaves the bounded pool full, allocation reports
+capacity exhaustion with the discovery failure.
+
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 
 Generated Compose gives Effigy enough ownership to classify data safely.

@@ -51,6 +51,9 @@ pub use report::{
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::eject::eject_generated_compose;
+pub use runtime::loopback::{
+    prune_loopback_assignments, prune_loopback_assignments_with_rows, LoopbackPruneOutcome,
+};
 pub use runtime::retire::{
     plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,
 };
@@ -64,8 +67,8 @@ pub use workspace::load_workspace_ownership_targets;
 #[cfg(test)]
 pub(crate) use compose::with_test_compose_backend;
 pub use policy::validation::{validate_compose_backend_runtime, validate_container_policy};
-#[cfg(test)]
-pub(crate) use policy_support::with_test_effigy_home;
+#[cfg(any(test, feature = "test-support"))]
+pub use policy_support::with_test_effigy_home;
 #[cfg(test)]
 pub(crate) use workspace::with_test_host_composer_home;
 

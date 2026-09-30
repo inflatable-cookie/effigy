@@ -5,17 +5,20 @@ use effigy_catalog::{
     assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler, ComposeOutput,
 };
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
-use effigy_gateway::loopback::LoopbackRegistry;
+use effigy_gateway::loopback::{project_loopback_identity, LoopbackRegistry};
 use effigy_gateway::ports::PortRegistry;
+use effigy_gateway::routes::RouteTable;
 use effigy_gateway::routes::RouteTableLock;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
+use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
 use crate::runtime::scope::{MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
-    layered_catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
-    ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
+    layered_catalog_resolver, mount_spec::resolve_host_mounts, prune_loopback_assignments,
+    resolve_catalog_network_contract, ContainerPolicyError, LoopbackPruneOutcome,
+    SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
 };
 
 /// Host address used for generated compose port bindings when the manifest
@@ -971,8 +974,12 @@ fn project_loopback_port_rules(
     project_name: &str,
     config: &ManifestContainerConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let Some(loopback_ip) =
-        load_or_allocate_loopback_ip(project_name, &repo_root.display().to_string())?
+    let source = repo_root.display().to_string();
+    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+        &project_loopback_identity(project_name, repo_root),
+        Some(project_name),
+        &source,
+    )?
     else {
         return Ok(Vec::new());
     };
@@ -1009,6 +1016,7 @@ fn shared_service_loopback_port_rules(
     };
     let Some(loopback_ip) = load_or_allocate_loopback_ip(
         &format!("shared:{project_name}"),
+        None,
         &output_dir.display().to_string(),
     )?
     else {
@@ -1024,7 +1032,22 @@ fn shared_service_loopback_port_rules(
 
 fn load_or_allocate_loopback_ip(
     identity: &str,
+    legacy_identity: Option<&str>,
     source: &str,
+) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
+    load_or_allocate_loopback_ip_with_inventory(
+        identity,
+        legacy_identity,
+        source,
+        discover_running_compose_containers,
+    )
+}
+
+fn load_or_allocate_loopback_ip_with_inventory(
+    identity: &str,
+    legacy_identity: Option<&str>,
+    source: &str,
+    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
@@ -1037,9 +1060,60 @@ fn load_or_allocate_loopback_ip(
     if let Some(existing) = registry.get(identity) {
         return Ok(Some(existing.ip));
     }
+    let migrated_legacy_identity = legacy_identity
+        .and_then(|legacy| {
+            registry
+                .get(legacy)
+                .cloned()
+                .map(|assignment| (legacy, assignment))
+        })
+        .filter(|(_, assignment)| assignment.scope == source)
+        .filter(|(legacy, assignment)| {
+            !registry.assignments.iter().any(|(other_identity, other)| {
+                other_identity.as_str() != *legacy && other.ip == assignment.ip
+            })
+        });
+    if let Some((legacy_identity, assignment)) = migrated_legacy_identity {
+        registry.deallocate(legacy_identity);
+        registry
+            .assignments
+            .insert(identity.to_owned(), assignment.clone());
+        registry
+            .save(&path)
+            .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+        return Ok(Some(assignment.ip));
+    }
+    let prune = if registry.is_empty() {
+        LoopbackPruneOutcome::default()
+    } else {
+        let inventory = discover_inventory();
+        match RouteTable::load(&home.join("gateway").join("routes.json")) {
+            Ok(route_table) => prune_loopback_assignments(&mut registry, &route_table, &inventory),
+            Err(error) => LoopbackPruneOutcome {
+                changed: false,
+                skipped_reason: Some(format!(
+                    "skipped stale loopback reclamation because the gateway route inventory could not be read; all uncertain assignments were preserved ({error})"
+                )),
+            },
+        }
+    };
+    if prune.changed {
+        registry
+            .save(&path)
+            .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    }
+    if let Some(reason) = &prune.skipped_reason {
+        eprintln!("[warn] {reason}");
+    }
     let assignment = registry
         .allocate(identity, source)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+        .map_err(|error| {
+            let detail = match &prune.skipped_reason {
+                Some(reason) => format!("{error}; {reason}"),
+                None => error.to_string(),
+            };
+            ContainerPolicyError::TaskInvocation(detail)
+        })?
         .ip;
     registry
         .save(&path)
@@ -1110,8 +1184,8 @@ fn host_workspace_identity() -> (u32, u32) {
     (1000, 1000)
 }
 
-#[cfg(test)]
-pub(crate) fn with_test_effigy_home<T>(path: &Path, run: impl FnOnce() -> T) -> T {
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_test_effigy_home<T>(path: &Path, run: impl FnOnce() -> T) -> T {
     struct ResetGuard(Option<PathBuf>);
 
     impl Drop for ResetGuard {
@@ -1458,6 +1532,86 @@ mod tests {
             .map(|path| path.join(".effigy"));
 
         assert_ne!(Some(actual), real_home);
+    }
+
+    fn full_project_registry() -> LoopbackRegistry {
+        let mut registry = LoopbackRegistry::new();
+        for index in 1..=50 {
+            let project = format!("stale-{index}");
+            registry
+                .allocate(
+                    &project_loopback_identity(&project, Path::new(&format!("/tmp/{project}"))),
+                    &format!("/tmp/{project}"),
+                )
+                .expect("fill private loopback pool");
+        }
+        registry
+    }
+
+    #[test]
+    fn loopback_allocator_reclaims_complete_stale_pool_before_exhaustion() {
+        let _lock = crate::test_env_lock();
+        let tempdir = tempfile::tempdir().expect("test home");
+        with_test_effigy_home(tempdir.path(), || {
+            let path = tempdir.path().join("gateway/loopback-ips.json");
+            let registry = full_project_registry();
+            registry.save(&path).expect("save full registry");
+
+            let identity = project_loopback_identity("new-project", Path::new("/tmp/new-project"));
+            let ip = load_or_allocate_loopback_ip_with_inventory(
+                &identity,
+                Some("new-project"),
+                "/tmp/new-project",
+                || RunningComposeContainerInventory::default(),
+            )
+            .expect("recover stale capacity before allocation")
+            .expect("allocated loopback IP");
+
+            let reloaded = LoopbackRegistry::load(&path).expect("reload registry");
+            assert_eq!(reloaded.len(), 1);
+            assert_eq!(
+                reloaded.get(&identity).map(|assignment| assignment.ip),
+                Some(ip)
+            );
+        });
+    }
+
+    #[test]
+    fn full_pool_with_incomplete_inventory_fails_with_preservation_reason() {
+        let _lock = crate::test_env_lock();
+        let tempdir = tempfile::tempdir().expect("test home");
+        with_test_effigy_home(tempdir.path(), || {
+            let path = tempdir.path().join("gateway/loopback-ips.json");
+            let registry = full_project_registry();
+            let before = registry.assignments.clone();
+            registry.save(&path).expect("save full registry");
+
+            let identity = project_loopback_identity("new-project", Path::new("/tmp/new-project"));
+            let error = load_or_allocate_loopback_ip_with_inventory(
+                &identity,
+                Some("new-project"),
+                "/tmp/new-project",
+                || RunningComposeContainerInventory {
+                    rows: Vec::new(),
+                    failures: vec![crate::exec::RuntimeInventoryFailure {
+                        backend: "colima".to_owned(),
+                        profile: "broken".to_owned(),
+                        error: "runtime ps failed".to_owned(),
+                    }],
+                },
+            )
+            .expect_err("incomplete discovery cannot reclaim protected owners");
+
+            assert!(error.to_string().contains("loopback pool exhausted"));
+            assert!(error
+                .to_string()
+                .contains("skipped stale loopback reclamation"));
+            assert!(error.to_string().contains("colima profile `broken`"));
+            assert_eq!(
+                LoopbackRegistry::load(&path).expect("reload").assignments,
+                before
+            );
+        });
     }
 
     #[test]

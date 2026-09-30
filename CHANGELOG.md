@@ -102,6 +102,11 @@ During v0.x, MINOR bumps may include breaking changes.
   its certificate. A second retire is success
   when nothing owned remains, and a shared-only retire then drops the
   durable record.
+- Generated Compose and gateway registration now reuse one checkout-qualified
+  loopback assignment. Retirement removes matching qualified and legacy keys
+  only when their recorded checkout scope proves ownership. Stale reclamation
+  requires complete Docker and Colima inventory; listing, runtime, or parse
+  failures preserve assignments and report why reclamation was skipped.
 - `effigy secrets unlock` accepts one operator passphrase, repairs the local
   dev key, and allows direct vault commands and secret-backed tasks to run
   without a prompt. `effigy secrets lock` revokes both local unlock files.

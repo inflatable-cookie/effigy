@@ -132,12 +132,22 @@ second retire with nothing left is success, including a shared-only scope
 whose durable record is then removed.
 
 Loopback allocation and reclamation must follow the same ownership boundary.
-Tom's 2026-09-30 ruling requires one allocation across preparation and gateway
-registration, with legacy entries reclaimed only when their ownership is proven.
-Complete empty inventory and failed or partial discovery are different states:
-failed discovery must preserve uncertain owners and explain why reclamation was
-skipped. Increasing the pool cannot substitute for this identity and discovery
-repair. The existing allocator and prune paths do not yet meet these requirements.
+An isolated project's loopback key is `project:<project-name>:<absolute-checkout>`
+in both generated Compose preparation and gateway registration. A legacy bare
+project key may move to that qualified key only when its recorded scope equals
+the checkout and its address is not already assigned elsewhere. Retirement
+clears qualified keys and legacy bare keys only when the recorded scope proves
+the same checkout owns them. Shared loopback identities remain retained.
+
+Stale reclamation requires a complete inventory across the Docker default
+backend and every running Colima profile. A successful empty inventory proves
+that no running owners were found and may release stale isolated assignments.
+A failed profile listing, runtime `ps`, or row parse makes the inventory
+incomplete; reclamation then preserves all uncertain assignments and reports
+the backend, profile, error, and skipped-prune reason. The allocator may use
+unassigned capacity, but a full pool remains a capacity error that includes the
+discovery failure. Increasing the pool cannot substitute for identity and
+discovery correctness.
 
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with

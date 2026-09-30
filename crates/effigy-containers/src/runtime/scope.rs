@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::policy::hosts::EffectiveHostMap;
 use crate::policy::model::{EffectiveComposeSource, EffectiveContainerPolicy};
 use crate::policy_support::effigy_home_dir;
+use effigy_gateway::loopback::project_loopback_identity;
 use effigy_gateway::routes::RouteTableLock;
 
 pub const SCOPE_LABEL: &str = "com.effigy.scope";
@@ -99,11 +100,7 @@ impl ScopeRecord {
             .iter()
             .map(|route| route.effective.clone())
             .collect::<Vec<_>>();
-        let loopback = format!(
-            "project:{}:{}",
-            policy.project_name,
-            policy.repo_root.display()
-        );
+        let loopback = project_loopback_identity(&policy.project_name, &policy.repo_root);
         let mut routes = Vec::new();
         let mut retain_routes = Vec::new();
         let mut loopback_identities = Vec::new();

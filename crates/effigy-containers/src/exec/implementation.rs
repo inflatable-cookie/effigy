@@ -80,6 +80,54 @@ impl std::fmt::Display for ContainerExecError {
 
 impl std::error::Error for ContainerExecError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInventoryFailure {
+    pub backend: String,
+    pub profile: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RunningComposeContainerInventory {
+    pub rows: Vec<RunningComposeContainerProfiled>,
+    pub failures: Vec<RuntimeInventoryFailure>,
+}
+
+impl RunningComposeContainerInventory {
+    pub fn is_complete(&self) -> bool {
+        self.failures.is_empty()
+    }
+
+    pub fn failure_summary(&self) -> Option<String> {
+        (!self.failures.is_empty()).then(|| {
+            self.failures
+                .iter()
+                .map(|failure| {
+                    format!(
+                        "{} profile `{}`: {}",
+                        failure.backend, failure.profile, failure.error
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
+    fn into_complete_rows(
+        self,
+    ) -> Result<Vec<RunningComposeContainerProfiled>, ContainerExecError> {
+        let Some(summary) = self.failure_summary() else {
+            return Ok(self.rows);
+        };
+        Err(ContainerExecError::Failure {
+            command: "container runtime inventory".to_owned(),
+            code: None,
+            stdout: format!("collected {} container rows", self.rows.len()),
+            stderr: format!("inventory is incomplete: {summary}"),
+        })
+    }
+}
+
 pub fn capture_compose_ps(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -359,11 +407,11 @@ pub fn run_compose_invocation_capture_with_env(
 
 pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>
 {
-    let mut rows = list_running_compose_containers_for_docker().unwrap_or_default();
-    for profile in running_colima_profiles(Path::new("."))? {
-        rows.extend(list_running_compose_containers_for_profile(&profile)?);
-    }
-    Ok(rows)
+    Ok(discover_running_compose_containers()
+        .into_complete_rows()?
+        .into_iter()
+        .map(|row| row.row)
+        .collect())
 }
 
 pub fn list_running_compose_containers_for_profile(
@@ -386,25 +434,63 @@ pub fn list_running_compose_containers_for_profile(
 
 pub fn list_running_compose_containers_profiled(
 ) -> Result<Vec<RunningComposeContainerProfiled>, ContainerExecError> {
-    let mut rows = list_running_compose_containers_for_docker()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|row| RunningComposeContainerProfiled {
-            profile: DOCKER_GLOBAL_RUNTIME_LABEL.to_owned(),
-            row,
-        })
-        .collect::<Vec<_>>();
-    for profile in running_colima_profiles(Path::new("."))? {
-        rows.extend(
-            list_running_compose_containers_for_profile(&profile)?
-                .into_iter()
-                .map(|row| RunningComposeContainerProfiled {
-                    profile: profile.clone(),
+    discover_running_compose_containers().into_complete_rows()
+}
+
+pub fn discover_running_compose_containers() -> RunningComposeContainerInventory {
+    collect_running_compose_container_inventory(
+        list_running_compose_containers_for_docker(),
+        running_colima_profiles(Path::new(".")),
+        list_running_compose_containers_for_profile,
+    )
+}
+
+fn collect_running_compose_container_inventory(
+    docker_rows: Result<Vec<RunningComposeContainer>, ContainerExecError>,
+    colima_profiles: Result<Vec<String>, ContainerExecError>,
+    mut profile_rows: impl FnMut(&str) -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
+) -> RunningComposeContainerInventory {
+    let mut inventory = RunningComposeContainerInventory::default();
+    match docker_rows {
+        Ok(rows) => {
+            inventory
+                .rows
+                .extend(rows.into_iter().map(|row| RunningComposeContainerProfiled {
+                    profile: DOCKER_GLOBAL_RUNTIME_LABEL.to_owned(),
                     row,
-                }),
-        );
+                }))
+        }
+        Err(error) => inventory.failures.push(RuntimeInventoryFailure {
+            backend: "docker".to_owned(),
+            profile: "default".to_owned(),
+            error: error.to_string(),
+        }),
     }
-    Ok(rows)
+    match colima_profiles {
+        Ok(profiles) => {
+            for profile in profiles {
+                match profile_rows(&profile) {
+                    Ok(rows) => inventory.rows.extend(rows.into_iter().map(|row| {
+                        RunningComposeContainerProfiled {
+                            profile: profile.clone(),
+                            row,
+                        }
+                    })),
+                    Err(error) => inventory.failures.push(RuntimeInventoryFailure {
+                        backend: "colima".to_owned(),
+                        profile,
+                        error: error.to_string(),
+                    }),
+                }
+            }
+        }
+        Err(error) => inventory.failures.push(RuntimeInventoryFailure {
+            backend: "colima".to_owned(),
+            profile: "profile-list".to_owned(),
+            error: error.to_string(),
+        }),
+    }
+    inventory
 }
 
 pub fn infer_host_working_dir_for_container(
@@ -691,4 +777,109 @@ fn run_runtime_command_capture_allow_failure_for_backend_profile(
             command: format!("{program} {}", super::process::format_args(&args)),
             error,
         })
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    fn row(project_name: &str, working_dir: &str) -> RunningComposeContainer {
+        RunningComposeContainer {
+            container_name: format!("{project_name}-1"),
+            status: "Up 10 seconds".to_owned(),
+            ports: Vec::new(),
+            project_name: Some(project_name.to_owned()),
+            working_dir: Some(working_dir.to_owned()),
+            service: Some("app".to_owned()),
+            oneoff: false,
+        }
+    }
+
+    fn failure(command: &str, stderr: &str) -> ContainerExecError {
+        ContainerExecError::Failure {
+            command: command.to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: stderr.to_owned(),
+        }
+    }
+
+    #[test]
+    fn complete_empty_inventory_is_distinct_from_discovery_failure() {
+        let inventory =
+            collect_running_compose_container_inventory(Ok(Vec::new()), Ok(Vec::new()), |_| {
+                Ok(Vec::new())
+            });
+
+        assert!(inventory.is_complete());
+        assert!(inventory.rows.is_empty());
+        assert!(inventory.failure_summary().is_none());
+    }
+
+    #[test]
+    fn profile_list_failure_marks_inventory_incomplete_with_actionable_context() {
+        let inventory = collect_running_compose_container_inventory(
+            Ok(Vec::new()),
+            Err(ContainerExecError::Launch {
+                command: "colima list --json".to_owned(),
+                error: std::io::Error::new(std::io::ErrorKind::NotFound, "colima not found"),
+            }),
+            |_| Ok(Vec::new()),
+        );
+
+        assert!(!inventory.is_complete());
+        assert_eq!(inventory.failures[0].backend, "colima");
+        assert_eq!(inventory.failures[0].profile, "profile-list");
+        assert!(inventory
+            .failure_summary()
+            .expect("failure summary")
+            .contains("colima not found"));
+    }
+
+    #[test]
+    fn profile_ps_failure_does_not_discard_rows_from_other_profiles() {
+        let inventory = collect_running_compose_container_inventory(
+            Ok(Vec::new()),
+            Ok(vec!["broken".to_owned(), "live".to_owned()]),
+            |profile| match profile {
+                "broken" => Err(failure(
+                    "colima nerdctl ps",
+                    "failed to parse docker ps row",
+                )),
+                "live" => Ok(vec![row("live-project", "/tmp/live-project")]),
+                _ => unreachable!(),
+            },
+        );
+
+        assert!(!inventory.is_complete());
+        assert_eq!(inventory.rows.len(), 1);
+        assert_eq!(inventory.rows[0].profile, "live");
+        assert_eq!(
+            inventory.rows[0].row.project_name.as_deref(),
+            Some("live-project")
+        );
+        assert_eq!(inventory.failures[0].backend, "colima");
+        assert_eq!(inventory.failures[0].profile, "broken");
+    }
+
+    #[test]
+    fn docker_launch_failure_is_reported_even_when_colima_inventory_succeeds() {
+        let inventory = collect_running_compose_container_inventory(
+            Err(ContainerExecError::Launch {
+                command: "docker ps".to_owned(),
+                error: std::io::Error::new(std::io::ErrorKind::NotFound, "docker not found"),
+            }),
+            Ok(vec!["effigy".to_owned()]),
+            |_| Ok(vec![row("live-project", "/tmp/live-project")]),
+        );
+
+        assert!(!inventory.is_complete());
+        assert_eq!(inventory.rows.len(), 1);
+        assert_eq!(inventory.failures[0].backend, "docker");
+        assert_eq!(inventory.failures[0].profile, "default");
+        assert!(inventory
+            .failure_summary()
+            .expect("failure summary")
+            .contains("docker not found"));
+    }
 }

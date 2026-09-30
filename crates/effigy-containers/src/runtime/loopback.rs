@@ -1,0 +1,94 @@
+use effigy_gateway::loopback::LoopbackRegistry;
+use effigy_gateway::routes::{RouteSource, RouteTable};
+
+use crate::exec::{RunningComposeContainer, RunningComposeContainerInventory};
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LoopbackPruneOutcome {
+    pub changed: bool,
+    pub skipped_reason: Option<String>,
+}
+
+pub fn prune_loopback_assignments(
+    registry: &mut LoopbackRegistry,
+    route_table: &RouteTable,
+    inventory: &RunningComposeContainerInventory,
+) -> LoopbackPruneOutcome {
+    if let Some(failures) = inventory.failure_summary() {
+        return LoopbackPruneOutcome {
+            changed: false,
+            skipped_reason: Some(format!(
+                "skipped stale loopback reclamation because runtime inventory is incomplete; all uncertain assignments were preserved ({failures})"
+            )),
+        };
+    }
+    let rows = inventory
+        .rows
+        .iter()
+        .map(|row| row.row.clone())
+        .collect::<Vec<_>>();
+    LoopbackPruneOutcome {
+        changed: prune_loopback_assignments_with_rows(registry, route_table, &rows),
+        skipped_reason: None,
+    }
+}
+
+pub fn prune_loopback_assignments_with_rows(
+    registry: &mut LoopbackRegistry,
+    route_table: &RouteTable,
+    rows: &[RunningComposeContainer],
+) -> bool {
+    let active_identities = rows
+        .iter()
+        .flat_map(|row| {
+            let mut identities = Vec::new();
+            if let Some(project_name) = row.project_name.as_deref() {
+                identities.push(project_name.to_owned());
+                identities.push(format!("shared:{project_name}"));
+                if let Some(working_dir) = row.working_dir.as_deref() {
+                    identities.push(format!("project:{project_name}:{working_dir}"));
+                    identities.push(format!("shared:{project_name}:{working_dir}"));
+                }
+            }
+            identities
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let active_projects = rows
+        .iter()
+        .filter_map(|row| row.working_dir.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    let active_names_without_working_dir = rows
+        .iter()
+        .filter(|row| row.working_dir.is_none())
+        .filter_map(|row| row.project_name.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    let active_ips = route_table
+        .all_routes()
+        .into_iter()
+        .filter(|route| route.source == RouteSource::Container)
+        .filter_map(|route| {
+            route
+                .dns_ip
+                .filter(|_| active_projects.contains(route.project.as_str()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let stale = registry
+        .assignments
+        .iter()
+        .filter(|(identity, assignment)| {
+            let project_name_is_ambiguous = active_names_without_working_dir
+                .iter()
+                .any(|name| identity.starts_with(&format!("project:{name}:")));
+            !active_identities.contains(identity.as_str())
+                && !active_ips.contains(&assignment.ip)
+                && !identity.starts_with("shared:")
+                && !project_name_is_ambiguous
+        })
+        .map(|(identity, _)| identity.clone())
+        .collect::<Vec<_>>();
+    let changed = !stale.is_empty();
+    for identity in stale {
+        registry.deallocate(&identity);
+    }
+    changed
+}
