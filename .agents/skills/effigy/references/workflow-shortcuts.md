@@ -73,6 +73,11 @@ repository's docs selector once when docs changed. Record each exit status;
 for a background command, record its PID and stop only that process or group.
 Effigy selectors preserve host-wide admission for admission-aware work.
 
+For declaring ordinary path and package gaps in QA groups, including how a
+matching gap takes precedence over member coverage, see the QA-group scope
+section in `docs/guides/081-bounded-qa-groups-workflow.md` and its linked
+contract and architecture references.
+
 The planner owns full `effigy qa` on `main` at Queue milestones. It is not the
 default per-task or pre-push recommendation. See
 `docs/guides/080-host-wide-validation-admission.md` for binary and admission
