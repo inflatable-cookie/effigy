@@ -149,6 +149,14 @@ fn resolve_named_skill_source(selector: &str) -> Result<TaskSourceContext, Runne
             "named skill `{skill_name}` cannot be resolved because the home directory is unavailable; pass --path <SKILL_DIR|EFFIGY_TOML>"
         ))
     })?;
+    resolve_named_global_skill_source(&home, skill_name, &invocation_cwd)
+}
+
+fn resolve_named_global_skill_source(
+    home: &Path,
+    skill_name: &str,
+    invocation_cwd: &Path,
+) -> Result<TaskSourceContext, RunnerError> {
     let mut candidates = Vec::<PathBuf>::new();
     for root in GLOBAL_SKILL_ROOTS {
         let candidate = home.join(root).join(skill_name);
@@ -633,5 +641,76 @@ fn parse_task_output(output: &str) -> Value {
         Value::Null
     } else {
         serde_json::from_str(output).unwrap_or_else(|_| Value::String(output.to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod installed_skill_tests {
+    use super::resolve_named_global_skill_source;
+    use std::path::{Path, PathBuf};
+
+    fn temp_home(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-installed-skill-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temporary home");
+        root
+    }
+
+    fn write_skill(root: &Path) {
+        std::fs::create_dir_all(root).expect("skill root");
+        std::fs::write(root.join("SKILL.md"), "---\nname: effigy\n---\n").expect("skill marker");
+        std::fs::write(root.join("effigy.toml"), "[tasks]\nping = \"printf ok\"\n")
+            .expect("skill manifest");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_named_skill_lookup_collapses_global_symlink_aliases() {
+        let home = temp_home("symlink-alias");
+        let source = home.join(".agents/skills/effigy");
+        write_skill(&source);
+        let alias = home.join(".claude/skills/effigy");
+        std::fs::create_dir_all(alias.parent().expect("alias parent"))
+            .expect("alias parent directory");
+        std::os::unix::fs::symlink(&source, &alias).expect("skill alias");
+
+        let resolved = resolve_named_global_skill_source(&home, "effigy", &home)
+            .expect("symlink aliases are one install");
+        assert_eq!(
+            resolved.source_root,
+            std::fs::canonicalize(&source).unwrap()
+        );
+        assert!(resolved
+            .resolution_evidence
+            .iter()
+            .any(|line| line.contains("canonical source root")));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn init_named_skill_lookup_rejects_distinct_global_roots() {
+        let home = temp_home("distinct-roots");
+        write_skill(&home.join(".agents/skills/effigy"));
+        write_skill(&home.join(".cursor/skills/effigy"));
+
+        let error = resolve_named_global_skill_source(&home, "effigy", &home)
+            .expect_err("distinct installations must fail closed");
+        assert!(error
+            .to_string()
+            .contains("ambiguous across distinct global skill roots"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn init_named_skill_lookup_reports_missing_global_install() {
+        let home = temp_home("missing");
+        let error = resolve_named_global_skill_source(&home, "effigy", &home)
+            .expect_err("missing installation must be explicit");
+        assert!(error.to_string().contains("was not found"));
+        assert!(error.to_string().contains("install the skill"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

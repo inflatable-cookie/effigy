@@ -560,6 +560,8 @@ fn render_init_help_shows_phase_scope() {
     assert!(rendered.contains("effigy init <name> [--dry-run] [--force] [--json]"));
     assert!(rendered.contains("effigy init --list [--json]"));
     assert!(rendered.contains("plain `effigy init` creates missing baseline"));
+    assert!(rendered.contains("does not create a project-local Effigy skill copy"));
+    assert!(rendered.contains("skill.codex_project"));
     assert!(rendered.contains("real TTYs"));
     assert!(rendered.contains("--list"));
     assert!(rendered.contains("--check"));

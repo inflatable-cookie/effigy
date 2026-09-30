@@ -10,7 +10,7 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         &[
             "Idempotently prepare the current repo for human and agent use.",
             "Plain `effigy init` now prompts through bounded setup phases when stdin/stdout are real TTYs and no conflicting flags are supplied.",
-            "With no starter name, non-interactive init still creates missing baseline files and managed agent surfaces without replacing existing project files.",
+            "With no starter name, non-interactive init creates managed baseline files without replacing existing project files or copying the shared Effigy skill.",
             "Multi-file starters write every declared target; nested parent directories are created automatically.",
             "An existing root `README.md` is never overwritten unless `--force` is set (other targets still use the normal conflict rules).",
         ],
@@ -73,10 +73,12 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         "Starter Scope",
         "init scope",
         &[
-            "plain `effigy init` creates missing baseline `effigy.toml`, README, `AGENTS.md`, `.agents/skills/effigy`, and local Effigy ignore rules",
+            "plain `effigy init` creates missing baseline `effigy.toml`, README, managed `AGENTS.md` guidance, and local Effigy ignore rules; it does not create a project-local Effigy skill copy",
             "plain TTY `effigy init` prompts for baseline setup and runnable setup jobs such as task migration, graph indexing, bundle inspection, and secrets inspection; health checks stay as next-step guidance",
             "existing project `effigy.toml` and `README.md` files are preserved by the plain initializer",
-            "the vendored `.agents/skills/effigy` tree is the repo-authoritative internal skill copy; treat global installs as fallback only",
+            "the installed shared Effigy Agent Skill is the maintained guidance source; init reports supported user-root discovery and never downloads, creates, or refreshes local/global skill copies by default",
+            "`skill.codex_project` remains an explicit `--apply-actions` opt-in that snapshots maintained skill files into `.agents/skills/effigy`; matching local files may be replaced, and additional local files are preserved",
+            "init reports filesystem discovery only; a fresh agent context is required to confirm newly loaded guidance, and the Effigy executable must be checked separately",
             "named starters can emit system, workspace, and managed-dev files as one scaffold",
             "`effigy init --check --json` reports a machine-readable initiation checklist without mutating the repo",
             "`effigy init --checklist --json` reports the wider setup inventory with applicability, safety class, and recommended commands",

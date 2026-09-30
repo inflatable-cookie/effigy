@@ -18,7 +18,7 @@ fn temp_root(name: &str) -> PathBuf {
 }
 
 #[test]
-fn inventory_detects_contextual_setup_surfaces() {
+fn init_inventory_detects_contextual_setup_surfaces() {
     let root = temp_root("context");
     fs::write(
         root.join("package.json"),
@@ -43,6 +43,19 @@ fn inventory_detects_contextual_setup_surfaces() {
         .any(|job| job.id == "bundle_sync.run" && job.category == SetupCategory::Bundles));
     assert!(jobs.iter().any(|job| job.id == "secrets_vault.init"));
     assert!(jobs.iter().any(|job| job.id == "release_surface.inspect"));
+    let skill_snapshot = jobs
+        .iter()
+        .find(|job| job.id == "skill.codex_project")
+        .expect("optional skill snapshot action");
+    assert_eq!(
+        skill_snapshot.applicability,
+        SetupApplicability::AlreadySatisfied
+    );
+    assert!(skill_snapshot.summary.contains("explicit opt-in"));
+    assert!(skill_snapshot
+        .recommended_command
+        .as_deref()
+        .is_some_and(|command| command.contains("skill.codex_project")));
 }
 
 #[test]

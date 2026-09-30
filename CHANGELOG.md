@@ -167,6 +167,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Plain `effigy init` no longer creates, refreshes, downloads, or installs a
+  project-local Effigy skill snapshot. It preserves existing local skill files
+  and reports installed guidance roots, canonical symlink aliases, missing
+  installs, and distinct-root ambiguity. The stable `skill.codex_project`
+  action remains an explicit opt-in snapshot and warns that maintained local
+  paths may be replaced. Managed `AGENTS.md` points to the installed shared
+  skill; fresh agent discovery and the executable on `PATH` must be verified
+  separately.
 - Vitest auto-detection requires package-owned evidence (`package.json`
   dependency/script, `vitest.config.*`, or `vite.config.*` with a `test`
   block, including `.cts`). A transitive `node_modules/.bin/vitest` is not

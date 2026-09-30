@@ -27,20 +27,44 @@ impl JobClass {
 pub(super) fn baseline_jobs(checks: &[AgentCheck]) -> Vec<SetupJob> {
     checks
         .iter()
-        .map(|check| SetupJob {
-            id: check.id().to_owned(),
-            category: SetupCategory::Baseline,
-            execution_kind: SetupExecutionKind::Apply,
-            safety_class: SetupSafetyClass::SafeApply,
-            applicability: if check.needs_change() {
-                SetupApplicability::Applicable
+        .map(|check| {
+            let skill_snapshot = check.is_skill_snapshot();
+            let mut reason = if skill_snapshot {
+                check.detail().unwrap_or_default().to_owned()
             } else {
-                SetupApplicability::AlreadySatisfied
-            },
-            summary: check.action_description(),
-            reason: String::new(),
-            recommended_command: Some("effigy init --apply".to_owned()),
-            can_run_noninteractive: true,
+                String::new()
+            };
+            if skill_snapshot {
+                reason.push_str(
+                    "; optional snapshot opt-in: maintained files at matching local paths may be replaced, while extra local files are kept",
+                );
+            }
+            SetupJob {
+                id: check.id().to_owned(),
+                category: SetupCategory::Baseline,
+                execution_kind: SetupExecutionKind::Apply,
+                safety_class: SetupSafetyClass::SafeApply,
+                applicability: if skill_snapshot {
+                    SetupApplicability::AlreadySatisfied
+                } else if check.needs_change() {
+                    SetupApplicability::Applicable
+                } else {
+                    SetupApplicability::AlreadySatisfied
+                },
+                summary: if skill_snapshot {
+                    "Create or refresh a repo-local Effigy skill snapshot (explicit opt-in)."
+                        .to_owned()
+                } else {
+                    check.action_description()
+                },
+                reason,
+                recommended_command: Some(if skill_snapshot {
+                    "effigy init --apply-actions skill.codex_project".to_owned()
+                } else {
+                    "effigy init --apply".to_owned()
+                }),
+                can_run_noninteractive: true,
+            }
         })
         .collect()
 }

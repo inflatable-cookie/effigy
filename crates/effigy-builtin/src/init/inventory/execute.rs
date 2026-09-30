@@ -142,7 +142,15 @@ fn execute_baseline_job(
     } else {
         SetupActionStatus::Skipped
     };
-    Ok((status, None, check.action_description()))
+    let reason = if matches!(job, AgentInitJob::SkillTree) {
+        format!(
+            "explicit opt-in snapshot; matching maintained files may be replaced and extra files are kept; {}",
+            check.detail().unwrap_or("skill snapshot inspected")
+        )
+    } else {
+        check.action_description()
+    };
+    Ok((status, None, reason))
 }
 
 fn execute_delegated_job(

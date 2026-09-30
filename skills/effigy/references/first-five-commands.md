@@ -32,27 +32,23 @@ resolution itself is the task.
 
 ## 2. `effigy tasks`
 
-List all tasks the repo defines or composes. Aggregator tasks
-(`qa:ci:fast`, `qa`, etc.) appear with their underlying chain expanded.
+List the tasks the repo defines or composes. A composed task appears with its
+underlying chain expanded.
 
 Expected: a flat or grouped list like:
 
 ```
-test
-fmt:check
-build:release
-qa:ci:fast
-  ↳ bash -lc 'if cargo nextest --version ...'
-  ↳ cargo test --doc
-  ↳ qa:released-surface
-  ↳ qa:ci:json
+dev
+api/test
+web/build
 ```
 
 If the list is empty, the repo doesn't define tasks — it may rely entirely on
 built-ins (`test`, `init`, `doctor`, …) or only nested-catalog tasks you have
 not opened yet.
 
-Use this when you need runnable selectors, QA entrypoints, or task inventory.
+Use this when you need task inventory or the selectors named by the current
+work brief.
 
 ## 3. `effigy test --plan`
 

@@ -8,6 +8,30 @@ Created: 2026-08-31
 Define explicit execution of tasks shipped inside an installed skill while the
 consuming repository remains Effigy's runtime target.
 
+## Guidance and Executable Channels
+
+Effigy's maintained agent guidance lives in `skills/effigy/` and is distributed
+as an installed Agent Skill. Plain `effigy init` does not create, update, or
+install a project-local skill copy. Existing `.agents/skills/effigy` content is
+preserved as project data; it is not the maintained guidance baseline.
+The stable `skill.codex_project` init action remains an explicit snapshot
+opt-in: it writes the maintained files under that path, may replace matching
+local files, and leaves additional local files in place.
+
+Agent Skill discovery and Effigy's executable are separate. A skill file on
+disk does not prove that a current agent session loaded it, and it does not
+prove that the `effigy` binary on `PATH` supports current commands. Verify
+fresh agent discovery separately from binary provenance. For host-wide
+validation support, probe the resolved binary with
+`effigy admission status --json` and require the
+`effigy.admission.status.v1` result schema.
+
+The task-source rules below still apply independently: when no explicit
+`--path` is supplied, the invocation project's `.agents/skills/<skill>` task
+catalog takes precedence over global task catalogs, and distinct global task
+sources remain ambiguous. A local task catalog can be intentional without
+becoming the canonical agent guidance source.
+
 ## Command Contract
 
 Supported commands:

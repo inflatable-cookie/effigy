@@ -40,5 +40,5 @@ target = "effigy.toml"
 
 [guidance]
 text = """
-Fill in AGENTS.md, docs/knowledge/vision.md, and the release procedure. Keep the plan, leads, papercuts, brief drafts, tasks and outcomes in Queue. Run `effigy qa` before the first PR. The committed `[docs_policy.graph]` profile is the repository's own documentation authority.
+Fill in AGENTS.md, docs/knowledge/vision.md, and the release procedure. Keep the plan, leads, papercuts, brief drafts, tasks and outcomes in Queue. Workers use the current brief's targeted Effigy selectors for changed-code tests and touched-target compilation, plus one docs check when needed; the planner runs full `effigy qa` on `main` at Queue milestones. The committed `[docs_policy.graph]` profile is the repository's own documentation authority.
 """

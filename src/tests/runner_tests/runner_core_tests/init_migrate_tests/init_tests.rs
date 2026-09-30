@@ -17,7 +17,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
             "manifest.effigy_toml [created]",
             "readme.project_intro [created]",
             "agents_md.effigy_contract [created]",
-            "skill.codex_project [created]",
+            "skill.codex_project [present]",
         ],
     );
     assert_file_text_contains_all(
@@ -39,7 +39,13 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
             "BEGIN EFFIGY AGENT CONTRACT",
             "Route by job",
             "effigy graph",
+            "installed shared Agent Skill",
+            "fresh agent context",
         ],
+    );
+    assert_path_missing(
+        &root.join(".agents/skills/effigy/SKILL.md"),
+        "fresh init does not vendor the shared skill",
     );
 
     let listed = run_tasks(TasksArgs {
@@ -198,14 +204,9 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
             "effigy graph",
         ],
     );
-    assert_file_text_contains_all(
+    assert_path_missing(
         &root.join(".agents/skills/effigy/SKILL.md"),
-        &[
-            "name: effigy",
-            "metadata:",
-            "internal: true",
-            "Agent routing",
-        ],
+        "default init does not create the project skill snapshot",
     );
     assert_file_text_contains_all(
         &root.join(".gitignore"),
@@ -221,6 +222,54 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
             "\"status\": \"ok\"",
             "\"needs_changes\": false",
         ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_keeps_local_skill_opt_in_and_preserves_custom_files() {
+    let root = temp_workspace("builtin-init-skill-opt-in");
+
+    let opted_in = run_builtin_ok(
+        root.to_path_buf(),
+        "init",
+        &["--apply-actions", "skill.codex_project", "--json"],
+    );
+    assert_output_contains_all(
+        &opted_in,
+        &[
+            "skill.codex_project",
+            "explicit opt-in snapshot",
+            "\"status\": \"applied\"",
+        ],
+    );
+    let local_skill = root.join(".agents/skills/effigy");
+    std::fs::write(
+        local_skill.join("SKILL.md"),
+        "# Local Effigy customization\n",
+    )
+    .expect("customize local skill");
+    std::fs::write(local_skill.join("local-notes.md"), "keep this file\n")
+        .expect("add local skill file");
+
+    run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
+    assert_file_text_contains_all(
+        &local_skill.join("SKILL.md"),
+        &["# Local Effigy customization"],
+    );
+    assert_file_text_contains_all(&local_skill.join("local-notes.md"), &["keep this file"]);
+
+    std::fs::remove_dir_all(&local_skill).expect("simulate consumer skill removal");
+    let reinitialized = run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
+    assert_output_contains_all(
+        &reinitialized,
+        &[
+            "skill.codex_project [present]",
+            "no project-local skill is required",
+        ],
+    );
+    assert_path_missing(
+        &local_skill.join("SKILL.md"),
+        "plain init does not restore a removed local skill",
     );
 }
 
@@ -242,6 +291,8 @@ fn run_manifest_task_builtin_init_checklist_json_reports_setup_inventory() {
             "\"jobs\":",
             "\"id\": \"task_migration.package_json\"",
             "\"id\": \"graph_status.inspect\"",
+            "\"id\": \"skill.codex_project\"",
+            "Create or refresh a repo-local Effigy skill snapshot (explicit opt-in).",
             "\"can_run_noninteractive\": true",
         ],
     );

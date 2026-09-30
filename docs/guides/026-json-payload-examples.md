@@ -2253,7 +2253,7 @@ Baseline managed init (`effigy init --check --json` / `--apply --json` / `--repa
   "schema_version": 1,
   "ok": true,
   "mode": "check",
-  "status": "ok",
+  "status": "needs_changes",
   "changed": false,
   "needs_changes": true,
   "checks": [
@@ -2268,11 +2268,18 @@ Baseline managed init (`effigy init --check --json` / `--apply --json` / `--repa
       "id": "agents_md.effigy_contract",
       "path": "/workspace/app/AGENTS.md",
       "status": "would_update",
-      "action": "insert_managed_block",
-      "description": "Insert or refresh the managed Effigy agent contract block."
+      "action": "upsert_block",
+      "detail": null
+    },
+    {
+      "id": "skill.codex_project",
+      "path": ".agents/skills/effigy",
+      "status": "present",
+      "action": "inspect_skill_guidance",
+      "detail": "no project-local skill is required; installed Effigy guidance found at canonical root /Users/example/.agents/skills/effigy"
     }
   ],
-  "text": "Effigy init check: needs changes\n..."
+  "text": "Effigy init check: needs_changes\n..."
 }
 ```
 
@@ -2303,6 +2310,17 @@ Checklist inventory (`effigy init --checklist --json`):
       "summary": "Create the root effigy.toml scaffold.",
       "reason": "effigy.toml is missing",
       "recommended_command": "effigy init --apply"
+    },
+    {
+      "id": "skill.codex_project",
+      "category": "baseline",
+      "execution_kind": "apply",
+      "safety_class": "safe_apply",
+      "applicability": "already_satisfied",
+      "can_run_noninteractive": true,
+      "summary": "Create or refresh a repo-local Effigy skill snapshot (explicit opt-in).",
+      "reason": "no project-local skill is required; installed Effigy guidance found at canonical root /Users/example/.agents/skills/effigy; matching maintained files may be replaced",
+      "recommended_command": "effigy init --apply-actions skill.codex_project"
     },
     {
       "id": "graph_status.inspect",
@@ -2357,6 +2375,8 @@ Notes:
 - `effigy.init.v1` now covers the baseline managed setup flow and still also
   covers explicit starter emission
 - checklist mode is a wider setup inventory than baseline `--check`
+- `skill.codex_project` is already satisfied by default; select it explicitly
+  to create or refresh the optional project-local snapshot
 - action execution reports per-action `applied`, `inspected`, `guided`,
   `blocked`, `skipped`, or `failed` outcomes
 

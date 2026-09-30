@@ -47,9 +47,15 @@ Agents should assume:
 - `effigy test --plan` is inspection only and never executes suite steps
 - shell wrappers and direct scripts are compatibility or external-contract
   surfaces unless the repo explicitly documents otherwise
-- a vendored `.agents/skills/effigy` copy is repo-authoritative when present,
-  and may be marked internal so generic `npx skills` repo scans do not treat it
-  as the public install source
+- current Effigy agent guidance comes from the installed shared Agent Skill;
+  repository facts and local workflow belong in `AGENTS.md` and their owning
+  knowledge files
+- a project-local `.agents/skills/effigy` directory is optional project data;
+  init preserves it, while named `effigy skill run` task lookup still gives it
+  precedence over global task sources by contract 042
+- skill instructions and the `effigy` executable are separate channels; a
+  fresh skill install does not prove the binary on `PATH` is current or
+  admission-capable
 - task cost follows one explicit ladder: `health` is cheap orientation,
   `validate` is the mid gate, and `qa` is the full board; never map `health`
   directly or transitively to `qa` because doctor delegates to `tasks.health`
@@ -184,26 +190,35 @@ For agents working in repos that use Effigy but don't host Effigy-specific
 guidance, install the bundled agent skill:
 
 ```bash
-npx skills add inflatable-cookie/effigy
+npx skills add inflatable-cookie/effigy -g
 ```
 
 For project-local adoption managed by Effigy itself, use:
 
 ```bash
 effigy init --checklist --json
-effigy init --apply-actions manifest.effigy_toml,agents_md.effigy_contract,skill.codex_project,gitignore.effigy_local_state --json
+effigy init --apply-actions manifest.effigy_toml,agents_md.effigy_contract,gitignore.effigy_local_state --json
 effigy init
 ```
 
 The checklist mode reports the wider setup inventory with applicability, safety
 class, and recommended commands. Plain `effigy init` writes only deterministic
 managed surfaces and preserves existing project manifests and READMEs, while
-prompting only when the call is on a real TTY without conflicting flags.
+prompting only when the call is on a real TTY without conflicting flags. It
+does not create, refresh, download, or install an Effigy skill. Its
+`skill.codex_project` checklist row reports current local and installed skill
+state, and the action remains available only as an explicit snapshot opt-in:
 
-When both a project-local and global Effigy skill are present, treat the
-project-local `.agents/skills/effigy` copy as authoritative for that repo. The
-global install is fallback convenience, not the source of truth for a vendored
-project skill.
+```bash
+effigy init --apply-actions skill.codex_project --json
+```
+
+That action writes the maintained skill files into
+`.agents/skills/effigy`; files at matching maintained paths may be replaced,
+while additional local files remain. Plain init preserves an existing local
+copy and does not restore one after it is removed. This keeps intentional
+project-local skill task sources available without treating a frozen copy as
+the current guidance baseline.
 
 The skill follows the open
 [Agent Skills](https://agentskills.io/specification) standard and works in
@@ -216,17 +231,79 @@ JSON envelopes, graph-first code navigation, config shapes, and release
 protocol. Agents read the
 references on demand without re-fetching the front door.
 
-Manual install for agents `npx skills` doesn't cover:
-
-```bash
-mkdir -p ~/.claude/skills && cp -r skills/effigy ~/.claude/skills/effigy
-mkdir -p ~/.agents/skills && cp -r skills/effigy ~/.agents/skills/effigy
-mkdir -p ~/.cursor/skills && cp -r skills/effigy ~/.cursor/skills/effigy
-```
-
 The skill is the recommended cross-repo entry point. The `AGENTS.md` snippet
 in section 3 still serves repos that want Effigy-first execution baked into
 their own project instructions; the two are complementary.
+
+Effigy named task lookup supports installed roots under `~/.agents/skills`,
+`~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`. Resolve each
+candidate through symlinks before comparing paths: aliases to the same
+canonical directory count once. Distinct matching roots are ambiguous; the
+named task resolver fails closed and names the candidates. Init reports the
+filesystem state but does not resolve conflicts by copying or deleting files.
+
+Filesystem presence does not prove that an agent loaded the latest skill.
+Existing sessions may retain earlier instructions. After a refresh, start a
+fresh agent context and ask it to identify the installed Effigy skill path; do
+not treat `effigy init --check` as evidence of observed agent discovery.
+Before relying on removed consumer-local paths, explicitly read `SKILL.md`
+from the chosen canonical install root and verify discovery in a fresh context.
+
+### Refresh an existing global skill
+
+Use the skill tree from the reviewed Effigy checkout. First inventory the
+supported roots and resolve symlinks. If they point to one canonical directory,
+refresh that directory once. If there are distinct copies, stop and choose one
+before continuing; do not overwrite all copies or remove provider aliases.
+
+```sh
+EFFIGY_CHECKOUT=/path/to/reviewed/effigy
+for candidate in \
+  "$HOME/.agents/skills/effigy" \
+  "$HOME/.codex/skills/effigy" \
+  "$HOME/.claude/skills/effigy" \
+  "$HOME/.cursor/skills/effigy"; do
+  if [ -f "$candidate/SKILL.md" ]; then
+    printf '%s -> %s\n' "$candidate" "$(cd "$candidate" && pwd -P)"
+  fi
+done
+```
+
+Choose the canonical root shown above, then back it up and copy the reviewed
+maintained files over it. Extra local files and symlink aliases are left alone.
+Edits to files with the same names as maintained files are recoverable from the
+backup.
+
+```sh
+EFFIGY_SKILL_SOURCE="$EFFIGY_CHECKOUT/skills/effigy"
+EFFIGY_SKILL_ROOT="$HOME/.agents/skills/effigy" # replace with the chosen root
+EFFIGY_CANONICAL_ROOT="$(cd "$EFFIGY_SKILL_ROOT" && pwd -P)"
+EFFIGY_SKILL_BACKUP="${EFFIGY_CANONICAL_ROOT}.backup-$(date +%Y%m%d%H%M%S)"
+cp -a "$EFFIGY_CANONICAL_ROOT" "$EFFIGY_SKILL_BACKUP"
+cp -a "$EFFIGY_SKILL_SOURCE/." "$EFFIGY_CANONICAL_ROOT/"
+cmp "$EFFIGY_SKILL_SOURCE/SKILL.md" "$EFFIGY_CANONICAL_ROOT/SKILL.md"
+```
+
+To roll back, copy the backup contents over the canonical root. If the refresh
+added maintained files, remove only those new files after checking they have no
+local changes. Keep custom files and aliases in place.
+
+```sh
+cp -a "$EFFIGY_SKILL_BACKUP/." "$EFFIGY_CANONICAL_ROOT/"
+```
+
+Then verify discovery in a fresh agent session. Separately check the resolved
+Effigy executable from the consumer checkout:
+
+```sh
+command -v effigy
+effigy admission status --json
+```
+
+The admission query must return `effigy.admission.status.v1`; a version string
+alone does not prove that the binary supports the host-wide validation
+coordinator. Skill lookup and binary capability are independent. See
+[`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md).
 
 ## 4) Minimum Adoption Criteria
 
