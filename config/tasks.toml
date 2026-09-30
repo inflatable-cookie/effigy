@@ -30,6 +30,7 @@
 "test:qa-groups:identity" = "cargo test -p effigy-process --lib identity -- --nocapture"
 "test:qa-groups:cli" = "cargo test --test cli_output_tests qa_groups_tests -- --nocapture"
 "test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
+"test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
