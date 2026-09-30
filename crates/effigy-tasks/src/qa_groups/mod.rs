@@ -398,6 +398,82 @@ pub(crate) fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Deterministic digest over a maintained group's validated definition
+/// content.
+///
+/// Temporary groups digest their raw file bytes; maintained groups share the
+/// composed manifest with unrelated content, so their identity digest covers
+/// exactly the validated fields in a fixed order. Any definition edit
+/// changes the digest; unrelated manifest edits do not.
+pub fn canonical_definition_digest(group: &effigy_manifest::ManifestQaGroup) -> String {
+    let mut canonical = String::new();
+    let mut push = |label: &str, value: &str| {
+        canonical.push_str(label);
+        canonical.push('=');
+        canonical.push_str(value);
+        canonical.push('\n');
+    };
+    push("lifecycle", group.lifecycle.as_str());
+    push("name", &group.name);
+    push("catalog", group.catalog.as_deref().unwrap_or(""));
+    push(
+        "created",
+        &group.created.map(|date| date.as_iso()).unwrap_or_default(),
+    );
+    push(
+        "expires",
+        &group.expires.map(|date| date.as_iso()).unwrap_or_default(),
+    );
+    push("purpose", &group.purpose);
+    push("scope_policy", group.scope_policy.as_str());
+    push(
+        "expected_wall_ms",
+        &group
+            .expected_wall_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    push(
+        "expectation_basis",
+        group.expectation_basis.as_deref().unwrap_or(""),
+    );
+    for gap in &group.coverage_gaps {
+        push(
+            "coverage_gap",
+            &format!("{}|{}", gap.input.as_token(), gap.reason),
+        );
+    }
+    for limit in &group.proof_limits {
+        push("proof_limit", limit);
+    }
+    for member in &group.members {
+        push("member.id", &member.id);
+        push("member.kind", member.kind.as_str());
+        push("member.surface", member.surface.as_str());
+        push("member.catalog", member.catalog.as_deref().unwrap_or(""));
+        push("member.task", &member.task);
+        for arg in &member.args {
+            push("member.arg", arg);
+        }
+        for target in &member.targets {
+            push("member.target", &target.as_token());
+        }
+        for cover in &member.covers {
+            push("member.cover", &cover.as_token());
+        }
+        for companion in &member.companions {
+            push("member.companion", companion);
+        }
+        for limit in &member.limits {
+            push("member.limit", limit);
+        }
+    }
+    format!(
+        "sha256:{}",
+        hex_digest(Sha256::digest(canonical.as_bytes()).as_slice())
+    )
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::collections::BTreeSet;
@@ -712,6 +788,40 @@ members = [{ id = "one", kind = "test", surface = "published", task = "t", targe
         .expect_err("unknown alias must fail");
         assert!(error.to_string().contains("ghost"), "{error}");
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn canonical_digest_is_stable_across_identical_definitions() {
+        let group_one = parse_group_with_purpose("same purpose");
+        let group_two = parse_group_with_purpose("same purpose");
+        let digest_one = super::canonical_definition_digest(&group_one);
+        let digest_two = super::canonical_definition_digest(&group_two);
+        assert_eq!(digest_one, digest_two);
+        assert!(digest_one.starts_with("sha256:"));
+
+        let changed = parse_group_with_purpose("a different purpose");
+        assert_ne!(digest_one, super::canonical_definition_digest(&changed));
+
+        let mut different_member = parse_group_with_purpose("same purpose");
+        different_member.members[0].args.push("extra".to_owned());
+        assert_ne!(
+            digest_one,
+            super::canonical_definition_digest(&different_member)
+        );
+    }
+
+    fn parse_group_with_purpose(purpose: &str) -> effigy_manifest::ManifestQaGroup {
+        let table: effigy_manifest::ManifestQaGroupTable = toml::from_str(&format!(
+            r#"
+lifecycle = "maintained"
+purpose = "{purpose}"
+scope_policy = "advisory"
+proof_limits = ["bounded"]
+members = [{{ id = "m", kind = "test", surface = "published", task = "t", args = ["-p"], targets = ["workspace:root"], limits = ["nothing"] }}]
+"#
+        ))
+        .expect("parse group fixture");
+        table.into_manifest_group(Some("dig")).expect("valid group")
     }
 
     #[test]

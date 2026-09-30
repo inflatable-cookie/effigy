@@ -21,7 +21,9 @@ During v0.x, MINOR bumps may include breaking changes.
   tokens and reasons before any run exists; a declared match still runs
   every member. Heavy groups take one host-wide admission lease that nested
   task references reuse, with wait reported separately from execution;
-  over-budget evidence never changes check outcomes. `tasks qa-group stop`
+  over-budget evidence never changes check outcomes. Member records carry
+  the task's real exit code (including 130, classified as cancellation for
+  the member and the group), never a placeholder. `tasks qa-group stop`
   and `hard_timeout_ms` parse only to be refused before any side effect:
   run-scoped stop/signal attribution (lead `29e5f6f7`) has not landed, and
   interrupted runs reconcile to `unknown`, never a pass. Payload schemas:

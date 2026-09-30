@@ -9,6 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use effigy_secrets::{
+    local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue, VaultPlaintextPayload,
+    VaultSecretRecord,
+};
 use serde_json::Value;
 
 use super::support::{parse_stdout_json, temp_workspace};
@@ -27,12 +31,19 @@ fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
 }
 
 fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
+    run_effigy_json_with_env(root, args, &[])
+}
+
+fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.arg("--json");
     for arg in args {
         command.arg(arg);
     }
     command.arg("--repo").arg(root).env("NO_COLOR", "1");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
     let output = command.output().expect("run effigy json");
     assert!(
         output.status.success(),
@@ -41,6 +52,27 @@ fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     parse_stdout_json(&output)
+}
+
+/// A hermetic host-admission store for tests that exercise heavy runs.
+///
+/// Heavy work acquires a host-wide lease; pointing `EFFIGY_ADMISSION_DIR` at
+/// this directory keeps the test independent of (and polite to) the shared
+/// machine gate. The directory must pre-exist with setgid group-writable
+/// permissions, matching admission's shared-directory requirements.
+fn private_admission_dir(root: &Path, name: &str) -> PathBuf {
+    let dir = root
+        .parent()
+        .unwrap()
+        .join(format!("{name}-{}", std::process::id()));
+    fs::create_dir(&dir).expect("create private admission dir");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, PermissionsExt::from_mode(0o2770))
+            .expect("secure private admission dir");
+    }
+    dir
 }
 
 fn write_manifest(root: &Path, body: &str) {
@@ -603,10 +635,26 @@ run = "echo light-ok"
         .unwrap();
     assert!(light.get("admission").is_none());
 
-    // The inventory `--json` shape stays additive; direct run works.
-    let payload = run_effigy_json(&root, &["draft", "heavy-probe"]);
+    // The inventory `--json` shape stays additive; a direct heavy draft run
+    // acquires its own lease. The private admission store keeps this
+    // hermetic: it must never wait on the shared machine gate.
+    let admission_dir = private_admission_dir(&root, "effigy-qa-draft-heavy-admission");
+    let payload = run_effigy_json_with_env(
+        &root,
+        &["draft", "heavy-probe"],
+        &[("EFFIGY_ADMISSION_DIR", &admission_dir)],
+    );
     assert_eq!(payload["result"]["surface_identity"]["admission"], "heavy");
     assert_eq!(payload["result"]["ok"], true);
+
+    // Exactly one lease record for the direct heavy draft.
+    let store: Value = serde_json::from_str(
+        &fs::read_to_string(admission_dir.join("state.json")).expect("admission state"),
+    )
+    .expect("valid admission store");
+    let runs = store["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["exit_classification"], "succeeded");
 }
 
 #[test]
@@ -653,17 +701,7 @@ run = "echo nested-ok"
     // Execute against a private host admission store; one group lease must
     // cover the heavy member and its nested task references without a
     // second-lease deadlock, and the run completes.
-    let admission_dir = root
-        .parent()
-        .unwrap()
-        .join(format!("effigy-qa-admission-{}", std::process::id()));
-    fs::create_dir(&admission_dir).expect("create admission dir");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&admission_dir, PermissionsExt::from_mode(0o2770))
-            .expect("secure admission dir");
-    }
+    let admission_dir = private_admission_dir(&root, "effigy-qa-admission");
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command
@@ -708,6 +746,235 @@ run = "echo nested-ok"
         .collect();
     assert_eq!(group_runs.len(), 1, "one group lease, not one per member");
     assert_eq!(group_runs[0]["exit_classification"], "succeeded");
+}
+
+#[test]
+fn member_exit_codes_are_recorded_honestly_including_cancellation() {
+    let root = temp_workspace("qa-groups-exit-codes");
+    write_manifest(
+        &root,
+        r#"
+[qa.groups.fails]
+lifecycle = "maintained"
+purpose = "Real exit code propagation"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [
+  { id = "boom", kind = "test", surface = "published", task = "exit7", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+  { id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+]
+
+[qa.groups.interrupted]
+lifecycle = "maintained"
+purpose = "Cancellation classification"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [
+  { id = "cancel", kind = "test", surface = "published", task = "exit130", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+  { id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+]
+
+[tasks.ok]
+run = "echo member-ok"
+
+[tasks.exit7]
+run = "exit 7"
+
+[tasks.exit130]
+run = "exit 130"
+"#,
+    );
+
+    // A member failing with exit 7 records exit_code 7, never a placeholder.
+    let run_dir = run_group_and_capture(root.as_path(), &["tasks", "qa-group", "run", "fails"]);
+    let record: Value = read_run_record(&run_dir);
+    assert_eq!(record["outcome"], "failed");
+    assert_eq!(record["members"][0]["state"], "failed");
+    assert_eq!(record["members"][0]["exit_code"], 7);
+    assert_eq!(record["members"][1]["state"], "not_started");
+
+    // Exit 130 classifies as cancellation for the member and the group, and
+    // still stops later members.
+    let run_dir =
+        run_group_and_capture(root.as_path(), &["tasks", "qa-group", "run", "interrupted"]);
+    let record: Value = read_run_record(&run_dir);
+    assert_eq!(record["outcome"], "cancelled");
+    assert_eq!(record["members"][0]["state"], "cancelled");
+    assert_eq!(record["members"][0]["exit_code"], 130);
+    assert_eq!(record["members"][1]["state"], "not_started");
+}
+
+/// Run the group through the compiled binary, tolerate its failing exit, and
+/// return the finalized run directory.
+fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    for arg in args {
+        command.arg(arg);
+    }
+    command.arg("--repo").arg(root).env("NO_COLOR", "1");
+    let output = command.output().expect("run group");
+    assert!(!output.status.success(), "expected a failing group run");
+    let reports = root.join(".effigy/reports/qa-groups");
+    let mut runs: Vec<PathBuf> = fs::read_dir(&reports)
+        .expect("reports dir")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    runs.sort_by_key(|path| fs::metadata(path).unwrap().modified().unwrap());
+    runs.pop().expect("one finalized run")
+}
+
+fn read_run_record(run_dir: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(run_dir.join("run.json")).expect("run json"))
+        .expect("valid run record")
+}
+
+#[test]
+fn over_budget_pass_preserves_the_check_outcome() {
+    let root = temp_workspace("qa-groups-over-budget");
+    write_manifest(
+        &root,
+        r#"
+[qa.groups.hopeful]
+lifecycle = "maintained"
+purpose = "Expected far below reality"
+scope_policy = "advisory"
+expected_wall_ms = 1
+expectation_basis = "deliberately impossible expectation"
+proof_limits = ["none"]
+members = [
+  { id = "sleeper", kind = "setup", surface = "published", task = "pause", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+  { id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+]
+
+[tasks.ok]
+run = "echo member-ok"
+
+[tasks.pause]
+run = "sleep 0.4"
+"#,
+    );
+
+    // A passing group can be over budget: the evidence never changes the
+    // outcome and never truncates the member list.
+    let run_dir = {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .args(["tasks", "qa-group", "run", "hopeful"])
+            .arg("--repo")
+            .arg(root.as_path())
+            .env("NO_COLOR", "1");
+        let output = command.output().expect("run group");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let reports = root.join(".effigy/reports/qa-groups");
+        let mut runs: Vec<PathBuf> = fs::read_dir(&reports)
+            .expect("reports dir")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        runs.sort_by_key(|path| fs::metadata(path).unwrap().modified().unwrap());
+        runs.pop().expect("one finalized run")
+    };
+    let record: Value = read_run_record(&run_dir);
+    assert_eq!(record["outcome"], "passed");
+    assert_eq!(record["budget_state"], "over_budget");
+    assert!(record["timing"]["execution_wall_ms"].as_u64().unwrap() >= 400);
+    assert_eq!(record["members"].as_array().unwrap().len(), 2);
+    assert_eq!(record["members"][1]["state"], "passed");
+}
+
+#[test]
+fn member_logs_inherit_pipeline_secret_redaction() {
+    let root = temp_workspace("qa-groups-secret-logs");
+    write_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = true
+targets = ["tasks"]
+
+[tasks.dev]
+run = "printf %s \"$API_TOKEN\""
+
+[qa.groups.leaky]
+lifecycle = "maintained"
+purpose = "Prove logs stay secret-safe"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [
+  { id = "prints-secret", kind = "proof", surface = "published", task = "dev", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+]
+"#,
+    );
+    write_vault_fixture(&root);
+    const SECRET: &str = "tok-local-dev-zebra";
+
+    let payload = run_effigy_json(&root, &["tasks", "qa-group", "run", "leaky"]);
+    let body = &payload["result"];
+    assert_eq!(body["outcome"], "passed");
+
+    // The member printed its secret; the pipeline redacts captures before
+    // they reach any payload, and the run-scoped log inherits that.
+    let log = fs::read_to_string(root.join(body["members"][0]["log_ref"].as_str().unwrap()))
+        .expect("member log");
+    assert!(log.contains("[REDACTED]"), "{log}");
+    assert!(
+        !log.contains(SECRET),
+        "plaintext secret leaked into the log: {log}"
+    );
+
+    // The ledger itself carries no environment or secret material.
+    let record: Value = read_run_record(
+        &root
+            .join(".effigy/reports/qa-groups")
+            .join(body["run_id"].as_str().unwrap()),
+    );
+    let serialized = record.to_string();
+    assert!(!serialized.contains(SECRET));
+    assert!(
+        !serialized.contains("\"env\""),
+        "the ledger must not carry environment material: {serialized}"
+    );
+}
+
+/// Write a passphrase vault with a local-dev unlock key so a task named
+/// `dev` resolves `$API_TOKEN` non-interactively (documented local-dev
+/// path; see `secrets_local_dev_cli_tests`).
+fn write_vault_fixture(root: &Path) {
+    let mut payload = VaultPlaintextPayload::empty();
+    payload.records.insert(
+        "api_token".to_owned(),
+        VaultSecretRecord::new(SecretValue::new("tok-local-dev-zebra")),
+    );
+    let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+    let envelope = payload
+        .encrypt_with_passphrase_and_local_dev_key("vault-passphrase", &local_dev_key)
+        .expect("encrypt vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        &vault_path,
+        envelope.to_json_pretty().expect("serialize vault"),
+    )
+    .expect("write vault");
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    fs::write(&key_path, local_dev_key.expose()).expect("write local-dev key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+            .expect("secure local-dev key");
+    }
 }
 
 #[test]

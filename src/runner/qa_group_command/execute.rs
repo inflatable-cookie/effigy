@@ -289,9 +289,19 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             Ok((stdout, stderr))
         }
         Err(RunnerError::CommandJsonFailure { rendered }) => {
-            let (stdout, stderr, _exit_code) = extract_failure_payload(&rendered);
+            // The captured payload carries the task's real exit code and its
+            // redacted output. Re-derive the typed failure from them so the
+            // ledger can distinguish cancellation (exit 130) from failure
+            // and record the actual code; the group renders its own ledger,
+            // so the wrapped JSON payload is not needed downstream.
+            let (stdout, stderr, exit_code) = extract_failure_payload(&rendered);
             Err((
-                Box::new(RunnerError::CommandJsonFailure { rendered }),
+                Box::new(RunnerError::TaskCommandFailure {
+                    command: member_command_label(member),
+                    code: Some(exit_code),
+                    stdout: stdout.clone(),
+                    stderr: stderr.clone(),
+                }),
                 stdout,
                 stderr,
             ))
@@ -301,6 +311,13 @@ fn run_single_member(root: &Path, member: &QaGroupPlanMember) -> MemberAttempt {
             Err((Box::new(failure), stdout, stderr))
         }
     }
+}
+
+fn member_command_label(member: &QaGroupPlanMember) -> String {
+    format!(
+        "qa-group member {}/{} {:?}",
+        member.catalog, member.task, member.args
+    )
 }
 
 fn build_member_request(
