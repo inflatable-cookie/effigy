@@ -215,8 +215,7 @@ struct NestedQaAdmissionSandbox {
 }
 
 fn fixture_admission_env_var(key: &OsStr) -> bool {
-    key == OsStr::new("EFFIGY_CALLER")
-        || key.to_string_lossy().starts_with("EFFIGY_ADMISSION_")
+    key == OsStr::new("EFFIGY_CALLER") || key.to_string_lossy().starts_with("EFFIGY_ADMISSION_")
 }
 
 fn admission_directory_snapshot(path: &std::path::Path) -> Vec<(OsString, Vec<u8>)> {
@@ -225,7 +224,10 @@ fn admission_directory_snapshot(path: &std::path::Path) -> Vec<(OsString, Vec<u8
         .map(|entry| {
             let entry = entry.expect("read admission fixture entry");
             assert!(
-                entry.file_type().expect("stat admission fixture entry").is_file(),
+                entry
+                    .file_type()
+                    .expect("stat admission fixture entry")
+                    .is_file(),
                 "admission fixture should contain files only"
             );
             (
@@ -248,8 +250,11 @@ fn nested_qa_admission_sandbox(root: &std::path::Path) -> NestedQaAdmissionSandb
         fs::set_permissions(dir, fs::Permissions::from_mode(0o2770))
             .expect("secure admission fixture directory");
     }
-    fs::write(host_dir.join("fixture-sentinel"), b"host admission fixture\n")
-        .expect("seed host admission fixture");
+    fs::write(
+        host_dir.join("fixture-sentinel"),
+        b"host admission fixture\n",
+    )
+    .expect("seed host admission fixture");
     let host_snapshot = admission_directory_snapshot(&host_dir);
 
     NestedQaAdmissionSandbox {
@@ -280,10 +285,7 @@ fn run_json_cli_command_with_private_admission(
             sandbox.host_dir.as_os_str().to_owned(),
         ),
         ("EFFIGY_ADMISSION_CPU_BUDGET", OsString::from("1")),
-        (
-            "EFFIGY_ADMISSION_MEMORY_BUDGET_MIB",
-            OsString::from("64"),
-        ),
+        ("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", OsString::from("64")),
         ("EFFIGY_ADMISSION_CPU_UNITS", OsString::from("1")),
         ("EFFIGY_ADMISSION_MEMORY_MIB", OsString::from("64")),
         ("EFFIGY_ADMISSION_TIMEOUT_SECS", OsString::from("1")),
@@ -341,7 +343,10 @@ fn assert_nested_qa_admission_is_private(
         "fixture must clear the inherited host caller"
     );
     let nested_lease = read_probe(".fixture-admission-lease");
-    assert!(!nested_lease.is_empty(), "nested task should retain its lease");
+    assert!(
+        !nested_lease.is_empty(),
+        "nested task should retain its lease"
+    );
     assert_ne!(
         nested_lease, sandbox.hostile_lease_id,
         "nested task must not inherit the host lease credential"
@@ -357,7 +362,10 @@ fn assert_nested_qa_admission_is_private(
     )
     .expect("parse private admission state");
     let runs = store["runs"].as_array().expect("private admission runs");
-    assert!(!runs.is_empty(), "heavy fixture QA should use private state");
+    assert!(
+        !runs.is_empty(),
+        "heavy fixture QA should use private state"
+    );
     assert!(runs.iter().all(|run| {
         run["lease_id"].as_str() != Some(sandbox.hostile_lease_id)
             && run["budget"]["cpu_units"].as_u64() == Some(2)
@@ -3220,8 +3228,7 @@ qa = [{ task = "qa:docs" }]
     let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
         .parent()
         .expect("effigy binary directory");
-    let output =
-        run_json_cli_command_with_private_admission(root, &["qa"], binary_dir, &sandbox);
+    let output = run_json_cli_command_with_private_admission(root, &["qa"], binary_dir, &sandbox);
     assert!(
         output.status.code().is_some_and(|code| code != 0),
         "nested QA failure must retain a nonzero exit: {output:?}"
@@ -3231,9 +3238,11 @@ qa = [{ task = "qa:docs" }]
         &fs::read(sandbox.private_dir.join("state.json")).expect("read private admission state"),
     )
     .expect("parse private admission state");
-    assert!(store["runs"].as_array().unwrap().iter().any(|run| {
-        run["exit_classification"] == "failed"
-    }));
+    assert!(store["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|run| { run["exit_classification"] == "failed" }));
 }
 
 #[test]
