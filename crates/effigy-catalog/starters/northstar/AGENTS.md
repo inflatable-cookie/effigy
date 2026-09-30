@@ -38,4 +38,6 @@ ideas or observations with `lead.add` (see the `northstar` skill).
 
 ## Validate
 
-`<validation command>` before opening a PR.
+Use the current brief's named Effigy selectors for changed-code tests and
+touched-target compilation; run the docs selector once when docs changed. The
+planner owns full `effigy qa` on `main` at Queue milestones.

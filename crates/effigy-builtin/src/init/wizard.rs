@@ -24,7 +24,6 @@ struct WizardPhase {
 const BASELINE_JOBS: &[AgentInitJob] = &[AgentInitJob::Manifest, AgentInitJob::Readme];
 const AGENT_SETUP_JOBS: &[AgentInitJob] = &[
     AgentInitJob::AgentsBlock,
-    AgentInitJob::SkillTree,
     AgentInitJob::Gitignore,
 ];
 
@@ -36,7 +35,7 @@ const WIZARD_PHASES: &[WizardPhase] = &[
     },
     WizardPhase {
         title: "Agent setup",
-        summary: "Add repo-local agent instructions and the Effigy skill.",
+        summary: "Add repo-local agent instructions and Effigy ignore rules.",
         jobs: AGENT_SETUP_JOBS,
     },
 ];

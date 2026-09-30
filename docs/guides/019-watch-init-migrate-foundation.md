@@ -74,8 +74,12 @@ The baseline managed setup still covers:
 - root `effigy.toml` when missing
 - root `README.md` when missing
 - managed `AGENTS.md` Effigy contract block
-- project-local `.agents/skills/effigy`
 - local `.effigy/` ignore policy
+
+Effigy agent guidance comes from the installed shared skill. Init reports its
+supported user skill roots and leaves `.agents/skills/effigy` project content
+alone. The stable `skill.codex_project` action remains an explicit opt-in for
+creating or refreshing a local snapshot; it is not part of the baseline.
 
 ### Usage
 

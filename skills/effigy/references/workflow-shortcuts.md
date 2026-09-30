@@ -19,15 +19,14 @@ See `graph-assist.md`.
 ## Run tests
 
 ```bash
-effigy test                  # run the built-in test orchestrator
-effigy test --plan           # show plan without running
-effigy test --json           # JSON envelope
-effigy test <selector>       # run tests in a specific workspace
+effigy test --plan                    # inspect execution shape
+effigy test <suite-or-runner-filter>  # run a focused test selection
+effigy --json test --plan            # JSON envelope for another tool
 ```
 
-The built-in `test` runs every configured `[test.suites]` entry. Without
-configured suites it detects polyglot runners, preferring `cargo-nextest` over
-`cargo test` for Rust. `effigy test --plan` never executes a suite.
+Use the selector named in the current work brief or a current draft. Filtered
+validation should cover changed code and compile touched targets;
+`effigy test --plan` never executes a suite.
 
 ## Bring local dev up
 
@@ -60,20 +59,24 @@ Use `bun` for a Bun package library. Re-run the same Bun link after
 manifest or use Bun `--save`. Guide:
 `docs/guides/077-local-dependency-linking.md`.
 
-## Pre-push validation
+## Validation for changed work
 
 ```bash
-effigy qa:ci:fast            # example aggregator (Effigy repo defines qa:*)
-effigy qa:ci:local           # fuller mirror when this repo defines it
-effigy qa                    # full QA when this repo defines it
+effigy tasks
+effigy <focused-selector> --plan
+effigy test <suite-or-runner-filter>
 ```
 
-These **`qa:*`** selectors exist only in repos that declare them (the Effigy
-source tree is the reference shape). Use `effigy tasks` to see what the current
-repo actually exposes.
+Use the current work brief's named Effigy selectors or a current task draft's
+plan to choose tests for changed code and compile touched targets. Run the
+repository's docs selector once when docs changed. Record each exit status;
+for a background command, record its PID and stop only that process or group.
+Effigy selectors preserve host-wide admission for admission-aware work.
 
-Use `qa:ci:fast` when iterating; `qa:ci:local` before pushing when your repo
-mirrors branch CI that way.
+The planner owns full `effigy qa` on `main` at Queue milestones. It is not the
+default per-task or pre-push recommendation. See
+`docs/guides/080-host-wide-validation-admission.md` for binary and admission
+proof.
 
 ## Manifest scaffolding
 

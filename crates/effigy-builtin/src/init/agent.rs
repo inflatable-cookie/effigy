@@ -30,9 +30,29 @@ Prefer `effigy <task>`, `effigy test`, and the matching built-in surface over
 raw package-manager or shell commands when Effigy covers the path. Use
 `effigy --json <command>` whenever another agent or tool will consume output.
 
-This repo's local `.agents/skills/effigy` copy is authoritative for this
-project. When an agent supports both project-local and global skills, prefer
-the project-local copy over any globally installed Effigy skill.
+Effigy guidance is maintained in the installed shared Agent Skill. Read the
+installed `effigy/SKILL.md` from one of these user skill roots when using
+Effigy-specific agent guidance: `~/.agents/skills`, `~/.codex/skills`,
+`~/.claude/skills`, or `~/.cursor/skills`. Resolve symlinks first; aliases to
+the same canonical skill directory are one installation. If distinct roots
+contain the skill, report the ambiguity and choose one source explicitly.
+
+This repo's `.agents/skills/effigy` copy is optional project-local content,
+not the maintained guidance source. Preserve it if it exists; plain init does
+not create or refresh it. The named `skill.codex_project` init action is an
+explicit snapshot opt-in and may replace files at maintained paths. Named
+`effigy skill run` task lookup still gives an invocation project's local skill
+source precedence, as defined by contract 042.
+
+If no installed Effigy Agent Skill is present, say so and suggest
+`npx skills add inflatable-cookie/effigy -g`; init does not download or install
+skills. A filesystem check cannot prove what an already-running agent loaded;
+use a fresh agent context to verify discovery.
+
+Agent Skill guidance and the `effigy` executable are separate channels. A
+current skill does not prove the binary on `PATH` is current or admission-capable;
+check the binary independently with `command -v effigy` and
+`effigy admission status --json`.
 
 Do not add a current-directory repo override while already inside the target
 repo. Do not edit
@@ -40,6 +60,8 @@ repo. Do not edit
 
 Reference docs:
 - Effigy agent adoption: `docs/guides/047-agent-and-cross-repo-adoption.md`
+- Installed skill task sources: `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`
+- Heavy validation admission: `docs/guides/080-host-wide-validation-admission.md`
 - Graph workflows: `docs/guides/076-code-graph-and-agent-workflows.md`
 - JSON contracts: `docs/guides/017-json-output-contracts.md`
 <!-- END EFFIGY AGENT CONTRACT -->
@@ -101,6 +123,12 @@ const SKILL_FILES: &[(&str, &str)] = &[
 ];
 
 const INTERNAL_SKILL_METADATA_BLOCK: &str = "metadata:\n  internal: true\n";
+const INSTALLED_SKILL_ROOTS: &[&str] = &[
+    ".agents/skills",
+    ".codex/skills",
+    ".claude/skills",
+    ".cursor/skills",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AgentInitJob {
@@ -285,9 +313,21 @@ impl AgentCheck {
             "create_file" => format!("create {}", self.path.display()),
             "upsert_block" => format!("update {}", self.path.display()),
             "sync_skill_tree" => format!("sync {}", self.path.display()),
+            "inspect_skill_guidance" => format!(
+                "inspect installed Effigy guidance; preserve {}",
+                self.path.display()
+            ),
             "preserve_existing" => format!("preserve {}", self.path.display()),
             other => format!("{other} {}", self.path.display()),
         }
+    }
+
+    pub(super) fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
+    pub(super) fn is_skill_snapshot(&self) -> bool {
+        matches!(self.job, AgentInitJob::SkillTree)
     }
 }
 
@@ -316,7 +356,13 @@ fn run_agent_job(
             AGENTS_BLOCK,
             apply,
         ),
-        AgentInitJob::SkillTree => ensure_skill_tree(root, job, apply),
+        AgentInitJob::SkillTree => {
+            if selected_jobs.is_some_and(|jobs| jobs.contains(&job)) {
+                ensure_skill_tree(root, job, apply)
+            } else {
+                inspect_skill_guidance(root, job)
+            }
+        }
         AgentInitJob::Gitignore => ensure_managed_block(
             root,
             job,
@@ -589,6 +635,138 @@ fn ensure_skill_tree(
     Ok(check(job, base, status, "sync_skill_tree", detail))
 }
 
+fn inspect_skill_guidance(root: &Path, job: AgentInitJob) -> Result<AgentCheck, BuiltinError> {
+    let local_skill = root.join(".agents/skills/effigy");
+    let local_status = if std::fs::symlink_metadata(&local_skill).is_ok() {
+        format!(
+            "existing project-local skill at {} will be preserved",
+            local_skill.display()
+        )
+    } else {
+        "no project-local skill is required".to_owned()
+    };
+    let install_status = installed_skill_status(home_dir().as_deref());
+    Ok(check(
+        job,
+        ".agents/skills/effigy",
+        AgentCheckStatus::Present,
+        "inspect_skill_guidance",
+        Some(format!("{local_status}; {}", install_status.description())),
+    ))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum InstalledSkillStatus {
+    Found {
+        canonical_root: PathBuf,
+        aliases: Vec<PathBuf>,
+    },
+    Missing,
+    Ambiguous(Vec<PathBuf>),
+    Unverifiable(Vec<PathBuf>),
+    HomeUnavailable,
+}
+
+impl InstalledSkillStatus {
+    fn description(&self) -> String {
+        match self {
+            Self::Found {
+                canonical_root,
+                aliases,
+            } if aliases.len() > 1 => format!(
+                "installed Effigy guidance resolves to canonical root {} through {}",
+                canonical_root.display(),
+                display_paths(aliases)
+            ),
+            Self::Found { canonical_root, .. } => format!(
+                "installed Effigy guidance found at canonical root {}",
+                canonical_root.display()
+            ),
+            Self::Missing => format!(
+                "no installed Effigy guidance found under the supported user roots ({}); install with `npx skills add inflatable-cookie/effigy -g`, then start a fresh agent context; init does not install or copy a skill",
+                INSTALLED_SKILL_ROOTS.join(", ")
+            ),
+            Self::Ambiguous(roots) => format!(
+                "multiple distinct installed Effigy guidance roots were found ({}); choose one explicitly; Effigy named task lookup fails closed on distinct global roots",
+                display_paths(roots)
+            ),
+            Self::Unverifiable(roots) => format!(
+                "could not canonicalize installed Effigy guidance at {}; resolve these paths before choosing a source",
+                display_paths(roots)
+            ),
+            Self::HomeUnavailable => format!(
+                "home directory is unavailable, so installed Effigy guidance could not be checked under {}; install with `npx skills add inflatable-cookie/effigy -g` and verify from a fresh agent context",
+                INSTALLED_SKILL_ROOTS.join(", ")
+            ),
+        }
+    }
+}
+
+fn installed_skill_status(home: Option<&Path>) -> InstalledSkillStatus {
+    let Some(home) = home else {
+        return InstalledSkillStatus::HomeUnavailable;
+    };
+
+    let mut canonical_roots = std::collections::BTreeMap::<PathBuf, Vec<PathBuf>>::new();
+    let mut unverifiable = Vec::new();
+    for root in INSTALLED_SKILL_ROOTS {
+        let candidate = home.join(root).join("effigy");
+        match std::fs::metadata(candidate.join("SKILL.md")) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                unverifiable.push(candidate);
+                continue;
+            }
+        }
+        match std::fs::canonicalize(&candidate) {
+            Ok(canonical) => canonical_roots
+                .entry(canonical)
+                .or_default()
+                .push(candidate),
+            Err(_) => unverifiable.push(candidate),
+        }
+    }
+
+    if !unverifiable.is_empty() {
+        return InstalledSkillStatus::Unverifiable(unverifiable);
+    }
+    match canonical_roots.len() {
+        0 => InstalledSkillStatus::Missing,
+        1 => {
+            let (canonical_root, aliases) = canonical_roots
+                .into_iter()
+                .next()
+                .expect("one canonical root was counted");
+            InstalledSkillStatus::Found {
+                canonical_root,
+                aliases,
+            }
+        }
+        _ => InstalledSkillStatus::Ambiguous(canonical_roots.into_keys().collect()),
+    }
+}
+
+fn display_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
 fn vendored_skill_contents(relative: &str, contents: &str) -> String {
     if relative != "SKILL.md" {
         return contents.to_owned();
@@ -731,7 +909,9 @@ fn mode_name(mode: AgentInitMode) -> &'static str {
 mod tests {
     use std::path::Path;
 
-    use super::{inject_internal_skill_metadata, SKILL_FILES};
+    use super::{
+        inject_internal_skill_metadata, installed_skill_status, InstalledSkillStatus, SKILL_FILES,
+    };
 
     fn collect_relative_files(root: &Path, current: &Path, files: &mut Vec<String>) {
         for entry in std::fs::read_dir(current).expect("skill directory should be readable") {
@@ -786,5 +966,79 @@ mod tests {
             "---\nname: effigy\ndescription: demo\nmetadata:\n  internal: true\n---\n\n# Skill\n";
         let output = inject_internal_skill_metadata(input);
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn init_installed_skill_status_collapses_symlink_aliases_to_one_canonical_root() {
+        let home = std::env::temp_dir().join(format!(
+            "effigy-init-skill-aliases-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let canonical = home.join(".agents/skills/effigy");
+        std::fs::create_dir_all(&canonical).expect("canonical skill root");
+        std::fs::write(canonical.join("SKILL.md"), "---\nname: effigy\n---\n")
+            .expect("skill marker");
+
+        #[cfg(unix)]
+        {
+            let alias = home.join(".claude/skills/effigy");
+            std::fs::create_dir_all(alias.parent().expect("alias parent"))
+                .expect("alias parent directory");
+            std::os::unix::fs::symlink(&canonical, &alias).expect("skill alias");
+
+            let status = installed_skill_status(Some(&home));
+            let InstalledSkillStatus::Found {
+                canonical_root,
+                aliases,
+            } = status
+            else {
+                panic!("expected one canonical install, got {status:?}");
+            };
+            assert_eq!(canonical_root, std::fs::canonicalize(&canonical).unwrap());
+            assert_eq!(aliases.len(), 2);
+        }
+
+        #[cfg(not(unix))]
+        {
+            let status = installed_skill_status(Some(&home));
+            assert!(matches!(status, InstalledSkillStatus::Found { .. }));
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn init_installed_skill_status_reports_distinct_global_roots_as_ambiguous() {
+        let home = std::env::temp_dir().join(format!(
+            "effigy-init-skill-duplicates-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        for root in [".agents/skills/effigy", ".cursor/skills/effigy"] {
+            let skill = home.join(root);
+            std::fs::create_dir_all(&skill).expect("skill root");
+            std::fs::write(skill.join("SKILL.md"), "---\nname: effigy\n---\n")
+                .expect("skill marker");
+        }
+
+        let status = installed_skill_status(Some(&home));
+        assert!(matches!(status, InstalledSkillStatus::Ambiguous(ref roots) if roots.len() == 2));
+        assert!(status.description().contains("choose one explicitly"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn init_installed_skill_status_reports_missing_install_without_claiming_success() {
+        let home = std::env::temp_dir().join(format!(
+            "effigy-init-skill-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+
+        let status = installed_skill_status(Some(&home));
+        assert_eq!(status, InstalledSkillStatus::Missing);
+        assert!(status.description().contains("no installed Effigy guidance"));
+        assert!(status.description().contains("npx skills add"));
+        assert!(status.description().contains("does not install or copy"));
     }
 }

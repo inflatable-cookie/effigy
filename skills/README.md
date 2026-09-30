@@ -34,28 +34,30 @@ location:
 - Codex CLI: `.agents/skills/` or `~/.agents/skills/`
 - Cursor: `.cursor/skills/` or `~/.cursor/skills/`
 
+Effigy's named skill task lookup also supports `~/.codex/skills/`. Keep one
+canonical global tree: symlink aliases to the same physical directory count as
+one root, while distinct copies with the same skill name are ambiguous.
+
 The CLI ships from [`vercel-labs/skills`](https://github.com/vercel-labs/skills)
 and supports 50+ agents.
 
 ### Manual install
 
-If your agent isn't covered by `npx skills`:
+If your agent isn't covered by `npx skills`, choose one supported global root
+and install once. For example, use `~/.agents/skills` for Codex-compatible
+discovery:
 
 ```bash
-# Claude Code
-mkdir -p ~/.claude/skills
-cp -r skills/effigy ~/.claude/skills/effigy
-
-# Codex CLI
 mkdir -p ~/.agents/skills
 cp -r skills/effigy ~/.agents/skills/effigy
-
-# Cursor
-mkdir -p ~/.cursor/skills
-cp -r skills/effigy ~/.cursor/skills/effigy
 ```
 
-Replace `~` with `.` for project-local installs.
+Effigy named task lookup also recognizes `~/.codex/skills`, `~/.claude/skills`,
+and `~/.cursor/skills`. Avoid separate copies in those roots: distinct matches
+are ambiguous. Use one canonical tree and provider symlink aliases where
+needed. Replace `~` with `.` only for an intentional project-local skill.
+`effigy init` does not make that project copy by default; it preserves existing
+local content.
 
 ## Activation
 
@@ -86,8 +88,9 @@ The front door stays short. Topic references hold depth and are read on demand.
 
 ## Maintenance
 
-Update the skill in the same PR as command or JSON contract changes. Validate
-with `effigy qa:docs` (links, JSON examples, agent-defaults checks).
+Update the maintained skill in the same PR as command or JSON contract changes.
+Run targeted changed-code checks, and run `effigy qa:docs` once when docs
+changed. The planner owns full `effigy qa` at Queue milestones.
 
 Reinstall after local edits:
 

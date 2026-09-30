@@ -55,7 +55,7 @@ the matching built-in instead of inserting `graph` ritualistically.
 
 ```bash
 effigy <selector>                  # manifest task or built-in
-effigy test                        # or effigy test --plan first
+effigy test <focused-selector>     # named suite or runner filter
 ```
 
 Prefer Effigy over raw `cargo` / `npm` / `docker compose` when a task or
@@ -65,8 +65,19 @@ built-in covers the path.
 
 ```bash
 git diff --name-only | effigy graph affected --stdin --json
-effigy test                        # or a repo-specific qa:* task
+effigy test <focused-selector>
 ```
+
+Use selectors named by the current work brief or a current
+`effigy draft <selector> --plan` when one provides the work-context proof.
+Run tests for changed code, compile touched targets, and run the docs selector
+once when documentation changed. Capture each exit status. For background
+processes, record the PID you started and stop only that PID or process group.
+Use Effigy selectors so admission-aware execution stays in effect.
+
+Full `effigy qa` belongs to the planner on `main` at Queue milestones, not the
+default per-task check. See the current host-wide admission guide at
+`docs/guides/080-host-wide-validation-admission.md`.
 
 Use `graph affected` to pick a smaller target; it is not exhaustive proof.
 
@@ -110,3 +121,15 @@ cargo run --bin effigy -- <command>
 
 Outside that repo, install the binary per the project README or use
 `effigy bootstrap`.
+
+Agent skill files and the executable are independent. When validation needs
+host-wide admission, probe the executable resolved from the consumer checkout:
+
+```bash
+command -v effigy
+effigy admission status --json
+```
+
+Require the `effigy.admission.status.v1` result schema; a version string alone
+does not prove capability. Existing agent contexts may still hold older skill
+instructions after the files are refreshed.

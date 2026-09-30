@@ -27,6 +27,27 @@ Use `test.suites.<name>.default = false` for focused suites that should run only
 when named. Use root `test.exclude_catalogs` when a parent workspace already
 owns a child catalog's tests; direct `catalog/test` selection still works.
 
+## Shared guidance source
+
+Effigy maintains this skill in `skills/effigy/` and distributes it as an
+installed Agent Skill. Supported global roots are `~/.agents/skills/effigy`,
+`~/.codex/skills/effigy`, `~/.claude/skills/effigy`, and
+`~/.cursor/skills/effigy`. Resolve symlinks before comparing them: aliases to
+the same canonical directory count once. Distinct matches are ambiguous and
+named Effigy task lookup fails closed.
+
+Plain `effigy init` does not copy or refresh a project-local skill. Preserve
+existing `.agents/skills/effigy` content; named skill-task lookup still gives
+an invocation project's local task source precedence by contract 042. A
+filesystem lookup does not prove what a running agent loaded; use a fresh
+agent context after an install or refresh.
+
+Agent Skill guidance and the `effigy` executable are separate. Check the
+resolved executable with `command -v effigy` and probe host-wide admission
+support with `effigy admission status --json`; the result schema must be
+`effigy.admission.status.v1`. See
+`docs/guides/080-host-wide-validation-admission.md`.
+
 ## Footguns (read first)
 
 - **Never modify `.github/workflows/`** without explicit human approval.
@@ -118,11 +139,10 @@ for generic repo orientation.
 |------|---------|
 | Orient in unfamiliar code | `effigy graph explore "<question>" --json` |
 | Find the governing document | `effigy docs context "<question>" --max-sections 4` |
-| Run tests | `effigy test` |
+| Run focused tests | `effigy test <suite-or-runner-filter>` |
 | Inspect test plan | `effigy test --plan` |
 | Bring local dev up | `effigy container up` then `effigy dev` |
-| Fast pre-push check | `effigy qa:ci:fast` (if defined) |
-| Full local QA | `effigy qa` or `effigy qa:ci:local` |
+| Inspect work validation selectors | `effigy tasks` or `effigy test --plan` |
 | Repo health scan | `effigy doctor --verbose` |
 | Local dependency link health | `effigy --json deps status` |
 | Run an installed skill task | `effigy skill run [--path <SKILL>] <SKILL>/<TASK>` |

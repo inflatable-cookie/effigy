@@ -97,8 +97,14 @@ Never write `health = [{ task = "qa" }]`, directly or through another task.
 diagnostic command into the full board. Doctor warns and skips that delegation
 when it can prove the health task reaches `qa` or a full test suite.
 
-## 8. Bonus: don't reinvent QA chains
+## 8. Keep per-task validation narrow
 
-If a repo has `qa:ci:fast`, `qa:ci:local`, or `qa` aggregator tasks, run those
-instead of building a new chain. Aggregators encode the project's pre-push
-contract — bypassing them means missing a gate.
+For one work task, use the named Effigy selectors in its current brief or a
+current draft. Run changed-code tests and compile touched targets; run the
+docs selector once when docs changed. Record exits and stop only background
+processes you started.
+
+Do not default to a full QA or CI aggregator before each PR. The planner runs
+full `effigy qa` on `main` at Queue milestones. Keep the distinction in the
+task brief and use Effigy selectors so admission-aware work enters the shared
+coordinator.
