@@ -36,6 +36,9 @@ complexity.
   envelopes, and release gates remain inspectable.
 - **Agent operations:** graph, docs context, scan, and doctor should
   reduce reconstruction work without making generated summaries authoritative.
+  Shared Effigy guidance belongs in one maintained installed skill;
+  repository-specific instructions belong in `AGENTS.md` and owning knowledge.
+  Consumer repositories should not freeze the shared skill in vendored copies.
 - **Bounded QA:** explicit groups should name a work context, its proof limits
   and expected execution cost, reusing the task-draft runtime. Tom's
   2026-09-30 direction puts these groups before automatic diff selection.
