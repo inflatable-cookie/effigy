@@ -923,10 +923,7 @@ members = [{ id = "m", kind = "test", surface = "published", task = "t", targets
         let error = table
             .into_manifest_group(None, super::QaGroupDefinitionContext::TemporaryFile)
             .expect_err("a [qa_group] file cannot embed a maintained group");
-        assert!(
-            error.contains("temporary groups only"),
-            "{error}"
-        );
+        assert!(error.contains("temporary groups only"), "{error}");
     }
 
     #[test]

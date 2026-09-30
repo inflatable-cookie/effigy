@@ -732,7 +732,8 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
 
     #[test]
     fn temporary_file_rejects_a_maintained_definition_end_to_end() {
-        let base = std::env::temp_dir().join(format!("effigy-qa-maint-file-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("effigy-qa-maint-file-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let file = base.join("wrong-place.toml");
@@ -749,9 +750,11 @@ members = [{ id = "m", kind = "test", surface = "published", task = "t", targets
         )
         .expect("write fixture");
         let error = load_temporary_qa_group(&file, &base, None)
-            .err()
-            .expect("maintained lifecycle in a file must fail");
-        assert!(error.to_string().contains("temporary groups only"), "{error}");
+            .expect_err("maintained lifecycle in a file must fail");
+        assert!(
+            error.to_string().contains("temporary groups only"),
+            "{error}"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 

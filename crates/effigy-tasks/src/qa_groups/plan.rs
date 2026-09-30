@@ -226,10 +226,9 @@ pub fn build_qa_group_plan(
             Some(tracking.as_str().to_owned()),
             Some(definition_sha256.clone()),
         ),
-        QaGroupDefinitionSource::Maintained { .. } => (
-            None,
-            Some(super::canonical_definition_digest(group)),
-        ),
+        QaGroupDefinitionSource::Maintained { .. } => {
+            (None, Some(super::canonical_definition_digest(group)))
+        }
     };
     let catalog_root = selected_catalog_root(&selected.source, request.catalogs, &owning_alias);
 

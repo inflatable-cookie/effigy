@@ -178,6 +178,16 @@ fn qa_groups_list_reports_maintained_groups_and_temporary_file_only() {
         .as_str()
         .unwrap()
         .starts_with("root/"));
+    // Maintained groups carry definition provenance too: a digest over the
+    // canonical rendering of the validated definition.
+    for row in body["qa_groups"].as_array().unwrap() {
+        let digest = row["definition_sha256"].as_str().unwrap_or_default();
+        assert!(
+            digest.starts_with("sha256:") && digest.len() > "sha256:".len(),
+            "row {} lacks a definition digest",
+            row["selector"]
+        );
+    }
 
     // --file adds exactly one temporary definition, not a directory scan.
     let file = temp_group_file(&root, "binding-check", "ok", "published");
