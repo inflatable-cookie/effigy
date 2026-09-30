@@ -8,6 +8,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | System shape | [Architecture](architecture.md) |
 | Detailed component design | [Architecture directory](architecture/000-overview.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
+| Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
 | Retired concepts | [Retirements](retired.toml) |
