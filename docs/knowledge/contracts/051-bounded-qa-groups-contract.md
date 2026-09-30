@@ -637,6 +637,11 @@ when each brief is approved and dispatched.
 
 ## Change triggers
 
+Tom's 2026-09-30 ruling limits the coverage-gap follow-up to guidance and
+private plan-only evidence using the existing grammar. It does not authorize
+new runtime syntax or dependency inference. Consumer gap declarations remain
+owned by each consumer; changing the installed skill is a separate action.
+
 Revisit this contract before adding automatic diff selection, implicit file
 discovery, group-to-group dependencies, parallel group scheduling, cross-run
 result joins, pass caching, exact-input fingerprints, OS resource enforcement,
