@@ -29,6 +29,13 @@ execution. Endpoint discovery, grants, nested execution, cancellation, failure
 and compatibility semantics must be pinned to the agreed shared contract before
 an implementation brief is dispatched. Queue Spec 031 owns Queue's side.
 
+The client boundary is Nucleus
+[contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/c446e185d1c4ceb096653ea6ac75d234b2c0e91e/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
+This pin defines submit/attach/status/cancel/report, validated parent tokens,
+settlement envelopes and durable container facts. Client implementation follows
+the conforming Queue server; accepting the protocol does not switch execution
+or authorize removal of the current store.
+
 An operator-approved recovery of an exact orphan record is an exception under
 the current mechanism, not permission to weaken automatic reclamation. Preserve
 the locked before-state, closure evidence, authorization and resulting record;
