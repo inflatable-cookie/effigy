@@ -151,6 +151,12 @@ environment contents.
 
 ## Validation
 
+- CLI fixtures that invoke heavy selectors use private admission state inside
+  their owned temporary root. They clear inherited caller, lease credentials
+  and admission settings before explicitly configuring that sandbox. Merely
+  removing caller identity does not isolate a fixture from host admission.
+  Tom authorized this test-isolation repair on 2026-09-30; it does not change
+  the frozen product admission mechanism.
 - Independent Effigy processes in different checkouts contend for one budget;
   a direct human invocation cannot bypass it. Nested task refs use one lease.
 - Synthetic capacities prove CPU and memory admission, headroom, FIFO within a
