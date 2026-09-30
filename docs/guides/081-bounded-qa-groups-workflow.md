@@ -74,6 +74,40 @@ Ask the planner when the declared map cannot resolve the explicit scope or
 when you cannot state the scope set confidently. This decision does not direct
 you to run the full board.
 
+### Declare ordinary path and package gaps
+
+Use `coverage_gaps` for unresolved ordinary inputs as well as opaque inputs.
+For example, a member may claim a path pattern and its exact Cargo package
+while both remain unresolved:
+
+```toml
+covers = ["path:crates/example/**", "cargo-package:example", "path:crates/mapped/**"]
+coverage_gaps = [
+  { input = "path:crates/example/**", reason = "The example crate's dependency closure is not mapped" },
+  { input = "cargo-package:example", reason = "The example package's dependency closure is not mapped" },
+  { input = "input:generator-closure", reason = "The generator's transitive compile inputs are not enumerated" },
+]
+```
+
+Coverage and gaps are compared independently. A supplied
+`path:crates/example/src/lib.rs` matches both the member and the path gap, and
+`cargo-package:example` matches both the member and the exact package gap;
+each plan returns `needs_planner`. The gap wins even though a member claims
+the same token. A supplied `path:crates/mapped/src/lib.rs` matches the member
+without a gap and can return `declared_match`. An unmapped input also returns
+`needs_planner`.
+
+Choose a broad gap pattern only when every path it can match remains
+unresolved. A successful check does not remove a gap: the declaration records
+uncertainty in the coverage map, and passing one member run does not establish
+that the dependency closure or the caller's scope list is complete. Path gaps
+match paths; package gaps match only the exact package token. Keep opaque gaps
+for inputs callers can name only by identity: `input:generator-closure` catches
+that explicitly supplied token, not an ordinary path or package that may
+relate to it. See the [coverage contract](../knowledge/contracts/051-bounded-qa-groups-contract.md)
+and [runtime model](../knowledge/architecture/031-bounded-qa-groups-runtime.md)
+for the shared grammar and matching rules.
+
 Group names are catalog-scoped. Use `catalog-alias/name` (or the documented
 catalog path prefix) when multiple groups could match; an unresolved tie is
 an error, not a task/draft fallback. Member selectors resolve in the owning
