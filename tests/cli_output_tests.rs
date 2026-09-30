@@ -18,6 +18,8 @@ mod graph_watch_tests;
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]
 mod json_envelope_tests;
+#[path = "cli_output_tests/qa_groups_tests.rs"]
+mod qa_groups_tests;
 #[path = "cli_output_tests/released_surface_transition_tests.rs"]
 mod released_surface_transition_tests;
 #[path = "cli_output_tests/released_surface_v0_2_13_tests.rs"]

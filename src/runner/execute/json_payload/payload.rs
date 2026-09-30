@@ -64,19 +64,31 @@ pub(super) fn task_run_payload(
     if selection.surface == TaskSurface::Draft {
         if let Some(object) = payload.as_object_mut() {
             object.insert("surface".to_owned(), json!("draft"));
-            object.insert(
-                "surface_identity".to_owned(),
-                json!({
-                    "surface": "draft",
-                    "catalog_alias": selection.catalog.alias,
-                    "catalog_root": selection.catalog.catalog_root.display().to_string(),
-                    "definition_source": selection
-                        .catalog
-                        .draft_source(&selector.task_name)
-                        .display()
-                        .to_string(),
-                }),
-            );
+            let mut surface_identity = json!({
+                "surface": "draft",
+                "catalog_alias": selection.catalog.alias,
+                "catalog_root": selection.catalog.catalog_root.display().to_string(),
+                "definition_source": selection
+                    .catalog
+                    .draft_source(&selector.task_name)
+                    .display()
+                    .to_string(),
+            });
+            // Additive heavy-admission metadata (contract 046 extension).
+            // Absent metadata keeps the payload exactly as before.
+            if selection.task.admission.is_some() {
+                if let Some(identity) = surface_identity.as_object_mut() {
+                    identity.insert(
+                        "admission".to_owned(),
+                        json!(selection
+                            .task
+                            .admission
+                            .as_ref()
+                            .map(|admission| admission.as_str())),
+                    );
+                }
+            }
+            object.insert("surface_identity".to_owned(), surface_identity);
         }
     }
 
@@ -123,19 +135,30 @@ pub(super) fn task_plan_payload(
     if selection.surface == TaskSurface::Draft {
         if let Some(object) = payload.as_object_mut() {
             object.insert("surface".to_owned(), json!("draft"));
-            object.insert(
-                "surface_identity".to_owned(),
-                json!({
-                    "surface": "draft",
-                    "catalog_alias": selection.catalog.alias,
-                    "catalog_root": selection.catalog.catalog_root.display().to_string(),
-                    "definition_source": selection
-                        .catalog
-                        .draft_source(&selector.task_name)
-                        .display()
-                        .to_string(),
-                }),
-            );
+            let mut surface_identity = json!({
+                "surface": "draft",
+                "catalog_alias": selection.catalog.alias,
+                "catalog_root": selection.catalog.catalog_root.display().to_string(),
+                "definition_source": selection
+                    .catalog
+                    .draft_source(&selector.task_name)
+                    .display()
+                    .to_string(),
+            });
+            // Additive heavy-admission metadata (contract 046 extension).
+            if selection.task.admission.is_some() {
+                if let Some(identity) = surface_identity.as_object_mut() {
+                    identity.insert(
+                        "admission".to_owned(),
+                        json!(selection
+                            .task
+                            .admission
+                            .as_ref()
+                            .map(|admission| admission.as_str())),
+                    );
+                }
+            }
+            object.insert("surface_identity".to_owned(), surface_identity);
         }
     }
 

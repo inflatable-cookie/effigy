@@ -3,6 +3,7 @@ mod error;
 mod listing;
 mod parsing;
 mod probe;
+mod qa_groups;
 mod reference;
 pub mod testing;
 mod view;
@@ -25,6 +26,16 @@ pub use parsing::{
     render_task_selector,
 };
 pub use probe::{probe_task_resolution, ProbeTaskResolutionRequest, TaskResolutionProbe};
+pub use qa_groups::budget_state;
+pub use qa_groups::{
+    build_qa_group_plan, canonical_definition_digest, list_qa_groups, load_temporary_qa_group,
+    render_qa_group_plan_json, render_qa_group_plan_text, render_qa_groups_json,
+    render_qa_groups_text, select_qa_group, ListQaGroupsRequest, ListQaGroupsResult,
+    QaFileTracking, QaGroupAdmissionPlan, QaGroupCapabilityLimits, QaGroupDefinitionSource,
+    QaGroupHeadContext, QaGroupListRow, QaGroupPlan, QaGroupPlanGroup, QaGroupPlanMember,
+    QaGroupPlanRequest, QaGroupSelectionRequest, QaPlannerReason, QaScopeMatch, ScopeAssessment,
+    TemporaryFileSummary, QA_GROUPS_SCHEMA, QA_GROUP_PLAN_SCHEMA, SCOPE_COVERAGE_DISCLAIMER,
+};
 pub use reference::{
     command_passthrough_args, parse_task_reference_invocation, render_passthrough_args,
     render_template_args,

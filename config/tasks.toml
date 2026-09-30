@@ -36,6 +36,15 @@
 "test:containers:backend-selection" = "cargo test -p effigy-containers manager::tests:: -- --nocapture"
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
 
+# Bounded QA-group proofs (contract 051 implementation)
+"test:qa-groups:manifest" = "cargo test -p effigy-manifest --lib qa_groups -- --nocapture"
+"test:qa-groups:surface" = "cargo test -p effigy-tasks --lib qa_groups -- --nocapture"
+"test:qa-groups:runtime" = "cargo test -p effigy-runtime --lib qa_group_status -- --nocapture"
+"test:qa-groups:identity" = "cargo test -p effigy-process --lib identity -- --nocapture"
+"test:qa-groups:cli" = "cargo test --test cli_output_tests qa_groups_tests -- --nocapture"
+"test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
+"test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
+
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"

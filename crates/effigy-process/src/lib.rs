@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 mod diagnostics;
+mod identity;
 mod lifecycle;
 mod locks;
 mod signal;
@@ -15,6 +16,7 @@ mod supervisor_lookup;
 mod supervisor_shutdown;
 
 use diagnostics::collect_exit_diagnostics;
+pub use identity::{boot_identity, process_start_identity, process_start_identity_matches};
 pub use signal::{process_is_descendant_of, process_is_running, terminate_process_tree};
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 

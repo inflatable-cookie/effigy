@@ -7,6 +7,37 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Bounded QA groups (contract 051) land through the existing task pipeline:
+  `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained
+  `[qa.groups]` definitions plus at most one explicit temporary definition
+  file, and `effigy tasks qa-group run/status/logs` resolve a non-executing
+  plan (`--plan`), run every member sequentially through the standard
+  pipeline, and persist a versioned run record with run-scoped
+  pipeline-redacted logs. Group selectors resolve only on the group surface
+  and never fall through to a same-named task or draft; temporary
+  definitions are selected only by their explicit `--file` (relative paths
+  resolve inside the selected repository) and carry a content digest.
+  Required/advisory scope comparison returns `needs_planner` with exact
+  tokens and reasons before any run exists; a declared match still runs
+  every member. Heavy groups take one host-wide admission lease that nested
+  task references reuse, with wait reported separately from execution;
+  over-budget evidence never changes check outcomes. Member records carry
+  the task's real exit code (including 130, classified as cancellation for
+  the member and the group), never a placeholder. `tasks qa-group stop`
+  and `hard_timeout_ms` parse only to be refused before any side effect:
+  owned-run supervision (contract 052) has not landed, and
+  interrupted runs reconcile to `unknown`, never a pass. Payload schemas:
+  `effigy.qa-groups.v1`, `effigy.qa-group-plan.v1`, `effigy.qa-group-run.v1`,
+  `effigy.qa-group-status.v1`.
+- `[drafts]` accept the same optional `admission = "heavy"` metadata as
+  `[tasks]` (contract 046 extension). A declared heavy draft opts into heavy
+  admission on direct runs and is classified heavy inside QA groups; absent
+  metadata keeps today's ordinary classification, and the drafts inventory,
+  direct draft plan, and run JSON carry the field only when a definition
+  declares it. `effigy draft <SELECTOR> --plan` now also parses: the
+  documented non-executing draft inspection was rejected by the parser
+  despite the contract, and a global `--repo` before `draft` was silently
+  ignored; both resolve against the selected repository now.
 - `effigy tasks --json` (`effigy.tasks.v1`) carries an additive `selectors`
   inventory: one deterministic array of invocation-ready names
   (`effigy <selector>`) with `kind` (`task`, `managed-profile`, `builtin`),

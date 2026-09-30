@@ -15,6 +15,7 @@ pub mod execution_binding;
 mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
+mod qa_groups;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;
@@ -72,6 +73,12 @@ pub use execution_binding::{
 };
 pub use loaded_catalog::{
     env_schema_declaring_catalog, DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection,
+};
+pub use qa_groups::{
+    path_pattern_matches, validate_qa_name_grammar, ManifestQaCoverageGap, ManifestQaGroup,
+    ManifestQaGroupMember, ManifestQaGroupTable, ManifestQaLifecycle, ManifestQaMemberKind,
+    ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
+    QaScopeToken,
 };
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
@@ -190,6 +197,11 @@ pub struct TaskManifest {
     /// published discovery surface; reachable only through `effigy draft`.
     #[serde(default, deserialize_with = "deserialize_drafts")]
     pub drafts: BTreeMap<String, ManifestDraft>,
+    /// Maintained bounded QA groups keyed under `[qa.groups.<name>]`
+    /// (contract 051). Selected only through the explicit `tasks qa-group`
+    /// surfaces; never task aliases and never implicit discovery.
+    #[serde(default)]
+    pub qa: Option<ManifestQaSection>,
 }
 
 #[derive(Debug, serde::Deserialize)]

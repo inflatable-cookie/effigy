@@ -243,6 +243,34 @@
       "surface": "caller-linked admission history query",
       "status": "active",
       "payload_schema": "effigy.admission.runs.v1"
+    },
+    {
+      "schema": "effigy.qa-groups.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks qa-groups list --repo <fixture_qa_groups>",
+      "surface": "bounded QA-group inventory",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.qa-group-plan.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks qa-group run release-probe --plan --repo <fixture_qa_groups>",
+      "surface": "non-executing bounded QA-group plan",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.qa-group-run.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks qa-group run release-probe --repo <fixture_qa_groups>",
+      "surface": "bounded QA-group run record",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.qa-group-status.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks qa-group status <fixture_qa_groups_run_id> --repo <fixture_qa_groups>",
+      "surface": "live/reconciled bounded QA-group status",
+      "status": "active"
     }
   ]
 }

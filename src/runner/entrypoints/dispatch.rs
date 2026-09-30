@@ -105,9 +105,17 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Admission(args) => run_admission(args),
         Command::Drafts(args) => run_drafts(args),
         Command::Draft(args) => {
+            // The captured context wins (embedded dispatch); otherwise an
+            // explicit repo override -- global or local -- must root the
+            // draft selection instead of the process cwd.
             let runtime_context = crate::runner::command_context::active_runtime_context()
+                .filter(|context| context.task_source().is_some())
                 .unwrap_or_else(|| {
-                    EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
+                    let root = args
+                        .repo_override
+                        .clone()
+                        .unwrap_or_else(|| cwd.to_path_buf());
+                    EffigyRuntimeContext::capture_lossy(Some(root), None)
                         .expect("runtime context capture should fall back to cwd")
                 });
             let request = TaskExecutionRequestBuilder::new()

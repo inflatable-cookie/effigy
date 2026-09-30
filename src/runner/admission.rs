@@ -18,8 +18,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const RSS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const LEASE_ENV: &str = "EFFIGY_ADMISSION_LEASE_ID";
 static UNIQUE: AtomicU64 = AtomicU64::new(1);
-static BOOT_IDENTITY: OnceLock<Option<String>> = OnceLock::new();
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct Budget {
     pub(super) cpu_units: u32,
@@ -1575,57 +1573,10 @@ fn physical_memory_bytes() -> Option<u64> {
     }
 }
 
+use effigy_process::process_start_identity;
+
 fn boot_identity() -> Option<String> {
-    BOOT_IDENTITY.get_or_init(read_boot_identity).clone()
-}
-
-fn read_boot_identity() -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        fs::read_to_string("/proc/sys/kernel/random/boot_id")
-            .ok()
-            .map(|value| value.trim().to_owned())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("sysctl")
-            .args(["-n", "kern.boottime"])
-            .output()
-            .ok()?;
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        None
-    }
-}
-
-fn process_start_identity(pid: u32) -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        let raw = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        let close = raw.rfind(')')?;
-        raw[close + 1..]
-            .split_whitespace()
-            .nth(19)
-            .map(str::to_owned)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("ps")
-            .args(["-o", "lstart=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = pid;
-        None
-    }
+    effigy_process::boot_identity()
 }
 
 fn child_cpu_snapshot() -> Option<(u128, u128)> {
