@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use effigy_tasks::normalize_builtin_test_suite;
 
-use super::planning::BuiltinTestRunnable;
+use super::planning::{
+    passthrough_has_explicit_package_selection, passthrough_has_explicit_workspace_selection,
+    BuiltinTestRunnable,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct BuiltinSuiteSelection {
@@ -114,10 +117,35 @@ pub(super) fn select_builtin_test_suite(
         }
     }
 
+    reject_ambiguous_package_and_workspace_scope(&runnable, &passthrough, &available_runners)?;
+
     Ok(BuiltinSuiteSelection {
         runnable,
         requested_suite,
         passthrough,
+    })
+}
+
+/// Fail when passthrough combines an explicit workspace selection with an
+/// explicit package selection for an auto-workspace Cargo suite. Cargo would
+/// run every workspace member plus the named packages, silently broadening
+/// past the named scope; the caller must keep one of the two requests.
+fn reject_ambiguous_package_and_workspace_scope(
+    runnable: &[BuiltinTestRunnable],
+    passthrough: &[String],
+    available_runners: &BTreeSet<String>,
+) -> Result<(), BuiltinSuiteSelectionError> {
+    let package_scope = passthrough_has_explicit_package_selection(passthrough);
+    let workspace_selection = passthrough_has_explicit_workspace_selection(passthrough);
+    if !(package_scope && workspace_selection) {
+        return Ok(());
+    }
+    if !runnable.iter().any(|entry| entry.auto_workspace_scope) {
+        return Ok(());
+    }
+    Err(BuiltinSuiteSelectionError {
+        message: "built-in `test` passthrough combines an explicit workspace selection (`--workspace` or `--all`) with an explicit package selection (`-p`/`--package`); cargo would widen the run to every workspace member instead of the named packages. Keep one: `effigy test --workspace` runs the full workspace, `effigy test -p <package>` runs the named packages, and `--workspace --exclude <package>` excludes members".to_owned(),
+        available_runners: available_runners.clone(),
     })
 }
 

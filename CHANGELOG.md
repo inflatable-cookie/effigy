@@ -224,6 +224,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Built-in `test` honors explicit Cargo package scope. Passthrough that
+  selects packages (`-p`, `--package`, including `--package=<package>`,
+  attached `-p<package>`, and repeated selections) no longer widens to the
+  workspace in auto-detected Cargo test and nextest plans or executions: the
+  detection-added `--workspace` flag yields, so `effigy test -p app` runs only
+  `app` and `--plan` shows the scoped command. Passthrough that selects the
+  workspace itself (`--workspace`, `--all`) keeps the full-workspace run
+  without repeating the flag (previously a runner usage error). Combining an
+  explicit workspace selection with an explicit package selection is rejected
+  as ambiguous instead of silently running every workspace member.
 - Reapplying an active Cargo link now recognizes its patched path resolutions
   only after the desired-state ledger and the library's managed config block
   agree on each package, workspace, source, and local path. This refreshes the

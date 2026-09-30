@@ -185,6 +185,7 @@ mod hydration_tests {
             runner: "bun".into(),
             root: app,
             command: "bun test".into(),
+            auto_workspace_scope: false,
             cargo_env: Default::default(),
             cargo_env_match: Default::default(),
             env: Default::default(),
