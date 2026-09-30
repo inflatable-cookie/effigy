@@ -22,10 +22,7 @@ struct WizardPhase {
 }
 
 const BASELINE_JOBS: &[AgentInitJob] = &[AgentInitJob::Manifest, AgentInitJob::Readme];
-const AGENT_SETUP_JOBS: &[AgentInitJob] = &[
-    AgentInitJob::AgentsBlock,
-    AgentInitJob::Gitignore,
-];
+const AGENT_SETUP_JOBS: &[AgentInitJob] = &[AgentInitJob::AgentsBlock, AgentInitJob::Gitignore];
 
 const WIZARD_PHASES: &[WizardPhase] = &[
     WizardPhase {

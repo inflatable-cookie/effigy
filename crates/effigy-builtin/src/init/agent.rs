@@ -970,10 +970,8 @@ mod tests {
 
     #[test]
     fn init_installed_skill_status_collapses_symlink_aliases_to_one_canonical_root() {
-        let home = std::env::temp_dir().join(format!(
-            "effigy-init-skill-aliases-{}",
-            std::process::id()
-        ));
+        let home =
+            std::env::temp_dir().join(format!("effigy-init-skill-aliases-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let canonical = home.join(".agents/skills/effigy");
         std::fs::create_dir_all(&canonical).expect("canonical skill root");
@@ -1029,15 +1027,15 @@ mod tests {
 
     #[test]
     fn init_installed_skill_status_reports_missing_install_without_claiming_success() {
-        let home = std::env::temp_dir().join(format!(
-            "effigy-init-skill-missing-{}",
-            std::process::id()
-        ));
+        let home =
+            std::env::temp_dir().join(format!("effigy-init-skill-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
 
         let status = installed_skill_status(Some(&home));
         assert_eq!(status, InstalledSkillStatus::Missing);
-        assert!(status.description().contains("no installed Effigy guidance"));
+        assert!(status
+            .description()
+            .contains("no installed Effigy guidance"));
         assert!(status.description().contains("npx skills add"));
         assert!(status.description().contains("does not install or copy"));
     }

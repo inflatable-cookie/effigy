@@ -243,8 +243,11 @@ fn run_manifest_task_builtin_init_keeps_local_skill_opt_in_and_preserves_custom_
         ],
     );
     let local_skill = root.join(".agents/skills/effigy");
-    std::fs::write(local_skill.join("SKILL.md"), "# Local Effigy customization\n")
-        .expect("customize local skill");
+    std::fs::write(
+        local_skill.join("SKILL.md"),
+        "# Local Effigy customization\n",
+    )
+    .expect("customize local skill");
     std::fs::write(local_skill.join("local-notes.md"), "keep this file\n")
         .expect("add local skill file");
 
@@ -259,7 +262,10 @@ fn run_manifest_task_builtin_init_keeps_local_skill_opt_in_and_preserves_custom_
     let reinitialized = run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
     assert_output_contains_all(
         &reinitialized,
-        &["skill.codex_project [present]", "no project-local skill is required"],
+        &[
+            "skill.codex_project [present]",
+            "no project-local skill is required",
+        ],
     );
     assert_path_missing(
         &local_skill.join("SKILL.md"),

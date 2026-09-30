@@ -661,8 +661,7 @@ mod installed_skill_tests {
 
     fn write_skill(root: &Path) {
         std::fs::create_dir_all(root).expect("skill root");
-        std::fs::write(root.join("SKILL.md"), "---\nname: effigy\n---\n")
-            .expect("skill marker");
+        std::fs::write(root.join("SKILL.md"), "---\nname: effigy\n---\n").expect("skill marker");
         std::fs::write(root.join("effigy.toml"), "[tasks]\nping = \"printf ok\"\n")
             .expect("skill manifest");
     }
@@ -680,7 +679,10 @@ mod installed_skill_tests {
 
         let resolved = resolve_named_global_skill_source(&home, "effigy", &home)
             .expect("symlink aliases are one install");
-        assert_eq!(resolved.source_root, std::fs::canonicalize(&source).unwrap());
+        assert_eq!(
+            resolved.source_root,
+            std::fs::canonicalize(&source).unwrap()
+        );
         assert!(resolved
             .resolution_evidence
             .iter()
