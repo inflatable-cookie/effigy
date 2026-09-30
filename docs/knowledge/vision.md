@@ -36,6 +36,10 @@ complexity.
   envelopes, and release gates remain inspectable.
 - **Agent operations:** graph, docs context, scan, and doctor should
   reduce reconstruction work without making generated summaries authoritative.
+- **Bounded QA:** explicit groups should name a work context, its proof limits
+  and expected execution cost, reusing the task-draft runtime. Tom's
+  2026-09-30 direction puts these groups before automatic diff selection.
+  Workers use targeted checks; planners run milestone QA through Queue.
 - **Portfolio proof:** bootstrap, bundles, dependency links, and consumer
   guidance need evidence from real sibling repositories, not fixtures alone.
 - **Sustainable internals:** semantic crate boundaries and clear command
