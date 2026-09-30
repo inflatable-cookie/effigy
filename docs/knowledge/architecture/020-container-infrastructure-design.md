@@ -387,15 +387,17 @@ another identity. Scope retirement removes qualified and attributable legacy
 keys; shared identities remain retained. Stale reclamation requires
 successful inventory across every participating runtime: Docker when it
 participates, and every running Colima profile. Participation is decided
-first, without launching a runtime: Docker is inactive only when its
-effective endpoint (environment, context store, then platform default socket)
-is an absent local Unix socket; a reachable, remote, or unresolvable endpoint
-stays authoritative, and Colima is inactive only when its CLI is absent. A
-successful empty result is distinct from profile-list, `ps`, or parse failure.
-Incomplete discovery preserves uncertain assignments and reports the backend,
-profile, error, and skipped reclamation reason; identical warnings print once
-per process. If preservation leaves the bounded pool full, allocation reports
-capacity exhaustion with the discovery failure.
+first, without launching a runtime. Docker considers every endpoint that could
+be effective (`DOCKER_CONTEXT`, `DOCKER_HOST`, the stored current context, then
+the platform default socket) and is inactive only when all of them are absent
+local Unix sockets; any remote, reachable, unresolvable, unreadable, or stale
+endpoint stays authoritative. Colima is inactive only when its CLI is absent
+and no Colima or Lima instance state remains. A successful empty result is
+distinct from profile-list, `ps`, or parse failure. Incomplete discovery
+preserves uncertain assignments and reports the backend, profile, error, and
+skipped reclamation reason; identical warnings print once per process. If
+preservation leaves the bounded pool full, allocation reports capacity
+exhaustion with the discovery failure.
 
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 

@@ -159,19 +159,22 @@ correctness.
 
 Participation is decided before any `ps` discovery, without launching Docker,
 Colima, or a container. A proven-inactive optional runtime is skipped rather
-than reported as a failed inventory. Docker's effective endpoint comes from
-`DOCKER_HOST`, then `DOCKER_CONTEXT`, then the named context in the Docker
-config store, then the platform default Unix sockets. An absent local Unix
-endpoint — including a dangling `/var/run/docker.sock` symlink — proves
-inactivity. A reachable local endpoint, a remote or unresolvable configured
-context (`tcp://`, `ssh://`, `npipe://`, a missing context, or unreadable
-config), and a socket that exists but cannot be connected are all ambiguous
-and stay authoritative, so a later failure remains actionable and fail-closed.
-Colima participation follows from whether its CLI exists, because a Colima
-profile has no endpoint that can outlive its client. Neither the preferred
-backend, CLI presence, stderr text, nor an absent socket on its own proves that
-a runtime owns nothing. Identical skipped-reclamation warnings are emitted once
-per process; distinct failures still print.
+than reported as a failed inventory. Docker considers every endpoint that could
+be effective — `DOCKER_CONTEXT`, then `DOCKER_HOST`, then the stored current
+context, then the platform default Unix sockets — so a remote context selected
+by `DOCKER_CONTEXT` is never omitted when `DOCKER_HOST` names an absent local
+socket. Docker is inactive only when every candidate is an absent local Unix
+endpoint, including a dangling `/var/run/docker.sock` symlink. A reachable local
+endpoint, any remote or unresolvable configured endpoint (`tcp://`, `ssh://`,
+`npipe://`, a missing context, unreadable config, or `DOCKER_HOST`), and a
+socket that exists but cannot be connected are all ambiguous and stay
+authoritative, so a later failure remains actionable and fail-closed. Colima is
+inactive only when its CLI is absent *and* no Colima or Lima instance state
+remains, because a running Colima VM can outlive its client CLI. Neither the
+preferred backend, CLI presence, CLI absence alongside remaining state, stderr
+text, nor an absent socket on its own proves that a runtime owns nothing.
+Identical skipped-reclamation warnings are emitted once per process; distinct
+failures still print.
 
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with

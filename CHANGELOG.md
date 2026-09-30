@@ -230,16 +230,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - Running-Compose inventory decides runtime participation before any `ps`
-  probe, without launching Docker, Colima, or a container. A Colima-only host
-  whose Docker Desktop is stopped no longer invokes the Docker CLI or reports
-  its absent `/var/run/docker.sock` as a failed authoritative inventory, so
-  complete Colima evidence can reclaim proven-stale isolated loopback
-  assignments. Docker participates for a remote, reachable, stale, unreadable,
-  or unresolvable endpoint, and Colima participates whenever its CLI exists;
-  those failures stay fail-closed and still preserve uncertain owners. The
-  preferred backend, CLI presence, stderr text, and an absent socket alone
-  never prove that a runtime owns nothing. Identical skipped-reclamation
-  warnings print once per launch; distinct failures still print.
+  probe, without launching Docker, Colima, or a container. Docker is inactive
+  only when every endpoint it could be using (`DOCKER_CONTEXT`, `DOCKER_HOST`,
+  the stored current context, and the platform default socket) is an absent
+  local Unix socket, so a Colima-only host whose Docker Desktop is stopped no
+  longer invokes the Docker CLI or reports its absent `/var/run/docker.sock`
+  as a failed authoritative inventory. A remote context selected by
+  `DOCKER_CONTEXT` is never omitted by an absent local `DOCKER_HOST`, and any
+  remote, reachable, stale, unreadable, or unresolvable endpoint stays
+  fail-closed. Colima participates when its CLI exists or when Colima/Lima
+  instance state remains, because a running VM can outlive its client CLI;
+  only a host with neither is Colima-inactive. Those failures still preserve
+  uncertain owners, and identical skipped-reclamation warnings print once per
+  launch while distinct failures still print.
 - Built-in `test` honors explicit Cargo package scope. Passthrough that
   selects packages (`-p`, `--package`, including `--package=<package>`,
   attached `-p<package>`, and repeated selections) no longer widens to the

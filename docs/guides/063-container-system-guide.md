@@ -490,13 +490,16 @@ Loopback stale reclamation and the cross-project `--global` views read the
 running Compose inventory. Before any `ps`, Effigy decides whether each
 runtime is participating, without launching Docker, Colima, or a container:
 
-- Docker participates when its effective endpoint — from `DOCKER_HOST`,
-  `DOCKER_CONTEXT`, the Docker context store, or the platform default socket —
-  is remote or reachable. An absent local Unix socket means Docker Desktop is
-  not running, so Docker is skipped rather than reported as a failed
-  inventory. A stale, unreadable, or unresolvable endpoint stays fail-closed.
-- Colima participates when its CLI is installed; running profiles come from
-  `colima list --json`.
+- Docker participates when any endpoint it could be using — `DOCKER_CONTEXT`,
+  `DOCKER_HOST`, the stored current context, or the platform default socket —
+  is remote or reachable. Docker is inactive only when every candidate is an
+  absent local Unix socket, so Docker Desktop not running means Docker is
+  skipped rather than reported as a failed inventory. A stale, unreadable, or
+  unresolvable endpoint stays fail-closed, and a remote context selected by
+  `DOCKER_CONTEXT` is never omitted by an absent local `DOCKER_HOST`.
+- Colima participates when its CLI is installed, and also when its CLI is
+  missing but Colima or Lima instance state remains, because a running Colima
+  VM can outlive its client CLI. Only a host with neither is Colima-inactive.
 
 A proven-inactive runtime cannot poison an otherwise complete inventory, so a
 Colima-only host reclaims stale isolated loopback assignments without starting

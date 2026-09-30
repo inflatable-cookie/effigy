@@ -7,33 +7,33 @@
 //! actionable and prevents uncertain reclamation.
 //!
 //! Detection never launches Docker, Colima, or a container. Docker
-//! participation is resolved from its effective endpoint — `DOCKER_HOST`,
-//! `DOCKER_CONTEXT`, the Docker context store, then the platform default
-//! socket — and verified with a non-launching Unix-socket probe. Colima
-//! participation follows from whether its CLI exists, because a Colima profile
-//! has no remote endpoint that could outlive its client.
+//! participation is resolved from every endpoint it could be using —
+//! `DOCKER_CONTEXT`, `DOCKER_HOST`, the stored current context, then the
+//! platform default socket — and verified with a non-launching Unix-socket
+//! probe. Colima participation follows from its CLI or leftover Colima/Lima
+//! state, because a Colima VM can outlive its client CLI.
 //!
 //! Preferred backend, CLI presence, a missing socket, unreadable state and
 //! stderr text are never sufficient on their own to conclude that a runtime
-//! owns nothing. Only an unresolvable-or-absent *effective* local endpoint
-//! proves a runtime inactive.
+//! owns nothing. Only an absent *effective* local endpoint, with no configured
+//! remote endpoint and no Colima runtime state, proves a runtime inactive.
 
 use std::path::{Path, PathBuf};
 
 /// Whether a runtime can own running Compose containers on this host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeParticipation {
-    /// Proven unable to own running containers: no reachable local endpoint
-    /// and no configured remote endpoint. Its inventory can be skipped without
-    /// weakening the completeness claim.
+    /// Proven unable to own running containers: no reachable local endpoint,
+    /// no configured remote endpoint, and no runtime state. Its inventory can
+    /// be skipped without weakening the completeness claim.
     Inactive,
     /// Running, reachable, or not provably inactive. Its inventory is
     /// authoritative, so a failed probe keeps the inventory incomplete.
     Participating,
 }
 
-/// The effective Docker endpoint after environment, context, and platform
-/// defaults have been resolved. Resolution never starts a runtime.
+/// One Docker endpoint that could be effective for this host. Resolution never
+/// starts a runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DockerEndpoint {
     /// A local Unix socket that can be probed directly.
@@ -58,47 +58,66 @@ enum SocketProbe {
     Indeterminate,
 }
 
+/// Colima state left behind by a profile, independent of its CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColimaStateEvidence {
+    /// No Colima home or Lima instance state exists.
+    None,
+    /// Colima home or Lima instance state exists; a VM may still be running.
+    Present,
+    /// State could not be inspected.
+    Unknown,
+}
+
 pub(super) fn docker_runtime_participation() -> RuntimeParticipation {
-    classify_docker_participation(resolve_docker_endpoint(), probe_unix_socket)
+    classify_docker_participation(docker_endpoint_candidates(), probe_unix_socket)
 }
 
 pub(super) fn colima_runtime_participation() -> RuntimeParticipation {
-    classify_colima_participation(crate::manager::command_exists("colima"))
-}
-
-fn classify_colima_participation(cli_available: bool) -> RuntimeParticipation {
-    if cli_available {
-        RuntimeParticipation::Participating
-    } else {
-        RuntimeParticipation::Inactive
-    }
+    classify_colima_participation(
+        crate::manager::command_exists("colima"),
+        colima_state_evidence(crate::runtime::dns::colima_home_dir().as_deref()),
+    )
 }
 
 fn classify_docker_participation(
-    endpoint: DockerEndpoint,
+    candidates: Vec<DockerEndpoint>,
     mut probe: impl FnMut(&Path) -> SocketProbe,
 ) -> RuntimeParticipation {
-    match endpoint {
-        DockerEndpoint::Remote | DockerEndpoint::Unresolved => RuntimeParticipation::Participating,
-        DockerEndpoint::Unix(path) => classify_probe(probe(&path)),
-        DockerEndpoint::DefaultLocal => {
-            let mut probed = false;
-            for candidate in default_docker_unix_sockets() {
-                probed = true;
-                match probe(&candidate) {
-                    SocketProbe::Reachable | SocketProbe::Indeterminate => {
-                        return RuntimeParticipation::Participating;
-                    }
-                    SocketProbe::Absent => {}
+    if candidates.is_empty() {
+        return RuntimeParticipation::Participating;
+    }
+    // Any remote or unresolvable configured endpoint keeps Docker
+    // authoritative, even when another configured local endpoint is absent.
+    if candidates.iter().any(|endpoint| {
+        matches!(
+            endpoint,
+            DockerEndpoint::Remote | DockerEndpoint::Unresolved
+        )
+    }) {
+        return RuntimeParticipation::Participating;
+    }
+    for endpoint in candidates {
+        match endpoint {
+            DockerEndpoint::Remote | DockerEndpoint::Unresolved => unreachable!("handled above"),
+            DockerEndpoint::Unix(path) => {
+                if classify_probe(probe(&path)) == RuntimeParticipation::Participating {
+                    return RuntimeParticipation::Participating;
                 }
             }
-            if probed {
-                RuntimeParticipation::Inactive
-            } else {
-                RuntimeParticipation::Participating
+            DockerEndpoint::DefaultLocal => {
+                for candidate in default_docker_unix_sockets() {
+                    match probe(&candidate) {
+                        SocketProbe::Reachable | SocketProbe::Indeterminate => {
+                            return RuntimeParticipation::Participating;
+                        }
+                        SocketProbe::Absent => {}
+                    }
+                }
             }
         }
     }
+    RuntimeParticipation::Inactive
 }
 
 fn classify_probe(probe: SocketProbe) -> RuntimeParticipation {
@@ -108,6 +127,23 @@ fn classify_probe(probe: SocketProbe) -> RuntimeParticipation {
         // inactivity.
         SocketProbe::Indeterminate => RuntimeParticipation::Participating,
         SocketProbe::Absent => RuntimeParticipation::Inactive,
+    }
+}
+
+fn classify_colima_participation(
+    cli_available: bool,
+    state: ColimaStateEvidence,
+) -> RuntimeParticipation {
+    if cli_available {
+        return RuntimeParticipation::Participating;
+    }
+    // Without the CLI, a Colima VM can still be running and owning containers.
+    // Only the absence of any Colima/Lima state proves the runtime inactive.
+    match state {
+        ColimaStateEvidence::None => RuntimeParticipation::Inactive,
+        ColimaStateEvidence::Present | ColimaStateEvidence::Unknown => {
+            RuntimeParticipation::Participating
+        }
     }
 }
 
@@ -136,38 +172,48 @@ fn default_docker_unix_sockets() -> Vec<PathBuf> {
     candidates
 }
 
-fn resolve_docker_endpoint() -> DockerEndpoint {
-    resolve_docker_endpoint_from(
+fn docker_endpoint_candidates() -> Vec<DockerEndpoint> {
+    docker_endpoint_candidates_from(
         non_empty_env("DOCKER_HOST"),
         non_empty_env("DOCKER_CONTEXT"),
         docker_config_dir(),
     )
 }
 
-fn resolve_docker_endpoint_from(
+/// Collect every Docker endpoint that could be effective for this host.
+///
+/// `DOCKER_CONTEXT` overrides `DOCKER_HOST` and the stored current context, and
+/// a named context endpoint overrides `DOCKER_HOST`. Candidate collection keeps
+/// all of them so a remote runtime selected by any of them is never omitted;
+/// only a host where every candidate is an absent local endpoint is inactive.
+fn docker_endpoint_candidates_from(
     docker_host: Option<String>,
     docker_context: Option<String>,
     config_dir: Option<PathBuf>,
-) -> DockerEndpoint {
-    if let Some(host) = docker_host {
-        return endpoint_from_host(&host);
+) -> Vec<DockerEndpoint> {
+    let mut candidates = Vec::new();
+    if let Some(name) = docker_context
+        .as_deref()
+        .filter(|name| !is_default_context_name(name))
+    {
+        candidates.push(resolve_context_endpoint_from(name, config_dir.as_deref()));
     }
-    let context = match docker_context {
-        Some(name) => Some(name),
-        None => match config_dir.as_deref().map(config_context) {
-            Some(DockerConfigContext::Named(name)) => name,
-            Some(DockerConfigContext::Absent) => None,
-            // A config that exists but cannot be read may name a remote
-            // endpoint we cannot remark on, so it is never treated as default.
-            Some(DockerConfigContext::Unreadable) => return DockerEndpoint::Unresolved,
-            None => None,
-        },
-    };
-    let context = context.filter(|name| !name.eq_ignore_ascii_case("default"));
-    match context {
-        Some(name) => resolve_context_endpoint_from(&name, config_dir.as_deref()),
-        None => DockerEndpoint::DefaultLocal,
+    if let Some(host) = docker_host.as_deref() {
+        candidates.push(endpoint_from_host(host));
     }
+    match config_dir.as_deref().map(config_context) {
+        Some(DockerConfigContext::Named(Some(name))) if !is_default_context_name(&name) => {
+            candidates.push(resolve_context_endpoint_from(&name, config_dir.as_deref()));
+        }
+        Some(DockerConfigContext::Unreadable) => candidates.push(DockerEndpoint::Unresolved),
+        _ => {}
+    }
+    candidates.push(DockerEndpoint::DefaultLocal);
+    candidates
+}
+
+fn is_default_context_name(name: &str) -> bool {
+    name.is_empty() || name.eq_ignore_ascii_case("default")
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -273,28 +319,41 @@ fn endpoint_from_host(host: &str) -> DockerEndpoint {
     DockerEndpoint::Unresolved
 }
 
+/// Inspect Colima state that can outlive the CLI. A running Lima instance
+/// lives under the Colima home's `_lima` directory, so its presence keeps
+/// Colima authoritative even when `colima` is not on `PATH`.
+fn colima_state_evidence(colima_home: Option<&Path>) -> ColimaStateEvidence {
+    let Some(home) = colima_home else {
+        return ColimaStateEvidence::None;
+    };
+    match std::fs::read_dir(home.join("_lima")) {
+        Ok(entries) => {
+            if entries
+                .filter_map(Result::ok)
+                .any(|entry| entry.path().is_dir())
+            {
+                ColimaStateEvidence::Present
+            } else {
+                ColimaStateEvidence::None
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ColimaStateEvidence::None,
+        Err(_) => ColimaStateEvidence::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
 
     #[test]
-    fn colima_participates_exactly_when_its_cli_exists() {
-        assert_eq!(
-            classify_colima_participation(true),
-            RuntimeParticipation::Participating
-        );
-        assert_eq!(
-            classify_colima_participation(false),
-            RuntimeParticipation::Inactive
-        );
-    }
-
-    #[test]
     fn absent_explicit_unix_endpoint_is_inactive() {
         let probes = Cell::new(0);
         let participation = classify_docker_participation(
-            DockerEndpoint::Unix(PathBuf::from("/tmp/effigy-absent.sock")),
+            vec![DockerEndpoint::Unix(PathBuf::from(
+                "/tmp/effigy-absent.sock",
+            ))],
             |_| {
                 probes.set(probes.get() + 1);
                 SocketProbe::Absent
@@ -308,7 +367,7 @@ mod tests {
     #[test]
     fn reachable_unix_endpoint_is_participating() {
         let participation = classify_docker_participation(
-            DockerEndpoint::Unix(PathBuf::from("/tmp/effigy-live.sock")),
+            vec![DockerEndpoint::Unix(PathBuf::from("/tmp/effigy-live.sock"))],
             |_| SocketProbe::Reachable,
         );
 
@@ -317,32 +376,46 @@ mod tests {
 
     #[test]
     fn stale_or_unreadable_unix_endpoint_stays_fail_closed() {
-        for probe in [SocketProbe::Indeterminate] {
+        let participation = classify_docker_participation(
+            vec![DockerEndpoint::Unix(PathBuf::from(
+                "/tmp/effigy-stale.sock",
+            ))],
+            |_| SocketProbe::Indeterminate,
+        );
+
+        assert_eq!(participation, RuntimeParticipation::Participating);
+    }
+
+    #[test]
+    fn remote_and_unresolved_endpoints_are_never_omitted() {
+        for remote in [DockerEndpoint::Remote, DockerEndpoint::Unresolved] {
             let participation = classify_docker_participation(
-                DockerEndpoint::Unix(PathBuf::from("/tmp/effigy-stale.sock")),
-                |_| probe,
+                vec![
+                    DockerEndpoint::Unix(PathBuf::from("/tmp/effigy-absent.sock")),
+                    remote,
+                ],
+                |_| panic!("a configured remote or unresolved endpoint must not be probed away"),
             );
             assert_eq!(participation, RuntimeParticipation::Participating);
         }
     }
 
     #[test]
-    fn remote_and_unresolved_endpoints_are_never_omitted() {
-        for endpoint in [DockerEndpoint::Remote, DockerEndpoint::Unresolved] {
-            let participation = classify_docker_participation(endpoint, |_| {
-                panic!("remote or unresolved endpoints must not be probed")
-            });
-            assert_eq!(participation, RuntimeParticipation::Participating);
-        }
+    fn empty_candidate_set_stays_fail_closed() {
+        let participation =
+            classify_docker_participation(Vec::new(), |_| panic!("no endpoints to probe"));
+
+        assert_eq!(participation, RuntimeParticipation::Participating);
     }
 
     #[test]
     fn default_local_endpoint_is_inactive_only_after_every_candidate_is_absent() {
         let probes = Cell::new(0);
-        let participation = classify_docker_participation(DockerEndpoint::DefaultLocal, |_| {
-            probes.set(probes.get() + 1);
-            SocketProbe::Absent
-        });
+        let participation =
+            classify_docker_participation(vec![DockerEndpoint::DefaultLocal], |_| {
+                probes.set(probes.get() + 1);
+                SocketProbe::Absent
+            });
 
         assert_eq!(participation, RuntimeParticipation::Inactive);
         assert_eq!(probes.get(), default_docker_unix_sockets().len());
@@ -350,28 +423,66 @@ mod tests {
 
     #[test]
     fn default_local_endpoint_with_one_reachable_candidate_is_participating() {
-        let participation = classify_docker_participation(DockerEndpoint::DefaultLocal, |path| {
-            if path == PathBuf::from("/var/run/docker.sock") {
-                SocketProbe::Reachable
-            } else {
-                SocketProbe::Absent
-            }
-        });
+        let participation =
+            classify_docker_participation(vec![DockerEndpoint::DefaultLocal], |path| {
+                if path == PathBuf::from("/var/run/docker.sock") {
+                    SocketProbe::Reachable
+                } else {
+                    SocketProbe::Absent
+                }
+            });
 
         assert_eq!(participation, RuntimeParticipation::Participating);
     }
 
     #[test]
     fn default_local_endpoint_with_one_stale_candidate_is_participating() {
-        let participation = classify_docker_participation(DockerEndpoint::DefaultLocal, |path| {
-            if path == PathBuf::from("/var/run/docker.sock") {
-                SocketProbe::Indeterminate
-            } else {
-                SocketProbe::Absent
-            }
-        });
+        let participation =
+            classify_docker_participation(vec![DockerEndpoint::DefaultLocal], |path| {
+                if path == PathBuf::from("/var/run/docker.sock") {
+                    SocketProbe::Indeterminate
+                } else {
+                    SocketProbe::Absent
+                }
+            });
 
         assert_eq!(participation, RuntimeParticipation::Participating);
+    }
+
+    #[test]
+    fn colima_participates_with_or_without_leftover_state_when_its_cli_exists() {
+        for state in [
+            ColimaStateEvidence::None,
+            ColimaStateEvidence::Present,
+            ColimaStateEvidence::Unknown,
+        ] {
+            assert_eq!(
+                classify_colima_participation(true, state),
+                RuntimeParticipation::Participating
+            );
+        }
+    }
+
+    #[test]
+    fn colima_without_a_cli_stays_fail_closed_when_state_remains() {
+        // A running Colima VM can outlive its client CLI, so a missing binary
+        // is not proof of inactivity while Colima or Lima state exists.
+        assert_eq!(
+            classify_colima_participation(false, ColimaStateEvidence::Present),
+            RuntimeParticipation::Participating
+        );
+        assert_eq!(
+            classify_colima_participation(false, ColimaStateEvidence::Unknown),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn colima_without_a_cli_or_any_state_is_inactive() {
+        assert_eq!(
+            classify_colima_participation(false, ColimaStateEvidence::None),
+            RuntimeParticipation::Inactive
+        );
     }
 
     #[test]
@@ -437,47 +548,80 @@ mod tests {
     }
 
     #[test]
-    fn explicit_docker_host_wins_over_the_context_store() {
+    fn docker_context_overrides_an_absent_docker_host() {
+        // The reviewed defect: a remote context selected by DOCKER_CONTEXT
+        // must not be omitted because DOCKER_HOST points at an absent socket.
         let dir = docker_context_fixture(&[("remote", Some("tcp://10.0.0.5:2375"))]);
-        write_current_context(&dir, "remote");
-
-        let endpoint = resolve_docker_endpoint_from(
-            Some("unix:///tmp/explicit.sock".to_owned()),
-            None,
+        let candidates = docker_endpoint_candidates_from(
+            Some("unix:///tmp/absent.sock".to_owned()),
+            Some("remote".to_owned()),
             Some(dir.path().to_path_buf()),
         );
 
+        assert!(candidates.contains(&DockerEndpoint::Remote));
+        assert!(candidates.contains(&DockerEndpoint::Unix(PathBuf::from("/tmp/absent.sock"))));
         assert_eq!(
-            endpoint,
-            DockerEndpoint::Unix(PathBuf::from("/tmp/explicit.sock"))
+            classify_docker_participation(candidates, |_| {
+                panic!("a configured remote endpoint must not be probed away")
+            }),
+            RuntimeParticipation::Participating
         );
     }
 
     #[test]
-    fn docker_context_override_resolves_through_the_store() {
-        let dir = docker_context_fixture(&[
-            (
-                "desktop-linux",
-                Some("unix:///Users/me/.docker/run/docker.sock"),
-            ),
-            ("remote", Some("ssh://builder")),
-        ]);
+    fn a_remote_docker_host_is_not_omitted_by_an_absent_context() {
+        let dir = docker_context_fixture(&[(
+            "desktop-linux",
+            Some("unix:///Users/me/.docker/run/docker.sock"),
+        )]);
+        write_current_context(&dir, "desktop-linux");
+        let candidates = docker_endpoint_candidates_from(
+            Some("ssh://builder".to_owned()),
+            None,
+            Some(dir.path().to_path_buf()),
+        );
+
+        assert!(candidates.contains(&DockerEndpoint::Remote));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("a configured remote endpoint must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn docker_context_and_host_candidates_are_both_kept() {
+        let dir = docker_context_fixture(&[(
+            "desktop-linux",
+            Some("unix:///Users/me/.docker/run/docker.sock"),
+        )]);
+        let candidates = docker_endpoint_candidates_from(
+            Some("unix:///tmp/other.sock".to_owned()),
+            Some("desktop-linux".to_owned()),
+            Some(dir.path().to_path_buf()),
+        );
+
+        assert!(candidates.contains(&DockerEndpoint::Unix(PathBuf::from(
+            "/Users/me/.docker/run/docker.sock"
+        ))));
+        assert!(candidates.contains(&DockerEndpoint::Unix(PathBuf::from("/tmp/other.sock"))));
+    }
+
+    #[test]
+    fn stored_current_context_is_a_candidate_without_env_overrides() {
+        let dir = docker_context_fixture(&[(
+            "desktop-linux",
+            Some("unix:///Users/me/.docker/run/docker.sock"),
+        )]);
+        write_current_context(&dir, "desktop-linux");
 
         assert_eq!(
-            resolve_docker_endpoint_from(
-                None,
-                Some("desktop-linux".to_owned()),
-                Some(dir.path().to_path_buf())
-            ),
-            DockerEndpoint::Unix(PathBuf::from("/Users/me/.docker/run/docker.sock"))
-        );
-        assert_eq!(
-            resolve_docker_endpoint_from(
-                None,
-                Some("remote".to_owned()),
-                Some(dir.path().to_path_buf())
-            ),
-            DockerEndpoint::Remote
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            vec![
+                DockerEndpoint::Unix(PathBuf::from("/Users/me/.docker/run/docker.sock")),
+                DockerEndpoint::DefaultLocal,
+            ]
         );
     }
 
@@ -485,10 +629,15 @@ mod tests {
     fn configured_but_unresolvable_context_stays_fail_closed() {
         let dir = docker_context_fixture(&[]);
         write_current_context(&dir, "missing-context");
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
 
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, Some(dir.path().to_path_buf())),
-            DockerEndpoint::Unresolved
+            classify_docker_participation(candidates, |_| {
+                panic!("an unresolvable context must not be probed away")
+            }),
+            RuntimeParticipation::Participating
         );
     }
 
@@ -496,10 +645,15 @@ mod tests {
     fn unreadable_config_is_fail_closed() {
         let dir = docker_context_fixture(&[]);
         std::fs::write(dir.path().join("config.json"), "{ not json").expect("write bad config");
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
 
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, Some(dir.path().to_path_buf())),
-            DockerEndpoint::Unresolved
+            classify_docker_participation(candidates, |_| {
+                panic!("an unreadable config must not be probed away")
+            }),
+            RuntimeParticipation::Participating
         );
     }
 
@@ -507,10 +661,15 @@ mod tests {
     fn context_without_a_docker_endpoint_is_fail_closed() {
         let dir = docker_context_fixture(&[("bare", None)]);
         write_current_context(&dir, "bare");
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
 
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, Some(dir.path().to_path_buf())),
-            DockerEndpoint::Unresolved
+            classify_docker_participation(candidates, |_| {
+                panic!("a context without an endpoint must not be probed away")
+            }),
+            RuntimeParticipation::Participating
         );
     }
 
@@ -519,12 +678,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("create empty docker config fixture");
 
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, Some(dir.path().to_path_buf())),
-            DockerEndpoint::DefaultLocal
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            vec![DockerEndpoint::DefaultLocal]
         );
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, None),
-            DockerEndpoint::DefaultLocal
+            docker_endpoint_candidates_from(None, None, None),
+            vec![DockerEndpoint::DefaultLocal]
         );
     }
 
@@ -534,8 +693,27 @@ mod tests {
         write_current_context(&dir, "default");
 
         assert_eq!(
-            resolve_docker_endpoint_from(None, None, Some(dir.path().to_path_buf())),
-            DockerEndpoint::DefaultLocal
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
+            vec![DockerEndpoint::DefaultLocal]
         );
+    }
+
+    #[test]
+    fn colima_state_evidence_tracks_lima_instance_directories() {
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::None
+        );
+
+        let instance = dir.path().join("_lima").join("colima-effigy");
+        std::fs::create_dir_all(&instance).expect("create lima instance dir");
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::Present
+        );
+
+        assert_eq!(colima_state_evidence(None), ColimaStateEvidence::None);
     }
 }
