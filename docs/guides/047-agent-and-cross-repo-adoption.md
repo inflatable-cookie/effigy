@@ -249,6 +249,13 @@ not treat `effigy init --check` as evidence of observed agent discovery.
 Before relying on removed consumer-local paths, explicitly read `SKILL.md`
 from the chosen canonical install root and verify discovery in a fresh context.
 
+Run init/discovery mutation probes only in a disposable fixture tree under one
+fresh temporary directory. Keep its sibling catalogs inside that same tree.
+Never create fixed temporary sibling names, link them to real checkouts, or
+write through existing sibling links: two concurrent probes can otherwise
+replace a consumer’s real manifest. Preserve evidence before restoring a
+clobbered file; restore only the proven fixture output with its owner’s authority.
+
 ### Refresh an existing global skill
 
 Use the skill tree from the reviewed Effigy checkout. First inventory the
