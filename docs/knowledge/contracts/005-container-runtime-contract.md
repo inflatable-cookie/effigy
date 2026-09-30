@@ -144,7 +144,10 @@ Desktop to permit safe loopback reclamation. Runtime discovery must distinguish
 a proven inactive optional backend from a failed authoritative inventory.
 An executable on PATH or a missing socket alone does not prove ownership.
 The repair must preserve uncertain owners; it does not authorize live registry
-cleanup or pool expansion.
+cleanup or pool expansion. Uncertain evidence includes symbolic or dangling
+Colima instance entries and explicit Docker environment overrides that cannot
+be decoded. Neither may be treated as an absent runtime; failed discovery
+must keep their owners protected.
 
 Stale reclamation requires a complete inventory across the Docker default
 backend and every running Colima profile. A successful empty inventory proves
