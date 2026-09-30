@@ -60,8 +60,12 @@ cross-catalog lookup requires an explicit catalog alias. The member's typed
 catalog and surface. Maintained groups use published members only. CWD and
 shallowest precedence never affect member resolution, and one surface never
 falls through to another. Duplicate group keys in one composed catalog fail
-independent of include order. Equal names in separate catalogs or task
-surfaces are distinct typed identities.
+independent of include order. A group may share a name with either a published
+task or a draft because routing selects the group surface explicitly. The
+published-task/draft same-name prohibition in contract
+[046](../contracts/046-published-and-draft-task-surface-contract.md) remains
+unchanged; a group cannot waive it. Equal group names in separate catalogs
+remain distinct typed identities.
 
 A temporary group file must declare its owning catalog alias from the
 effective set. Its directory does not imply catalog identity. A member's

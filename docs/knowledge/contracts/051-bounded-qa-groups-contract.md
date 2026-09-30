@@ -85,11 +85,15 @@ leading `qa-groups` and `qa-group` routes, leaving those forms, task-list flags,
 and top-level selectors unchanged. Group names use `[a-z][a-z0-9-]*` and
 cannot contain `/`, so only the catalog prefix can qualify a selector. The
 action precedes the name, so names
-such as `run` or `status` are valid. Task, draft, and group names may match:
-their command surfaces and typed identities remain separate. Duplicate group
-names inside one composed catalog are invalid; include order never overrides
-one definition with another. The same group name in distinct catalogs is
-valid and must be qualified if normal catalog precedence cannot choose one.
+such as `run` or `status` are valid. A QA-group name may match a published
+task name or a draft name because those definitions use separate command
+surfaces and typed identities. This does not relax contract
+[046](046-published-and-draft-task-surface-contract.md): a published task and
+a draft with the same name in one effective catalog remain invalid, even if a
+QA group with that name also exists. Duplicate group names inside one
+composed catalog are invalid; include order never overrides one definition
+with another. The same group name in distinct catalogs is valid and must be
+qualified if normal catalog precedence cannot choose one.
 Temporary files are isolated by explicit `--file`; a same-named maintained
 group cannot shadow or be shadowed by one.
 
@@ -324,13 +328,16 @@ to a published task. Member dependencies inside an ordinary task continue to
 use their existing routing contract.
 
 Typed group identity is `(repository root, owning catalog root, qa_group
-surface, lifecycle/source, name, source path, definition digest)`. Catalog
-scope permits equal names in separate catalogs without identity collision;
-the route must qualify or be uniquely resolvable. Duplicate keys after
-explicit manifest composition are invalid and are never resolved by include
-order. Member IDs are unique within one definition. A temporary file is a
-separate identity selected only by its explicit file path, so equal names do
-not shadow maintained definitions.
+surface, lifecycle/source, name, source path, definition digest)`. A group may
+share its name with a published task or draft; the QA-group route selects only
+the group surface. Contract 046 still forbids a published task and draft with
+the same name in one effective catalog. Catalog scope permits equal group
+names in separate catalogs without identity collision; the route must qualify
+or be uniquely resolvable. Duplicate group keys after explicit manifest
+composition are invalid and are never resolved by include order. Member IDs
+are unique within one definition. A temporary file is a separate identity
+selected only by its explicit file path, so equal names do not shadow
+maintained definitions.
 
 ## Runtime expectation and timeout
 
@@ -571,12 +578,19 @@ when each brief is approved and dispatched.
   temporary paths, expired execution, typed draft references, and the top-level
   selector collision cases. Existing `qa`, `validate`, task and draft routes
   remain unchanged.
+- Collision tests prove `[qa.groups.smoke]` may coexist with `[tasks.smoke]`
+  and, separately, with `[drafts.smoke]`. The effective catalog still rejects
+  `[tasks.smoke]` plus `[drafts.smoke]` under contract 046, including when
+  `[qa.groups.smoke]` is present; a group definition cannot waive that
+  validator rule.
 - Routing tests cover root-owned effective catalog membership; alias/path,
   cwd-nearest, shallowest, ambiguity, and qualified group lookup; exact member
   lookup in the owning catalog; explicit cross-catalog member aliases; and no
   published/draft fallback. Duplicate group keys in one composed catalog fail
-  regardless of include order; same names across catalogs and task surfaces
-  remain distinct. Temporary files are selected only by their explicit path.
+  regardless of include order; QA-group names may overlap either task surface,
+  while the published-task/draft same-name pair remains invalid per the
+  collision tests above. Equal group names across catalogs remain distinct.
+  Temporary files are selected only by their explicit path.
 - Coverage tests cover required scope omitted, advisory scope omitted,
   exact typed-token matching, matching path `*`/`**` patterns, invalid and
   escaping paths, one input mapped to multiple member IDs, a known gap even

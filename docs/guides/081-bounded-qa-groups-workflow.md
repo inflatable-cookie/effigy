@@ -84,10 +84,13 @@ Group names are catalog-scoped. Use `catalog-alias/name` (or the documented
 catalog path prefix) when multiple groups could match; an unresolved tie is
 an error, not a task/draft fallback. Member selectors resolve in the owning
 catalog unless their definition explicitly pins another catalog alias, and
-their `published`/`draft` surface is explicit. Equal group, task, and draft
-names do not collide because they use separate command surfaces. Duplicate
-group definitions within one catalog are invalid; a temporary file is
-selected only by its explicit `--file` and cannot shadow a maintained group.
+their `published`/`draft` surface is explicit. A QA group may share a name
+with a published task or a draft because the group has its own command
+surface. Contract [046](../knowledge/contracts/046-published-and-draft-task-surface-contract.md)
+still rejects a published task and draft with the same name in one effective
+catalog; adding a same-named group does not change that rule. Duplicate group
+definitions within one catalog are invalid; a temporary file is selected only
+by its explicit `--file` and cannot shadow a maintained group.
 
 ## Longhorn pilot examples
 
