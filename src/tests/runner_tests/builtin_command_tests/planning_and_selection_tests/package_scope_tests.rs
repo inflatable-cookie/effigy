@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::harness::EnvGuard;
 use crate::runner::tests::prelude::{
-    assert_builtin_test_non_zero, assert_invocation_error_contains, assert_output_contains_all,
-    assert_output_excludes_all, fs, lock_test, parse_json_output_with_schema, run_builtin_err,
-    run_builtin_ok, temp_workspace, write_executable,
+    assert_builtin_test_non_zero, assert_invocation_error_contains, assert_output_contains_all, fs,
+    lock_test, parse_json_output_with_schema, run_builtin_err, run_builtin_ok, temp_workspace,
+    write_executable,
 };
 use std::path::Path;
 use std::path::PathBuf;
@@ -127,6 +127,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
 
 #[test]
 fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_runner_separator() {
+    let _guard = lock_test();
     let root = temp_workspace("builtin-test-package-scope-runner-separator");
     write_two_package_cargo_workspace(&root);
 
@@ -229,13 +230,20 @@ fn run_manifest_task_builtin_test_package_scope_execution_omits_unrelated_failin
     );
     assert_output_contains_all(&out_excluded, &["Test Results"]);
 
-    let err = run_builtin_err(root.to_path_buf(), "test", &["--workspace"]);
+    // Failing runs carry `--no-fail-fast` so the inner runner completes every
+    // selected binary and tears down deterministically instead of cancelling
+    // a binary mid-run; the failure oracle (nonzero exit) is unchanged.
+    let err = run_builtin_err(
+        root.to_path_buf(),
+        "test",
+        &["--workspace", "--no-fail-fast"],
+    );
     assert_builtin_test_non_zero(err, None, &["Test Results", "root"], &[]);
 
     let err_repeated = run_builtin_err(
         root.to_path_buf(),
         "test",
-        &["-p", "scope-good", "-p", "scope-bad"],
+        &["-p", "scope-good", "-p", "scope-bad", "--no-fail-fast"],
     );
     assert_builtin_test_non_zero(err_repeated, None, &["Test Results", "root"], &[]);
 
@@ -290,7 +298,11 @@ fn run_manifest_task_builtin_test_package_scope_execution_cargo_test_fallback() 
     let out = run_builtin_ok(root.to_path_buf(), "test", &["-p", "scope-good"]);
     assert_output_contains_all(&out, &["Test Results", "targets:", "root"]);
 
-    let err = run_builtin_err(root.to_path_buf(), "test", &["--workspace"]);
+    let err = run_builtin_err(
+        root.to_path_buf(),
+        "test",
+        &["--workspace", "--no-fail-fast"],
+    );
     assert_builtin_test_non_zero(err, None, &["Test Results", "root"], &[]);
 }
 
