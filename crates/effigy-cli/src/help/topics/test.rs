@@ -70,6 +70,10 @@ pub(crate) fn render_test_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
             "cargo test (Rust fallback)",
         ],
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Workspace roots add `--workspace` automatically; passthrough like `-p <package>` narrows to the named packages, and `--plan` shows the composed command.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Configuration")?;

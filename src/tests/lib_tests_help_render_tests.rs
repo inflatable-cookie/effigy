@@ -490,6 +490,7 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("`tasks.test` was removed in v0.11"));
     assert!(rendered.contains("including `<catalog>/test` targeting"));
     assert!(rendered.contains("Detection Order"));
+    assert!(rendered.contains("passthrough like `-p <package>` narrows to the named packages"));
     assert!(rendered.contains("--verbose-results"));
     assert!(rendered.contains("--tui"));
     assert!(rendered.contains("[suite] [runner args]"));

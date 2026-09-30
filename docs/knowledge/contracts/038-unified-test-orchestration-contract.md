@@ -40,6 +40,13 @@ the detected command includes that root. Explicit `[test.suites]` and
 - `effigy test --plan [suite]` resolves and renders the same selection without
   running setup, suites, teardown, task references, or scripts.
 - runner passthrough is allowed only when selection resolves unambiguously.
+- passthrough that selects Cargo packages explicitly (`-p`, `--package`,
+  including repeated selections) narrows the auto-detected Rust suites to
+  exactly those packages: detection's `--workspace` flag yields so the run
+  cannot widen to the workspace. Passthrough that selects the workspace
+  explicitly (`--workspace`, `--all`) keeps the full-workspace run. Combining
+  both selections is rejected as ambiguous, never silently broadened; the
+  plan shows the composed command either way.
 
 Suites are on the default board unless a full suite table sets
 `default = false`. On-demand suites remain available through
@@ -118,6 +125,12 @@ must name this migration directly.
 - mixed Rust and TypeScript roots plan and run both supported ecosystems
 - named suites, catalog targeting, suite targeting, lifecycle steps, task
   references, Rhai, and passthrough retain focused coverage
+- a two-package Cargo fixture whose unrelated package fails when selected
+  proves `-p`/`--package`, repeated selections, `--package=<package>`, and
+  exclusion combinations plan and execute without the unrelated package,
+  while explicit `--workspace` still selects it
+- explicit workspace selection combined with explicit package selection is
+  rejected for auto-workspace Rust suites instead of widening
 - on-demand suites stay selectable without joining the default board
 - root exclusions preserve direct catalog selection and plan visibility
 - migration preview/apply writes `[test.suites]`, never `tasks.test`
@@ -129,6 +142,8 @@ must name this migration directly.
 - `--plan` reaches an execution pipeline
 - a second test configuration authority appears
 - mixed-root detection stops returning every supported ecosystem
+- auto-detected Rust suites widen an explicit Cargo package selection to the
+  workspace in a plan or an execution
 - migration or starter guidance emits `tasks.test`
 - a suite task reference changes cwd by rebuilding repository context and loses
   an already loaded ancestor execution registry

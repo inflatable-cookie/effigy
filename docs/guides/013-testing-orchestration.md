@@ -26,6 +26,29 @@ When the root `Cargo.toml` declares `[workspace]`, both Cargo runners add
 `--workspace` automatically. Use `[test.runners]` or `[test.suites]` only when
 the repository intentionally needs a narrower or otherwise custom board.
 
+### Cargo package scope in passthrough
+
+Passthrough arguments reach the runner command verbatim, and Cargo treats
+`--workspace` and package selection additively — `--workspace -p app` runs
+every workspace member, not just `app`. Built-in routing therefore keeps the
+auto-added workspace flag out of the way when passthrough narrows scope:
+
+- `-p <package>` / `--package <package>` (including `--package=<package>`,
+  attached `-p<package>`, and repeated selections) runs exactly the named
+  packages; the auto-added `--workspace` is omitted and `effigy test --plan`
+  shows the scoped command.
+- An explicit `--workspace` or `--all` in passthrough keeps the full-workspace
+  run (the auto flag yields to avoid repeating the flag, which the runners
+  reject as a usage error).
+- Combining an explicit workspace selection with an explicit package selection
+  is rejected as ambiguous instead of silently broadening: keep one request.
+  `--workspace --exclude <package>` is the supported way to run the workspace
+  minus members; `--exclude` without `--workspace` keeps the auto workspace
+  flag, which is what makes the exclusion valid for Cargo.
+
+`effigy test --plan` reports the composed command either way, so the plan is
+the source of truth for the exact package scope before execution.
+
 `effigy test --plan` prints selected runner, command, evidence, fallback chain,
 and per-target `cargo-env-match` mode. Planning never runs setup, suite, or
 teardown commands.

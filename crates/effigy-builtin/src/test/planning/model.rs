@@ -7,6 +7,10 @@ use effigy_manifest::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy
 pub(crate) struct BuiltinResolvedPlan {
     pub(crate) suite: String,
     pub(crate) command: String,
+    /// True when the command's `--workspace` flag was added by built-in Rust
+    /// detection rather than repo-owned configuration. Only this auto flag
+    /// yields when passthrough selects Cargo packages explicitly.
+    pub(crate) auto_workspace_scope: bool,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) suite_env: Option<String>,
     pub(crate) suite_env_files: Vec<String>,
@@ -69,6 +73,7 @@ pub(crate) struct BuiltinTestRunnable {
     pub(crate) runner: String,
     pub(crate) root: PathBuf,
     pub(crate) command: String,
+    pub(crate) auto_workspace_scope: bool,
     pub(crate) cargo_env: BTreeMap<String, String>,
     pub(crate) cargo_env_match: ManifestCargoEnvMatchMode,
     pub(crate) env: BTreeMap<String, String>,

@@ -14,10 +14,16 @@ mod model;
 mod resolve;
 #[path = "planning/runnable.rs"]
 mod runnable;
+#[path = "planning/scope.rs"]
+mod scope;
 
 pub(super) use model::{
     BuiltinResolvedPlan, BuiltinTargetRuntime, BuiltinTestCliFlags, BuiltinTestRunnable,
     BuiltinTestTarget, BuiltinTestTargetSet,
+};
+pub(super) use scope::{
+    compose_scoped_command, passthrough_has_explicit_package_selection,
+    passthrough_has_explicit_workspace_selection,
 };
 
 pub(super) fn extract_builtin_test_flags(

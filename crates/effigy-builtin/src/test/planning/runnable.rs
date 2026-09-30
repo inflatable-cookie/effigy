@@ -1,6 +1,4 @@
-use effigy_core::shell::shell_quote;
-
-use crate::test::planning::{BuiltinTestRunnable, BuiltinTestTarget};
+use crate::test::planning::{compose_scoped_command, BuiltinTestRunnable, BuiltinTestTarget};
 
 pub(super) fn collect_builtin_test_runnable_targets(
     targets: &[BuiltinTestTarget],
@@ -21,6 +19,7 @@ pub(super) fn collect_builtin_test_runnable_targets(
                     runner: plan.suite,
                     root: target.root.clone(),
                     command: plan.command,
+                    auto_workspace_scope: plan.auto_workspace_scope,
                     cargo_env: target.cargo_env.clone(),
                     cargo_env_match: target.cargo_env_match,
                     env: plan.env,
@@ -40,17 +39,12 @@ pub(super) fn apply_passthrough_to_runnable(
     runnable: Vec<BuiltinTestRunnable>,
     passthrough: &[String],
 ) -> Vec<BuiltinTestRunnable> {
-    let args_rendered = passthrough
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
     runnable
         .into_iter()
         .map(|mut entry| {
-            if !args_rendered.is_empty() {
-                entry.command = format!("{} {}", entry.command, args_rendered);
-            }
+            entry.command =
+                compose_scoped_command(&entry.command, entry.auto_workspace_scope, passthrough)
+                    .command;
             entry
         })
         .collect::<Vec<BuiltinTestRunnable>>()
