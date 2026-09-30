@@ -201,12 +201,17 @@ fn docker_endpoint_candidates_from(
     if let Some(host) = docker_host.as_deref() {
         candidates.push(endpoint_from_host(host));
     }
-    match config_dir.as_deref().map(config_context) {
-        Some(DockerConfigContext::Named(Some(name))) if !is_default_context_name(&name) => {
-            candidates.push(resolve_context_endpoint_from(&name, config_dir.as_deref()));
-        }
-        Some(DockerConfigContext::Unreadable) => candidates.push(DockerEndpoint::Unresolved),
-        _ => {}
+    match config_dir.as_deref() {
+        Some(dir) => match config_context(dir) {
+            DockerConfigContext::Named(Some(name)) if !is_default_context_name(&name) => {
+                candidates.push(resolve_context_endpoint_from(&name, Some(dir)));
+            }
+            DockerConfigContext::Unreadable => candidates.push(DockerEndpoint::Unresolved),
+            _ => {}
+        },
+        // Without a config directory we cannot tell whether a stored context
+        // selects a remote endpoint, so Docker stays fail-closed.
+        None => candidates.push(DockerEndpoint::Unresolved),
     }
     candidates.push(DockerEndpoint::DefaultLocal);
     candidates
@@ -241,22 +246,30 @@ enum DockerConfigContext {
 
 fn config_context(config_dir: &Path) -> DockerConfigContext {
     let path = config_dir.join("config.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return if path.exists() {
-            DockerConfigContext::Unreadable
-        } else {
-            DockerConfigContext::Absent
-        };
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return DockerConfigContext::Unreadable;
-    };
-    DockerConfigContext::Named(
-        value
-            .get("currentContext")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned),
-    )
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => DockerConfigContext::Named(
+                value
+                    .get("currentContext")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+            ),
+            Err(_) => DockerConfigContext::Unreadable,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A missing file only means a missing context when the config
+            // directory itself is reachable. An inaccessible directory can
+            // still hold a stored remote context, so it stays fail-closed.
+            match std::fs::metadata(config_dir) {
+                Ok(_) => DockerConfigContext::Absent,
+                Err(metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound => {
+                    DockerConfigContext::Absent
+                }
+                Err(_) => DockerConfigContext::Unreadable,
+            }
+        }
+        Err(_) => DockerConfigContext::Unreadable,
+    }
 }
 
 /// Resolve a named Docker context to its effective endpoint. A configured
@@ -681,9 +694,76 @@ mod tests {
             docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf())),
             vec![DockerEndpoint::DefaultLocal]
         );
+    }
+
+    #[test]
+    fn unknown_config_directory_stays_fail_closed() {
+        // Without a config directory we cannot inspect the stored context.
+        let candidates = docker_endpoint_candidates_from(None, None, None);
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
         assert_eq!(
-            docker_endpoint_candidates_from(None, None, None),
-            vec![DockerEndpoint::DefaultLocal]
+            classify_docker_participation(candidates, |_| {
+                panic!("an unknown config directory must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn config_path_below_a_file_is_fail_closed() {
+        // A non-`NotFound` config read error must not be read as an absent
+        // stored context: the directory may still select a remote endpoint.
+        let dir = tempfile::tempdir().expect("create fixture root");
+        let blocking_file = dir.path().join("not-a-directory");
+        std::fs::write(&blocking_file, "file").expect("write blocking file");
+        let config_dir = blocking_file.join(".docker");
+        let candidates = docker_endpoint_candidates_from(None, None, Some(config_dir));
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("an inaccessible config path must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inaccessible_config_directory_is_fail_closed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = docker_context_fixture(&[("remote", Some("tcp://10.0.0.5:2375"))]);
+        write_current_context(&dir, "remote");
+        let restore = |mode: u32| {
+            let mut permissions = std::fs::metadata(dir.path())
+                .expect("config dir metadata")
+                .permissions();
+            permissions.set_mode(mode);
+            std::fs::set_permissions(dir.path(), permissions).expect("restore config dir mode");
+        };
+        restore(0o000);
+
+        let readable_even_locked = std::fs::read_to_string(dir.path().join("config.json")).is_ok();
+        if readable_even_locked {
+            // Running as a user that bypasses permissions (for example root);
+            // the deterministic config_path_below_a_file test covers this I/O
+            // classification instead.
+            restore(0o700);
+            return;
+        }
+
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+        restore(0o700);
+
+        assert!(candidates.contains(&DockerEndpoint::Unresolved));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("an inaccessible config directory must not be probed away")
+            }),
+            RuntimeParticipation::Participating
         );
     }
 
