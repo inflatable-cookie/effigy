@@ -25,9 +25,9 @@ manifest or explicit temporary file
 ```
 
 The resolver owns group grammar, typed identity, definition provenance,
-selector resolution, declared targets, member roles, companion references,
-proof limits, and the estimated cost. It does not inspect a diff or infer a
-larger member set.
+group/member selector resolution, declared targets, member roles, companion
+references, proof limits, coverage comparison, and the estimated cost. It does
+not inspect a diff or infer a larger member set.
 
 The coordinator owns one group run ID, sequential member order, shared heavy
 admission, aggregate state, wall-time measurement, and a durable member ledger.
@@ -44,10 +44,29 @@ selector. The proposed commands live under `effigy tasks`, so the new
 
 ## Plan resolution
 
-Resolution is side-effect free. It resolves the group surface and catalog,
-loads the group definition and its physical source, resolves each member to a
-task surface and selector, checks its fixed argv and companion IDs, and
-assembles the member plans in declaration order.
+Resolution is side-effect free. It loads the effective catalog set using
+contract 037's root-owned membership, then resolves a maintained group by
+explicit alias prefix, explicit catalog path prefix, cwd-nearest, and
+shallowest precedence. It searches only the group surface; an ambiguity
+returns qualified candidates before member resolution. `--file` selects only
+the one temporary definition in that file. Inventory lists each effective
+catalog's maintained groups plus only the explicitly selected temporary file.
+There is no descendant manifest or temporary-file scan.
+
+The resolver loads the definition and physical source, then resolves each
+member in declaration order. A member defaults to the owning group catalog;
+cross-catalog lookup requires an explicit catalog alias. The member's typed
+`surface` chooses published or draft, and its selector is exact within that
+catalog and surface. Maintained groups use published members only. CWD and
+shallowest precedence never affect member resolution, and one surface never
+falls through to another. Duplicate group keys in one composed catalog fail
+independent of include order. Equal names in separate catalogs or task
+surfaces are distinct typed identities.
+
+A temporary group file must declare its owning catalog alias from the
+effective set. Its directory does not imply catalog identity. A member's
+optional catalog alias pins cross-catalog routing; without it, the member
+stays within that declared owner.
 
 The plan reports:
 
@@ -56,15 +75,31 @@ The plan reports:
   state without treating Git identity as complete proof input;
 - each resolved task selector, task/draft surface, arguments, runtime route,
   heavy-admission classification, declared targets, companions, and limits;
+- each caller-supplied scope token, the member IDs whose `covers` patterns
+  match it, any matching known-gap reasons, unmatched tokens, and the final
+  `scope_assessment`;
 - expected total wall time and its basis, or `unknown`;
-- unsupported routes, broad/unbounded selectors, stale or missing coverage,
-  and an actionable `needs_planner` result.
+- unsupported routes, broad/unbounded selectors, and actionable
+  `needs_planner` reasons.
 
-An unresolved task, invalid reference, unsafe file path, unsupported timeout,
-or uncertain required scope prevents run creation. A plan does not acquire a
-capacity lease, task lock, container, or environment. No implicit current
-directory, branch diff, task directory scan, local overlay, or selector
-fallback changes the group.
+Scope arrives only as repeatable explicit `--scope TOKEN` input. Tokens are
+typed exact inputs (`cargo-package:`, `bun-package:`, `workspace:`,
+`external:`, `input:`, or a normalized repository-relative `path:`); callers
+include relevant unchanged dependencies and opaque inputs as known. Definition
+path patterns use only `*` within one segment and `**` across whole path
+segments; other token types match exactly. For each token, any match to a
+declared `coverage_gaps` entry is unresolved even if a member also claims it.
+A token with no member mapping, a matching gap, a required but absent scope,
+or requested scope against an empty coverage map returns `needs_planner`,
+listing exact tokens and reasons with no run ID. Advisory scope omitted is
+`not_requested`; a complete declared match is `declared_match`. Neither case
+asserts that the caller's list is complete or the repository map is true.
+An unresolved task, invalid reference/path, unsupported timeout, or
+`needs_planner` result prevents run creation. A plan does not acquire a
+capacity lease, task lock, container, or environment. CWD is used only for
+the documented group-selector precedence, never to resolve members. No branch
+diff, graph output, task directory scan, local overlay, or selector fallback
+changes the selected group or its member list.
 
 ## Execution and state
 
@@ -72,6 +107,8 @@ Once a plan is accepted, the coordinator creates the run identity and records
 the selected definition snapshot before the first member. It executes members
 serially in declaration order. A failure ends the run and marks later members
 `not_started`; the aggregate cannot pass with an unexecuted required member.
+Coverage is a preflight gate and an explanation only: a `declared_match` never
+filters members, while `needs_planner` prevents execution.
 
 The group ledger records the currently active member and each member's
 selector, fixed args, role, target declarations, timestamps, exit

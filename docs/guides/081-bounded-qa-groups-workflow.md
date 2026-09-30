@@ -31,8 +31,8 @@ through the `tasks` dispatcher:
 
 ```sh
 effigy tasks qa-groups list
-effigy tasks qa-group run rust-cli --plan
-effigy tasks qa-group run rust-cli
+effigy tasks qa-group run agent-cli --scope cargo-package:effigy-cli --scope path:crates/effigy-cli/src/main.rs --plan
+effigy tasks qa-group run agent-cli --scope cargo-package:effigy-cli --scope path:crates/effigy-cli/src/main.rs
 effigy tasks qa-group status <run-id>
 effigy tasks qa-group logs <run-id>
 ```
@@ -41,20 +41,53 @@ A one-off group requires an explicit file every time:
 
 ```sh
 effigy tasks qa-groups list --file config/qa-groups/2026-10-02-binding-check.toml
-effigy tasks qa-group run binding-check --file config/qa-groups/2026-10-02-binding-check.toml --plan
-effigy tasks qa-group run binding-check --file config/qa-groups/2026-10-02-binding-check.toml
+effigy tasks qa-group run binding-check --file config/qa-groups/2026-10-02-binding-check.toml --scope path:crates/longhorn-bindings/src/lib.rs --plan
 ```
 
 The file path is part of definition identity. Effigy does not search its
 directory. A temporary group expires for inventory and cleanup purposes; an
 expired definition remains runnable when selected explicitly. Expected time
-and expiry answer different questions.
+and expiry answer different questions. The example's known bindings compile
+gap makes this plan return `needs_planner`; do not start a run until that gap
+has a reviewed proof mapping or the planner chooses the required evidence.
+The temporary definition also names its owning catalog alias explicitly; its
+file location never selects a catalog implicitly.
 
 Read the plan for the exact selectors, fixed arguments, targets, companions,
 limits, admission class, and definition source. If a task is broad, its
 declared target is uncertain, or an input has no mapped selector, stop at
 `needs_planner`. Do not call an aggregate a bounded check because its name
 looks narrow.
+
+### Scope input and planner boundary
+
+Supply the scope you can name explicitly with repeatable `--scope` tokens:
+repository-relative `path:` inputs and relevant typed package, workspace,
+external, or opaque `input:` identities. Include relevant unchanged inputs
+such as a lockfile or generator/toolchain dependency when they affect the
+proof. Do not assume Effigy will extract this list from a Git diff, status, or
+graph. If the input cannot be classified, name it as `input:<identity>`; an
+unmapped token or a token matching a group's declared `coverage_gaps` returns
+`needs_planner` before execution and identifies the token and reason.
+
+`scope_policy = "required"` with no tokens also returns `needs_planner`.
+Advisory groups with no tokens report `not_requested` and make no coverage
+claim. A `declared_match` means every supplied token matches at least one
+member coverage declaration and no known gap; it does not prove the input
+list is complete or validate the map. In all cases an accepted group runs
+every member in declaration order. Scope matching never filters out checks.
+Ask the planner when the declared map cannot resolve the explicit scope or
+when you cannot state the scope set confidently. This decision does not direct
+you to run the full board.
+
+Group names are catalog-scoped. Use `catalog-alias/name` (or the documented
+catalog path prefix) when multiple groups could match; an unresolved tie is
+an error, not a task/draft fallback. Member selectors resolve in the owning
+catalog unless their definition explicitly pins another catalog alias, and
+their `published`/`draft` surface is explicit. Equal group, task, and draft
+names do not collide because they use separate command surfaces. Duplicate
+group definitions within one catalog are invalid; a temporary file is
+selected only by its explicit `--file` and cannot shadow a maintained group.
 
 ## Longhorn pilot examples
 
@@ -73,6 +106,16 @@ evidence, not an Effigy selector contract or proof of complete coverage.
 | Rust behavior that changes generated bindings, such as `longhorn-licence/src/key.rs` | `test:rust`, `check:bindings`, `check:ts`, and `test:ts`. | Once package/domain selectors exist, define a `licence-bindings` group with the Rust behavior test, licence generation/drift, TypeScript check, and consuming test. | The current selectors are workspace/domain aggregates. The generator executes behavior and writes generated JSON; it is not only a type export. `check:bindings` also has unmapped transitive compile dependencies. |
 | Agent-control release-absence proof | `check:agent-control-release-absence`; add `check:agent-control-shim` for the committed shim asset. | Keep both compile and marker-scan obligations explicit in a future `agent-control-absence` group after the input split is reviewed. | The map separates compile inputs (`longhorn-core`, `longhorn-config`, `longhorn-tauri-config`, Tauri shim asset) from byte-scan marker sources, but leaves exact marker coverage unresolved. A change whose role is uncertain returns `needs_planner`. |
 
+For the bindings group, declare
+`input:bindings-generator-transitive-compile-dependencies` as a known coverage
+gap until the generator's compile closure is mapped. For the absence proof,
+declare `input:agent-control-marker-source-coverage` as a gap until the
+compile and marker source sets are independently reviewed. If either input is
+in the caller's scope, or a submitted input has no member mapping, the plan
+returns `needs_planner` with that input and reason. The planner can resolve
+the proof obligation or request a map/selector update; a matching group name
+does not clear either gap.
+
 Do not put names of `proof:artifacts` scripts into a group as if they were
 selectors. The map lists fourteen ordered members, but only the aggregate
 `proof:artifacts` and explicitly standalone proof selectors can be invoked.
@@ -85,8 +128,10 @@ The map treats `Cargo.lock` conservatively: it affects the Rust lane,
 `check:bindings`, `check:api-reference`, both agent absence proofs,
 `proof:artifacts`, prototype checks, and release-only proof. That selection is
 too broad to call a bounded package group. Ask the planner which affected
-scope and milestone policy apply. Do not convert uncertainty into a whole
-board instruction.
+scope and milestone policy apply. A caller can name the input as
+`--scope input:cargo-lock`, but that makes it visible to coverage matching; it
+does not narrow these broad gates or settle the required milestone policy. Do
+not convert uncertainty into a whole-board instruction.
 
 For `effigy.toml` task or include changes, the map selects the board plus
 configuration/tooling checks because the selector definitions themselves are

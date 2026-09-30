@@ -32,6 +32,9 @@ planner-owned through Queue on `main` at milestones and release points.
   file. It has a required purpose, creation date, and expiry date.
 - **Member**: one existing task selector, fixed argument vector, declared
   targets, proof role, limits, and optional companion member IDs.
+- **Scope input**: one caller-supplied, typed description of an input the
+  current work may affect. Effigy does not collect scope inputs from Git,
+  graph output, or the worktree.
 - **Expected runtime**: an owner-maintained wall-time expectation under named
   conditions. It is not an ETA or deadline.
 - **Run**: one invocation with a unique run ID, definition snapshot, selected
@@ -42,24 +45,53 @@ top-level repository selector. The proposed command grammar is:
 
 ```text
 effigy tasks qa-groups list [FILTER] [--file PATH] [--json]
-effigy tasks qa-group run <NAME> [--file PATH] [--plan] [--json]
+effigy tasks qa-group run <SELECTOR> [--file PATH] [--scope TOKEN]... [--plan] [--json]
 effigy tasks qa-group status <RUN_ID> [--json]
 effigy tasks qa-group logs <RUN_ID> [--follow]
 effigy tasks qa-group stop <RUN_ID> [--json]
 ```
 
+`<SELECTOR>` is a group name, an explicit `<catalog-alias>/<name>`, or an
+existing catalog path prefix followed by `/` and the name. With no prefix,
+group resolution uses the existing task precedence (cwd-nearest, then
+shallowest) over the effective catalog set, but searches only the QA-group
+surface. A tie is an error listing qualified candidates; there is no fallback
+to a task or draft with the same name. With `--file`, `<SELECTOR>` must equal
+the file's `name`; resolution selects only that temporary definition and
+never falls through to a maintained group. Without `--file`, temporary
+definitions are not candidates. The inventory lists maintained groups in
+effective catalogs and, when `--file`
+is supplied, only that one additional temporary definition; it never scans a
+directory. `FILTER` is a literal, case-sensitive substring over the displayed
+`<catalog-alias>/<name>` identity.
+
+`--scope TOKEN` is repeatable and supplies the caller's explicit scope set.
 `--file` is absent for maintained groups and required for temporary groups.
-The inventory sees maintained definitions and only the temporary file named
-on that command; it never scans a directory. `--plan` resolves without
-execution. `--json` changes output only and does not make a run non-executing.
-There is no member argument passthrough: the group fixes each member's argv so
-the plan and selected proof do not change at run time.
+`--plan` resolves without execution. `--json` changes output only and does
+not make a run non-executing. There is no member argument passthrough: the
+group fixes each member's argv so the plan and selected proof do not change at
+run time.
 
 This preserves `effigy qa`, `effigy validate`, existing selectors, hosted CI,
 and release routing. The proposed bare commands `effigy qa-groups` and
 `effigy qa-group` are not used: they would reserve names in the same top-level
 space where repositories already own selectors. A group name also does not
 become a task selector.
+
+Group commands are recognized only by the exact multiword forms shown above
+under `effigy tasks`. The current `tasks` parser has separate leading routes
+for `status`, `migrate`, `unlock`, and `cache`; implementation adds only the
+leading `qa-groups` and `qa-group` routes, leaving those forms, task-list flags,
+and top-level selectors unchanged. Group names use `[a-z][a-z0-9-]*` and
+cannot contain `/`, so only the catalog prefix can qualify a selector. The
+action precedes the name, so names
+such as `run` or `status` are valid. Task, draft, and group names may match:
+their command surfaces and typed identities remain separate. Duplicate group
+names inside one composed catalog are invalid; include order never overrides
+one definition with another. The same group name in distinct catalogs is
+valid and must be qualified if normal catalog precedence cannot choose one.
+Temporary files are isolated by explicit `--file`; a same-named maintained
+group cannot shadow or be shadowed by one.
 
 ## Definition grammar
 
@@ -70,6 +102,8 @@ through existing explicit manifest includes:
 [qa.groups.agent-cli]
 lifecycle = "maintained"
 purpose = "Check the Effigy CLI parser and help surface"
+scope_policy = "required"
+coverage_gaps = []
 expected_wall_ms = 180000
 expectation_basis = "Three warm local runs on the documented contributor host"
 proof_limits = ["Does not cover other workspace crates or release workflows"]
@@ -78,17 +112,21 @@ members = [
   {
     id = "cli-tests",
     kind = "test",
+    surface = "published",
     task = "test:rust:effigy-cli",
     args = ["-p", "effigy-cli"],
     targets = ["cargo-package:effigy-cli", "path:crates/effigy-cli/**"],
+    covers = ["cargo-package:effigy-cli", "path:crates/effigy-cli/**"],
     limits = ["Only the task's declared package test targets are proved"]
   },
   {
     id = "cli-compile",
     kind = "compile",
+    surface = "published",
     task = "check:rust:effigy-cli",
     args = ["-p", "effigy-cli"],
     targets = ["cargo-package:effigy-cli", "path:crates/effigy-cli/**"],
+    covers = ["cargo-package:effigy-cli", "path:crates/effigy-cli/**"],
     companions = ["cli-tests"],
     limits = ["Does not compile downstream consumers"]
   }
@@ -104,7 +142,11 @@ Required group fields are:
 - `lifecycle`: `maintained` in the manifest or `temporary` in an explicit
   temporary file;
 - `purpose`: a concise work context, not a claim of complete change coverage;
+- `scope_policy`: `required` or `advisory`; required groups return
+  `needs_planner` if the caller supplies no `--scope` tokens;
 - `proof_limits`: one or more concrete gaps or boundaries;
+- `coverage_gaps`: zero or more `{ input, reason }` entries for known inputs
+  that do not yet have a trustworthy member mapping;
 - `members`: an ordered, non-empty list with unique IDs.
 
 `expected_wall_ms` and `expectation_basis` are a pair. Both may be absent,
@@ -115,12 +157,17 @@ resolved route.
 
 Each member requires:
 
-- unique `id` within the group;
+- unique `id` within the group, using `[a-z][a-z0-9-]*`;
 - `kind`: `test`, `compile`, `docs`, `proof`, or `setup`;
+- `surface`: `published` or `draft`; maintained groups use `published`, and
+  temporary groups must state the value explicitly;
+- optional `catalog`: an effective catalog alias that explicitly pins a
+  cross-catalog member (otherwise the owning group catalog is used);
 - exact task `selector` and a fixed `args` array (the example uses `task` as
   the TOML key; the runtime resolves it as a selector);
 - non-empty `targets`, using explicit `path:`, `cargo-package:`,
   `bun-package:`, `workspace:`, or `external:` labels;
+- `covers`: zero or more scope patterns this member is declared to prove;
 - non-empty `limits`, naming what this member does not prove.
 
 `companions` contains member IDs, not shell commands or auto-expanded task
@@ -130,6 +177,39 @@ reviewable declarations, not filters Effigy can impose on arbitrary shell
 tasks. The exact selector and args determine execution. `--plan` shows both
 the declarations and the resolved task route so reviewers can reject a broad
 or mislabelled selector.
+
+Coverage declarations are separate from `targets`: targets describe the
+selector's declared execution scope; `covers` maps caller scope inputs to the
+member IDs expected to exercise them. A caller supplies repeatable typed
+tokens in these forms: `path:<repo-relative-path>`,
+`cargo-package:<name>`, `bun-package:<name>`, `workspace:<name>`,
+`input:<opaque-id>`, and `external:<opaque-id>`. Each value is non-empty;
+other token kinds are invalid. Examples include
+`path:crates/effigy-cli/src/main.rs`, `cargo-package:effigy-cli`,
+`bun-package:longhorn-tauri`, `workspace:root`, `input:cargo-lock`, and
+`external:generator-toolchain`.
+Path inputs are repository-relative, slash-normalized, case-sensitive logical
+paths without empty, `.` or `..` segments. They need not currently exist, so
+deleted files remain nameable; scope matching does not dereference them.
+In a definition, `path:` coverage patterns may use `*` for characters within
+one path segment and `**` for zero or more complete path segments; other token
+kinds match exactly. Coverage gap inputs use the same matching rules. Invalid
+or escaping path tokens fail resolution. An unsupported token kind is a
+validation error; a valid but unmapped typed token yields `needs_planner`.
+
+For each supplied token, the resolver reports every matching member ID and
+every matching `coverage_gaps` reason. A token with no member mapping, any
+token matching a known gap, a missing required scope, or a group with no
+coverage declaration for a requested scope yields `needs_planner`. This is a
+pre-execution result with unresolved tokens/reasons and no run ID. A fully
+mapped scope is `declared_match`, not proof that the map is true or the
+caller's list complete. Scope must include relevant unchanged inputs and
+opaque dependencies as the caller understands them; if that set cannot be
+stated, ask the planner. When scope is absent from an advisory group, the
+assessment is `not_requested` and no coverage claim is made. No scope result
+filters members: an accepted group always runs every declared member in order.
+Effigy cannot detect an omitted scope token and never infers one from Git,
+status, a graph, or a changed-file list.
 
 Members run sequentially in declaration order through the ordinary execution
 pipeline. A failed member ends the group; remaining members are reported as
@@ -161,10 +241,16 @@ Create a temporary group in a file such as
 [qa_group]
 name = "binding-check"
 lifecycle = "temporary"
+catalog = "<owning-catalog-alias>"
 created = "2026-10-02"
 expires = "2026-10-09"
 purpose = "Check the binding change for task 049"
+scope_policy = "required"
 proof_limits = ["Generator dependency closure is not fully mapped"]
+coverage_gaps = [
+  { input = "path:crates/longhorn-bindings/**", reason = "Bindings generator transitive compile dependencies are not mapped" },
+  { input = "input:bindings-generator-transitive-compile-dependencies", reason = "Bindings generator compile closure is not enumerated" }
+]
 expected_wall_ms = 900000
 expectation_basis = "One warm run; cold compile cost is unknown"
 
@@ -176,6 +262,7 @@ members = [
     task = "check:bindings",
     args = [],
     targets = ["path:crates/longhorn-bindings/**"],
+    covers = [],
     limits = ["Runs all registered binding domains"]
   }
 ]
@@ -187,6 +274,11 @@ escape through `..` or symlinks, and records the canonical relative path and
 content digest. The explicit file is treated as executable task configuration
 chosen by the caller. A tracked file is portable; an untracked file is allowed
 only with an `untracked definition` notice and is not portable evidence.
+
+The file's `catalog` is a required effective-catalog alias and pins its owning
+catalog. For `run`, the supplied selector must equal its `name`; the explicit
+path and catalog fields together identify the temporary definition. There is
+no directory-derived catalog or group-name fallback.
 
 Temporary files contain group metadata and task references only: no task body,
 shell command, include, directory glob, overlay, or environment override. The
@@ -206,6 +298,39 @@ The maintained inventory reports source manifest/include provenance. A
 temporary inventory reports provenance only for the explicitly selected file.
 No implicit scan under `config/qa-groups/`, no ignored local overlay, and no
 hidden precedence are allowed.
+
+### Group and member resolution
+
+The group resolver uses the effective catalog set defined by contract 037;
+it does not discover nested manifests. Inventory is catalog-qualified and
+shows each group's owning alias/root and include provenance. Maintained
+selector resolution follows the existing selector precedence but is restricted
+to groups: explicit alias prefix, explicit catalog path prefix, cwd-nearest
+group, then shallowest group. Ambiguity fails before member resolution and
+reports qualified candidates. A qualified selector pins the owning catalog.
+A temporary file bypasses maintained-name lookup entirely.
+
+Each member has a `surface` of `published` or `draft`; maintained groups may
+use only `published` members. A temporary member must state its surface. A
+temporary group must also state `catalog` as an alias in the effective
+catalog set; this pins the file's owning catalog without inferring it from
+the file's directory. Member lookup defaults to the owning group catalog. An
+optional member `catalog` must name an alias in the effective catalog set and
+pins cross-catalog lookup; it never uses cwd-nearest or shallowest fallback.
+Within that catalog, `selector` is exact on the declared surface (the
+illustrative TOML uses `task` for this selector field). A published miss does
+not fall through to a same-named draft, and a draft miss does not fall through
+to a published task. Member dependencies inside an ordinary task continue to
+use their existing routing contract.
+
+Typed group identity is `(repository root, owning catalog root, qa_group
+surface, lifecycle/source, name, source path, definition digest)`. Catalog
+scope permits equal names in separate catalogs without identity collision;
+the route must qualify or be uniquely resolvable. Duplicate keys after
+explicit manifest composition are invalid and are never resolved by include
+order. Member IDs are unique within one definition. A temporary file is a
+separate identity selected only by its explicit file path, so equal names do
+not shadow maintained definitions.
 
 ## Runtime expectation and timeout
 
@@ -325,10 +450,28 @@ The run payload includes at least:
     "name": "agent-cli",
     "catalog": "<catalog-root>",
     "source": "effigy.toml",
-    "definition_sha256": "<digest>"
+    "definition_sha256": "<digest>",
+    "scope_policy": "required",
+    "coverage_gaps": []
   },
   "head": { "commit": "<commit-or-null>", "worktree": "modified" },
   "selected_targets": ["cargo-package:effigy-cli"],
+  "scope_inputs": ["cargo-package:effigy-cli", "path:crates/effigy-cli/src/main.rs"],
+  "scope_assessment": "declared_match",
+  "scope_matches": [
+    {
+      "input": "cargo-package:effigy-cli",
+      "member_ids": ["cli-tests", "cli-compile"],
+      "gap_reasons": []
+    },
+    {
+      "input": "path:crates/effigy-cli/src/main.rs",
+      "member_ids": ["cli-tests", "cli-compile"],
+      "gap_reasons": []
+    }
+  ],
+  "unmatched_scope_inputs": [],
+  "coverage_disclaimer": "Declared mappings do not establish map truth or caller scope completeness",
   "state": "running",
   "outcome": null,
   "budget_state": "unknown",
@@ -347,9 +490,12 @@ The run payload includes at least:
     {
       "id": "cli-tests",
       "kind": "test",
+      "surface": "published",
+      "catalog": "<owning-or-explicit-catalog-alias>",
       "selector": "test:rust:effigy-cli",
       "args": ["-p", "effigy-cli"],
       "targets": ["cargo-package:effigy-cli"],
+      "covers": ["cargo-package:effigy-cli", "path:crates/effigy-cli/**"],
       "state": "running",
       "started_at": "<time-or-null>",
       "ended_at": null,
@@ -361,6 +507,15 @@ The run payload includes at least:
 }
 ```
 
+`scope_assessment` in a run is `not_requested` or `declared_match`;
+`needs_planner` exists only in the non-executing plan response.
+The plan schema contains the same scope fields plus all resolved member
+selectors, source surfaces/catalogs, fixed args, targets, coverage patterns,
+companions, and reasons. A `needs_planner` plan is not executable and has no
+run ID; an attempted `run` with that assessment returns the same plan and
+does not create a run record. A live or final run carries only its explicit
+input list and the result of comparing that list with the chosen definition.
+
 The example's selector is illustrative, not a currently runnable selector.
 `definition_sha256` identifies definition provenance only; it is not a complete
 input fingerprint, cache key, or permission to join/replay another run. The
@@ -368,8 +523,13 @@ head and worktree fields are context, not proof of a clean or immutable input
 snapshot. Null timing means unavailable, not zero.
 
 If selection cannot establish coverage, the result is a non-executing
-`needs_planner` plan with missing/uncertain inputs and no run ID. It does not
-invent a group, select the full board, or omit an uncertain member.
+`needs_planner` plan with the supplied scope tokens, matched member IDs,
+unmatched tokens, known gap reasons, and no run ID. Missing required scope is
+reported as such. An advisory group with no supplied scope may run all its
+members with `scope_assessment = "not_requested"`. A mapped scope reports
+`scope_assessment = "declared_match"` and the disclaimer that mappings and
+caller completeness are not verified. It does not invent a group, select the
+full board, or omit an uncertain member.
 
 ## Migration and compatibility
 
@@ -411,6 +571,19 @@ when each brief is approved and dispatched.
   temporary paths, expired execution, typed draft references, and the top-level
   selector collision cases. Existing `qa`, `validate`, task and draft routes
   remain unchanged.
+- Routing tests cover root-owned effective catalog membership; alias/path,
+  cwd-nearest, shallowest, ambiguity, and qualified group lookup; exact member
+  lookup in the owning catalog; explicit cross-catalog member aliases; and no
+  published/draft fallback. Duplicate group keys in one composed catalog fail
+  regardless of include order; same names across catalogs and task surfaces
+  remain distinct. Temporary files are selected only by their explicit path.
+- Coverage tests cover required scope omitted, advisory scope omitted,
+  exact typed-token matching, matching path `*`/`**` patterns, invalid and
+  escaping paths, one input mapped to multiple member IDs, a known gap even
+  when another member also claims it, and an unmatched opaque input. A
+  `needs_planner` result returns the missing input/reason with no run ID and
+  no side effect. A declared match still runs every group member; it never
+  filters members. Git diff/status and graph data are not consulted.
 - `--plan` shows all task resolutions, arguments, targets, companions,
   admission classification, provenance, expectation, and proof limits without
   acquiring capacity or executing setup.
