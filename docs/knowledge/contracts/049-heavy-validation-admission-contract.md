@@ -1,12 +1,38 @@
 # 049 - Heavy Validation Admission Contract
 
 Owner: Platform
-Last Updated: 2026-09-28
+Last Updated: 2026-09-30
 
 Heavy Effigy validation shares one host-wide admission budget. This contract
 covers invocations started by people, workers, and orchestrators on the same
-machine. Queue supplies caller identity and observes Effigy's state; it does
-not implement a second scheduler.
+machine. The current mechanism is Effigy-owned: Queue supplies caller identity
+and observes Effigy's state. The scheduler cutover below replaces that ownership;
+it is not implemented yet.
+
+## Scheduler ownership ruling
+
+Tom ruled on 2026-09-30: "The QA lease we added to Effigy should have been a Queue
+feature - Effigy should be the runtime that executes QA, Queue and Nucleus
+should manage who runs what when."
+
+Queue and Nucleus own the shared scheduler contract: admission, capacity,
+fairness, scheduling and lease recovery. Effigy executes QA and supplies the
+runtime boundary the scheduler needs: clean SIGTERM handling, truthful exit
+results and telemetry. The scheduler launches its Effigy run in an owned process
+group. Heavy invocations started directly through Effigy will request admission
+from the scheduler endpoint rather than an Effigy-owned lease store.
+
+Freeze new implementation of Effigy's admission and lease store. Keep the
+existing mechanism unchanged until the scheduler is live and the cutover is
+proved. Removal follows cutover; it must not leave a period of unadmitted heavy
+execution. Endpoint discovery, grants, nested execution, cancellation, failure
+and compatibility semantics must be pinned to the agreed shared contract before
+an implementation brief is dispatched. Queue Spec 031 owns Queue's side.
+
+An operator-approved recovery of an exact orphan record is an exception under
+the current mechanism, not permission to weaken automatic reclamation. Preserve
+the locked before-state, closure evidence, authorization and resulting record;
+change no other runs. A queue-wait deadline is not a running lease's expiry.
 
 ## Selection and ownership
 

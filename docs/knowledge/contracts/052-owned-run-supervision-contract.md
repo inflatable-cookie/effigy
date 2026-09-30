@@ -6,6 +6,14 @@ exists today. Until an implementation brief lands, use existing selector
 status, managed-session controls, and `effigy admission` queries; never claim
 scoped stop or signal attribution from this document.
 
+The scheduler ownership ruling in [049](049-heavy-validation-admission-contract.md)
+governs the next implementation cut. Queue and Nucleus own admission and the
+scheduler-launched process group; Effigy owns execution, graceful termination,
+exit evidence and runtime telemetry. This proposed design must be reconciled
+with their agreed shared contract before implementation. Its lease-store and
+supervisor-placement proposals do not authorize extending the current admission
+mechanism.
+
 Owner: task execution and lifecycle maintainers
 Architecture: [032](../architecture/032-owned-run-supervision-runtime.md)
 Workflow: [082](../../guides/082-owned-run-supervision-workflow.md)
