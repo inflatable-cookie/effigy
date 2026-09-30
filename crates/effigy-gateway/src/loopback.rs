@@ -15,6 +15,16 @@ use serde::{Deserialize, Serialize};
 use crate::atomic_write;
 use crate::error::GatewayError;
 
+/// Build the stable registry identity for one isolated project checkout.
+pub fn project_loopback_identity(project_name: &str, checkout: &Path) -> String {
+    format!("project:{project_name}:{}", checkout.display())
+}
+
+/// Build the stable registry identity for one shared service checkout.
+pub fn shared_loopback_identity(project_name: &str, checkout: &Path) -> String {
+    format!("shared:{project_name}:{}", checkout.display())
+}
+
 /// First assignable loopback IP in the bounded pool.
 pub const DEFAULT_LOOPBACK_START: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 1);
 

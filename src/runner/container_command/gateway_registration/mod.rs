@@ -4,13 +4,21 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
+    discover_running_compose_containers,
     list_compose_containers_for_policy_including_stopped_with_timeout,
-    list_running_compose_containers, list_running_compose_containers_for_policy,
+    list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
-    RunningComposeContainer,
+    RunningComposeContainer, RunningComposeContainerInventory,
 };
-use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
-use effigy_gateway::loopback::LoopbackRegistry;
+#[cfg(test)]
+use effigy_containers::prune_loopback_assignments_with_rows;
+use effigy_containers::{
+    prune_loopback_assignments, EffectiveContainerPolicy, EffectiveDnsRoute, LoopbackPruneOutcome,
+    SharedServiceBinding,
+};
+use effigy_gateway::loopback::{
+    project_loopback_identity, shared_loopback_identity, LoopbackRegistry,
+};
 use effigy_gateway::registration::{check_claim, owned_by, project_scope};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
@@ -1071,16 +1079,44 @@ fn load_or_allocate_loopback_ip(
     project_path: &str,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
+    load_or_allocate_loopback_ip_with_inventory(
+        identity,
+        legacy_identity,
+        project_path,
+        allocate_if_missing,
+        discover_running_compose_containers,
+    )
+}
+
+fn load_or_allocate_loopback_ip_with_inventory(
+    identity: &str,
+    legacy_identity: Option<&str>,
+    project_path: &str,
+    allocate_if_missing: bool,
+    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     let path = gateway_dir()?.join("loopback-ips.json");
     let _lock = RouteTableLock::acquire(&path)
         .map_err(|error| gateway_loopback_error("registry lock", error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| gateway_loopback_error("registry load", error.to_string()))?;
     let route_table = load_gateway_route_table(&gateway_route_table_path()?)?;
-    if prune_stale_loopback_assignments(&mut registry)? {
+    let prune = if registry.is_empty() {
+        LoopbackPruneOutcome::default()
+    } else {
+        prune_stale_loopback_assignments_with_inventory(
+            &mut registry,
+            &route_table,
+            &discover_inventory(),
+        )
+    };
+    if prune.changed {
         registry
             .save(&path)
             .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
+    }
+    if let Some(reason) = &prune.skipped_reason {
+        eprintln!("[warn] {reason}");
     }
     let reserved_ips = active_loopback_ips_for_other_projects(&route_table, project_path);
     let migrated_legacy_identity = migrate_legacy_loopback_identity(
@@ -1112,20 +1148,18 @@ fn load_or_allocate_loopback_ip(
     }
     let assignment = registry
         .allocate_avoiding(identity, project_path, &reserved_ips)
-        .map_err(|error| gateway_loopback_error("allocation", error.to_string()))?
+        .map_err(|error| {
+            let detail = match &prune.skipped_reason {
+                Some(reason) => format!("{error}; {reason}"),
+                None => error.to_string(),
+            };
+            gateway_loopback_error("allocation", detail)
+        })?
         .ip;
     registry
         .save(&path)
         .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     Ok(Some(assignment))
-}
-
-fn project_loopback_identity(project_name: &str, repo_root: &Path) -> String {
-    format!("project:{project_name}:{}", repo_root.display())
-}
-
-fn shared_loopback_identity(project_name: &str, repo_root: &Path) -> String {
-    format!("shared:{project_name}:{}", repo_root.display())
 }
 
 fn migrate_legacy_loopback_identity(
@@ -1167,77 +1201,21 @@ fn active_loopback_ips_for_other_projects(
         .collect()
 }
 
-fn prune_stale_loopback_assignments(registry: &mut LoopbackRegistry) -> Result<bool, RunnerError> {
-    if registry.is_empty() {
-        return Ok(false);
-    }
-    let route_table = load_gateway_route_table(&gateway_route_table_path()?)?;
-    // Pruning is best-effort: if no container runtime is reachable
-    // (e.g. colima/docker not installed in CI sandboxes, or the
-    // daemon is transiently down), skip this round rather than
-    // failing the entire gateway registration. Stale entries will be
-    // pruned on the next successful round.
-    let rows = match list_running_compose_containers() {
-        Ok(rows) => rows,
-        Err(_) => {
-            // Container runtime not reachable — skip prune this round.
-            return Ok(false);
-        }
-    };
-    Ok(prune_stale_loopback_assignments_with_runtime(
-        registry,
-        &route_table,
-        &rows,
-    ))
+fn prune_stale_loopback_assignments_with_inventory(
+    registry: &mut LoopbackRegistry,
+    route_table: &RouteTable,
+    inventory: &RunningComposeContainerInventory,
+) -> LoopbackPruneOutcome {
+    prune_loopback_assignments(registry, route_table, inventory)
 }
 
+#[cfg(test)]
 fn prune_stale_loopback_assignments_with_runtime(
     registry: &mut LoopbackRegistry,
     route_table: &RouteTable,
     rows: &[RunningComposeContainer],
 ) -> bool {
-    let active_identities = rows
-        .iter()
-        .flat_map(|row| {
-            let mut identities = Vec::new();
-            if let Some(project_name) = row.project_name.as_deref() {
-                identities.push(project_name.to_owned());
-                identities.push(format!("shared:{project_name}"));
-                if let Some(working_dir) = row.working_dir.as_deref() {
-                    identities.push(format!("project:{project_name}:{working_dir}"));
-                    identities.push(format!("shared:{project_name}:{working_dir}"));
-                }
-            }
-            identities
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    let active_projects = rows
-        .iter()
-        .filter_map(|row| row.working_dir.as_deref())
-        .collect::<std::collections::BTreeSet<_>>();
-    let active_ips = route_table
-        .all_routes()
-        .into_iter()
-        .filter(|route| route.source == RouteSource::Container)
-        .filter_map(|route| {
-            route
-                .dns_ip
-                .filter(|_| active_projects.contains(route.project.as_str()))
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    let stale = registry
-        .assignments
-        .iter()
-        .filter(|(identity, assignment)| {
-            !active_identities.contains(identity.as_str()) && !active_ips.contains(&assignment.ip)
-        })
-        .map(|(identity, _)| identity.clone())
-        .collect::<Vec<_>>();
-    let changed = !stale.is_empty();
-    for identity in stale {
-        registry.deallocate(&identity);
-    }
-    changed
+    prune_loopback_assignments_with_rows(registry, route_table, rows)
 }
 
 fn occupied_service_alias_domains<'a>(

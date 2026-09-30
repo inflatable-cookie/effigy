@@ -13,15 +13,16 @@ pub use colima_runtime::{
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
-    capture_running_container_stats_for_profile, infer_host_working_dir_for_container,
-    list_compose_containers_for_policy_including_stopped,
+    capture_running_container_stats_for_profile, discover_running_compose_containers,
+    infer_host_working_dir_for_container, list_compose_containers_for_policy_including_stopped,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_compose_containers_for_project_including_stopped, list_running_compose_containers,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_timeout,
     list_running_compose_containers_for_profile, list_running_compose_containers_profiled,
     run_compose_capture, run_compose_invocation_capture, run_compose_invocation_capture_with_env,
-    run_docker_capture, shutdown_container, ContainerExecError,
+    run_docker_capture, shutdown_container, ContainerExecError, RunningComposeContainerInventory,
+    RuntimeInventoryFailure,
 };
 pub use parse::{
     compose_status_is_running, RunningComposeContainer, RunningComposeContainerProfiled,

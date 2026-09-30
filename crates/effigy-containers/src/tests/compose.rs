@@ -895,7 +895,34 @@ catalog = "minio"
             .declared_ports
             .iter()
             .any(|value| value.ends_with(":9000")));
-        assert!(home.join("gateway").join("loopback-ips.json").exists());
+        let loopback_path = home.join("gateway").join("loopback-ips.json");
+        let registry = effigy_gateway::loopback::LoopbackRegistry::load(&loopback_path)
+            .expect("loopback registry");
+        let identity = effigy_gateway::loopback::project_loopback_identity(
+            &policy.project_name,
+            &policy.repo_root,
+        );
+        let first_assignment = registry
+            .get(&identity)
+            .expect("qualified project assignment");
+        assert_eq!(
+            first_assignment.scope,
+            policy.repo_root.display().to_string()
+        );
+        assert!(registry.get(&policy.project_name).is_none());
+        assert_eq!(registry.len(), 1, "one project allocation: {registry:?}");
+
+        let regenerated = load_container_policy(&root, None).expect("regenerated policy");
+        assert_eq!(regenerated.project_name, policy.project_name);
+        let regenerated_registry = effigy_gateway::loopback::LoopbackRegistry::load(&loopback_path)
+            .expect("regenerated registry");
+        assert_eq!(regenerated_registry.len(), 1);
+        assert_eq!(
+            regenerated_registry
+                .get(&identity)
+                .map(|assignment| assignment.ip),
+            Some(first_assignment.ip)
+        );
     });
 }
 

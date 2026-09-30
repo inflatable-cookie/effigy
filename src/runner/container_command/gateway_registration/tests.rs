@@ -1,5 +1,8 @@
 use super::*;
-use effigy_containers::exec::ContainerExecError;
+use effigy_containers::exec::{
+    ContainerExecError, RunningComposeContainerInventory, RunningComposeContainerProfiled,
+    RuntimeInventoryFailure,
+};
 use effigy_containers::{EffectiveComposeSource, EffectiveServiceAlias, SharedServiceBinding};
 use effigy_gateway::routes::RouteTable;
 use effigy_manifest::{
@@ -1320,12 +1323,262 @@ fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
     assert!(registry.get("stale-project").is_none());
 }
 
+fn inventory_row(
+    project_name: &str,
+    working_dir: &str,
+    profile: &str,
+) -> RunningComposeContainerProfiled {
+    RunningComposeContainerProfiled {
+        profile: profile.to_owned(),
+        row: RunningComposeContainer {
+            container_name: format!("{project_name}-1"),
+            status: "Up 10 seconds".to_owned(),
+            ports: Vec::new(),
+            project_name: Some(project_name.to_owned()),
+            working_dir: Some(working_dir.to_owned()),
+            service: Some("app".to_owned()),
+            oneoff: false,
+        },
+    }
+}
+
+fn full_project_loopback_registry() -> LoopbackRegistry {
+    let mut registry = LoopbackRegistry::new();
+    for index in 1..=50 {
+        let name = format!("project-{index}");
+        registry
+            .allocate(
+                &format!("project:{name}:/tmp/{name}"),
+                &format!("/tmp/{name}"),
+            )
+            .expect("fill private loopback pool");
+    }
+    registry
+}
+
+#[test]
+fn complete_inventory_reclaims_only_proven_stale_loopback_assignments() {
+    let mut registry = full_project_loopback_registry();
+    let inventory = RunningComposeContainerInventory {
+        rows: vec![inventory_row("project-1", "/tmp/project-1", "effigy")],
+        failures: Vec::new(),
+    };
+
+    let outcome = prune_stale_loopback_assignments_with_inventory(
+        &mut registry,
+        &RouteTable::new(),
+        &inventory,
+    );
+
+    assert!(outcome.changed);
+    assert!(outcome.skipped_reason.is_none());
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get("project:project-1:/tmp/project-1").is_some());
+    assert!(registry
+        .allocate("project:new:/tmp/new", "/tmp/new")
+        .is_ok());
+}
+
+#[test]
+fn complete_empty_inventory_reclaims_stale_assignments_and_allows_reallocation() {
+    let mut registry = full_project_loopback_registry();
+    let inventory = RunningComposeContainerInventory::default();
+
+    let outcome = prune_stale_loopback_assignments_with_inventory(
+        &mut registry,
+        &RouteTable::new(),
+        &inventory,
+    );
+
+    assert!(outcome.changed);
+    assert_eq!(registry.len(), 0);
+    assert!(registry
+        .allocate("project:new:/tmp/new", "/tmp/new")
+        .is_ok());
+}
+
+#[test]
+fn complete_inventory_keeps_a_full_pool_of_protected_live_owners() {
+    let mut registry = full_project_loopback_registry();
+    let rows = (1..=50)
+        .map(|index| {
+            let name = format!("project-{index}");
+            inventory_row(&name, &format!("/tmp/{name}"), "effigy")
+        })
+        .collect();
+    let inventory = RunningComposeContainerInventory {
+        rows,
+        failures: Vec::new(),
+    };
+
+    let outcome = prune_stale_loopback_assignments_with_inventory(
+        &mut registry,
+        &RouteTable::new(),
+        &inventory,
+    );
+
+    assert!(!outcome.changed);
+    assert_eq!(registry.len(), 50);
+    assert!(registry
+        .allocate("project:new:/tmp/new", "/tmp/new")
+        .expect_err("protected pool stays exhausted")
+        .to_string()
+        .contains("loopback pool exhausted"));
+}
+
+#[test]
+fn generated_registration_and_regeneration_reuse_one_loopback_assignment() {
+    let home = std::env::temp_dir().join(format!(
+        "effigy-loopback-lifecycle-home-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let repo_root = std::env::temp_dir().join(format!(
+        "effigy-loopback-lifecycle-repo-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&home).expect("create isolated home");
+    std::fs::create_dir_all(&repo_root).expect("create isolated repo");
+    let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
+    effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+        std::fs::write(
+            repo_root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+project_name = "demo-web-dev"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+host_ports = ["41001:41001"]
+
+[containers.web.services.postgres]
+catalog = "postgres"
+database = "acme"
+password = "postgres"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = effigy_containers::load_container_policy(&repo_root, None)
+            .expect("generate compose policy");
+        let loopback_path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        let identity = project_loopback_identity(&policy.project_name, &repo_root);
+        let generated_registry =
+            LoopbackRegistry::load(&loopback_path).expect("generated registry");
+        let generated_ip = generated_registry
+            .get(&identity)
+            .expect("qualified generated assignment")
+            .ip;
+        assert_eq!(generated_registry.len(), 1);
+        assert!(generated_registry.get(&policy.project_name).is_none());
+
+        let registered_ip = load_or_allocate_loopback_ip_with_inventory(
+            &identity,
+            Some(&policy.project_name),
+            &repo_root.display().to_string(),
+            true,
+            || RunningComposeContainerInventory {
+                rows: vec![inventory_row(
+                    &policy.project_name,
+                    &repo_root.display().to_string(),
+                    "effigy",
+                )],
+                failures: Vec::new(),
+            },
+        )
+        .expect("register project loopback")
+        .expect("registered loopback IP");
+        assert_eq!(registered_ip, generated_ip);
+
+        let _regenerated = effigy_containers::load_container_policy(&repo_root, None)
+            .expect("regenerate compose policy");
+        let final_registry = LoopbackRegistry::load(&loopback_path).expect("final registry");
+        assert_eq!(final_registry.len(), 1);
+        assert_eq!(
+            final_registry
+                .get(&identity)
+                .map(|assignment| assignment.ip),
+            Some(generated_ip)
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(repo_root);
+    drop(_gateway_home);
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[test]
+fn incomplete_inventory_preserves_all_assignments_and_reports_failed_profile() {
+    let mut registry = full_project_loopback_registry();
+    let before = registry.assignments.clone();
+    let inventory = RunningComposeContainerInventory {
+        rows: vec![inventory_row(
+            "project-1",
+            "/tmp/project-1",
+            "healthy-profile",
+        )],
+        failures: vec![RuntimeInventoryFailure {
+            backend: "colima".to_owned(),
+            profile: "broken-profile".to_owned(),
+            error: "runtime ps failed to parse output".to_owned(),
+        }],
+    };
+
+    let outcome = prune_stale_loopback_assignments_with_inventory(
+        &mut registry,
+        &RouteTable::new(),
+        &inventory,
+    );
+
+    assert!(!outcome.changed);
+    assert_eq!(registry.assignments, before);
+    let reason = outcome.skipped_reason.expect("skipped-prune reason");
+    assert!(reason.contains("skipped stale loopback reclamation"));
+    assert!(reason.contains("colima profile `broken-profile`"));
+    assert!(reason.contains("runtime ps failed to parse output"));
+}
+
+#[test]
+fn complete_empty_inventory_preserves_shared_loopback_identity() {
+    let mut registry = LoopbackRegistry::new();
+    registry
+        .allocate("project:stale:/tmp/stale", "/tmp/stale")
+        .expect("stale project");
+    registry
+        .allocate("shared:service:/tmp/repo", "/tmp/repo")
+        .expect("shared service");
+
+    let outcome = prune_stale_loopback_assignments_with_inventory(
+        &mut registry,
+        &RouteTable::new(),
+        &RunningComposeContainerInventory::default(),
+    );
+
+    assert!(outcome.changed);
+    assert!(registry.get("project:stale:/tmp/stale").is_none());
+    assert!(registry.get("shared:service:/tmp/repo").is_some());
+}
+
 #[test]
 fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
     let mut registry = LoopbackRegistry::new();
     registry
         .allocate("active-project", "/tmp/active")
         .expect("allocate active");
+    registry
+        .allocate("project:active-project:/tmp/active", "/tmp/active")
+        .expect("allocate qualified active");
     registry
         .allocate("stale-project", "/tmp/stale")
         .expect("allocate stale");
@@ -1344,6 +1597,7 @@ fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
         prune_stale_loopback_assignments_with_runtime(&mut registry, &RouteTable::new(), &rows);
     assert!(changed);
     assert!(registry.get("active-project").is_some());
+    assert!(registry.get("project:active-project:/tmp/active").is_some());
     assert!(registry.get("stale-project").is_none());
 }
 
@@ -1490,20 +1744,40 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
         registry
             .allocate("demo-web-dev", "/tmp/repo")
             .expect("seed legacy assignment");
+        let legacy_ip = registry
+            .get("demo-web-dev")
+            .expect("seeded legacy assignment")
+            .ip;
         registry.save(&loopback_path).expect("save registry");
 
-        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("allocate")
-            .expect("loopback ip");
+        let identity = project_loopback_identity(&policy.project_name, &repo_root);
+        let ip = load_or_allocate_loopback_ip_with_inventory(
+            &identity,
+            Some(&policy.project_name),
+            &repo_root.display().to_string(),
+            true,
+            || RunningComposeContainerInventory {
+                rows: vec![inventory_row(
+                    &policy.project_name,
+                    &repo_root.display().to_string(),
+                    "effigy",
+                )],
+                failures: vec![RuntimeInventoryFailure {
+                    backend: "colima".to_owned(),
+                    profile: "temporary-failure".to_owned(),
+                    error: "test inventory failure".to_owned(),
+                }],
+            },
+        )
+        .expect("allocate")
+        .expect("loopback ip");
         let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
 
-        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 1));
+        assert_eq!(ip, legacy_ip);
         assert!(reloaded.get("demo-web-dev").is_none());
         assert_eq!(
-            reloaded
-                .get("project:demo-web-dev:/tmp/repo")
-                .map(|entry| entry.ip),
-            Some(std::net::Ipv4Addr::new(127, 1, 0, 1))
+            reloaded.get(&identity).map(|entry| entry.ip),
+            Some(legacy_ip)
         );
     });
 }

@@ -467,10 +467,25 @@ fn observe_loopbacks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
     }
     let registry = LoopbackRegistry::load(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(record
+    let mut identities = record
         .loopback_identities
         .iter()
         .chain(record.retain_loopback_identities.iter())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    identities.extend(
+        record
+            .project_names
+            .iter()
+            .filter(|identity| {
+                registry
+                    .get(identity)
+                    .is_some_and(|assignment| assignment.scope == record.checkout)
+            })
+            .cloned(),
+    );
+    Ok(identities
+        .iter()
         .filter(|identity| registry.get(identity).is_some())
         .map(|identity| ObservedResource {
             kind: ObservedKind::Loopback,
@@ -663,8 +678,29 @@ fn delete_loopbacks(record: &ScopeRecord) -> Result<bool, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    for identity in &record.loopback_identities {
-        registry.deallocate(identity);
+    let mut identities = record
+        .loopback_identities
+        .iter()
+        .filter(|identity| {
+            registry
+                .get(identity)
+                .is_some_and(|assignment| assignment.scope == record.checkout)
+        })
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    identities.extend(
+        record
+            .project_names
+            .iter()
+            .filter(|identity| {
+                registry
+                    .get(identity)
+                    .is_some_and(|assignment| assignment.scope == record.checkout)
+            })
+            .cloned(),
+    );
+    for identity in identities {
+        registry.deallocate(&identity);
     }
     registry
         .save(&path)
@@ -734,5 +770,56 @@ mod tests {
         let cwd = observation_cwd(&sample_record());
         assert!(cwd.is_dir());
         assert_ne!(cwd, PathBuf::from("/tmp/missing-worker"));
+    }
+
+    #[test]
+    fn retirement_clears_qualified_and_owned_legacy_loopbacks_only() {
+        let home = std::env::temp_dir().join(format!(
+            "effigy-loopback-retirement-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&home).expect("create test home");
+        let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
+        let path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("project:demo:/tmp/missing-worker", "/tmp/missing-worker")
+            .expect("qualified assignment");
+        registry
+            .allocate("demo", "/tmp/missing-worker")
+            .expect("legacy assignment");
+        registry
+            .allocate("project:foreign:/tmp/foreign", "/tmp/foreign")
+            .expect("foreign assignment");
+        registry
+            .allocate("shared:demo:/tmp/missing-worker", "/tmp/missing-worker")
+            .expect("shared assignment");
+        registry.save(&path).expect("save registry");
+
+        let mut record = sample_record();
+        record.project_names = vec!["demo".to_owned()];
+        record.loopback_identities = vec!["project:demo:/tmp/missing-worker".to_owned()];
+        let observed = observe_loopbacks(&record).expect("observe loopbacks");
+        let observed_names = observed
+            .iter()
+            .map(|resource| resource.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(observed_names.contains("project:demo:/tmp/missing-worker"));
+        assert!(observed_names.contains("demo"));
+        assert!(!observed_names.contains("project:foreign:/tmp/foreign"));
+
+        delete_loopbacks(&record).expect("retire owned loopbacks");
+        let remaining = LoopbackRegistry::load(&path).expect("reload registry");
+        assert!(remaining.get("project:demo:/tmp/missing-worker").is_none());
+        assert!(remaining.get("demo").is_none());
+        assert!(remaining.get("project:foreign:/tmp/foreign").is_some());
+        assert!(remaining.get("shared:demo:/tmp/missing-worker").is_some());
+        let _ = std::fs::remove_dir_all(home);
     }
 }
