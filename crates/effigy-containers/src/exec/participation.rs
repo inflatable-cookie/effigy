@@ -218,7 +218,11 @@ fn docker_endpoint_candidates_from(
 }
 
 fn is_default_context_name(name: &str) -> bool {
-    name.is_empty() || name.eq_ignore_ascii_case("default")
+    // Docker context names are case-sensitive, so `DEFAULT` is a distinct,
+    // selectable context that must not be collapsed into the default context.
+    // Collapsing it could omit a remote endpoint chosen by `DOCKER_CONTEXT` or
+    // the stored current context.
+    name.is_empty() || name == "default"
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -334,24 +338,38 @@ fn endpoint_from_host(host: &str) -> DockerEndpoint {
 
 /// Inspect Colima state that can outlive the CLI. A running Lima instance
 /// lives under the Colima home's `_lima` directory, so its presence keeps
-/// Colima authoritative even when `colima` is not on `PATH`.
+/// Colima authoritative even when `colima` is not on `PATH`. State that cannot
+/// be inspected is never proof of inactivity.
 fn colima_state_evidence(colima_home: Option<&Path>) -> ColimaStateEvidence {
     let Some(home) = colima_home else {
-        return ColimaStateEvidence::None;
+        // Without a Colima home we cannot tell whether a VM is running.
+        return ColimaStateEvidence::Unknown;
     };
-    match std::fs::read_dir(home.join("_lima")) {
-        Ok(entries) => {
-            if entries
-                .filter_map(Result::ok)
-                .any(|entry| entry.path().is_dir())
-            {
-                ColimaStateEvidence::Present
-            } else {
-                ColimaStateEvidence::None
-            }
+    let entries = match std::fs::read_dir(home.join("_lima")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ColimaStateEvidence::None;
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ColimaStateEvidence::None,
-        Err(_) => ColimaStateEvidence::Unknown,
+        // An inaccessible or malformed `_lima` path could still hold a running
+        // instance, so it stays unknowable rather than absent.
+        Err(_) => return ColimaStateEvidence::Unknown,
+    };
+    let mut present = false;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return ColimaStateEvidence::Unknown,
+        };
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => present = true,
+            Ok(_) => {}
+            Err(_) => return ColimaStateEvidence::Unknown,
+        }
+    }
+    if present {
+        ColimaStateEvidence::Present
+    } else {
+        ColimaStateEvidence::None
     }
 }
 
@@ -779,6 +797,42 @@ mod tests {
     }
 
     #[test]
+    fn uppercase_default_context_selected_by_env_is_not_omitted() {
+        // Docker context names are case-sensitive, so a context literally named
+        // `DEFAULT` is selectable and must keep a remote endpoint authoritative.
+        let dir = docker_context_fixture(&[("DEFAULT", Some("tcp://10.0.0.5:2375"))]);
+        let candidates = docker_endpoint_candidates_from(
+            None,
+            Some("DEFAULT".to_owned()),
+            Some(dir.path().to_path_buf()),
+        );
+
+        assert!(candidates.contains(&DockerEndpoint::Remote));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("a remote DEFAULT context must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
+    fn uppercase_default_context_in_the_store_is_not_omitted() {
+        let dir = docker_context_fixture(&[("DEFAULT", Some("ssh://builder"))]);
+        write_current_context(&dir, "DEFAULT");
+        let candidates =
+            docker_endpoint_candidates_from(None, None, Some(dir.path().to_path_buf()));
+
+        assert!(candidates.contains(&DockerEndpoint::Remote));
+        assert_eq!(
+            classify_docker_participation(candidates, |_| {
+                panic!("a remote DEFAULT context must not be probed away")
+            }),
+            RuntimeParticipation::Participating
+        );
+    }
+
+    #[test]
     fn colima_state_evidence_tracks_lima_instance_directories() {
         let dir = tempfile::tempdir().expect("create colima home fixture");
 
@@ -794,6 +848,50 @@ mod tests {
             ColimaStateEvidence::Present
         );
 
-        assert_eq!(colima_state_evidence(None), ColimaStateEvidence::None);
+        assert_eq!(colima_state_evidence(None), ColimaStateEvidence::Unknown);
+    }
+
+    #[test]
+    fn colima_state_evidence_with_an_off_layout_lima_path_is_unknown() {
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+        std::fs::write(dir.path().join("_lima"), "not a directory")
+            .expect("write off-layout _lima file");
+
+        assert_eq!(
+            colima_state_evidence(Some(dir.path())),
+            ColimaStateEvidence::Unknown
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inaccessible_lima_instance_state_is_unknown() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("create colima home fixture");
+        let instances = dir.path().join("_lima");
+        std::fs::create_dir_all(instances.join("colima-effigy")).expect("create instance dir");
+        let restore = |mode: u32| {
+            let mut permissions = std::fs::metadata(&instances)
+                .expect("lima dir metadata")
+                .permissions();
+            permissions.set_mode(mode);
+            std::fs::set_permissions(&instances, permissions).expect("restore lima dir mode");
+        };
+        restore(0o000);
+
+        let readable_even_locked = std::fs::read_dir(&instances).is_ok();
+        if readable_even_locked {
+            // Running as a user that bypasses permissions (for example root);
+            // the off-layout and no-home tests cover this classification
+            // instead.
+            restore(0o700);
+            return;
+        }
+
+        let evidence = colima_state_evidence(Some(dir.path()));
+        restore(0o700);
+
+        assert_eq!(evidence, ColimaStateEvidence::Unknown);
     }
 }

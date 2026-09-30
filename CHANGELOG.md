@@ -239,10 +239,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `DOCKER_CONTEXT` is never omitted by an absent local `DOCKER_HOST`, and any
   remote, reachable, stale, unreadable, or unresolvable endpoint stays
   fail-closed. Colima participates when its CLI exists or when Colima/Lima
-  instance state remains, because a running VM can outlive its client CLI;
-  only a host with neither is Colima-inactive. Those failures still preserve
-  uncertain owners, and identical skipped-reclamation warnings print once per
-  launch while distinct failures still print.
+  instance state remains or cannot be inspected, because a running VM can
+  outlive its client CLI; only a host with neither is Colima-inactive. Those
+  failures still preserve uncertain owners, and identical skipped-reclamation
+  warnings print once per launch while distinct failures still print.
 - Built-in `test` honors explicit Cargo package scope. Passthrough that
   selects packages (`-p`, `--package`, including `--package=<package>`,
   attached `-p<package>`, and repeated selections) no longer widens to the

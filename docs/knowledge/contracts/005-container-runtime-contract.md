@@ -169,12 +169,14 @@ endpoint, any remote or unresolvable configured endpoint (`tcp://`, `ssh://`,
 `npipe://`, a missing context, unreadable config, or `DOCKER_HOST`), and a
 socket that exists but cannot be connected are all ambiguous and stay
 authoritative, so a later failure remains actionable and fail-closed. Colima is
-inactive only when its CLI is absent *and* no Colima or Lima instance state
-remains, because a running Colima VM can outlive its client CLI. Neither the
-preferred backend, CLI presence, CLI absence alongside remaining state, stderr
-text, nor an absent socket on its own proves that a runtime owns nothing.
-Identical skipped-reclamation warnings are emitted once per process; distinct
-failures still print.
+inactive only when its CLI is absent, its Colima home can be inspected, and no
+Colima or Lima instance state remains, because a running Colima VM can outlive
+its client CLI. Docker context names are case-sensitive, so a context named
+`DEFAULT` is selectable and is not collapsed into the default context. Neither
+the preferred backend, CLI presence, CLI absence alongside remaining or
+uninspectable state, stderr text, nor an absent socket on its own proves that a
+runtime owns nothing. Identical skipped-reclamation warnings are emitted once
+per process; distinct failures still print.
 
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with
