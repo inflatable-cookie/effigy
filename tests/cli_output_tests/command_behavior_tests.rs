@@ -1,4 +1,6 @@
 use serde_json::Value;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -203,6 +205,164 @@ fn run_json_cli_command_with_path(
         .env("PATH", joined_path)
         .output()
         .expect("run effigy with test PATH")
+}
+
+struct NestedQaAdmissionSandbox {
+    private_dir: PathBuf,
+    host_dir: PathBuf,
+    host_snapshot: Vec<(OsString, Vec<u8>)>,
+    hostile_lease_id: &'static str,
+}
+
+fn fixture_admission_env_var(key: &OsStr) -> bool {
+    key == OsStr::new("EFFIGY_CALLER")
+        || key.to_string_lossy().starts_with("EFFIGY_ADMISSION_")
+}
+
+fn admission_directory_snapshot(path: &std::path::Path) -> Vec<(OsString, Vec<u8>)> {
+    let mut entries = fs::read_dir(path)
+        .expect("read admission fixture directory")
+        .map(|entry| {
+            let entry = entry.expect("read admission fixture entry");
+            assert!(
+                entry.file_type().expect("stat admission fixture entry").is_file(),
+                "admission fixture should contain files only"
+            );
+            (
+                entry.file_name(),
+                fs::read(entry.path()).expect("read admission fixture file"),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
+fn nested_qa_admission_sandbox(root: &std::path::Path) -> NestedQaAdmissionSandbox {
+    let admission_root = root.join(".fixture-admission");
+    fs::create_dir(&admission_root).expect("create admission fixture root");
+    let private_dir = admission_root.join("private");
+    let host_dir = admission_root.join("host");
+    for dir in [&private_dir, &host_dir] {
+        fs::create_dir(dir).expect("create admission fixture directory");
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o2770))
+            .expect("secure admission fixture directory");
+    }
+    fs::write(host_dir.join("fixture-sentinel"), b"host admission fixture\n")
+        .expect("seed host admission fixture");
+    let host_snapshot = admission_directory_snapshot(&host_dir);
+
+    NestedQaAdmissionSandbox {
+        private_dir,
+        host_dir,
+        host_snapshot,
+        hostile_lease_id: "host-lease-token-that-must-not-reenter",
+    }
+}
+
+fn run_json_cli_command_with_private_admission(
+    root: &std::path::Path,
+    args: &[&str],
+    path_prefix: &std::path::Path,
+    sandbox: &NestedQaAdmissionSandbox,
+) -> std::process::Output {
+    // Model an outer admitted test process, then filter its caller, lease and
+    // admission settings before explicitly configuring this fixture.
+    let mut inherited_env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+    for (key, value) in [
+        ("EFFIGY_CALLER", OsString::from("queue:outer-admitted-test")),
+        (
+            "EFFIGY_ADMISSION_LEASE_ID",
+            OsString::from(sandbox.hostile_lease_id),
+        ),
+        (
+            "EFFIGY_ADMISSION_DIR",
+            sandbox.host_dir.as_os_str().to_owned(),
+        ),
+        ("EFFIGY_ADMISSION_CPU_BUDGET", OsString::from("1")),
+        (
+            "EFFIGY_ADMISSION_MEMORY_BUDGET_MIB",
+            OsString::from("64"),
+        ),
+        ("EFFIGY_ADMISSION_CPU_UNITS", OsString::from("1")),
+        ("EFFIGY_ADMISSION_MEMORY_MIB", OsString::from("64")),
+        ("EFFIGY_ADMISSION_TIMEOUT_SECS", OsString::from("1")),
+    ] {
+        inherited_env.insert(OsString::from(key), value);
+    }
+
+    let current_path = inherited_env
+        .get(OsStr::new("PATH"))
+        .cloned()
+        .unwrap_or_default();
+    let joined_path = std::env::join_paths(
+        std::iter::once(path_prefix.to_path_buf()).chain(std::env::split_paths(&current_path)),
+    )
+    .expect("join test PATH");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .env_clear()
+        .arg("--json")
+        .args(args)
+        .arg("--repo")
+        .arg(root);
+    for (key, value) in inherited_env {
+        if !fixture_admission_env_var(&key) {
+            command.env(key, value);
+        }
+    }
+    command
+        .env("NO_COLOR", "1")
+        .env("PATH", joined_path)
+        .env("EFFIGY_ADMISSION_DIR", &sandbox.private_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "128")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "5");
+    command.output().expect("run isolated nested-QA fixture")
+}
+
+fn assert_nested_qa_admission_is_private(
+    qa_repo: &std::path::Path,
+    sandbox: &NestedQaAdmissionSandbox,
+) {
+    let read_probe = |name: &str| {
+        fs::read_to_string(qa_repo.join(name))
+            .unwrap_or_else(|error| panic!("read nested QA environment probe {name}: {error}"))
+    };
+    assert_eq!(
+        read_probe(".fixture-admission-dir"),
+        sandbox.private_dir.to_string_lossy().into_owned()
+    );
+    assert_eq!(
+        read_probe(".fixture-admission-caller"),
+        "",
+        "fixture must clear the inherited host caller"
+    );
+    let nested_lease = read_probe(".fixture-admission-lease");
+    assert!(!nested_lease.is_empty(), "nested task should retain its lease");
+    assert_ne!(
+        nested_lease, sandbox.hostile_lease_id,
+        "nested task must not inherit the host lease credential"
+    );
+    assert_eq!(
+        admission_directory_snapshot(&sandbox.host_dir),
+        sandbox.host_snapshot,
+        "fixture must leave the outer host-store fixture unchanged"
+    );
+
+    let store: Value = serde_json::from_slice(
+        &fs::read(sandbox.private_dir.join("state.json")).expect("read private admission state"),
+    )
+    .expect("parse private admission state");
+    let runs = store["runs"].as_array().expect("private admission runs");
+    assert!(!runs.is_empty(), "heavy fixture QA should use private state");
+    assert!(runs.iter().all(|run| {
+        run["lease_id"].as_str() != Some(sandbox.hostile_lease_id)
+            && run["budget"]["cpu_units"].as_u64() == Some(2)
+            && run["budget"]["memory_mib"].as_u64() == Some(128)
+    }));
 }
 
 fn write_demo_manifest_fixture(root: &std::path::Path) {
@@ -2918,7 +3078,10 @@ fn cli_docs_check_next_action_json_rejects_non_actionable_verb() {
 
 #[test]
 fn cli_starter_docs_policy_bundle_tasks_pass_on_neutral_fixture() {
-    let root = temp_workspace("lean-starter-docs-policy-bundle");
+    let fixture = tempfile::tempdir().expect("create starter fixture workspace");
+    let root = fixture.path();
+    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
+    let sandbox = nested_qa_admission_sandbox(root);
     fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir knowledge");
     fs::write(
         root.join("README.md"),
@@ -2942,7 +3105,7 @@ fn cli_starter_docs_policy_bundle_tasks_pass_on_neutral_fixture() {
     )
     .expect("release");
     fs::write(root.join("effigy.toml"), r#"[tasks]
-"qa:docs" = ["effigy docs check links", "effigy docs check paths AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/contracts/release.md"]
+"qa:docs" = ["printf '%s' \"$EFFIGY_ADMISSION_DIR\" > .fixture-admission-dir", "printf '%s' \"${EFFIGY_CALLER-}\" > .fixture-admission-caller", "printf '%s' \"${EFFIGY_ADMISSION_LEASE_ID-}\" > .fixture-admission-lease", "effigy docs check links", "effigy docs check paths AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/contracts/release.md"]
 qa = [{ task = "qa:docs" }]
 
 [docs_policy.graph]
@@ -2956,15 +3119,20 @@ authority = 100
         let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
             .parent()
             .expect("effigy binary directory");
-        let output = run_json_cli_command_with_path(&root, &[task], binary_dir);
+        let output =
+            run_json_cli_command_with_private_admission(root, &[task], binary_dir, &sandbox);
         assert!(output.status.success(), "{task} should pass: {output:?}");
         assert_eq!(parse_stdout_json(&output)["ok"], true);
     }
+    assert_nested_qa_admission_is_private(root, &sandbox);
 }
 
 #[test]
 fn cli_workspace_container_starter_bundle_passes_via_nested_docs_authority() {
-    let root = temp_workspace("lean-workspace-container-starter-bundle");
+    let fixture = tempfile::tempdir().expect("create workspace starter fixture");
+    let root = fixture.path();
+    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
+    let sandbox = nested_qa_admission_sandbox(root);
     let authority = root.join("trellis");
     fs::create_dir_all(authority.join("docs/knowledge/contracts")).expect("mkdir authority");
     fs::write(
@@ -3007,16 +3175,65 @@ fn cli_workspace_container_starter_bundle_passes_via_nested_docs_authority() {
         "# Release\n\nNo release yet.\n",
     )
     .expect("authority release");
-    fs::write(authority.join("effigy.toml"), "[tasks]\n\"qa:docs\" = [\"effigy docs check links\", \"effigy docs check paths AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/contracts/release.md\"]\nqa = [{ task = \"qa:docs\" }]\n").expect("authority manifest");
+    fs::write(
+        authority.join("effigy.toml"),
+        r#"[tasks]
+"qa:docs" = ["printf '%s' \"$EFFIGY_ADMISSION_DIR\" > .fixture-admission-dir", "printf '%s' \"${EFFIGY_CALLER-}\" > .fixture-admission-caller", "printf '%s' \"${EFFIGY_ADMISSION_LEASE_ID-}\" > .fixture-admission-lease", "effigy docs check links", "effigy docs check paths AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/contracts/release.md"]
+qa = [{ task = "qa:docs" }]
+"#,
+    )
+    .expect("authority manifest");
     let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
         .parent()
         .expect("effigy binary directory");
-    let output = run_json_cli_command_with_path(&root, &["qa"], binary_dir);
+    let output = run_json_cli_command_with_private_admission(root, &["qa"], binary_dir, &sandbox);
     assert!(
         output.status.success(),
         "workspace qa should pass: {output:?}"
     );
     assert_eq!(parse_stdout_json(&output)["ok"], true);
+    assert_nested_qa_admission_is_private(&authority, &sandbox);
+}
+
+#[test]
+fn cli_nested_qa_fixture_isolates_admission_and_preserves_failure_status() {
+    let fixture = tempfile::tempdir().expect("create failing nested QA fixture");
+    let root = fixture.path();
+    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
+    let sandbox = nested_qa_admission_sandbox(root);
+    let nested = root.join("nested");
+    fs::create_dir(&nested).expect("create nested QA repository");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks]\nqa = \"effigy qa --repo nested\"\n",
+    )
+    .expect("write outer manifest");
+    fs::write(
+        nested.join("effigy.toml"),
+        r#"[tasks]
+"qa:docs" = ["printf '%s' \"$EFFIGY_ADMISSION_DIR\" > .fixture-admission-dir", "printf '%s' \"${EFFIGY_CALLER-}\" > .fixture-admission-caller", "printf '%s' \"${EFFIGY_ADMISSION_LEASE_ID-}\" > .fixture-admission-lease", "exit 23"]
+qa = [{ task = "qa:docs" }]
+"#,
+    )
+    .expect("write nested manifest");
+
+    let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"))
+        .parent()
+        .expect("effigy binary directory");
+    let output =
+        run_json_cli_command_with_private_admission(root, &["qa"], binary_dir, &sandbox);
+    assert!(
+        output.status.code().is_some_and(|code| code != 0),
+        "nested QA failure must retain a nonzero exit: {output:?}"
+    );
+    assert_nested_qa_admission_is_private(&nested, &sandbox);
+    let store: Value = serde_json::from_slice(
+        &fs::read(sandbox.private_dir.join("state.json")).expect("read private admission state"),
+    )
+    .expect("parse private admission state");
+    assert!(store["runs"].as_array().unwrap().iter().any(|run| {
+        run["exit_classification"] == "failed"
+    }));
 }
 
 #[test]
