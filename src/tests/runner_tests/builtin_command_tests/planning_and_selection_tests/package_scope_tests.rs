@@ -126,6 +126,45 @@ fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_runner_separator() {
+    let root = temp_workspace("builtin-test-package-scope-runner-separator");
+    write_two_package_cargo_workspace(&root);
+
+    // A second `--` survives into the passthrough and becomes the runner's
+    // own separator: the trailing `--workspace` is a test-binary argument,
+    // never a Cargo selector, so the package scope stands and nothing is
+    // rejected.
+    let command = plan_command_at(
+        root.to_path_buf(),
+        &[
+            "--plan",
+            "--json",
+            "-p",
+            "scope-good",
+            "--",
+            "good_passes",
+            "--",
+            "--workspace",
+        ],
+    );
+    let command = command.as_str().expect("plan command string");
+    assert!(
+        command.contains("run '-p' 'scope-good' 'good_passes' '--' '--workspace'"),
+        "unexpected plan command: {command}"
+    );
+    assert!(!command.starts_with("cargo nextest run --workspace"));
+
+    // Pre-separator `-p` scopes Cargo while post-boundary tokens flow to the
+    // runner as a matching name filter.
+    let out = run_builtin_ok(
+        root.to_path_buf(),
+        "test",
+        &["-p", "scope-good", "--", "good_passes"],
+    );
+    assert_output_contains_all(&out, &["Test Results", "targets:", "root"]);
+}
+
+#[test]
 fn run_manifest_task_builtin_test_plan_package_scope_rejects_workspace_plus_package() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-package-scope-rejects-ambiguous");

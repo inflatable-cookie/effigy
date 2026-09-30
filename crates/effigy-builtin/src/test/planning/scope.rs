@@ -10,6 +10,10 @@
 //! the passthrough's own flag keeps the workspace scope. Combining an
 //! explicit workspace selection with an explicit package selection is
 //! rejected as ambiguous instead of silently broadening.
+//!
+//! Detection only reads the Cargo-level prefix of the passthrough: tokens
+//! after the runner's own `--` belong to the test binary and are never
+//! Cargo selectors.
 
 use effigy_core::shell::shell_quote;
 
@@ -65,13 +69,27 @@ pub(in crate::test) fn compose_scoped_command(
 
 const WORKSPACE_FLAG: &str = "--workspace";
 
+/// The Cargo-level prefix of the passthrough. A `--` token inside the
+/// passthrough is appended verbatim, so it becomes Cargo's own argument
+/// separator: everything after it is forwarded to the test binary and is
+/// never a Cargo package or workspace selector. Effigy's own `--` boundary
+/// is consumed earlier by flag extraction, so any `--` found here is one the
+/// runner will see.
+fn cargo_level_passthrough(passthrough: &[String]) -> &[String] {
+    match passthrough.iter().position(|arg| arg == "--") {
+        Some(index) => &passthrough[..index],
+        None => passthrough,
+    }
+}
+
 /// True when passthrough names Cargo packages explicitly. Covers `-p <pkg>`,
 /// `-p<pkg>`, `-p=<pkg>`, `--package <pkg>`, and `--package=<pkg>`; repeated
 /// selections each count. A trailing `-p` with no value is still treated as
 /// a package selection: the runner rejects the malformed argument instead of
-/// the composition widening to the workspace.
+/// the composition widening to the workspace. Tokens after the runner's
+/// `--` are test-binary arguments and never count.
 pub(in crate::test) fn passthrough_has_explicit_package_selection(passthrough: &[String]) -> bool {
-    passthrough.iter().any(|arg| {
+    cargo_level_passthrough(passthrough).iter().any(|arg| {
         arg == "-p"
             || arg == "--package"
             || (arg.starts_with("--package=") && arg.len() > "--package=".len())
@@ -82,10 +100,11 @@ pub(in crate::test) fn passthrough_has_explicit_package_selection(passthrough: &
 /// True when passthrough explicitly selects the workspace. Cargo accepts
 /// `--workspace` and its `--all` alias on both `cargo test` and nextest;
 /// neither runner accepts a `-w` short form, so none is recognized here.
+/// Tokens after the runner's `--` are test-binary arguments and never count.
 pub(in crate::test) fn passthrough_has_explicit_workspace_selection(
     passthrough: &[String],
 ) -> bool {
-    passthrough
+    cargo_level_passthrough(passthrough)
         .iter()
         .any(|arg| arg == WORKSPACE_FLAG || arg == "--all")
 }

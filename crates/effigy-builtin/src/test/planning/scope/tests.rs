@@ -170,3 +170,82 @@ fn package_scope_detection_recognizes_workspace_selection_forms() {
         "--workspaceless"
     ])));
 }
+
+#[test]
+fn package_scope_detection_ignores_selectors_after_the_runner_separator() {
+    assert!(!passthrough_has_explicit_package_selection(&args(&[
+        "--",
+        "-p",
+        "scope-good",
+    ])));
+    assert!(!passthrough_has_explicit_workspace_selection(&args(&[
+        "--",
+        "--workspace",
+    ])));
+    assert!(passthrough_has_explicit_workspace_selection(&args(&[
+        "--workspace",
+        "--",
+        "-p",
+        "scope-good",
+    ])));
+    assert!(!passthrough_has_explicit_package_selection(&args(&[
+        "--workspace",
+        "--",
+        "-p",
+        "scope-good",
+    ])));
+    assert!(passthrough_has_explicit_package_selection(&args(&[
+        "-p",
+        "scope-good",
+        "--",
+        "--workspace",
+    ])));
+    assert!(!passthrough_has_explicit_workspace_selection(&args(&[
+        "-p",
+        "scope-good",
+        "--",
+        "--workspace",
+    ])));
+}
+
+#[test]
+fn package_scope_compose_keeps_auto_workspace_flag_when_selector_is_past_separator() {
+    let scoped =
+        compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["--", "-p", "scope-good"]));
+    assert_eq!(
+        scoped.command,
+        "cargo nextest run --workspace '--' '-p' 'scope-good'"
+    );
+    assert!(!scoped.workspace_flag_dropped);
+    assert!(!scoped.package_scope_narrowed);
+}
+
+#[test]
+fn package_scope_compose_yields_auto_flag_only_to_cargo_level_workspace_selection() {
+    let scoped = compose_scoped_command(
+        NEXTEST_WORKSPACE,
+        true,
+        &args(&["--workspace", "--", "-p", "scope-good"]),
+    );
+    assert_eq!(
+        scoped.command,
+        "cargo nextest run '--workspace' '--' '-p' 'scope-good'"
+    );
+    assert!(scoped.workspace_flag_dropped);
+    assert!(!scoped.package_scope_narrowed);
+}
+
+#[test]
+fn package_scope_compose_narrows_only_for_cargo_level_package_selection() {
+    let scoped = compose_scoped_command(
+        NEXTEST_WORKSPACE,
+        true,
+        &args(&["-p", "scope-good", "--", "good_passes"]),
+    );
+    assert_eq!(
+        scoped.command,
+        "cargo nextest run '-p' 'scope-good' '--' 'good_passes'"
+    );
+    assert!(scoped.workspace_flag_dropped);
+    assert!(scoped.package_scope_narrowed);
+}
