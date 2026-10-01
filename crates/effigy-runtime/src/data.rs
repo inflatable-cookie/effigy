@@ -598,6 +598,8 @@ where
         ))
     })?;
 
+    effigy_containers::register_container_runtime_scope(&policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_started =
         effigy_containers::exec::ensure_runtime_backend_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;

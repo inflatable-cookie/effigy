@@ -178,7 +178,9 @@ fn prepare_container_up(
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
-    let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
+    let colima_started = start_runtime_after_scope_registration(&policy, || {
+        ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
+    })?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
@@ -207,6 +209,15 @@ fn prepare_container_up(
         shared_service_notes,
         up_plan,
     })
+}
+
+fn start_runtime_after_scope_registration<T>(
+    policy: &EffectiveContainerPolicy,
+    start: impl FnOnce() -> Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    effigy_containers::register_container_runtime_scope(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    start()
 }
 
 fn run_container_up_compose(
@@ -807,7 +818,10 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 
 #[cfg(test)]
 mod tests {
-    use super::{exec_operation_plan, lifecycle_operation_plan, run_container_eject};
+    use super::{
+        exec_operation_plan, lifecycle_operation_plan, run_container_eject,
+        start_runtime_after_scope_registration, RunnerError,
+    };
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
@@ -909,6 +923,50 @@ mod tests {
             }
         );
         assert!(!wipe_data.consumes_declared_container_secrets());
+    }
+
+    #[test]
+    fn runtime_start_failure_keeps_scope_record_created_before_start() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let checkout = temp.path().join("worker");
+        let home = temp.path().join("home");
+        fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
+        fs::create_dir_all(&home).expect("temporary home");
+        fs::write(
+            checkout.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("mark private checkout as ephemeral");
+        fs::write(
+            checkout.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yaml\"\nprimary_service = \"app\"\n",
+        )
+        .expect("write manifest");
+        fs::write(
+            checkout.join("compose.yaml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose file");
+        effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+            let policy = effigy_containers::load_container_policy(&checkout, None)
+                .expect("resolve policy without activating runtime");
+            let token = effigy_core::worktree_scope::load_or_create(&checkout)
+                .expect("resolve fixture token")
+                .expect("ephemeral fixture scope");
+
+            let error = start_runtime_after_scope_registration::<()>(&policy, || {
+                assert!(effigy_containers::load_scope_record(&token)
+                    .expect("read registered scope")
+                    .is_some());
+                Err(RunnerError::task_invocation("injected start failure"))
+            })
+            .expect_err("injected start should fail");
+
+            assert!(error.to_string().contains("injected start failure"));
+            assert!(effigy_containers::load_scope_record(&token)
+                .expect("scope remains readable")
+                .is_some());
+        });
     }
 
     #[test]

@@ -1,23 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use effigy_catalog::volumes::{
     inspect_volumes_command, parse_inspect_volume_metadata_list_strict,
     parse_listed_resource_names, remove_volume_command, DockerCommand,
 };
 use effigy_containers::{
-    load_all_container_policies, load_container_policy, load_for_checkout, load_scope_record,
-    plan_retirement, remaining_after, remove_scope_record, retire_report, upsert_scope_record,
-    volume_has_ownership_proof, ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord,
-    COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+    load_for_checkout, load_scope_record, plan_retirement, remaining_after, remove_scope_record,
+    retire_report, upsert_scope_record, volume_has_ownership_proof, ObservedKind, ObservedResource,
+    ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
-use effigy_core::worktree_scope;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
 use effigy_gateway::registration::{cleanup_owned_routes_and_certs, owned_by};
 use effigy_gateway::routes::{RouteTable, RouteTableLock};
 
 use super::data::maybe_confirm_destructive_container_action;
-use super::hosts::{host_map_for_policy, shared_runtime_identity};
 use super::support::run_runtime_volume_capture;
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
@@ -57,7 +54,7 @@ pub(super) fn run_container_retire(
 
 fn resolve_retire_records(
     repo_override: Option<PathBuf>,
-    name: Option<&str>,
+    _name: Option<&str>,
     scope: Option<&str>,
 ) -> Result<Vec<ScopeRecord>, RunnerError> {
     if let Some(token) = scope {
@@ -76,37 +73,7 @@ fn resolve_retire_records(
             return Ok(Vec::new());
         }
     };
-    refresh_live_record(&checkout, name);
     load_for_checkout(&checkout).map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn refresh_live_record(checkout: &Path, name: Option<&str>) {
-    let policies = if name.is_some() {
-        load_container_policy(checkout, name)
-            .into_iter()
-            .collect::<Vec<_>>()
-    } else {
-        load_all_container_policies(checkout).unwrap_or_default()
-    };
-    let Ok(Some(token)) = worktree_scope::load_or_create(checkout) else {
-        return;
-    };
-    for policy in policies {
-        let Ok(host_map) = host_map_for_policy(&policy) else {
-            continue;
-        };
-        let Some(key) = host_map.host_key.clone() else {
-            continue;
-        };
-        let record = ScopeRecord::from_policy(
-            &policy,
-            &token,
-            &key,
-            &host_map,
-            shared_runtime_identity(&policy, Some(&token)),
-        );
-        let _ = effigy_containers::upsert_scope_record(&record);
-    }
 }
 
 fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, RunnerError> {
@@ -720,6 +687,92 @@ fn observation_cwd(record: &ScopeRecord) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retire_of_unactivated_checkout_does_not_create_scope_or_probe_profile() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let checkout = temp.path().join("worker");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        std::fs::write(
+            checkout.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("mark checkout as ephemeral");
+        std::fs::write(
+            checkout.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\nprofile = \"private-stopped-profile\"\ncompose_file = \"compose.yaml\"\nprimary_service = \"app\"\n",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            checkout.join("compose.yaml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose file");
+
+        let output = effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+            run_container_retire(Some(checkout.clone()), None, None, true, true)
+        })
+        .expect("unactivated scope retirement should be a no-op");
+
+        let report: serde_json::Value = serde_json::from_str(&output).expect("retire report JSON");
+        assert_eq!(report["ok"], true);
+        assert!(!home.join(".effigy/runtime-scopes").exists());
+    }
+
+    #[test]
+    fn checkout_retirement_lookup_preserves_existing_unknown_profile_record() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let checkout = temp.path().join("worker");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        std::fs::write(
+            checkout.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("mark checkout as ephemeral");
+        std::fs::write(
+            checkout.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\nprofile = \"private-stopped-profile\"\ncompose_file = \"compose.yaml\"\nprimary_service = \"app\"\n",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            checkout.join("compose.yaml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose file");
+        let checkout = checkout.canonicalize().expect("canonical checkout path");
+
+        effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+            let policy =
+                effigy_containers::load_container_policy(&checkout, None).expect("resolve policy");
+            effigy_containers::register_container_runtime_scope(&policy)
+                .expect("record activated scope fixture");
+            let token = effigy_core::worktree_scope::load_or_create(&checkout)
+                .expect("resolve fixture token")
+                .expect("ephemeral fixture scope");
+            let mut record = load_scope_record(&token)
+                .expect("load scope")
+                .expect("record exists");
+            record.profile = "unknown-stopped-profile".to_owned();
+            record.profiles = vec!["unknown-stopped-profile".to_owned()];
+            upsert_scope_record(&record).expect("preserve unknown profile in record");
+            let record_path = home
+                .join(".effigy/runtime-scopes")
+                .join(format!("{token}.json"));
+            let before = std::fs::read(&record_path).expect("read record before lookup");
+
+            let records = resolve_retire_records(Some(checkout), None, None)
+                .expect("resolve existing retirement record");
+            let after = std::fs::read(&record_path).expect("read record after lookup");
+
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].profile, "unknown-stopped-profile");
+            assert_eq!(after, before);
+        });
+    }
 
     fn sample_record() -> ScopeRecord {
         ScopeRecord {

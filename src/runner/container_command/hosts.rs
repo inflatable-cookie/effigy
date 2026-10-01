@@ -1,6 +1,6 @@
 use effigy_containers::{
-    build_host_map, hosts_report, load_container_policy, EffectiveContainerPolicy,
-    EffectiveHostMap, HostScopeKind,
+    build_host_map, hosts_report, load_container_policy, uses_shared_runtime_identity,
+    EffectiveContainerPolicy, EffectiveHostMap, HostScopeKind,
 };
 use effigy_core::worktree_scope::{self, ScopeKind};
 
@@ -53,24 +53,5 @@ pub(super) fn shared_runtime_identity(
     policy: &EffectiveContainerPolicy,
     token: Option<&str>,
 ) -> bool {
-    let Some(token) = token.filter(|token| token.len() >= 12) else {
-        return false;
-    };
-    // A scoped project name carries its generation token behind a scope-shape
-    // tag (`-wt-` linked worktree, `-ec-` ephemeral clone). If the recorded
-    // name carries the current token under any tag, the policy was resolved
-    // for this exact generation and is not a shared-identity stack.
-    !worktree_scope::PROJECT_TAGS.iter().any(|tag| {
-        policy
-            .project_name
-            .contains(&format!("-{tag}-{}", &token[..12]))
-    })
-}
-
-pub(super) fn host_map_for_policy(
-    policy: &EffectiveContainerPolicy,
-) -> Result<effigy_containers::EffectiveHostMap, RunnerError> {
-    let token = worktree_scope::load_or_create(&policy.repo_root)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    scoped_host_map(&policy.repo_root, policy, token.as_deref())
+    uses_shared_runtime_identity(policy, token)
 }

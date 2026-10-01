@@ -24,6 +24,13 @@
 "perf:docs-context-benchmark" = { rhai = "scripts/benchmark-docs-context.rhai" }
 
 # Scoped runtime inventory, participation, backend selection and loopback
+"test:containers:scope-lifecycle" = [
+  "cargo test -p effigy-containers --lib policy_resolution_does_not_register_an_unactivated_runtime_scope -- --nocapture",
+  "cargo test -p effigy --lib retire_of_unactivated_checkout_does_not_create_scope_or_probe_profile -- --nocapture",
+  "cargo test -p effigy --lib checkout_retirement_lookup_preserves_existing_unknown_profile_record -- --nocapture",
+  "cargo test -p effigy --lib runtime_start_failure_keeps_scope_record_created_before_start -- --nocapture",
+]
+"check:containers:scope-compile" = "cargo check -p effigy-containers -p effigy-runtime -p effigy --all-targets"
 "test:containers:runtime-inventory" = [
   "cargo test -p effigy-containers inventory_tests:: -- --nocapture",
   "cargo test -p effigy-containers participation::tests:: -- --nocapture",

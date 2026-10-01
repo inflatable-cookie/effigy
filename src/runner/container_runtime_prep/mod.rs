@@ -217,6 +217,8 @@ fn activate_container_runtime_plan_for_task_using(
     ) -> Result<bool, RunnerError>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
     let repo_root = plan.request.repo_root.as_path();
+    effigy_containers::register_container_runtime_scope(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,

@@ -131,6 +131,18 @@ network, isolated route, port, loopback, or TLS certificate remains. A
 second retire with nothing left is success, including a shared-only scope
 whose durable record is then removed.
 
+Resolving, discovering, planning, or reporting container policy does not
+register runtime ownership. Runtime activation records the scope before
+starting the backend or creating containers, networks, shared services,
+routes, or ports. The registration uses the checkout generation token and
+preserves the isolated or shared-identity policy; a failed start leaves its
+record available for retry. Checkout-based retirement consults existing
+records only. A configured container with no activation record is not proof
+that its profile was activated, so retirement reports no owned scope without
+starting or probing that profile. Existing records, including records naming
+stopped or unavailable profiles, remain authoritative and fail closed when
+their resources cannot be observed.
+
 Loopback allocation and reclamation must follow the same ownership boundary.
 An isolated project's loopback key is `project:<project-name>:<absolute-checkout>`
 in both generated Compose preparation and gateway registration. A legacy bare
