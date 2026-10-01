@@ -718,7 +718,7 @@ fn offline_journal_writers_serialize_and_keep_every_fact() {
                     &FixedClock(Utc::now()),
                 )
                 .unwrap();
-                crate::journal_facts_offline(&root, &[fact.clone()]).unwrap();
+                crate::journal_facts_offline(&root, std::slice::from_ref(&fact)).unwrap();
                 // An identical copy is a no-op, not a duplicate line.
                 crate::journal_facts_offline(&root, &[fact]).unwrap();
             })

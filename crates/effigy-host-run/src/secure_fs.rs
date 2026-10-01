@@ -1,3 +1,7 @@
+// libc mode/uid widths differ between Linux and macOS, so these casts are
+// redundant on one platform and required on the other.
+#![allow(clippy::unnecessary_cast)]
+
 use crate::MAX_LOCAL_FILE_BYTES;
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;

@@ -1102,7 +1102,7 @@ pub fn parse_settlement(value: &Value) -> Result<Settlement, ClientError> {
             || result
                 .get("startIdentity")
                 .and_then(Value::as_str)
-                .map_or(true, str::is_empty)
+                .is_none_or(str::is_empty)
             || !valid_time_value(result.get("startedAt"))
             || !valid_time_value(result.get("endedAt"))
             || !valid_telemetry_value(result.get("wallMs"))
@@ -1151,7 +1151,7 @@ fn validate_fact(fact: &Value) -> Result<(), ClientError> {
         || fact
             .get("factId")
             .and_then(Value::as_str)
-            .map_or(true, |id| !is_uuid(id))
+            .is_none_or(|id| !is_uuid(id))
         || fact.get("observedAt").and_then(Value::as_str).is_none()
     {
         return Err(ClientError::InvalidSubmission(
@@ -1263,9 +1263,9 @@ pub fn journal_facts_offline(root: &HostRunRoot, facts: &[Value]) -> Result<(), 
         write_pending(root, &pending)
     })();
     let unlock = FileExt::unlock(&lock);
-    let value = result?;
+    result?;
     unlock?;
-    Ok(value)
+    Ok(())
 }
 
 fn read_pending(file: &mut File) -> Result<Vec<Value>, ClientError> {
