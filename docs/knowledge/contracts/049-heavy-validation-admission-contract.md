@@ -8,7 +8,8 @@ covers invocations started by people, workers, and orchestrators on the same
 machine. The default mechanism is Effigy-owned: Queue supplies caller identity
 and observes Effigy's state. An explicit opt-in backend (below) routes heavy
 execution through the host-run scheduler; the cutover that makes it the default
-and removes the lease store is not approved or implemented.
+is approved for gated implementation, but is not implemented. Lease-store
+removal remains a separate later cut.
 
 ## Scheduler ownership ruling
 
@@ -65,6 +66,17 @@ An operator-approved recovery of an exact orphan record is an exception under
 the current mechanism, not permission to weaken automatic reclamation. Preserve
 the locked before-state, closure evidence, authorization and resulting record;
 change no other runs. A queue-wait deadline is not a running lease's expiry.
+
+Tom's 2026-10-01 ruling (decision `de386d8c`) is: "Implement and prove
+default activation, then roll out after all gates pass." This permits the
+bounded default-scheduler change with explicit `EFFIGY_HOST_SCHEDULER=0`
+legacy rollback, independent review and CI, an exact-source Queue milestone,
+and backed-up local rollout. The same milestone must prove a Queue-launched
+run inherits its parent token without taking a legacy Effigy lease. Container
+routing must preserve ownership without forwarding tokens. The existing store
+remains for rollback; its later removal requires Queue's admission-hook change
+first. No global shell or service environment edits, forced restarts, live
+cleanup, automatic VM starts, workflow changes, or releases are authorized.
 
 ## Opt-in scheduler backend
 
