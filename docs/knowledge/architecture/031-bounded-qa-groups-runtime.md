@@ -144,6 +144,15 @@ members require the maximum selected reservation, not their sum. Nested task
 re-entry proves and reuses the parent lease; the group cannot use a caller
 environment variable to fabricate it.
 
+With `EFFIGY_HOST_SCHEDULER=1` the same heavy classification submits the whole
+group to the host-run scheduler instead of acquiring a lease (contract
+[049](../contracts/049-heavy-validation-admission-contract.md#opt-in-scheduler-backend)).
+The scheduler launches this invocation with a run token; that child validates
+the token, owns the one ledger and records `backend` correlation, and its
+members run in place with no lease. Preflight, including `needs_planner`, runs
+before submit. Only a run the scheduler settles without launching writes a
+record from the submitting process.
+
 A route whose nested admission shape cannot be resolved fails the plan rather
 than beginning unleased and acquiring a second lease later. A group with only
 non-heavy members receives no host-wide lease and no OS resource cap claim.

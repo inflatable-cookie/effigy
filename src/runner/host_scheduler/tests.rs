@@ -199,3 +199,46 @@ fn nested_queue_wait_comes_from_the_status_record_and_is_null_when_absent() {
     });
     assert_eq!(queue_wait_from_status(&inverted), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn owned_children_scope_forwards_termination_only_to_registered_groups() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    let spawn = || {
+        Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep")
+    };
+    let mut owned = spawn();
+    let mut foreign = spawn();
+    {
+        let _scope = crate::runner::admission::OwnedChildrenScope::enter().expect("enter scope");
+        assert!(crate::runner::admission::signal_scope_active());
+        crate::runner::admission::register_process_group(owned.id());
+        unsafe {
+            libc::raise(libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut owned_exit = None;
+        while Instant::now() < deadline && owned_exit.is_none() {
+            owned_exit = owned.try_wait().expect("poll owned");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            owned_exit.is_some_and(|status| !status.success()),
+            "the registered child was terminated"
+        );
+        assert!(
+            foreign.try_wait().expect("poll foreign").is_none(),
+            "an unregistered process group is never signalled"
+        );
+    }
+    assert!(!crate::runner::admission::signal_scope_active());
+    let _ = foreign.kill();
+    let _ = foreign.wait();
+}

@@ -849,19 +849,23 @@ fn teardown_inline_workspace_container(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
 ) {
-    let removed = run_compose_capture(
+    let result = run_compose_capture(
         repo_root,
         policy,
         &compose_args(policy, ["down", "--remove-orphans"]),
         "docker compose down",
-    )
-    .ok()
-    .map(|output| output.status.success());
+    );
     crate::runner::host_scheduler::report_container_removed(
         owned_container_runtime(repo_root, policy),
         policy.name.as_str(),
-        removed,
+        removal_state(&result),
     );
+}
+
+/// `true` only when the teardown command ran and succeeded, `false` when it ran
+/// and failed, `None` (unknown) when it could not be observed.
+fn removal_state<E>(result: &Result<std::process::Output, E>) -> Option<bool> {
+    result.as_ref().ok().map(|output| output.status.success())
 }
 
 fn standard_runtime_activation_plan(
@@ -1227,6 +1231,19 @@ mod tests {
             ))
         );
         assert!(!activation.refreshed_host_container_lease);
+    }
+
+    #[test]
+    fn container_removal_state_is_false_or_unknown_and_never_assumed() {
+        use std::process::Command;
+        let output = |program: &str| Command::new(program).output().expect("run");
+        let removed: Result<_, std::io::Error> = Ok(output("true"));
+        let failed: Result<_, std::io::Error> = Ok(output("false"));
+        let unobserved: Result<std::process::Output, _> =
+            Err(std::io::Error::other("teardown could not run"));
+        assert_eq!(super::removal_state(&removed), Some(true));
+        assert_eq!(super::removal_state(&failed), Some(false));
+        assert_eq!(super::removal_state(&unobserved), None);
     }
 
     struct EnvRestore {

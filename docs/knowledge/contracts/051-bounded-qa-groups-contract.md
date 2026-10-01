@@ -403,6 +403,7 @@ Current availability after the contract 051 implementation:
 | Capability | State | Notes |
 | --- | --- | --- |
 | Heavy admission and waiting | Implemented for groups. | One `qa-group:` lease covers all members, is acquired before setup, and is retained through cleanup; nested tasks reuse it through the existing scoped-lease mechanism. `admission_wait_ms` is reported separately from execution time. |
+| Scheduler backend (opt-in) | Implemented behind `EFFIGY_HOST_SCHEDULER=1`. | A heavy group is submitted whole to the host-run scheduler under [049](049-heavy-validation-admission-contract.md#opt-in-scheduler-backend); the launched child owns the ledger and takes no legacy lease. The legacy lease above remains the default. A run the scheduler settles without launching leaves a completed record with outcome `capacity_timeout` or `cancelled`. |
 | Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
 | Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-owned-run-supervision-contract.md), proposed and unavailable until implementation. |
@@ -522,6 +523,15 @@ The run payload includes at least:
   ]
 }
 ```
+
+A heavy group that ran under the opt-in scheduler backend adds one optional
+object, `backend`: `kind` (`host_scheduler` or `host_scheduler_override`),
+`scheduler_run_id`, `scheduler_epoch`, `queue_wait_ms` and `settlement`
+(`capacity_timeout`, `cancelled` or `null`). Every metric is `null` when
+unavailable, never zero. The key is absent on light groups and on legacy-lease
+runs. The run schema stays `effigy.qa-group-run.v1` with `schema_version` 1: the
+field is additive and optional, readers must ignore unknown keys, and records
+written before it existed remain valid.
 
 `scope_assessment` in a run is `not_requested` or `declared_match`;
 `needs_planner` exists only in the non-executing plan response.

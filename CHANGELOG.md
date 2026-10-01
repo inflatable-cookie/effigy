@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
+  `admission = "heavy"`) and heavy QA groups through the host-run scheduler
+  instead of the legacy lease, which stays the default. The scheduler launches
+  the same invocation with a run token; nested calls reuse it in place and an
+  invalid token exits 77. An unreachable scheduler fails heavy work with exit
+  75 (no legacy fallback); `EFFIGY_SCHEDULER_OVERRIDE=<reason>` records a
+  durable override and runs directly. Output, exit status and JSON envelopes are
+  the child's; `capacity_timeout`, prelaunch cancel, run timeout and lost
+  runs stay distinct, and interrupts ask the scheduler to cancel. Owned
+  container start/removal facts report `true`, `false` or `unknown` and replay
+  until acknowledged. QA-group run records gain an optional `backend` object
+  (schema stays `effigy.qa-group-run.v1`). Run stop/logs commands and group
+  `hard_timeout_ms` remain unavailable. Host-run token keys now accept the
+  scheduler's standard-base64 spelling and millisecond `exp`.
 - Bounded QA groups (contract 051) land through the existing task pipeline:
   `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained
   `[qa.groups]` definitions plus at most one explicit temporary definition

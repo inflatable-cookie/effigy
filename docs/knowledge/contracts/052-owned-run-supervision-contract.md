@@ -14,6 +14,16 @@ with their agreed shared contract before implementation. Its lease-store and
 supervisor-placement proposals do not authorize extending the current admission
 mechanism.
 
+Shipped subset (effigy#058): with `EFFIGY_HOST_SCHEDULER=1`, heavy runs go
+through the host-run scheduler client. The scheduler owns their run identity,
+admission and process group; Effigy asks it to cancel the run it submitted on an
+interrupt and, inside a launched run, forwards termination only to the process
+groups its own tasks started. That is the whole of what ships. This contract's
+run journal, generic run stop and logs commands, signal-attribution record and
+hard timeouts stay unavailable, and the default backend is still the legacy
+lease.
+See [049](049-heavy-validation-admission-contract.md#opt-in-scheduler-backend).
+
 Owner: task execution and lifecycle maintainers
 Architecture: [032](../architecture/032-owned-run-supervision-runtime.md)
 Workflow: [082](../../guides/082-owned-run-supervision-workflow.md)

@@ -53,6 +53,7 @@
 # isolated Queue checkout at the pinned commit; they never touch a live endpoint.
 "test:host-run:integration" = [
   "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
+  "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "cargo test --test host_scheduler_integration -- --nocapture --test-threads=1",
 ]
 

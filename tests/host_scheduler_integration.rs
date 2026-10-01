@@ -85,6 +85,11 @@ impl Server {
             .expect("server authority line");
         let authority: Value = serde_json::from_str(line.trim()).expect("authority JSON");
         assert_eq!(authority["format"], "host.run.authority");
+        eprintln!(
+            "private server pid {}, state {}",
+            child.id(),
+            state.display()
+        );
         Some(Self {
             _dir: dir,
             state,
@@ -133,7 +138,8 @@ impl Drop for Server {
         }
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                eprintln!("private server pid {} exited: {status}", self.child.id());
                 return;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -250,7 +256,7 @@ run = "echo before-fail; exit 3"
 
 [tasks.heavy-hold]
 admission = "heavy"
-run = "echo started >> $MARK; echo $$ > $PIDFILE; exec sleep 120"
+run = "echo started >> $MARK; echo $$ > $PIDFILE; exec sleep 40"
 
 [tasks.outer]
 admission = "heavy"
@@ -616,7 +622,17 @@ fn capacity_timeout_never_launches_and_cancellation_follows_settlement() {
         .output()
         .expect("run blocked");
     assert_ne!(code(&blocked), 0);
-    assert!(started.elapsed() < Duration::from_secs(30));
+    let waited = started.elapsed();
+    eprintln!("capacity timeout settled after {waited:?}");
+    assert!(
+        waited >= Duration::from_millis(900),
+        "deadline was honoured: {waited:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(20),
+        "{waited:?} stderr: {}",
+        text(&blocked.stderr)
+    );
     let stderr = text(&blocked.stderr);
     assert!(stderr.contains("capacity_timeout"), "{stderr}");
     assert!(stderr.contains("not a validation failure"));
@@ -814,8 +830,8 @@ fn heavy_group_runs_as_the_launched_child_with_backend_correlation() {
     assert!(record["backend"]["scheduler_epoch"].as_u64().is_some());
     assert_eq!(
         ws.lines("mark"),
-        1,
-        "heavy member ran once; the light member shares the run"
+        2,
+        "the heavy and light members each ran once inside the one scheduler run"
     );
     assert!(ws.legacy_store_untouched());
 }
@@ -859,6 +875,59 @@ fn group_capacity_timeout_leaves_an_honest_record_without_launching_members() {
         .iter()
         .all(|member| member["state"] == "not_started"));
     assert_eq!(ws.lines("mark"), 1, "only the holder ran");
+    unsafe {
+        libc::kill(holder.id() as i32, libc::SIGTERM);
+    }
+    let _ = holder.wait();
+}
+
+#[test]
+fn late_attach_to_a_capacity_timed_out_run_returns_its_settlement() {
+    let Some(server) = Server::start(None) else {
+        return;
+    };
+    let ws = Workspace::new(MANIFEST);
+    let mut holder = ws
+        .command(Some(&server.state), &["heavy-hold"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn holder");
+    wait_for("holder launch", Duration::from_secs(60), || {
+        ws.lines("mark") == 1
+    });
+    let (root, authority) = effigy_host_run::HostRunRoot::open(&server.state).expect("open root");
+    let mut client = effigy_host_run::HostRunClient::open(root, authority);
+    let request = effigy_host_run::SubmitRequest {
+        client_request_id: effigy_host_run::new_client_request_id().unwrap(),
+        caller: "test".to_owned(),
+        repository: ws.root().to_string_lossy().into_owned(),
+        cwd: ws.root().to_path_buf(),
+        selector: "late".to_owned(),
+        argv: vec!["/usr/bin/true".to_owned()],
+        class: effigy_host_run::RunClass::Heavy,
+        class_source: effigy_host_run::ClassSource::Manifest,
+        priority: effigy_host_run::Priority::Validation,
+        budget_fallback: effigy_host_run::BudgetFallback {
+            cpu: 1,
+            memory_bytes: 64 * 1024 * 1024,
+        },
+        capacity_deadline_ms: 200,
+        run_timeout_ms: 10_000,
+        env: std::collections::BTreeMap::new(),
+        cancel_on_disconnect: false,
+    };
+    let submitted = client.submit_request(&request).expect("submit");
+    std::thread::sleep(Duration::from_millis(1_500));
+    let started = Instant::now();
+    let events = client.attach(&submitted.run_id, 0, 0).expect("attach");
+    eprintln!("late attach returned after {:?}", started.elapsed());
+    assert!(matches!(
+        events.last(),
+        Some(effigy_host_run::AttachEvent::Settled(settlement))
+            if settlement.outcome == effigy_host_run::SettlementOutcome::CapacityTimeout
+                && !settlement.launched
+    ));
     unsafe {
         libc::kill(holder.id() as i32, libc::SIGTERM);
     }
