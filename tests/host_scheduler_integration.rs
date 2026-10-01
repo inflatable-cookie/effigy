@@ -60,14 +60,12 @@ impl Server {
                     &format!("{{ stateDir: target, outputRetentionMs: {ms} }}"),
                 );
                 for module in ["store", "host-run-scheduler", "host-run-endpoint"] {
-                    let marker = format!(
-                        "new URL(\"../server/{module}.ts\", import.meta.url).href"
-                    );
+                    let marker =
+                        format!("new URL(\"../server/{module}.ts\", import.meta.url).href");
                     let module_path = queue.join("server").join(format!("{module}.ts"));
-                    let path_literal = serde_json::to_string(
-                        &module_path.to_string_lossy().into_owned(),
-                    )
-                    .expect("module path literal");
+                    let path_literal =
+                        serde_json::to_string(&module_path.to_string_lossy().into_owned())
+                            .expect("module path literal");
                     let replacement = format!("pathToFileURL({path_literal}).href");
                     assert!(patched.contains(&marker), "expected private-server import");
                     patched = patched.replace(&marker, &replacement);

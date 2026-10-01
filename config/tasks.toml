@@ -80,6 +80,13 @@
   "cargo test -p effigy --lib host_scheduler::tests::scheduler_setting_defaults -- --nocapture",
   "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",
 ]
+# These CLI cases prove legacy lease, signal, and telemetry behavior. They opt
+# into legacy routing locally so scheduler-default changes do not alter them.
+"test:host-run:legacy-admission-fixtures" = [
+  "cargo test --test cli_output_tests cli_heavy_task_sigint_reaches_detached_child_and_releases_admission -- --nocapture",
+  "cargo test --test cli_output_tests cli_heavy_idle_task_cpu_telemetry_excludes_rss_sampler_processes -- --nocapture",
+  "cargo test --test cli_output_tests cli_heavy_builtin_test_child_stops_on_sigint_and_sigterm -- --nocapture",
+]
 # Scheduler routing: unit decisions plus the private Queue-server proofs. The
 # private-server cases run only when EFFIGY_HOST_RUN_PRIVATE_SERVER names an
 # isolated Queue checkout at the pinned commit; they never touch a live endpoint.

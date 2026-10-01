@@ -44,7 +44,9 @@ fn scheduler_setting_defaults_to_scheduler_and_accepts_explicit_values() {
     for invalid in ["", "yes", "true", "01", " 1", "2"] {
         let error = parse_scheduler_setting(Some(OsString::from(invalid))).unwrap_err();
         assert_eq!(code_of(&error), 2, "{invalid:?}");
-        assert!(error.to_string().contains("unset selects the host scheduler"));
+        assert!(error
+            .to_string()
+            .contains("unset selects the host scheduler"));
     }
 }
 
