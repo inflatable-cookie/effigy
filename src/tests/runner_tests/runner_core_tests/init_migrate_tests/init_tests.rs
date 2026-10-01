@@ -710,3 +710,43 @@ fn run_manifest_task_builtin_init_northstar_json_reports_files_array_and_guidanc
     );
     assert_path_exists(&root.join("AGENTS.md"), "northstar json agent contract");
 }
+
+#[test]
+fn init_upstream_guidance_links_resolve_upstream_and_preserve_consumer_text() {
+    let root = temp_workspace("builtin-init-upstream-guidance");
+    write_root_manifest(&root, "[tasks]\ncustom = \"printf custom\"\n");
+    let agents = root.join("AGENTS.md");
+    std::fs::write(
+        &agents,
+        "# Consumer\n\nOwn text.\n\n<!-- BEGIN EFFIGY AGENT CONTRACT -->\nstale\nReference docs:\n- `docs/guides/047-agent-and-cross-repo-adoption.md`\n<!-- END EFFIGY AGENT CONTRACT -->\n\nTrailing consumer text.\n",
+    )
+    .expect("seed consumer AGENTS.md");
+
+    run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
+    let first = std::fs::read_to_string(&agents).expect("read AGENTS.md");
+    assert!(first.starts_with("# Consumer\n\nOwn text.\n\n"));
+    assert!(first.ends_with("\n\nTrailing consumer text.\n"));
+    assert!(!first.contains("stale"));
+    assert!(!first.contains("Reference docs:"));
+    assert!(first.contains("Upstream Effigy reference docs"));
+
+    let prefix = "https://github.com/inflatable-cookie/effigy/blob/main/";
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut links = 0;
+    for part in first.split("](").skip(1) {
+        let url = part.split(')').next().expect("link end");
+        let rel = url
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("link must point upstream: {url}"));
+        assert!(repo.join(rel).is_file(), "upstream doc missing: {rel}");
+        links += 1;
+    }
+    assert_eq!(links, 5);
+
+    run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), first);
+    assert_path_missing(
+        &root.join(".agents/skills/effigy/SKILL.md"),
+        "plain init does not vendor a skill",
+    );
+}

@@ -58,12 +58,13 @@ Do not add a current-directory repo override while already inside the target
 repo. Do not edit
 `.github/workflows/` or run release mutations unless the user explicitly asks.
 
-Reference docs:
-- Effigy agent adoption: `docs/guides/047-agent-and-cross-repo-adoption.md`
-- Installed skill task sources: `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`
-- Heavy validation admission: `docs/guides/080-host-wide-validation-admission.md`
-- Graph workflows: `docs/guides/076-code-graph-and-agent-workflows.md`
-- JSON contracts: `docs/guides/017-json-output-contracts.md`
+Upstream Effigy reference docs (in the Effigy repository, not paths in this
+repo):
+- [Effigy agent adoption](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/047-agent-and-cross-repo-adoption.md)
+- [Installed skill task sources](https://github.com/inflatable-cookie/effigy/blob/main/docs/knowledge/contracts/042-external-skill-task-runner-contract.md)
+- [Heavy validation admission](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/080-host-wide-validation-admission.md)
+- [Graph workflows](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/076-code-graph-and-agent-workflows.md)
+- [JSON contracts](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/017-json-output-contracts.md)
 <!-- END EFFIGY AGENT CONTRACT -->
 "#;
 

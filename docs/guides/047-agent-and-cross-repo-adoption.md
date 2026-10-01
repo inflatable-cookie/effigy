@@ -201,6 +201,10 @@ effigy init --apply-actions manifest.effigy_toml,agents_md.effigy_contract,gitig
 effigy init
 ```
 
+The generated `AGENTS.md` block links its reference docs as upstream Effigy
+repository URLs, not consumer-relative paths. Rerunning init rewrites only the
+managed block and keeps surrounding consumer text.
+
 The checklist mode reports the wider setup inventory with applicability, safety
 class, and recommended commands. Plain `effigy init` writes only deterministic
 managed surfaces and preserves existing project manifests and READMEs, while
