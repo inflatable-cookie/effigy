@@ -30,7 +30,7 @@ and compatibility semantics must be pinned to the agreed shared contract before
 an implementation brief is dispatched. Queue Spec 031 owns Queue's side.
 
 The client boundary is Nucleus
-[contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/ba282141528fb58076de62e9c4433b787d5755b0/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
+[contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/59cca903426635dd3581002a67058919e012eb45/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
 This pin defines submit/attach/status/cancel/report, validated parent tokens,
 settlement envelopes and durable container facts. Client implementation follows
 the conforming Queue server; accepting the protocol does not switch execution
@@ -41,6 +41,12 @@ without descriptor-relative open. Its ancestor-chain recheck detects persistent
 swaps; reverted swaps remain inside the declared same-uid trust boundary. The
 Rust client retains `openat` traversal. This amendment changes neither the wire
 nor the cutover prerequisites.
+
+The subsequent start-identity clarification pins Linux boot ID plus process
+start ticks, and macOS kernel start time in UTC whole seconds. Unknown
+identities never prove a match. The transition accepts only whole-second macOS
+`.000Z` values as equivalent to `Z`; other fractional values refuse proof.
+The macOS same-second PID-reuse residual is explicit in the shared contract.
 
 An operator-approved recovery of an exact orphan record is an exception under
 the current mechanism, not permission to weaken automatic reclamation. Preserve
