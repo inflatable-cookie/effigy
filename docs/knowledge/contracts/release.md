@@ -2,6 +2,20 @@
 
 Effigy ships a versioned binary through GitHub Releases and a Homebrew tap. The release configuration is in [`config/release.toml`](../../../config/release.toml). A human must explicitly request a release and confirm its version. Only `main` can be tagged. Do not publish Effigy's internal crates to crates.io.
 
+## Approved macOS checksum publication change
+
+Tom's authority relayed by the acowtancy planner on 2026-10-01 permits a bounded
+release-workflow change for app-managed Effigy installation: starting with the
+next release, publish `<asset>.sha256` beside each macOS raw binary
+(`effigy-aarch64-apple-darwin` and `effigy-x86_64-apple-darwin`). The sidecar
+contains one line of 64 lowercase SHA-256 hex characters, two spaces, the asset
+basename, and a newline, computed from the exact bytes being uploaded.
+The release pipeline has no artifact-signing step; this change adds checksum
+sidecars, not a signed manifest. Existing release gates, binary names and
+platforms remain authoritative. This request permits the checksum workflow
+edit, not a release, an old-release mutation, or a tag change. Human release
+and version authorization is still required.
+
 ## Prepare
 
 1. Start from clean, pushed `main`. Record `candidate_sha=$(git rev-parse HEAD)`.
