@@ -353,7 +353,7 @@ mod tests {
                 |_| unreachable!()
             )
             .unwrap_err(),
-            TokenError::Invalid("expired or incomplete token")
+            crate::TokenError::Invalid("expired or incomplete token")
         );
         let fractional =
             json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":1.5});
@@ -366,7 +366,7 @@ mod tests {
                 |_| unreachable!()
             )
             .unwrap_err(),
-            TokenError::Invalid("invalid token payload")
+            crate::TokenError::Invalid("invalid token payload")
         );
     }
 

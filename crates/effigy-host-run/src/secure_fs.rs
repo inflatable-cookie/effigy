@@ -310,20 +310,40 @@ fn open_file(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
 
 fn open_or_create_private_file(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
     let name = CString::new(name).map_err(|_| TrustError::Invalid("invalid path component"))?;
-    let fd = unsafe {
-        libc::openat(
-            parent,
-            name.as_ptr(),
-            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            FILE_MODE as libc::mode_t as libc::c_uint,
-        )
-    };
-    if fd < 0 {
-        return Err(std::io::Error::last_os_error().into());
+    // Open the existing file first and create exclusively only when it is
+    // missing. Two writers racing to create the same name each end up with the
+    // one file: a plain `O_CREAT | O_NOFOLLOW` open spuriously fails with
+    // ENOENT on macOS when creators race.
+    let mut last_error = None;
+    for _ in 0..32 {
+        for flags in [
+            libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        ] {
+            let fd = unsafe {
+                libc::openat(
+                    parent,
+                    name.as_ptr(),
+                    flags,
+                    FILE_MODE as libc::mode_t as libc::c_uint,
+                )
+            };
+            if fd >= 0 {
+                let file = unsafe { File::from_raw_fd(fd) };
+                verify_fd(&file, libc::S_IFREG as u32, FILE_MODE, uid)?;
+                return Ok(file);
+            }
+            let error = std::io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(libc::ENOENT) | Some(libc::EEXIST) => last_error = Some(error),
+                _ => return Err(error.into()),
+            }
+        }
+        std::thread::yield_now();
     }
-    let file = unsafe { File::from_raw_fd(fd) };
-    verify_fd(&file, libc::S_IFREG as u32, FILE_MODE, uid)?;
-    Ok(file)
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        .into())
 }
 
 fn verify_fd(file: &File, file_type: u32, mode: u32, uid: u32) -> Result<(), TrustError> {
