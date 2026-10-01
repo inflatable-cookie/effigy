@@ -87,6 +87,12 @@
   "cargo test --test cli_output_tests cli_heavy_idle_task_cpu_telemetry_excludes_rss_sampler_processes -- --nocapture",
   "cargo test --test cli_output_tests cli_heavy_builtin_test_child_stops_on_sigint_and_sigterm -- --nocapture",
 ]
+"test:qa:private-admission-fixtures" = [
+  "cargo test --test cli_output_tests cli_starter_docs_policy_bundle_tasks_pass_on_neutral_fixture -- --nocapture",
+  "cargo test --test cli_output_tests cli_workspace_container_starter_bundle_passes_via_nested_docs_authority -- --nocapture",
+  "cargo test --test cli_output_tests cli_nested_qa_fixture_isolates_admission_and_preserves_failure_status -- --nocapture",
+]
+"check:qa:private-admission-fixtures" = "cargo check --test cli_output_tests"
 # Scheduler routing: unit decisions plus the private Queue-server proofs. The
 # private-server cases run only when EFFIGY_HOST_RUN_PRIVATE_SERVER names an
 # isolated Queue checkout at the pinned commit; they never touch a live endpoint.
