@@ -316,6 +316,16 @@ Preserve existing media, remote objects and secrets; this ruling does not
 authorize live storage cleanup. Generic MinIO catalog services and independent
 consumer S3 adapters remain outside this retirement.
 
+Tom subsequently overrode that prerequisite: "Effigy doesn't need to wait for
+bovine, you can get on with removing those features from effigy now".
+Effigy's Rhai storage surface and vendored dependency may therefore be retired
+in parallel with Bovine's consumer cleanup, without a consumer-closeout gate.
+The removal is an explicit breaking change for residual `storage::*` callers;
+do not preserve a compatibility shim or claim they still work. The earlier
+replacement-upload and consumer-evidence requirements below do not gate this
+authorized retirement. All unrelated storage infrastructure and live data
+protections remain in force.
+
 The current Rhai S3 surface remains supported while `bovine-accelerator`
 depends on it for media upload.
 
