@@ -7,8 +7,8 @@ use effigy_catalog::volumes::{
 use effigy_containers::{
     load_for_checkout, load_scope_record, plan_retirement, remaining_after, remove_scope_record,
     retire_report, retire_report_unverified, upsert_scope_record, volume_has_ownership_proof,
-    ObservedKind, ObservedResource,
-    ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+    ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL,
+    PROJECT_LABEL, SCOPE_LABEL,
 };
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
@@ -922,6 +922,8 @@ mod tests {
 #[cfg(test)]
 mod stopped_profile_tests {
     use super::runtime_stopped_message;
+    use crate::runner::RunnerError;
+    use effigy_containers::retire_report_unverified;
 
     #[test]
     fn stopped_colima_and_docker_daemon_are_stopped() {
@@ -936,5 +938,19 @@ mod stopped_profile_tests {
     #[test]
     fn other_failures_are_not_stopped() {
         assert!(!runtime_stopped_message("permission denied"));
+    }
+
+    #[test]
+    fn json_failure_exposes_structured_report_in_error_details() {
+        let stopped = vec!["stopped-profile".to_owned()];
+        let report = retire_report_unverified(None, None, &[], &[], false, &stopped);
+        let error = RunnerError::CommandJsonFailure {
+            rendered: report.json.to_string(),
+        };
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("details")).unwrap();
+        assert_eq!(details["schema"], "effigy.container.retire.v1");
+        assert_eq!(details["idempotent"], false);
+        assert_eq!(details["unverified_profiles"][0], "stopped-profile");
     }
 }
