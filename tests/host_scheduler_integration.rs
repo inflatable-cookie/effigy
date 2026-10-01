@@ -1,8 +1,9 @@
 //! Scheduler-routing proofs for opt-in heavy execution (contract 049).
 //!
 //! Cases that need a scheduler run against Queue's isolated host-run private
-//! server (`bin/host-run-private-server.mjs`, reviewed merge 7563a61 of
-//! PR186) with a throwaway state directory. Point
+//! server (`bin/host-run-private-server.mjs`, reviewed merge e9e4d12 of
+//! PR192, whose token verifier conforms to contract 010 at 16fcb59) with a
+//! throwaway state directory. Point
 //! `EFFIGY_HOST_RUN_PRIVATE_SERVER` at an isolated Queue checkout at that
 //! commit with `node_modules` installed; without it those cases report
 //! `SKIPPED` and pass vacuously, so a green run without the variable proves

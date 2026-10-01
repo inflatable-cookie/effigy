@@ -64,11 +64,16 @@ The client does not pass scheduler credentials or parent tokens in output or
 container environments. It does not invoke a live endpoint during its tests or
 remove the existing lease mechanism.
 
-Interoperability with the reviewed Queue server (merge `7563a61`, PR186) fixed
-two spellings the contract leaves open: `keyB64` is plain base64 (URL-safe and
-unpadded spellings also decode, still exactly 32 bytes) and token `exp` is
-integer milliseconds since the Unix epoch (RFC 3339 text also parses). The MAC
-covers the payload either way. `HostRunRoot::open_journal` and
+Parent tokens follow contract 010 at pin `16fcb59` exactly, with no extra
+accepted spellings: `keyB64` is 44-character RFC 4648 §4 standard padded base64
+of exactly 32 bytes; token parts are two nonempty unpadded base64url parts; the
+MAC is HMAC-SHA256 over the transmitted payload part; claims are exactly
+`runId`, `epoch`, `class`, `root` and `exp`; `exp` is integer UTC Unix
+milliseconds and validity is strictly `now_ms < exp` (a token expires at `exp`
+exactly). URL-safe or unpadded keys, padded or standard-alphabet token parts,
+RFC 3339, string or fractional expiry, and unknown or out-of-range claims are
+refused. Conformance is proven against Queue's private server at `e9e4d12`
+(PR192). `HostRunRoot::open_journal` and
 `journal_facts_offline` append facts to the pending journal without a reachable
 scheduler, which is how an operator override is recorded durably.
 

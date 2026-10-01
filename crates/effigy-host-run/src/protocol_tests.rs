@@ -152,7 +152,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 
     let fixture = make_fixture();
     std::fs::set_permissions(
-        &fixture.root_path.join("authority.json"),
+        fixture.root_path.join("authority.json"),
         std::fs::Permissions::from_mode(0o644),
     )
     .unwrap();
@@ -160,7 +160,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 
     let fixture = make_fixture();
     std::fs::set_permissions(
-        &fixture.root_path.join("run"),
+        fixture.root_path.join("run"),
         std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
@@ -175,7 +175,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 fn token_key_requires_private_regular_file() {
     let fixture = make_fixture();
     let path = fixture.root_path.join("token.key");
-    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([5u8;32])}});
+    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::STANDARD.encode([5u8;32])}});
     std::fs::write(&path, serde_json::to_vec(&content).unwrap()).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let root = HostRunRoot::open(&fixture.root_path).unwrap().0;
@@ -188,7 +188,7 @@ fn token_key_requires_private_regular_file() {
 fn present_invalid_parent_token_is_exit_77_and_never_submits() {
     let fixture = make_fixture();
     let path = fixture.root_path.join("token.key");
-    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([5u8;32])}});
+    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::STANDARD.encode([5u8;32])}});
     std::fs::write(&path, serde_json::to_vec(&content).unwrap()).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut client = client(&fixture);
@@ -574,7 +574,7 @@ fn pending_facts_replay_until_stored_copy_ack_and_conflict_keeps_fact() {
     ));
     third.join().unwrap();
     let pending: Value = serde_json::from_slice(
-        &std::fs::read(fixture.root_path.join("pending-facts.jsonl"))
+        std::fs::read(fixture.root_path.join("pending-facts.jsonl"))
             .unwrap()
             .split(|b| *b == b'\n')
             .next()

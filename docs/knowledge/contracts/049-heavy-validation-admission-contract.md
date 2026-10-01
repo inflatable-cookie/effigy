@@ -153,18 +153,25 @@ refresh any installed channel, restart anything, or change workflows.
 
 ### Backend evidence
 
-Private-server proof used Queue's `bin/host-run-private-server.mjs` at reviewed
-merge `7563a61ef3a1efdb8c6cce43cdb3ad1207cee424` (Queue PR186), run from an
-isolated archive of that commit with a throwaway state directory and never the
-live endpoint (`test:host-run:integration`, see guide 080). The reviewed server emits padded standard base64 keys and integer-millisecond
-expiry. Contract 010 at the current pin makes these encodings normative: a key
-is exactly 32 bytes in 44-character RFC 4648 standard base64 with padding; token
-parts are unpadded base64url and the MAC covers the transmitted first part.
-Claims contain exactly `runId`, `epoch`, `class`, `root`, and `exp`; validity is
-`now_ms < exp`. Effigy re-signed this clarification on 2026-10-01 after independently
-checking its key and HMAC vectors. The shipped client still accepts additional
-spellings and RFC 3339 expiry; strict enforcement and server expiry-boundary
-conformance are prerequisites for activation. This pin does not authorize cutover.
+Private-server proof runs Queue's `bin/host-run-private-server.mjs` from an
+isolated archive of the reviewed merge with a throwaway state directory and
+never the live endpoint (`test:host-run:integration`, see guide 080); the first
+proof ran merge `7563a61ef3a1efdb8c6cce43cdb3ad1207cee424` (Queue PR186).
+Contract 010 at pin `16fcb59cff96de581f4cb3141b4927d6ab53b4e5` makes the
+encodings normative: a key is exactly 32 bytes in 44-character RFC 4648 §4
+standard padded base64; token parts are unpadded RFC 4648 §5 base64url and the
+MAC is HMAC-SHA256 over the transmitted payload part. Claims contain exactly
+`runId` (1–160 chars), `epoch` (positive), `class` (`heavy`|`light`), `root`
+(nonempty canonical path), and `exp` (integer UTC Unix milliseconds); validity
+is strictly `now_ms < exp`, so a token expires at `exp` exactly. Effigy
+re-signed this clarification on 2026-10-01 after independently checking its key
+and HMAC vectors, and the shipped client now enforces exactly these encodings.
+Refused: URL-safe, unpadded, whitespace or non-canonical keys; padded,
+standard-alphabet or extra token parts; RFC 3339, string or fractional expiry;
+unknown, missing or out-of-range claims. Conformance is proven against Queue's
+private server at `e9e4d12d1c232c534acf1e8dd5b34269ba7a38e5` (Queue PR192),
+whose readers follow the same pin and expire at equality. This pin does not
+authorize cutover.
 
 ## Selection and ownership
 
