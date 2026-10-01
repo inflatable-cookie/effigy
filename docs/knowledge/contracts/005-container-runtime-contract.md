@@ -126,7 +126,12 @@ aggregates every container environment and every runtime profile in that
 worktree. Record writes take a lock and replace the file atomically; a
 corrupt record is an error, not an empty scope. Backend discovery failures,
 including malformed inspect or listing JSON, keep the record and do not
-report success. Success requires that no owned container, mutable volume,
+report success. A recorded profile whose runtime is stopped is probed first,
+never skipped silently and never started: retire still clears host-side
+resources (routes, ports, loopbacks, certificates) and live profiles, then
+exits non-zero, lists the profile under `unverified_profiles`, and keeps the
+record. A stopped VM is not proof that its persisted containers or volumes are
+gone; start the profile and rerun retire. Success requires that no owned container, mutable volume,
 network, isolated route, port, loopback, or TLS certificate remains. A
 second retire with nothing left is success, including a shared-only scope
 whose durable record is then removed.

@@ -1420,7 +1420,20 @@ pub fn retire_report(
     remaining: &[crate::ObservedResource],
     record_removed: bool,
 ) -> ContainerCommandReport {
-    let ok = remaining.is_empty();
+    retire_report_unverified(record, plan, removed, remaining, record_removed, &[])
+}
+
+/// Like [`retire_report`], with runtime profiles that could not be queried
+/// (stopped). Their containers and volumes are unverified, never "gone".
+pub fn retire_report_unverified(
+    record: Option<&crate::ScopeRecord>,
+    plan: Option<&crate::RetirementPlan>,
+    removed: &[crate::ObservedResource],
+    remaining: &[crate::ObservedResource],
+    record_removed: bool,
+    unverified_profiles: &[String],
+) -> ContainerCommandReport {
+    let ok = remaining.is_empty() && unverified_profiles.is_empty();
     let json = json!({
         "schema": "effigy.container.retire.v1",
         "schema_version": 1,
@@ -1441,9 +1454,27 @@ pub fn retire_report(
         "mismatch": plan.map(|plan| plan.mismatch.iter().map(observed_json).collect::<Vec<_>>()),
         "remaining": remaining.iter().map(observed_json).collect::<Vec<_>>(),
         "record_removed": record_removed,
+        "unverified_profiles": unverified_profiles,
     });
     let mut lines = Vec::new();
-    if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
+    if !unverified_profiles.is_empty() {
+        lines.push(format!(
+            "[error] runtime profile(s) {} stopped; owned containers and volumes there are unverified, not gone",
+            unverified_profiles.join(", ")
+        ));
+        for profile in unverified_profiles {
+            lines.push(format!(
+                "start the profile (`colima start {profile}`) and rerun `effigy container retire --yes`; the scope record was kept"
+            ));
+        }
+        for resource in remaining {
+            lines.push(format!(
+                "remaining {}: {}",
+                kind_label(resource.kind),
+                resource.name
+            ));
+        }
+    } else if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
         lines.push(format!(
             "[ok] runtime scope is `{reason}`; shared resources were left in place"
         ));

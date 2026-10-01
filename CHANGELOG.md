@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- `container retire` probes each recorded runtime profile first. A stopped
+  profile no longer aborts teardown with a raw query error: host-side and live
+  resources are still retired, the stopped profile is reported as unverified
+  (`unverified_profiles` in JSON), the scope record is kept, and the command
+  exits non-zero until the profile is started and retire is rerun.
+
 ### Added
 - `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
