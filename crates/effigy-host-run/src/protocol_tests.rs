@@ -152,7 +152,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 
     let fixture = make_fixture();
     std::fs::set_permissions(
-        &fixture.root_path.join("authority.json"),
+        fixture.root_path.join("authority.json"),
         std::fs::Permissions::from_mode(0o644),
     )
     .unwrap();
@@ -160,7 +160,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 
     let fixture = make_fixture();
     std::fs::set_permissions(
-        &fixture.root_path.join("run"),
+        fixture.root_path.join("run"),
         std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
@@ -574,7 +574,7 @@ fn pending_facts_replay_until_stored_copy_ack_and_conflict_keeps_fact() {
     ));
     third.join().unwrap();
     let pending: Value = serde_json::from_slice(
-        &std::fs::read(fixture.root_path.join("pending-facts.jsonl"))
+        std::fs::read(fixture.root_path.join("pending-facts.jsonl"))
             .unwrap()
             .split(|b| *b == b'\n')
             .next()

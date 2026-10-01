@@ -121,10 +121,8 @@ impl TokenKeys {
         if !claims_are_canonical(&token) {
             return Err(TokenError::Invalid("invalid token claims"));
         }
-        let exp =
-            DateTime::from_timestamp_millis(token.exp).ok_or(TokenError::Invalid(
-                "invalid token claims",
-            ))?;
+        let exp = DateTime::from_timestamp_millis(token.exp)
+            .ok_or(TokenError::Invalid("invalid token claims"))?;
         // Valid only while now_ms < exp: a token expires at exp exactly.
         if exp <= now {
             return Err(TokenError::Invalid("expired or incomplete token"));
@@ -389,7 +387,10 @@ mod tests {
             STANDARD.encode([1u8; 33]),
             String::new(),
         ] {
-            assert!(accepts_key(&refused).is_err(), "refuse spelling {refused:?}");
+            assert!(
+                accepts_key(&refused).is_err(),
+                "refuse spelling {refused:?}"
+            );
         }
         // Even a canonically spelled key needs a positive epoch.
         assert!(TokenKeys::from_json(
@@ -406,32 +407,30 @@ mod tests {
         let key = vec![3u8; 32];
         let keys = keys_for(1, &key);
         let authority = authority(1);
-        let exp = Utc.with_ymd_and_hms(2026, 10, 1, 15, 0, 0)
+        let exp = Utc
+            .with_ymd_and_hms(2026, 10, 1, 15, 0, 0)
             .unwrap()
             .timestamp_millis();
-        let claims =
-            json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":exp});
+        let claims = json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":exp});
         // now_ms < exp: one millisecond before expiry is still valid.
-        keys
-            .validate(
+        keys.validate(
+            &signed_token(&claims, &key),
+            root.path(),
+            &authority,
+            Utc.timestamp_millis_opt(exp - 1).unwrap(),
+            |_| unreachable!(),
+        )
+        .unwrap();
+        // A token expires at exp exactly.
+        assert_eq!(
+            keys.validate(
                 &signed_token(&claims, &key),
                 root.path(),
                 &authority,
-                Utc.timestamp_millis_opt(exp - 1).unwrap(),
+                Utc.timestamp_millis_opt(exp).unwrap(),
                 |_| unreachable!(),
             )
-            .unwrap();
-        // A token expires at exp exactly.
-        assert_eq!(
-            keys
-                .validate(
-                    &signed_token(&claims, &key),
-                    root.path(),
-                    &authority,
-                    Utc.timestamp_millis_opt(exp).unwrap(),
-                    |_| unreachable!(),
-                )
-                .unwrap_err(),
+            .unwrap_err(),
             crate::TokenError::Invalid("expired or incomplete token")
         );
     }
@@ -444,40 +443,36 @@ mod tests {
         let authority = authority(1);
         let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
         let valid_ms = now.timestamp_millis() + 60_000;
-        let claims_with = |exp: Value| {
-            json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":exp})
-        };
+        let claims_with = |exp: Value| json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":exp});
         for (refused, reason) in [
             (json!("2026-10-01T15:00:00Z"), "invalid token payload"), // RFC 3339 text
             (json!(valid_ms.to_string()), "invalid token payload"),   // string digits
-            (json!(1.5), "invalid token payload"), // fractional milliseconds
+            (json!(1.5), "invalid token payload"),                    // fractional milliseconds
             (json!(true), "invalid token payload"),
             (json!(null), "invalid token payload"),
             (json!(0), "invalid token claims"),
             (json!(-1), "invalid token claims"),
         ] {
             assert_eq!(
-                keys
-                    .validate(
-                        &signed_token(&claims_with(refused), &key),
-                        root.path(),
-                        &authority,
-                        now,
-                        |_| unreachable!(),
-                    )
-                    .unwrap_err(),
+                keys.validate(
+                    &signed_token(&claims_with(refused), &key),
+                    root.path(),
+                    &authority,
+                    now,
+                    |_| unreachable!(),
+                )
+                .unwrap_err(),
                 crate::TokenError::Invalid(reason)
             );
         }
-        keys
-            .validate(
-                &signed_token(&claims_with(json!(valid_ms)), &key),
-                root.path(),
-                &authority,
-                now,
-                |_| unreachable!(),
-            )
-            .unwrap();
+        keys.validate(
+            &signed_token(&claims_with(json!(valid_ms)), &key),
+            root.path(),
+            &authority,
+            now,
+            |_| unreachable!(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -489,30 +484,72 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
         let exp = now.timestamp_millis() + 60_000;
         // 160 characters is the maximum accepted runId.
-        let accepted = json!({"runId":"r".repeat(160),"epoch":1,"class":"light","root":root.path(),"exp":exp});
-        keys.validate(&signed_token(&accepted, &key), root.path(), &authority, now, |_| {
-            unreachable!()
-        })
+        let accepted =
+            json!({"runId":"r".repeat(160),"epoch":1,"class":"light","root":root.path(),"exp":exp});
+        keys.validate(
+            &signed_token(&accepted, &key),
+            root.path(),
+            &authority,
+            now,
+            |_| unreachable!(),
+        )
         .unwrap();
         let refused = [
-            ("empty runId", json!({"runId":"","epoch":1,"class":"heavy","root":root.path(),"exp":exp})),
-            ("161-char runId", json!({"runId":"r".repeat(161),"epoch":1,"class":"heavy","root":root.path(),"exp":exp})),
-            ("zero epoch", json!({"runId":"r","epoch":0,"class":"heavy","root":root.path(),"exp":exp})),
-            ("negative epoch", json!({"runId":"r","epoch":-1,"class":"heavy","root":root.path(),"exp":exp})),
-            ("string epoch", json!({"runId":"r","epoch":"1","class":"heavy","root":root.path(),"exp":exp})),
-            ("unknown class", json!({"runId":"r","epoch":1,"class":"median","root":root.path(),"exp":exp})),
-            ("capitalised class", json!({"runId":"r","epoch":1,"class":"Heavy","root":root.path(),"exp":exp})),
-            ("empty root", json!({"runId":"r","epoch":1,"class":"heavy","root":"","exp":exp})),
-            ("unknown claim", json!({"runId":"r","epoch":1,"class":"heavy","root":root.path(),"exp":exp,"iss":"queue"})),
-            ("missing class", json!({"runId":"r","epoch":1,"root":root.path(),"exp":exp})),
-            ("numeric runId", json!({"runId":7,"epoch":1,"class":"heavy","root":root.path(),"exp":exp})),
+            (
+                "empty runId",
+                json!({"runId":"","epoch":1,"class":"heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "161-char runId",
+                json!({"runId":"r".repeat(161),"epoch":1,"class":"heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "zero epoch",
+                json!({"runId":"r","epoch":0,"class":"heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "negative epoch",
+                json!({"runId":"r","epoch":-1,"class":"heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "string epoch",
+                json!({"runId":"r","epoch":"1","class":"heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "unknown class",
+                json!({"runId":"r","epoch":1,"class":"median","root":root.path(),"exp":exp}),
+            ),
+            (
+                "capitalised class",
+                json!({"runId":"r","epoch":1,"class":"Heavy","root":root.path(),"exp":exp}),
+            ),
+            (
+                "empty root",
+                json!({"runId":"r","epoch":1,"class":"heavy","root":"","exp":exp}),
+            ),
+            (
+                "unknown claim",
+                json!({"runId":"r","epoch":1,"class":"heavy","root":root.path(),"exp":exp,"iss":"queue"}),
+            ),
+            (
+                "missing class",
+                json!({"runId":"r","epoch":1,"root":root.path(),"exp":exp}),
+            ),
+            (
+                "numeric runId",
+                json!({"runId":7,"epoch":1,"class":"heavy","root":root.path(),"exp":exp}),
+            ),
         ];
         for (label, payload) in refused {
             assert!(
                 matches!(
-                    keys.validate(&signed_token(&payload, &key), root.path(), &authority, now, |_| {
-                        unreachable!()
-                    }),
+                    keys.validate(
+                        &signed_token(&payload, &key),
+                        root.path(),
+                        &authority,
+                        now,
+                        |_| { unreachable!() }
+                    ),
                     Err(crate::TokenError::Invalid(_))
                 ),
                 "{label} must be refused"
@@ -535,7 +572,10 @@ mod tests {
         for (label, refused) in [
             ("padded payload", format!("{payload_part}=.{mac_part}")),
             ("padded mac", format!("{payload_part}.{mac_part}=")),
-            ("standard alphabet", format!("{payload_part}.+wIJEBceJSwzOkFIT1ZdZGtyeYCHjpWco6qxuL/GzdQ=")),
+            (
+                "standard alphabet",
+                format!("{payload_part}.+wIJEBceJSwzOkFIT1ZdZGtyeYCHjpWco6qxuL/GzdQ="),
+            ),
             ("extra component", format!("{valid}.extra")),
             ("empty payload", format!(".{mac_part}")),
             ("empty mac", format!("{payload_part}.")),
@@ -587,10 +627,12 @@ mod tests {
         let keys = TokenKeys::from_json(&serde_json::to_vec(&keys_json).unwrap()).unwrap();
         let authority = authority(4);
         let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
-        let exp = Utc.with_ymd_and_hms(2026, 10, 1, 15, 0, 0)
+        let exp = Utc
+            .with_ymd_and_hms(2026, 10, 1, 15, 0, 0)
             .unwrap()
             .timestamp_millis();
-        let payload = json!({"runId":"run1","epoch":3,"class":"heavy","root":root.path(),"exp":exp});
+        let payload =
+            json!({"runId":"run1","epoch":3,"class":"heavy","root":root.path(),"exp":exp});
         let encoded = signed_token(&payload, &key);
         let accepted = keys
             .validate(&encoded, &cwd, &authority, now, |_| {
@@ -598,7 +640,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(accepted.run_id, "run1");
-        let current_payload = json!({"runId":"run2","epoch":4,"class":"heavy","root":root.path(),"exp":exp});
+        let current_payload =
+            json!({"runId":"run2","epoch":4,"class":"heavy","root":root.path(),"exp":exp});
         let current = signed_token(&current_payload, &[8u8; 32]);
         assert_eq!(
             keys.validate(&current, &cwd, &authority, now, |_| unreachable!())
@@ -643,8 +686,10 @@ mod tests {
         // A different valid payload under the original MAC binds the exact
         // received bytes: swapping the payload part is detected.
         let other_payload = URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&json!({"runId":"r2","epoch":4,"class":"heavy","root":temp.path(),"exp":exp}))
-                .unwrap(),
+            serde_json::to_vec(
+                &json!({"runId":"r2","epoch":4,"class":"heavy","root":temp.path(),"exp":exp}),
+            )
+            .unwrap(),
         );
         let swapped = format!("{other_payload}.{signature_part}");
         assert_eq!(
