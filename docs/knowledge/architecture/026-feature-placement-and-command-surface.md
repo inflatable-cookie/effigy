@@ -219,22 +219,15 @@ ownership stops at the generic transaction boundary.
 
 ## Rhai Storage And S3
 
-Direct S3 CRUD is provider-specific and remains a future optional-provider or
-removal candidate. It is not ready to move.
-
-`bovine-accelerator` currently uses the Rhai storage surface for media upload.
-`bovine-accelerator-desktop` is expected to assume that responsibility, but the
-replacement is not live and proved. Preserve the existing S3 behavior until the
-consumer migration satisfies contract `043`.
-
-Preservation includes bounded safety repairs required by a current consumer.
-Contract `044` adds atomic create-if-absent behavior to the retained Rhai PUT
-surface after Bovine proved HEAD then PUT cannot prevent overwrite races. That
-repair neither promotes S3 to permanent core nor supplies removal evidence.
-
-No deprecation, dependency removal, or base-Rhai removal may begin merely to
-clean the Effigy dependency tree. The consumer path moves first; Effigy cleanup
-follows proven replacement.
+Effigy's Rhai object-storage surface and its vendored S3 client library were
+removed as one breaking change recorded in
+[contract 043](../contracts/043-feature-placement-and-surface-migration-contract.md)
+under Tom's independent-retirement ruling. Scripts that still call the removed
+`storage::*` helpers fail with an unknown-function error; no compatibility
+shim exists. Live objects, buckets, secrets, and assets were untouched;
+generic MinIO catalog services and independent consumer S3 adapters remain
+outside Effigy's ownership. A future optional-provider object-store surface
+stays unplanned until its transport and minimum contract are chosen.
 
 ## Placement Inventory
 

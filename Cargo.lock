@@ -1187,7 +1187,6 @@ dependencies = [
  "rhai",
  "ring",
  "rpassword",
- "s3",
  "semver",
  "serde_json",
  "serde_yaml",
@@ -1594,35 +1593,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "graviola"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4387e0458389da24c6fe732531e65595c7c4a32b027f98f4789e512e28224465"
-dependencies = [
- "cfg-if",
- "getrandom 0.3.4",
-]
-
-[[package]]
-name = "h2"
-version = "0.4.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
-dependencies = [
- "atomic-waker",
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "http",
- "indexmap",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1796,7 +1766,6 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2",
  "http",
  "http-body",
  "httparse",
@@ -1821,7 +1790,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2337,16 +2305,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "md-5"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
-dependencies = [
- "cfg-if",
- "digest 0.11.3",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2849,16 +2807,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
-name = "quick-xml"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
-dependencies = [
- "memchr",
- "serde",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3162,14 +3110,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d9f0a84f43a067a97ca9d6476c6f02bb4857f9cb7e3e87ce3cfa3f510754f99"
 dependencies = [
  "bytes",
- "futures-core",
- "futures-util",
  "http",
- "http-body-util",
  "httpdate",
- "hyper",
- "hyper-rustls",
- "hyper-util",
  "rand 0.10.2",
  "rustls",
  "rustls-native-certs",
@@ -3177,14 +3119,10 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tower-service",
  "tracing",
  "ureq",
  "url",
  "webpki-root-certs",
- "webpki-roots",
 ]
 
 [[package]]
@@ -3457,24 +3395,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "s3"
-version = "0.1.36"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "graviola",
- "hex",
- "http",
- "httpdate",
- "md-5",
- "quick-xml",
- "reqx",
- "serde",
- "time",
- "url",
-]
 
 [[package]]
 name = "same-file"
@@ -4057,7 +3977,6 @@ dependencies = [
  "powerfmt",
  "serde_core",
  "time-core",
- "time-macros",
 ]
 
 [[package]]
@@ -4065,16 +3984,6 @@ name = "time-core"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
-
-[[package]]
-name = "time-macros"
-version = "0.2.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
-dependencies = [
- "num-conv",
- "time-core",
-]
 
 [[package]]
 name = "tiny-keccak"
@@ -4157,7 +4066,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "libc",
  "pin-project-lite",
  "tokio",
 ]

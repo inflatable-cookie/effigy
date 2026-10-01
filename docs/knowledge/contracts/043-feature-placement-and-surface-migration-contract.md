@@ -304,49 +304,27 @@ The core release façade may invoke external recipes, but it must not silently
 restore Effigy-specific defaults as generic behavior. Migration must prove the
 Effigy repository's current release gates before removing any existing path.
 
-## S3 Consumer Gate
+## Rhai Storage Retirement
 
-Tom's ruling (2026-10-01) authorizes a retirement sequence: Bovine first
-retires its unused media/R2 tasks, then Effigy removes the Rhai `storage::*`
-surface and its vendored S3 dependency. For this sequence, deliberate consumer
-retirement replaces the requirement to implement a replacement upload path.
-Before Effigy removal, reviewed consumer evidence must show that no supported
-task, shared helper, proof or validation contract still requires that surface.
-Preserve existing media, remote objects and secrets; this ruling does not
-authorize live storage cleanup. Generic MinIO catalog services and independent
-consumer S3 adapters remain outside this retirement.
+Tom's ruling (2026-10-01) authorized the retirement: "Effigy doesn't need to
+wait for bovine, you can get on with removing those features from effigy
+now". Effigy removed its Rhai `storage::*` host surface, the direct `s3`
+dependency, and the vendored `vendor/s3` tree in one reviewed breaking change,
+in parallel with Bovine's consumer cleanup and without a consumer-closeout
+gate. The earlier replacement-upload and consumer-evidence requirements were
+disapplied for this retirement by the same ruling; their history is in Git.
+Residual callers (for example `bovine-accelerator` Rhai tasks) break by
+design; their retirement is owned by the consumer repository, not by a
+compatibility shim here.
 
-Tom subsequently overrode that prerequisite: "Effigy doesn't need to wait for
-bovine, you can get on with removing those features from effigy now".
-Effigy's Rhai storage surface and vendored dependency may therefore be retired
-in parallel with Bovine's consumer cleanup, without a consumer-closeout gate.
-The removal is an explicit breaking change for residual `storage::*` callers;
-do not preserve a compatibility shim or claim they still work. The earlier
-replacement-upload and consumer-evidence requirements below do not gate this
-authorized retirement. All unrelated storage infrastructure and live data
-protections remain in force.
-
-The current Rhai S3 surface remains supported while `bovine-accelerator`
-depends on it for media upload.
-
-Contract [`044`](044-rhai-storage-create-only-contract.md) governs the
-bounded atomic create-if-absent repair required by that retained consumer. An
-additive safety correction is not S3-removal evidence and does not choose the
-future optional-provider transport.
-
-S3 extraction, deprecation, vendored-dependency removal, or base-Rhai removal
-cannot become implementation-ready until evidence proves:
-
-1. `bovine-accelerator-desktop` owns and can execute the replacement upload;
-2. `bovine-accelerator` routes the relevant media path through that replacement;
-3. representative upload behavior passes in the consumer environment;
-4. no supported consumer path still calls the Rhai storage functions proposed
-   for removal;
-5. migration and rollback instructions exist for the consumer boundary.
-
-After that gate, planning must choose the optional-provider transport and the
-minimum retained object-store/Rhai contract before implementation. No cleanup
-may assume those choices.
+The retirement removed only Effigy's old Rhai object-storage functions and
+their vendored client library. It did not touch live objects, buckets,
+secrets, or assets; generic MinIO catalog services and workspace-bundle
+configuration remain; independent consumer S3 adapters (for example Farmyard
+and Underlay) are unrelated infrastructure and keep their own owners. A
+future optional-provider object-store surface remains unplanned: planning
+must choose the transport and the minimum contract before any replacement
+exists, and no cleanup may assume those choices.
 
 ## Migration Evidence
 
