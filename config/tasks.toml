@@ -30,6 +30,7 @@
   "cargo test -p effigy --lib checkout_retirement_lookup_preserves_existing_unknown_profile_record -- --nocapture",
   "cargo test -p effigy --lib runtime_start_failure_keeps_scope_record_created_before_start -- --nocapture",
 ]
+"test:worktree:lifecycle-hooks" = "sh tests/scripts/worktree-lifecycle-hooks.sh"
 "check:containers:scope-compile" = "cargo check -p effigy-containers -p effigy-runtime -p effigy --all-targets"
 "test:containers:runtime-inventory" = [
   "cargo test -p effigy-containers inventory_tests:: -- --nocapture",

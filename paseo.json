@@ -1,7 +1,7 @@
 {
   "worktree": {
-    "setup": "effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- prepare ../effigy-catalog-pack && effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- link",
-    "teardown": "effigy container retire --yes && effigy skill run --path \"${NORTHSTAR_SKILL_PATH:-$HOME/.agents/skills/northstar}\" paseo:worktree -- unlink"
+    "setup": "sh scripts/worktree-lifecycle.sh setup",
+    "teardown": "sh scripts/worktree-lifecycle.sh teardown"
   },
   "scripts": {
     "qa": { "command": "effigy qa" },
