@@ -287,6 +287,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Generated `AGENTS.md` Effigy Agent Contract now links its reference docs as
+  upstream Effigy repository URLs instead of nonexistent consumer-relative
+  paths; rerunning init rewrites the managed block only.
 - `container retire` probes each recorded runtime profile first. A stopped
   profile no longer aborts teardown with a raw query error: host-side and live
   resources are still retired, the stopped profile is reported as unverified

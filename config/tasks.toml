@@ -52,6 +52,8 @@
 "test:qa-groups:identity" = "cargo test -p effigy-process --lib identity -- --nocapture"
 "test:qa-groups:cli" = "cargo test --test cli_output_tests qa_groups_tests -- --nocapture"
 "test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
+"test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
+"check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 
 # Trusted host-run protocol client (contract 010 Client protocol v1)
