@@ -1462,11 +1462,10 @@ pub fn retire_report_unverified(
             "[error] runtime profile(s) {} stopped; owned containers and volumes there are unverified, not gone",
             unverified_profiles.join(", ")
         ));
-        for profile in unverified_profiles {
-            lines.push(format!(
-                "start the profile (`colima start {profile}`) and rerun `effigy container retire --yes`; the scope record was kept"
-            ));
-        }
+        lines.push(
+            "start the runtime for each profile and rerun `effigy container retire --yes`; the scope record was kept"
+                .to_owned(),
+        );
         for resource in remaining {
             lines.push(format!(
                 "remaining {}: {}",

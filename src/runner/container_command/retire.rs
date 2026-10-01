@@ -128,7 +128,10 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
     if remaining.is_empty() && stopped.is_empty() {
         Ok(render_container_report(report, output_json))
     } else {
-        Err(RunnerError::task_invocation(report.success_text))
+        Err(RunnerError::task_invocation(render_container_report(
+            report,
+            output_json,
+        )))
     }
 }
 
