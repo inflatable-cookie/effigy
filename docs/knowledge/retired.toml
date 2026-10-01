@@ -1,4 +1,22 @@
 [[retired]]
+id = "effigy-rhai-storage-surface"
+retired = "2026-10-02"
+replacement = "Effigy's Rhai object-storage host functions, the effigy-rhai s3 dependency, and the vendored upstream S3 client library were removed as one breaking change (contract 043's retirement record). Scripts calling the removed helpers fail with an unknown-function error; generic MinIO catalog services and independent consumer S3 adapters are unrelated and keep their own owners."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = ["storage::provider", "storage::status", "storage::ls", "storage::head", "storage::get", "storage::put", "storage::delete"]
+paths = [
+  "vendor/s3/",
+  "crates/effigy-rhai/src/host_api/storage.rs",
+  "crates/effigy-rhai/src/tests/storage.rs",
+  "docs/knowledge/contracts/044-rhai-storage-create-only-contract.md",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-rhai/src/tests/storage_retirement.rs",
+]
+
+[[retired]]
 id = "northstar-process-records"
 retired = "2026-09-26"
 replacement = "Knowledge lives in docs/knowledge/; the plan, leads, papercuts, brief drafts, tasks, status and outcomes live in Queue."

@@ -26,7 +26,7 @@ mod runtime;
 mod script_policy;
 mod secrets;
 mod semver;
-mod storage;
+mod storage_retirement;
 mod utility;
 
 fn temp_root(name: &str) -> PathBuf {

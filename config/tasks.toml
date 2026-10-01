@@ -56,6 +56,11 @@
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 
+# Rhai storage retirement (contract 043): negative proofs that the removed
+# surface stays absent and neighbouring modules still work.
+"test:rhai:storage-retirement" = "cargo test -p effigy-rhai --lib storage_retirement -- --nocapture"
+"check:rhai:storage-retirement" = "cargo check -p effigy-rhai -p effigy --lib --bin effigy"
+
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration"

@@ -216,6 +216,15 @@ During v0.x, MINOR bumps may include breaking changes.
   stream and headless logs.
 
 ### Breaking
+- Removed the Rhai object-storage host surface (`storage::provider`, `status`,
+  `ls`, `head`, `get`, `put`, `delete`), the `effigy-rhai` `s3` dependency, and
+  the vendored `vendor/s3` library, per the independent-retirement ruling in
+  contract 043. Scripts calling any removed helper now fail with an
+  unknown-function error and no compatibility shim exists. Live objects,
+  buckets, secrets, and assets are untouched; generic MinIO catalog services
+  and independent consumer S3 adapters are unrelated and unchanged. Residual
+  consumer callers (for example `bovine-accelerator` Rhai tasks) break by
+  design and are retired in their own repository.
 - Lean Northstar repositories no longer carry a Queue manifest. `effigy init
   northstar` omits it; Queue closeout is the default, and overrides live in
   Queue project settings (`project.set`).

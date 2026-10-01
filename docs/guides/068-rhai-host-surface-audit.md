@@ -39,7 +39,6 @@ Policy:
 | Semantic versions | `semver::parse`, `semver::valid`, `semver::compare`, `semver::satisfies`, `semver::bump_major`, `semver::bump_minor`, `semver::bump_patch` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
 | Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
-| Object storage | `storage::provider`, `storage::status`, `storage::ls`, `storage::head`, `storage::get`, `storage::put`, `storage::delete` | Exposed; temporarily retained under contract 043's consumer gate |
 | Interactive prompts | `prompt::confirm`, `prompt::input` | Exposed; requires TTY stdin and stdout |
 | Git repository operations | `git::status`, `git::working_tree_clean`, `git::assert_clean`, `git::current_branch`, `git::rev_parse`, `git::changed_files`, `git::diff_name_only`, `git::branch_exists`, `git::commit_exists`, `git::merge_base`, `git::is_ancestor`, `git::remote_url`, `git::upstream_branch`, `git::switch`, `git::create_branch`, `git::checkout`, `git::fetch`, `git::pull`, `git::push`, `git::add`, `git::commit` | Exposed |
 | Source forge operations | `forge::provider`, `forge::status`, `forge::pr_view`, `forge::pr_list`, `forge::pr_create`, `forge::pr_checkout` | Exposed for GitHub via `gh`; adapter-shaped for future providers |
@@ -94,22 +93,17 @@ None currently tracked.
 | Watch | Long-running file-watching loops |
 | Tasks migrate | One-shot import utility |
 
-## Temporary S3 Consumer Boundary
+## Removed Storage Surface
 
-`bovine-accelerator` currently relies on the object-storage helpers for media
-uploads. Keep that surface available until `bovine-accelerator-desktop` owns the
-replacement path and the consumer migration satisfies
-[contract 043](../knowledge/contracts/043-feature-placement-and-surface-migration-contract.md).
-Extraction remains a placement direction, not current removal authority.
-
-The retained `storage::put` surface accepts an optional boolean `create_only`.
-When `create_only` is `true`, Effigy sends `If-None-Match: *` on the same
-PutObject request, so one of two writers racing for an absent key wins and the
-other fails with one stable diagnostic; a key occupied before or during the
-request is never overwritten. Omitting the option or passing `false` keeps the
-existing unconditional write. The collision diagnostic names only the
-create-only collision and never carries signed URLs, credentials, or response
-bodies.
+The seven Rhai object-storage helpers behind the former `storage` module were
+removed as one breaking change, together with the `effigy-rhai` `s3`
+dependency and its vendored upstream client library. Scripts that still call
+any of them fail with an unknown-function error. The retirement record and its
+boundaries live in
+[contract 043](../knowledge/contracts/043-feature-placement-and-surface-migration-contract.md);
+generic MinIO catalog services (see
+[`067-catalog-services-reference.md`](067-catalog-services-reference.md)) and
+independent consumer S3 adapters are unrelated and unchanged.
 
 ## Return Shapes
 

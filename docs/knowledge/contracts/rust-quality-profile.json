@@ -2,9 +2,7 @@
   "deviations_file": "docs/knowledge/contracts/rust-quality-deviations.json",
   "exclusions": {
     "generated": [],
-    "vendored": [
-      "vendor/s3"
-    ]
+    "vendored": []
   },
   "language": "rust",
   "msrv": {
