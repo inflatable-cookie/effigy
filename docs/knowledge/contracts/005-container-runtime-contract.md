@@ -143,6 +143,14 @@ starting or probing that profile. Existing records, including records naming
 stopped or unavailable profiles, remain authoritative and fail closed when
 their resources cannot be observed.
 
+Tom’s 2026-10-01 recovery ruling, "do what you need to for 061", allowed one
+exact-scope exception: start the stopped profile to observe its resources,
+retire only resources proven owned by the approved scope, and retry only the
+recorded milestone teardown while preserving its QA result. Restore the
+initial profile state only if no other active owner appeared. This does not
+permit automatic profile starts, treating stopped resources as absent, broader
+host cleanup, or scheduler activation.
+
 Loopback allocation and reclamation must follow the same ownership boundary.
 An isolated project's loopback key is `project:<project-name>:<absolute-checkout>`
 in both generated Compose preparation and gateway registration. A legacy bare
