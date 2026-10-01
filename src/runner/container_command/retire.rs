@@ -6,8 +6,9 @@ use effigy_catalog::volumes::{
 };
 use effigy_containers::{
     load_for_checkout, load_scope_record, plan_retirement, remaining_after, remove_scope_record,
-    retire_report, upsert_scope_record, volume_has_ownership_proof, ObservedKind, ObservedResource,
-    ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+    retire_report, retire_report_unverified, upsert_scope_record, volume_has_ownership_proof,
+    ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL,
+    PROJECT_LABEL, SCOPE_LABEL,
 };
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
@@ -78,7 +79,8 @@ fn resolve_retire_records(
 
 fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, RunnerError> {
     let record = remember_pending_tls(record)?;
-    let observed = observe_scope(&record)?;
+    let (live, stopped) = split_stopped_profiles(&record);
+    let observed = observe_scope(&record, &live)?;
     let plan = plan_retirement(&record, &observed);
     let mut removed = Vec::new();
     let mut routes_cleared = false;
@@ -109,31 +111,71 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
             removed.push(resource.clone());
         }
     }
-    let remaining = remaining_after(&record, &observe_scope(&record)?);
-    let record_removed = remaining.is_empty();
+    let remaining = remaining_after(&record, &observe_scope(&record, &live)?);
+    let record_removed = remaining.is_empty() && stopped.is_empty();
     if record_removed {
         remove_scope_record(&record.token)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
-    let report = retire_report(
+    let report = retire_report_unverified(
         Some(&record),
         Some(&plan),
         &removed,
         &remaining,
         record_removed,
+        &stopped,
     );
-    if remaining.is_empty() {
+    if remaining.is_empty() && stopped.is_empty() {
         Ok(render_container_report(report, output_json))
     } else {
-        Err(RunnerError::task_invocation(report.success_text))
+        let rendered = render_container_report(report, output_json);
+        // JSON mode keeps the structured report in `error.details`.
+        if output_json {
+            Err(RunnerError::CommandJsonFailure { rendered })
+        } else {
+            Err(RunnerError::task_invocation(rendered))
+        }
     }
 }
 
-fn observe_scope(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
+/// Splits recorded profiles into queryable and stopped. A stopped profile is
+/// never skipped silently: the caller keeps the record and reports it
+/// unverified. Other probe failures stay live so the real query surfaces them.
+fn split_stopped_profiles(record: &ScopeRecord) -> (Vec<String>, Vec<String>) {
+    let mut live = Vec::new();
+    let mut stopped = Vec::new();
+    for profile in record.observation_profiles() {
+        let probe = DockerCommand {
+            program: "docker".to_owned(),
+            args: vec!["ps".to_owned(), "-q".to_owned(), "--latest".to_owned()],
+            description: format!("probe runtime profile {profile}"),
+        };
+        match run_runtime_volume_capture(&observation_cwd(record), &profile, &probe) {
+            Err(error) if runtime_stopped_message(&error.to_string()) => stopped.push(profile),
+            _ => live.push(profile),
+        }
+    }
+    (live, stopped)
+}
+
+fn runtime_stopped_message(message: &str) -> bool {
+    message.contains("is not running")
+        || message.contains("Cannot connect to the Docker daemon")
+        || message.contains("daemon is not running")
+}
+
+fn observe_scope(
+    record: &ScopeRecord,
+    live_profiles: &[String],
+) -> Result<Vec<ObservedResource>, RunnerError> {
+    let mut scoped = record.clone();
+    scoped.profiles = live_profiles.to_vec();
     let mut observed = Vec::new();
-    observed.extend(observe_labeled_containers(record)?);
-    observed.extend(observe_networks(record)?);
-    observed.extend(observe_volumes(record)?);
+    if !live_profiles.is_empty() {
+        observed.extend(observe_labeled_containers(&scoped)?);
+        observed.extend(observe_networks(&scoped)?);
+        observed.extend(observe_volumes(&scoped)?);
+    }
     observed.extend(observe_routes(record)?);
     observed.extend(observe_ports(record)?);
     observed.extend(observe_loopbacks(record)?);
@@ -874,5 +916,41 @@ mod tests {
         assert!(remaining.get("project:foreign:/tmp/foreign").is_some());
         assert!(remaining.get("shared:demo:/tmp/missing-worker").is_some());
         let _ = std::fs::remove_dir_all(home);
+    }
+}
+
+#[cfg(test)]
+mod stopped_profile_tests {
+    use super::runtime_stopped_message;
+    use crate::runner::RunnerError;
+    use effigy_containers::retire_report_unverified;
+
+    #[test]
+    fn stopped_colima_and_docker_daemon_are_stopped() {
+        assert!(runtime_stopped_message(
+            "stderr:\ntime level=fatal msg=\"colima [profile=effigy-release] is not running\""
+        ));
+        assert!(runtime_stopped_message(
+            "Cannot connect to the Docker daemon at unix:///x"
+        ));
+    }
+
+    #[test]
+    fn other_failures_are_not_stopped() {
+        assert!(!runtime_stopped_message("permission denied"));
+    }
+
+    #[test]
+    fn json_failure_exposes_structured_report_in_error_details() {
+        let stopped = vec!["stopped-profile".to_owned()];
+        let report = retire_report_unverified(None, None, &[], &[], false, &stopped);
+        let error = RunnerError::CommandJsonFailure {
+            rendered: report.json.to_string(),
+        };
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("details")).unwrap();
+        assert_eq!(details["schema"], "effigy.container.retire.v1");
+        assert_eq!(details["idempotent"], false);
+        assert_eq!(details["unverified_profiles"][0], "stopped-profile");
     }
 }

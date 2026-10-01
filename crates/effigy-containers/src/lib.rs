@@ -43,12 +43,12 @@ pub use policy::model::{
 pub use report::{
     cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
     data_pull_production_report, data_transfer_report, down_report, eject_report, hosts_report,
-    logs_report, reset_report, retire_report, stats_global_report, status_global_report,
-    status_report, up_detached_report, volume_list_report, volume_prune_report,
-    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
-    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
-    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    logs_report, reset_report, retire_report, retire_report_unverified, stats_global_report,
+    status_global_report, status_report, up_detached_report, volume_list_report,
+    volume_prune_report, AllocatedPortsSummary, ContainerCacheGlobalEntry,
+    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
+    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::eject::eject_generated_compose;

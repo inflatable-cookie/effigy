@@ -1420,12 +1420,25 @@ pub fn retire_report(
     remaining: &[crate::ObservedResource],
     record_removed: bool,
 ) -> ContainerCommandReport {
-    let ok = remaining.is_empty();
+    retire_report_unverified(record, plan, removed, remaining, record_removed, &[])
+}
+
+/// Like [`retire_report`], with runtime profiles that could not be queried
+/// (stopped). Their containers and volumes are unverified, never "gone".
+pub fn retire_report_unverified(
+    record: Option<&crate::ScopeRecord>,
+    plan: Option<&crate::RetirementPlan>,
+    removed: &[crate::ObservedResource],
+    remaining: &[crate::ObservedResource],
+    record_removed: bool,
+    unverified_profiles: &[String],
+) -> ContainerCommandReport {
+    let ok = remaining.is_empty() && unverified_profiles.is_empty();
     let json = json!({
         "schema": "effigy.container.retire.v1",
         "schema_version": 1,
         "ok": ok,
-        "idempotent": removed.is_empty() && remaining.is_empty(),
+        "idempotent": removed.is_empty() && remaining.is_empty() && unverified_profiles.is_empty(),
         "scope": record.map(|record| json!({
             "token": record.token,
             "checkout": record.checkout,
@@ -1441,9 +1454,26 @@ pub fn retire_report(
         "mismatch": plan.map(|plan| plan.mismatch.iter().map(observed_json).collect::<Vec<_>>()),
         "remaining": remaining.iter().map(observed_json).collect::<Vec<_>>(),
         "record_removed": record_removed,
+        "unverified_profiles": unverified_profiles,
     });
     let mut lines = Vec::new();
-    if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
+    if !unverified_profiles.is_empty() {
+        lines.push(format!(
+            "[error] runtime profile(s) {} stopped; owned containers and volumes there are unverified, not gone",
+            unverified_profiles.join(", ")
+        ));
+        lines.push(
+            "start the runtime for each profile and rerun `effigy container retire --yes`; the scope record was kept"
+                .to_owned(),
+        );
+        for resource in remaining {
+            lines.push(format!(
+                "remaining {}: {}",
+                kind_label(resource.kind),
+                resource.name
+            ));
+        }
+    } else if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
         lines.push(format!(
             "[ok] runtime scope is `{reason}`; shared resources were left in place"
         ));
@@ -1552,5 +1582,52 @@ fn format_bytes(bytes: u64) -> String {
         format!("{bytes} {}", UNITS[unit])
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod retire_unverified_tests {
+    use super::retire_report_unverified;
+    use crate::{ObservedKind, ObservedResource};
+
+    fn live_container() -> ObservedResource {
+        ObservedResource {
+            kind: ObservedKind::Container,
+            name: "web-1".to_owned(),
+            scope_label: Some("tok".to_owned()),
+            project_label: None,
+            persist: false,
+            external: false,
+            profile: Some("live-profile".to_owned()),
+        }
+    }
+
+    #[test]
+    fn stopped_profile_report_is_not_ok_nor_idempotent() {
+        let stopped = vec!["stopped-profile".to_owned()];
+        let report = retire_report_unverified(None, None, &[], &[], false, &stopped);
+        assert_eq!(report.json["ok"], false);
+        assert_eq!(report.json["idempotent"], false);
+        assert_eq!(report.json["record_removed"], false);
+        assert_eq!(report.json["unverified_profiles"][0], "stopped-profile");
+        assert!(report.success_text.contains("unverified"));
+    }
+
+    #[test]
+    fn mixed_stopped_and_live_report_keeps_live_remaining_and_unverified() {
+        let stopped = vec!["stopped-profile".to_owned()];
+        let remaining = vec![live_container()];
+        let report = retire_report_unverified(None, None, &[], &remaining, false, &stopped);
+        assert_eq!(report.json["ok"], false);
+        assert_eq!(report.json["idempotent"], false);
+        assert_eq!(report.json["remaining"][0]["profile"], "live-profile");
+        assert_eq!(report.json["unverified_profiles"][0], "stopped-profile");
+    }
+
+    #[test]
+    fn clean_report_stays_idempotent() {
+        let report = retire_report_unverified(None, None, &[], &[], true, &[]);
+        assert_eq!(report.json["ok"], true);
+        assert_eq!(report.json["idempotent"], true);
     }
 }

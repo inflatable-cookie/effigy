@@ -284,6 +284,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `container retire` probes each recorded runtime profile first. A stopped
+  profile no longer aborts teardown with a raw query error: host-side and live
+  resources are still retired, the stopped profile is reported as unverified
+  (`unverified_profiles` in JSON), the scope record is kept, and the command
+  exits non-zero until the profile is started and retire is rerun.
 - Running-Compose inventory decides runtime participation before any `ps`
   probe, without launching Docker, Colima, or a container. Docker is inactive
   only when every endpoint it could be using (`DOCKER_CONTEXT`, `DOCKER_HOST`,
