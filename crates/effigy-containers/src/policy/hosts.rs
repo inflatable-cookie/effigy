@@ -5,7 +5,9 @@
 //! every declared HTTP route and TCP alias stays together under
 //! `<apex>-w<host-key>.<tld>`.
 
-use super::model::{EffectiveDnsRoute, EffectiveServiceAlias, SharedServiceBinding};
+use super::model::{
+    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias, SharedServiceBinding,
+};
 use effigy_core::worktree_scope;
 
 pub const HOST_KEY_LEN: usize = 8;
@@ -68,6 +70,23 @@ pub fn host_key(token: &str) -> Option<&str> {
     let token = token.trim();
     (token.len() >= HOST_KEY_LEN && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .then(|| &token[..HOST_KEY_LEN])
+}
+
+/// Resolve shared runtime identity from the effective project name and the
+/// checkout's generation token. Scoped project names carry the generation
+/// suffix; an unsuffixed project name intentionally shares its identity.
+pub fn uses_shared_runtime_identity(
+    policy: &EffectiveContainerPolicy,
+    token: Option<&str>,
+) -> bool {
+    let Some(token) = token.filter(|token| token.len() >= 12) else {
+        return false;
+    };
+    !worktree_scope::PROJECT_TAGS.iter().any(|tag| {
+        policy
+            .project_name
+            .contains(&format!("-{tag}-{}", &token[..12]))
+    })
 }
 
 pub fn rewrite_declared_host(declared: &str, host_key: &str) -> String {

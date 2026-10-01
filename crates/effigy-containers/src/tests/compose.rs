@@ -193,6 +193,46 @@ host_ports = ["41001:41001"]
 }
 
 #[test]
+fn policy_resolution_does_not_register_an_unactivated_runtime_scope() {
+    with_temp_effigy_home("unactivated-policy-read", |home| {
+        let _lock = crate::test_env_lock();
+        let checkout = temp_repo("unactivated-policy-read");
+        fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
+        fs::write(
+            checkout.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("mark checkout as ephemeral");
+        fs::write(
+            checkout.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+profile = "private-stopped-profile"
+compose_file = "compose.yaml"
+primary_service = "app"
+"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            checkout.join("compose.yaml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose file");
+
+        assert!(!home.join("runtime-scopes").exists());
+        let policy = load_container_policy(&checkout, None).expect("resolve policy");
+        let policies = load_all_container_policies(&checkout).expect("resolve all policies");
+
+        assert_eq!(policy.profile, "private-stopped-profile");
+        assert_eq!(policies.len(), 1);
+        assert!(!home.join("runtime-scopes").exists());
+    });
+}
+
+#[test]
 fn marked_ephemeral_clones_get_distinct_effective_hosts_and_unmarked_keeps_declared() {
     with_temp_effigy_home("ephemeral-clone-hosts", |_| {
         let _lock = crate::test_env_lock();

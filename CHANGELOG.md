@@ -217,6 +217,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Container policy reads, discovery, plans and retirement lookup no longer
+  register runtime ownership. Container activation records the checkout scope
+  before starting the backend or creating owned resources; a failed start
+  keeps that record for retry. Retiring a configured but never activated
+  checkout reports no owned scope without probing its runtime profile.
 - Plain `effigy init` no longer creates, refreshes, downloads, or installs a
   project-local Effigy skill snapshot. It preserves existing local skill files
   and reports installed guidance roots, canonical symlink aliases, missing
