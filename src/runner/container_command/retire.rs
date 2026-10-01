@@ -128,10 +128,13 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
     if remaining.is_empty() && stopped.is_empty() {
         Ok(render_container_report(report, output_json))
     } else {
-        Err(RunnerError::task_invocation(render_container_report(
-            report,
-            output_json,
-        )))
+        let rendered = render_container_report(report, output_json);
+        // JSON mode keeps the structured report in `error.details`.
+        if output_json {
+            Err(RunnerError::CommandJsonFailure { rendered })
+        } else {
+            Err(RunnerError::task_invocation(rendered))
+        }
     }
 }
 
