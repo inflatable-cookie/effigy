@@ -93,6 +93,10 @@
   "cargo test --test cli_output_tests cli_nested_qa_fixture_isolates_admission_and_preserves_failure_status -- --nocapture",
 ]
 "check:qa:private-admission-fixtures" = "cargo check --test cli_output_tests"
+"test:host-run:legacy-qa-group-fixtures" = [
+  "cargo test --test cli_output_tests heavy_draft_admission_metadata_runs_directly_and_reports_the_class -- --nocapture",
+  "cargo test --test cli_output_tests heavy_group_takes_one_lease_and_nested_members_reuse_it -- --nocapture",
+]
 # Scheduler routing: unit decisions plus the private Queue-server proofs. The
 # private-server cases run only when EFFIGY_HOST_RUN_PRIVATE_SERVER names an
 # isolated Queue checkout at the pinned commit; they never touch a live endpoint.
