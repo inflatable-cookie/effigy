@@ -164,6 +164,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Generate and verify macOS checksum sidecars
+        run: |
+          ./scripts/release-assets.sh generate artifacts
+          ./scripts/release-assets.sh verify artifacts
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -199,17 +204,10 @@ jobs:
         run: |
           TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
-          chmod +x artifacts/effigy-*
           if [ "${{ steps.notes.outputs.fallback }}" = "true" ]; then
-            gh release create "$TAG" \
-              --title "Effigy $VERSION" \
-              --generate-notes \
-              artifacts/effigy-*
+            ./scripts/release-assets.sh publish generated "$TAG" "$VERSION" artifacts
           else
-            gh release create "$TAG" \
-              --title "Effigy $VERSION" \
-              --notes-file release-notes.md \
-              artifacts/effigy-*
+            ./scripts/release-assets.sh publish changelog "$TAG" "$VERSION" artifacts release-notes.md
           fi
 
       - name: Check for Homebrew tap token

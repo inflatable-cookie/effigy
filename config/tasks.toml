@@ -17,6 +17,7 @@
 "release:linux:rehearse" = { rhai = "scripts/rehearse-linux-release-container.rhai" }
 "workspace:linux:artifact" = { rhai = "scripts/build-linux-workspace-artifact.rhai" }
 "dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
+"test:release:macos-checksums" = "bash tests/scripts/release-macos-checksums.sh"
 
 # Container/runtime profiling
 "perf:container-shell-matrix" = { rhai = "scripts/profile-container-shell-matrix.rhai" }

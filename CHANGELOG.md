@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- GitHub Releases will include verified, unsigned SHA-256 sidecars for both
+  macOS binaries starting with the next normally authorized release. The raw
+  binaries keep their existing names.
 - `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
   instead of the legacy lease, which stays the default. The scheduler launches
