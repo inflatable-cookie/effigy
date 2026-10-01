@@ -59,6 +59,17 @@
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration"
+
+# Env-isolation regressions (papercut batch 067): parallel process-env
+# readers and writers. Build-identity readers take injected values and the
+# runner's remaining global writers share one proved boundary.
+"test:env-isolation:build-info" = "cargo test -p effigy-core --lib build_info::tests::env_isolation -- --nocapture"
+"test:env-isolation:runner" = [
+  "cargo test -p effigy --lib runner::tests::env_isolation_tests -- --nocapture",
+  "cargo test -p effigy --lib stay_in_shell -- --nocapture",
+  "cargo test -p effigy --lib deferral::policy -- --nocapture",
+]
+"check:env-isolation" = "cargo check -p effigy-core -p effigy --lib --profile test"
 # Scheduler routing: unit decisions plus the private Queue-server proofs. The
 # private-server cases run only when EFFIGY_HOST_RUN_PRIVATE_SERVER names an
 # isolated Queue checkout at the pinned commit; they never touch a live endpoint.

@@ -734,8 +734,25 @@ fn should_stay_in_workspace_shell(
     task: &effigy_manifest::ManifestTask,
     container_binding: &ContainerExecutionBinding,
 ) -> bool {
+    should_stay_in_workspace_shell_in(
+        inside_container_handoff(),
+        output_json,
+        task,
+        container_binding,
+    )
+}
+
+/// Testable form of [`should_stay_in_workspace_shell`] that takes the
+/// container-handoff env fact explicitly instead of reading the process
+/// environment, so parallel tests cannot overwrite one another's env.
+fn should_stay_in_workspace_shell_in(
+    inside_container_handoff: bool,
+    output_json: bool,
+    task: &effigy_manifest::ManifestTask,
+    container_binding: &ContainerExecutionBinding,
+) -> bool {
     if output_json
-        || inside_container_handoff()
+        || inside_container_handoff
         || !task.stay_in_shell.unwrap_or(false)
         || task.workspace.is_none()
         || task.run.is_none()
@@ -963,10 +980,9 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell,
+        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell_in,
         ContainerExecutionBinding,
     };
-    use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
     use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
@@ -974,48 +990,7 @@ mod tests {
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use effigy_runtime_plan::RuntimeLeasePolicy;
-    use std::env;
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    /// Serializes tests that read or mutate `CONTAINER_HANDOFF_ENV`.
-    /// `should_stay_in_workspace_shell` reads the env directly via
-    /// `std::env::var_os`, so tests touching that env must not run in
-    /// parallel with each other or with tests that read the same env.
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &'static str) -> Self {
-            let old = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match self.old.take() {
-                Some(value) => unsafe {
-                    env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    env::remove_var(self.key);
-                },
-            }
-        }
-    }
 
     fn stay_in_shell_task() -> ManifestTask {
         ManifestTask {
@@ -1040,19 +1015,8 @@ mod tests {
 
     #[test]
     fn stay_in_shell_requires_explicit_task_opt_in() {
-        let _lock = env_lock();
-        // Defensive: ensure the env isn't set if a stale prior process left
-        // it behind. The lock prevents concurrent test mutation.
-        let _clear = unsafe {
-            let prior = env::var_os(CONTAINER_HANDOFF_ENV);
-            env::remove_var(CONTAINER_HANDOFF_ENV);
-            EnvRestore {
-                key: CONTAINER_HANDOFF_ENV,
-                value: prior,
-            }
-        };
-
-        assert!(should_stay_in_workspace_shell(
+        assert!(should_stay_in_workspace_shell_in(
+            false,
             false,
             &stay_in_shell_task(),
             &ContainerExecutionBinding::Container {
@@ -1064,10 +1028,8 @@ mod tests {
 
     #[test]
     fn stay_in_shell_is_disabled_inside_container_handoff() {
-        let _lock = env_lock();
-        let _env = EnvGuard::set(CONTAINER_HANDOFF_ENV, "1");
-
-        assert!(!should_stay_in_workspace_shell(
+        assert!(!should_stay_in_workspace_shell_in(
+            true,
             false,
             &stay_in_shell_task(),
             &ContainerExecutionBinding::Container {
@@ -1244,23 +1206,5 @@ mod tests {
         assert_eq!(super::removal_state(&removed), Some(true));
         assert_eq!(super::removal_state(&failed), Some(false));
         assert_eq!(super::removal_state(&unobserved), None);
-    }
-
-    struct EnvRestore {
-        key: &'static str,
-        value: Option<std::ffi::OsString>,
-    }
-
-    impl Drop for EnvRestore {
-        fn drop(&mut self) {
-            match self.value.take() {
-                Some(value) => unsafe {
-                    env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    env::remove_var(self.key);
-                },
-            }
-        }
     }
 }

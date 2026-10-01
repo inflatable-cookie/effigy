@@ -29,6 +29,9 @@ mod deferral_tests;
 #[path = "runner_tests/managed_and_locking_tests/mod.rs"]
 mod managed_and_locking_tests;
 
+#[path = "runner_tests/env_isolation_tests.rs"]
+mod env_isolation_tests;
+
 #[path = "runner_test_support/mod.rs"]
 mod runner_test_support;
 
