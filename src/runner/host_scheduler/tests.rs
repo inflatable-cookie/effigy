@@ -229,10 +229,14 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
             owned_exit = owned.try_wait().expect("poll owned");
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(
-            owned_exit.is_some_and(|status| !status.success()),
-            "the registered child was terminated"
-        );
+        if owned_exit.is_none() {
+            let _ = owned.kill();
+        }
+        // Always reap our own child, whichever path got here.
+        let reaped = owned.wait().expect("reap owned");
+        let owned_terminated = owned_exit.unwrap_or(reaped);
+        let owned_terminated = !owned_terminated.success();
+        assert!(owned_terminated, "the registered child was terminated");
         assert!(
             foreign.try_wait().expect("poll foreign").is_none(),
             "an unregistered process group is never signalled"
