@@ -1,7 +1,7 @@
 # 049 - Heavy Validation Admission Contract
 
 Owner: Platform
-Last Updated: 2026-09-30
+Last Updated: 2026-10-01
 
 Heavy Effigy validation shares one host-wide admission budget. This contract
 covers invocations started by people, workers, and orchestrators on the same
@@ -35,6 +35,17 @@ This pin defines submit/attach/status/cancel/report, validated parent tokens,
 settlement envelopes and durable container facts. Client implementation follows
 the conforming Queue server; accepting the protocol does not switch execution
 or authorize removal of the current store.
+
+`crates/effigy-host-run` provides the Rust client primitives for that pin:
+descriptor-relative trust discovery, Unix peer proof, bounded NDJSON calls,
+submit ambiguity recovery, attach offsets, settlement validation, parent-token
+verification and durable report-fact replay. Its protocol-specific start
+identity is `PID@boot_id:starttime_ticks` on Linux (proc stat field 22 after
+the last command-name parenthesis) and `PID@UTC-second` on macOS, read from the
+kernel process start time. An unknown identity never matches. Unsupported
+platforms fail closed. These primitives are not wired into selector execution;
+the existing Effigy lease store and every admission and execution path remain
+unchanged until the separately approved scheduler cutover.
 
 The 2026-10-01 re-sign-off accepts verified traversal only for implementations
 without descriptor-relative open. Its ancestor-chain recheck detects persistent

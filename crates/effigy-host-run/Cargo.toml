@@ -1,0 +1,23 @@
+[package]
+name = "effigy-host-run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Trusted client for the Nucleus host-run protocol"
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+effigy-process = { path = "../effigy-process" }
+fs2 = "0.4"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

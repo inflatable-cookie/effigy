@@ -45,6 +45,10 @@
 "test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 
+# Trusted host-run protocol client (contract 010 Client protocol v1)
+"test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
+"check:host-run:compile" = "cargo check -p effigy-host-run"
+
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
