@@ -212,6 +212,21 @@ bootstrap sessions, not worker scopes. The intended Paseo hook is
 `paseo.json` `worktree.teardown`; Queue `workspace.archive` does not call
 retire itself. A consumer that still calls `bootstrap teardown`, checks
 only running containers, or returns 0 on residue needs its own change.
+This repository's own `paseo.json` hooks call `scripts/worktree-lifecycle.sh`
+instead of an installed `effigy`. `setup` discards any staged binary, builds
+`effigy` from the checkout with `CARGO_TARGET_DIR` pinned to
+`target/worktree-hooks`, stages it at `.local-install/worktree-hooks/effigy`,
+then runs the skill `prepare ../effigy-catalog-pack` and `link`. `teardown`
+runs `container retire --yes` and then skill `unlink` with the staged binary,
+so Queue milestone cleanup exercises the lifecycle code under test. Setup
+stages the binary even if later QA fails. A missing or failed build, prepare or
+retire exits non-zero; teardown never falls back to the PATH `effigy` and does
+not unlink after a retire failure. Limits: the helper compiles with raw
+`cargo` as bootstrap, does not install anything globally, and a checkout whose
+setup never ran cannot be torn down by this hook. Covered by
+`test:worktree:lifecycle-hooks`. `NORTHSTAR_SKILL_PATH` still overrides the
+skill location.
+
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
