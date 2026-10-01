@@ -175,7 +175,7 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
 fn token_key_requires_private_regular_file() {
     let fixture = make_fixture();
     let path = fixture.root_path.join("token.key");
-    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([5u8;32])}});
+    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::STANDARD.encode([5u8;32])}});
     std::fs::write(&path, serde_json::to_vec(&content).unwrap()).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let root = HostRunRoot::open(&fixture.root_path).unwrap().0;
@@ -188,7 +188,7 @@ fn token_key_requires_private_regular_file() {
 fn present_invalid_parent_token_is_exit_77_and_never_submits() {
     let fixture = make_fixture();
     let path = fixture.root_path.join("token.key");
-    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([5u8;32])}});
+    let content = json!({"format":"host.run.keys","version":1,"current":{"epoch":3,"keyB64":base64::engine::general_purpose::STANDARD.encode([5u8;32])}});
     std::fs::write(&path, serde_json::to_vec(&content).unwrap()).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut client = client(&fixture);

@@ -19,8 +19,13 @@ During v0.x, MINOR bumps may include breaking changes.
   container start/removal facts report `true`, `false` or `unknown` and replay
   until acknowledged. QA-group run records gain an optional `backend` object
   (schema stays `effigy.qa-group-run.v1`). Run stop/logs commands and group
-  `hard_timeout_ms` remain unavailable. Host-run token keys now accept the
-  scheduler's standard-base64 spelling and millisecond `exp`.
+  `hard_timeout_ms` remain unavailable. Run tokens are strict per contract 010
+  at pin `16fcb59`: keys are 44-character RFC 4648 standard padded base64 of
+  exactly 32 bytes, token parts are unpadded base64url, claims are exactly
+  `runId`/`epoch`/`class`/`root`/`exp` with integer UTC millisecond expiry
+  (valid strictly `now_ms < exp`), and anything else — URL-safe or unpadded
+  keys, padded or standard-alphabet token parts, RFC 3339, string or fractional
+  expiry, unknown or out-of-range claims — exits 77 without queueing.
 - Bounded QA groups (contract 051) land through the existing task pipeline:
   `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained
   `[qa.groups]` definitions plus at most one explicit temporary definition

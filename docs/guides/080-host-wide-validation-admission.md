@@ -124,4 +124,4 @@ and groups with a heavy member):
 Not available: a run stop or logs command, group `hard_timeout_ms`, and any
 default activation. Maintainers prove the backend with
 `effigy test:host-run:integration` against an isolated Queue checkout at merge
-`7563a61` (see the test file header); it never touches the live endpoint.
+`e9e4d12` (see the test file header); it never touches the live endpoint.
