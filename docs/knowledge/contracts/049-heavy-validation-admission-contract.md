@@ -31,7 +31,7 @@ and compatibility semantics must be pinned to the agreed shared contract before
 an implementation brief is dispatched. Queue Spec 031 owns Queue's side.
 
 The client boundary is Nucleus
-[contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/59cca903426635dd3581002a67058919e012eb45/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
+[contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/16fcb59cff96de581f4cb3141b4927d6ab53b4e5/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
 This pin defines submit/attach/status/cancel/report, validated parent tokens,
 settlement envelopes and durable container facts. Client implementation follows
 the conforming Queue server; accepting the protocol does not switch execution
@@ -156,10 +156,15 @@ refresh any installed channel, restart anything, or change workflows.
 Private-server proof used Queue's `bin/host-run-private-server.mjs` at reviewed
 merge `7563a61ef3a1efdb8c6cce43cdb3ad1207cee424` (Queue PR186), run from an
 isolated archive of that commit with a throwaway state directory and never the
-live endpoint (`test:host-run:integration`, see guide 080). The reviewed server
-spells `keyB64` as plain base64 and token `exp` as integer milliseconds; the
-contract names neither, so the client accepts both spellings and RFC 3339
-expiry. The planner should have the shared contract state these two encodings.
+live endpoint (`test:host-run:integration`, see guide 080). The reviewed server emits padded standard base64 keys and integer-millisecond
+expiry. Contract 010 at the current pin makes these encodings normative: a key
+is exactly 32 bytes in 44-character RFC 4648 standard base64 with padding; token
+parts are unpadded base64url and the MAC covers the transmitted first part.
+Claims contain exactly `runId`, `epoch`, `class`, `root`, and `exp`; validity is
+`now_ms < exp`. Effigy re-signed this clarification on 2026-10-01 after independently
+checking its key and HMAC vectors. The shipped client still accepts additional
+spellings and RFC 3339 expiry; strict enforcement and server expiry-boundary
+conformance are prerequisites for activation. This pin does not authorize cutover.
 
 ## Selection and ownership
 
