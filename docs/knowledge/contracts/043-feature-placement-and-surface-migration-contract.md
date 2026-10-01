@@ -306,6 +306,16 @@ Effigy repository's current release gates before removing any existing path.
 
 ## S3 Consumer Gate
 
+Tom's ruling (2026-10-01) authorizes a retirement sequence: Bovine first
+retires its unused media/R2 tasks, then Effigy removes the Rhai `storage::*`
+surface and its vendored S3 dependency. For this sequence, deliberate consumer
+retirement replaces the requirement to implement a replacement upload path.
+Before Effigy removal, reviewed consumer evidence must show that no supported
+task, shared helper, proof or validation contract still requires that surface.
+Preserve existing media, remote objects and secrets; this ruling does not
+authorize live storage cleanup. Generic MinIO catalog services and independent
+consumer S3 adapters remain outside this retirement.
+
 The current Rhai S3 surface remains supported while `bovine-accelerator`
 depends on it for media upload.
 
