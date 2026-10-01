@@ -1,11 +1,11 @@
-//! Opt-in routing of heavy execution through the host-run scheduler.
+//! Routing of heavy execution through the host-run scheduler.
 //!
-//! Contract 049 keeps legacy lease admission as the default. Setting
-//! `EFFIGY_HOST_SCHEDULER=1` sends heavy work through the trusted Client
-//! protocol v1 client in `effigy-host-run`; Queue and Nucleus own admission,
-//! capacity and process-group settlement. A present `HOST_RUN_TOKEN` always
-//! takes the validation path first, so a scheduler-launched child can never
-//! acquire a legacy lease or submit behind its own parent.
+//! Contract 049 uses the trusted Client protocol v1 client in `effigy-host-run`
+//! for heavy work by default. `EFFIGY_HOST_SCHEDULER=0` selects legacy lease
+//! admission for rollback; Queue and Nucleus own scheduler admission, capacity
+//! and process-group settlement. A present `HOST_RUN_TOKEN` always takes the
+//! validation path first, so a scheduler-launched child can never acquire a
+//! legacy lease or submit behind its own parent.
 
 mod facts;
 mod submit;
@@ -24,7 +24,7 @@ use super::error::RunnerError;
 pub(super) use facts::{report_container_removed, report_container_started};
 pub(super) use submit::{submit_and_settle, PreLaunch, Settled, SubmitContext};
 
-pub(super) const OPT_IN_ENV: &str = "EFFIGY_HOST_SCHEDULER";
+pub(super) const SCHEDULER_ENV: &str = "EFFIGY_HOST_SCHEDULER";
 pub(super) const ROOT_ENV: &str = "EFFIGY_HOST_RUN_ROOT";
 pub(super) const OVERRIDE_ENV: &str = "EFFIGY_SCHEDULER_OVERRIDE";
 pub(super) const TOKEN_ENV: &str = "HOST_RUN_TOKEN";
@@ -42,7 +42,7 @@ pub(super) struct Nested {
 /// How a heavy invocation reaches execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Route {
-    /// Opt-in is off: legacy lease admission, unchanged.
+    /// Explicit legacy rollback: lease admission, unchanged.
     Legacy,
     /// Executing inside a validated scheduler run: no second admission.
     Nested(Nested),
@@ -77,21 +77,21 @@ fn unreachable_error(detail: impl std::fmt::Display) -> RunnerError {
     )
 }
 
-/// Parse the opt-in. Unset is legacy; only `1` and `0` are accepted.
-pub(super) fn opted_in() -> Result<bool, RunnerError> {
-    parse_opt_in(std::env::var_os(OPT_IN_ENV))
+/// The scheduler is the default; only `0` selects the legacy backend.
+pub(super) fn scheduler_enabled() -> Result<bool, RunnerError> {
+    parse_scheduler_setting(std::env::var_os(SCHEDULER_ENV))
 }
 
-fn parse_opt_in(value: Option<OsString>) -> Result<bool, RunnerError> {
+fn parse_scheduler_setting(value: Option<OsString>) -> Result<bool, RunnerError> {
     match value {
-        None => Ok(false),
+        None => Ok(true),
         Some(value) => match value.to_str() {
             Some("1") => Ok(true),
             Some("0") => Ok(false),
             _ => Err(refuse(
                 2,
                 format!(
-                    "{OPT_IN_ENV} must be `1` (host scheduler) or `0` (legacy admission); unset keeps legacy admission"
+                    "{SCHEDULER_ENV} must be `1` (host scheduler) or `0` (legacy admission); unset selects the host scheduler"
                 ),
             )),
         },
@@ -101,11 +101,11 @@ fn parse_opt_in(value: Option<OsString>) -> Result<bool, RunnerError> {
 /// Decide how one heavy invocation proceeds. Everything that can refuse does so
 /// here, before any build, setup, container or group effect.
 pub(super) fn route_heavy(selector: &str, cwd: &Path) -> Result<Route, RunnerError> {
-    let opted_in = opted_in()?;
+    let scheduler_enabled = scheduler_enabled()?;
     if let Some(token) = std::env::var_os(TOKEN_ENV) {
         return nested_route(token, selector, cwd).map(Route::Nested);
     }
-    if !opted_in {
+    if !scheduler_enabled {
         return Ok(Route::Legacy);
     }
     if let Some(reason) = override_reason()? {

@@ -363,6 +363,28 @@ working_dir = "/var/www/contact-patch"
     }
 
     #[test]
+    fn scheduler_tokens_are_not_forwarded_to_container_exec() {
+        let mut args = vec![OsString::from("exec"), OsString::from("-T")];
+        let env = BTreeMap::from([
+            ("HOST_RUN_TOKEN".to_owned(), OsString::from("secret-token")),
+            ("HOST_RUN_ID".to_owned(), OsString::from("scheduler-run")),
+            ("VISIBLE".to_owned(), OsString::from("yes")),
+        ]);
+
+        append_container_exec_env(&mut args, &env);
+
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("exec"),
+                OsString::from("-T"),
+                OsString::from("-e"),
+                OsString::from("VISIBLE=yes"),
+            ]
+        );
+    }
+
+    #[test]
     fn non_primary_service_shell_skips_workspace_effigy_refresh() {
         let mut policy = test_policy(Vec::new());
         policy.primary_service = "workspace".to_owned();

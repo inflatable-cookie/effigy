@@ -5,11 +5,12 @@ Last Updated: 2026-10-01
 
 Heavy Effigy validation shares one host-wide admission budget. This contract
 covers invocations started by people, workers, and orchestrators on the same
-machine. The default mechanism is Effigy-owned: Queue supplies caller identity
-and observes Effigy's state. An explicit opt-in backend (below) routes heavy
-execution through the host-run scheduler; the cutover that makes it the default
-is approved for gated implementation, but is not implemented. Lease-store
-removal remains a separate later cut.
+machine. The default backend for heavy execution is the Queue/Nucleus host-run
+scheduler. `EFFIGY_HOST_SCHEDULER=0` retains the existing Effigy lease backend
+as a reversible rollback. The scheduler default is implemented in source;
+installed-channel activation remains planner-owned after the reviewed milestone
+and backed-up rollout gates pass. Lease-store removal remains a separate later
+cut.
 
 ## Scheduler ownership ruling
 
@@ -25,11 +26,10 @@ group. Heavy invocations started directly through Effigy will request admission
 from the scheduler endpoint rather than an Effigy-owned lease store.
 
 Freeze new implementation of Effigy's admission and lease store. Keep the
-existing mechanism unchanged until the scheduler is live and the cutover is
-proved. Removal follows cutover; it must not leave a period of unadmitted heavy
-execution. Endpoint discovery, grants, nested execution, cancellation, failure
-and compatibility semantics must be pinned to the agreed shared contract before
-an implementation brief is dispatched. Queue Spec 031 owns Queue's side.
+existing mechanism unchanged for explicit rollback. Removal is a later cut; it
+must not leave a period of unadmitted heavy execution. Endpoint discovery,
+grants, nested execution, cancellation, failure and compatibility semantics
+must be pinned to the agreed shared contract. Queue Spec 031 owns Queue's side.
 
 The client boundary is Nucleus
 [contract 010, Client protocol v1](https://github.com/inflatable-cookie/nucleus/blob/16fcb59cff96de581f4cb3141b4927d6ab53b4e5/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
@@ -45,10 +45,9 @@ verification and durable report-fact replay. Its protocol-specific start
 identity is `PID@boot_id:starttime_ticks` on Linux (proc stat field 22 after
 the last command-name parenthesis) and `PID@UTC-second` on macOS, read from the
 kernel process start time. An unknown identity never matches. Unsupported
-platforms fail closed. Selector execution uses them only through the opt-in
-backend below; the existing Effigy lease store and every legacy admission and
-execution path remain unchanged and remain the default until the separately
-approved scheduler cutover.
+platforms fail closed. Selector execution uses them through the default
+scheduler backend below; the existing Effigy lease store and legacy admission
+path remain unchanged for explicit rollback.
 
 The 2026-10-01 re-sign-off accepts verified traversal only for implementations
 without descriptor-relative open. Its ancestor-chain recheck detects persistent
@@ -78,15 +77,16 @@ remains for rollback; its later removal requires Queue's admission-hook change
 first. No global shell or service environment edits, forced restarts, live
 cleanup, automatic VM starts, workflow changes, or releases are authorized.
 
-## Opt-in scheduler backend
+## Scheduler backend and explicit legacy rollback
 
-Migration step (b) of the shared contract is shipped behind a setting. Step (c)
-(removing the lease store) and any default activation are not.
+Migration step (b) of the shared contract is the default in source. Step (c)
+(removing the lease store) is not part of this cutover.
 
-- `EFFIGY_HOST_SCHEDULER=1` routes top-level heavy work through the scheduler.
-  Unset or `0` keeps legacy lease admission, unchanged. Any other value refuses
-  with exit 2 before any effect. The setting is the only switch: nothing
-  detects a scheduler and switches on its own.
+- Unset or `EFFIGY_HOST_SCHEDULER=1` routes top-level heavy work through the
+  scheduler. `EFFIGY_HOST_SCHEDULER=0` selects the retained legacy lease
+  backend, unchanged. Any other value refuses with exit 2 before any effect.
+  This setting is the only backend switch: Effigy does not detect availability
+  and fall back automatically.
 - Classification is the existing one: published and draft tasks resolved as
   implicit `qa`/`ci`/`ci:fresh` or explicit `admission = "heavy"`, and QA groups
   with a heavy member. Light work, `--plan` and discovery stay direct and acquire
@@ -160,8 +160,8 @@ Migration step (b) of the shared contract is shipped behind a setting. Step (c)
   valid.
 
 Unchanged and unavailable: the generic run stop/logs commands, group
-`hard_timeout_ms`, and contract 052 remain unavailable. The opt-in does not
-refresh any installed channel, restart anything, or change workflows.
+`hard_timeout_ms`, and contract 052 remain unavailable. Default selection does
+not refresh any installed channel, restart anything, or change workflows.
 
 ### Backend evidence
 
@@ -193,7 +193,11 @@ shell or service environment changes, forced restarts, automatic VM starts,
 live cleanup, or default activation. Local-channel proof must record exact
 source and artifact hashes, parent-token reuse without a second reservation,
 truthful cancellation settlement, owned-process closure, and a rollback.
-Native Linux private checks do not prove connection to the host's live endpoint.
+Heavy work on native Linux without a reachable scheduler endpoint fails closed
+with exit 75. Host-owned container task legs remain inside the launched Effigy
+run: they do not acquire a second scheduler reservation, and container exec and
+sudo boundaries strip `HOST_RUN_TOKEN` and `HOST_RUN_ID`. A native Linux private
+server proves the protocol; it does not prove a host endpoint inside a container.
 
 ## Selection and ownership
 
@@ -204,12 +208,19 @@ Native Linux private checks do not prove connection to the host's live endpoint.
 - Effigy's own `qa:ci:fast` and `qa:ci:local` are explicitly marked heavy.
   Other tasks remain unchanged until their owners mark them. `effigy test` is
   not implicitly heavy in isolation; its repository may provide a heavy
-  wrapper. `--plan` and read-only task discovery never acquire a lease.
+  wrapper. `--plan` and read-only task discovery never acquire admission.
 - Admission happens once after selection and before setup, build, container
-  activation, or test execution. A nested Effigy task within that run shares
-  its parent's lease, including a heavy nested task. A separate top-level
-  invocation always requests its own lease. Reentry must prove the parent
-  lease, not trust a forgeable environment flag alone.
+  activation, or test execution. Under the default scheduler backend, a nested
+  heavy Effigy call validates and reuses its parent's run token. With explicit
+  `EFFIGY_HOST_SCHEDULER=0`, it proves and reuses its parent's lease. A separate
+  top-level invocation always requests its own admission. Reentry proves the
+  parent authority instead of trusting a forgeable environment flag.
+
+## Legacy lease backend details (`EFFIGY_HOST_SCHEDULER=0`)
+
+The capacity, waiting, recovery, joining, telemetry and query sections below
+describe the retained Effigy lease store. Queue and Nucleus own those concerns
+for the default scheduler backend.
 - The host-wide state is outside repositories and worktrees. All Effigy
   processes on one host use the same coordinator, lock, queue, and run journal.
   State creation validates directory ownership, permissions, and symlinks;
@@ -218,7 +229,7 @@ Native Linux private checks do not prove connection to the host's live endpoint.
   location and permissions are required when several OS users run Effigy on
   one machine.
 
-## Capacity and fairness
+### Capacity and fairness
 
 - The coordinator measures host logical CPU count and physical memory. Its
   default aggregate reservation budget leaves at least half of each for
@@ -242,7 +253,7 @@ Native Linux private checks do not prove connection to the host's live endpoint.
   headroom from *concurrent* heavy validations; a single task that exceeds
   its reservation remains visible as an overrun.
 
-## Wait and run lifecycle
+### Wait and run lifecycle
 
 - The caller may set `EFFIGY_CALLER` to an opaque identity such as
   `queue:<taskId>:<runId>`. Effigy records it without treating it as an
@@ -264,7 +275,7 @@ Native Linux private checks do not prove connection to the host's live endpoint.
   an unverifiable boot identity, or a live child prevents reclamation and
   produces an actionable stale/unknown status rather than unsafe admission.
 
-## Result identity and joins
+### Result identity and joins
 
 Tom ruled on 2026-09-28 to ship host-wide admission before same-input joins.
 Each current invocation takes its own lease and runs every gate. Joining stays
@@ -291,7 +302,7 @@ The deferred joining contract is:
   completely disables joining before execution. Completed-result caching
   across worktrees is outside this contract.
 
-## Telemetry and query
+### Telemetry and query
 
 Each invocation retains `queued_at`, `admitted_at`, `started_at`, `ended_at`,
 `queue_wait_ms`, `wall_ms`, CPU user and system time, and peak RSS when the

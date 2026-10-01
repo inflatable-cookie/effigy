@@ -20,6 +20,6 @@ Current technical authority for Effigy.
 | Docs-check source traversal | [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md) |
 | Bounded QA groups runtime (proposed) | [031-bounded-qa-groups-runtime.md](031-bounded-qa-groups-runtime.md) |
 | Owned run supervision runtime (proposed) | [032-owned-run-supervision-runtime.md](032-owned-run-supervision-runtime.md) |
-| Trusted host-run protocol client and opt-in scheduler routing | [033-host-run-protocol-client.md](033-host-run-protocol-client.md) |
+| Trusted host-run protocol client and default scheduler routing | [033-host-run-protocol-client.md](033-host-run-protocol-client.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |

@@ -10,9 +10,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - GitHub Releases will include verified, unsigned SHA-256 sidecars for both
   macOS binaries starting with the next normally authorized release. The raw
   binaries keep their existing names.
-- `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
+- Unset or `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
-  instead of the legacy lease, which stays the default. The scheduler launches
+  instead of the legacy lease; `EFFIGY_HOST_SCHEDULER=0` retains the legacy
+  backend for rollback. The scheduler launches
   the same invocation with a run token; nested calls reuse it in place and an
   invalid token exits 77. An unreachable scheduler fails heavy work with exit
   75 (no legacy fallback); `EFFIGY_SCHEDULER_OVERRIDE=<reason>` records a

@@ -7,7 +7,7 @@ queries; do not claim run-scoped stop or interruption attribution.
 
 Shipped narrow subset: with `EFFIGY_HOST_SCHEDULER=1`, Ctrl-C or SIGTERM on a
 heavy `effigy` run asks the host-run scheduler to cancel that run and then
-reports how it settled (see [080](080-host-wide-validation-admission.md#opt-in-host-scheduler-backend)).
+reports how it settled (see [080](080-host-wide-validation-admission.md#default-host-scheduler-backend)).
 That is not run control: there is still no stop or logs command for runs and no
 hard timeout.
 

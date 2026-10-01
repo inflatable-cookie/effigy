@@ -137,16 +137,16 @@ members.
 ## Admission and timing
 
 Before any side effect, the resolver classifies all resolved members and their
-known nested task references. If any path is heavy under contract
-[049](../contracts/049-heavy-validation-admission-contract.md), the coordinator
-obtains one host-wide lease before setup and retains it to cleanup. Serial
-members require the maximum selected reservation, not their sum. Nested task
-re-entry proves and reuses the parent lease; the group cannot use a caller
-environment variable to fabricate it.
+known nested task references. If the legacy backend is selected with
+`EFFIGY_HOST_SCHEDULER=0`, the coordinator obtains one host-wide lease before
+setup and retains it to cleanup. Serial members require the maximum selected
+reservation, not their sum. Nested task re-entry proves and reuses the parent
+lease; the group cannot use a caller environment variable to fabricate it.
 
-With `EFFIGY_HOST_SCHEDULER=1` the same heavy classification submits the whole
-group to the host-run scheduler instead of acquiring a lease (contract
-[049](../contracts/049-heavy-validation-admission-contract.md#opt-in-scheduler-backend)).
+By default the same heavy classification submits the whole group to the
+host-run scheduler instead of acquiring a lease; `EFFIGY_HOST_SCHEDULER=0`
+selects the retained lease backend for rollback (contract
+[049](../contracts/049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback)).
 The scheduler launches this invocation with a run token; that child validates
 the token, owns the one ledger and records `backend` correlation, and its
 members run in place with no lease. Preflight, including `needs_planner`, runs

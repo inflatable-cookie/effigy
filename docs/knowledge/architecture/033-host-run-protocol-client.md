@@ -79,13 +79,13 @@ scheduler, which is how an operator override is recorded durably.
 
 ## Integration
 
-`src/runner/host_scheduler/` is the only consumer. It is inert unless
-`EFFIGY_HOST_SCHEDULER=1` or a `HOST_RUN_TOKEN` is present; with neither, the
-legacy lease path runs unchanged.
+`src/runner/host_scheduler/` is the only consumer. Heavy work uses this
+client by default; `EFFIGY_HOST_SCHEDULER=0` selects the retained legacy lease
+path. A present `HOST_RUN_TOKEN` is validated before backend selection.
 
-- `mod.rs` parses the opt-in and override, validates a present token, and picks
-  one route per heavy invocation: legacy, nested (in place), override (recorded,
-  direct) or submit. Refusals happen here, before any effect.
+- `mod.rs` parses the backend setting and override, validates a present token,
+  and picks one route per heavy invocation: legacy, nested (in place), override
+  (recorded, direct) or submit. Refusals happen here, before any effect.
 - `submit.rs` builds the request from the process's own argv, cwd and
   environment, streams attach output, turns the first interrupt into one cancel
   and maps the settlement to an exit status. A launched run exits with the
@@ -97,6 +97,6 @@ legacy lease path runs unchanged.
   scope with no lease and no admission-store access: it records only the process
   groups this process started and forwards termination to them.
 
-Contract [049](../contracts/049-heavy-validation-admission-contract.md#opt-in-scheduler-backend)
+Contract [049](../contracts/049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback)
 owns the behavior. Run-scoped stop, logs and group `hard_timeout_ms` stay
 unavailable; contract 052 is not implemented by this boundary.

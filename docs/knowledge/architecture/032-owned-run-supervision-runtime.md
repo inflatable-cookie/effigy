@@ -3,7 +3,7 @@
 Contract: [052](../contracts/052-owned-run-supervision-contract.md)
 Status: proposed and unavailable until implementation.
 
-The opt-in scheduler backend ships a narrow part of this boundary for heavy
+The default scheduler backend ships a narrow part of this boundary for heavy
 runs only: the scheduler owns run identity and the process group, Effigy
 cancels its own submitted run on interrupt and forwards termination to the
 groups its tasks started (`OwnedChildrenScope`, no lease). The supervisor,
