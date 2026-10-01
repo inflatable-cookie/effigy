@@ -173,6 +173,16 @@ private server at `e9e4d12d1c232c534acf1e8dd5b34269ba7a38e5` (Queue PR192),
 whose readers follow the same pin and expire at equality. This pin does not
 authorize cutover.
 
+Tom's 2026-10-01 local-channel ruling (decision `4404f2e8`) permits the
+backed-up host and ARM64 Linux channel refresh and installed-skill refresh from
+the tested source, followed by bounded invocation-only scheduler evidence.
+That scope preserves the legacy default and store; it does not authorize
+shell or service environment changes, forced restarts, automatic VM starts,
+live cleanup, or default activation. Local-channel proof must record exact
+source and artifact hashes, parent-token reuse without a second reservation,
+truthful cancellation settlement, owned-process closure, and a rollback.
+Native Linux private checks do not prove connection to the host's live endpoint.
+
 ## Selection and ownership
 
 - The resolved task selectors `qa`, `ci`, and `ci:fresh` are heavy even when a
