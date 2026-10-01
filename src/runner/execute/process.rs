@@ -30,6 +30,14 @@ pub(super) fn build_shell_process(
             use std::os::unix::process::CommandExt;
             process.process_group(0);
         }
+    } else if super::super::admission::signal_scope_active() {
+        // A scheduler-launched run owns this child's group so a termination
+        // signal can be forwarded to it without touching any other group.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            process.process_group(0);
+        }
     }
     process
 }

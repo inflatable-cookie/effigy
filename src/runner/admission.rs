@@ -521,13 +521,72 @@ impl Drop for LeaseScope {
     }
 }
 
+/// Signal-forwarding scope for a scheduler-launched (nested) run. It holds no
+/// lease and never touches the legacy admission store: it only remembers the
+/// process groups of children this process started so a termination signal
+/// reaches those groups and nothing else.
+pub(super) struct OwnedChildrenScope {
+    previous_signal_state: Option<Arc<Mutex<LeaseSignalState>>>,
+    previous_observer: Option<effigy_process::ProcessGroupObserver>,
+    _signal_forwarder: LeaseSignalForwarder,
+}
+
+impl OwnedChildrenScope {
+    pub(super) fn enter() -> io::Result<Self> {
+        let signal_forwarder = LeaseSignalForwarder::install()?;
+        let previous_signal_state =
+            replace_current_signal_state(Some(signal_forwarder.state.clone()));
+        let signal_state = signal_forwarder.state.clone();
+        let observer = Arc::new(move |event| match event {
+            effigy_process::ProcessGroupEvent::Started(pid) => {
+                signal_state_register(&signal_state, pid);
+            }
+            effigy_process::ProcessGroupEvent::Stopped(pid) => {
+                signal_state_unregister_if_gone(&signal_state, pid);
+            }
+        }) as effigy_process::ProcessGroupObserver;
+        let previous_observer = effigy_process::replace_process_group_observer(Some(observer));
+        Ok(Self {
+            previous_signal_state,
+            previous_observer,
+            _signal_forwarder: signal_forwarder,
+        })
+    }
+}
+
+impl Drop for OwnedChildrenScope {
+    fn drop(&mut self) {
+        effigy_process::replace_process_group_observer(self.previous_observer.take());
+        replace_current_signal_state(self.previous_signal_state.take());
+    }
+}
+
+/// True while a lease or owned-children scope forwards signals to children.
+pub(super) fn signal_scope_active() -> bool {
+    current_signal_state().is_some()
+}
+
+/// CPU units and memory a heavy run reserves, shared with the scheduler path so
+/// both backends honour the same `EFFIGY_ADMISSION_*` reservation settings.
+pub(super) fn requested_reservation_units() -> Result<(u32, u64), String> {
+    let budget = host_budget()?;
+    let reservation = requested_reservation(&budget)?;
+    Ok((reservation.cpu_units, reservation.memory_mib))
+}
+
+/// Capacity wait in seconds, shared with the scheduler path.
+pub(super) fn capacity_wait_secs() -> Result<u64, String> {
+    wait_timeout_secs()
+}
+
 pub(super) fn register_process_group(pid: u32) {
-    let Some(lease_id) = current_lease_id() else {
-        return;
-    };
-    let Ok(root) = state_root() else { return };
-    register_process_group_for(&root, &lease_id, pid);
-    if let Some(state) = current_signal_state() {
+    let signal_state = current_signal_state();
+    if let Some(lease_id) = current_lease_id() {
+        if let Ok(root) = state_root() {
+            register_process_group_for(&root, &lease_id, pid);
+        }
+    }
+    if let Some(state) = signal_state {
         signal_state_register(&state, pid);
     }
 }

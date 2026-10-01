@@ -82,6 +82,9 @@ fn append_task_exec_env(args: &mut Vec<OsString>, task_env: Option<&BTreeMap<Str
         return;
     };
     for (key, value) in task_env {
+        if crate::runner::host_scheduler::is_scheduler_owned_env(key) {
+            continue;
+        }
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("{key}={value}")));
     }
@@ -398,6 +401,9 @@ pub(super) struct ParsedComposeExec {
 
 fn append_exec_env(args: &mut Vec<OsString>, secret_env: Option<&[(&str, &SecretString)]>) {
     for (key, value) in secret_env.unwrap_or(&[]) {
+        if crate::runner::host_scheduler::is_scheduler_owned_env(key) {
+            continue;
+        }
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("{key}={}", value.expose())));
     }

@@ -393,6 +393,7 @@ mod tests {
                 hard_timeout: false,
                 stop: false,
             },
+            backend: None,
         }
     }
 

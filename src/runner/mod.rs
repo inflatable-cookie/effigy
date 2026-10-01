@@ -33,6 +33,7 @@ mod graph_command;
 mod graph_time_budget;
 mod host_container_lease;
 mod host_process;
+mod host_scheduler;
 mod interactive_session;
 mod locking;
 mod managed_shell;

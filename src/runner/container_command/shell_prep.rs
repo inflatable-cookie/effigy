@@ -74,6 +74,9 @@ pub(super) fn append_container_exec_env(
     env: &BTreeMap<String, OsString>,
 ) {
     for (key, value) in env {
+        if crate::runner::host_scheduler::is_scheduler_owned_env(key) {
+            continue;
+        }
         args.push(OsString::from("-e"));
         let mut assignment = OsString::from(key);
         assignment.push("=");

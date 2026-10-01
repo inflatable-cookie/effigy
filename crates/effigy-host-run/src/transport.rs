@@ -1240,6 +1240,34 @@ fn validate_status(value: Value) -> Result<Value, ClientError> {
     Ok(value)
 }
 
+/// Append facts to the durable pending journal without contacting the
+/// scheduler. The next client call replays them until acknowledged. A known
+/// `factId` with a different body is a conflict; an identical copy is a no-op.
+pub fn journal_facts_offline(root: &HostRunRoot, facts: &[Value]) -> Result<(), ClientError> {
+    let lock = root.open_pending_lock()?;
+    lock.lock_exclusive()?;
+    let result = (|| {
+        let mut file = root.open_pending_facts()?;
+        let mut pending = read_pending(&mut file)?;
+        for fact in facts {
+            validate_fact(fact)?;
+            let id = fact["factId"].as_str().expect("validated fact id");
+            match pending.iter().find(|value| value["factId"] == id) {
+                Some(existing) if existing != fact => {
+                    return Err(ClientError::ReportConflict(id.to_owned()))
+                }
+                Some(_) => {}
+                None => pending.push(fact.clone()),
+            }
+        }
+        write_pending(root, &pending)
+    })();
+    let unlock = FileExt::unlock(&lock);
+    let value = result?;
+    unlock?;
+    Ok(value)
+}
+
 fn read_pending(file: &mut File) -> Result<Vec<Value>, ClientError> {
     file.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();

@@ -95,6 +95,46 @@ impl HostRunRoot {
         Ok((root, authority))
     }
 
+    /// Open the subtree root for the durable pending-facts journal only. No
+    /// authority or socket proof is required, so an operator override can be
+    /// recorded while the scheduler is down. A missing root is created `0700`
+    /// when `create` is set; an existing root must pass the normal checks.
+    pub fn open_journal(path: impl AsRef<Path>, create: bool) -> Result<Self, TrustError> {
+        use std::os::unix::fs::DirBuilderExt;
+        let path = path.as_ref();
+        if create && !path.exists() {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(DIRECTORY_MODE)
+                .create(path)?;
+        }
+        let path = std::fs::canonicalize(path)?;
+        let cpath = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| TrustError::Invalid("root path contains NUL"))?;
+        let fd = unsafe {
+            libc::open(
+                cpath.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let directory = unsafe { File::from_raw_fd(fd) };
+        let uid = unsafe { libc::geteuid() } as u32;
+        verify_fd(&directory, libc::S_IFDIR as u32, DIRECTORY_MODE, uid)?;
+        Ok(Self {
+            path,
+            directory,
+            uid,
+        })
+    }
+
+    /// Canonical subtree root path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(super) fn read_authority(&self) -> Result<Authority, TrustError> {
         let file = open_file(self.directory.as_raw_fd(), "authority.json", self.uid)?;
         let mut bytes = Vec::new();

@@ -12,10 +12,11 @@ pub use identity::{canonical_start_identity, start_identity_matches};
 pub use secure_fs::{Authority, HostRunRoot, TrustError};
 pub use token::{ParentToken, TokenError, TokenKeys};
 pub use transport::{
-    container_removed_fact, container_started_fact, nested_fact, new_client_request_id, new_fact,
-    override_fact, AttachEvent, BudgetFallback, ClassSource, ClientError, Clock, HostRunClient,
-    HostRunFact, IdentityProvider, OutputStream, Priority, RunClass, Settlement, SettlementOutcome,
-    StatusQuery, SubmitRequest, SubmitResult, SystemClock, SystemIdentityProvider, WireError,
+    container_removed_fact, container_started_fact, journal_facts_offline, nested_fact,
+    new_client_request_id, new_fact, override_fact, AttachEvent, BudgetFallback, ClassSource,
+    ClientError, Clock, HostRunClient, HostRunFact, IdentityProvider, OutputStream, Priority,
+    RunClass, Settlement, SettlementOutcome, StatusQuery, SubmitRequest, SubmitResult, SystemClock,
+    SystemIdentityProvider, WireError,
 };
 
 /// Maximum encoded NDJSON frame size, including the newline.
