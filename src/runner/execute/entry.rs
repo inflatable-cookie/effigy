@@ -7,6 +7,7 @@ use effigy_manifest::{ManifestTaskAdmission, TaskSelection};
 use super::pipeline::run_execution_pipeline;
 use super::planning::build_execution_preflight_from_input;
 use crate::runner::error::RunnerError;
+use crate::runner::host_scheduler::{self, Route, SubmitContext};
 
 fn run_manifest_task_with_preflight_input(
     task: &TaskInvocation,
@@ -89,7 +90,9 @@ fn run_selected_task_with_admission(
     selection: &TaskSelection<'_>,
     execute: impl FnOnce() -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
-    if crate::runner::admission::scoped_lease_id().is_some() {
+    if crate::runner::admission::scoped_lease_id().is_some()
+        || crate::runner::admission::signal_scope_active()
+    {
         return execute();
     }
     let task_name = preflight.selector.task_name.as_str();
@@ -102,12 +105,34 @@ fn run_selected_task_with_admission(
         return execute();
     }
 
-    let caller = std::env::var("EFFIGY_CALLER")
-        .unwrap_or_else(|_| crate::runner::admission::default_caller_identity());
     let selector = preflight.selector.prefix.as_ref().map_or_else(
         || task_name.to_owned(),
         |prefix| format!("{prefix}/{task_name}"),
     );
+    match host_scheduler::route_heavy(&selector, &preflight.invocation_cwd)? {
+        Route::Legacy => {}
+        Route::Nested(_) | Route::Override => {
+            let scope = crate::runner::admission::OwnedChildrenScope::enter().map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot install heavy-run signal forwarding: {error}"
+                ))
+            })?;
+            let result = execute();
+            drop(scope);
+            return result;
+        }
+        Route::Submit => {
+            let settled = host_scheduler::submit_and_settle(SubmitContext {
+                selector: &selector,
+                class_source: host_scheduler::class_source(selected_heavy),
+                repository: &preflight.invocation_cwd,
+                cwd: &preflight.invocation_cwd,
+            })?;
+            return Err(settled.into_error());
+        }
+    }
+    let caller = std::env::var("EFFIGY_CALLER")
+        .unwrap_or_else(|_| crate::runner::admission::default_caller_identity());
     let lease = crate::runner::admission::acquire(crate::runner::admission::Request {
         caller: &caller,
         repository: &preflight.invocation_cwd,

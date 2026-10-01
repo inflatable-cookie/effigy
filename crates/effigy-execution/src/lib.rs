@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use effigy_context::{EffigyRuntimeContext, TaskSourceContext};
 use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
 pub use qa_group_status::{
-    member_log_file_name, qa_group_log_dir, QaGroupBudgetState, QaGroupGapSnapshot,
+    member_log_file_name, qa_group_log_dir, QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot,
     QaGroupMemberRecord, QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities,
     QaGroupRunGroupSnapshot, QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming,
     QaGroupScopeMatchRecord, QaGroupStatusSnapshot, QaMemberExit, QA_GROUP_RUN_SCHEMA,

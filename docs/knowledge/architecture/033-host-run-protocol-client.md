@@ -1,16 +1,16 @@
 # 033 - Trusted Host-Run Protocol Client
 
 Contract: [Nucleus 010 Client protocol v1](../contracts/049-heavy-validation-admission-contract.md#scheduler-ownership-ruling)
-Status: library primitives available; execution integration is deferred.
+Status: library primitives available; the root runner consumes them for opt-in
+heavy routing only (see Integration below).
 
 ## Placement and boundary
 
 `crates/effigy-host-run` is a leaf Rust client crate for the Queue/Nucleus
 host-run socket. It has no scheduler, admission decisions, task selection,
 process launching, or lease store. A following integration change may consume
-its typed submit, attach, status, cancel and report APIs after the conforming
-Queue server is qualified. The current Effigy admission and selector execution
-paths do not call this crate.
+its typed submit, attach, status, cancel and report APIs. The crate itself still
+has no scheduling, admission decisions, task selection or process launching.
 
 The client follows [contract 049](../contracts/049-heavy-validation-admission-contract.md)
 and the signed [Nucleus 010 pin](https://github.com/inflatable-cookie/nucleus/blob/59cca903426635dd3581002a67058919e012eb45/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
@@ -61,6 +61,37 @@ used.
   facts are typed; none makes capacity decisions.
 
 The client does not pass scheduler credentials or parent tokens in output or
-container environments. It does not invoke a live endpoint during its tests,
-change selector execution, switch admission, or remove the existing lease
-mechanism.
+container environments. It does not invoke a live endpoint during its tests or
+remove the existing lease mechanism.
+
+Interoperability with the reviewed Queue server (merge `7563a61`, PR186) fixed
+two spellings the contract leaves open: `keyB64` is plain base64 (URL-safe and
+unpadded spellings also decode, still exactly 32 bytes) and token `exp` is
+integer milliseconds since the Unix epoch (RFC 3339 text also parses). The MAC
+covers the payload either way. `HostRunRoot::open_journal` and
+`journal_facts_offline` append facts to the pending journal without a reachable
+scheduler, which is how an operator override is recorded durably.
+
+## Integration
+
+`src/runner/host_scheduler/` is the only consumer. It is inert unless
+`EFFIGY_HOST_SCHEDULER=1` or a `HOST_RUN_TOKEN` is present; with neither, the
+legacy lease path runs unchanged.
+
+- `mod.rs` parses the opt-in and override, validates a present token, and picks
+  one route per heavy invocation: legacy, nested (in place), override (recorded,
+  direct) or submit. Refusals happen here, before any effect.
+- `submit.rs` builds the request from the process's own argv, cwd and
+  environment, streams attach output, turns the first interrupt into one cancel
+  and maps the settlement to an exit status. A launched run exits with the
+  child's real status through `RunnerError::HostRunSettled`; unlaunched
+  outcomes are typed refusals.
+- `facts.rs` reports `nested`, `override` and owned-container facts, journaling
+  before any send.
+- A nested or overridden run installs `OwnedChildrenScope`, a signal-forwarding
+  scope with no lease and no admission-store access: it records only the process
+  groups this process started and forwards termination to them.
+
+Contract [049](../contracts/049-heavy-validation-admission-contract.md#opt-in-scheduler-backend)
+owns the behavior. Run-scoped stop, logs and group `hard_timeout_ms` stay
+unavailable; contract 052 is not implemented by this boundary.

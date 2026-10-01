@@ -632,6 +632,9 @@ fn run_runtime_volume_usage_capture(
 
     std::process::Command::new(&program)
         .current_dir(repo_root)
+        // Run tokens stay out of privileged helper commands.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
         .args(&args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -692,6 +695,9 @@ fn run_runtime_volume_usage_batch_capture(
 
     std::process::Command::new(&program)
         .current_dir(repo_root)
+        // Run tokens stay out of privileged helper commands.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
         .args(&args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -753,6 +759,9 @@ fn run_runtime_volume_cache_kind_batch_capture(
 
     std::process::Command::new(&program)
         .current_dir(repo_root)
+        // Run tokens stay out of privileged helper commands.
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
         .args(&args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {

@@ -703,3 +703,47 @@ fn unknown_identity_and_legacy_fractional_identity_never_match() {
     let legacy = format!("{identity}.000Z");
     assert!(!start_identity_matches(pid, &legacy));
 }
+
+#[test]
+fn offline_journal_writers_serialize_and_keep_every_fact() {
+    let fixture = make_fixture();
+    let handles: Vec<_> = (0..4)
+        .map(|index| {
+            let path = fixture.root_path.clone();
+            thread::spawn(move || {
+                let root = HostRunRoot::open_journal(&path, false).unwrap();
+                let fact = crate::override_fact(
+                    "outage drill",
+                    &format!("selector-{index}"),
+                    &FixedClock(Utc::now()),
+                )
+                .unwrap();
+                crate::journal_facts_offline(&root, std::slice::from_ref(&fact)).unwrap();
+                // An identical copy is a no-op, not a duplicate line.
+                crate::journal_facts_offline(&root, &[fact]).unwrap();
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    let journal = std::fs::read_to_string(fixture.root_path.join("pending-facts.jsonl")).unwrap();
+    assert_eq!(journal.lines().count(), 4);
+}
+
+#[test]
+fn journal_root_is_created_private_and_unsafe_roots_are_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = tempfile::tempdir().unwrap();
+    let root = parent.path().join("state/host-run");
+    assert!(HostRunRoot::open_journal(&root, false).is_err());
+    let created = HostRunRoot::open_journal(&root, true).unwrap();
+    let mode = std::fs::metadata(created.path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o700);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(HostRunRoot::open_journal(&root, true).is_err());
+}

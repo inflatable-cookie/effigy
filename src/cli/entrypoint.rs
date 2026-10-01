@@ -237,9 +237,16 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             if let Some(spinner) = spinner.as_ref() {
                 spinner.finish_clear();
             }
+            let scheduler_exit = err.host_scheduler_exit_code();
+            if matches!(err, crate::runner::RunnerError::HostRunSettled { .. }) {
+                // The scheduler-launched child already wrote its own output and
+                // envelope; relay its status without adding text.
+                std::process::exit(scheduler_exit.unwrap_or(1));
+            }
+            let exit_code = scheduler_exit.unwrap_or(1);
             if context.emit_json_envelope {
                 emit_json_envelope_error(
-                    1,
+                    exit_code,
                     context.command_kind,
                     context.command_name,
                     "RunnerError",
@@ -265,7 +272,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);
             let _ = err_renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));
-            std::process::exit(1);
+            std::process::exit(exit_code);
         }
     }
 }

@@ -764,6 +764,10 @@ fn run_inline_workspace_standard_task(
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
     let _ = activate_inline_workspace_container_runtime(repo_root, &policy)?;
+    crate::runner::host_scheduler::report_container_started(
+        owned_container_runtime(repo_root, &policy),
+        policy.name.as_str(),
+    );
 
     let exec_result = if preflight.output_json {
         let output = capture_routed_task_container_exec_with_policy(
@@ -780,12 +784,7 @@ fn run_inline_workspace_standard_task(
             &policy,
             &working_dir,
         );
-        let _ = run_compose_capture(
-            repo_root,
-            &policy,
-            &compose_args(&policy, ["down", "--remove-orphans"]),
-            "docker compose down",
-        );
+        teardown_inline_workspace_container(repo_root, &policy);
         let output = output?;
         let stdout =
             redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
@@ -820,12 +819,7 @@ fn run_inline_workspace_standard_task(
             &policy,
             &working_dir,
         );
-        let _ = run_compose_capture(
-            repo_root,
-            &policy,
-            &compose_args(&policy, ["down", "--remove-orphans"]),
-            "docker compose down",
-        );
+        teardown_inline_workspace_container(repo_root, &policy);
         result.map(|_| {
             if preflight.runtime_args_raw.verbose_root {
                 context.render_resolution_trace()
@@ -836,6 +830,42 @@ fn run_inline_workspace_standard_task(
     };
 
     exec_result
+}
+
+fn owned_container_runtime(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> &'static str {
+    match effigy_containers::compose::resolve_compose_backend_for_repo(repo_root, policy) {
+        effigy_containers::compose::ComposeBackend::Docker => "docker-compose",
+        effigy_containers::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
+    }
+}
+
+/// Tear down the container this task activated and report the result to the
+/// scheduler run it ran under. Removal is `true` only when the teardown command
+/// succeeded; a failed command is `false` and an unrunnable one is unknown.
+fn teardown_inline_workspace_container(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) {
+    let result = run_compose_capture(
+        repo_root,
+        policy,
+        &compose_args(policy, ["down", "--remove-orphans"]),
+        "docker compose down",
+    );
+    crate::runner::host_scheduler::report_container_removed(
+        owned_container_runtime(repo_root, policy),
+        policy.name.as_str(),
+        removal_state(&result),
+    );
+}
+
+/// `true` only when the teardown command ran and succeeded, `false` when it ran
+/// and failed, `None` (unknown) when it could not be observed.
+fn removal_state<E>(result: &Result<std::process::Output, E>) -> Option<bool> {
+    result.as_ref().ok().map(|output| output.status.success())
 }
 
 fn standard_runtime_activation_plan(
@@ -1201,6 +1231,19 @@ mod tests {
             ))
         );
         assert!(!activation.refreshed_host_container_lease);
+    }
+
+    #[test]
+    fn container_removal_state_is_false_or_unknown_and_never_assumed() {
+        use std::process::Command;
+        let output = |program: &str| Command::new(program).output().expect("run");
+        let removed: Result<_, std::io::Error> = Ok(output("true"));
+        let failed: Result<_, std::io::Error> = Ok(output("false"));
+        let unobserved: Result<std::process::Output, _> =
+            Err(std::io::Error::other("teardown could not run"));
+        assert_eq!(super::removal_state(&removed), Some(true));
+        assert_eq!(super::removal_state(&failed), Some(false));
+        assert_eq!(super::removal_state(&unobserved), None);
     }
 
     struct EnvRestore {

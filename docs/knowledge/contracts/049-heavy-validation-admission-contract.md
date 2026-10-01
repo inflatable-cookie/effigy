@@ -5,9 +5,10 @@ Last Updated: 2026-10-01
 
 Heavy Effigy validation shares one host-wide admission budget. This contract
 covers invocations started by people, workers, and orchestrators on the same
-machine. The current mechanism is Effigy-owned: Queue supplies caller identity
-and observes Effigy's state. The scheduler cutover below replaces that ownership;
-it is not implemented yet.
+machine. The default mechanism is Effigy-owned: Queue supplies caller identity
+and observes Effigy's state. An explicit opt-in backend (below) routes heavy
+execution through the host-run scheduler; the cutover that makes it the default
+and removes the lease store is not approved or implemented.
 
 ## Scheduler ownership ruling
 
@@ -43,9 +44,10 @@ verification and durable report-fact replay. Its protocol-specific start
 identity is `PID@boot_id:starttime_ticks` on Linux (proc stat field 22 after
 the last command-name parenthesis) and `PID@UTC-second` on macOS, read from the
 kernel process start time. An unknown identity never matches. Unsupported
-platforms fail closed. These primitives are not wired into selector execution;
-the existing Effigy lease store and every admission and execution path remain
-unchanged until the separately approved scheduler cutover.
+platforms fail closed. Selector execution uses them only through the opt-in
+backend below; the existing Effigy lease store and every legacy admission and
+execution path remain unchanged and remain the default until the separately
+approved scheduler cutover.
 
 The 2026-10-01 re-sign-off accepts verified traversal only for implementations
 without descriptor-relative open. Its ancestor-chain recheck detects persistent
@@ -63,6 +65,101 @@ An operator-approved recovery of an exact orphan record is an exception under
 the current mechanism, not permission to weaken automatic reclamation. Preserve
 the locked before-state, closure evidence, authorization and resulting record;
 change no other runs. A queue-wait deadline is not a running lease's expiry.
+
+## Opt-in scheduler backend
+
+Migration step (b) of the shared contract is shipped behind a setting. Step (c)
+(removing the lease store) and any default activation are not.
+
+- `EFFIGY_HOST_SCHEDULER=1` routes top-level heavy work through the scheduler.
+  Unset or `0` keeps legacy lease admission, unchanged. Any other value refuses
+  with exit 2 before any effect. The setting is the only switch: nothing
+  detects a scheduler and switches on its own.
+- Classification is the existing one: published and draft tasks resolved as
+  implicit `qa`/`ci`/`ci:fresh` or explicit `admission = "heavy"`, and QA groups
+  with a heavy member. Light work, `--plan` and discovery stay direct and acquire
+  nothing, whether or not the scheduler is reachable.
+- Effigy resolves and preflights first, so selection, scope gaps
+  (`needs_planner`) and refusals happen before submit. No build, setup,
+  container activation or group member runs before the scheduler launches the
+  run. The client then submits the invocation it was started with: the absolute
+  executable, the original arguments and canonical working directory, and the
+  caller's environment without scheduler, token or legacy-lease names. The
+  scheduler provides only `PATH`, `HOME` and its own run variables on top of that
+  map, so a task sees the scheduler's `PATH`/`HOME`. A fresh client request ID
+  makes submit idempotent; the client resolves an ambiguous reply by lookup
+  before it resubmits. Capacity and run deadlines are separate: the capacity
+  wait reuses `EFFIGY_ADMISSION_TIMEOUT_SECS` (default 30 minutes) and the run
+  deadline is `EFFIGY_HOST_SCHEDULER_RUN_TIMEOUT_SECS` (default 2 hours). The
+  reservation fallback reuses `EFFIGY_ADMISSION_CPU_UNITS` and
+  `EFFIGY_ADMISSION_MEMORY_MIB`, and the run receives `CARGO_BUILD_JOBS` from it.
+  The scheduler root is `~/.local/state/host-run`; `EFFIGY_HOST_RUN_ROOT` names
+  an absolute private root for isolated fixtures.
+- The scheduler-launched child is the same Effigy invocation with
+  `HOST_RUN_TOKEN` set. A present token always takes the validation path,
+  regardless of the setting: a valid token (current or immediately previous
+  epoch, within its root, unexpired, MAC verified, class `heavy`) executes the
+  work in place with no lease, no submit and a reported `nested` fact; a present
+  token that fails validation exits 77 `invalid_parent_token` and never queues.
+  Token verification that cannot reach the scheduler exits 75. Caller strings,
+  flags and the legacy lease variable never substitute for a token. Tokens and
+  `HOST_RUN_ID` are stripped from container exec environments and `sudo`
+  commands and are never logged.
+- Heavy work with an unreachable, untrusted or missing scheduler fails closed
+  with exit 75 and `scheduler_unreachable`. There is no automatic legacy
+  fallback. `EFFIGY_SCHEDULER_OVERRIDE=<reason>` is the explicit operator
+  override: the reason is mandatory, is recorded as a durable `override` fact in
+  the client's pending journal before the run (a journal failure refuses the
+  run), then the work executes directly with no admission, never also taking a
+  legacy lease. The journal replays until the scheduler acknowledges it. There
+  is no other bypass flag.
+- The parent streams stdout and stderr verbatim, with no duplicate bytes across
+  a reconnect, and exits with the child's real status: the JSON envelope and
+  exit code are the child's. Outcomes stay distinct: `capacity_timeout` (never
+  launched, exit 1, a capacity message), cancelled before launch (exit
+  128+signal after a local interrupt, else 1), run timeout (exit 124), lost
+  (exit 70, result unknown, never success), and a signalled child (128+signal).
+  A non-pass outcome never exits 0. Output the scheduler no longer retains
+  (`output_expired`) is reported on stderr and leaves the relayed output marked
+  incomplete.
+- SIGINT, SIGTERM or SIGHUP on the parent asks the scheduler to cancel its own
+  run once, then the parent follows the settlement; it never signals the
+  scheduler's process group itself. Inside a scheduler-launched run, Effigy
+  forwards termination only to the process groups its own tasks started and
+  runs their cleanup. External kills are not claimed to be attributable, and a
+  host process-group closure is not proof of container closure.
+- Owned containers an Effigy task starts and tears down (inline workspace
+  tasks) report `started` and `removed` facts with the scheduler run ID, epoch
+  and a stable fact UUID. Removal is `true` only when the teardown command
+  succeeded, `false` when it ran and failed, and `unknown` when it could not be
+  observed. Facts persist in `pending-facts.jsonl` before sending and replay
+  until acknowledged; nothing invents container closure. Container lifecycles
+  outside that flow do not report yet.
+- QA groups: a heavy group is submitted whole, and the launched child owns the
+  ledger, so a launched run leaves exactly one record. The record adds an
+  optional `backend` object (`kind`, `scheduler_run_id`, `scheduler_epoch`,
+  `queue_wait_ms`, `settlement`); absent means legacy or light. `queue_wait_ms`
+  comes from the scheduler's status record and is `null` when unavailable. A
+  group the scheduler settles without launching (capacity timeout, prelaunch
+  cancel) leaves a completed record with that outcome, `settlement` and the
+  measured wait. Members stay serial and `needs_planner` still stops before
+  submit. The run-record schema stays `effigy.qa-group-run.v1`: the field is
+  additive and optional, so older readers ignore it and older records stay
+  valid.
+
+Unchanged and unavailable: the generic run stop/logs commands, group
+`hard_timeout_ms`, and contract 052 remain unavailable. The opt-in does not
+refresh any installed channel, restart anything, or change workflows.
+
+### Backend evidence
+
+Private-server proof used Queue's `bin/host-run-private-server.mjs` at reviewed
+merge `7563a61ef3a1efdb8c6cce43cdb3ad1207cee424` (Queue PR186), run from an
+isolated archive of that commit with a throwaway state directory and never the
+live endpoint (`test:host-run:integration`, see guide 080). The reviewed server
+spells `keyB64` as plain base64 and token `exp` as integer milliseconds; the
+contract names neither, so the client accepts both spellings and RFC 3339
+expiry. The planner should have the shared contract state these two encodings.
 
 ## Selection and ownership
 

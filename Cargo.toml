@@ -90,6 +90,7 @@ effigy-execution = { path = "crates/effigy-execution" }
 effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
+effigy-host-run = { path = "crates/effigy-host-run" }
 effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }
@@ -127,5 +128,6 @@ minijinja = "2"
 rpassword = "7"
 
 [dev-dependencies]
+base64 = "0.22"
 effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
 tempfile = "3"

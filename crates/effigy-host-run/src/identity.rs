@@ -35,7 +35,7 @@ pub fn canonical_start_identity(pid: u32) -> Option<String> {
         if info.pbi_pid != pid {
             return None;
         }
-        Some(format_mac_identity(pid, info.pbi_start_tvsec)?)
+        format_mac_identity(pid, info.pbi_start_tvsec)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {

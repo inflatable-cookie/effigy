@@ -194,6 +194,8 @@ impl ResolverSpec {
         // Ensure the directory exists.
         if !resolver_dir_exists() {
             let output = Command::new("sudo")
+                .env_remove("HOST_RUN_TOKEN")
+                .env_remove("HOST_RUN_ID")
                 .args(["mkdir", "-p", RESOLVER_DIR])
                 .output()
                 .map_err(GatewayError::Io)?;
@@ -207,6 +209,8 @@ impl ResolverSpec {
 
         // Write the file via sudo tee.
         let mut child = Command::new("sudo")
+            .env_remove("HOST_RUN_TOKEN")
+            .env_remove("HOST_RUN_ID")
             .args(["tee", validated_path.to_str().unwrap_or("")])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -272,6 +276,8 @@ impl ResolverSpec {
         }
 
         let output = std::process::Command::new("sudo")
+            .env_remove("HOST_RUN_TOKEN")
+            .env_remove("HOST_RUN_ID")
             .args(["rm", validated_path.to_str().unwrap_or("")])
             .output()
             .map_err(GatewayError::Io)?;

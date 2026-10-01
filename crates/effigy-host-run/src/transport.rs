@@ -1102,7 +1102,7 @@ pub fn parse_settlement(value: &Value) -> Result<Settlement, ClientError> {
             || result
                 .get("startIdentity")
                 .and_then(Value::as_str)
-                .map_or(true, str::is_empty)
+                .is_none_or(str::is_empty)
             || !valid_time_value(result.get("startedAt"))
             || !valid_time_value(result.get("endedAt"))
             || !valid_telemetry_value(result.get("wallMs"))
@@ -1151,7 +1151,7 @@ fn validate_fact(fact: &Value) -> Result<(), ClientError> {
         || fact
             .get("factId")
             .and_then(Value::as_str)
-            .map_or(true, |id| !is_uuid(id))
+            .is_none_or(|id| !is_uuid(id))
         || fact.get("observedAt").and_then(Value::as_str).is_none()
     {
         return Err(ClientError::InvalidSubmission(
@@ -1238,6 +1238,34 @@ fn validate_status(value: Value) -> Result<Value, ClientError> {
         ));
     }
     Ok(value)
+}
+
+/// Append facts to the durable pending journal without contacting the
+/// scheduler. The next client call replays them until acknowledged. A known
+/// `factId` with a different body is a conflict; an identical copy is a no-op.
+pub fn journal_facts_offline(root: &HostRunRoot, facts: &[Value]) -> Result<(), ClientError> {
+    let lock = root.open_pending_lock()?;
+    lock.lock_exclusive()?;
+    let result = (|| {
+        let mut file = root.open_pending_facts()?;
+        let mut pending = read_pending(&mut file)?;
+        for fact in facts {
+            validate_fact(fact)?;
+            let id = fact["factId"].as_str().expect("validated fact id");
+            match pending.iter().find(|value| value["factId"] == id) {
+                Some(existing) if existing != fact => {
+                    return Err(ClientError::ReportConflict(id.to_owned()))
+                }
+                Some(_) => {}
+                None => pending.push(fact.clone()),
+            }
+        }
+        write_pending(root, &pending)
+    })();
+    let unlock = FileExt::unlock(&lock);
+    result?;
+    unlock?;
+    Ok(())
 }
 
 fn read_pending(file: &mut File) -> Result<Vec<Value>, ClientError> {

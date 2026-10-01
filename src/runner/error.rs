@@ -44,6 +44,17 @@ pub enum RunnerError {
         shell_error: String,
         cleanup_error: String,
     },
+    /// A scheduler-routing refusal or pre-launch outcome that carries its own
+    /// process exit code (for example 75 unreachable or 77 invalid token).
+    HostScheduler {
+        code: i32,
+        detail: String,
+    },
+    /// The scheduler-launched child settled; its output was already relayed
+    /// verbatim, so the caller exits with its real status and prints nothing.
+    HostRunSettled {
+        code: i32,
+    },
     HostContainerLeaseEncode {
         detail: String,
     },
@@ -223,6 +234,16 @@ impl RunnerError {
         rendered_output::runner_error_rendered_output(self)
     }
 
+    /// Process exit code owned by the host scheduler routing, when it applies.
+    pub fn host_scheduler_exit_code(&self) -> Option<i32> {
+        match self {
+            RunnerError::HostRunSettled { code } | RunnerError::HostScheduler { code, .. } => {
+                Some(*code)
+            }
+            _ => None,
+        }
+    }
+
     pub fn json_error_details(&self) -> Option<&str> {
         rendered_output::runner_error_json_details(self)
     }
@@ -387,6 +408,9 @@ impl RunnerError {
     // Effigy preserves is the launched child's status.
     pub fn task_exit_status(&self) -> Option<i32> {
         match self {
+            RunnerError::HostRunSettled { code } | RunnerError::HostScheduler { code, .. } => {
+                Some(*code)
+            }
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { .. } => Some(1),
             _ => None,

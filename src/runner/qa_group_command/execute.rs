@@ -17,15 +17,16 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use effigy_execution::{
-    QaGroupBudgetState, QaGroupGapSnapshot, QaGroupMemberRecord, QaGroupMemberState,
-    QaGroupOutcome, QaGroupRunCapabilities, QaGroupRunGroupSnapshot, QaGroupRunHead,
-    QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
+    QaGroupBackend, QaGroupBudgetState, QaGroupGapSnapshot, QaGroupMemberRecord,
+    QaGroupMemberState, QaGroupOutcome, QaGroupRunCapabilities, QaGroupRunGroupSnapshot,
+    QaGroupRunHead, QaGroupRunRecord, QaGroupRunState, QaGroupRunTiming, QA_GROUP_RUN_SCHEMA,
 };
 use effigy_tasks::{budget_state, QaGroupPlan, QaGroupPlanMember};
 
-use super::super::admission::{self, LeaseScope, Request as AdmissionRequest};
+use super::super::admission::{self, LeaseScope, OwnedChildrenScope, Request as AdmissionRequest};
 use super::super::error::RunnerError;
 use super::super::execute::api::run_manifest_task_request;
+use super::super::host_scheduler::{self, Route, SubmitContext};
 use super::member_runtime_context;
 use effigy_runtime::qa_group_status::{
     begin_qa_group_run_record, finalize_qa_group_run_record, update_qa_group_run_record,
@@ -46,12 +47,29 @@ pub(super) fn execute_group_run(
 ) -> Result<String, RunnerError> {
     let run_id = generate_run_id();
     let heavy = plan.admission.required;
-    let mut record = initial_record(&run_id, plan, heavy);
+    let selector = format!("qa-group:{}/{}", plan.group.catalog, plan.group.name);
+    // Routing decisions that can refuse (invalid setting, forged token, down
+    // scheduler) happen here, before any ledger entry or member effect.
+    let route = if heavy {
+        host_scheduler::route_heavy(&selector, &invocation_cwd(root))?
+    } else {
+        Route::Legacy
+    };
+    if route == Route::Submit {
+        return submit_group_run(root, plan, output_json, &run_id, &selector);
+    }
+    let admission = match (&route, heavy) {
+        (_, false) => Admission::Light,
+        (Route::Legacy, true) => Admission::Legacy,
+        _ => Admission::Owned,
+    };
+    let mut record = initial_record(&run_id, plan, admission == Admission::Legacy);
+    record.backend = backend_for(&route, heavy);
 
     begin_qa_group_run_record(root, &record)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
-    let outcome = run_members(root, plan, &mut record, heavy);
+    let outcome = run_members(root, plan, &mut record, admission);
     let rendered = if output_json {
         render_record_json(&record)?
     } else {
@@ -74,6 +92,114 @@ pub(super) fn execute_group_run(
     }
 }
 
+/// Which admission covers this group run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// No heavy members: direct execution.
+    Light,
+    /// Legacy lease acquired here (the default backend).
+    Legacy,
+    /// Already covered: a validated scheduler run, or a recorded override.
+    Owned,
+}
+
+fn invocation_cwd(root: &Path) -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| root.to_path_buf())
+}
+
+/// Backend correlation for the record. Legacy and light runs record nothing.
+fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
+    if !heavy {
+        return None;
+    }
+    match route {
+        Route::Nested(nested) => Some(QaGroupBackend {
+            kind: "host_scheduler".to_owned(),
+            scheduler_run_id: Some(nested.run_id.clone()),
+            scheduler_epoch: Some(nested.epoch),
+            queue_wait_ms: host_scheduler::nested_queue_wait_ms(nested),
+            settlement: None,
+        }),
+        Route::Override => Some(QaGroupBackend {
+            kind: "host_scheduler_override".to_owned(),
+            scheduler_run_id: None,
+            scheduler_epoch: None,
+            queue_wait_ms: None,
+            settlement: None,
+        }),
+        Route::Legacy | Route::Submit => None,
+    }
+}
+
+/// Top-level scheduler path for a heavy group. The scheduler launches this same
+/// invocation as the owner of the group ledger, so a run that launched is
+/// followed to its real status and writes no second record here. Only a run the
+/// scheduler settled without launching leaves a record, written by this process.
+fn submit_group_run(
+    root: &Path,
+    plan: &QaGroupPlan,
+    output_json: bool,
+    run_id: &str,
+    selector: &str,
+) -> Result<String, RunnerError> {
+    let cwd = invocation_cwd(root);
+    let settled = host_scheduler::submit_and_settle(SubmitContext {
+        selector,
+        class_source: effigy_host_run::ClassSource::Manifest,
+        repository: root,
+        cwd: &cwd,
+    })?;
+    let host_scheduler::Settled::NotLaunched {
+        run_id: scheduler_run_id,
+        epoch,
+        reason,
+        queue_wait_ms,
+        interrupt_signal,
+    } = settled.clone()
+    else {
+        return Err(settled.into_error());
+    };
+    let (outcome, label) = match reason {
+        host_scheduler::PreLaunch::CapacityTimeout => {
+            (QaGroupOutcome::CapacityTimeout, "capacity_timeout")
+        }
+        host_scheduler::PreLaunch::Cancelled => (QaGroupOutcome::Cancelled, "cancelled"),
+    };
+    let mut record = initial_record(run_id, plan, false);
+    record.state = QaGroupRunState::Completed;
+    record.outcome = Some(outcome);
+    record.timing.queued_at = Some(Utc::now().to_rfc3339());
+    record.timing.ended_at = Some(Utc::now().to_rfc3339());
+    record.timing.admission_wait_ms = queue_wait_ms;
+    record.backend = Some(QaGroupBackend {
+        kind: "host_scheduler".to_owned(),
+        scheduler_run_id: Some(scheduler_run_id.clone()),
+        scheduler_epoch: Some(epoch),
+        queue_wait_ms,
+        settlement: Some(label.to_owned()),
+    });
+    record.warnings.push(format!(
+        "host scheduler run {scheduler_run_id} settled as {label} before any member launched"
+    ));
+    touch(&mut record);
+    begin_qa_group_run_record(root, &record)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    finalize_qa_group_run_record(root, &record)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let rendered = if output_json {
+        render_record_json(&record)?
+    } else {
+        render_record_text(&record)
+    };
+    match interrupt_signal {
+        Some(signal) => {
+            println!("{rendered}");
+            Err(RunnerError::HostRunSettled { code: 128 + signal })
+        }
+        None => Err(RunnerError::CommandJsonFailure { rendered }),
+    }
+}
+
 /// Acquire the shared lease when needed, run members serially, and finalize
 /// aggregate states. All failure paths leave the record finalized and the
 /// admission lease closed so evidence is never lost.
@@ -81,13 +207,24 @@ fn run_members(
     root: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
-    heavy: bool,
+    admission_mode: Admission,
 ) -> Result<(), RunnerError> {
     record.timing.queued_at = Some(Utc::now().to_rfc3339());
 
     let mut lease = None;
     let mut scope = None;
-    if heavy {
+    // A scheduler-launched or overridden run owns its children's signals but
+    // holds no lease and never touches the legacy admission store.
+    let _owned_children = if admission_mode == Admission::Owned {
+        Some(OwnedChildrenScope::enter().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot install heavy-run signal forwarding: {error}"
+            ))
+        })?)
+    } else {
+        None
+    };
+    if admission_mode == Admission::Legacy {
         let caller =
             std::env::var("EFFIGY_CALLER").unwrap_or_else(|_| admission::default_caller_identity());
         let selector = format!("qa-group:{}/{}", record.group.catalog, record.group.name);
@@ -570,6 +707,7 @@ fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRe
             hard_timeout: false,
             stop: false,
         },
+        backend: None,
     }
 }
 

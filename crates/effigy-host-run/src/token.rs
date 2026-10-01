@@ -118,9 +118,7 @@ impl TokenKeys {
             .map_err(|_| TokenError::Invalid("malformed token payload"))?;
         let token: ParentTokenWire = serde_json::from_slice(&payload_bytes)
             .map_err(|_| TokenError::Invalid("invalid token payload"))?;
-        let exp = DateTime::parse_from_rfc3339(&token.exp)
-            .map_err(|_| TokenError::Invalid("invalid token expiry"))?
-            .with_timezone(&Utc);
+        let exp = token.exp.instant()?;
         if token.run_id.is_empty() || token.epoch == 0 || token.class.is_empty() || exp <= now {
             return Err(TokenError::Invalid("expired or incomplete token"));
         }
@@ -189,13 +187,43 @@ struct ParentTokenWire {
     epoch: u64,
     class: String,
     root: PathBuf,
-    exp: String,
+    exp: TokenExpiry,
+}
+
+/// Token expiry as the scheduler issues it: integer milliseconds since the
+/// Unix epoch (Queue's reviewed server). RFC 3339 text is also accepted. The
+/// MAC covers the payload either way.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TokenExpiry {
+    Millis(i64),
+    Text(String),
+}
+
+impl TokenExpiry {
+    fn instant(&self) -> Result<DateTime<Utc>, TokenError> {
+        match self {
+            Self::Millis(ms) => DateTime::from_timestamp_millis(*ms),
+            Self::Text(text) => DateTime::parse_from_rfc3339(text)
+                .ok()
+                .map(|value| value.with_timezone(&Utc)),
+        }
+        .ok_or(TokenError::Invalid("invalid token expiry"))
+    }
+}
+
+/// `keyB64` is plain base64 in the scheduler's key file (Node `Buffer`
+/// semantics); URL-safe and unpadded spellings of the same 32 bytes decode too.
+fn decode_key_bytes(encoded: &str) -> Option<Vec<u8>> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    [STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD]
+        .iter()
+        .find_map(|engine| engine.decode(encoded).ok())
 }
 
 fn decode_key(key: KeyEpoch) -> Result<KeyMaterial, TokenError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(key.key_b64)
-        .map_err(|_| TokenError::Invalid("invalid key encoding"))?;
+    let bytes =
+        decode_key_bytes(&key.key_b64).ok_or(TokenError::Invalid("invalid key encoding"))?;
     if key.epoch == 0 || bytes.len() != 32 {
         return Err(TokenError::Invalid(
             "key must contain 32 bytes and a positive epoch",
@@ -263,6 +291,82 @@ mod tests {
         assert_eq!(
             hex,
             "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
+
+    #[test]
+    fn queue_server_key_spelling_and_millisecond_expiry_are_accepted() {
+        use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE};
+        // Bytes whose standard spelling contains `+`, `/` and padding, as Node's
+        // `Buffer.toString("base64")` writes in the scheduler's key file.
+        let key: Vec<u8> = (0..32u8)
+            .map(|byte| 0xfb_u8.wrapping_add(byte * 7))
+            .collect();
+        for engine_spelling in [
+            STANDARD.encode(&key),
+            STANDARD_NO_PAD.encode(&key),
+            URL_SAFE.encode(&key),
+            URL_SAFE_NO_PAD.encode(&key),
+        ] {
+            let json = json!({"format":"host.run.keys","version":1,
+                "current":{"epoch":1,"keyB64":engine_spelling}});
+            TokenKeys::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+        }
+        let short = json!({"format":"host.run.keys","version":1,
+            "current":{"epoch":1,"keyB64":STANDARD.encode([1u8; 31])}});
+        assert!(TokenKeys::from_json(&serde_json::to_vec(&short).unwrap()).is_err());
+
+        let root = tempfile::tempdir().unwrap();
+        let keys_json = json!({"format":"host.run.keys","version":1,
+            "current":{"epoch":1,"keyB64":STANDARD.encode(&key)}});
+        let keys = TokenKeys::from_json(&serde_json::to_vec(&keys_json).unwrap()).unwrap();
+        let authority = crate::Authority {
+            format: "host.run.authority".into(),
+            version: 1,
+            holder: "queue".into(),
+            endpoint: PathBuf::from("/unused"),
+            epoch: 1,
+            pid: 1,
+            start_identity: "1@x".into(),
+        };
+        let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
+        let future_ms = now.timestamp_millis() + 60_000;
+        let live =
+            json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":future_ms});
+        let accepted = keys
+            .validate(
+                &signed_token(&live, &key),
+                root.path(),
+                &authority,
+                now,
+                |_| unreachable!(),
+            )
+            .unwrap();
+        assert_eq!(accepted.exp.timestamp_millis(), future_ms);
+        let expired = json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":now.timestamp_millis() - 1});
+        assert_eq!(
+            keys.validate(
+                &signed_token(&expired, &key),
+                root.path(),
+                &authority,
+                now,
+                |_| unreachable!()
+            )
+            .unwrap_err(),
+            crate::TokenError::Invalid("expired or incomplete token")
+        );
+        let fractional =
+            json!({"runId":"run1","epoch":1,"class":"heavy","root":root.path(),"exp":1.5});
+        assert_eq!(
+            keys.validate(
+                &signed_token(&fractional, &key),
+                root.path(),
+                &authority,
+                now,
+                |_| unreachable!()
+            )
+            .unwrap_err(),
+            crate::TokenError::Invalid("invalid token payload")
         );
     }
 

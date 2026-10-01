@@ -175,6 +175,10 @@ pub(super) fn fmt_runner_error(
         } => write_task_command_failure(f, command, code, stdout, stderr),
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
         RunnerError::TaskLockIo { path, error } => write_task_lock_io(f, path, error),
+        RunnerError::HostScheduler { detail, .. } => f.write_str(detail),
+        RunnerError::HostRunSettled { code } => {
+            write!(f, "scheduler-launched run settled with exit {code}")
+        }
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")
         }

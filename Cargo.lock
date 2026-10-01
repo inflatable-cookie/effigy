@@ -755,6 +755,7 @@ name = "effigy"
 version = "0.13.1"
 dependencies = [
  "anstyle",
+ "base64 0.22.1",
  "chrono",
  "crossterm",
  "effigy-artifacts",
@@ -778,6 +779,7 @@ dependencies = [
  "effigy-exec",
  "effigy-execution",
  "effigy-gateway",
+ "effigy-host-run",
  "effigy-managed",
  "effigy-manifest",
  "effigy-process",
