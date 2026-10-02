@@ -13,7 +13,11 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const ATTACH_RECONNECT_WINDOW: Duration = Duration::from_secs(5);
+const ATTACH_RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(50);
+const ATTACH_RECONNECT_MAX_BACKOFF: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -220,6 +224,89 @@ impl From<serde_json::Error> for ClientError {
     }
 }
 
+fn is_retryable_endpoint_error(error: &ClientError) -> bool {
+    match error {
+        ClientError::Io(error) => matches!(
+            error.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+        ),
+        ClientError::Trust(TrustError::Io(error)) => error.kind() == io::ErrorKind::NotFound,
+        _ => false,
+    }
+}
+
+fn is_transport_closure(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Io(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::NotConnected
+            )
+    )
+}
+
+fn classify_socket_trust_error(error: TrustError) -> RecoveryError {
+    let retry = matches!(&error, TrustError::Io(error) if error.kind() == io::ErrorKind::NotFound);
+    let error = ClientError::Trust(error);
+    if retry {
+        RecoveryError::Retry
+    } else {
+        RecoveryError::Fail(error)
+    }
+}
+
+fn classify_recovery_connect_error(error: ClientError) -> RecoveryError {
+    if is_retryable_endpoint_error(&error) || is_transport_closure(&error) {
+        RecoveryError::Retry
+    } else {
+        RecoveryError::Fail(error)
+    }
+}
+
+fn classify_recovery_io(error: ClientError) -> RecoveryError {
+    if is_transport_closure(&error) {
+        RecoveryError::Retry
+    } else {
+        RecoveryError::Fail(error)
+    }
+}
+
+fn parent_token_status_error(error: ClientError) -> TokenError {
+    match error {
+        ClientError::SchedulerUnreachable
+        | ClientError::Io(_)
+        | ClientError::Trust(_)
+        | ClientError::InvalidParentToken(TokenError::SchedulerUnreachable) => {
+            TokenError::SchedulerUnreachable
+        }
+        ClientError::Wire(WireError { code, .. })
+            if matches!(code.as_str(), "unsupported_version" | "stale_epoch") =>
+        {
+            TokenError::SchedulerUnreachable
+        }
+        _ => TokenError::Invalid("takeover lookup failed"),
+    }
+}
+
+fn read_recovery_keys(root: &HostRunRoot, epoch: u64) -> Result<TokenKeys, ClientError> {
+    let keys = TokenKeys::from_root(root).map_err(|_| {
+        ClientError::Trust(TrustError::Invalid(
+            "token keys could not be trusted during run recovery",
+        ))
+    })?;
+    if !keys.matches_authority_epoch(epoch) {
+        return Err(ClientError::Trust(TrustError::Invalid(
+            "token key epochs do not match the current authority",
+        )));
+    }
+    Ok(keys)
+}
+
 impl ClientError {
     /// Protocol-compatible process exit classification for callers.
     pub fn exit_code(&self) -> Option<u8> {
@@ -256,11 +343,44 @@ impl IdentityProvider for SystemIdentityProvider {
     }
 }
 
+pub(crate) trait ReconnectTimer: Send + Sync {
+    fn now(&self) -> Duration;
+    fn sleep(&self, duration: Duration);
+}
+
+struct SystemReconnectTimer {
+    start: Instant,
+}
+
+impl Default for SystemReconnectTimer {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+}
+
+impl ReconnectTimer for SystemReconnectTimer {
+    fn now(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+enum RecoveryError {
+    Retry,
+    Fail(ClientError),
+}
+
 pub struct HostRunClient {
     root: HostRunRoot,
     authority: Authority,
     clock: Arc<dyn Clock>,
     identity: Arc<dyn IdentityProvider>,
+    reconnect_timer: Arc<dyn ReconnectTimer>,
 }
 
 impl HostRunClient {
@@ -270,6 +390,7 @@ impl HostRunClient {
             authority,
             clock: Arc::new(SystemClock),
             identity: Arc::new(SystemIdentityProvider),
+            reconnect_timer: Arc::new(SystemReconnectTimer::default()),
         }
     }
 
@@ -279,6 +400,11 @@ impl HostRunClient {
     }
     pub fn with_identity_provider(mut self, identity: Arc<dyn IdentityProvider>) -> Self {
         self.identity = identity;
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn with_reconnect_timer(mut self, timer: Arc<dyn ReconnectTimer>) -> Self {
+        self.reconnect_timer = timer;
         self
     }
     pub fn authority(&self) -> &Authority {
@@ -323,25 +449,54 @@ impl HostRunClient {
         let keys = TokenKeys::from_root(&self.root).map_err(ClientError::InvalidParentToken)?;
         let authority = self.authority.clone();
         let result = keys.validate(token, cwd, &authority, self.clock.now(), |run_id| {
-            let value = self
-                .status(&json!({"runId":run_id}))
-                .map_err(|error| match error {
-                    ClientError::SchedulerUnreachable
-                    | ClientError::Io(_)
-                    | ClientError::Trust(_) => TokenError::SchedulerUnreachable,
-                    ClientError::Wire(WireError { code, .. })
-                        if matches!(code.as_str(), "unsupported_version" | "stale_epoch") =>
-                    {
-                        TokenError::SchedulerUnreachable
-                    }
-                    _ => TokenError::Invalid("takeover lookup failed"),
-                })?;
-            Ok(value)
+            self.parent_token_status(run_id, &keys, authority.epoch)
         });
         match result {
             Ok(token) => Ok(Some(token)),
             Err(TokenError::SchedulerUnreachable) => Err(ClientError::SchedulerUnreachable),
             Err(error) => Err(ClientError::InvalidParentToken(error)),
+        }
+    }
+
+    fn parent_token_status(
+        &mut self,
+        run_id: &str,
+        key_anchor: &TokenKeys,
+        expected_epoch: u64,
+    ) -> Result<Value, TokenError> {
+        let body = json!({"runId":run_id});
+        let started_at = self.reconnect_timer.now();
+        let mut backoff = ATTACH_RECONNECT_INITIAL_BACKOFF;
+        loop {
+            match self.exchange_recovery("status", &body, expected_epoch, key_anchor, started_at) {
+                Ok(status) => {
+                    let status = validate_status(status)
+                        .map_err(|_| TokenError::Invalid("takeover lookup failed"))?;
+                    if status.get("runId").and_then(Value::as_str) != Some(run_id)
+                        || status.get("epoch").and_then(Value::as_u64) != Some(expected_epoch)
+                    {
+                        return Err(TokenError::Invalid("takeover lookup failed"));
+                    }
+                    return Ok(status);
+                }
+                Err(RecoveryError::Retry) => {
+                    let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+                    if elapsed >= ATTACH_RECONNECT_WINDOW {
+                        return Err(TokenError::SchedulerUnreachable);
+                    }
+                    self.reconnect_timer
+                        .sleep(backoff.min(ATTACH_RECONNECT_WINDOW.saturating_sub(elapsed)));
+                    if self.reconnect_timer.now().saturating_sub(started_at)
+                        >= ATTACH_RECONNECT_WINDOW
+                    {
+                        return Err(TokenError::SchedulerUnreachable);
+                    }
+                    backoff = backoff.saturating_mul(2).min(ATTACH_RECONNECT_MAX_BACKOFF);
+                }
+                Err(RecoveryError::Fail(error)) => {
+                    return Err(parent_token_status_error(error));
+                }
+            }
         }
     }
 
@@ -414,14 +569,66 @@ impl HostRunClient {
     }
 
     pub fn cancel(&mut self, run_id: &str, reason: &str) -> Result<Value, ClientError> {
-        self.flush_pending_facts()?;
-        let body = json!({"runId":run_id,"reason":reason});
-        match self.exchange("cancel", &body) {
-            Err(ClientError::Wire(WireError { code, .. })) if code == "stale_epoch" => {
-                self.refresh()?;
-                self.exchange("cancel", &body)
+        let recovery_epoch = self.authority.epoch;
+        let mut recovery_keys = read_recovery_keys(&self.root, recovery_epoch)?;
+        self.refresh_attach_authority(recovery_epoch, &recovery_keys)?;
+        if let Err(error) = self.flush_pending_facts() {
+            if !is_retryable_endpoint_error(&error) && !is_transport_closure(&error) {
+                return Err(error);
             }
-            result => result,
+        }
+        self.refresh_attach_authority(recovery_epoch, &recovery_keys)?;
+        let body = json!({"runId":run_id,"reason":reason});
+        let mut result = self.exchange("cancel", &body);
+        if matches!(&result, Err(ClientError::Wire(WireError { code, .. })) if code == "stale_epoch")
+        {
+            self.refresh()?;
+            if self.authority.epoch != recovery_epoch {
+                return Err(ClientError::Trust(TrustError::Invalid(
+                    "authority epoch changed while cancelling the run",
+                )));
+            }
+            let refreshed_keys = read_recovery_keys(&self.root, recovery_epoch)?;
+            if !refreshed_keys.same_keyset(&recovery_keys) {
+                return Err(ClientError::Trust(TrustError::Invalid(
+                    "token keys changed while cancelling the run",
+                )));
+            }
+            recovery_keys = refreshed_keys;
+            result = self.exchange("cancel", &body);
+        }
+        match result {
+            Ok(value) => return Ok(value),
+            Err(error) if is_retryable_endpoint_error(&error) || is_transport_closure(&error) => {}
+            Err(error) => return Err(error),
+        }
+        let started_at = self.reconnect_timer.now();
+        let mut backoff = ATTACH_RECONNECT_INITIAL_BACKOFF;
+        loop {
+            let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+            if elapsed >= ATTACH_RECONNECT_WINDOW {
+                return Err(ClientError::SchedulerUnreachable);
+            }
+            self.reconnect_timer
+                .sleep(backoff.min(ATTACH_RECONNECT_WINDOW.saturating_sub(elapsed)));
+            if self.reconnect_timer.now().saturating_sub(started_at) >= ATTACH_RECONNECT_WINDOW {
+                return Err(ClientError::SchedulerUnreachable);
+            }
+
+            match self.exchange_recovery(
+                "cancel",
+                &body,
+                recovery_epoch,
+                &recovery_keys,
+                started_at,
+            ) {
+                Ok(value) => return Ok(value),
+                Err(RecoveryError::Retry) => {
+                    backoff = backoff.saturating_mul(2).min(ATTACH_RECONNECT_MAX_BACKOFF);
+                    continue;
+                }
+                Err(RecoveryError::Fail(error)) => return Err(error),
+            }
         }
     }
 
@@ -449,22 +656,87 @@ impl HostRunClient {
     where
         F: FnMut(AttachEvent),
     {
-        self.flush_pending_facts()?;
         let mut expected = [from_stdout, from_stderr];
-        let mut disconnects = 0usize;
+        let expected_epoch = self.authority.epoch;
+        let recovery_keys = read_recovery_keys(&self.root, expected_epoch)?;
+        let authority_changed = self.refresh_attach_authority(expected_epoch, &recovery_keys)?;
+        let mut recovery = if authority_changed {
+            Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF))
+        } else {
+            None
+        };
+        if recovery.is_none() {
+            if let Err(error) = self.flush_pending_facts() {
+                if is_retryable_endpoint_error(&error) || is_transport_closure(&error) {
+                    recovery = Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                } else {
+                    return Err(error);
+                }
+            }
+        }
         loop {
+            let mut stream = if let Some((started_at, backoff)) = recovery {
+                let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+                if elapsed >= ATTACH_RECONNECT_WINDOW {
+                    return Err(ClientError::SchedulerUnreachable);
+                }
+                self.reconnect_timer
+                    .sleep(backoff.min(ATTACH_RECONNECT_WINDOW.saturating_sub(elapsed)));
+                if self.reconnect_timer.now().saturating_sub(started_at) >= ATTACH_RECONNECT_WINDOW
+                {
+                    return Err(ClientError::SchedulerUnreachable);
+                }
+                match self.recovery_attach_connection(
+                    run_id,
+                    expected_epoch,
+                    &recovery_keys,
+                    started_at,
+                ) {
+                    Ok(stream) => stream,
+                    Err(RecoveryError::Retry) => {
+                        let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+                        if elapsed >= ATTACH_RECONNECT_WINDOW {
+                            return Err(ClientError::SchedulerUnreachable);
+                        }
+                        recovery = Some((
+                            started_at,
+                            backoff.saturating_mul(2).min(ATTACH_RECONNECT_MAX_BACKOFF),
+                        ));
+                        continue;
+                    }
+                    Err(RecoveryError::Fail(error)) => return Err(error),
+                }
+            } else {
+                match self.connect() {
+                    Ok(stream) => stream,
+                    Err(error)
+                        if is_retryable_endpoint_error(&error) || is_transport_closure(&error) =>
+                    {
+                        recovery =
+                            Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             let body =
                 json!({"runId":run_id,"fromOffset":{"stdout":expected[0],"stderr":expected[1]}});
-            let mut stream = self.connect()?;
             let request = request("attach", self.authority.epoch, &body)?;
             let request_id = request["id"].clone();
-            write_request(&mut stream, &request)?;
+            if let Err(error) = write_request(&mut stream, &request) {
+                if is_transport_closure(&error) {
+                    recovery = Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                    continue;
+                }
+                return Err(error);
+            }
             let mut reader = BufReader::new(stream);
             loop {
                 let frame = match read_frame(&mut reader) {
                     Ok(frame) => frame,
-                    Err(ClientError::Io(_)) if disconnects < 5 => {
-                        disconnects += 1;
+                    Err(error) if is_transport_closure(&error) => {
+                        recovery =
+                            Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
                         break;
                     }
                     Err(error) => return Err(error),
@@ -476,13 +748,6 @@ impl HostRunClient {
                     }
                     if value.get("ok").and_then(Value::as_bool) == Some(false) {
                         let error = parse_response(value).unwrap_err();
-                        if matches!(&error, ClientError::Wire(WireError { code, .. }) if code == "stale_epoch")
-                        {
-                            self.refresh()?;
-                            self.status(&json!({"runId":run_id}))?;
-                            disconnects = 0;
-                            break;
-                        }
                         return Err(error);
                     }
                     if value.get("ok").and_then(Value::as_bool) == Some(true)
@@ -575,6 +840,142 @@ impl HostRunClient {
                     _ => return Err(ClientError::InvalidAttach("unknown event")),
                 }
             }
+        }
+    }
+
+    fn recovery_attach_connection(
+        &mut self,
+        run_id: &str,
+        expected_epoch: u64,
+        key_anchor: &TokenKeys,
+        started_at: Duration,
+    ) -> Result<UnixStream, RecoveryError> {
+        let body = json!({"runId":run_id});
+        let status_response =
+            self.exchange_recovery("status", &body, expected_epoch, key_anchor, started_at)?;
+        let status = validate_status(status_response).map_err(RecoveryError::Fail)?;
+        if status.get("runId").and_then(Value::as_str) != Some(run_id)
+            || status.get("epoch").and_then(Value::as_u64) != Some(expected_epoch)
+        {
+            return Err(RecoveryError::Fail(ClientError::InvalidAttach(
+                "recovery status did not prove the requested run at the current epoch",
+            )));
+        }
+
+        let status_authority = self.authority.clone();
+        self.refresh_recovery_authority(expected_epoch, key_anchor)?;
+        if self.authority.pid != status_authority.pid
+            || self.authority.start_identity != status_authority.start_identity
+        {
+            return Err(RecoveryError::Fail(ClientError::Trust(
+                TrustError::Invalid("scheduler peer changed during attach recovery"),
+            )));
+        }
+        let timeout = self.recovery_time_left(started_at)?;
+        let stream = self
+            .connect_with_timeout(timeout)
+            .map_err(classify_recovery_connect_error)?;
+        self.recovery_time_left(started_at)?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .map_err(|error| RecoveryError::Fail(ClientError::Io(error)))?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(60)))
+            .map_err(|error| RecoveryError::Fail(ClientError::Io(error)))?;
+        Ok(stream)
+    }
+
+    fn refresh_attach_authority(
+        &mut self,
+        expected_epoch: u64,
+        key_anchor: &TokenKeys,
+    ) -> Result<bool, ClientError> {
+        let previous = self.authority.clone();
+        let authority = self.root.read_authority()?;
+        if authority.epoch != expected_epoch {
+            return Err(ClientError::Trust(TrustError::Invalid(
+                "authority epoch changed before attach",
+            )));
+        }
+        let keys = read_recovery_keys(&self.root, authority.epoch)?;
+        if !keys.same_keyset(key_anchor) {
+            return Err(ClientError::Trust(TrustError::Invalid(
+                "token keys changed before attach",
+            )));
+        }
+        let changed =
+            previous.pid != authority.pid || previous.start_identity != authority.start_identity;
+        self.authority = authority;
+        Ok(changed)
+    }
+
+    fn exchange_recovery(
+        &mut self,
+        method: &str,
+        body: &Value,
+        expected_epoch: u64,
+        key_anchor: &TokenKeys,
+        started_at: Duration,
+    ) -> Result<Value, RecoveryError> {
+        self.refresh_recovery_authority(expected_epoch, key_anchor)?;
+        let timeout = self.recovery_time_left(started_at)?;
+        let mut stream = self
+            .connect_with_timeout(timeout)
+            .map_err(classify_recovery_connect_error)?;
+        self.recovery_time_left(started_at)?;
+        let request = request(method, self.authority.epoch, body).map_err(RecoveryError::Fail)?;
+        let request_id = request["id"].clone();
+        write_request(&mut stream, &request).map_err(classify_recovery_io)?;
+        let frame = read_frame(&mut BufReader::new(stream)).map_err(classify_recovery_io)?;
+        let response: Value = serde_json::from_slice(&frame)
+            .map_err(ClientError::Decode)
+            .map_err(RecoveryError::Fail)?;
+        if response.get("id") != Some(&request_id) {
+            return Err(RecoveryError::Fail(ClientError::Frame(
+                "response id does not match request",
+            )));
+        }
+        parse_response(response).map_err(RecoveryError::Fail)
+    }
+
+    fn refresh_recovery_authority(
+        &mut self,
+        expected_epoch: u64,
+        key_anchor: &TokenKeys,
+    ) -> Result<(), RecoveryError> {
+        let authority = self
+            .root
+            .read_authority()
+            .map_err(|error| RecoveryError::Fail(ClientError::Trust(error)))?;
+        if authority.epoch != expected_epoch {
+            return Err(RecoveryError::Fail(ClientError::Trust(
+                TrustError::Invalid("authority epoch changed during attach recovery"),
+            )));
+        }
+        self.root
+            .verify_socket(&authority)
+            .map_err(classify_socket_trust_error)?;
+        let keys = TokenKeys::from_root(&self.root).map_err(|_| {
+            RecoveryError::Fail(ClientError::Trust(TrustError::Invalid(
+                "token keys could not be trusted during attach recovery",
+            )))
+        })?;
+        if !keys.matches_authority_epoch(authority.epoch) || !keys.same_keyset(key_anchor) {
+            return Err(RecoveryError::Fail(ClientError::Trust(
+                TrustError::Invalid("token keys changed during attach recovery"),
+            )));
+        }
+        self.authority = authority;
+        Ok(())
+    }
+
+    fn recovery_time_left(&self, started_at: Duration) -> Result<Duration, RecoveryError> {
+        let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+        let remaining = ATTACH_RECONNECT_WINDOW.saturating_sub(elapsed);
+        if remaining.is_zero() {
+            Err(RecoveryError::Fail(ClientError::SchedulerUnreachable))
+        } else {
+            Ok(remaining)
         }
     }
 
@@ -708,10 +1109,14 @@ impl HostRunClient {
     }
 
     fn connect(&self) -> Result<UnixStream, ClientError> {
+        self.connect_with_timeout(Duration::from_secs(60))
+    }
+
+    fn connect_with_timeout(&self, timeout: Duration) -> Result<UnixStream, ClientError> {
         self.root.verify_socket(&self.authority)?;
         let stream = UnixStream::connect(&self.authority.endpoint)?;
-        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(60)))?;
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
         verify_peer(
             stream.as_raw_fd(),
             self.root.uid(),

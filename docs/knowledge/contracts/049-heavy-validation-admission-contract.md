@@ -146,7 +146,19 @@ Migration step (b) of the shared contract is the default in source. Step (c)
   is no other bypass flag.
 - The parent streams stdout and stderr verbatim, with no duplicate bytes across
   a reconnect, and exits with the child's real status: the JSON envelope and
-  exit code are the child's. Outcomes stay distinct: `capacity_timeout` (never
+  exit code are the child's. After an attach connection is lost, recovery uses
+  a five-second monotonic budget with capped backoff. Only endpoint `ENOENT`,
+  `ECONNREFUSED` and transport closure are transient. Each recovery connection
+  rereads and revalidates descriptor-relative authority and token-key files,
+  owner and mode, peer PID/start identity, and the unchanged epoch/key set. The
+  client queries status for the same run ID at the current epoch before
+  reattaching at the exact last-delivered stdout and stderr offsets. It never
+  submits or launches the run again. A valid previous-epoch token's required
+  status lookup uses the same bounded transport recovery after its signature,
+  root and expiry have been verified. Trust, key, token, epoch and protocol
+  errors fail closed without retry; an exhausted recovery exits 75 with final
+  run state unknown. Initial scheduler-unreachable heavy calls still fail
+  promptly. Outcomes stay distinct: `capacity_timeout` (never
   launched, exit 1, a capacity message), cancelled before launch (exit
   128+signal after a local interrupt, else 1), run timeout (exit 124), lost
   (exit 70, result unknown, never success), and a signalled child (128+signal).

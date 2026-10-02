@@ -91,6 +91,26 @@ impl TokenKeys {
         )
     }
 
+    pub(crate) fn matches_authority_epoch(&self, epoch: u64) -> bool {
+        self.current.epoch == epoch
+            && self
+                .previous
+                .as_ref()
+                .is_none_or(|previous| previous.epoch.checked_add(1) == Some(epoch))
+    }
+
+    pub(crate) fn same_keyset(&self, other: &Self) -> bool {
+        self.current.epoch == other.current.epoch
+            && constant_time_eq(&self.current.bytes, &other.current.bytes)
+            && match (&self.previous, &other.previous) {
+                (Some(left), Some(right)) => {
+                    left.epoch == right.epoch && constant_time_eq(&left.bytes, &right.bytes)
+                }
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
     /// Validate a present token. Previous-epoch tokens require an explicit
     /// scheduler lookup whose record is running at the current authority epoch.
     pub fn validate<F>(
