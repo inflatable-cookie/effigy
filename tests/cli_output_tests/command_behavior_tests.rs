@@ -8809,6 +8809,44 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
 #[test]
 fn cli_container_data_seed_json_reports_seed_contract() {
     let root = temp_workspace("container-data-seed");
+    let output = run_container_data_seed_fixture(&root, true);
+    let reapers = HostContainerLeaseReaperGuard::capture(&root);
+
+    assert_container_data_seed_contract(&root, &output);
+    assert!(
+        reapers.processes.is_empty(),
+        "reaper detector found a process for the canonical fixture root: {reapers:?}"
+    );
+}
+
+#[test]
+fn cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child() {
+    let root = temp_workspace("container-data-seed-reaper-control");
+    let output = run_container_data_seed_fixture(&root, false);
+    let mut reapers = HostContainerLeaseReaperGuard::capture(&root);
+
+    assert_container_data_seed_contract(&root, &output);
+    assert_eq!(
+        reapers.processes.len(),
+        1,
+        "canonical-root detector must find the enabled fixture's exact reaper: {reapers:?}"
+    );
+    reapers
+        .terminate_and_wait()
+        .expect("terminate only the recorded negative-control reaper");
+    assert!(
+        HostContainerLeaseReaperGuard::capture(&root)
+            .processes
+            .is_empty(),
+        "negative-control reaper remained after PID/start-identity cleanup"
+    );
+}
+
+fn run_container_data_seed_fixture(
+    fixture_root: &std::path::Path,
+    disable_reaper: bool,
+) -> std::process::Output {
+    let root = fs::canonicalize(fixture_root).expect("canonicalize seed fixture root");
     write_generated_container_data_seed_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
@@ -8823,7 +8861,8 @@ fn cli_container_data_seed_json_reports_seed_contract() {
     fs::write(&seed, "create table contacts(id int);\n").expect("write sql dump");
     fs::write(&colima_state, "running\n").expect("seed colima state");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
         .arg("container")
         .arg("data")
         .arg("seed")
@@ -8841,11 +8880,21 @@ fn cli_container_data_seed_json_reports_seed_contract() {
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
-        .output()
-        .expect("run effigy");
+        .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
+        .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS");
+    if disable_reaper {
+        command.env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1");
+    } else {
+        command.env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
+    }
+    command.output().expect("run fake-runtime data seed")
+}
 
+fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::process::Output) {
+    let root = fs::canonicalize(root).expect("canonicalize seed fixture root");
+    let seed = root.join("latest.sql");
     assert!(output.status.success(), "data seed failed: {output:?}");
-    let parsed = parse_stdout_json(&output);
+    let parsed = parse_stdout_json(output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.data-seed.v1");
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["count"], 1);
@@ -8858,6 +8907,134 @@ fn cli_container_data_seed_json_reports_seed_contract() {
         fs::read_to_string(root.join(".effigy/local/db-seed.marker")).expect("read marker"),
         "seeded"
     );
+
+    let lease_path =
+        root.join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json");
+    let lease: Value = serde_json::from_slice(&fs::read(&lease_path).expect("read host lease"))
+        .expect("parse host lease");
+    assert_eq!(lease["schema"], "effigy.host-container-lease.v1");
+    assert_eq!(lease["container_name"], "web");
+    assert_eq!(lease["profile"], "dev");
+    assert_eq!(lease["project_name"], "fixture-web-dev");
+    assert!(!lease["token"].as_str().unwrap_or_default().is_empty());
+}
+
+#[derive(Debug)]
+struct HostContainerLeaseReaperProcess {
+    pid: u32,
+    start_identity: String,
+}
+
+#[derive(Debug)]
+struct HostContainerLeaseReaperGuard {
+    canonical_root: PathBuf,
+    processes: Vec<HostContainerLeaseReaperProcess>,
+}
+
+impl HostContainerLeaseReaperGuard {
+    fn capture(root: &std::path::Path) -> Self {
+        let canonical_root = fs::canonicalize(root).expect("canonicalize reaper fixture root");
+        let output = Command::new("ps")
+            .args(["-ww", "-axo", "pid=,command="])
+            .output()
+            .expect("inspect process table");
+        assert!(output.status.success(), "ps failed: {output:?}");
+        let process_list = String::from_utf8_lossy(&output.stdout);
+        let needle = format!(
+            "__container-lease-reaper --repo-root {}",
+            canonical_root.display()
+        );
+        let processes = process_list
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim_start();
+                let (pid, command) = line.split_once(char::is_whitespace)?;
+                let pid = pid.trim().parse::<u32>().ok()?;
+                let command = command.trim();
+                command.contains(&needle).then(|| {
+                    let start_identity = effigy_process::process_start_identity(pid)
+                        .unwrap_or_else(|| panic!("read start identity for matched PID {pid}"));
+                    HostContainerLeaseReaperProcess {
+                        pid,
+                        start_identity,
+                    }
+                })
+            })
+            .collect();
+        Self {
+            canonical_root,
+            processes,
+        }
+    }
+
+    fn terminate_and_wait(&mut self) -> Result<(), String> {
+        for process in &self.processes {
+            if !effigy_process::process_start_identity_matches(process.pid, &process.start_identity)
+            {
+                continue;
+            }
+            let command = process_command_line(process.pid)?;
+            if !command_matches_reaper_root(&command, &self.canonical_root) {
+                return Err(format!(
+                    "PID {} changed identity before cleanup; refusing to signal it",
+                    process.pid
+                ));
+            }
+            match nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(process.pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            ) {
+                Ok(()) => {}
+                Err(nix::errno::Errno::ESRCH) => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "SIGTERM for recorded PID {} failed: {error}",
+                        process.pid
+                    ))
+                }
+            }
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while effigy_process::process_start_identity_matches(
+                process.pid,
+                &process.start_identity,
+            ) {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "recorded reaper PID {} did not exit after SIGTERM",
+                        process.pid
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        self.processes.clear();
+        Ok(())
+    }
+}
+
+impl Drop for HostContainerLeaseReaperGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.terminate_and_wait() {
+            eprintln!("failed to clean up private lease reaper control: {error}");
+        }
+    }
+}
+
+fn process_command_line(pid: u32) -> Result<String, String> {
+    let output = Command::new("ps")
+        .args(["-ww", "-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .map_err(|error| format!("inspect recorded PID {pid}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("ps failed while inspecting PID {pid}: {output:?}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn command_matches_reaper_root(command: &str, root: &std::path::Path) -> bool {
+    command.contains("__container-lease-reaper")
+        && command.contains(&format!("--repo-root {}", root.display()))
 }
 
 #[test]
@@ -9410,74 +9587,38 @@ fn terminate_admission_test_child_groups(state_dir: &std::path::Path) {
 }
 
 #[test]
-#[ignore = "workspace handoff flow replaced the compose-logs-follow path; SIGINT propagation to \
-            the handoff exec child needs a redesign before this test can run headlessly"]
-fn cli_task_workspace_binding_stops_environment_on_sigint() {
+fn cli_workspace_binding_handoff_stops_environment_after_return() {
     let _guard = lock_cli_process_tests();
     let root = temp_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
-    let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
-    let log_follow = root.join("log-follow.marker");
     let path = format!(
         "{}:{}",
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
 
-    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("dev")
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("workspace")
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("PATH", path)
-        .env("EFFIGY_CONTAINER_STREAM", "1")
-        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
-        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn effigy");
-
-    let poll_started = std::time::Instant::now();
-    let log_timeout = Duration::from_secs(3);
-    while !log_follow.exists() {
-        if poll_started.elapsed() >= log_timeout {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(child.id() as i32),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-            let output = child.wait_with_output().expect("wait output");
-            let docker_log = fs::read_to_string(&docker_args).unwrap_or_default();
-            let colima_log = fs::read_to_string(&colima_args).unwrap_or_default();
-            panic!(
-                "task container log follow marker was not created in time: {}\n--- stdout ---\n{}\n--- stderr ---\n{}\n--- docker_args ---\n{docker_log}\n--- colima_args ---\n{colima_log}",
-                log_follow.display(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(child.id() as i32),
-        nix::sys::signal::Signal::SIGINT,
-    )
-    .expect("send sigint");
-
-    let output = child.wait_with_output().expect("wait output");
+        .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
+        .output()
+        .expect("run workspace handoff");
     assert!(
         output.status.success(),
-        "task container session failed: {output:?}"
+        "workspace container session failed: {output:?}"
     );
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    let docker_invocations = fs::read_to_string(&colima_args).expect("read Colima args");
     assert!(
         docker_invocations.contains("EFFIGY_INTERNAL_CONTAINER_HANDOFF"),
-        "expected workspace handoff shell invocation in docker args: {docker_invocations}"
+        "expected workspace handoff shell invocation in Colima args: {docker_invocations}"
     );
     assert!(
         docker_invocations.contains("down --remove-orphans"),
