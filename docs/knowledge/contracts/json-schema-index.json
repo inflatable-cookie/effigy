@@ -221,30 +221,6 @@
       "expect_failure": true
     },
     {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy --json admission status",
-      "surface": "host-wide admission query",
-      "status": "active",
-      "payload_schema": "effigy.admission.status.v1"
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy admission run <RUN_ID> --json",
-      "surface": "durable admission run query",
-      "status": "active",
-      "expect_failure": true
-    },
-    {
-      "schema": "effigy.command.v1",
-      "schema_version": 1,
-      "command": "effigy admission runs --caller <IDENTITY> --json",
-      "surface": "caller-linked admission history query",
-      "status": "active",
-      "payload_schema": "effigy.admission.runs.v1"
-    },
-    {
       "schema": "effigy.qa-groups.v1",
       "schema_version": 1,
       "command": "effigy --json tasks qa-groups list --repo <fixture_qa_groups>",

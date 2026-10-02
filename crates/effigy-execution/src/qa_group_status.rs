@@ -269,7 +269,7 @@ pub struct QaGroupRunRecord {
 /// when unavailable; null is never zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QaGroupBackend {
-    /// `legacy_lease`, `host_scheduler` or `host_scheduler_override`.
+    /// `host_scheduler` or `host_scheduler_override`.
     pub kind: String,
     /// Scheduler run id. For a scheduler-launched child this is the run that
     /// launched this very process; for a run that never launched it is the

@@ -103,7 +103,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
 | `effigy help extend` | `effigy skill`, `effigy rhai surface` |
-| `effigy help admin` | `effigy admission`, `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
+| `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
 
 `effigy help <command>` renders the same panel as `effigy <command> --help`, so
 `effigy help docs` and `effigy docs --help` agree. That holds for every command
@@ -372,13 +372,10 @@ effigy init --list [--json]
 effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
 effigy <task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
 effigy <catalog>/<task> [--repo <PATH>] [--verbose-root] [--env-schema <PATH>] [--lock-wait-ms <MS>] [--plan] [--json] [task args]
-effigy admission status [--json]
-effigy admission run <RUN_ID> [--json]
-effigy admission runs --caller <IDENTITY> [--offset <N>] [--limit <N>] [--json]
 ```
 
 See [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
-for the shared budget, wait lifecycle, caller telemetry, and recovery rules.
+for heavy scheduler routing, waiting, cancellation, and retained-history rules.
 
 Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
 flags such as `--include`, `--exclude`, `--threshold`, `--source-root`, marker

@@ -12,11 +12,12 @@ During v0.x, MINOR bumps may include breaking changes.
   binaries keep their existing names.
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
-  instead of the legacy lease; `EFFIGY_HOST_SCHEDULER=0` retains the legacy
-  backend for rollback. The scheduler launches
-  the same invocation with a run token; nested calls reuse it in place and an
-  invalid token exits 77. An unreachable scheduler fails heavy work with exit
-  75 (no legacy fallback); `EFFIGY_SCHEDULER_OVERRIDE=<reason>` records a
+  (Queue/Nucleus owns capacity and scheduling). `EFFIGY_HOST_SCHEDULER=0` is
+  retired and rejected before task effects; malformed values also fail closed.
+  The scheduler launches the same invocation with a run token; nested calls
+  reuse it in place, and an invalid token exits 77. An unreachable scheduler
+  fails heavy work with exit 75 (no legacy fallback);
+  `EFFIGY_SCHEDULER_OVERRIDE=<reason>` records a
   durable override and runs directly. Output, exit status and JSON envelopes are
   the child's; `capacity_timeout`, prelaunch cancel, run timeout and lost
   runs stay distinct, and interrupts ask the scheduler to cancel. Owned
@@ -42,8 +43,9 @@ During v0.x, MINOR bumps may include breaking changes.
   resolve inside the selected repository) and carry a content digest.
   Required/advisory scope comparison returns `needs_planner` with exact
   tokens and reasons before any run exists; a declared match still runs
-  every member. Heavy groups take one host-wide admission lease that nested
-  task references reuse, with wait reported separately from execution;
+  every member. Heavy groups run as one Queue/Nucleus scheduler invocation;
+  nested task references reuse its token, with scheduler wait reported apart
+  from execution;
   over-budget evidence never changes check outcomes. Member records carry
   the task's real exit code (including 130, classified as cancellation for
   the member and the group), never a placeholder. `tasks qa-group stop`
@@ -77,11 +79,6 @@ During v0.x, MINOR bumps may include breaking changes.
   destination, including a dangling symlink, is never replaced. Failed staged
   writes clean up their temporary file, unsupported filesystems fail clearly,
   and `fs::move_path` now documents its replacement and race limits.
-- Heavy validation tasks share a measured host-wide CPU and memory admission
-  budget with repository round-robin scheduling, bounded capacity waits, stale
-  owner recovery, caller-linked run telemetry, and `effigy admission` queries.
-  Configure per-invocation `EFFIGY_CALLER` identity and reservation values;
-  standard task commands receive the reserved CPU units as `CARGO_BUILD_JOBS`.
 - `effigy container scope --json` reports the selected checkout's absolute
   path, scope kind and full generation token before archive without loading a
   container policy or contacting a runtime backend. It creates a missing
@@ -217,6 +214,14 @@ During v0.x, MINOR bumps may include breaking changes.
   stream and headless logs.
 
 ### Breaking
+- Retired Effigy's heavy-admission lease store, store-writing backend, and
+  `effigy admission status|run|runs` commands and JSON schemas after Queue
+  removed its legacy joins. `EFFIGY_ADMISSION_DIR` is no longer read;
+  `EFFIGY_HOST_SCHEDULER=0` now returns an unsupported-retired diagnostic
+  before effects. Existing default or custom state files are untouched and
+  treated as opaque historical data; no reader or migration is added. Rollback
+  uses the backed-up prior `48183cf` local-channel binary, which retains the
+  explicit-zero path.
 - Removed the Rhai object-storage host surface (`storage::provider`, `status`,
   `ls`, `head`, `get`, `put`, `delete`), the `effigy-rhai` `s3` dependency, and
   the vendored `vendor/s3` library, per the independent-retirement ruling in

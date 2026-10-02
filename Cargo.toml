@@ -112,7 +112,6 @@ globset = "0.4"
 walkdir = "2"
 semver = "1"
 regex = "1"
-fs2 = "0.4"
 libc = "0.2"
 signal-hook = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }

@@ -349,8 +349,9 @@ maintained definitions.
 
 `expected_wall_ms` describes total group execution wall time under the named
 `expectation_basis`. It includes setup, compilation, member execution, and
-cleanup after admission. `admission_wait_ms` is reported separately and is not
-compared with the expectation. If the expectation is unknown, the CLI prints
+cleanup after scheduler launch. `admission_wait_ms` records scheduler capacity
+wait separately and is not compared with the expectation. If the expectation
+is unknown, the CLI prints
 `expected: unknown`; it does not derive an ETA from recent runs.
 
 The group owner updates the expectation from observed runs and records the
@@ -365,8 +366,8 @@ can therefore be `outcome = "passed"` and `budget_state = "over_budget"`.
 Over-budget evidence is not a timeout or failed check. It never truncates the
 member list.
 
-An explicit `hard_timeout_ms` is a separate policy. It starts after admission,
-does not replace the host admission deadline, and on expiry returns
+An explicit `hard_timeout_ms` is a separate policy. It starts after scheduler
+launch, does not replace the scheduler capacity deadline, and on expiry returns
 `outcome = "timed_out"`. It is usable only when the resolved process tree can
 be stopped and attributed safely. Unsupported routes fail plan validation;
 Effigy must not pretend to enforce a timeout on an unowned child.
@@ -377,24 +378,20 @@ Heavy groups compose with host-wide admission contract
 [049](049-heavy-validation-admission-contract.md):
 
 - Resolution inspects every selected member's effective task route before any
-  member side effect. If any selected path is heavy, the group obtains one
-  lease before setup and retains it through cleanup.
-- Members run serially, so the group reserves the largest selected heavy
-  member reservation, not the sum. Existing declared parallelism remains in
-  force inside a member.
-- Nested Effigy task references inherit the group's lease. They never request a
-  second lease or wait behind themselves. The lease is not bypassed by a group
-  wrapper or environment flag.
+  member side effect. If any selected path is heavy, Effigy submits the whole
+  group to the Queue/Nucleus scheduler before setup and retains that scheduler
+  run through cleanup.
+- Nested Effigy task references validate and reuse the group's parent token.
+  They never request a second scheduler run or wait behind themselves. Caller
+  environment flags cannot fabricate parent authority.
 - If a dependency cannot be resolved before execution, `--plan` fails closed;
-  the runtime does not discover heavy work after it has begun and acquire a
-  nested lease.
-- A draft member's admission classification comes from its typed draft
-  definition. The current draft contract has no `admission` field; adding it to
-  draft parsing, direct execution, plans, and JSON is an explicit
-  implementation gap. Until that ships, draft members are rejected from
-  groups. Afterward, a declared heavy draft gets the same top-level lease when
-  run directly and shares a parent group lease when nested.
-- A group with no heavy member acquires no heavy lease. Its execution is still
+  the runtime does not discover heavy work after it has begun and submit a
+  second run.
+- A draft member's heavy classification comes from its typed draft definition.
+  `[drafts]` accepts the same optional `admission = "heavy"` metadata as
+  `[tasks]`; direct heavy drafts route through the scheduler, and group members
+  reuse a validated parent token.
+- A group with no heavy member submits no heavy scheduler run. Its execution is still
   timed and recorded; it does not receive machine-wide CPU or memory
   enforcement.
 
@@ -402,8 +399,8 @@ Current availability after the contract 051 implementation:
 
 | Capability | State | Notes |
 | --- | --- | --- |
-| Legacy lease admission and waiting | Retained for rollback with `EFFIGY_HOST_SCHEDULER=0`. | One `qa-group:` lease covers all members, is acquired before setup, and is retained through cleanup; nested tasks reuse it through the existing scoped-lease mechanism. `admission_wait_ms` is reported separately from execution time. |
-| Scheduler backend (default) | Unset or `EFFIGY_HOST_SCHEDULER=1` selects the host-run scheduler; `0` keeps the legacy lease backend for rollback. | A heavy group is submitted whole to the scheduler under [049](049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback); the launched child owns the ledger and takes no legacy lease. A run the scheduler settles without launching leaves a completed record with outcome `capacity_timeout` or `cancelled`. |
+| Legacy Effigy lease admission | Retired. | The old local store and its records remain untouched and opaque; the current binary has no legacy admission route. `EFFIGY_HOST_SCHEDULER=0` fails before effects. |
+| Queue/Nucleus scheduler routing | Implemented. | Unset or `EFFIGY_HOST_SCHEDULER=1` selects the scheduler. A heavy group is submitted whole under [049](049-heavy-validation-admission-contract.md#scheduler-routing); the launched child owns the ledger, and nested members reuse its validated token. A run settled before launch leaves a completed record with outcome `capacity_timeout` or `cancelled`. |
 | Draft admission | Implemented. | `[drafts]` accept the same optional `admission = "heavy"` metadata as `[tasks]`; direct draft plans/runs/inventory carry it additively, and temporary groups may select draft members explicitly. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
 | Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-owned-run-supervision-contract.md), proposed and unavailable until implementation. |
@@ -414,8 +411,8 @@ Current availability after the contract 051 implementation:
 `status`, `logs`, and `stop` address a run ID, not a selector or PID. Stop is
 scoped to that run and its supervised process generation. It records the
 request, signal delivery, member that was active, and whether descendants were
-confirmed gone. Logs are run-scoped and redact secrets. A capacity waiter can
-be cancelled without stopping another lease owner.
+confirmed gone. Logs are run-scoped and redact secrets. A caller interrupt can
+cancel its own scheduler-waiting group without affecting another scheduler run.
 
 Owned-run supervision (contract
 [052](052-owned-run-supervision-contract.md)) remains the prerequisite for
@@ -433,8 +430,9 @@ Group outcome is separate from budget evidence:
 - `cancelled`: the owner or operator cancelled the run;
 - `timed_out`: an explicitly configured execution deadline fired;
 - `blocked`: selection or a required runtime route failed before execution;
-- `waiting_for_capacity`: a live state, not a terminal outcome;
-- `capacity_timeout`: the admission deadline elapsed before execution began;
+- `waiting_for_capacity`: a live Queue/Nucleus scheduler state, not a terminal
+  outcome; the Effigy group record is written after launch or settlement;
+- `capacity_timeout`: the scheduler capacity deadline elapsed before launch;
 - `unknown`: persisted evidence cannot prove a live or complete result.
 
 Member states are `passed`, `failed`, `cancelled`, `timed_out`, `blocked`, or
@@ -528,8 +526,9 @@ A heavy group that ran under the default scheduler backend adds one optional
 object, `backend`: `kind` (`host_scheduler` or `host_scheduler_override`),
 `scheduler_run_id`, `scheduler_epoch`, `queue_wait_ms` and `settlement`
 (`capacity_timeout`, `cancelled` or `null`). Every metric is `null` when
-unavailable, never zero. The key is absent on light groups and on legacy-lease
-runs. The run schema stays `effigy.qa-group-run.v1` with `schema_version` 1: the
+unavailable, never zero. The key is absent on light groups and on historical
+records that predate this field. The run schema stays `effigy.qa-group-run.v1`
+with `schema_version` 1: the
 field is additive and optional, readers must ignore unknown keys, and records
 written before it existed remain valid.
 
@@ -627,11 +626,10 @@ when each brief is approved and dispatched.
 - An injected failure in each declared test/compile/docs/proof member fails
   the group with the correct member ID and exit result. A stopped or timed-out
   member marks remaining members `not_started`; no pass is synthesized.
-- Heavy members take one admission lease for the group; nested heavy tasks
-  share it without waiting behind themselves. Heavy draft members also obtain
-  a lease when run directly and share the group lease when nested. Heavy-only
-  limits remain host-wide, while non-heavy runs do not claim OS resource
-  enforcement.
+- Heavy members run inside one Queue/Nucleus scheduler run for the group;
+  nested heavy tasks reuse its validated token. Heavy draft members also route
+  through the scheduler directly and reuse the group token when nested.
+  Non-heavy runs do not claim OS resource enforcement.
 - Text and JSON distinguish capacity wait/timeout, pass, failed check,
   cancellation, execution timeout, unknown/interrupted evidence, and over
   budget. Tests inject capacity and execution timing; they do not sleep on wall

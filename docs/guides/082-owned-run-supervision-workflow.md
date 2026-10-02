@@ -2,12 +2,13 @@
 
 Status: proposed. Run-control commands and signal evidence are not available
 yet. Until an implementation brief lands, use selector status
-(`effigy tasks status`), managed-session controls, and `effigy admission`
-queries; do not claim run-scoped stop or interruption attribution.
+(`effigy tasks status`) and managed-session controls; there is no Effigy
+heavy-admission query command. Do not claim run-scoped stop or interruption
+attribution.
 
 Shipped narrow subset: with `EFFIGY_HOST_SCHEDULER=1`, Ctrl-C or SIGTERM on a
 heavy `effigy` run asks the host-run scheduler to cancel that run and then
-reports how it settled (see [080](080-host-wide-validation-admission.md#default-host-scheduler-backend)).
+reports how it settled (see [080](080-host-wide-validation-admission.md#routing-and-prerequisites)).
 That is not run control: there is still no stop or logs command for runs and no
 hard timeout.
 
@@ -34,8 +35,6 @@ Inspect a selector, not a run:
 
 ```sh
 effigy tasks status <selector>
-effigy admission status --json
-effigy admission run <RUN_ID> --json
 ```
 
 Managed headless sessions keep their own controls:
@@ -46,8 +45,8 @@ effigy tui logs --profile <profile>
 effigy tui stop --profile <profile>
 ```
 
-These read selector status, host capacity, or one managed session. None of
-them stops an ordinary task run or a QA-group member, and none records signal
+These read selector status or one managed session. None of them stops an
+ordinary task run or a QA-group member, and none records signal
 attribution.
 
 ## Proposed workflow

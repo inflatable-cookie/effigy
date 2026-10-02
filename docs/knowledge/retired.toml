@@ -1,4 +1,43 @@
 [[retired]]
+id = "effigy-heavy-admission-store-and-cli"
+retired = "2026-10-02"
+replacement = "Queue and Nucleus own heavy scheduling. Effigy routes heavy invocations through the host-run client and exposes no local heavy-admission store or status/run/runs commands. Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; the prior 48183cf binary is the supported explicit-zero rollback artifact."
+owner = "docs/knowledge/contracts/049-heavy-validation-admission-contract.md"
+terms = [
+  "effigy admission",
+  "effigy.admission.status.v1",
+  "effigy.admission.run.v1",
+  "effigy.admission.runs.v1",
+  "effigy.admission.state.v1",
+  "EFFIGY_HOST_SCHEDULER=0",
+  "EFFIGY_ADMISSION_DIR",
+  "EFFIGY_ADMISSION_LEASE_ID",
+  "~/.cache/effigy/admission/state.json",
+]
+paths = [
+  "src/runner/admission.rs",
+  "src/runner/admission_command.rs",
+  "crates/effigy-cli/src/help/topics/admission.rs",
+]
+config_keys = ["EFFIGY_ADMISSION_DIR", "EFFIGY_ADMISSION_LEASE_ID"]
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/contracts/049-heavy-validation-admission-contract.md",
+  "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
+  "docs/knowledge/contracts/052-owned-run-supervision-contract.md",
+  "docs/guides/080-host-wide-validation-admission.md",
+  "docs/knowledge/architecture/010-package-map.md",
+  "docs/knowledge/architecture/031-bounded-qa-groups-runtime.md",
+  "docs/knowledge/architecture/033-host-run-protocol-client.md",
+  "docs/knowledge/architecture/032-owned-run-supervision-runtime.md",
+  "src/runner/host_scheduler/mod.rs",
+  "src/runner/host_scheduler/submit.rs",
+  "src/runner/host_scheduler/tests.rs",
+  "crates/effigy-cli/src/command_surface/tests.rs",
+  "tests/host_scheduler_integration.rs",
+]
+
+[[retired]]
 id = "effigy-rhai-storage-surface"
 retired = "2026-10-02"
 replacement = "Effigy's Rhai object-storage host functions, the effigy-rhai s3 dependency, and the vendored upstream S3 client library were removed as one breaking change (contract 043's retirement record). Scripts calling the removed helpers fail with an unknown-function error; generic MinIO catalog services and independent consumer S3 adapters are unrelated and keep their own owners."

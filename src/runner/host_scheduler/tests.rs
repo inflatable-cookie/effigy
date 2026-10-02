@@ -37,16 +37,18 @@ fn signalled(signal: Value) -> Option<Value> {
 }
 
 #[test]
-fn scheduler_setting_defaults_to_scheduler_and_accepts_explicit_values() {
-    assert!(parse_scheduler_setting(None).unwrap());
-    assert!(parse_scheduler_setting(Some(OsString::from("1"))).unwrap());
-    assert!(!parse_scheduler_setting(Some(OsString::from("0"))).unwrap());
+fn scheduler_setting_accepts_unset_and_one_but_retires_zero() {
+    assert!(parse_scheduler_setting(None).is_ok());
+    assert!(parse_scheduler_setting(Some(OsString::from("1"))).is_ok());
+    let retired = parse_scheduler_setting(Some(OsString::from("0"))).unwrap_err();
+    assert_eq!(code_of(&retired), 2);
+    assert!(retired
+        .to_string()
+        .contains("legacy admission backend was retired"));
     for invalid in ["", "yes", "true", "01", " 1", "2"] {
         let error = parse_scheduler_setting(Some(OsString::from(invalid))).unwrap_err();
         assert_eq!(code_of(&error), 2, "{invalid:?}");
-        assert!(error
-            .to_string()
-            .contains("unset selects the host scheduler"));
+        assert!(error.to_string().contains("must be `1` (host scheduler)"));
     }
 }
 
@@ -75,12 +77,12 @@ fn scheduler_owned_names_never_cross_boundaries() {
 }
 
 #[test]
-fn submitted_environment_drops_scheduler_lease_and_unrepresentable_entries() {
+fn submitted_environment_drops_tokens_retired_lease_and_unrepresentable_entries() {
     let vars = vec![
         ("PATH", "/bin"),
         ("HOST_RUN_TOKEN", "secret-token"),
         ("HOST_RUN_ID", "run"),
-        ("EFFIGY_ADMISSION_LEASE_ID", "lease"),
+        ("EFFIGY_ADMISSION_LEASE_ID", "retired lease"),
         ("EFFIGY_HOST_SCHEDULER", "1"),
         ("A=B", "bad-name"),
         ("", "empty-name"),
@@ -220,9 +222,10 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
     let mut owned = spawn();
     let mut foreign = spawn();
     {
-        let _scope = crate::runner::admission::OwnedChildrenScope::enter().expect("enter scope");
-        assert!(crate::runner::admission::signal_scope_active());
-        crate::runner::admission::register_process_group(owned.id());
+        let _scope =
+            crate::runner::owned_children::OwnedChildrenScope::enter().expect("enter scope");
+        assert!(crate::runner::owned_children::signal_scope_active());
+        crate::runner::owned_children::register_process_group(owned.id());
         unsafe {
             libc::raise(libc::SIGTERM);
         }
@@ -245,7 +248,7 @@ fn owned_children_scope_forwards_termination_only_to_registered_groups() {
             "an unregistered process group is never signalled"
         );
     }
-    assert!(!crate::runner::admission::signal_scope_active());
+    assert!(!crate::runner::owned_children::signal_scope_active());
     let _ = foreign.kill();
     let _ = foreign.wait();
 }

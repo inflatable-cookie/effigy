@@ -308,12 +308,12 @@ Effigy executable from the consumer checkout:
 
 ```sh
 command -v effigy
-effigy admission status --json
+effigy --version
 ```
 
-The admission query must return `effigy.admission.status.v1`; a version string
-alone does not prove that the binary supports the host-wide validation
-coordinator. Skill lookup and binary capability are independent. See
+The version command identifies the resolved executable; heavy selectors route
+through the Queue/Nucleus scheduler, and Effigy no longer exposes a local
+admission capability query. Skill lookup and binary provenance are independent. See
 [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md).
 
 ## 4) Minimum Adoption Criteria

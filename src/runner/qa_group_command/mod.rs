@@ -303,7 +303,7 @@ fn render_status_text(snapshot: &QaGroupStatusSnapshot) -> Result<String, Runner
             .unwrap_or_else(|| "unknown".to_owned())
     };
     out.push_str(&format!(
-        "timing: admission wait {}, execution {}, expected {}\n",
+        "timing: scheduler wait {}, execution {}, expected {}\n",
         format_ms(&timing.admission_wait_ms),
         format_ms(&timing.execution_wall_ms),
         format_ms(&timing.expected_wall_ms),

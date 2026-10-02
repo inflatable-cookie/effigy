@@ -3,12 +3,11 @@
 //! Cases that need a scheduler run against Queue's isolated host-run private
 //! server (`bin/host-run-private-server.mjs`, reviewed merge e9e4d12 of
 //! PR192, whose token verifier conforms to contract 010 at 16fcb59) with a
-//! throwaway state directory. Point
-//! `EFFIGY_HOST_RUN_PRIVATE_SERVER` at an isolated Queue checkout at that
-//! commit with `node_modules` installed; without it those cases report
-//! `SKIPPED` and pass vacuously, so a green run without the variable proves
-//! only the cases that need no server. Nothing here talks to the live
-//! `~/.local/state/host-run` endpoint or the live Queue data directory.
+//! throwaway state directory. Point `EFFIGY_HOST_RUN_PRIVATE_SERVER` at an
+//! isolated Queue checkout at that commit or a verified descendant, with
+//! `node_modules` installed. The fixture fails if this required input is
+//! missing, so scheduler cases cannot pass vacuously. Nothing here talks to
+//! the live `~/.local/state/host-run` endpoint or live Queue data directory.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -35,11 +34,10 @@ struct Server {
 impl Server {
     /// Start the private server, optionally with a shortened output retention
     /// (a copy of the pinned script that only adds `outputRetentionMs`).
-    fn start(retention_ms: Option<u64>) -> Option<Self> {
-        let Some(queue) = std::env::var_os(SERVER_ENV).map(PathBuf::from) else {
-            eprintln!("SKIPPED: {SERVER_ENV} is not set; no private Queue server available");
-            return None;
-        };
+    fn start(retention_ms: Option<u64>) -> Self {
+        let queue = std::env::var_os(SERVER_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("{SERVER_ENV} must name an isolated Queue checkout"));
         let queue = fs::canonicalize(queue).expect("canonical private Queue checkout");
         let dir = tempfile::Builder::new()
             .prefix("hr")
@@ -109,11 +107,11 @@ impl Server {
             child.id(),
             state.display()
         );
-        Some(Self {
+        Self {
             _dir: dir,
             state,
             child,
-        })
+        }
     }
 
     fn run_ids(&self) -> Vec<String> {
@@ -170,7 +168,6 @@ impl Drop for Server {
 
 struct Workspace {
     dir: tempfile::TempDir,
-    admission: PathBuf,
 }
 
 impl Workspace {
@@ -181,13 +178,7 @@ impl Workspace {
             .expect("workspace");
         let manifest = manifest.replace("{EFFIGY}", EFFIGY);
         fs::write(dir.path().join("effigy.toml"), manifest).expect("manifest");
-        let admission = dir.path().join("adm");
-        fs::DirBuilder::new()
-            .mode(0o2770)
-            .create(&admission)
-            .expect("admission dir");
-        fs::set_permissions(&admission, PermissionsExt::from_mode(0o2770)).expect("chmod");
-        Self { dir, admission }
+        Self { dir }
     }
 
     fn root(&self) -> &Path {
@@ -221,7 +212,6 @@ impl Workspace {
             .arg(self.root())
             .current_dir(self.root())
             .env("NO_COLOR", "1")
-            .env("EFFIGY_ADMISSION_DIR", &self.admission)
             .env("EFFIGY_ADMISSION_CPU_UNITS", "1")
             .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
             .env("MARK", self.root().join("mark"))
@@ -245,12 +235,6 @@ impl Workspace {
             command.env("EFFIGY_HOST_SCHEDULER", setting);
         }
         command
-    }
-
-    fn legacy_store_untouched(&self) -> bool {
-        fs::read_dir(&self.admission)
-            .map(|entries| entries.count() == 0)
-            .unwrap_or(true)
     }
 }
 
@@ -337,18 +321,15 @@ fn now_ms() -> i64 {
 }
 
 #[test]
-fn explicit_zero_keeps_legacy_admission_available_for_rollback() {
+fn explicit_zero_rejects_retired_legacy_admission_before_effects() {
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command_with_setting(None, &["heavy-echo"], Some("0"))
         .output()
         .expect("run effigy");
-    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
-    assert_eq!(ws.lines("mark"), 1);
-    assert!(
-        !ws.legacy_store_untouched(),
-        "explicit zero selects the legacy lease backend"
-    );
+    assert_eq!(code(&output), 2, "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("legacy admission backend was retired"));
+    assert_eq!(ws.lines("mark"), 0, "nothing executes");
 }
 
 #[test]
@@ -364,7 +345,6 @@ fn invalid_setting_refuses_before_any_effect() {
         assert!(text(&output.stderr).contains("EFFIGY_HOST_SCHEDULER must be"));
     }
     assert_eq!(ws.lines("mark"), 0, "nothing executed");
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
@@ -378,7 +358,6 @@ fn light_tasks_stay_direct_even_when_the_scheduler_is_unreachable() {
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert!(text(&output.stdout).contains("light-out"));
     assert_eq!(ws.lines("mark"), 1);
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
@@ -392,7 +371,6 @@ fn unreachable_heavy_fails_closed_with_75_and_no_legacy_fallback() {
     assert_eq!(code(&output), 75);
     assert!(text(&output.stderr).contains("scheduler_unreachable"));
     assert_eq!(ws.lines("mark"), 0, "heavy work did not run");
-    assert!(ws.legacy_store_untouched(), "no automatic legacy fallback");
 }
 
 #[test]
@@ -412,7 +390,6 @@ fn unsafe_authority_fails_closed_with_75() {
         .expect("run effigy");
     assert_eq!(code(&output), 75);
     assert_eq!(ws.lines("mark"), 0);
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
@@ -426,7 +403,6 @@ fn override_is_recorded_durably_then_runs_without_any_admission() {
         .expect("run effigy");
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert_eq!(ws.lines("mark"), 1, "override executes the task directly");
-    assert!(ws.legacy_store_untouched(), "no dual admission");
     let journal = fs::read_to_string(root.join("pending-facts.jsonl")).expect("pending journal");
     let fact: Value = serde_json::from_str(journal.lines().next().expect("a fact")).unwrap();
     assert_eq!(fact["kind"], "override");
@@ -448,9 +424,7 @@ fn empty_override_reason_refuses_without_executing() {
 
 #[test]
 fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command(Some(&server.state), &["heavy-echo"])
@@ -466,7 +440,6 @@ fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
     assert!(text(&output.stderr).contains("heavy-err"));
     assert_eq!(ws.lines("mark"), 1, "launched exactly once");
     assert_eq!(server.run_ids().len(), 1, "one scheduler run");
-    assert!(ws.legacy_store_untouched(), "legacy store is never used");
     let run = &server.run_ids()[0];
     let nested: Vec<_> = server
         .facts()
@@ -483,9 +456,7 @@ fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
 
 #[test]
 fn explicit_one_keeps_the_scheduler_backend() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command_with_setting(Some(&server.state), &["heavy-echo"], Some("1"))
@@ -493,14 +464,11 @@ fn explicit_one_keeps_the_scheduler_backend() {
         .expect("run effigy");
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert_eq!(server.run_ids().len(), 1);
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
 fn json_envelope_and_the_real_nonzero_child_exit_are_preserved() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let failed = ws
         .command(Some(&server.state), &["--json", "heavy-fail"])
@@ -524,9 +492,7 @@ fn json_envelope_and_the_real_nonzero_child_exit_are_preserved() {
 
 #[test]
 fn nested_heavy_reuses_the_parent_run_without_resubmit_or_legacy_lease() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command(Some(&server.state), &["outer"])
@@ -539,7 +505,6 @@ fn nested_heavy_reuses_the_parent_run_without_resubmit_or_legacy_lease() {
         1,
         "the nested heavy invocation did not submit behind its parent"
     );
-    assert!(ws.legacy_store_untouched());
     let run = &server.run_ids()[0];
     let nested: Vec<_> = server
         .facts()
@@ -554,9 +519,7 @@ fn nested_heavy_reuses_the_parent_run_without_resubmit_or_legacy_lease() {
 
 #[test]
 fn forged_expired_and_outside_root_tokens_exit_77_and_never_queue() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let (epoch, key) = server.token_key();
     let other = tempfile::tempdir().expect("outside root");
@@ -589,14 +552,11 @@ fn forged_expired_and_outside_root_tokens_exit_77_and_never_queue() {
     }
     assert_eq!(ws.lines("mark"), 0, "nothing executed");
     assert!(server.run_ids().is_empty(), "no invalid token ever queued");
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
-fn a_present_token_is_validated_even_with_legacy_backend_selected() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+fn parent_validation_precedes_retired_zero_and_valid_parent_rejects_before_effects() {
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command_with_setting(Some(&server.state), &["heavy-echo"], Some("0"))
@@ -605,17 +565,31 @@ fn a_present_token_is_validated_even_with_legacy_backend_selected() {
         .expect("run effigy");
     assert_eq!(code(&output), 77);
     assert_eq!(ws.lines("mark"), 0);
-    assert!(
-        ws.legacy_store_untouched(),
-        "no legacy lease behind a parent"
+
+    let (epoch, key) = server.token_key();
+    let token = mint_token(
+        json!({"runId":"synthetic-parent","epoch":epoch,"class":"heavy","root":ws.root(),"exp":now_ms() + 60_000}),
+        &key,
     );
+    let output = ws
+        .command_with_setting(Some(&server.state), &["heavy-echo"], Some("0"))
+        .env("HOST_RUN_TOKEN", &token)
+        .output()
+        .expect("run effigy");
+    assert_eq!(code(&output), 2);
+    assert!(text(&output.stderr).contains("legacy admission backend was retired"));
+    assert_eq!(
+        ws.lines("mark"),
+        0,
+        "valid parent does not bypass retired zero"
+    );
+    assert!(server.run_ids().is_empty(), "retired setting never submits");
+    assert!(server.facts().iter().all(|fact| fact["kind"] != "nested"));
 }
 
 #[test]
 fn a_valid_parent_token_executes_in_place_and_reports_a_nested_fact() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let (epoch, key) = server.token_key();
     let token = mint_token(
@@ -630,16 +604,13 @@ fn a_valid_parent_token_executes_in_place_and_reports_a_nested_fact() {
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert_eq!(ws.lines("mark"), 1);
     assert!(server.run_ids().is_empty(), "no resubmission");
-    assert!(ws.legacy_store_untouched());
     assert!(!text(&output.stderr).contains(&token), "token never logged");
     assert!(!text(&output.stdout).contains(&token));
 }
 
 #[test]
 fn capacity_timeout_never_launches_and_cancellation_follows_settlement() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
 
     // A holds the single CPU of the private server.
@@ -709,14 +680,11 @@ fn capacity_timeout_never_launches_and_cancellation_follows_settlement() {
     wait_for("owned child gone", Duration::from_secs(20), || unsafe {
         libc::kill(held_pid, 0) != 0
     });
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
 fn retained_output_replays_and_expires_for_a_late_attach() {
-    let Some(server) = Server::start(Some(3_000)) else {
-        return;
-    };
+    let server = Server::start(Some(3_000));
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command(Some(&server.state), &["heavy-echo"])
@@ -764,9 +732,7 @@ fn retained_output_replays_and_expires_for_a_late_attach() {
 
 #[test]
 fn pending_facts_replay_and_container_removal_stays_false_or_unknown() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
 
     // A running scheduler run to attribute container facts to.
@@ -849,9 +815,7 @@ fn pending_facts_replay_and_container_removal_stays_false_or_unknown() {
 
 #[test]
 fn heavy_group_runs_as_the_launched_child_with_backend_correlation() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let output = ws
         .command(
@@ -877,14 +841,11 @@ fn heavy_group_runs_as_the_launched_child_with_backend_correlation() {
         2,
         "the heavy and light members each ran once inside the one scheduler run"
     );
-    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
 fn group_capacity_timeout_leaves_an_honest_record_without_launching_members() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let mut holder = ws
         .command(Some(&server.state), &["heavy-hold"])
@@ -927,9 +888,7 @@ fn group_capacity_timeout_leaves_an_honest_record_without_launching_members() {
 
 #[test]
 fn late_attach_to_a_capacity_timed_out_run_returns_its_settlement() {
-    let Some(server) = Server::start(None) else {
-        return;
-    };
+    let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
     let mut holder = ws
         .command(Some(&server.state), &["heavy-hold"])

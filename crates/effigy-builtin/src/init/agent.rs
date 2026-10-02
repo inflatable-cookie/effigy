@@ -50,9 +50,10 @@ skills. A filesystem check cannot prove what an already-running agent loaded;
 use a fresh agent context to verify discovery.
 
 Agent Skill guidance and the `effigy` executable are separate channels. A
-current skill does not prove the binary on `PATH` is current or admission-capable;
-check the binary independently with `command -v effigy` and
-`effigy admission status --json`.
+current skill does not prove the binary on `PATH` is current; check the
+resolved executable independently with `command -v effigy` and
+`effigy --version`. Heavy selectors route through the Queue/Nucleus scheduler;
+Effigy has no local admission capability query.
 
 Do not add a current-directory repo override while already inside the target
 repo. Do not edit

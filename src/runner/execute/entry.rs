@@ -27,7 +27,7 @@ fn run_manifest_task_with_preflight_input(
             }
             super::selection::SelectionResolution::Output(output) => return Ok(output),
         };
-    run_selected_task_with_admission(&preflight, &selection, || {
+    run_selected_task_with_scheduler(&preflight, &selection, || {
         if let Some(output) =
             super::pipeline::managed::run_managed_task(&preflight, &selection, &selection_plan)?
         {
@@ -69,7 +69,7 @@ fn run_manifest_task_with_preflight_input_and_env(
         surface: selection.surface,
     };
 
-    run_selected_task_with_admission(&preflight, &overridden_selection, || {
+    run_selected_task_with_scheduler(&preflight, &overridden_selection, || {
         if let Some(output) = super::pipeline::managed::run_managed_task(
             &preflight,
             &overridden_selection,
@@ -85,14 +85,12 @@ fn run_manifest_task_with_preflight_input_and_env(
     })
 }
 
-fn run_selected_task_with_admission(
+fn run_selected_task_with_scheduler(
     preflight: &super::planning::ExecutionPreflight,
     selection: &TaskSelection<'_>,
     execute: impl FnOnce() -> Result<String, RunnerError>,
 ) -> Result<String, RunnerError> {
-    if crate::runner::admission::scoped_lease_id().is_some()
-        || crate::runner::admission::signal_scope_active()
-    {
+    if crate::runner::owned_children::signal_scope_active() {
         return execute();
     }
     let task_name = preflight.selector.task_name.as_str();
@@ -110,16 +108,16 @@ fn run_selected_task_with_admission(
         |prefix| format!("{prefix}/{task_name}"),
     );
     match host_scheduler::route_heavy(&selector, &preflight.invocation_cwd)? {
-        Route::Legacy => {}
         Route::Nested(_) | Route::Override => {
-            let scope = crate::runner::admission::OwnedChildrenScope::enter().map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot install heavy-run signal forwarding: {error}"
-                ))
-            })?;
+            let scope =
+                crate::runner::owned_children::OwnedChildrenScope::enter().map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "cannot install heavy-run signal forwarding: {error}"
+                    ))
+                })?;
             let result = execute();
             drop(scope);
-            return result;
+            result
         }
         Route::Submit => {
             let settled = host_scheduler::submit_and_settle(SubmitContext {
@@ -128,26 +126,9 @@ fn run_selected_task_with_admission(
                 repository: &preflight.invocation_cwd,
                 cwd: &preflight.invocation_cwd,
             })?;
-            return Err(settled.into_error());
+            Err(settled.into_error())
         }
     }
-    let caller = std::env::var("EFFIGY_CALLER")
-        .unwrap_or_else(|_| crate::runner::admission::default_caller_identity());
-    let lease = crate::runner::admission::acquire(crate::runner::admission::Request {
-        caller: &caller,
-        repository: &preflight.invocation_cwd,
-        selector: &selector,
-    })
-    .map_err(RunnerError::task_invocation)?;
-    let scope = crate::runner::admission::LeaseScope::enter(lease.id()).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "cannot install heavy-run signal forwarding: {error}"
-        ))
-    })?;
-    let result = execute();
-    lease.finish(&result);
-    drop(scope);
-    result
 }
 
 fn is_managed_control_invocation(

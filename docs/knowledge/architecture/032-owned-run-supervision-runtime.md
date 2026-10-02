@@ -3,21 +3,22 @@
 Contract: [052](../contracts/052-owned-run-supervision-contract.md)
 Status: proposed and unavailable until implementation.
 
-The default scheduler backend ships a narrow part of this boundary for heavy
-runs only: the scheduler owns run identity and the process group, Effigy
-cancels its own submitted run on interrupt and forwards termination to the
-groups its tasks started (`OwnedChildrenScope`, no lease). The supervisor,
-journal, stop and hard-timeout design below remains proposed and unavailable.
+The host-run scheduler ships a narrow part of this boundary for heavy runs:
+the scheduler owns run identity and the process group, Effigy cancels its own
+submitted run on interrupt and forwards termination to the groups its tasks
+started (`OwnedChildrenScope`). The supervisor, journal, stop and hard-timeout
+design below remains proposed and unavailable.
 See [033](033-host-run-protocol-client.md#integration).
 
 ## Placement
 
-Run supervision sits under the canonical execution pipeline and above the
-host-wide coordinator. It generalizes the signal forwarding, process-group
-registration, and crash recovery that contract
-[049](../contracts/049-heavy-validation-admission-contract.md) already
-implements for heavy admission so that every run, every nested child, and
-every QA-group member shares one boundary.
+Run supervision sits under the canonical execution pipeline and coordinates
+with the scheduler-owned process group for heavy runs. The broader design
+below was drafted while Effigy still had a heavy-admission coordinator; that
+store was retired under contract
+[049](../contracts/049-heavy-validation-admission-contract.md). The proposed
+general run journal and stop surface remain unavailable and require a new
+approved brief; they cannot revive or extend the retired admission store.
 
 ```text
 canonical TaskExecutionRequest (contract 013)
@@ -31,8 +32,8 @@ canonical TaskExecutionRequest (contract 013)
       cancellation / timeout / stop
                  |
                  v
-       host-wide run journal (contract 049 coordinator)
-       lock + atomic writes + boot identity
+       proposed run journal (not implemented)
+       durable identity + closure evidence
 ```
 
 The boundary resolves a run id, not a selector or a PID. QA-group runs
@@ -46,14 +47,13 @@ The design reuses what exists today and names the gap.
 - `crates/effigy-process` spawns each child in its own process group
   (`setpgid`) and signals a tree with an `ppid` walk. It has no run identity
   and no ownership proof.
-- `src/runner/admission.rs` records the heavy owner PID, owner start identity,
-  boot identity, and supervised process groups in a host-wide locked store.
-  It forwards `SIGINT`/`SIGTERM`/`SIGHUP` to registered groups through
-  `LeaseScope` and recovers stale owners fail-closed.
-- `src/runner/execute/entry.rs` enters `LeaseScope` only after a heavy lease
-  is acquired. `src/runner/execute/process_run.rs` calls
-  `register_process_group` for every task, but the record is dropped when no
-  running capacity lease exists, so non-heavy runs register nothing.
+- Historical `src/runner/admission.rs` tracked heavy owner and group identity;
+  its store and writers are retired. Existing history remains opaque and is
+  not read or migrated.
+- `src/runner/execute/entry.rs` enters `OwnedChildrenScope` only for a validated
+  scheduler parent or recorded operator override. `process_run.rs` registers
+  each spawned group only inside that scope; this is graceful signal forwarding,
+  not a general run journal or stop surface.
 - `crates/effigy-managed` runs a supervisor process for a headless managed
   session, records `session.json`, and stops by pid plus descendant proof.
   That supervisor is the owner process itself.
@@ -61,15 +61,15 @@ The design reuses what exists today and names the gap.
   supervisor with a PID file and signal/escalation handling for container
   host processes. It is the existing shape for a surviving witness.
 
-The gap is exactly one boundary: a run record for every invocation, a
-generation a stop can prove, and interruption evidence that survives the
-owner.
+The remaining gap is a durable record for every invocation, a generation a
+general stop can prove, and interruption evidence that survives the owner.
+Those capabilities remain unavailable.
 
 ## Run journal
 
-The journal is the contract
-[049](../contracts/049-heavy-validation-admission-contract.md) coordinator
-store extended additively:
+This journal design is a superseded proposal, not a contract 049 store
+extension. A future implementation brief would need to specify its own
+ownership and persistence boundary without affecting scheduler capacity:
 
 - one record per run, at creation, before lease acquisition or child spawn;
 - `kind = capacity_lease` records participate in capacity scheduling;
@@ -81,11 +81,9 @@ store extended additively:
 - terminal writes set state, classification, interruption evidence, timing,
   and log reference.
 
-The store keeps its lock, temp+rename write, fsync, ownership, permission, and
-symlink validation from contract
-[049](../contracts/049-heavy-validation-admission-contract.md). A schema
-version bump maps existing records to `capacity_lease` with no behavior
-change.
+The store described here does not exist. Existing Effigy admission files are
+not inputs to a future run journal, and any proposed journal requires its own
+schema and reviewed migration/retention policy.
 
 ## Supervisor placements
 

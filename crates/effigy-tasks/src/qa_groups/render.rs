@@ -122,11 +122,11 @@ pub fn render_qa_group_plan_text(plan: &QaGroupPlan) -> Result<String, EffigyTas
             "admission",
             if plan.admission.required {
                 format!(
-                    "heavy (members: {}); one host-wide lease for the whole run",
+                    "heavy (members: {}); one Queue/Nucleus scheduler run for the whole group",
                     plan.admission.member_ids.join(", ")
                 )
             } else {
-                "standard; no heavy lease needed".to_owned()
+                "standard; no heavy scheduler run needed".to_owned()
             },
         ),
     ])?;
