@@ -8841,6 +8841,9 @@ fn cli_container_data_seed_json_reports_seed_contract() {
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
+        .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
+        .env("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS", "300")
+        .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
         .output()
         .expect("run effigy");
 
@@ -8857,6 +8860,28 @@ fn cli_container_data_seed_json_reports_seed_contract() {
     assert_eq!(
         fs::read_to_string(root.join(".effigy/local/db-seed.marker")).expect("read marker"),
         "seeded"
+    );
+
+    let lease_path =
+        root.join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json");
+    let lease: Value = serde_json::from_slice(&fs::read(&lease_path).expect("read host lease"))
+        .expect("parse host lease");
+    assert_eq!(lease["schema"], "effigy.host-container-lease.v1");
+    assert_eq!(lease["container_name"], "web");
+    assert_eq!(lease["profile"], "dev");
+    assert_eq!(lease["project_name"], "fixture-web-dev");
+    assert!(!lease["token"].as_str().unwrap_or_default().is_empty());
+
+    let processes = Command::new("ps")
+        .args(["-ww", "-axo", "command="])
+        .output()
+        .expect("inspect process table");
+    assert!(processes.status.success(), "ps failed: {processes:?}");
+    let process_list = String::from_utf8_lossy(&processes.stdout);
+    let reaper_identity = format!("__container-lease-reaper --repo-root {}", root.display());
+    assert!(
+        !process_list.contains(&reaper_identity),
+        "fake-runtime data-seed fixture left a host lease reaper: {process_list}"
     );
 }
 
@@ -9438,6 +9463,7 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
+        .env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

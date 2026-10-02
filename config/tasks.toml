@@ -44,6 +44,7 @@
 ]
 "test:containers:backend-selection" = "cargo test -p effigy-containers manager::tests:: -- --nocapture"
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+"test:container:data-seed-lease-isolation" = "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture"
 
 # Bounded QA-group proofs (contract 051 implementation)
 "test:qa-groups:manifest" = "cargo test -p effigy-manifest --lib qa_groups -- --nocapture"
