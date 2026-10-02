@@ -5,9 +5,11 @@
 //! PR192, whose token verifier conforms to contract 010 at 16fcb59) with a
 //! throwaway state directory. Point `EFFIGY_HOST_RUN_PRIVATE_SERVER` at an
 //! isolated Queue checkout at that commit or a verified descendant, with
-//! `node_modules` installed. The fixture fails if this required input is
-//! missing, so scheduler cases cannot pass vacuously. Nothing here talks to
-//! the live `~/.local/state/host-run` endpoint or live Queue data directory.
+//! `node_modules` installed. Tests that require this fixture are ignored by
+//! default so general CI can run without Queue; the dedicated Effigy selector
+//! includes ignored tests and fails if the fixture is missing. Nothing here
+//! talks to the live `~/.local/state/host-run` endpoint or live Queue data
+//! directory.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -423,6 +425,7 @@ fn empty_override_reason_refuses_without_executing() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -455,6 +458,7 @@ fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn explicit_one_keeps_the_scheduler_backend() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -467,6 +471,7 @@ fn explicit_one_keeps_the_scheduler_backend() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn json_envelope_and_the_real_nonzero_child_exit_are_preserved() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -491,6 +496,7 @@ fn json_envelope_and_the_real_nonzero_child_exit_are_preserved() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn nested_heavy_reuses_the_parent_run_without_resubmit_or_legacy_lease() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -518,6 +524,7 @@ fn nested_heavy_reuses_the_parent_run_without_resubmit_or_legacy_lease() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn forged_expired_and_outside_root_tokens_exit_77_and_never_queue() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -555,6 +562,7 @@ fn forged_expired_and_outside_root_tokens_exit_77_and_never_queue() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn parent_validation_precedes_retired_zero_and_valid_parent_rejects_before_effects() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -588,6 +596,7 @@ fn parent_validation_precedes_retired_zero_and_valid_parent_rejects_before_effec
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn a_valid_parent_token_executes_in_place_and_reports_a_nested_fact() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -609,6 +618,7 @@ fn a_valid_parent_token_executes_in_place_and_reports_a_nested_fact() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn capacity_timeout_never_launches_and_cancellation_follows_settlement() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -683,6 +693,7 @@ fn capacity_timeout_never_launches_and_cancellation_follows_settlement() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn retained_output_replays_and_expires_for_a_late_attach() {
     let server = Server::start(Some(3_000));
     let ws = Workspace::new(MANIFEST);
@@ -731,6 +742,7 @@ fn retained_output_replays_and_expires_for_a_late_attach() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn pending_facts_replay_and_container_removal_stays_false_or_unknown() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -814,6 +826,7 @@ fn pending_facts_replay_and_container_removal_stays_false_or_unknown() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn heavy_group_runs_as_the_launched_child_with_backend_correlation() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -844,6 +857,7 @@ fn heavy_group_runs_as_the_launched_child_with_backend_correlation() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn group_capacity_timeout_leaves_an_honest_record_without_launching_members() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
@@ -887,6 +901,7 @@ fn group_capacity_timeout_leaves_an_honest_record_without_launching_members() {
 }
 
 #[test]
+#[ignore = "requires the private Queue fixture; run test:host-run:integration"]
 fn late_attach_to_a_capacity_timed_out_run_returns_its_settlement() {
     let server = Server::start(None);
     let ws = Workspace::new(MANIFEST);
