@@ -77,6 +77,25 @@ remains for rollback; its later removal requires Queue's admission-hook change
 first. No global shell or service environment edits, forced restarts, live
 cleanup, automatic VM starts, workflow changes, or releases are authorized.
 
+Tom's 2026-10-02 ruling (decision `219dc10a`) approves coordinated migration
+step (c), with a gated local rollout and prior-binary rollback. Queue must first
+remove its legacy admission joins through its independently reviewed
+prerequisite and roll that change live. Effigy may then retire its legacy heavy
+admission backend, CLI and store-writing code. Existing historical state files
+remain untouched; this does not authorize deletion, migration or release of
+any recorded reservation. Host-container leases and other independent lease
+mechanisms are outside this retirement.
+
+The retirement ends `EFFIGY_HOST_SCHEDULER=0` support in the new binary: reject
+it clearly before effects, rather than executing without admission or silently
+choosing another backend. Unset and `1` retain scheduler execution and parent
+token validation remains first. Rollback restores the backed-up `48183cf`
+local-channel binary, which still supports explicit legacy mode. Installation
+requires independent exact-head review, CI, one newer-source Queue milestone,
+preserved historical state, backups and bounded smoke evidence. This ruling
+does not change the running mechanism before those gates or authorize
+workflows, releases, VM starts, forced restarts or live cleanup.
+
 ## Scheduler backend and explicit legacy rollback
 
 Migration step (b) of the shared contract is the default in source. Step (c)
