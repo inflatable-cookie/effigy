@@ -1,8 +1,8 @@
 //! Scheduler-routing proofs for default heavy execution (contract 049).
 //!
 //! Cases that need a scheduler run against Queue's isolated host-run private
-//! server (`bin/host-run-private-server.mjs`, reviewed merge e9e4d12 of
-//! PR192, whose token verifier conforms to contract 010 at 16fcb59) with a
+//! server (`bin/host-run-private-server.mjs`, reviewed Queue152 merge
+//! f53a9d0, whose token verifier conforms to contract 010 at 16fcb59) with a
 //! throwaway state directory. Point
 //! `EFFIGY_HOST_RUN_PRIVATE_SERVER` at an isolated Queue checkout at that
 //! commit with `node_modules` installed; without it those cases report
@@ -11,11 +11,13 @@
 //! `~/.local/state/host-run` endpoint or the live Queue data directory.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -168,6 +170,283 @@ impl Drop for Server {
     }
 }
 
+struct RestartingServer {
+    _dir: tempfile::TempDir,
+    state: PathBuf,
+    supervisor: Child,
+    supervisor_pid: u32,
+    authority_rx: mpsc::Receiver<Value>,
+    authorities: Vec<Value>,
+}
+
+impl RestartingServer {
+    /// Start Queue152's private warm-standby supervisor on a fresh store.
+    fn start() -> Option<Self> {
+        let Some(queue) = std::env::var_os(SERVER_ENV).map(PathBuf::from) else {
+            eprintln!("SKIPPED: {SERVER_ENV} is not set; no private Queue server available");
+            return None;
+        };
+        let queue = fs::canonicalize(queue).expect("canonical private Queue checkout");
+        let head = Command::new("git")
+            .current_dir(&queue)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("read private Queue checkout head");
+        assert!(head.status.success(), "git rev-parse failed");
+        assert_eq!(
+            text(&head.stdout).trim(),
+            "f53a9d006851ff1649d906531e42f9b810481fc0",
+            "the restart acceptance must use the reviewed Queue152 merge"
+        );
+        let status = Command::new("git")
+            .current_dir(&queue)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("check private Queue checkout status");
+        assert!(status.status.success(), "git status failed");
+        assert!(
+            text(&status.stdout).trim().is_empty(),
+            "the pinned private Queue checkout must be clean"
+        );
+
+        let dir = tempfile::Builder::new()
+            .prefix("hr")
+            .tempdir()
+            .expect("supervised server tempdir");
+        let state = dir.path().join("s");
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&state)
+            .expect("supervised state dir");
+        let mut supervisor = Command::new("node")
+            .current_dir(&queue)
+            .args(["--import", "tsx"])
+            .arg(queue.join("bin/host-run-private-server.mjs"))
+            .args(["--supervise", "--state-dir"])
+            .arg(&state)
+            .env_remove("QUEUE_STANDBY_FOR_PID")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn Queue152 private supervisor");
+        let supervisor_pid = supervisor.id();
+        let stdout = supervisor.stdout.take().expect("supervisor stdout");
+        let (authority_tx, authority_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Ok(authority) = serde_json::from_str::<Value>(&line) {
+                    if authority_tx.send(authority).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let first = authority_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("initial supervised authority line");
+        assert_eq!(first["format"], "host.run.authority");
+        eprintln!(
+            "Queue152 private supervisor pid {}, head {}, state {}",
+            supervisor_pid,
+            text(&head.stdout).trim(),
+            state.display()
+        );
+        Some(Self {
+            _dir: dir,
+            state,
+            supervisor,
+            supervisor_pid,
+            authority_rx,
+            authorities: vec![first],
+        })
+    }
+
+    fn next_authority(&mut self, timeout: Duration) -> Value {
+        let authority = self
+            .authority_rx
+            .recv_timeout(timeout)
+            .expect("replacement authority line before reconnect deadline");
+        assert_eq!(authority["format"], "host.run.authority");
+        self.authorities.push(authority.clone());
+        authority
+    }
+
+    fn run_ids(&self) -> Vec<String> {
+        let runs = self.state.join("runs");
+        let Ok(entries) = fs::read_dir(runs) else {
+            return Vec::new();
+        };
+        let mut ids: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn status(&self, run_id: &str) -> Value {
+        let (root, authority) =
+            effigy_host_run::HostRunRoot::open(&self.state).expect("trusted current authority");
+        let mut client = effigy_host_run::HostRunClient::open(root, authority);
+        client
+            .status_query(effigy_host_run::StatusQuery::Run {
+                run_id: run_id.to_owned(),
+            })
+            .expect("query existing run status")
+    }
+
+    fn token_key_record(&self) -> Value {
+        serde_json::from_slice(
+            &fs::read(self.state.join("token.key")).expect("read current token keys"),
+        )
+        .expect("parse current token keys")
+    }
+}
+
+impl Drop for RestartingServer {
+    fn drop(&mut self) {
+        // Only signal the private supervisor PID recorded when this fixture started.
+        unsafe {
+            libc::kill(self.supervisor_pid as i32, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Ok(Some(status)) = self.supervisor.try_wait() {
+                eprintln!(
+                    "private supervisor pid {} exited: {status}",
+                    self.supervisor_pid
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = self.supervisor.kill();
+        let _ = self.supervisor.wait();
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OutputPipe {
+    Stdout,
+    Stderr,
+}
+
+fn forward_lines<R: Read + Send + 'static>(
+    pipe: R,
+    kind: OutputPipe,
+    sender: mpsc::Sender<(OutputPipe, String)>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            if sender.send((kind, line)).is_err() {
+                break;
+            }
+        }
+    })
+}
+
+fn collect_until<F>(
+    receiver: &mpsc::Receiver<(OutputPipe, String)>,
+    stdout: &mut Vec<String>,
+    stderr: &mut Vec<String>,
+    deadline: Instant,
+    predicate: F,
+) where
+    F: Fn(&[String], &[String]) -> bool,
+{
+    while !predicate(stdout, stderr) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "timed out waiting for follower output"
+        );
+        let (kind, line) = receiver
+            .recv_timeout(remaining)
+            .expect("follower output remained readable through the bounded roll");
+        match kind {
+            OutputPipe::Stdout => stdout.push(line),
+            OutputPipe::Stderr => stderr.push(line),
+        }
+    }
+}
+
+struct EndpointProbe {
+    stop: Arc<AtomicBool>,
+    samples: Arc<Mutex<Vec<(Instant, bool)>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl EndpointProbe {
+    fn start(endpoint: PathBuf) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let thread_stop = Arc::clone(&stop);
+        let thread_samples = Arc::clone(&samples);
+        let thread = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                let connected = UnixStream::connect(&endpoint).is_ok();
+                thread_samples
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((Instant::now(), connected));
+                std::thread::sleep(Duration::from_millis(4));
+            }
+        });
+        Self {
+            stop,
+            samples,
+            thread: Some(thread),
+        }
+    }
+
+    fn samples(&self) -> Vec<(Instant, bool)> {
+        self.samples
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("endpoint probe thread");
+        }
+    }
+}
+
+impl Drop for EndpointProbe {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn endpoint_gap(
+    samples: &[(Instant, bool)],
+    started: Instant,
+    finished: Instant,
+) -> Option<Duration> {
+    let from = started
+        .checked_sub(Duration::from_millis(100))
+        .unwrap_or(started);
+    let to = finished + Duration::from_millis(150);
+    let inside: Vec<_> = samples
+        .iter()
+        .filter(|(at, _)| *at >= from && *at <= to)
+        .collect();
+    let first_refusal = inside.iter().position(|(_, ok)| !ok)?;
+    let last_accept = inside[..first_refusal]
+        .iter()
+        .rev()
+        .find(|(_, ok)| *ok)
+        .expect("probe accepted before endpoint refusal");
+    let next_accept = inside[first_refusal..]
+        .iter()
+        .find(|(_, ok)| *ok)
+        .expect("probe accepted after endpoint replacement");
+    Some(next_accept.0.duration_since(last_accept.0))
+}
+
 struct Workspace {
     dir: tempfile::TempDir,
     admission: PathBuf,
@@ -253,6 +532,84 @@ impl Workspace {
             .unwrap_or(true)
     }
 }
+
+struct FollowedCommand {
+    child: Child,
+    release_file: PathBuf,
+}
+
+impl Drop for FollowedCommand {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.release_file, "release");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn drain_output(
+    receiver: &mpsc::Receiver<(OutputPipe, String)>,
+    stdout: &mut Vec<String>,
+    stderr: &mut Vec<String>,
+) {
+    while let Ok((kind, line)) = receiver.try_recv() {
+        match kind {
+            OutputPipe::Stdout => stdout.push(line),
+            OutputPipe::Stderr => stderr.push(line),
+        }
+    }
+}
+
+fn output_line_count(lines: &[String], prefix: &str) -> usize {
+    lines.iter().filter(|line| line.starts_with(prefix)).count()
+}
+
+fn assert_current_run_token(
+    server: &RestartingServer,
+    workspace: &Workspace,
+    run_id: &str,
+    token: &str,
+    epoch: u64,
+) {
+    let (root, authority) =
+        effigy_host_run::HostRunRoot::open(&server.state).expect("trusted token authority");
+    assert_eq!(authority.epoch, epoch);
+    let mut client = effigy_host_run::HostRunClient::open(root, authority);
+    let parent = client
+        .validate_parent_token(Some(token), workspace.root())
+        .expect("validate current run token")
+        .expect("private Queue launched the run with a token");
+    assert_eq!(parent.run_id, run_id);
+    assert_eq!(parent.epoch, epoch);
+}
+
+const RESTART_MANIFEST: &str = r#"
+[tasks.heavy-roll-probe]
+admission = "heavy"
+run = "node restart-probe.cjs"
+"#;
+
+const RESTART_PROBE: &str = r#"
+const fs = require("node:fs");
+fs.writeFileSync("run-token", process.env.HOST_RUN_TOKEN || "", { mode: 0o600 });
+let n = 0;
+const timer = setInterval(() => {
+  if (fs.existsSync("release")) {
+    clearInterval(timer);
+    console.log("done");
+    process.exit(0);
+  }
+  console.log(`out ${n}`);
+  if (n % 2 === 0) console.error(`err ${n}`);
+  n++;
+}, 80);
+"#;
 
 const MANIFEST: &str = r#"
 [qa.groups.heavy-group]
@@ -976,4 +1333,219 @@ fn late_attach_to_a_capacity_timed_out_run_returns_its_settlement() {
         libc::kill(holder.id() as i32, libc::SIGTERM);
     }
     let _ = holder.wait();
+}
+
+#[test]
+fn real_effigy_follower_recovers_across_five_queue152_supervisor_rolls() {
+    let Some(mut server) = RestartingServer::start() else {
+        return;
+    };
+    let ws = Workspace::new(RESTART_MANIFEST);
+    fs::write(ws.file("restart-probe.cjs"), RESTART_PROBE).expect("write restart probe");
+
+    let child = ws
+        .command(Some(&server.state), &["heavy-roll-probe"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn real Effigy follower");
+    let mut follower = FollowedCommand {
+        child,
+        release_file: ws.file("release"),
+    };
+    let (output_tx, output_rx) = mpsc::channel();
+    let stdout_reader = forward_lines(
+        follower.child.stdout.take().expect("follower stdout"),
+        OutputPipe::Stdout,
+        output_tx.clone(),
+    );
+    let stderr_reader = forward_lines(
+        follower.child.stderr.take().expect("follower stderr"),
+        OutputPipe::Stderr,
+        output_tx.clone(),
+    );
+    drop(output_tx);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    collect_until(
+        &output_rx,
+        &mut stdout,
+        &mut stderr,
+        Instant::now() + Duration::from_secs(30),
+        |out, err| output_line_count(out, "out ") >= 2 && output_line_count(err, "err ") >= 1,
+    );
+    wait_for("run token written", Duration::from_secs(30), || {
+        ws.file("run-token").exists()
+    });
+    wait_for("one submitted run", Duration::from_secs(30), || {
+        server.run_ids().len() == 1
+    });
+    let run_id = server.run_ids()[0].clone();
+    let run_token = fs::read_to_string(ws.file("run-token")).expect("read run token");
+    assert!(
+        !run_token.is_empty(),
+        "Queue launched the task with its run token"
+    );
+
+    let before = {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let status = server.status(&run_id);
+            if status["state"] == "running" && status["pid"].as_u64().is_some() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "run did not reach running state");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let original_run_pid = before["pid"].clone();
+    let original_start_identity = before["startIdentity"].clone();
+    let first_authority = server.authorities[0].clone();
+    let epoch = first_authority["epoch"].as_u64().expect("initial epoch");
+    let token_keys = server.token_key_record();
+    let endpoint = PathBuf::from(
+        first_authority["endpoint"]
+            .as_str()
+            .expect("initial private endpoint"),
+    );
+    let mut probe = EndpointProbe::start(endpoint.clone());
+    assert_current_run_token(&server, &ws, &run_id, run_token.trim(), epoch);
+
+    let reconnect_window = Duration::from_secs(5);
+    let mut gaps = Vec::new();
+    for roll in 1..=5 {
+        drain_output(&output_rx, &mut stdout, &mut stderr);
+        let stdout_before = output_line_count(&stdout, "out ");
+        let stderr_before = output_line_count(&stderr, "err ");
+        let started = Instant::now();
+        let deadline = started + reconnect_window;
+        let signal_result = unsafe { libc::kill(server.supervisor_pid as i32, libc::SIGUSR2) };
+        assert_eq!(
+            signal_result, 0,
+            "signal only the recorded private supervisor"
+        );
+
+        let replacement = server.next_authority(deadline.saturating_duration_since(Instant::now()));
+        let replacement_at = Instant::now();
+        let previous = &server.authorities[roll - 1];
+        assert_ne!(
+            replacement["pid"], previous["pid"],
+            "roll replaced the server process"
+        );
+        assert_ne!(
+            replacement["startIdentity"], previous["startIdentity"],
+            "roll replaced the server process identity"
+        );
+        assert_eq!(replacement["endpoint"], first_authority["endpoint"]);
+        assert_eq!(replacement["epoch"], epoch, "ordinary roll preserves epoch");
+        assert_eq!(
+            server.token_key_record(),
+            token_keys,
+            "ordinary roll preserves current and previous token keys"
+        );
+
+        let status = server.status(&run_id);
+        assert_eq!(status["runId"], run_id);
+        assert_eq!(status["state"], "running");
+        assert_eq!(status["epoch"], epoch);
+        assert_eq!(
+            status["pid"], original_run_pid,
+            "the original work process survives"
+        );
+        assert_eq!(status["startIdentity"], original_start_identity);
+        assert_current_run_token(&server, &ws, &run_id, run_token.trim(), epoch);
+
+        collect_until(
+            &output_rx,
+            &mut stdout,
+            &mut stderr,
+            deadline,
+            |out, err| {
+                output_line_count(out, "out ") > stdout_before
+                    && output_line_count(err, "err ") > stderr_before
+            },
+        );
+        assert!(
+            Instant::now().duration_since(started) <= reconnect_window,
+            "real Effigy follower resumed both streams inside the five-second window"
+        );
+        std::thread::sleep(Duration::from_millis(150));
+        let gap = endpoint_gap(&probe.samples(), started, replacement_at)
+            .expect("probe observed refusal between old and replacement endpoints");
+        assert!(
+            gap <= reconnect_window,
+            "roll {roll} endpoint gap was {gap:?}"
+        );
+        gaps.push(gap);
+    }
+    probe.stop();
+
+    fs::write(&follower.release_file, "release").expect("release the one scheduler run");
+    let exit_deadline = Instant::now() + Duration::from_secs(30);
+    let exit = loop {
+        if let Some(status) = follower.child.try_wait().expect("wait for Effigy follower") {
+            break status;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "Effigy follower did not settle"
+        );
+        match output_rx.recv_timeout(Duration::from_millis(25)) {
+            Ok((OutputPipe::Stdout, line)) => stdout.push(line),
+            Ok((OutputPipe::Stderr, line)) => stderr.push(line),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    };
+    assert_eq!(exit.code(), Some(0), "the real Effigy follower passed");
+    stdout_reader.join().expect("stdout reader");
+    stderr_reader.join().expect("stderr reader");
+    drain_output(&output_rx, &mut stdout, &mut stderr);
+
+    let output_count = output_line_count(&stdout, "out ");
+    assert!(
+        output_count > 5,
+        "probe emitted real output during all rolls"
+    );
+    let mut expected_stdout: Vec<_> = (0..output_count)
+        .map(|index| format!("out {index}"))
+        .collect();
+    expected_stdout.push("done".to_owned());
+    assert_eq!(stdout, expected_stdout, "stdout has no gaps or duplicates");
+    let expected_stderr: Vec<_> = (0..output_count)
+        .filter(|index| index % 2 == 0)
+        .map(|index| format!("err {index}"))
+        .collect();
+    let task_stderr: Vec<_> = stderr
+        .iter()
+        .filter(|line| line.starts_with("err "))
+        .cloned()
+        .collect();
+    assert_eq!(
+        task_stderr, expected_stderr,
+        "task stderr has no gaps or duplicates"
+    );
+    assert_eq!(
+        server.run_ids(),
+        vec![run_id.clone()],
+        "one run and reservation only"
+    );
+
+    let settled = server.status(&run_id);
+    assert_eq!(settled["runId"], run_id);
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(settled["epoch"], epoch);
+    assert_eq!(settled["settlement"]["outcome"], "passed");
+    assert_eq!(settled["settlement"]["result"]["exitCode"], 0);
+    eprintln!(
+        "Queue152 real-client roll gaps ms: {:?}; max {} ms; run {run_id} settled passed once",
+        gaps.iter().map(Duration::as_millis).collect::<Vec<_>>(),
+        gaps.iter()
+            .map(Duration::as_millis)
+            .max()
+            .unwrap_or_default()
+    );
 }
