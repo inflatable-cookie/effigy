@@ -137,30 +137,30 @@ members.
 ## Admission and timing
 
 Before any side effect, the resolver classifies all resolved members and their
-known nested task references. If the legacy backend is selected with
-`EFFIGY_HOST_SCHEDULER=0`, the coordinator obtains one host-wide lease before
-setup and retains it to cleanup. Serial members require the maximum selected
-reservation, not their sum. Nested task re-entry proves and reuses the parent
-lease; the group cannot use a caller environment variable to fabricate it.
+known nested task references. Heavy groups use the Queue/Nucleus host-run
+scheduler. The scheduler launches one complete group invocation before the
+group record and members are created; nested heavy tasks reuse its validated
+parent token. No Effigy lease store or local lease acquisition remains.
 
-By default the same heavy classification submits the whole group to the
-host-run scheduler instead of acquiring a lease; `EFFIGY_HOST_SCHEDULER=0`
-selects the retained lease backend for rollback (contract
-[049](../contracts/049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback)).
+The same heavy classification submits the whole group to the host-run
+scheduler (contract
+[049](../contracts/049-heavy-validation-admission-contract.md#scheduler-routing)).
 The scheduler launches this invocation with a run token; that child validates
-the token, owns the one ledger and records `backend` correlation, and its
-members run in place with no lease. Preflight, including `needs_planner`, runs
-before submit. Only a run the scheduler settles without launching writes a
-record from the submitting process.
+the token, owns the one ledger and records `backend` correlation. Members run
+in place under the validated scheduler run. `EFFIGY_HOST_SCHEDULER=0` is
+retired and rejected. Preflight, including `needs_planner`, runs before submit.
+Only a run the scheduler settles without launching writes a record from the
+submitting process.
 
 A route whose nested admission shape cannot be resolved fails the plan rather
-than beginning unleased and acquiring a second lease later. A group with only
-non-heavy members receives no host-wide lease and no OS resource cap claim.
+than discovering heavy work after launch and submitting it as a second run. A
+group with only non-heavy members submits no scheduler run and makes no OS
+resource cap claim.
 
 Timing is attached to the run ledger:
 
-- `queued_at` to `admitted_at` is `admission_wait_ms`;
-- admission to final cleanup is `execution_wall_ms`, including setup,
+- `admission_wait_ms` is the scheduler-reported capacity wait, when available;
+- scheduler launch to final cleanup is `execution_wall_ms`, including setup,
   compilation, member work, and cleanup;
 - member start/end times provide per-member wall time;
 - cold/warm build times remain null unless the runtime measured them.
@@ -168,8 +168,8 @@ Timing is attached to the run ledger:
 The expected wall time is compared only with execution wall time. Exceeding
 expectation records `budget_state = over_budget`; it does not kill, skip, or
 reorder work. A configured hard timeout is a separate policy and requires a
-supervisor that can stop the full process tree. Admission deadline remains
-independent of both.
+supervisor that can stop the full process tree. The scheduler capacity
+deadline remains independent of the run deadline.
 
 ## Inspect and stop
 
@@ -180,8 +180,8 @@ ID to its supervised process generation, records signal attribution, and
 confirms descendant cleanup before claiming cancellation.
 
 Current task status is selector-scoped; current managed-session status/logs/
-stop only cover the managed session; admission queries expose host-wide heavy
-wait and lease state. General stop attribution for ordinary and non-heavy runs,
+stop only cover the managed session; Queue/Nucleus own host-wide heavy waiting
+and scheduler state. General stop attribution for ordinary and non-heavy runs,
 nested process trees, PID reuse, and owner loss is owned by the separate
 [owned run supervision contract](../contracts/052-owned-run-supervision-contract.md)
 and [runtime](032-owned-run-supervision-runtime.md). Group controls must reuse
@@ -190,8 +190,8 @@ that supervision boundary. They do not introduce a second cancellation system.
 If the coordinator survives an interrupted owner, it may record a cancelled
 or unknown member from supervisor evidence. If the owner itself is killed and
 no supervisor can complete the ledger, status stays incomplete/unknown; a
-dead process cannot print a final receipt. The existing admission recovery
-rules still block unsafe lease reuse when owner generation, boot identity, PID
+dead process cannot print a final receipt. Scheduler recovery rules block
+unsafe capacity reuse when owner generation, boot identity, PID
 reuse, or a live child is uncertain.
 
 ## Definition sources
@@ -214,13 +214,10 @@ untracked files are visibly local. Temporary expiry is advisory and separate
 from runtime expectation. Cleanup is a human edit/removal, not automatic
 pruning.
 
-Temporary groups may refer to draft tasks only after contract 046 adds the
-published-task `admission` field to draft definitions and direct draft runs.
-Today a draft body cannot carry that field. Until the schema and runtime
-extension lands, group planning rejects draft members; it does not assume an
-unmarked draft is safe to run outside heavy admission. Once supported, a
-declared heavy draft acquires its lease on a direct run and shares the parent
-lease inside a group.
+Temporary groups resolve draft-task classification from the typed definition.
+`[drafts]` accepts the same optional `admission = "heavy"` metadata as
+`[tasks]`; direct heavy drafts route through the scheduler, and group members
+reuse a validated parent token.
 
 ## Boundaries
 

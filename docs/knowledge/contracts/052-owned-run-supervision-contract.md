@@ -3,25 +3,27 @@
 Status: proposed and unavailable. No run journal, run-scoped stop, run-scoped
 logs, signal-evidence record, or hard-timeout enforcement described here
 exists today. Until an implementation brief lands, use existing selector
-status, managed-session controls, and `effigy admission` queries; never claim
-scoped stop or signal attribution from this document.
+status and managed-session controls; there is no Effigy heavy-admission query
+CLI. Never claim scoped stop or signal attribution from this document.
 
 The scheduler ownership ruling in [049](049-heavy-validation-admission-contract.md)
 governs the next implementation cut. Queue and Nucleus own admission and the
 scheduler-launched process group; Effigy owns execution, graceful termination,
 exit evidence and runtime telemetry. This proposed design must be reconciled
-with their agreed shared contract before implementation. Its lease-store and
-supervisor-placement proposals do not authorize extending the current admission
-mechanism.
+with their agreed shared contract before implementation. The store and lease
+reuse details below predate the 2026-10-02 retirement in contract 049 and are
+historical design proposals, not current architecture or implementation
+authority. A future implementation would require a new brief and must not
+recreate Effigy's retired heavy-admission store.
 
-Shipped subset (effigy#058): heavy runs go through the host-run scheduler
-client by default; `EFFIGY_HOST_SCHEDULER=0` selects the retained lease backend.
+Shipped subset (effigy#058, updated by effigy#070): heavy runs go through the
+host-run scheduler client; `EFFIGY_HOST_SCHEDULER=0` is retired and rejected.
 The scheduler owns run identity, admission and process group; Effigy asks it to
 cancel the run it submitted on interrupt and, inside a launched run, forwards
 termination only to process groups its tasks started. That is the whole of what
 ships. This contract's run journal, generic run stop and logs commands,
 signal-attribution record and hard timeouts stay unavailable.
-See [049](049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback).
+See [049](049-heavy-validation-admission-contract.md#scheduler-routing).
 
 Owner: task execution and lifecycle maintainers
 Architecture: [032](../architecture/032-owned-run-supervision-runtime.md)
@@ -36,10 +38,10 @@ Contracts: [013](013-task-execution-request-contract.md),
 ## Purpose and proof boundary
 
 Effigy needs one supervision boundary that can stop one owned run and state
-what was actually observed about its interruption. Today signal forwarding,
-process-group registration, and crash recovery exist only inside the heavy
-admission lease; ordinary tasks, nested children, and QA-group members have no
-run-scoped stop and no honest signal record. Contracts
+what was actually observed about its interruption. Today scheduler-launched
+heavy runs and their owned task children support graceful termination within
+their established boundaries; ordinary tasks and QA-group members still have
+no general run-scoped stop or signal record. Contracts
 [049](049-heavy-validation-admission-contract.md) and
 [051](051-bounded-qa-groups-contract.md) already refuse to claim those controls
 until this contract and its implementation land.
@@ -491,12 +493,12 @@ never implies a complete run.
 provide closure proof. A false capability rejects a dependent declaration
 before execution.
 
-## Composition with admission and QA groups
+## Composition with scheduler routing and QA groups
 
-- Heavy runs keep one contract
-  [049](049-heavy-validation-admission-contract.md) lease, acquire it before
-  setup, and release it through the ordered stop sequence. Non-heavy runs get
-  an `evidence_only` record with no lease and no machine-wide resource claim.
+- Heavy runs use the Queue/Nucleus scheduler under contract
+  [049](049-heavy-validation-admission-contract.md); this proposed design does
+  not create a second Effigy admission lease. Non-heavy runs receive no
+  machine-wide resource claim.
 - A QA-group run is one run with one generation; its members execute serially
   inside it and keep contract
   [051](051-bounded-qa-groups-contract.md) member states. Stopping the group
@@ -512,11 +514,11 @@ before execution.
 | Surface | Decision |
 | --- | --- |
 | Selector status (017/018) | Unchanged. Run control is run-id scoped and separate. |
-| `effigy admission` schemas | Unchanged. The unified run status composes the existing admission record; it does not reshape admission JSON. |
+| Retired Effigy admission schemas | Not emitted or queried by the current binary; historical records remain opaque under contract 049. |
 | `effigy qa` / CI / release routes | Unchanged. Supervision adds no gate. |
 | Managed-session `status`/`logs`/`stop` | Unchanged and still own their managed session. They do not become generic run control. |
 | Draft tasks (046) | No new draft grammar. A draft route is supervised like any other once it resolves; admission classification stays governed by 046. |
-| Admission store | Additive schema upgrade only. Existing capacity records map to `kind = capacity_lease`; scheduling and reclamation predicates for capacity holders are unchanged. Evidence-only records are invisible to scheduling. |
+| Proposed run journal | This old proposal is not authorized to extend or recreate the retired admission store. A future design requires a new approved brief. |
 | JSON consumers | New `effigy.run-*` schemas; existing schema ids are not reshaped. |
 
 The store upgrade and any journal field that influences capacity are

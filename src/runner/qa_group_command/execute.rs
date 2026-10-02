@@ -1,12 +1,12 @@
 //! QA-group run coordinator: one run identity, sequential member execution
-//! through the canonical pipeline, one shared heavy lease, durable ledger.
+//! through the canonical pipeline, one durable ledger.
 //!
 //! Members run in declaration order, one at a time, each as a typed
 //! `TaskExecutionRequest` handed to the ordinary pipeline (routing,
 //! environment, secrets, containers, locks, and cleanup stay pipeline
-//! responsibilities). Nested task references inside a member inherit the
-//! group's lease through the existing scoped-lease mechanism, so a heavy
-//! member never waits behind itself or acquires a second lease. A failed
+//! responsibilities). A scheduler-launched group owns its children through
+//! the validated parent token, so a heavy member never waits behind itself or
+//! submits a second run. A failed
 //! member ends the group; later members are recorded `not_started` and no
 //! pass is synthesized. Expected wall time is compared with execution wall
 //! time only; over-budget evidence never changes the check outcome.
@@ -23,10 +23,10 @@ use effigy_execution::{
 };
 use effigy_tasks::{budget_state, QaGroupPlan, QaGroupPlanMember};
 
-use super::super::admission::{self, LeaseScope, OwnedChildrenScope, Request as AdmissionRequest};
 use super::super::error::RunnerError;
 use super::super::execute::api::run_manifest_task_request;
 use super::super::host_scheduler::{self, Route, SubmitContext};
+use super::super::owned_children::OwnedChildrenScope;
 use super::member_runtime_context;
 use effigy_runtime::qa_group_status::{
     begin_qa_group_run_record, finalize_qa_group_run_record, update_qa_group_run_record,
@@ -51,25 +51,32 @@ pub(super) fn execute_group_run(
     // Routing decisions that can refuse (invalid setting, forged token, down
     // scheduler) happen here, before any ledger entry or member effect.
     let route = if heavy {
-        host_scheduler::route_heavy(&selector, &invocation_cwd(root))?
+        Some(host_scheduler::route_heavy(
+            &selector,
+            &invocation_cwd(root),
+        )?)
     } else {
-        Route::Legacy
+        None
     };
-    if route == Route::Submit {
+    if route == Some(Route::Submit) {
         return submit_group_run(root, plan, output_json, &run_id, &selector);
     }
-    let admission = match (&route, heavy) {
-        (_, false) => Admission::Light,
-        (Route::Legacy, true) => Admission::Legacy,
-        _ => Admission::Owned,
+    let run_mode = if heavy {
+        RunMode::Owned
+    } else {
+        RunMode::Light
     };
-    let mut record = initial_record(&run_id, plan, admission == Admission::Legacy);
-    record.backend = backend_for(&route, heavy);
+    let mut record = initial_record(&run_id, plan);
+    record.backend = route.as_ref().and_then(|route| backend_for(route, heavy));
+    record.timing.admission_wait_ms = record
+        .backend
+        .as_ref()
+        .and_then(|backend| backend.queue_wait_ms);
 
     begin_qa_group_run_record(root, &record)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
-    let outcome = run_members(root, plan, &mut record, admission);
+    let outcome = run_members(root, plan, &mut record, run_mode);
     let rendered = if output_json {
         render_record_json(&record)?
     } else {
@@ -92,13 +99,11 @@ pub(super) fn execute_group_run(
     }
 }
 
-/// Which admission covers this group run.
+/// Whether this group has a scheduler-owned parent scope.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Admission {
+enum RunMode {
     /// No heavy members: direct execution.
     Light,
-    /// Legacy lease acquired here (the default backend).
-    Legacy,
     /// Already covered: a validated scheduler run, or a recorded override.
     Owned,
 }
@@ -107,7 +112,7 @@ fn invocation_cwd(root: &Path) -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_else(|_| root.to_path_buf())
 }
 
-/// Backend correlation for the record. Legacy and light runs record nothing.
+/// Backend correlation for a scheduler-covered heavy run.
 fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
     if !heavy {
         return None;
@@ -127,7 +132,7 @@ fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
             queue_wait_ms: None,
             settlement: None,
         }),
-        Route::Legacy | Route::Submit => None,
+        Route::Submit => None,
     }
 }
 
@@ -165,7 +170,7 @@ fn submit_group_run(
         }
         host_scheduler::PreLaunch::Cancelled => (QaGroupOutcome::Cancelled, "cancelled"),
     };
-    let mut record = initial_record(run_id, plan, false);
+    let mut record = initial_record(run_id, plan);
     record.state = QaGroupRunState::Completed;
     record.outcome = Some(outcome);
     record.timing.queued_at = Some(Utc::now().to_rfc3339());
@@ -200,22 +205,16 @@ fn submit_group_run(
     }
 }
 
-/// Acquire the shared lease when needed, run members serially, and finalize
-/// aggregate states. All failure paths leave the record finalized and the
-/// admission lease closed so evidence is never lost.
+/// Run members serially and finalize aggregate states.
 fn run_members(
     root: &Path,
     plan: &QaGroupPlan,
     record: &mut QaGroupRunRecord,
-    admission_mode: Admission,
+    run_mode: RunMode,
 ) -> Result<(), RunnerError> {
     record.timing.queued_at = Some(Utc::now().to_rfc3339());
 
-    let mut lease = None;
-    let mut scope = None;
-    // A scheduler-launched or overridden run owns its children's signals but
-    // holds no lease and never touches the legacy admission store.
-    let _owned_children = if admission_mode == Admission::Owned {
+    let _owned_children = if run_mode == RunMode::Owned {
         Some(OwnedChildrenScope::enter().map_err(|error| {
             RunnerError::task_invocation(format!(
                 "cannot install heavy-run signal forwarding: {error}"
@@ -224,53 +223,6 @@ fn run_members(
     } else {
         None
     };
-    if admission_mode == Admission::Legacy {
-        let caller =
-            std::env::var("EFFIGY_CALLER").unwrap_or_else(|_| admission::default_caller_identity());
-        let selector = format!("qa-group:{}/{}", record.group.catalog, record.group.name);
-        let queued = Instant::now();
-        let acquired = admission::acquire(AdmissionRequest {
-            caller: &caller,
-            repository: root,
-            selector: &selector,
-        });
-        record.timing.admission_wait_ms = Some(elapsed_ms(queued));
-        match acquired {
-            Ok(acquired_lease) => {
-                record.timing.admitted_at = Some(Utc::now().to_rfc3339());
-                match LeaseScope::enter(acquired_lease.id()) {
-                    Ok(entered) => {
-                        scope = Some(entered);
-                        lease = Some(acquired_lease);
-                    }
-                    Err(error) => {
-                        let message =
-                            format!("cannot install heavy-run signal forwarding: {error}");
-                        record.warnings.push(message.clone());
-                        record.state = QaGroupRunState::Completed;
-                        record.outcome = Some(QaGroupOutcome::Blocked);
-                        record.timing.ended_at = Some(Utc::now().to_rfc3339());
-                        touch(record);
-                        let result: Result<String, RunnerError> =
-                            Err(RunnerError::task_invocation(message));
-                        acquired_lease.finish(&result);
-                        return result.map(|_| ());
-                    }
-                }
-            }
-            Err(message) => {
-                // Capacity timeout: the group never started. This is a
-                // blocked-before-execution capacity timeout, not a check
-                // failure, and admission wait is reported separately.
-                record.warnings.push(format!("admission: {message}"));
-                record.state = QaGroupRunState::Completed;
-                record.outcome = Some(QaGroupOutcome::CapacityTimeout);
-                record.timing.ended_at = Some(Utc::now().to_rfc3339());
-                touch(record);
-                return Err(RunnerError::task_invocation(message));
-            }
-        }
-    }
 
     record.state = QaGroupRunState::Running;
     record.timing.started_at = Some(Utc::now().to_rfc3339());
@@ -297,28 +249,6 @@ fn run_members(
     record.state = QaGroupRunState::Completed;
     touch(record);
 
-    // Close the admission record against the same result the ledger shows,
-    // then unwind the scoped lease.
-    if let Some(lease) = lease.take() {
-        // `RunnerError` is not `Clone`; rebuild the classification the lease
-        // telemetry needs (cancelled versus failed) from the stamped outcome.
-        let finish_result: Result<String, RunnerError> = match record.outcome {
-            Some(QaGroupOutcome::Cancelled) => Err(RunnerError::TaskCommandFailure {
-                command: format!("qa-group:{}/{}", record.group.catalog, record.group.name),
-                code: Some(130),
-                stdout: String::new(),
-                stderr: String::new(),
-            }),
-            _ => match &result {
-                Ok(()) => Ok(String::new()),
-                Err(_) => Err(RunnerError::task_invocation(
-                    "qa-group members finished with a failure",
-                )),
-            },
-        };
-        lease.finish(&finish_result);
-    }
-    drop(scope);
     result
 }
 
@@ -612,7 +542,7 @@ fn short_message(error: &RunnerError) -> String {
         .to_owned()
 }
 
-fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRecord {
+fn initial_record(run_id: &str, plan: &QaGroupPlan) -> QaGroupRunRecord {
     // unchanged shape
     QaGroupRunRecord {
         schema: QA_GROUP_RUN_SCHEMA.to_owned(),
@@ -664,11 +594,7 @@ fn initial_record(run_id: &str, plan: &QaGroupPlan, heavy: bool) -> QaGroupRunRe
                 gap_reasons: match_entry.gap_reasons.clone(),
             })
             .collect(),
-        state: if heavy {
-            QaGroupRunState::WaitingForCapacity
-        } else {
-            QaGroupRunState::Running
-        },
+        state: QaGroupRunState::Running,
         outcome: None,
         budget_state: QaGroupBudgetState::Unknown,
         timing: QaGroupRunTiming {
@@ -787,7 +713,7 @@ fn render_record_text(record: &QaGroupRunRecord) -> String {
             .unwrap_or_else(|| "unknown".to_owned())
     };
     out.push_str(&format!(
-        "admission wait {} · execution {} · expected {} · budget {}\n",
+        "scheduler wait {} · execution {} · expected {} · budget {}\n",
         format_ms(&record.timing.admission_wait_ms),
         format_ms(&record.timing.execution_wall_ms),
         format_ms(&record.timing.expected_wall_ms),

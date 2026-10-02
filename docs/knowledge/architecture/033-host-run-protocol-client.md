@@ -1,16 +1,16 @@
 # 033 - Trusted Host-Run Protocol Client
 
 Contract: [Nucleus 010 Client protocol v1](../contracts/049-heavy-validation-admission-contract.md#scheduler-ownership-ruling)
-Status: library primitives available; the root runner consumes them for opt-in
-heavy routing only (see Integration below).
+Status: library primitives available; the root runner consumes them for heavy
+routing (see Integration below).
 
 ## Placement and boundary
 
 `crates/effigy-host-run` is a leaf Rust client crate for the Queue/Nucleus
 host-run socket. It has no scheduler, admission decisions, task selection,
-process launching, or lease store. A following integration change may consume
-its typed submit, attach, status, cancel and report APIs. The crate itself still
-has no scheduling, admission decisions, task selection or process launching.
+process launching, or lease store. The root runner consumes its typed submit,
+attach, status, cancel and report APIs; the client crate itself makes no
+scheduling or task-selection decisions.
 
 The client follows [contract 049](../contracts/049-heavy-validation-admission-contract.md)
 and the signed [Nucleus 010 pin](https://github.com/inflatable-cookie/nucleus/blob/59cca903426635dd3581002a67058919e012eb45/docs/knowledge/contracts/010-host-run-scheduling.md#client-protocol-v1).
@@ -28,8 +28,9 @@ Authority format, version, positive epoch, endpoint containment and socket
 peer proof are checked before a request. Linux uses `SO_PEERCRED`; macOS uses
 `LOCAL_PEERPID` plus `getpeereid`. Other platforms fail closed.
 
-The protocol-specific peer identity is separate from the existing admission
-record identity. Linux combines the current boot id with `/proc/<pid>/stat`
+The protocol-specific peer identity is separate from any historical Effigy
+admission record identity; current routing does not read that historical store.
+Linux combines the current boot id with `/proc/<pid>/stat`
 field 22, parsed after the last `)` in the command name. macOS reads the
 kernel-reported process start seconds and emits UTC `YYYY-MM-DDTHH:MM:SSZ`.
 Missing identities never match. No `ps` output or heuristic date conversion is
@@ -61,8 +62,7 @@ used.
   facts are typed; none makes capacity decisions.
 
 The client does not pass scheduler credentials or parent tokens in output or
-container environments. It does not invoke a live endpoint during its tests or
-remove the existing lease mechanism.
+container environments. Tests use a private server, never a live endpoint.
 
 Parent tokens follow contract 010 at pin `16fcb59` exactly, with no extra
 accepted spellings: `keyB64` is 44-character RFC 4648 §4 standard padded base64
@@ -80,11 +80,11 @@ scheduler, which is how an operator override is recorded durably.
 ## Integration
 
 `src/runner/host_scheduler/` is the only consumer. Heavy work uses this
-client by default; `EFFIGY_HOST_SCHEDULER=0` selects the retained legacy lease
-path. A present `HOST_RUN_TOKEN` is validated before backend selection.
+client; `EFFIGY_HOST_SCHEDULER=0` is retired and rejected. A present
+`HOST_RUN_TOKEN` is validated before routing settings.
 
 - `mod.rs` parses the backend setting and override, validates a present token,
-  and picks one route per heavy invocation: legacy, nested (in place), override
+  and picks one route per heavy invocation: nested (in place), audited override
   (recorded, direct) or submit. Refusals happen here, before any effect.
 - `submit.rs` builds the request from the process's own argv, cwd and
   environment, streams attach output, turns the first interrupt into one cancel
@@ -97,6 +97,6 @@ path. A present `HOST_RUN_TOKEN` is validated before backend selection.
   scope with no lease and no admission-store access: it records only the process
   groups this process started and forwards termination to them.
 
-Contract [049](../contracts/049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback)
+Contract [049](../contracts/049-heavy-validation-admission-contract.md#scheduler-routing)
 owns the behavior. Run-scoped stop, logs and group `hard_timeout_ms` stay
 unavailable; contract 052 is not implemented by this boundary.

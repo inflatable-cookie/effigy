@@ -20,17 +20,7 @@ pub(super) fn build_shell_process(
             process.env(key, secret.expose());
         }
     }
-    if let Some(lease_id) = super::super::admission::scoped_lease_id() {
-        process.env("EFFIGY_ADMISSION_LEASE_ID", lease_id);
-        if let Some(cpu_units) = super::super::admission::scoped_cpu_units() {
-            process.env("CARGO_BUILD_JOBS", cpu_units.to_string());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            process.process_group(0);
-        }
-    } else if super::super::admission::signal_scope_active() {
+    if super::super::owned_children::signal_scope_active() {
         // A scheduler-launched run owns this child's group so a termination
         // signal can be forwarded to it without touching any other group.
         #[cfg(unix)]

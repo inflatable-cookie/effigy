@@ -220,10 +220,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("init"),
     },
     CommandDescriptor {
-        topic: HelpTopic::Admission,
-        command_name: Some("admission"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Migrate,
         command_name: None,
     },
@@ -469,13 +465,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- admin --------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Admin,
-        command: "effigy admission",
-        description: "Inspect the host-wide heavy validation budget, waiting runs, and caller telemetry",
-        deferred_builtin: None,
-        help_argument: Some("admission"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Admin,
         command: "effigy config",
         description: "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
         deferred_builtin: None,
@@ -538,7 +527,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
 /// parity test in this module parses both forms and compares them.
 pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("artifact", HelpTopic::Artifact),
-    ("admission", HelpTopic::Admission),
     ("bootstrap", HelpTopic::Bootstrap),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),

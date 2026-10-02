@@ -1,12 +1,12 @@
 //! Routing of heavy execution through the host-run scheduler.
 //!
 //! Contract 049 uses the trusted Client protocol v1 client in `effigy-host-run`
-//! for heavy work by default. `EFFIGY_HOST_SCHEDULER=0` selects legacy lease
-//! admission for rollback; Queue and Nucleus own scheduler admission, capacity
-//! and process-group settlement. A present `HOST_RUN_TOKEN` always takes the
-//! validation path first, so a scheduler-launched child can never acquire a
-//! legacy lease or submit behind its own parent.
+//! for heavy work. The retired `EFFIGY_HOST_SCHEDULER=0` value is rejected;
+//! Queue and Nucleus own scheduler admission, capacity and process-group
+//! settlement. A present `HOST_RUN_TOKEN` is validated before routing settings,
+//! so a child can never bypass parent verification or submit behind its parent.
 
+mod config;
 mod facts;
 mod submit;
 #[cfg(test)]
@@ -21,6 +21,7 @@ use effigy_host_run::{ClassSource, HostRunClient, HostRunRoot};
 
 use super::error::RunnerError;
 
+use config::{capacity_wait_secs, default_caller_identity, requested_reservation_units};
 pub(super) use facts::{report_container_removed, report_container_started};
 pub(super) use submit::{submit_and_settle, PreLaunch, Settled, SubmitContext};
 
@@ -42,8 +43,6 @@ pub(super) struct Nested {
 /// How a heavy invocation reaches execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Route {
-    /// Explicit legacy rollback: lease admission, unchanged.
-    Legacy,
     /// Executing inside a validated scheduler run: no second admission.
     Nested(Nested),
     /// Recorded operator override: execute directly with no admission.
@@ -77,21 +76,27 @@ fn unreachable_error(detail: impl std::fmt::Display) -> RunnerError {
     )
 }
 
-/// The scheduler is the default; only `0` selects the legacy backend.
-pub(super) fn scheduler_enabled() -> Result<bool, RunnerError> {
+/// Unset and `1` select the host scheduler. The removed legacy backend's `0`
+/// switch fails clearly so heavy work can never run without admission.
+pub(super) fn scheduler_enabled() -> Result<(), RunnerError> {
     parse_scheduler_setting(std::env::var_os(SCHEDULER_ENV))
 }
 
-fn parse_scheduler_setting(value: Option<OsString>) -> Result<bool, RunnerError> {
+fn parse_scheduler_setting(value: Option<OsString>) -> Result<(), RunnerError> {
     match value {
-        None => Ok(true),
+        None => Ok(()),
         Some(value) => match value.to_str() {
-            Some("1") => Ok(true),
-            Some("0") => Ok(false),
+            Some("1") => Ok(()),
+            Some("0") => Err(refuse(
+                2,
+                format!(
+                    "{SCHEDULER_ENV}=0 is no longer supported: Effigy's legacy admission backend was retired; unset this variable or set it to `1` to use the host scheduler"
+                ),
+            )),
             _ => Err(refuse(
                 2,
                 format!(
-                    "{SCHEDULER_ENV} must be `1` (host scheduler) or `0` (legacy admission); unset selects the host scheduler"
+                    "{SCHEDULER_ENV} must be `1` (host scheduler); unset selects the host scheduler"
                 ),
             )),
         },
@@ -101,12 +106,17 @@ fn parse_scheduler_setting(value: Option<OsString>) -> Result<bool, RunnerError>
 /// Decide how one heavy invocation proceeds. Everything that can refuse does so
 /// here, before any build, setup, container or group effect.
 pub(super) fn route_heavy(selector: &str, cwd: &Path) -> Result<Route, RunnerError> {
-    let scheduler_enabled = scheduler_enabled()?;
-    if let Some(token) = std::env::var_os(TOKEN_ENV) {
-        return nested_route(token, selector, cwd).map(Route::Nested);
-    }
-    if !scheduler_enabled {
-        return Ok(Route::Legacy);
+    // Parent authority is checked first even when a retired or malformed
+    // routing setting is present. Validation itself records no facts and runs
+    // no task effects.
+    let nested = std::env::var_os(TOKEN_ENV)
+        .map(|token| validate_parent_token(token, cwd))
+        .transpose()?;
+    scheduler_enabled()?;
+    if let Some(nested) = nested {
+        let _ = ACTIVE_NESTED.set(nested.clone());
+        facts::report_nested_once(&nested, selector);
+        return Ok(Route::Nested(nested));
     }
     if let Some(reason) = override_reason()? {
         facts::record_override(&reason, selector)?;
@@ -115,7 +125,7 @@ pub(super) fn route_heavy(selector: &str, cwd: &Path) -> Result<Route, RunnerErr
     Ok(Route::Submit)
 }
 
-fn nested_route(token: OsString, selector: &str, cwd: &Path) -> Result<Nested, RunnerError> {
+fn validate_parent_token(token: OsString, cwd: &Path) -> Result<Nested, RunnerError> {
     let token = token.into_string().map_err(|_| {
         refuse(
             77,
@@ -143,8 +153,6 @@ fn nested_route(token: OsString, selector: &str, cwd: &Path) -> Result<Nested, R
         run_id: parent.run_id,
         epoch: parent.epoch,
     };
-    let _ = ACTIVE_NESTED.set(nested.clone());
-    facts::report_nested_once(&nested, selector);
     Ok(nested)
 }
 

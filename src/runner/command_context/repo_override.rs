@@ -33,7 +33,6 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Release(args) => args.repo_override.clone(),
         Command::Doctor(args) => args.repo_override.clone(),
         Command::Tasks(args) => args.repo_override.clone(),
-        Command::Admission(_) => None,
         Command::Drafts(args) => args.repo_override.clone(),
         Command::Draft(args) => args.repo_override.clone(),
         Command::InternalGateway(_) => None,
@@ -97,7 +96,6 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         | Command::InternalHostProcessSupervise(_)
         | Command::InternalHostProcessStop(_)
         | Command::Task(_)
-        | Command::Admission(_)
         | Command::Help(_)
         | Command::HelpGroup(_) => {}
     }

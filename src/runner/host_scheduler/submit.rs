@@ -18,7 +18,7 @@ use crate::runner::error::RunnerError;
 
 const DEFAULT_RUN_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const RUN_TIMEOUT_ENV: &str = "EFFIGY_HOST_SCHEDULER_RUN_TIMEOUT_SECS";
-const LEASE_ENV: &str = "EFFIGY_ADMISSION_LEASE_ID";
+const RETIRED_LEASE_ENV: &str = "EFFIGY_ADMISSION_LEASE_ID";
 
 /// What the caller resolved before submitting.
 pub(in crate::runner) struct SubmitContext<'a> {
@@ -238,10 +238,9 @@ pub(in crate::runner) fn submit_and_settle(ctx: SubmitContext<'_>) -> Result<Set
 
 fn build_request(ctx: &SubmitContext<'_>) -> Result<SubmitRequest, RunnerError> {
     let argv = invocation_argv()?;
-    let (cpu_units, memory_mib) = crate::runner::admission::requested_reservation_units()
-        .map_err(|error| refuse(2, error))?;
-    let capacity_secs =
-        crate::runner::admission::capacity_wait_secs().map_err(|error| refuse(2, error))?;
+    let (cpu_units, memory_mib) =
+        super::requested_reservation_units().map_err(|error| refuse(2, error))?;
+    let capacity_secs = super::capacity_wait_secs().map_err(|error| refuse(2, error))?;
     let run_secs = match std::env::var(RUN_TIMEOUT_ENV) {
         Ok(value) => value
             .parse::<u64>()
@@ -253,8 +252,8 @@ fn build_request(ctx: &SubmitContext<'_>) -> Result<SubmitRequest, RunnerError> 
     let mut env = forwarded_env();
     env.entry("CARGO_BUILD_JOBS".to_owned())
         .or_insert_with(|| cpu_units.to_string());
-    let caller = std::env::var("EFFIGY_CALLER")
-        .unwrap_or_else(|_| crate::runner::admission::default_caller_identity());
+    let caller =
+        std::env::var("EFFIGY_CALLER").unwrap_or_else(|_| super::default_caller_identity());
     Ok(SubmitRequest {
         client_request_id: new_client_request_id().map_err(|error| refuse(1, error.to_string()))?,
         caller,
@@ -307,7 +306,8 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
     Ok(argv)
 }
 
-/// The caller's environment minus names the scheduler or legacy lease own. The
+/// The caller's environment minus scheduler credentials and the retired lease
+/// name. The
 /// scheduler launches with only this map plus PATH, HOME and its own run
 /// variables, so nothing else crosses.
 fn forwarded_env() -> BTreeMap<String, String> {
@@ -325,7 +325,7 @@ pub(super) fn forward_env_from(
                 && !value.contains('\0')
                 && key != TOKEN_ENV
                 && key != RUN_ID_ENV
-                && key != LEASE_ENV
+                && key != RETIRED_LEASE_ENV
         })
         .collect()
 }

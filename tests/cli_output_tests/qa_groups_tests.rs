@@ -2,7 +2,7 @@
 //!
 //! These tests exercise the compiled binary so grammar validation, group
 //! routing restricted to the group surface, scope comparison, run records,
-//! logs/status honesty, and heavy-admission lease reuse are proven through
+//! logs/status honesty, and scheduler execution metadata are proven through
 //! the real command surface.
 
 use std::fs;
@@ -52,27 +52,6 @@ fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) 
         String::from_utf8_lossy(&output.stderr)
     );
     parse_stdout_json(&output)
-}
-
-/// A hermetic host-admission store for tests that exercise heavy runs.
-///
-/// Heavy work acquires a host-wide lease; pointing `EFFIGY_ADMISSION_DIR` at
-/// this directory keeps the test independent of (and polite to) the shared
-/// machine gate. The directory must pre-exist with setgid group-writable
-/// permissions, matching admission's shared-directory requirements.
-fn private_admission_dir(root: &Path, name: &str) -> PathBuf {
-    let dir = root
-        .parent()
-        .unwrap()
-        .join(format!("{name}-{}", std::process::id()));
-    fs::create_dir(&dir).expect("create private admission dir");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&dir, PermissionsExt::from_mode(0o2770))
-            .expect("secure private admission dir");
-    }
-    dir
 }
 
 fn write_manifest(root: &Path, body: &str) {
@@ -603,7 +582,7 @@ run = "echo draft-ok"
 }
 
 #[test]
-fn heavy_draft_admission_metadata_runs_directly_and_reports_the_class() {
+fn heavy_draft_admission_metadata_is_reported_for_selection() {
     let root = temp_workspace("qa-groups-draft-heavy");
     write_manifest(
         &root,
@@ -644,54 +623,10 @@ run = "echo light-ok"
         .find(|row| row["name"] == "light-probe")
         .unwrap();
     assert!(light.get("admission").is_none());
-
-    // The inventory `--json` shape stays additive; a direct heavy draft run
-    // acquires its own lease. The private admission store keeps this
-    // hermetic: it must never wait on the shared machine gate.
-    let admission_dir = private_admission_dir(&root, "effigy-qa-draft-heavy-admission");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
-    command
-        .arg("--json")
-        .args(["draft", "heavy-probe"])
-        .arg("--repo")
-        .arg(&root)
-        .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_SCHEDULER", "0")
-        .env("EFFIGY_ADMISSION_DIR", &admission_dir)
-        .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
-        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
-        .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
-        .env("EFFIGY_ADMISSION_MEMORY_MIB", "128")
-        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "60")
-        .env_remove("EFFIGY_CALLER")
-        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
-        .env_remove("HOST_RUN_TOKEN")
-        .env_remove("HOST_RUN_ID")
-        .env_remove("EFFIGY_HOST_RUN_ROOT")
-        .env_remove("EFFIGY_SCHEDULER_OVERRIDE");
-    let output = command.output().expect("run heavy draft");
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["result"]["surface_identity"]["admission"], "heavy");
-    assert_eq!(payload["result"]["ok"], true);
-
-    // Exactly one lease record for the direct heavy draft.
-    let store: Value = serde_json::from_str(
-        &fs::read_to_string(admission_dir.join("state.json")).expect("admission state"),
-    )
-    .expect("valid admission store");
-    let runs = store["runs"].as_array().unwrap();
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0]["exit_classification"], "succeeded");
 }
 
 #[test]
-fn heavy_group_takes_one_lease_and_nested_members_reuse_it() {
+fn heavy_group_plan_reports_classification_and_capabilities() {
     let root = temp_workspace("qa-groups-heavy");
     write_manifest(
         &root,
@@ -730,63 +665,6 @@ run = "echo nested-ok"
         body["capabilities"],
         serde_json::json!({"hard_timeout": false, "stop": false, "prerequisite": "owned-run supervision (contract 052)"})
     );
-
-    // Execute against a private host admission store; one group lease must
-    // cover the heavy member and its nested task references without a
-    // second-lease deadlock, and the run completes.
-    let admission_dir = private_admission_dir(&root, "effigy-qa-admission");
-
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
-    command
-        .arg("--json")
-        .args(["tasks", "qa-group", "run", "heavy-group"])
-        .arg("--repo")
-        .arg(&root)
-        .env("NO_COLOR", "1")
-        .env("EFFIGY_HOST_SCHEDULER", "0")
-        .env("EFFIGY_ADMISSION_DIR", &admission_dir)
-        .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
-        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
-        .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
-        .env("EFFIGY_ADMISSION_MEMORY_MIB", "128")
-        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "60")
-        .env_remove("EFFIGY_CALLER")
-        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
-        .env_remove("HOST_RUN_TOKEN")
-        .env_remove("HOST_RUN_ID")
-        .env_remove("EFFIGY_HOST_RUN_ROOT")
-        .env_remove("EFFIGY_SCHEDULER_OVERRIDE");
-    let output = command.output().expect("run heavy group");
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let payload: Value = parse_stdout_json(&output);
-    let body = &payload["result"];
-    assert_eq!(body["outcome"], "passed", "{}", body);
-    assert!(body["timing"]["admission_wait_ms"].as_u64().is_some());
-
-    // Exactly one qa-group lease record for this invocation: nested task
-    // references reused it instead of requesting a second lease.
-    let store: Value = serde_json::from_str(
-        &fs::read_to_string(admission_dir.join("state.json")).expect("admission state"),
-    )
-    .expect("valid admission store");
-    let group_runs: Vec<&Value> = store["runs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|run| {
-            run["selector"]
-                .as_str()
-                .unwrap_or("")
-                .starts_with("qa-group:")
-        })
-        .collect();
-    assert_eq!(group_runs.len(), 1, "one group lease, not one per member");
-    assert_eq!(group_runs[0]["exit_classification"], "succeeded");
 }
 
 #[test]

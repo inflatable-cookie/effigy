@@ -122,14 +122,14 @@ cargo run --bin effigy -- <command>
 Outside that repo, install the binary per the project README or use
 `effigy bootstrap`.
 
-Agent skill files and the executable are independent. When validation needs
-host-wide admission, probe the executable resolved from the consumer checkout:
+Agent skill files and the executable are independent. Check the executable
+resolved from the consumer checkout:
 
 ```bash
 command -v effigy
-effigy admission status --json
+effigy --version
 ```
 
-Require the `effigy.admission.status.v1` result schema; a version string alone
-does not prove capability. Existing agent contexts may still hold older skill
-instructions after the files are refreshed.
+Heavy selectors route through the Queue/Nucleus scheduler; Effigy no longer
+provides a local admission capability query. Existing agent contexts may still
+hold older skill instructions after the files are refreshed.

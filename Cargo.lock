@@ -788,7 +788,6 @@ dependencies = [
  "effigy-tasks",
  "effigy-tui",
  "effigy-ui",
- "fs2",
  "globset",
  "libc",
  "minijinja",

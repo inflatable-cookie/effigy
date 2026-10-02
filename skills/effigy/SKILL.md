@@ -43,9 +43,9 @@ filesystem lookup does not prove what a running agent loaded; use a fresh
 agent context after an install or refresh.
 
 Agent Skill guidance and the `effigy` executable are separate. Check the
-resolved executable with `command -v effigy` and probe host-wide admission
-support with `effigy admission status --json`; the result schema must be
-`effigy.admission.status.v1`. See
+resolved executable with `command -v effigy` and `effigy --version`. Heavy
+selectors route through the Queue/Nucleus scheduler; Effigy no longer exposes
+a local admission query command. See
 `docs/guides/080-host-wide-validation-admission.md`.
 
 ## Footguns (read first)

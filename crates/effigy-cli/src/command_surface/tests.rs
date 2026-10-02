@@ -8,7 +8,6 @@ use crate::{parse_command, Command, HelpTopic, TaskInvocation};
 
 const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::General,
-    HelpTopic::Admission,
     HelpTopic::Bundle,
     HelpTopic::Changelog,
     HelpTopic::Deploy,
@@ -43,7 +42,6 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
 ];
 
 const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
-    ("admission", HelpTopic::Admission),
     ("version", HelpTopic::General),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),
@@ -137,7 +135,6 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     (
         HelpGroup::Admin,
         &[
-            "effigy admission",
             "effigy config",
             "effigy deps",
             "effigy secrets",
@@ -174,6 +171,17 @@ fn command_descriptors_cover_current_help_topics_once() {
         CURRENT_HELP_TOPICS.len(),
         "descriptor list has topics outside CURRENT_HELP_TOPICS"
     );
+}
+
+#[test]
+fn retired_heavy_admission_queries_are_not_a_builtin_help_surface() {
+    assert!(command_descriptors()
+        .iter()
+        .all(|descriptor| descriptor.command_name != Some("admission")));
+    assert!(general_help_entries()
+        .iter()
+        .all(|entry| !entry.command.starts_with("effigy admission")));
+    assert_eq!(help_topic_for_command("admission"), None);
 }
 
 #[test]

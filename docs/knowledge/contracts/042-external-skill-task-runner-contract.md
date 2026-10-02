@@ -21,10 +21,10 @@ local files, and leaves additional local files in place.
 Agent Skill discovery and Effigy's executable are separate. A skill file on
 disk does not prove that a current agent session loaded it, and it does not
 prove that the `effigy` binary on `PATH` supports current commands. Verify
-fresh agent discovery separately from binary provenance. For host-wide
-validation support, probe the resolved binary with
-`effigy admission status --json` and require the
-`effigy.admission.status.v1` result schema.
+fresh agent discovery separately from binary provenance. For host-wide heavy
+execution, check the resolved binary with `command -v effigy` and
+`effigy --version`; current binaries route heavy selectors through the
+Queue/Nucleus scheduler and expose no admission-status query command.
 
 The task-source rules below still apply independently: when no explicit
 `--path` is supplied, the invocation project's `.agents/skills/<skill>` task
