@@ -589,6 +589,50 @@ fn assert_current_run_token(
     assert_eq!(parent.epoch, epoch);
 }
 
+fn launched_exit_from_settlement(settlement: &Value) -> i32 {
+    assert_eq!(settlement["launched"], true, "run was launched");
+    let result = settlement["result"]
+        .as_object()
+        .expect("launched settlement has a result object");
+    assert!(result.contains_key("exitCode"), "result includes exitCode");
+    assert!(result.contains_key("signal"), "result includes signal");
+    let from_result = if let Some(code) = result.get("exitCode").and_then(Value::as_i64) {
+        i32::try_from(code).ok()
+    } else {
+        result
+            .get("signal")
+            .map(|signal| 128 + settlement_signal_number(signal).unwrap_or(0))
+    };
+    match settlement["outcome"].as_str() {
+        Some("timed_out") => 124,
+        Some("lost") => 70,
+        Some("passed") => from_result.unwrap_or(0),
+        Some(_) => match from_result {
+            Some(0) | None => 1,
+            Some(code) => code,
+        },
+        None => panic!("settlement outcome is present"),
+    }
+}
+
+fn settlement_signal_number(signal: &Value) -> Option<i32> {
+    if let Some(number) = signal.as_u64() {
+        return i32::try_from(number).ok();
+    }
+    Some(match signal.as_str()? {
+        "SIGHUP" => 1,
+        "SIGINT" => 2,
+        "SIGQUIT" => 3,
+        "SIGABRT" => 6,
+        "SIGKILL" => 9,
+        "SIGSEGV" => 11,
+        "SIGPIPE" => 13,
+        "SIGALRM" => 14,
+        "SIGTERM" => 15,
+        _ => return None,
+    })
+}
+
 const RESTART_MANIFEST: &str = r#"
 [tasks.heavy-roll-probe]
 admission = "heavy"
@@ -1637,16 +1681,29 @@ fn real_effigy_sigterm_cancels_during_queue152_supervisor_roll() {
         assert!(Instant::now() < deadline, "SIGTERM follower did not settle");
         std::thread::sleep(Duration::from_millis(25));
     };
-    assert_ne!(
-        exit.code(),
-        Some(0),
-        "SIGTERM cancellation is never reported as success"
-    );
     let settled = server.status(&run_id);
     assert_eq!(settled["runId"], run_id);
     assert_eq!(settled["state"], "settled");
     assert_eq!(settled["epoch"], epoch);
-    assert_eq!(settled["settlement"]["outcome"], "cancelled");
+    let settlement = &settled["settlement"];
+    assert_eq!(settlement["outcome"], "cancelled");
+    assert_eq!(settlement["launched"], true);
+    let result = settlement["result"]
+        .as_object()
+        .expect("cancelled launched run has an authoritative result");
+    let expected_exit = launched_exit_from_settlement(settlement);
+    let observed_exit = exit
+        .code()
+        .expect("Effigy follower exits with the settlement-mapped status");
+    eprintln!(
+        "SIGTERM roll settlement result: exitCode={:?}, signal={:?}; follower exit={observed_exit}, expected={expected_exit}",
+        result.get("exitCode"),
+        result.get("signal")
+    );
+    assert_eq!(
+        observed_exit, expected_exit,
+        "the follower reports the exact authoritative settlement result"
+    );
     assert_eq!(
         server.run_ids(),
         vec![run_id],
