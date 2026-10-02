@@ -110,6 +110,22 @@ NDJSON calls, submit ambiguity recovery, attach offsets, and report-fact replay.
 Token encodings and claims follow the pinned protocol; unsupported or invalid
 authority fails closed.
 
+The peer start identity is Linux boot ID plus process start ticks (proc stat
+field 22, parsed after the command name) or macOS kernel process start time in
+UTC whole seconds. Unknown identities never prove a match; only whole-second
+macOS `.000Z` timestamps are equivalent to `Z`, and other fractional values
+refuse proof. The documented same-second macOS PID-reuse residual remains.
+
+After an attach is interrupted, recovery has a five-second monotonic budget
+with capped backoff and retries only endpoint absence/refusal or transport
+closure. Each connection revalidates authority, peer identity, epoch, and token
+keys, checks status for the same run, and resumes both streams at their exact
+delivered byte offsets. Status/attach responses without offset progress do not
+reset the budget; advancing output and `output_expired` offsets do. Interrupt
+cancellation retries against the same run through the bounded roll. Recovery
+never resubmits: trust/protocol failures fail closed, and exhaustion exits 75
+with final run state unknown.
+
 ## Selection and ownership
 
 The resolved task selectors `qa`, `ci`, and `ci:fresh` are heavy even when a

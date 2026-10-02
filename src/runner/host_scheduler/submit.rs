@@ -86,6 +86,7 @@ impl Settled {
 #[derive(Default)]
 struct InterruptState {
     run_id: Option<String>,
+    epoch: Option<u64>,
     signal: Option<i32>,
     cancel_sent: bool,
 }
@@ -109,8 +110,11 @@ impl Interrupt {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn set_run_id(&self, run_id: &str) {
-        self.lock().run_id = Some(run_id.to_owned());
+    fn set_run_id(&self, run_id: &str, epoch: u64) {
+        let mut state = self.lock();
+        state.run_id = Some(run_id.to_owned());
+        state.epoch = Some(epoch);
+        drop(state);
         self.cancel_if_ready();
     }
 
@@ -125,21 +129,28 @@ impl Interrupt {
     }
 
     fn cancel_if_ready(&self) {
-        let (run_id, signal) = {
+        let (run_id, epoch, signal) = {
             let mut state = self.lock();
-            let (Some(run_id), Some(signal)) = (state.run_id.clone(), state.signal) else {
+            let (Some(run_id), Some(epoch), Some(signal)) =
+                (state.run_id.clone(), state.epoch, state.signal)
+            else {
                 return;
             };
             if state.cancel_sent {
                 return;
             }
             state.cancel_sent = true;
-            (run_id, signal)
+            (run_id, epoch, signal)
         };
         let reason = format!("client interrupted by {}", signal_name(signal));
-        let sent = HostRunRoot::open(&self.root)
+        let sent = HostRunRoot::open_for_recovery(&self.root)
             .map_err(|error| error.to_string())
             .and_then(|(root, authority)| {
+                if authority.epoch != epoch {
+                    return Err(format!(
+                        "authority epoch changed while following run {run_id}"
+                    ));
+                }
                 HostRunClient::open(root, authority)
                     .cancel(&run_id, &reason)
                     .map_err(|error| error.to_string())
@@ -206,7 +217,7 @@ pub(in crate::runner) fn submit_and_settle(ctx: SubmitContext<'_>) -> Result<Set
     })?;
     let run_id = submitted.run_id;
     let epoch = client.authority().epoch;
-    interrupt.set_run_id(&run_id);
+    interrupt.set_run_id(&run_id, epoch);
 
     let mut relay = Relay::default();
     let settlement = client

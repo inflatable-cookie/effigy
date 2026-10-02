@@ -84,16 +84,17 @@
 # Scheduler routing: unit decisions plus the private Queue-server proofs. The
 # private-server cases require EFFIGY_HOST_RUN_PRIVATE_SERVER to name an
 # isolated Queue checkout at e9e4d12 or a verified descendant; they never touch
-# a live endpoint. Those cases are ignored by ordinary test runners, and this
-# selector explicitly includes them; its required Server::start fixture check
-# makes a missing private server fail instead of silently skipping proofs. The
-# separate protocol selector covers the client crate.
+# a live endpoint. Restart/roll cases pin Queue152 merge f53a9d0. Cases using a
+# private fixture are ignored by ordinary test runners; this selector includes
+# them and sets the required-fixture gate so a missing server fails instead of
+# silently skipping proofs. The separate protocol selector covers the client
+# crate.
 "test:host-run:integration" = [
   "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
   "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",
   "cargo test -p effigy --lib host_scheduler::tests::owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
-  "cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
 ]
 
 # Documentation QA
