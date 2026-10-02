@@ -30,6 +30,15 @@ During v0.x, MINOR bumps may include breaking changes.
   (valid strictly `now_ms < exp`), and anything else — URL-safe or unpadded
   keys, padded or standard-alphabet token parts, RFC 3339, string or fractional
   expiry, unknown or out-of-range claims — exits 77 without queueing.
+- Host-run followers recover a lost attach for at most five monotonic seconds
+  with capped backoff, and only for endpoint absence/refusal or transport
+  closure. Recovery revalidates trusted authority, peer identity, epoch and
+  token keys, checks status for the same run, and resumes stdout/stderr at their
+  exact delivered byte offsets. Trusted status or attach responses without
+  stream-offset progress do not reset the five-second budget; advancing output
+  or `output_expired` offsets do. Interrupt cancellation retries the same run
+  ID through the same bounded endpoint roll. It never resubmits; trust/protocol
+  failures fail closed, and exhaustion reports exit 75 with final state unknown.
 - Bounded QA groups (contract 051) land through the existing task pipeline:
   `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained
   `[qa.groups]` definitions plus at most one explicit temporary definition

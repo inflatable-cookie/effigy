@@ -1,4 +1,4 @@
-use crate::transport::{parse_settlement, parse_test_frame};
+use crate::transport::{parse_settlement, parse_test_frame, ReconnectTimer};
 use crate::{
     canonical_start_identity, container_started_fact, start_identity_matches, AttachEvent,
     Authority, ClientError, Clock, HostRunClient, HostRunRoot, IdentityProvider, OutputStream,
@@ -11,8 +11,10 @@ use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
 struct FixedClock(DateTime<Utc>);
@@ -26,6 +28,22 @@ struct FixedIdentity(&'static str);
 impl IdentityProvider for FixedIdentity {
     fn start_identity(&self, _pid: u32) -> Option<String> {
         Some(self.0.into())
+    }
+}
+
+#[derive(Default)]
+struct FakeReconnectTimer(AtomicU64);
+
+impl ReconnectTimer for FakeReconnectTimer {
+    fn now(&self) -> Duration {
+        Duration::from_millis(self.0.load(Ordering::Relaxed))
+    }
+
+    fn sleep(&self, duration: Duration) {
+        self.0.fetch_add(
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -60,6 +78,7 @@ fn make_fixture() -> Fixture {
         start_identity: canonical_start_identity(pid).expect("test process identity"),
     };
     write_authority(&root_path, &authority);
+    write_token_keys(&root_path, 3, [5u8; 32], None);
     Fixture {
         _temp: temp,
         root_path,
@@ -67,6 +86,28 @@ fn make_fixture() -> Fixture {
         listener,
         authority,
     }
+}
+
+fn write_token_keys(
+    root: &Path,
+    current_epoch: u64,
+    current: [u8; 32],
+    previous: Option<(u64, [u8; 32])>,
+) {
+    let mut content = json!({
+        "format":"host.run.keys",
+        "version":1,
+        "current":{"epoch":current_epoch,"keyB64":base64::engine::general_purpose::STANDARD.encode(current)}
+    });
+    if let Some((epoch, key)) = previous {
+        content["previous"] = json!({
+            "epoch":epoch,
+            "keyB64":base64::engine::general_purpose::STANDARD.encode(key)
+        });
+    }
+    let path = root.join("token.key");
+    std::fs::write(&path, serde_json::to_vec(&content).unwrap()).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
 fn write_authority(root: &Path, authority: &Authority) {
@@ -430,56 +471,414 @@ fn attach_reports_expiration_and_preserves_stream_byte_offsets_without_duplicate
 }
 
 #[test]
-fn attach_reconnect_resumes_at_delivered_byte_offset() {
+fn attach_recovers_across_endpoint_absence_with_current_status_and_exact_offsets() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
     let listener = fixture.listener;
+    let socket_path = fixture.socket_path.clone();
     let server = thread::spawn(move || {
         let (mut first, _) = listener.accept().unwrap();
         let request = read_request(&mut first);
-        let first_frame = json!({
-            "v":1,"id":request["id"],"ok":true,
-            "body":{"event":"output","stream":"stdout","offset":0,"dataB64":"YWJj"}
-        });
-        serde_json::to_writer(&mut first, &first_frame).unwrap();
-        first.write_all(b"\n").unwrap();
+        assert_eq!(request["method"], "attach");
+        let id = request["id"].clone();
+        for body in [
+            json!({"event":"output","stream":"stdout","offset":0,"dataB64":"YWJj"}),
+            json!({"event":"output","stream":"stderr","offset":0,"dataB64":"ZXJy"}),
+        ] {
+            serde_json::to_writer(
+                &mut first,
+                &json!({"v":1,"id":id.clone(),"ok":true,"body":body}),
+            )
+            .unwrap();
+            first.write_all(b"\n").unwrap();
+        }
+        drop(listener);
+        std::fs::remove_file(&socket_path).unwrap();
         drop(first);
+        thread::sleep(Duration::from_millis(80));
+        let replacement = UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-        let (mut second, _) = listener.accept().unwrap();
+        let (mut status, _) = replacement.accept().unwrap();
+        let request = read_request(&mut status);
+        assert_eq!(request["method"], "status");
+        assert_eq!(request["epoch"], 3);
+        assert_eq!(request["body"]["runId"], "r-reconnect");
+        send_response(
+            &mut status,
+            &request,
+            json!({"runId":"r-reconnect","state":"running","epoch":3}),
+        );
+        drop(status);
+
+        let (mut second, _) = replacement.accept().unwrap();
         let request = read_request(&mut second);
+        assert_eq!(request["method"], "attach");
         assert_eq!(request["body"]["fromOffset"]["stdout"], 3);
-        let output = json!({
-            "v":1,"id":request["id"],"ok":true,
-            "body":{"event":"output","stream":"stdout","offset":3,"dataB64":"ZGVm"}
-        });
-        serde_json::to_writer(&mut second, &output).unwrap();
-        second.write_all(b"\n").unwrap();
-        let settled = json!({
-            "v":1,"id":request["id"],"ok":true,
-            "body":{"event":"settled","settlement":ok_settlement("r-reconnect")}
-        });
-        serde_json::to_writer(&mut second, &settled).unwrap();
-        second.write_all(b"\n").unwrap();
+        assert_eq!(request["body"]["fromOffset"]["stderr"], 3);
+        let id = request["id"].clone();
+        for body in [
+            json!({"event":"output","stream":"stdout","offset":1,"dataB64":"YmNkZWY="}),
+            json!({"event":"output","stream":"stderr","offset":2,"dataB64":"ciE="}),
+            json!({"event":"settled","settlement":ok_settlement("r-reconnect")}),
+        ] {
+            serde_json::to_writer(
+                &mut second,
+                &json!({"v":1,"id":id.clone(),"ok":true,"body":body}),
+            )
+            .unwrap();
+            second.write_all(b"\n").unwrap();
+        }
     });
     let mut events = Vec::new();
     let settlement = client
         .attach_stream("r-reconnect", 0, 0, |event| events.push(event))
         .unwrap();
     assert_eq!(settlement.run_id, "r-reconnect");
-    assert_eq!(
+    let collect = |stream| {
         events
             .iter()
             .filter_map(|event| match event {
                 AttachEvent::Output {
-                    stream: OutputStream::Stdout,
-                    offset,
+                    stream: actual,
                     data,
-                } => Some((*offset, data.as_slice())),
+                    ..
+                } if *actual == stream => Some(data.as_slice()),
                 _ => None,
             })
-            .collect::<Vec<_>>(),
-        vec![(0, b"abc".as_slice()), (3, b"def".as_slice())]
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(collect(OutputStream::Stdout), b"abcdef");
+    assert_eq!(collect(OutputStream::Stderr), b"err!");
+    server.join().unwrap();
+}
+
+#[test]
+fn output_expired_is_preserved_through_bounded_recovery() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let socket_path = fixture.socket_path.clone();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let request = read_request(&mut first);
+        assert_eq!(request["method"], "attach");
+        let id = request["id"].clone();
+        let expired = json!({"event":"output_expired","stream":"stdout","availableFrom":4});
+        serde_json::to_writer(&mut first, &json!({"v":1,"id":id,"ok":true,"body":expired}))
+            .unwrap();
+        first.write_all(b"\n").unwrap();
+        drop(listener);
+        std::fs::remove_file(&socket_path).unwrap();
+        drop(first);
+        thread::sleep(Duration::from_millis(80));
+        let replacement = UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let (mut status, _) = replacement.accept().unwrap();
+        let request = read_request(&mut status);
+        send_response(
+            &mut status,
+            &request,
+            json!({"runId":"r-expired-roll","state":"running","epoch":3}),
+        );
+        drop(status);
+        let (mut second, _) = replacement.accept().unwrap();
+        let request = read_request(&mut second);
+        assert_eq!(request["body"]["fromOffset"]["stdout"], 4);
+        let id = request["id"].clone();
+        for body in [
+            json!({"event":"output","stream":"stdout","offset":4,"dataB64":"dGFpbA=="}),
+            json!({"event":"settled","settlement":ok_settlement("r-expired-roll")}),
+        ] {
+            serde_json::to_writer(
+                &mut second,
+                &json!({"v":1,"id":id.clone(),"ok":true,"body":body}),
+            )
+            .unwrap();
+            second.write_all(b"\n").unwrap();
+        }
+    });
+    let events = client.attach("r-expired-roll", 0, 0).unwrap();
+    assert!(events.contains(&AttachEvent::OutputExpired {
+        stream: OutputStream::Stdout,
+        available_from: 4,
+    }));
+    assert!(events.contains(&AttachEvent::Output {
+        stream: OutputStream::Stdout,
+        offset: 4,
+        data: b"tail".to_vec(),
+    }));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_recovery_exhaustion_is_bounded_and_reports_unknown_scheduler_state() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    let socket_path = fixture.socket_path.clone();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let request = read_request(&mut first);
+        assert_eq!(request["method"], "attach");
+        drop(listener);
+        std::fs::remove_file(socket_path).unwrap();
+        drop(first);
+    });
+    let error = client
+        .attach_stream("r-exhausted", 0, 0, |_| {})
+        .unwrap_err();
+    assert!(matches!(error, ClientError::SchedulerUnreachable));
+    assert_eq!(timer.now(), Duration::from_secs(5));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_recovery_budget_survives_trusted_no_progress_reattaches() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    listener.set_nonblocking(true).unwrap();
+    let stop_server = Arc::new(AtomicU64::new(0));
+    let status_count = Arc::new(AtomicU64::new(0));
+    let attach_count = Arc::new(AtomicU64::new(0));
+    let server_stop = stop_server.clone();
+    let server_status_count = status_count.clone();
+    let server_attach_count = attach_count.clone();
+    let server = thread::spawn(move || {
+        let accept = || loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    return Some(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if server_stop.load(Ordering::Relaxed) != 0 {
+                        return None;
+                    }
+                    thread::yield_now();
+                }
+                Err(error) => panic!("private listener accept failed: {error}"),
+            }
+        };
+
+        let mut initial = accept().expect("initial attach connection");
+        let request = read_request(&mut initial);
+        assert_eq!(request["method"], "attach");
+        server_attach_count.fetch_add(1, Ordering::Relaxed);
+        drop(initial);
+
+        while server_stop.load(Ordering::Relaxed) == 0 {
+            let Some(mut status) = accept() else {
+                break;
+            };
+            let request = read_request(&mut status);
+            assert_eq!(request["method"], "status");
+            assert_eq!(request["body"]["runId"], "r-no-progress");
+            server_status_count.fetch_add(1, Ordering::Relaxed);
+            send_response(
+                &mut status,
+                &request,
+                json!({"runId":"r-no-progress","state":"running","epoch":3}),
+            );
+            drop(status);
+
+            let Some(mut attach) = accept() else {
+                break;
+            };
+            let request = read_request(&mut attach);
+            assert_eq!(request["method"], "attach");
+            assert_eq!(request["body"]["runId"], "r-no-progress");
+            server_attach_count.fetch_add(1, Ordering::Relaxed);
+            drop(attach);
+        }
+    });
+
+    let error = client
+        .attach_stream("r-no-progress", 0, 0, |_| {})
+        .unwrap_err();
+    stop_server.store(1, Ordering::Relaxed);
+    server.join().unwrap();
+
+    assert!(matches!(error, ClientError::SchedulerUnreachable));
+    assert_eq!(timer.now(), Duration::from_secs(5));
+    let statuses = status_count.load(Ordering::Relaxed);
+    let attaches = attach_count.load(Ordering::Relaxed);
+    assert!(
+        statuses > 1,
+        "the trusted server answered repeated status requests"
     );
+    assert_eq!(
+        attaches,
+        statuses + 1,
+        "each status was followed by a no-progress attach"
+    );
+}
+
+#[test]
+fn attach_recovery_fails_closed_on_token_key_mode_change_without_retry() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    let key_path = fixture.root_path.join("token.key");
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let _request = read_request(&mut first);
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        drop(first);
+        thread::sleep(Duration::from_millis(100));
+        drop(listener);
+    });
+    let error = client
+        .attach_stream("r-untrusted", 0, 0, |_| {})
+        .unwrap_err();
+    assert!(matches!(error, ClientError::Trust(_)));
+    assert_eq!(timer.now(), Duration::from_millis(50));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_recovery_does_not_retry_malformed_protocol() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let _request = read_request(&mut first);
+        first.write_all(b"not-json\n").unwrap();
+    });
+    let error = client
+        .attach_stream("r-malformed", 0, 0, |_| {})
+        .unwrap_err();
+    assert!(matches!(error, ClientError::Decode(_)));
+    assert_eq!(timer.now(), Duration::ZERO);
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_recovery_refuses_an_unexpected_authority_epoch_without_retry() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    let root_path = fixture.root_path.clone();
+    let authority = fixture.authority.clone();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let _request = read_request(&mut first);
+        let changed = Authority {
+            epoch: 4,
+            ..authority
+        };
+        write_authority(&root_path, &changed);
+        drop(first);
+    });
+    let error = client
+        .attach_stream("r-epoch-change", 0, 0, |_| {})
+        .unwrap_err();
+    assert!(matches!(error, ClientError::Trust(_)));
+    assert_eq!(timer.now(), Duration::from_millis(50));
+    server.join().unwrap();
+}
+
+#[test]
+fn cancel_retries_the_same_run_during_endpoint_roll() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let socket_path = fixture.socket_path.clone();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let request = read_request(&mut first);
+        assert_eq!(request["method"], "cancel");
+        assert_eq!(request["body"]["runId"], "r-cancel-roll");
+        drop(listener);
+        std::fs::remove_file(&socket_path).unwrap();
+        drop(first);
+        thread::sleep(Duration::from_millis(80));
+        let replacement = UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (mut second, _) = replacement.accept().unwrap();
+        let retry = read_request(&mut second);
+        assert_eq!(retry["method"], "cancel");
+        assert_eq!(retry["body"]["runId"], "r-cancel-roll");
+        send_response(&mut second, &retry, json!({"stopping":true}));
+    });
+    assert_eq!(
+        client.cancel("r-cancel-roll", "interrupted").unwrap()["stopping"],
+        true
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn recovery_root_open_accepts_a_trusted_authority_while_the_socket_is_absent() {
+    let fixture = make_fixture();
+    let socket_path = fixture.socket_path.clone();
+    drop(fixture.listener);
+    std::fs::remove_file(socket_path).unwrap();
+    assert!(HostRunRoot::open(&fixture.root_path).is_err());
+    let (root, authority) = HostRunRoot::open_for_recovery(&fixture.root_path).unwrap();
+    assert_eq!(root.path(), fixture.root_path);
+    assert_eq!(authority.epoch, fixture.authority.epoch);
+}
+
+#[test]
+fn authenticated_previous_epoch_status_recovers_within_the_bounded_window() {
+    let mut fixture = make_fixture();
+    fixture.authority.epoch = 4;
+    write_authority(&fixture.root_path, &fixture.authority);
+    write_token_keys(&fixture.root_path, 4, [6u8; 32], Some((3, [5u8; 32])));
+    let client = client(&fixture);
+    let socket_path = fixture.socket_path.clone();
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        drop(listener);
+        std::fs::remove_file(&socket_path).unwrap();
+        thread::sleep(Duration::from_millis(80));
+        let replacement = UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (mut status, _) = replacement.accept().unwrap();
+        let request = read_request(&mut status);
+        assert_eq!(request["method"], "status");
+        assert_eq!(request["epoch"], 4);
+        assert_eq!(request["body"]["runId"], "r-previous");
+        send_response(
+            &mut status,
+            &request,
+            json!({"runId":"r-previous","state":"running","epoch":4}),
+        );
+    });
+
+    let now = Utc.with_ymd_and_hms(2026, 10, 1, 14, 0, 0).unwrap();
+    let payload = json!({
+        "runId":"r-previous",
+        "epoch":3,
+        "class":"heavy",
+        "root":fixture.root_path.clone(),
+        "exp":now.timestamp_millis() + 60_000
+    });
+    let payload_part = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&payload).unwrap());
+    let mac = crate::token::hmac_sha256(&[5u8; 32], payload_part.as_bytes());
+    let token = format!(
+        "{payload_part}.{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac)
+    );
+    let accepted = client
+        .with_clock(Arc::new(FixedClock(now)))
+        .validate_parent_token(Some(&token), &fixture.root_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.run_id, "r-previous");
+    assert_eq!(accepted.epoch, 3);
     server.join().unwrap();
 }
 

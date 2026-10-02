@@ -74,6 +74,15 @@ impl HostRunRoot {
 
     /// Open an explicit subtree root, mainly for private fixture directories.
     pub fn open(path: impl AsRef<Path>) -> Result<(Self, Authority), TrustError> {
+        let (root, authority) = Self::open_for_recovery(path)?;
+        root.verify_socket(&authority)?;
+        Ok((root, authority))
+    }
+
+    /// Open and validate the descriptor-relative root and authority while
+    /// allowing a temporarily absent socket. The first request still verifies
+    /// the socket and peer before sending protocol data.
+    pub fn open_for_recovery(path: impl AsRef<Path>) -> Result<(Self, Authority), TrustError> {
         let path = std::fs::canonicalize(path)?;
         let cpath = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| TrustError::Invalid("root path contains NUL"))?;
@@ -95,7 +104,6 @@ impl HostRunRoot {
             uid,
         };
         let authority = root.read_authority()?;
-        root.verify_socket(&authority)?;
         Ok((root, authority))
     }
 
