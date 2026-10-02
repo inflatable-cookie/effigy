@@ -85,7 +85,14 @@ pub fn package_version() -> &'static str {
 }
 
 pub fn active_version() -> String {
-    if let Some(version) = read_active_version_env() {
+    active_version_with_env(std::env::var(ACTIVE_VERSION_ENV).ok())
+}
+
+/// Testable form of [`active_version`] that takes the active-version env
+/// override explicitly instead of reading the process environment, so
+/// parallel build-identity tests cannot overwrite one another's env.
+fn active_version_with_env(env_override: Option<String>) -> String {
+    if let Some(version) = read_active_version_env_value(env_override) {
         return version;
     }
     std::env::current_exe()
@@ -109,8 +116,9 @@ fn active_version_file_for(executable: &Path) -> PathBuf {
     executable.with_extension(LOCAL_ACTIVE_VERSION_EXTENSION)
 }
 
-fn read_active_version_env() -> Option<String> {
-    let raw = std::env::var(ACTIVE_VERSION_ENV).ok()?;
+/// Pure form of the active-version env reader over an injected value.
+fn read_active_version_env_value(raw: Option<String>) -> Option<String> {
+    let raw = raw?;
     let value = raw.trim();
     if value.is_empty() {
         return None;
@@ -245,10 +253,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        active_version, active_version_file_for, discover_repo_root_from_executable,
-        display_version_prefix, git_repo_is_dirty, infer_repo_local_version,
-        local_commit_from_identity, package_version, read_active_version_env,
-        read_active_version_file_for, stale_repo_local_install_for, ACTIVE_VERSION_ENV,
+        active_version, active_version_file_for, active_version_with_env,
+        discover_repo_root_from_executable, display_version_prefix, git_repo_is_dirty,
+        infer_repo_local_version, local_commit_from_identity, package_version,
+        read_active_version_env_value, read_active_version_file_for, stale_repo_local_install_for,
+        ACTIVE_VERSION_ENV,
     };
 
     #[test]
@@ -281,21 +290,60 @@ mod tests {
     }
 
     #[test]
-    fn read_active_version_env_trims_and_ignores_empty_values() {
-        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, " v0.3.1+local.abc123 \n");
+    fn env_isolation_injected_env_value_trims_and_ignores_empty_values() {
         assert_eq!(
-            read_active_version_env().as_deref(),
+            read_active_version_env_value(Some(" v0.3.1+local.abc123 \n".to_owned())).as_deref(),
             Some("v0.3.1+local.abc123")
         );
 
-        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, "   ");
-        assert!(read_active_version_env().is_none());
+        assert!(read_active_version_env_value(Some("   ".to_owned())).is_none());
     }
 
     #[test]
-    fn active_version_prefers_explicit_env_override() {
-        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, "v9.9.9+local.override");
-        assert_eq!(active_version(), "v9.9.9+local.override");
+    fn env_isolation_active_version_prefers_injected_env_override() {
+        assert_eq!(
+            active_version_with_env(Some("v9.9.9+local.override".to_owned())),
+            "v9.9.9+local.override"
+        );
+    }
+
+    /// Deterministic regression for the process-global `EnvGuard` conflict:
+    /// build-identity tests used to write the live process environment with
+    /// no boundary, so any parallel test could overwrite the value mid-read.
+    /// The live environment now holds one guarded sentinel while parallel
+    /// threads read only injected values; neither the sentinel nor another
+    /// thread's value may leak into a result.
+    #[test]
+    fn env_isolation_sentinel_and_parallel_reads_stay_independent() {
+        let _restore = ProcessEnvRestore::set(ACTIVE_VERSION_ENV, " v0.0.0-process-sentinel ");
+
+        // The live reader stays wired to the process environment and trims.
+        assert_eq!(active_version(), "v0.0.0-process-sentinel");
+
+        let readers: Vec<_> = (0..4)
+            .map(|reader| {
+                std::thread::spawn(move || {
+                    for round in 0..100 {
+                        let injected = format!("v9.{reader}.{round}+local.override");
+                        assert_eq!(
+                            active_version_with_env(Some(injected.clone())),
+                            injected,
+                            "a parallel writer or the process sentinel leaked into a \
+                             build-identity read"
+                        );
+                    }
+                })
+            })
+            .collect();
+        for reader in readers {
+            reader.join().expect("reader thread");
+        }
+
+        // Injected readers never touch the process environment.
+        assert_eq!(
+            std::env::var(ACTIVE_VERSION_ENV).ok().as_deref(),
+            Some(" v0.0.0-process-sentinel ")
+        );
     }
 
     #[test]
@@ -507,12 +555,16 @@ mod tests {
         );
     }
 
-    struct EnvGuard {
+    /// Restores one process-environment key on drop. Only the env-isolation
+    /// sentinel regression writes the process environment in this crate, and
+    /// no other test in this binary reads `EFFIGY_ACTIVE_VERSION`, so no
+    /// shared boundary is required.
+    struct ProcessEnvRestore {
         key: &'static str,
         previous: Option<String>,
     }
 
-    impl EnvGuard {
+    impl ProcessEnvRestore {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
             unsafe {
@@ -522,7 +574,7 @@ mod tests {
         }
     }
 
-    impl Drop for EnvGuard {
+    impl Drop for ProcessEnvRestore {
         fn drop(&mut self) {
             match &self.previous {
                 Some(value) => unsafe {
