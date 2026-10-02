@@ -521,8 +521,11 @@ fn a_missing_or_unparsable_portfolio_is_a_usage_error() {
         &["docs", "context", "tolerance", "--sources", "globbed.toml"],
     );
     assert!(!globbed.status.success(), "{globbed:?}");
-    let rendered = String::from_utf8_lossy(&globbed.stderr).into_owned()
-        + &String::from_utf8_lossy(&globbed.stdout);
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&globbed.stderr),
+        String::from_utf8_lossy(&globbed.stdout)
+    );
     assert!(rendered.contains("glob"), "{rendered}");
 
     std::fs::write(
