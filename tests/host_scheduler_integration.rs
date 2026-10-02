@@ -1,4 +1,4 @@
-//! Scheduler-routing proofs for opt-in heavy execution (contract 049).
+//! Scheduler-routing proofs for default heavy execution (contract 049).
 //!
 //! Cases that need a scheduler run against Queue's isolated host-run private
 //! server (`bin/host-run-private-server.mjs`, reviewed merge e9e4d12 of
@@ -40,6 +40,7 @@ impl Server {
             eprintln!("SKIPPED: {SERVER_ENV} is not set; no private Queue server available");
             return None;
         };
+        let queue = fs::canonicalize(queue).expect("canonical private Queue checkout");
         let dir = tempfile::Builder::new()
             .prefix("hr")
             .tempdir()
@@ -54,12 +55,29 @@ impl Server {
             Some(ms) => {
                 let original = fs::read_to_string(queue.join("bin/host-run-private-server.mjs"))
                     .expect("read pinned script");
-                let patched = original.replace(
+                let mut patched = original.replace(
                     "{ stateDir: target }",
                     &format!("{{ stateDir: target, outputRetentionMs: {ms} }}"),
                 );
+                for module in ["store", "host-run-scheduler", "host-run-endpoint"] {
+                    let marker =
+                        format!("new URL(\"../server/{module}.ts\", import.meta.url).href");
+                    let module_path = queue.join("server").join(format!("{module}.ts"));
+                    let path_literal =
+                        serde_json::to_string(&module_path.to_string_lossy().into_owned())
+                            .expect("module path literal");
+                    let replacement = format!("pathToFileURL({path_literal}).href");
+                    assert!(patched.contains(&marker), "expected private-server import");
+                    patched = patched.replace(&marker, &replacement);
+                }
+                patched = patched.replace(
+                    "import { join, resolve, sep } from \"node:path\";",
+                    "import { join, resolve, sep } from \"node:path\";\nimport { pathToFileURL } from \"node:url\";",
+                );
                 assert_ne!(original, patched, "pinned script no longer matches");
-                let path = queue.join("bin/host-run-private-server-short-retention.mjs");
+                let path = dir
+                    .path()
+                    .join("host-run-private-server-short-retention.mjs");
                 fs::write(&path, patched).expect("write retention variant");
                 path
             }
@@ -187,6 +205,15 @@ impl Workspace {
     }
 
     fn command(&self, root: Option<&Path>, args: &[&str]) -> Command {
+        self.command_with_setting(root, args, None)
+    }
+
+    fn command_with_setting(
+        &self,
+        root: Option<&Path>,
+        args: &[&str],
+        scheduler_setting: Option<&str>,
+    ) -> Command {
         let mut command = Command::new(EFFIGY);
         command
             .args(args)
@@ -204,16 +231,18 @@ impl Workspace {
             .env_remove("HOST_RUN_TOKEN")
             .env_remove("HOST_RUN_ID")
             .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+            .env_remove("EFFIGY_HOST_SCHEDULER")
             .env_remove("EFFIGY_SCHEDULER_OVERRIDE");
         match root {
             Some(root) => {
-                command
-                    .env("EFFIGY_HOST_SCHEDULER", "1")
-                    .env("EFFIGY_HOST_RUN_ROOT", root);
+                command.env("EFFIGY_HOST_RUN_ROOT", root);
             }
             None => {
-                command.env_remove("EFFIGY_HOST_SCHEDULER");
+                command.env_remove("EFFIGY_HOST_RUN_ROOT");
             }
+        }
+        if let Some(setting) = scheduler_setting {
+            command.env("EFFIGY_HOST_SCHEDULER", setting);
         }
         command
     }
@@ -308,17 +337,17 @@ fn now_ms() -> i64 {
 }
 
 #[test]
-fn legacy_admission_is_the_default_when_the_setting_is_unset() {
+fn explicit_zero_keeps_legacy_admission_available_for_rollback() {
     let ws = Workspace::new(MANIFEST);
     let output = ws
-        .command(None, &["heavy-echo"])
+        .command_with_setting(None, &["heavy-echo"], Some("0"))
         .output()
         .expect("run effigy");
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert_eq!(ws.lines("mark"), 1);
     assert!(
         !ws.legacy_store_untouched(),
-        "the default backend records a legacy lease"
+        "explicit zero selects the legacy lease backend"
     );
 }
 
@@ -418,7 +447,7 @@ fn empty_override_reason_refuses_without_executing() {
 }
 
 #[test]
-fn top_level_heavy_launches_exactly_once_and_streams_output() {
+fn unset_setting_routes_heavy_work_through_the_scheduler_once() {
     let Some(server) = Server::start(None) else {
         return;
     };
@@ -450,6 +479,21 @@ fn top_level_heavy_launches_exactly_once_and_streams_output() {
         "the launched child reports its nested fact"
     );
     assert_eq!(nested[0]["parentRunId"], run.as_str());
+}
+
+#[test]
+fn explicit_one_keeps_the_scheduler_backend() {
+    let Some(server) = Server::start(None) else {
+        return;
+    };
+    let ws = Workspace::new(MANIFEST);
+    let output = ws
+        .command_with_setting(Some(&server.state), &["heavy-echo"], Some("1"))
+        .output()
+        .expect("run effigy");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(server.run_ids().len(), 1);
+    assert!(ws.legacy_store_untouched());
 }
 
 #[test]
@@ -549,14 +593,13 @@ fn forged_expired_and_outside_root_tokens_exit_77_and_never_queue() {
 }
 
 #[test]
-fn a_present_token_takes_the_validation_path_even_without_the_opt_in() {
+fn a_present_token_is_validated_even_with_legacy_backend_selected() {
     let Some(server) = Server::start(None) else {
         return;
     };
     let ws = Workspace::new(MANIFEST);
     let output = ws
-        .command(Some(&server.state), &["heavy-echo"])
-        .env_remove("EFFIGY_HOST_SCHEDULER")
+        .command_with_setting(Some(&server.state), &["heavy-echo"], Some("0"))
         .env("HOST_RUN_TOKEN", "forged")
         .output()
         .expect("run effigy");

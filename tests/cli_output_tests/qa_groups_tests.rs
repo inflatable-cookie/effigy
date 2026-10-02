@@ -649,11 +649,34 @@ run = "echo light-ok"
     // acquires its own lease. The private admission store keeps this
     // hermetic: it must never wait on the shared machine gate.
     let admission_dir = private_admission_dir(&root, "effigy-qa-draft-heavy-admission");
-    let payload = run_effigy_json_with_env(
-        &root,
-        &["draft", "heavy-probe"],
-        &[("EFFIGY_ADMISSION_DIR", &admission_dir)],
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .arg("--json")
+        .args(["draft", "heavy-probe"])
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_SCHEDULER", "0")
+        .env("EFFIGY_ADMISSION_DIR", &admission_dir)
+        .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
+        .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
+        .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
+        .env("EFFIGY_ADMISSION_MEMORY_MIB", "128")
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "60")
+        .env_remove("EFFIGY_CALLER")
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_HOST_RUN_ROOT")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE");
+    let output = command.output().expect("run heavy draft");
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+    let payload = parse_stdout_json(&output);
     assert_eq!(payload["result"]["surface_identity"]["admission"], "heavy");
     assert_eq!(payload["result"]["ok"], true);
 
@@ -720,16 +743,24 @@ run = "echo nested-ok"
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_SCHEDULER", "0")
         .env("EFFIGY_ADMISSION_DIR", &admission_dir)
         .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
         .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
         .env("EFFIGY_ADMISSION_CPU_UNITS", "2")
         .env("EFFIGY_ADMISSION_MEMORY_MIB", "128")
-        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "60");
+        .env("EFFIGY_ADMISSION_TIMEOUT_SECS", "60")
+        .env_remove("EFFIGY_CALLER")
+        .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_HOST_RUN_ROOT")
+        .env_remove("EFFIGY_SCHEDULER_OVERRIDE");
     let output = command.output().expect("run heavy group");
     assert!(
         output.status.success(),
-        "{}",
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let payload: Value = parse_stdout_json(&output);

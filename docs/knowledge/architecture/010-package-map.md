@@ -245,7 +245,7 @@ Current retained small-crate rationale:
 | `effigy-runtime-plan` | Keep. Pure activation request/plan/report model; small by design because side effects stay in runtime adapters. |
 | `effigy-deps` | Keep. Shared dependency-link state and report owner consumed by command and doctor surfaces without importing either shell. |
 | `effigy-process` | Keep. Host process primitives are reused across runner surfaces without importing container/runtime crates. |
-| `effigy-host-run` | Keep. Owns the bounded Unix protocol, descriptor-relative trust checks and durable fact delivery behind a reusable library seam; only the root runner's `host_scheduler` module consumes it, and only behind `EFFIGY_HOST_SCHEDULER=1`. |
+| `effigy-host-run` | Keep. Owns the bounded Unix protocol, descriptor-relative trust checks and durable fact delivery behind a reusable library seam; only the root runner's `host_scheduler` module consumes it for default heavy execution, with `EFFIGY_HOST_SCHEDULER=0` retaining the legacy rollback path. |
 | `effigy-gateway` | Keep. Local gateway registry and route primitives are consumed by runtime/container code without dragging command-shell behavior down. |
 | `effigy-ui` | Keep. Renderer abstraction and output primitives keep domain crates out of top-level CLI rendering details. |
 | `effigy-tui` | Keep. Thin TUI-only composition boundary; intentionally tiny because browser/demo terminal modules stay behind one crate-local seam. |

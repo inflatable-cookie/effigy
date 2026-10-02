@@ -214,8 +214,19 @@ struct NestedQaAdmissionSandbox {
     hostile_lease_id: &'static str,
 }
 
-fn fixture_admission_env_var(key: &OsStr) -> bool {
-    key == OsStr::new("EFFIGY_CALLER") || key.to_string_lossy().starts_with("EFFIGY_ADMISSION_")
+fn fixture_env_var_to_strip(key: &OsStr) -> bool {
+    key == OsStr::new("EFFIGY_CALLER")
+        || key.to_string_lossy().starts_with("EFFIGY_ADMISSION_")
+        || matches!(
+            key.to_str(),
+            Some(
+                "EFFIGY_HOST_SCHEDULER"
+                    | "EFFIGY_HOST_RUN_ROOT"
+                    | "EFFIGY_SCHEDULER_OVERRIDE"
+                    | "HOST_RUN_TOKEN"
+                    | "HOST_RUN_ID"
+            )
+        )
 }
 
 fn admission_directory_snapshot(path: &std::path::Path) -> Vec<(OsString, Vec<u8>)> {
@@ -309,13 +320,14 @@ fn run_json_cli_command_with_private_admission(
         .arg("--repo")
         .arg(root);
     for (key, value) in inherited_env {
-        if !fixture_admission_env_var(&key) {
+        if !fixture_env_var_to_strip(&key) {
             command.env(key, value);
         }
     }
     command
         .env("NO_COLOR", "1")
         .env("PATH", joined_path)
+        .env("EFFIGY_HOST_SCHEDULER", "0")
         .env("EFFIGY_ADMISSION_DIR", &sandbox.private_dir)
         .env("EFFIGY_ADMISSION_CPU_BUDGET", "2")
         .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "128")
@@ -9086,6 +9098,7 @@ run = '''trap 'printf interrupted > "$EFFIGY_TEST_CANCEL_MARKER"; exit 130' INT;
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_SCHEDULER", "0")
         .env("EFFIGY_ADMISSION_DIR", &state_dir)
         .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
         .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
@@ -9096,6 +9109,9 @@ run = '''trap 'printf interrupted > "$EFFIGY_TEST_CANCEL_MARKER"; exit 130' INT;
         .env("EFFIGY_TEST_READY_MARKER", &ready)
         .env("EFFIGY_TEST_CANCEL_MARKER", &interrupted)
         .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_HOST_RUN_ROOT")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -9176,6 +9192,7 @@ run = [{ task = "test" }]
             .arg("heavy")
             .current_dir(&root)
             .env("NO_COLOR", "1")
+            .env("EFFIGY_HOST_SCHEDULER", "0")
             .env("EFFIGY_ADMISSION_DIR", &state_dir)
             .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
             .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
@@ -9185,6 +9202,9 @@ run = [{ task = "test" }]
             .env("EFFIGY_CALLER", format!("test:heavy-builtin-{label}"))
             .env("EFFIGY_TEST_READY_MARKER", &ready)
             .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+            .env_remove("HOST_RUN_TOKEN")
+            .env_remove("HOST_RUN_ID")
+            .env_remove("EFFIGY_HOST_RUN_ROOT")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -9295,6 +9315,7 @@ run = "sleep 3"
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
+        .env("EFFIGY_HOST_SCHEDULER", "0")
         .env("EFFIGY_ADMISSION_DIR", &state_dir)
         .env("EFFIGY_ADMISSION_CPU_BUDGET", "1")
         .env("EFFIGY_ADMISSION_MEMORY_BUDGET_MIB", "64")
@@ -9302,6 +9323,9 @@ run = "sleep 3"
         .env("EFFIGY_ADMISSION_MEMORY_MIB", "64")
         .env("EFFIGY_CALLER", "test:heavy-task-idle-cpu")
         .env_remove("EFFIGY_ADMISSION_LEASE_ID")
+        .env_remove("HOST_RUN_TOKEN")
+        .env_remove("HOST_RUN_ID")
+        .env_remove("EFFIGY_HOST_RUN_ROOT")
         .output()
         .expect("run idle heavy task");
     assert!(

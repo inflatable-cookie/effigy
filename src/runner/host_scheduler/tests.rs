@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 
 use super::submit::{forward_env_from, interpret, launched_exit_code};
 use super::{
-    is_scheduler_owned_env, parse_opt_in, parse_override_reason, queue_wait_from_status, PreLaunch,
-    Settled,
+    is_scheduler_owned_env, parse_override_reason, parse_scheduler_setting, queue_wait_from_status,
+    PreLaunch, Settled,
 };
 use crate::runner::error::RunnerError;
 
@@ -37,13 +37,16 @@ fn signalled(signal: Value) -> Option<Value> {
 }
 
 #[test]
-fn opt_in_accepts_only_one_and_zero_and_unset_is_legacy() {
-    assert!(!parse_opt_in(None).unwrap());
-    assert!(parse_opt_in(Some(OsString::from("1"))).unwrap());
-    assert!(!parse_opt_in(Some(OsString::from("0"))).unwrap());
+fn scheduler_setting_defaults_to_scheduler_and_accepts_explicit_values() {
+    assert!(parse_scheduler_setting(None).unwrap());
+    assert!(parse_scheduler_setting(Some(OsString::from("1"))).unwrap());
+    assert!(!parse_scheduler_setting(Some(OsString::from("0"))).unwrap());
     for invalid in ["", "yes", "true", "01", " 1", "2"] {
-        let error = parse_opt_in(Some(OsString::from(invalid))).unwrap_err();
+        let error = parse_scheduler_setting(Some(OsString::from(invalid))).unwrap_err();
         assert_eq!(code_of(&error), 2, "{invalid:?}");
+        assert!(error
+            .to_string()
+            .contains("unset selects the host scheduler"));
     }
 }
 

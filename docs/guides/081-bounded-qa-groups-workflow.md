@@ -184,9 +184,9 @@ The run report keeps these measures separate:
 
 - selected group, definition digest, repository head/worktree state, and
   declared targets;
-- capacity queue position and admission wait (under the opt-in scheduler backend
-  the record's `backend` object carries the scheduler run and `queue_wait_ms`,
-  `null` when unavailable);
+- capacity queue position and admission wait; for scheduler-backed runs the
+  record's `backend` object carries the scheduler run and `queue_wait_ms`,
+  `null` when unavailable;
 - setup/compile/member/cleanup execution time and per-member outcomes;
 - expected wall time and `within_budget`, `over_budget`, or `unknown` evidence;
 - cold/warm phase timing only when measured.

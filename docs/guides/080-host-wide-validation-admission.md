@@ -10,6 +10,11 @@ admission = "heavy"
 run = ["cargo test --workspace"]
 ```
 
+Heavy execution now uses the Queue/Nucleus scheduler by default. The local
+lease journal and `effigy admission` queries below describe the retained
+rollback backend selected with `EFFIGY_HOST_SCHEDULER=0`; see the scheduler
+section for default-run behavior.
+
 Shorthand tasks keep their existing behavior. Unknown `admission` values fail
 manifest parsing. `--plan`, task discovery, and admission queries do not
 acquire a lease.
@@ -87,15 +92,17 @@ Repeated runs do not currently join an owner's execution. Joining stays
 disabled unless Effigy can prove the complete input identity and capture the
 owner's complete log and exit result.
 
-## Opt-in host scheduler backend
+## Default host scheduler backend
 
-The lease store above is the default and is unchanged. Set
-`EFFIGY_HOST_SCHEDULER=1` to send heavy work to the Queue/Nucleus host-run
-scheduler instead ([contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md#opt-in-scheduler-backend)).
-Unset or `0` keeps the lease. Anything else exits 2 before doing any work.
+Heavy work uses the Queue/Nucleus host-run scheduler by default
+([contract 049](../knowledge/contracts/049-heavy-validation-admission-contract.md#scheduler-backend-and-explicit-legacy-rollback)). Set
+`EFFIGY_HOST_SCHEDULER=0` to select the retained legacy lease backend for
+rollback. `EFFIGY_HOST_SCHEDULER=1` explicitly selects the scheduler. Any other
+value exits 2 before doing any work.
 
 ```sh
-EFFIGY_HOST_SCHEDULER=1 effigy qa
+effigy qa
+EFFIGY_HOST_SCHEDULER=0 effigy qa
 ```
 
 What changes for a heavy run (`qa`/`ci`/`ci:fresh`, `admission = "heavy"` tasks
