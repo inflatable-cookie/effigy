@@ -323,6 +323,16 @@ pieces of glue that the integration relies on:
   than the root-owned forwarded original. Bridging is more reliable than
   chmoding the forwarded socket because Colima may harden the socket
   inside its VM in ways that defeat in-container `chmod`.
+- The entrypoint treats its diagnostics log
+  (`/var/log/effigy-ssh-bridge.log`, root-owned) as optional: a start as
+  the non-root workspace user — or any start whose log is unwritable —
+  continues normally and reports diagnostics, including unavailable
+  forwarding warnings, on stderr instead. A non-root start honestly
+  refuses what it cannot do: it does not attempt `update-ca-certificates`
+  (mkcert trust installation stays a root-mode step) and it creates the
+  bridge socket via `umask 077` rather than chown-style options. A
+  root-mode start keeps the full behavior: it installs the mkcert root CA
+  when mounted and creates the bridge owned by the workspace user.
 
 ### Override per service
 
@@ -377,11 +387,12 @@ safely. If it depends on private key files or `IdentityFile` rules, use
 `ssh_dir_path` instead.
 
 If you suspect Colima itself isn't forwarding the agent (the bridge log
-under `/var/log/effigy-ssh-bridge.log` reports `host_sock missing`), stop
-Colima entirely and bring it back up so the `--ssh-agent` flag actually
-applies — `colima stop --profile <profile>` followed by `effigy container
-reset`. A `colima start` against an already-running profile is a no-op and
-won't pick up new flags.
+under `/var/log/effigy-ssh-bridge.log` reports `host_sock missing`; on
+non-root starts the log is unwritable, so the same warning appears on
+container stderr instead), stop Colima entirely and bring it back up so
+the `--ssh-agent` flag actually applies — `colima stop --profile
+<profile>` followed by `effigy container reset`. A `colima start` against
+an already-running profile is a no-op and won't pick up new flags.
 
 ## Caveats And Gaps
 

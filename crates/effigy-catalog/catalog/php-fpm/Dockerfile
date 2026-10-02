@@ -225,12 +225,33 @@ RUN set -eux; \
         echo 'smtp_host=${EFFIGY_SMTP_HOST:-mail}'; \
         echo 'smtp_port=${EFFIGY_SMTP_PORT:-1025}'; \
         echo 'smtp_from=${EFFIGY_SMTP_FROM:-effigy@localhost}'; \
+        echo 'log_optional() {'; \
+        echo '    if ! printf "%s\n" "$*" >> "$log" 2>/dev/null; then'; \
+        echo '        printf "%s\n" "$*" >&2'; \
+        echo '    fi'; \
+        echo '}'; \
+        echo 'run_optional_logged() {'; \
+        echo '    local output status'; \
+        echo '    output=$("$@" 2>&1) && status=0 || status=$?'; \
+        echo '    [ -z "$output" ] || log_optional "$output"'; \
+        echo '    return "$status"'; \
+        echo '}'; \
+        echo 'if ! : > "$log" 2>/dev/null; then'; \
+        echo '    printf "[effigy-entrypoint] WARNING bridge log unavailable at %s; continuing with diagnostics on stderr\n" "$log" >&2'; \
+        echo 'fi'; \
+        echo 'log_optional "[effigy-entrypoint] $(date -u +%FT%TZ) start"'; \
+        echo 'if [ "$(id -u)" -eq 0 ]; then'; \
+        echo '    is_root=1'; \
+        echo 'else'; \
+        echo '    is_root=0'; \
+        echo 'fi'; \
+        echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
+        echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
+        echo 'if [ "$is_root" -eq 1 ]; then'; \
         echo 'mkdir -p /run/effigy/secrets'; \
         echo 'cp /usr/local/share/effigy/container-secrets-bootstrap.php /run/effigy/secrets/bootstrap.php'; \
         echo ': > /run/effigy/secrets/runtime.env'; \
         echo 'printf '"'"'{}'"'"' > /run/effigy/secrets/runtime.json'; \
-        echo ': > "$log" || true'; \
-        echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
         echo 'cat > /etc/msmtprc <<EOF'; \
         echo 'defaults'; \
         echo 'auth off'; \
@@ -242,36 +263,44 @@ RUN set -eux; \
         echo 'from '"'"'$smtp_from'"'"''; \
         echo 'EOF'; \
         echo 'chmod 0600 /etc/msmtprc'; \
-        echo 'echo "[effigy-entrypoint] configured msmtp sendmail shim -> ${smtp_host}:${smtp_port} from ${smtp_from}" >> "$log"'; \
-        echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
-        echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
-        echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \
+        echo 'log_optional "[effigy-entrypoint] configured msmtp sendmail shim -> ${smtp_host}:${smtp_port} from ${smtp_from}"'; \
+        echo 'log_optional "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid"'; \
         echo 'chown dev:"$(id -gn dev 2>/dev/null || echo dev)" /run/effigy/secrets /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
         echo 'chmod 0700 /run/effigy/secrets'; \
         echo 'chmod 0600 /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
+        echo 'else'; \
+        echo '    log_optional "[effigy-entrypoint] WARNING non-root startup cannot initialize root-owned PHP secrets or msmtp configuration; existing files are unchanged"'; \
+        echo '    log_optional "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid"'; \
+        echo 'fi'; \
         echo 'if [ -f "$mkcert_ca" ]; then'; \
-        echo '    if update-ca-certificates >>"$log" 2>&1; then'; \
-        echo '        echo "[effigy-entrypoint] mkcert root CA installed into system trust store" >> "$log"'; \
+        echo '    if [ "$is_root" -eq 0 ]; then'; \
+        echo '        log_optional "[effigy-entrypoint] WARNING non-root startup cannot install the mkcert root CA; system trust was not updated"'; \
+        echo '    elif run_optional_logged update-ca-certificates; then'; \
+        echo '        log_optional "[effigy-entrypoint] mkcert root CA installed into system trust store"'; \
         echo '    else'; \
-        echo '        echo "[effigy-entrypoint] WARNING update-ca-certificates failed (see lines above)" >> "$log"'; \
+        echo '        log_optional "[effigy-entrypoint] WARNING update-ca-certificates failed; root trust was not updated"'; \
         echo '    fi'; \
         echo 'fi'; \
         echo 'if [ -S "$host_sock" ]; then'; \
-        echo '    echo "[effigy-entrypoint] host_sock present at $host_sock" >> "$log"'; \
+        echo '    log_optional "[effigy-entrypoint] host_sock present at $host_sock"'; \
         echo '    rm -f "$bridge_sock"'; \
-        echo '    socat UNIX-LISTEN:"$bridge_sock",fork,reuseaddr,unlink-early,user=$dev_uid,group=$dev_gid,mode=0600 UNIX-CONNECT:"$host_sock" >>"$log" 2>&1 &'; \
-        echo '    echo "[effigy-entrypoint] socat pid=$!" >> "$log"'; \
+        echo '    if [ "$is_root" -eq 1 ]; then'; \
+        echo '        socat UNIX-LISTEN:"$bridge_sock",fork,reuseaddr,unlink-early,user=$dev_uid,group=$dev_gid,mode=0600 UNIX-CONNECT:"$host_sock" > >(while IFS= read -r line; do log_optional "$line"; done) 2>&1 &'; \
+        echo '    else'; \
+        echo '        (umask 077; socat UNIX-LISTEN:"$bridge_sock",fork,reuseaddr,unlink-early,mode=0600 UNIX-CONNECT:"$host_sock" > >(while IFS= read -r line; do log_optional "$line"; done) 2>&1) &'; \
+        echo '    fi'; \
+        echo '    log_optional "[effigy-entrypoint] socat pid=$!"'; \
         echo '    for _ in 1 2 3 4 5 6 7 8 9 10; do'; \
         echo '        [ -S "$bridge_sock" ] && break'; \
         echo '        sleep 0.1'; \
         echo '    done'; \
         echo '    if [ -S "$bridge_sock" ]; then'; \
-        echo '        echo "[effigy-entrypoint] bridge_sock created at $bridge_sock" >> "$log"'; \
+        echo '        log_optional "[effigy-entrypoint] bridge_sock created at $bridge_sock"'; \
         echo '    else'; \
-        echo '        echo "[effigy-entrypoint] WARNING bridge_sock never appeared" >> "$log"'; \
+        echo '        log_optional "[effigy-entrypoint] WARNING bridge_sock never appeared"'; \
         echo '    fi'; \
         echo 'else'; \
-        echo '    echo "[effigy-entrypoint] WARNING host_sock missing at $host_sock - SSH agent forwarding will not work" >> "$log"'; \
+        echo '    log_optional "[effigy-entrypoint] WARNING host_sock missing at $host_sock - SSH agent forwarding will not work"'; \
         echo 'fi'; \
         echo 'exec "$@"'; \
     } > /usr/local/bin/effigy-entrypoint; \

@@ -249,6 +249,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- The embedded catalog baseline now tracks published catalog-pack `v1.1.1`
+  (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:a83b723e14a131d9bba0eaddeb931c8b881157948f5a8e47e68610e62ba91989`).
+  The generated `workspace-rust-bun` and `php-fpm` entrypoints start safely
+  as the non-root workspace user when the root-owned bridge log
+  (`/var/log/effigy-ssh-bridge.log`) is unwritable: diagnostics, including
+  unavailable-forwarding warnings, fall back to stderr, and non-root starts
+  honestly refuse what needs root (the mkcert system-trust update and
+  php-fpm's root-owned secrets/msmtp initialization) instead of failing
+  startup. Root-mode starts keep the full bridge and trust behavior.
 - Container policy reads, discovery, plans and retirement lookup no longer
   register runtime ownership. Container activation records the checkout scope
   before starting the backend or creating owned resources; a failed start
