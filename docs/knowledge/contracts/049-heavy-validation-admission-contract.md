@@ -152,7 +152,9 @@ Migration step (b) of the shared contract is the default in source. Step (c)
   rereads and revalidates descriptor-relative authority and token-key files,
   owner and mode, peer PID/start identity, and the unchanged epoch/key set. The
   client queries status for the same run ID at the current epoch before
-  reattaching at the exact last-delivered stdout and stderr offsets. It never
+  reattaching at the exact last-delivered stdout and stderr offsets. Trusted
+  status or attach responses without stream-offset progress do not reset the
+  five-second budget; advancing output or `output_expired` offsets do. It never
   submits or launches the run again. A valid previous-epoch token's required
   status lookup uses the same bounded transport recovery after its signature,
   root and expiry have been verified. Trust, key, token, epoch and protocol

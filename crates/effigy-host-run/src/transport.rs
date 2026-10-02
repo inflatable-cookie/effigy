@@ -250,6 +250,16 @@ fn is_transport_closure(error: &ClientError) -> bool {
     )
 }
 
+fn schedule_attach_recovery(recovery: &mut Option<(Duration, Duration)>, now: Duration) {
+    *recovery = Some(match *recovery {
+        Some((started_at, backoff)) => (
+            started_at,
+            backoff.saturating_mul(2).min(ATTACH_RECONNECT_MAX_BACKOFF),
+        ),
+        None => (now, ATTACH_RECONNECT_INITIAL_BACKOFF),
+    });
+}
+
 fn classify_socket_trust_error(error: TrustError) -> RecoveryError {
     let retry = matches!(&error, TrustError::Io(error) if error.kind() == io::ErrorKind::NotFound);
     let error = ClientError::Trust(error);
@@ -694,14 +704,12 @@ impl HostRunClient {
                 ) {
                     Ok(stream) => stream,
                     Err(RecoveryError::Retry) => {
-                        let elapsed = self.reconnect_timer.now().saturating_sub(started_at);
+                        let now = self.reconnect_timer.now();
+                        let elapsed = now.saturating_sub(started_at);
                         if elapsed >= ATTACH_RECONNECT_WINDOW {
                             return Err(ClientError::SchedulerUnreachable);
                         }
-                        recovery = Some((
-                            started_at,
-                            backoff.saturating_mul(2).min(ATTACH_RECONNECT_MAX_BACKOFF),
-                        ));
+                        schedule_attach_recovery(&mut recovery, now);
                         continue;
                     }
                     Err(RecoveryError::Fail(error)) => return Err(error),
@@ -712,8 +720,7 @@ impl HostRunClient {
                     Err(error)
                         if is_retryable_endpoint_error(&error) || is_transport_closure(&error) =>
                     {
-                        recovery =
-                            Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                        schedule_attach_recovery(&mut recovery, self.reconnect_timer.now());
                         continue;
                     }
                     Err(error) => return Err(error),
@@ -725,7 +732,7 @@ impl HostRunClient {
             let request_id = request["id"].clone();
             if let Err(error) = write_request(&mut stream, &request) {
                 if is_transport_closure(&error) {
-                    recovery = Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                    schedule_attach_recovery(&mut recovery, self.reconnect_timer.now());
                     continue;
                 }
                 return Err(error);
@@ -735,8 +742,7 @@ impl HostRunClient {
                 let frame = match read_frame(&mut reader) {
                     Ok(frame) => frame,
                     Err(error) if is_transport_closure(&error) => {
-                        recovery =
-                            Some((self.reconnect_timer.now(), ATTACH_RECONNECT_INITIAL_BACKOFF));
+                        schedule_attach_recovery(&mut recovery, self.reconnect_timer.now());
                         break;
                     }
                     Err(error) => return Err(error),
@@ -782,6 +788,9 @@ impl HostRunClient {
                                 "output_expired moved the offset backwards",
                             ));
                         }
+                        if available > expected[index] {
+                            recovery = None;
+                        }
                         expected[index] = available;
                         on_event(AttachEvent::OutputExpired {
                             stream: index_stream(index),
@@ -818,6 +827,7 @@ impl HostRunClient {
                             let new_offset = expected[index];
                             let retained = data[skip..].to_vec();
                             expected[index] = end;
+                            recovery = None;
                             on_event(AttachEvent::Output {
                                 stream: index_stream(index),
                                 offset: new_offset,

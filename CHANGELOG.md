@@ -34,8 +34,10 @@ During v0.x, MINOR bumps may include breaking changes.
   with capped backoff, and only for endpoint absence/refusal or transport
   closure. Recovery revalidates trusted authority, peer identity, epoch and
   token keys, checks status for the same run, and resumes stdout/stderr at their
-  exact delivered byte offsets. Interrupt cancellation retries the same run ID
-  through the same bounded endpoint roll. It never resubmits; trust/protocol
+  exact delivered byte offsets. Trusted status or attach responses without
+  stream-offset progress do not reset the five-second budget; advancing output
+  or `output_expired` offsets do. Interrupt cancellation retries the same run
+  ID through the same bounded endpoint roll. It never resubmits; trust/protocol
   failures fail closed, and exhaustion reports exit 75 with final state unknown.
 - Bounded QA groups (contract 051) land through the existing task pipeline:
   `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained

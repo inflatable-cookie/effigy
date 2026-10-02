@@ -638,6 +638,89 @@ fn attach_recovery_exhaustion_is_bounded_and_reports_unknown_scheduler_state() {
 }
 
 #[test]
+fn attach_recovery_budget_survives_trusted_no_progress_reattaches() {
+    let fixture = make_fixture();
+    let timer = Arc::new(FakeReconnectTimer::default());
+    let mut client = client(&fixture).with_reconnect_timer(timer.clone());
+    let listener = fixture.listener;
+    listener.set_nonblocking(true).unwrap();
+    let stop_server = Arc::new(AtomicU64::new(0));
+    let status_count = Arc::new(AtomicU64::new(0));
+    let attach_count = Arc::new(AtomicU64::new(0));
+    let server_stop = stop_server.clone();
+    let server_status_count = status_count.clone();
+    let server_attach_count = attach_count.clone();
+    let server = thread::spawn(move || {
+        let accept = || loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    return Some(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if server_stop.load(Ordering::Relaxed) != 0 {
+                        return None;
+                    }
+                    thread::yield_now();
+                }
+                Err(error) => panic!("private listener accept failed: {error}"),
+            }
+        };
+
+        let mut initial = accept().expect("initial attach connection");
+        let request = read_request(&mut initial);
+        assert_eq!(request["method"], "attach");
+        server_attach_count.fetch_add(1, Ordering::Relaxed);
+        drop(initial);
+
+        while server_stop.load(Ordering::Relaxed) == 0 {
+            let Some(mut status) = accept() else {
+                break;
+            };
+            let request = read_request(&mut status);
+            assert_eq!(request["method"], "status");
+            assert_eq!(request["body"]["runId"], "r-no-progress");
+            server_status_count.fetch_add(1, Ordering::Relaxed);
+            send_response(
+                &mut status,
+                &request,
+                json!({"runId":"r-no-progress","state":"running","epoch":3}),
+            );
+            drop(status);
+
+            let Some(mut attach) = accept() else {
+                break;
+            };
+            let request = read_request(&mut attach);
+            assert_eq!(request["method"], "attach");
+            assert_eq!(request["body"]["runId"], "r-no-progress");
+            server_attach_count.fetch_add(1, Ordering::Relaxed);
+            drop(attach);
+        }
+    });
+
+    let error = client
+        .attach_stream("r-no-progress", 0, 0, |_| {})
+        .unwrap_err();
+    stop_server.store(1, Ordering::Relaxed);
+    server.join().unwrap();
+
+    assert!(matches!(error, ClientError::SchedulerUnreachable));
+    assert_eq!(timer.now(), Duration::from_secs(5));
+    let statuses = status_count.load(Ordering::Relaxed);
+    let attaches = attach_count.load(Ordering::Relaxed);
+    assert!(
+        statuses > 1,
+        "the trusted server answered repeated status requests"
+    );
+    assert_eq!(
+        attaches,
+        statuses + 1,
+        "each status was followed by a no-progress attach"
+    );
+}
+
+#[test]
 fn attach_recovery_fails_closed_on_token_key_mode_change_without_retry() {
     let fixture = make_fixture();
     let timer = Arc::new(FakeReconnectTimer::default());

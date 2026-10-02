@@ -1549,3 +1549,107 @@ fn real_effigy_follower_recovers_across_five_queue152_supervisor_rolls() {
             .unwrap_or_default()
     );
 }
+
+#[test]
+fn real_effigy_sigterm_cancels_during_queue152_supervisor_roll() {
+    let Some(mut server) = RestartingServer::start() else {
+        return;
+    };
+    let ws = Workspace::new(RESTART_MANIFEST);
+    fs::write(ws.file("restart-probe.cjs"), RESTART_PROBE).expect("write restart probe");
+
+    let child = ws
+        .command(Some(&server.state), &["heavy-roll-probe"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn real Effigy follower");
+    let mut follower = FollowedCommand {
+        child,
+        release_file: ws.file("release"),
+    };
+    wait_for("run token written", Duration::from_secs(30), || {
+        ws.file("run-token").exists()
+    });
+    wait_for("one submitted run", Duration::from_secs(30), || {
+        server.run_ids().len() == 1
+    });
+    let run_id = server.run_ids()[0].clone();
+    wait_for("run started", Duration::from_secs(30), || {
+        let status = server.status(&run_id);
+        status["state"] == "running" && status["pid"].as_u64().is_some()
+    });
+
+    let first_authority = server.authorities[0].clone();
+    let epoch = first_authority["epoch"].as_u64().expect("initial epoch");
+    let token_keys = server.token_key_record();
+    let endpoint = PathBuf::from(
+        first_authority["endpoint"]
+            .as_str()
+            .expect("initial private endpoint"),
+    );
+    let mut probe = EndpointProbe::start(endpoint);
+    wait_for("endpoint probe connected", Duration::from_secs(5), || {
+        probe.samples().iter().any(|(_, connected)| *connected)
+    });
+
+    let started = Instant::now();
+    let signal_result = unsafe { libc::kill(server.supervisor_pid as i32, libc::SIGUSR2) };
+    assert_eq!(
+        signal_result, 0,
+        "signal only the recorded private supervisor"
+    );
+    wait_for(
+        "endpoint refusal during roll",
+        Duration::from_secs(4),
+        || {
+            probe
+                .samples()
+                .iter()
+                .any(|(at, connected)| *at >= started && !connected)
+        },
+    );
+    let follower_signal = unsafe { libc::kill(follower.child.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        follower_signal, 0,
+        "signal only the recorded private follower"
+    );
+
+    let replacement = server.next_authority(Duration::from_secs(5));
+    assert_ne!(replacement["pid"], first_authority["pid"]);
+    assert_ne!(
+        replacement["startIdentity"],
+        first_authority["startIdentity"]
+    );
+    assert_eq!(replacement["epoch"], epoch, "ordinary roll preserves epoch");
+    assert_eq!(server.token_key_record(), token_keys);
+    probe.stop();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Some(status) = follower
+            .child
+            .try_wait()
+            .expect("wait for SIGTERM follower")
+        {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "SIGTERM follower did not settle");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_ne!(
+        exit.code(),
+        Some(0),
+        "SIGTERM cancellation is never reported as success"
+    );
+    let settled = server.status(&run_id);
+    assert_eq!(settled["runId"], run_id);
+    assert_eq!(settled["state"], "settled");
+    assert_eq!(settled["epoch"], epoch);
+    assert_eq!(settled["settlement"]["outcome"], "cancelled");
+    assert_eq!(
+        server.run_ids(),
+        vec![run_id],
+        "the interrupted run was not resubmitted"
+    );
+}
