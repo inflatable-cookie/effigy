@@ -164,6 +164,14 @@ Effigy ownership:
   unit pair is transient in the selected profile, stop only
   `{full_id}.timer`, `reset-failed` `{full_id}.service`/`{full_id}.timer`,
   retry start once, and prove readiness by inspect
+- operation exit 0 is not unload proof: after stop/reset, re-probe the exact
+  pair with a bounded wait until both units are unloaded; a late unload
+  recovers once, a never-unloaded pair fails bounded with its load/fragment
+  state, and a persistent/unverified unit appearing mid-flight refuses
+- a start that reports the collision while inspect shows the container
+  running reports an unresolved health check with the exact inspect/start
+  commands instead of a clean recovery; never repeat a unit mutation on a
+  now-running container
 - refuse automatic repair for running, unknown, foreign, one-off,
   undeclared, persistent, mismatched, wrong-profile, or missing-authority
   cases; keep Docker start unchanged; never delete unit files
@@ -185,6 +193,11 @@ Target compatibility cases:
 - `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
 - `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
 - `start_timeout_reports_observed_exited_status`
+- `unload_proof_stop_reset_exit_zero_but_still_loaded_fails_bounded`
+- `unload_proof_late_unload_within_bounded_probes_recovers_once`
+- `unload_proof_persistent_fragment_mid_flight_refuses`
+- `unload_proof_post_stop_probe_failure_fails_closed`
+- `pathological_start_fatal_with_running_container_reports_unresolved_healthcheck`
 - `docker_backend_does_not_recover_healthcheck_units`
 
 ### Primary-service exec readiness

@@ -356,14 +356,23 @@ named after container ids.
 Start exit 0 is not readiness. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded when
 inspect then shows the owned container running; systemd units are not
-deleted. If the owned Colima/nerdctl container stays stopped with that
-collision, Effigy may recover once: inspect the container for a full
-64-character hexadecimal ID, require stopped status and the selected
-project/service labels (not one-off, orphan, foreign, running, or
-undeclared), confirm `{full_id}.timer` and `{full_id}.service` in the
-selected profile are transient or already gone, then `systemctl stop` only
-`{full_id}.timer` and `systemctl reset-failed` `{full_id}.service` and
-`{full_id}.timer`, retry start once, and treat inspect readiness as proof.
+deleted. A start that reports that collision while inspect shows the
+container running is recorded as an unresolved health check with the exact
+inspect/start commands rather than as a clean recovery. If the owned
+Colima/nerdctl container stays stopped with that collision, Effigy may
+recover once: inspect the container for a full 64-character hexadecimal ID,
+require stopped status and the selected project/service labels (not one-off,
+orphan, foreign, running, or undeclared), confirm `{full_id}.timer` and
+`{full_id}.service` in the selected profile are transient or already gone,
+then `systemctl stop` only `{full_id}.timer` and `systemctl reset-failed`
+`{full_id}.service` and `{full_id}.timer`. Because operation exit 0 is not
+proof that a stopped transient unit unloaded, Effigy then re-probes the
+exact pair with a bounded wait until both units are unloaded; a late unload
+recovers once, and a pair that never unloads fails with its still-loaded
+load/fragment state and a bounded diagnostic instead of claiming recovery.
+A persistent or otherwise unverified unit appearing after the stop/reset is
+refused without deleting files. The single start retry then proves readiness
+by inspect.
 Stop/reset of already-gone units is idempotent. Persistent fragments,
 mismatched unit identity, unknown status, missing inspect ID, unavailable
 systemctl/Colima authority, or Docker backends are not recovered

@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::time::Duration;
 
 use super::implementation::ContainerExecError;
 use super::parse::RunningComposeContainer;
@@ -21,6 +22,14 @@ pub(crate) const FULL_CONTAINER_ID_LEN: usize = 64;
 const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
 const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
 const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
+
+/// How many times recovery re-probes the exact-owned transient unit pair after
+/// `stop`/`reset-failed` while waiting for a stopped pair to unload. A stopped
+/// transient unit can stay loaded for a moment; operation exit 0 alone is not
+/// proof of a restart-safe state.
+const MAX_RESTART_SAFE_PROBES: usize = 5;
+/// Delay between bounded post-stop restart-safe probes.
+const RESTART_SAFE_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VolumeRef {
@@ -318,6 +327,7 @@ pub(crate) fn recover_owned_stale_healthcheck_units(
     inspect: &UnitProbe,
     mut probe_unit: impl FnMut(&str) -> Result<UnitProbe, ContainerExecError>,
     mut run: impl FnMut(&str, &[OsString]) -> Result<CommandOutcome, ContainerExecError>,
+    mut pause: impl FnMut(Duration),
 ) -> Result<StaleTimerAction, ContainerExecError> {
     if !inspect.success {
         return Ok(refuse(
@@ -336,18 +346,8 @@ pub(crate) fn recover_owned_stale_healthcheck_units(
 
     let timer_name = timer_unit_name(&identity.id);
     let service_name = service_unit_name(&identity.id);
-    let timer_probe = probe_unit(&timer_name)?;
-    let service_probe = probe_unit(&service_name)?;
-    let timer = classify_unit(
-        &parse_systemctl_show(&timer_probe.stdout),
-        &timer_name,
-        &timer_probe,
-    );
-    let service = classify_unit(
-        &parse_systemctl_show(&service_probe.stdout),
-        &service_name,
-        &service_probe,
-    );
+    let (timer, _) = probe_classified_unit(&mut probe_unit, &timer_name)?;
+    let (service, _) = probe_classified_unit(&mut probe_unit, &service_name)?;
     if let Some(reason) = unit_pair_refusal(&timer, &service, &timer_name, &service_name) {
         return Ok(refuse(Some(&identity), expected, &reason));
     }
@@ -379,15 +379,96 @@ pub(crate) fn recover_owned_stale_healthcheck_units(
         ));
     }
 
+    if let Some(reason) =
+        verify_restart_safe(&mut probe_unit, &mut pause, &timer_name, &service_name)?
+    {
+        return Ok(refuse_after_mutation(Some(&identity), expected, &reason));
+    }
+
     Ok(StaleTimerAction::Recovered {
         warning: format!(
-            "recovered stale nerdctl health-check timer for owned service `{}` (`{}`); stopped `{timer_name}` and reset-failed `{service_name}`/`{timer_name}` without deleting units",
+            "recovered stale nerdctl health-check timer for owned service `{}` (`{}`); stopped `{timer_name}`, reset-failed `{service_name}`/`{timer_name}`, and verified both transient units unloaded after stop/reset before the single retry start, without deleting units",
             expected.service, identity.id
         ),
         volume_refs: identity.volume_refs,
         stop_timer,
         reset_failed,
     })
+}
+
+fn probe_classified_unit(
+    probe_unit: &mut impl FnMut(&str) -> Result<UnitProbe, ContainerExecError>,
+    unit: &str,
+) -> Result<(UnitClassification, SystemdUnitShow), ContainerExecError> {
+    let raw = probe_unit(unit)?;
+    let show = parse_systemctl_show(&raw.stdout);
+    let classification = classify_unit(&show, unit, &raw);
+    Ok((classification, show))
+}
+
+/// After `stop`/`reset-failed` return idempotent success, prove the exact-owned
+/// transient pair is actually unloaded before the caller retries start. A
+/// stopped-but-still-loaded transient unit makes `systemd-run` fail again with
+/// `already loaded or has a fragment file`, so operation exit 0 alone is not
+/// proof. The pair is re-probed a bounded number of times: a unit that unloads
+/// late succeeds once, a unit that never unloads returns a bounded diagnostic,
+/// and a persistent/ambiguous/foreign unit appearing mid-flight refuses without
+/// any deletion or cleanup outside the exact pair.
+fn verify_restart_safe(
+    probe_unit: &mut impl FnMut(&str) -> Result<UnitProbe, ContainerExecError>,
+    pause: &mut impl FnMut(Duration),
+    timer_name: &str,
+    service_name: &str,
+) -> Result<Option<String>, ContainerExecError> {
+    let mut last_state: Option<(SystemdUnitShow, SystemdUnitShow)> = None;
+    for attempt in 0..MAX_RESTART_SAFE_PROBES {
+        let (timer, timer_show) = probe_classified_unit(probe_unit, timer_name)?;
+        let (service, service_show) = probe_classified_unit(probe_unit, service_name)?;
+        if let Some(reason) = unit_pair_refusal(&timer, &service, timer_name, service_name) {
+            return Ok(Some(format!(
+                "unit state changed during recovery: {reason}"
+            )));
+        }
+        if matches!(timer, UnitClassification::Missing)
+            && matches!(service, UnitClassification::Missing)
+        {
+            return Ok(None);
+        }
+        last_state = Some((timer_show, service_show));
+        if attempt + 1 < MAX_RESTART_SAFE_PROBES {
+            pause(RESTART_SAFE_PROBE_INTERVAL);
+        }
+    }
+    let detail = last_state
+        .map(|(timer_show, service_show)| {
+            format!(
+                "`{timer_name}` is {}; `{service_name}` is {}",
+                describe_unit_show(&timer_show),
+                describe_unit_show(&service_show)
+            )
+        })
+        .unwrap_or_else(|| "unit state unavailable".to_owned());
+    Ok(Some(format!(
+        "the exact-owned transient health-check pair is still loaded after stop/reset and {MAX_RESTART_SAFE_PROBES} bounded re-probes ({detail}); a retry start would hit the same `already loaded or has a fragment file` collision"
+    )))
+}
+
+fn describe_unit_show(show: &SystemdUnitShow) -> String {
+    let load_state = if show.load_state.is_empty() {
+        "(empty)"
+    } else {
+        show.load_state.as_str()
+    };
+    let unit_file_state = if show.unit_file_state.is_empty() {
+        "(empty)"
+    } else {
+        show.unit_file_state.as_str()
+    };
+    format!(
+        "LoadState={load_state} Transient={} FragmentPath=`{}` UnitFileState={unit_file_state}",
+        if show.transient { "yes" } else { "no" },
+        show.fragment_path
+    )
 }
 
 pub(crate) fn expected_ownership_from_row<'a>(
@@ -499,7 +580,30 @@ fn refuse(
     reason: &str,
 ) -> StaleTimerAction {
     StaleTimerAction::Refused {
-        diagnostic: refusal_diagnostic(identity, expected, reason),
+        diagnostic: refusal_diagnostic(
+            identity,
+            expected,
+            reason,
+            "Effigy did not stop, reset, or delete systemd units.",
+        ),
+    }
+}
+
+/// Refusal after `stop`/`reset-failed` already ran. The mutation note must not
+/// claim nothing happened, because the exact-owned transient pair was stopped
+/// and reset; only unit-file deletion never occurred.
+fn refuse_after_mutation(
+    identity: Option<&InspectedContainerIdentity>,
+    expected: ExpectedOwnership<'_>,
+    reason: &str,
+) -> StaleTimerAction {
+    StaleTimerAction::Refused {
+        diagnostic: refusal_diagnostic(
+            identity,
+            expected,
+            reason,
+            "Effigy stopped and reset-failed only the exact owned transient units and did not delete any unit file.",
+        ),
     }
 }
 
@@ -507,6 +611,7 @@ fn refusal_diagnostic(
     identity: Option<&InspectedContainerIdentity>,
     expected: ExpectedOwnership<'_>,
     reason: &str,
+    mutation_note: &str,
 ) -> String {
     let id = identity
         .map(|identity| identity.id.as_str())
@@ -533,7 +638,7 @@ fn refusal_diagnostic(
             expected.profile
         ),
         format!("reason: {reason}"),
-        "Effigy did not stop, reset, or delete systemd units.".to_owned(),
+        mutation_note.to_owned(),
         "next:".to_owned(),
         format!(
             "  colima nerdctl --profile {} -- inspect {}",
@@ -785,16 +890,20 @@ mod tests {
 
     fn recover_with(
         inspect: UnitProbe,
-        units: BTreeMap<String, UnitProbe>,
+        units: BTreeMap<String, Vec<UnitProbe>>,
     ) -> (StaleTimerAction, Vec<(String, Vec<String>)>) {
         let mut recorded = Vec::new();
-        let mut remaining = units;
+        let mut remaining: BTreeMap<String, std::collections::VecDeque<UnitProbe>> = units
+            .into_iter()
+            .map(|(unit, probes)| (unit, probes.into()))
+            .collect();
         let action = recover_owned_stale_healthcheck_units(
             expected(),
             &inspect,
             |unit| {
                 remaining
-                    .remove(unit)
+                    .get_mut(unit)
+                    .and_then(|probes| probes.pop_front())
                     .ok_or_else(|| ContainerExecError::Failure {
                         command: format!("systemctl show {unit}"),
                         code: None,
@@ -815,25 +924,57 @@ mod tests {
                     stderr: String::new(),
                 })
             },
+            |_| {},
         )
         .expect("recovery helper");
         assert!(
-            remaining.is_empty(),
+            remaining.values().all(|probes| probes.is_empty()),
             "unconsumed unit probes: {:?}",
-            remaining.keys().collect::<Vec<_>>()
+            remaining
+                .iter()
+                .filter(|(_, probes)| !probes.is_empty())
+                .map(|(unit, _)| unit.clone())
+                .collect::<Vec<_>>()
         );
         (action, recorded)
     }
 
-    fn owned_units() -> BTreeMap<String, UnitProbe> {
+    /// Initial state is a loaded transient pair; after stop/reset each unit is
+    /// unloaded, which is the restart-safe post-state recovery must prove.
+    fn loaded_then_unloaded_units() -> BTreeMap<String, Vec<UnitProbe>> {
         BTreeMap::from([
             (
                 timer_unit_name(FULL_ID),
-                transient_show(&timer_unit_name(FULL_ID)),
+                vec![
+                    transient_show(&timer_unit_name(FULL_ID)),
+                    missing_show(&timer_unit_name(FULL_ID)),
+                ],
             ),
             (
                 service_unit_name(FULL_ID),
-                transient_show(&service_unit_name(FULL_ID)),
+                vec![
+                    transient_show(&service_unit_name(FULL_ID)),
+                    missing_show(&service_unit_name(FULL_ID)),
+                ],
+            ),
+        ])
+    }
+
+    fn already_gone_units() -> BTreeMap<String, Vec<UnitProbe>> {
+        BTreeMap::from([
+            (
+                timer_unit_name(FULL_ID),
+                vec![
+                    missing_show(&timer_unit_name(FULL_ID)),
+                    missing_show(&timer_unit_name(FULL_ID)),
+                ],
+            ),
+            (
+                service_unit_name(FULL_ID),
+                vec![
+                    missing_show(&service_unit_name(FULL_ID)),
+                    missing_show(&service_unit_name(FULL_ID)),
+                ],
             ),
         ])
     }
@@ -890,7 +1031,10 @@ mod tests {
 
     #[test]
     fn recoverable_transient_pair_stops_only_exact_timer_and_resets_pair() {
-        let (action, recorded) = recover_with(inspect_probe(&owned_inspect()), owned_units());
+        let (action, recorded) = recover_with(
+            inspect_probe(&owned_inspect()),
+            loaded_then_unloaded_units(),
+        );
         let StaleTimerAction::Recovered {
             warning,
             volume_refs,
@@ -961,21 +1105,210 @@ mod tests {
 
     #[test]
     fn already_gone_units_are_idempotent_and_still_issue_exact_stop_reset() {
-        let units = BTreeMap::from([
-            (
-                timer_unit_name(FULL_ID),
-                missing_show(&timer_unit_name(FULL_ID)),
-            ),
-            (
-                service_unit_name(FULL_ID),
-                missing_show(&service_unit_name(FULL_ID)),
-            ),
-        ]);
+        let units = already_gone_units();
         let (action, recorded) = recover_with(inspect_probe(&owned_inspect()), units);
         assert!(matches!(action, StaleTimerAction::Recovered { .. }));
         assert_eq!(recorded.len(), 2);
         assert!(recorded[0].1.contains(&timer_unit_name(FULL_ID)));
         assert!(recorded[1].1.contains(&service_unit_name(FULL_ID)));
+    }
+
+    #[test]
+    fn unload_proof_stop_reset_exit_zero_but_still_loaded_fails_bounded() {
+        let timer = timer_unit_name(FULL_ID);
+        let mut probes = 0usize;
+        let mut pauses = 0usize;
+        let mut mutations: Vec<String> = Vec::new();
+        let action = recover_owned_stale_healthcheck_units(
+            expected(),
+            &inspect_probe(&owned_inspect()),
+            |unit| {
+                probes += 1;
+                if unit == timer {
+                    Ok(transient_show(unit))
+                } else {
+                    Ok(missing_show(unit))
+                }
+            },
+            |program, args| {
+                mutations.push(format!("{program} {}", render_os_args(args)));
+                Ok(CommandOutcome {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+            |_| pauses += 1,
+        )
+        .expect("bounded refusal");
+        match action {
+            StaleTimerAction::Refused { diagnostic } => {
+                assert!(diagnostic.contains("still loaded"), "got: {diagnostic}");
+                assert!(
+                    diagnostic.contains("bounded re-probes"),
+                    "got: {diagnostic}"
+                );
+                assert!(diagnostic.contains("LoadState=loaded"), "got: {diagnostic}");
+                assert!(
+                    diagnostic.contains("did not delete any unit file"),
+                    "got: {diagnostic}"
+                );
+                assert!(
+                    !diagnostic.contains("did not stop, reset, or delete"),
+                    "post-mutation refusal must not deny the stop/reset: {diagnostic}"
+                );
+            }
+            other => panic!("expected bounded refusal, got {other:?}"),
+        }
+        assert_eq!(mutations.len(), 2);
+        assert!(mutations[0].contains("stop"));
+        assert!(mutations[1].contains("reset-failed"));
+        assert_eq!(probes, 2 + MAX_RESTART_SAFE_PROBES * 2);
+        assert_eq!(pauses, MAX_RESTART_SAFE_PROBES - 1);
+    }
+
+    #[test]
+    fn unload_proof_late_unload_within_bounded_probes_recovers_once() {
+        let timer = timer_unit_name(FULL_ID);
+        let mut timer_probes = 0usize;
+        let mut service_probes = 0usize;
+        let mut pauses = 0usize;
+        let action = recover_owned_stale_healthcheck_units(
+            expected(),
+            &inspect_probe(&owned_inspect()),
+            |unit| {
+                if unit == timer {
+                    timer_probes += 1;
+                    if timer_probes <= 2 {
+                        Ok(transient_show(unit))
+                    } else {
+                        Ok(missing_show(unit))
+                    }
+                } else {
+                    service_probes += 1;
+                    if service_probes == 1 {
+                        Ok(transient_show(unit))
+                    } else {
+                        Ok(missing_show(unit))
+                    }
+                }
+            },
+            |_, _| {
+                Ok(CommandOutcome {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+            |_| pauses += 1,
+        )
+        .expect("late unload recovery");
+        match action {
+            StaleTimerAction::Recovered { warning, .. } => {
+                assert!(
+                    warning.contains("verified both transient units unloaded"),
+                    "got: {warning}"
+                );
+                assert!(warning.contains("without deleting units"), "got: {warning}");
+            }
+            other => panic!("expected recovery after late unload, got {other:?}"),
+        }
+        assert_eq!(timer_probes, 3);
+        assert_eq!(service_probes, 3);
+        assert_eq!(pauses, 1);
+    }
+
+    #[test]
+    fn unload_proof_persistent_fragment_mid_flight_refuses() {
+        let timer = timer_unit_name(FULL_ID);
+        let mut timer_probes = 0usize;
+        let mut mutations = 0usize;
+        let action = recover_owned_stale_healthcheck_units(
+            expected(),
+            &inspect_probe(&owned_inspect()),
+            |unit| {
+                if unit == timer {
+                    timer_probes += 1;
+                    if timer_probes == 1 {
+                        Ok(transient_show(unit))
+                    } else {
+                        Ok(persistent_show(unit))
+                    }
+                } else {
+                    Ok(missing_show(unit))
+                }
+            },
+            |_, _| {
+                mutations += 1;
+                Ok(CommandOutcome {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+            |_| {},
+        )
+        .expect("mid-flight refusal");
+        match action {
+            StaleTimerAction::Refused { diagnostic } => {
+                assert!(
+                    diagnostic.contains("unit state changed during recovery"),
+                    "got: {diagnostic}"
+                );
+                assert!(
+                    diagnostic.contains("persistent fragment"),
+                    "got: {diagnostic}"
+                );
+                assert!(
+                    diagnostic.contains("did not delete any unit file"),
+                    "got: {diagnostic}"
+                );
+            }
+            other => panic!("expected mid-flight persistent refusal, got {other:?}"),
+        }
+        assert_eq!(mutations, 2);
+    }
+
+    #[test]
+    fn unload_proof_post_stop_probe_failure_fails_closed() {
+        let timer = timer_unit_name(FULL_ID);
+        let mut timer_probes = 0usize;
+        let mut mutations = 0usize;
+        let result = recover_owned_stale_healthcheck_units(
+            expected(),
+            &inspect_probe(&owned_inspect()),
+            |unit| {
+                if unit == timer {
+                    timer_probes += 1;
+                    if timer_probes == 1 {
+                        Ok(transient_show(unit))
+                    } else {
+                        Err(ContainerExecError::Failure {
+                            command: format!("systemctl show {unit}"),
+                            code: None,
+                            stdout: String::new(),
+                            stderr: "permission denied".to_owned(),
+                        })
+                    }
+                } else {
+                    Ok(missing_show(unit))
+                }
+            },
+            |_, _| {
+                mutations += 1;
+                Ok(CommandOutcome {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+            |_| {},
+        );
+        assert!(
+            result.is_err(),
+            "post-stop probe failure must fail closed: {result:?}"
+        );
+        assert_eq!(mutations, 2);
     }
 
     #[test]
@@ -1056,6 +1389,7 @@ mod tests {
             &inspect_probe(&stdout),
             |unit| panic!("must not probe units for unlabeled container, got {unit}"),
             |_, _| panic!("must not mutate units for unlabeled container"),
+            |_| {},
         )
         .expect("refusal");
         match action {
@@ -1106,11 +1440,11 @@ mod tests {
         let units = BTreeMap::from([
             (
                 timer_unit_name(FULL_ID),
-                persistent_show(&timer_unit_name(FULL_ID)),
+                vec![persistent_show(&timer_unit_name(FULL_ID))],
             ),
             (
                 service_unit_name(FULL_ID),
-                transient_show(&service_unit_name(FULL_ID)),
+                vec![transient_show(&service_unit_name(FULL_ID))],
             ),
         ]);
         let (action, recorded) = recover_with(inspect_probe(&owned_inspect()), units);
@@ -1127,7 +1461,7 @@ mod tests {
         let units = BTreeMap::from([
             (
                 timer_unit_name(FULL_ID),
-                UnitProbe {
+                vec![UnitProbe {
                     success: true,
                     stdout: format!(
                         "Id={}.timer\nLoadState=loaded\nTransient=yes\nFragmentPath=/run/systemd/transient/{}.timer\nUnitFileState=\n",
@@ -1135,11 +1469,11 @@ mod tests {
                         &FULL_ID[..12]
                     ),
                     stderr: String::new(),
-                },
+                }],
             ),
             (
                 service_unit_name(FULL_ID),
-                transient_show(&service_unit_name(FULL_ID)),
+                vec![transient_show(&service_unit_name(FULL_ID))],
             ),
         ]);
         let (action, recorded) = recover_with(inspect_probe(&owned_inspect()), units);
@@ -1152,15 +1486,15 @@ mod tests {
         let units = BTreeMap::from([
             (
                 timer_unit_name(FULL_ID),
-                UnitProbe {
+                vec![UnitProbe {
                     success: false,
                     stdout: String::new(),
                     stderr: "sudo: systemctl: command not found".to_owned(),
-                },
+                }],
             ),
             (
                 service_unit_name(FULL_ID),
-                missing_show(&service_unit_name(FULL_ID)),
+                vec![missing_show(&service_unit_name(FULL_ID))],
             ),
         ]);
         let (action, recorded) = recover_with(inspect_probe(&owned_inspect()), units);
@@ -1187,7 +1521,7 @@ mod tests {
         let action = recover_owned_stale_healthcheck_units(
             expected(),
             &inspect_probe(&owned_inspect()),
-            |unit| Ok(owned_units().remove(unit).expect("probed owned unit")),
+            |unit| Ok(transient_show(unit)),
             |program, args| {
                 recorded.push((
                     program.to_owned(),
@@ -1201,6 +1535,7 @@ mod tests {
                     stderr: "Access denied".to_owned(),
                 })
             },
+            |_| {},
         )
         .expect("refusal");
         assert_refusal(&action, "systemctl stop");
