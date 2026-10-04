@@ -1662,10 +1662,7 @@ esac
             .expect("doctor ownership diagnosis must not launch mutating commands");
         assert_no_unexpected_operations(&executed).expect("no unexpected launch");
         assert!(
-            diagnostics
-                .findings
-                .iter()
-                .all(|finding| finding.fixable == false),
+            diagnostics.findings.iter().all(|finding| !finding.fixable),
             "verify-only findings are not fixable"
         );
     }
