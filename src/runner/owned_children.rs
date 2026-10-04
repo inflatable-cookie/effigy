@@ -200,8 +200,43 @@ fn process_group_is_live(group: i32) -> Option<bool> {
     }
 }
 
+/// Test-only negative seam. While held, the signal forwarder observes signals
+/// and records them, but never delivers them to a registered process group.
+/// This backs the termination-oracle negative proof: with delivery off the
+/// oracle must report no observed termination, and unconditional cleanup must
+/// still reap every test-created child. Never compiled into a release build.
+#[cfg(test)]
+pub(super) struct ForwardingDisabledForTest;
+
+#[cfg(test)]
+static FORWARDING_DISABLED_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+pub(super) fn disable_forwarding_for_test() -> ForwardingDisabledForTest {
+    FORWARDING_DISABLED_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+    ForwardingDisabledForTest
+}
+
+#[cfg(test)]
+impl Drop for ForwardingDisabledForTest {
+    fn drop(&mut self) {
+        FORWARDING_DISABLED_FOR_TEST.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+fn forwarding_disabled_for_test() -> bool {
+    FORWARDING_DISABLED_FOR_TEST.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 #[cfg(unix)]
 fn forward_signal_to_process_group(process_group: i32, signal: i32) {
+    #[cfg(test)]
+    if forwarding_disabled_for_test() {
+        return;
+    }
+
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};

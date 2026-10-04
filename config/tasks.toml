@@ -139,6 +139,15 @@
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
 ]
 
+# Owned-child termination proof (papercut 075): the real scope must terminate a
+# registered child before any cleanup, and a controlled negative seam must show
+# the oracle fails when forwarding is disabled while unconditional exact-owned
+# cleanup still reaps both test-created children.
+"test:host-run:termination-proof" = [
+  "cargo test -p effigy --lib host_scheduler::tests::owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
+  "cargo test -p effigy --lib host_scheduler::tests::owned_children_termination_oracle_fails_when_forwarding_is_disabled -- --nocapture",
+]
+
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"

@@ -205,50 +205,176 @@ fn nested_queue_wait_comes_from_the_status_record_and_is_null_when_absent() {
     assert_eq!(queue_wait_from_status(&inverted), None);
 }
 
+/// Serializes the termination-proof tests that install the process-wide
+/// signal-forwarding scope. The scope swaps global signal state and the
+/// process-group observer, so concurrent scope entries would corrupt each
+/// other.
 #[cfg(unix)]
-#[test]
-fn owned_children_scope_forwards_termination_only_to_registered_groups() {
-    use std::os::unix::process::CommandExt;
-    use std::process::Command;
-    use std::time::{Duration, Instant};
+fn owned_children_test_serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
-    let spawn = || {
+/// Owns the two children a termination proof creates. `cleanup` reaps them
+/// explicitly and reports the outcome; `Drop` is the unconditional backstop so
+/// an assertion failure or panic still kills and reaps both children.
+#[cfg(unix)]
+struct TerminationProofChildren {
+    owned: Option<std::process::Child>,
+    foreign: Option<std::process::Child>,
+}
+
+#[cfg(unix)]
+impl TerminationProofChildren {
+    fn spawn_pair() -> Self {
+        // Put the first child under the RAII fixture *before* spawning the
+        // second, so a panic in the second spawn still unwinds through `Drop`
+        // and reaps the first child instead of leaking it.
+        let mut children = Self {
+            owned: Some(Self::spawn_one()),
+            foreign: None,
+        };
+        children.foreign = Some(Self::spawn_one());
+        children
+    }
+
+    fn spawn_one() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+
         Command::new("sleep")
             .arg("30")
             .process_group(0)
             .spawn()
             .expect("spawn sleep")
-    };
-    let mut owned = spawn();
-    let mut foreign = spawn();
+    }
+
+    fn owned_mut(&mut self) -> &mut std::process::Child {
+        self.owned.as_mut().expect("owned child present")
+    }
+
+    fn foreign_mut(&mut self) -> &mut std::process::Child {
+        self.foreign.as_mut().expect("foreign child present")
+    }
+
+    /// Kill and reap both children exactly once. Returns whether reaping
+    /// succeeded for both, which is the cleanup proof.
+    fn cleanup(&mut self) -> bool {
+        let owned = Self::reap_exact(self.owned.take());
+        let foreign = Self::reap_exact(self.foreign.take());
+        owned && foreign
+    }
+
+    fn reap_exact(child: Option<std::process::Child>) -> bool {
+        match child {
+            Some(mut child) => {
+                let _ = child.kill();
+                child.wait().is_ok()
+            }
+            None => false,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminationProofChildren {
+    fn drop(&mut self) {
+        let _ = Self::reap_exact(self.owned.take());
+        let _ = Self::reap_exact(self.foreign.take());
+    }
+}
+
+#[cfg(unix)]
+struct TerminationObservation {
+    /// True only when the registered child was observed terminated before any
+    /// cleanup ran. A fallback kill is never counted as evidence.
+    owned_terminated_before_cleanup: bool,
+    /// True only when the unregistered child was still alive before cleanup.
+    foreign_alive_before_cleanup: bool,
+    /// True when unconditional exact-owned cleanup reaped both children.
+    cleanup_reaped_both: bool,
+}
+
+/// Enter the real owned-children scope, raise SIGTERM to this process, and
+/// report what the signal forwarder did before cleanup. Delivery is governed by
+/// the production scope; the test-only seam in `owned_children` can disable
+/// delivery for the negative proof.
+#[cfg(unix)]
+fn observe_registered_child_termination(wait: std::time::Duration) -> TerminationObservation {
+    use std::time::Instant;
+
+    let mut children = TerminationProofChildren::spawn_pair();
+    let mut owned_terminated_before_cleanup = false;
+    let foreign_alive_before_cleanup;
     {
         let _scope =
             crate::runner::owned_children::OwnedChildrenScope::enter().expect("enter scope");
         assert!(crate::runner::owned_children::signal_scope_active());
-        crate::runner::owned_children::register_process_group(owned.id());
+        crate::runner::owned_children::register_process_group(children.owned_mut().id());
         unsafe {
             libc::raise(libc::SIGTERM);
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut owned_exit = None;
-        while Instant::now() < deadline && owned_exit.is_none() {
-            owned_exit = owned.try_wait().expect("poll owned");
-            std::thread::sleep(Duration::from_millis(20));
+        let deadline = Instant::now() + wait;
+        while Instant::now() < deadline {
+            match children.owned_mut().try_wait().expect("poll owned") {
+                Some(status) => {
+                    // The observed status must be a termination, never success.
+                    owned_terminated_before_cleanup = !status.success();
+                    break;
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
         }
-        if owned_exit.is_none() {
-            let _ = owned.kill();
-        }
-        // Always reap our own child, whichever path got here.
-        let reaped = owned.wait().expect("reap owned");
-        let owned_terminated = owned_exit.unwrap_or(reaped);
-        let owned_terminated = !owned_terminated.success();
-        assert!(owned_terminated, "the registered child was terminated");
-        assert!(
-            foreign.try_wait().expect("poll foreign").is_none(),
-            "an unregistered process group is never signalled"
-        );
+        foreign_alive_before_cleanup = children
+            .foreign_mut()
+            .try_wait()
+            .expect("poll foreign")
+            .is_none();
     }
-    assert!(!crate::runner::owned_children::signal_scope_active());
-    let _ = foreign.kill();
-    let _ = foreign.wait();
+    let cleanup_reaped_both = children.cleanup();
+    TerminationObservation {
+        owned_terminated_before_cleanup,
+        foreign_alive_before_cleanup,
+        cleanup_reaped_both,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn owned_children_scope_forwards_termination_only_to_registered_groups() {
+    let _serial = owned_children_test_serial();
+    let observation = observe_registered_child_termination(std::time::Duration::from_secs(10));
+    assert!(
+        observation.owned_terminated_before_cleanup,
+        "the registered child was terminated by the scope before any cleanup"
+    );
+    assert!(
+        observation.foreign_alive_before_cleanup,
+        "an unregistered process group is never signalled"
+    );
+    assert!(
+        observation.cleanup_reaped_both,
+        "unconditional exact-owned cleanup reaps both test-created children"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn owned_children_termination_oracle_fails_when_forwarding_is_disabled() {
+    let _serial = owned_children_test_serial();
+    let _seam = crate::runner::owned_children::disable_forwarding_for_test();
+    let observation = observe_registered_child_termination(std::time::Duration::from_secs(1));
+    assert!(
+        !observation.owned_terminated_before_cleanup,
+        "with forwarding disabled the termination oracle must fail: no pre-cleanup termination"
+    );
+    assert!(
+        observation.foreign_alive_before_cleanup,
+        "a disabled forwarder still never signals the unregistered group"
+    );
+    assert!(
+        observation.cleanup_reaped_both,
+        "cleanup still reaps both test-created children when the oracle fails"
+    );
 }
