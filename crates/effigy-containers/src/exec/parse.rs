@@ -75,7 +75,7 @@ pub(crate) fn compose_status_needs_start(status: &str) -> bool {
     lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead")
 }
 
-pub(super) fn parse_running_compose_containers(
+pub fn parse_running_compose_containers(
     stdout: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let mut rows = Vec::new();

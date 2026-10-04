@@ -163,6 +163,18 @@
   "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
   "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",
 ]
+# Deterministic doctor behavior fixtures (papercut 4ee28d2c). The four
+# behavior oracles and the model deadline controls run through the production
+# orchestration, argv construction and parsers with zero real subprocess
+# launches; the negative controls keep each oracle non-vacuous; and a bounded
+# private fake runtime crosschecks received argv/parse for the same workload.
+"test:doctor:fixture-contract" = [
+  "cargo test -p effigy --lib runner::doctor_ports::tests::fixture_contract -- --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::successful_and_stopped_liveness_distinctions_survive_a_deadline -- --exact --nocapture",
+]
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.

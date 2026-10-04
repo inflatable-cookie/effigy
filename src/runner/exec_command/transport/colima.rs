@@ -18,6 +18,16 @@ use super::{resolve_host_program, ParsedComposeExec};
 static SERVICE_CONTAINER_NAME_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
     OnceLock::new();
 
+/// Test-only fixture switch: clear the process-global service-name cache so a
+/// crosscheck run performs the same service resolve as a fresh workload.
+#[cfg(test)]
+pub(in crate::runner) fn clear_service_container_name_cache() {
+    service_container_name_cache()
+        .lock()
+        .expect("service container name cache poisoned")
+        .clear();
+}
+
 pub(super) type ParseComposeExec = dyn Fn(&[OsString]) -> Result<ParsedComposeExec, RunnerError>;
 pub(super) type CaptureCommand =
     dyn Fn(&Path, &std::ffi::OsStr, &[OsString]) -> Result<Output, RunnerError>;
@@ -267,6 +277,13 @@ fn resolve_running_service_container_name(
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Result<Option<String>, RunnerError> {
+    // Test-only deterministic seam: the scripted doctor runtime answers the
+    // service resolve so the behavior oracles spawn nothing. Production has no
+    // scripted runtime installed and falls through to the real probe.
+    #[cfg(test)]
+    if let Some(scripted) = crate::runner::scripted_doctor::intercept_service_name(policy) {
+        return scripted;
+    }
     let rows = match list_running_compose_containers_for_policy(repo_root, policy) {
         Ok(rows) => rows,
         Err(_) => return Ok(None),
