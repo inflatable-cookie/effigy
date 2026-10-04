@@ -320,6 +320,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- QA-group local `--json` list, plan, run, and status output now suppresses the
+  CLI banner while keeping each QA-group schema as one complete stdout JSON
+  document. Global `effigy --json` continues to emit the command envelope.
 - After a Colima/nerdctl restart, a stopped owned stack container can recover
   its own stale transient health-check timer/service collision. Effigy
   inspects the full hexadecimal container ID, requires stopped status and the

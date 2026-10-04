@@ -21,6 +21,13 @@ When JSON mode is active, CLI preamble output is suppressed and output is pure J
 `effigy --json <selector>` still runs the task. Use `effigy --json <selector> --plan`
 to inspect the resolved command without executing it.
 
+For QA groups, prefer the global form for automation: `effigy --json tasks
+qa-groups list` and `effigy --json tasks qa-group ...` use the canonical
+`effigy.command.v1` envelope. The local `--json` flags on group list, run
+(including `--plan`), and status also suppress the banner, but emit the
+corresponding `effigy.qa-*` payload directly. `tasks qa-group logs` has no local
+JSON form; use global `--json` to wrap its text result.
+
 Task and draft text runs keep the framed header off stdout. Presentation goes to
 stderr so command substitution receives only the task bytes.
 

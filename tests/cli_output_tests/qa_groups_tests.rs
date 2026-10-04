@@ -54,6 +54,36 @@ fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) 
     parse_stdout_json(&output)
 }
 
+fn assert_json_stdout(
+    output: &std::process::Output,
+    expected_success: bool,
+    command: &str,
+) -> Value {
+    assert_eq!(
+        output.status.success(),
+        expected_success,
+        "{command} exit: {:?} | stdout: {} | stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).unwrap_or_else(|error| {
+        panic!("{command} stdout must be exactly one JSON document: {error}; stdout={stdout:?}")
+    })
+}
+
+fn private_qa_json_workspace(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .expect("make private fixture root");
+    }
+    root
+}
+
 fn write_manifest(root: &Path, body: &str) {
     fs::write(root.join("effigy.toml"), body).expect("write manifest");
 }
@@ -186,6 +216,178 @@ fn qa_groups_list_reports_maintained_groups_and_temporary_file_only() {
         .unwrap()
         .is_empty());
     assert!(body["file"]["tracking"].is_null() || body["file"]["tracking"] == "unknown");
+}
+
+#[test]
+fn qa_group_json_forms_emit_one_banner_free_document() {
+    let root = private_qa_json_workspace("qa-groups-json-clean");
+    write_manifest(
+        &root,
+        r#"
+[catalog]
+alias = "root"
+
+[qa.groups.light]
+lifecycle = "maintained"
+purpose = "Private light CLI fixture"
+scope_policy = "advisory"
+proof_limits = ["Private fixture only"]
+members = [{ id = "member", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["One fixture task"] }]
+
+[qa.groups.failing]
+lifecycle = "maintained"
+purpose = "Private failure fixture"
+scope_policy = "advisory"
+proof_limits = ["Private fixture only"]
+members = [{ id = "member", kind = "test", surface = "published", task = "fail", args = [], targets = ["workspace:root"], limits = ["One fixture task"] }]
+
+[tasks.ok]
+run = "echo member-ok"
+
+[tasks.fail]
+run = "echo member-failed >&2; exit 7"
+"#,
+    );
+
+    let human_list = run_effigy(&root, &["tasks", "qa-groups", "list"]);
+    assert!(human_list.status.success());
+    assert!(
+        String::from_utf8_lossy(&human_list.stdout).contains("EFFIGY"),
+        "human mode retains the CLI banner: {}",
+        String::from_utf8_lossy(&human_list.stdout)
+    );
+
+    let global_list = assert_json_stdout(
+        &run_effigy(&root, &["--json", "tasks", "qa-groups", "list"]),
+        true,
+        "global JSON list",
+    );
+    assert_eq!(global_list["schema"], "effigy.command.v1");
+    assert_eq!(global_list["result"]["schema"], "effigy.qa-groups.v1");
+
+    let local_list = assert_json_stdout(
+        &run_effigy(&root, &["tasks", "qa-groups", "list", "--json"]),
+        true,
+        "local JSON list",
+    );
+    assert_eq!(local_list["schema"], "effigy.qa-groups.v1");
+
+    let global_plan = assert_json_stdout(
+        &run_effigy(
+            &root,
+            &["--json", "tasks", "qa-group", "run", "light", "--plan"],
+        ),
+        true,
+        "global JSON plan",
+    );
+    assert_eq!(global_plan["schema"], "effigy.command.v1");
+    assert_eq!(global_plan["result"]["schema"], "effigy.qa-group-plan.v1");
+
+    let local_plan = assert_json_stdout(
+        &run_effigy(
+            &root,
+            &["tasks", "qa-group", "run", "light", "--plan", "--json"],
+        ),
+        true,
+        "local JSON plan",
+    );
+    assert_eq!(local_plan["schema"], "effigy.qa-group-plan.v1");
+
+    let global_run = assert_json_stdout(
+        &run_effigy(&root, &["--json", "tasks", "qa-group", "run", "light"]),
+        true,
+        "global JSON run",
+    );
+    assert_eq!(global_run["schema"], "effigy.command.v1");
+    assert_eq!(global_run["result"]["schema"], "effigy.qa-group-run.v1");
+    let global_run_id = global_run["result"]["run_id"].as_str().unwrap();
+
+    let local_run = assert_json_stdout(
+        &run_effigy(&root, &["tasks", "qa-group", "run", "light", "--json"]),
+        true,
+        "local JSON run",
+    );
+    assert_eq!(local_run["schema"], "effigy.qa-group-run.v1");
+    let local_run_id = local_run["run_id"].as_str().unwrap();
+
+    let global_status = assert_json_stdout(
+        &run_effigy(
+            &root,
+            &["--json", "tasks", "qa-group", "status", global_run_id],
+        ),
+        true,
+        "global JSON status",
+    );
+    assert_eq!(global_status["schema"], "effigy.command.v1");
+    assert_eq!(
+        global_status["result"]["schema"],
+        "effigy.qa-group-status.v1"
+    );
+
+    let local_status = assert_json_stdout(
+        &run_effigy(
+            &root,
+            &["tasks", "qa-group", "status", local_run_id, "--json"],
+        ),
+        true,
+        "local JSON status",
+    );
+    assert_eq!(local_status["schema"], "effigy.qa-group-status.v1");
+
+    let global_logs = assert_json_stdout(
+        &run_effigy(
+            &root,
+            &["--json", "tasks", "qa-group", "logs", global_run_id],
+        ),
+        true,
+        "global JSON logs",
+    );
+    assert_eq!(global_logs["schema"], "effigy.command.v1");
+    assert!(global_logs["result"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("member-ok"));
+
+    let local_failure = assert_json_stdout(
+        &run_effigy(&root, &["tasks", "qa-group", "run", "failing", "--json"]),
+        false,
+        "local JSON failed run",
+    );
+    assert_eq!(local_failure["schema"], "effigy.qa-group-run.v1");
+    assert_eq!(local_failure["outcome"], "failed");
+
+    let failed_status = run_effigy(
+        &root,
+        &["--json", "tasks", "qa-group", "status", "qa-missing-run"],
+    );
+    let global_error = assert_json_stdout(&failed_status, false, "global JSON status failure");
+    assert_eq!(global_error["schema"], "effigy.command.v1");
+    assert_eq!(global_error["ok"], false);
+    assert!(global_error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no qa-group run named"));
+
+    let local_status_failure = run_effigy(
+        &root,
+        &["tasks", "qa-group", "status", "qa-missing-run", "--json"],
+    );
+    assert!(!local_status_failure.status.success());
+    assert!(local_status_failure.stdout.is_empty());
+
+    let unsupported_local_logs = run_effigy(
+        &root,
+        &["tasks", "qa-group", "logs", global_run_id, "--json"],
+    );
+    assert_eq!(unsupported_local_logs.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unsupported_local_logs.stderr).contains("renders text"));
+
+    assert!(
+        String::from_utf8_lossy(&local_status_failure.stderr).contains("no qa-group run named"),
+        "meaningful error detail stays on stderr: {}",
+        String::from_utf8_lossy(&local_status_failure.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&local_status_failure.stderr).contains("EFFIGY"));
 }
 
 #[test]

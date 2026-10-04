@@ -75,6 +75,7 @@
 "test:qa-groups:runtime" = "cargo test -p effigy-runtime --lib qa_group_status -- --nocapture"
 "test:qa-groups:identity" = "cargo test -p effigy-process --lib identity -- --nocapture"
 "test:qa-groups:cli" = "cargo test --test cli_output_tests qa_groups_tests -- --nocapture"
+"test:qa-groups:json-clean" = "cargo test --test cli_output_tests qa_group_json_forms_emit_one_banner_free_document -- --nocapture"
 "test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
 "test:cli:command-surface" = "cargo test -p effigy-cli --lib command_surface -- --nocapture"
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
