@@ -7826,11 +7826,48 @@ case "$*" in
           *"uname -m"*)
             printf "x86_64\n"
             ;;
+          *"id -u"*"id -g"*)
+            printf "501\n20\n"
+            ;;
           *"id -u"*)
             printf "501\n"
             ;;
           *"id -g"*)
             printf "20\n"
+            ;;
+          *effigy-perm-inspect-batch*)
+            record=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                case "$arg" in
+                  */.cargo-build-lock) printf "file 501 20 644\n" ;;
+                  *) printf "dir 501 20 755\n" ;;
+                esac
+              fi
+            done
+            ;;
+          *effigy-perm-find-batch*)
+            record=0
+            skip=2
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf "clean\n"; fi
+              fi
+            done
+            ;;
+          *effigy-perm-access-batch*)
+            record=0
+            directory=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$directory" -eq 0 ]; then directory=1; else printf "ready\n"; directory=0; fi
+              fi
+            done
+            ;;
+          *effigy-perm-mkdir-batch*)
             ;;
           *"find -P"*)
             ;;
@@ -7986,11 +8023,48 @@ case "$subcmd" in
       *"uname -m"*)
         printf "x86_64\n"
         ;;
+      *"id -u"*"id -g"*)
+        printf "501\n20\n"
+        ;;
       *"id -u"*)
         printf "501\n"
         ;;
       *"id -g"*)
         printf "20\n"
+        ;;
+      *effigy-perm-inspect-batch*)
+        record=0
+        for arg in "$@"; do
+          if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+          if [ "$record" -eq 1 ]; then
+            case "$arg" in
+              */.cargo-build-lock) printf "file 501 20 644\n" ;;
+              *) printf "dir 501 20 755\n" ;;
+            esac
+          fi
+        done
+        ;;
+      *effigy-perm-find-batch*)
+        record=0
+        skip=2
+        for arg in "$@"; do
+          if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+          if [ "$record" -eq 1 ]; then
+            if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf "clean\n"; fi
+          fi
+        done
+        ;;
+      *effigy-perm-access-batch*)
+        record=0
+        directory=0
+        for arg in "$@"; do
+          if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+          if [ "$record" -eq 1 ]; then
+            if [ "$directory" -eq 0 ]; then directory=1; else printf "ready\n"; directory=0; fi
+          fi
+        done
+        ;;
+      *effigy-perm-mkdir-batch*)
         ;;
       *"find -P"*)
         ;;
