@@ -515,7 +515,16 @@ source, not from the host login name:
   bounded by a 600 s cap (or the caller deadline if sooner) and reaped on
   expiry. It never follows symlinks or leaves the volume. Readiness requires
   a post-repair unowned listing, a scope identity re-check and the access
-  probe, not chown exit alone
+  probe, not chown exit alone. Private acceptance (disposable container from a
+  local GNU-find image, no host mounts or network, `--ignored` case in
+  `test:workspace:rust-ownership:bulk`): 44339 entries over three volumes were
+  repaired to 501:20 in 3 runtime execs and 193 batched native `chown`
+  invocations (about 2.2 s real; the per-file model would be 88678 execs), then
+  to 1000:1000, with content manifests identical, numeric-user
+  read/write/create verified, idempotent reruns doing no chown, a deep failing
+  path returning not-ready after partial progress, and the directory-swap race
+  leaving outside files untouched (the old `-exec` form escapes). This is a
+  private fixture, not installed-consumer acceptance
 - bind-mounted rust `target` or cargo paths: verify only; never chown host
   source, siblings, or shared caches
 - named volumes used by two or more compose or managed services: rust

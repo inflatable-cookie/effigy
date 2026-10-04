@@ -115,6 +115,10 @@
 "test:workspace:rust-ownership:bulk" = [
   "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::bulk -- --nocapture",
   "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::compose_bulk -- --nocapture",
+  # Full-size GNU findutils + native chown + numeric-user proof in a private
+  # disposable container (already-running effigy Colima profile, already-local
+  # image, no host mounts or network). Fails, never skips, if unavailable.
+  "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::bulk_gnu_container_full_acceptance -- --ignored --nocapture",
 ]
 "check:workspace:rust-ownership:bulk" = [
   "cargo check -p effigy --lib --tests --profile test",

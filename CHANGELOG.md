@@ -337,7 +337,9 @@ During v0.x, MINOR bumps may include breaking changes.
   persistent, foreign and read-only scopes are unchanged; timeouts and
   permission failures report not-ready. The bulk child uses `-execdir`
   (GNU find) so a mid-run symlink swap cannot redirect ownership outside the
-  volume, and is capped at 600 s. Not yet accepted against an installed
+  volume, and is capped at 600 s. A private GNU-find container fixture (44339 entries,
+  three volumes, numeric 501:20 and 1000:1000) repaired in 3 execs and 193
+  batched chown calls, about 2.2 s real. Not yet accepted against an installed
   consumer stack.
 - QA-group local `--json` list, plan, run, and status output now suppresses the
   CLI banner while keeping each QA-group schema as one complete stdout JSON
