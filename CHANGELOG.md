@@ -253,6 +253,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Plain primary-service `effigy exec` now requires a running service and
+  reports explicit `container up` guidance when it is stopped, without
+  starting the VM, service, or gateway. Workspace preparation batches
+  metadata and numeric access checks, repairs only dirty owned volumes, and
+  rechecks mutable paths on every invocation because they have no exact cache
+  invalidation signal.
 - Heavy host-run submissions now send only reviewed Cargo/Rust runtime controls,
   routing settings, and process variables explicitly referenced by the selected
   task or its transitively composed published tasks and drafts. Heavy QA-group

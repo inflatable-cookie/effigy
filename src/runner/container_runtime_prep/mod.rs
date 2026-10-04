@@ -59,10 +59,16 @@ pub(in crate::runner) struct ActivationRequest<'a> {
 pub(in crate::runner) fn ensure_container_runtime_prepared(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    route: RuntimeActivationRoute,
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
 ) -> Result<bool, RunnerError> {
     validate_policy_runtime(repo_root, policy)?;
+    if route == RuntimeActivationRoute::Exec {
+        return ensure_exec_container_running_with(policy, container_name, || {
+            check_runtime_running_state_stage(repo_root, policy)
+        });
+    }
     let system_was_running = check_runtime_running_state_stage(repo_root, policy)?;
     ensure_runtime_running_stage(
         system_was_running,
@@ -77,6 +83,19 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         container_name.or(Some(policy.name.as_str())),
     )?;
     Ok(system_was_running)
+}
+
+fn ensure_exec_container_running_with(
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    is_running: impl FnOnce() -> Result<bool, RunnerError>,
+) -> Result<bool, RunnerError> {
+    if is_running()? {
+        return Ok(true);
+    }
+    Err(RunnerError::container_surface_not_running(
+        container_name.unwrap_or(policy.name.as_str()),
+    ))
 }
 
 pub(in crate::runner) fn activate_container_runtime_for_task(
@@ -200,6 +219,7 @@ fn activate_container_runtime_plan_for_task_using(
     ensure_runtime_prepared: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
+        RuntimeActivationRoute,
         Option<&str>,
         Option<PathBuf>,
     ) -> Result<bool, RunnerError>,
@@ -222,6 +242,7 @@ fn activate_container_runtime_plan_for_task_using(
     let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,
+        plan.route,
         plan.request.container_name.as_deref(),
         plan.request.repo_override.clone(),
     )?;

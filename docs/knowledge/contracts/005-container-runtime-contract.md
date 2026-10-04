@@ -500,6 +500,13 @@ before children launch:
 - primary-service `effigy exec`
 - routed and deferred container tasks
 
+Plain primary-service `effigy exec` requires that the primary service is
+already running. If it is down, Effigy reports `effigy container up <NAME>`
+and returns before workspace repair or the requested child. `effigy dev` is
+also a project start path. Plain exec does not start the VM, service, or
+gateway. Explicit `container up` and the existing routed-task activation path
+continue to own provisioning.
+
 Preparation classifies each declared mount from current policy and compose
 source, not from the host login name:
 
@@ -508,12 +515,18 @@ source, not from the host login name:
   actual read/write/create-lock as the resolved non-root user. Repair is one
   bounded `find -P -xdev ! -type l ... -execdir chown -h` exec per volume
   (runtime round trips are O(volumes), not O(files); native traversal still
-  scales with entries). `-execdir` runs `chown` on `./name` from a directory
-  fd held by `find`, so an intermediate directory swapped for a symlink
-  mid-run cannot redirect ownership changes outside the volume. It needs GNU
-  findutils in the image; without it repair fails not-ready. The child is
-  bounded by a 600 s cap (or the caller deadline if sooner) and reaped on
-  expiry. It never follows symlinks or leaves the volume. Readiness requires
+  scales with entries). Exec preparation batches plan metadata and numeric-user
+  access checks; one bounded ownership scan checks all owned paths and launches
+  the bulk repair only for dirty volumes. Clean paths therefore launch no
+  repair. Effigy rechecks on every exec because nested permissions can change
+  through external writers and the current runtime provides no exact cache
+  invalidation signal; no cached pass skips those checks. `-execdir` runs
+  `chown` on `./name` from a directory fd held by `find`, so an intermediate
+  directory swapped for a symlink mid-run cannot redirect ownership changes
+  outside the volume. It needs GNU findutils in the image; without it repair
+  fails not-ready. The child is bounded by a 600 s cap (or the caller deadline
+  if sooner) and reaped on expiry. The batched ownership scan has the same cap.
+  It never follows symlinks or leaves the volume. Readiness requires
   a post-repair unowned listing, a scope identity re-check and the access
   probe, not chown exit alone. Private acceptance (disposable container from a
   local GNU-find image, no host mounts or network, `--ignored` case in

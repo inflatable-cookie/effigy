@@ -114,6 +114,15 @@
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
   "cargo test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
 ]
+# Plain exec workspace prep stays down-stack-safe and batches live checks by
+# plan; private in-memory backends only, with no VM or host mount access.
+"test:exec:workspace-preparation" = [
+  "cargo test -p effigy --lib exec_preparation -- --nocapture",
+]
+"test:exec:workspace-preparation:bulk-guards" = [
+  "cargo test -p effigy --lib bulk_ -- --nocapture",
+]
+"check:exec:workspace-preparation" = "cargo check -p effigy --lib --tests --profile test"
 # Bulk ownership repair (papercut dab293be): O(volumes) runtime round trips
 # for owned Rust volumes, deadline/identity/protected-scope failures. Private
 # in-memory numeric-user backend only; no live VM/container/chown.
@@ -128,6 +137,18 @@
 "check:workspace:rust-ownership:bulk" = [
   "cargo check -p effigy --lib --tests --profile test",
   "cargo clippy -p effigy --lib -- -D warnings",
+]
+"test:workspace:rust-ownership:fake-runtime-identity" = [
+  "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
+]
+# Deadline/reap proof uses only a fresh private temp root, a fake Docker command,
+# and exact fixture PIDs. Includes the expired-no-spawn and disabled-reap controls.
+"test:workspace:rust-ownership:bulk-deadline" = [
+  "cargo test -p effigy --lib bulk_production_constructor -- --nocapture",
+]
+"check:workspace:rust-ownership:bulk-deadline" = [
+  "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
 "check:workspace:rust-ownership" = [
   "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",

@@ -36,6 +36,15 @@ pub(in crate::runner) struct PathInspection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum AccessProbe {
+    Ready,
+    Unwritable,
+    LockFailed,
+    Missing,
+    Symlink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PermissionPrepContext {
     pub profile: String,
     pub project_name: String,
@@ -103,6 +112,80 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
         identity: &ResolvedWorkspaceIdentity,
         directory: &str,
     ) -> Result<(), PermissionPrepError>;
+
+    fn inspect_many(
+        &mut self,
+        paths: &[String],
+    ) -> Result<Vec<PathInspection>, PermissionPrepError> {
+        paths.iter().map(|path| self.inspect(path)).collect()
+    }
+
+    fn find_unowned_many(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+    ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+        paths
+            .iter()
+            .map(|path| {
+                self.list_unowned(path, uid, gid)
+                    .map(|unowned| unowned.into_iter().next())
+            })
+            .collect()
+    }
+
+    fn mkdir_many(&mut self, paths: &[String]) -> Result<(), PermissionPrepError> {
+        for path in paths {
+            self.mkdir_p(path)?;
+        }
+        Ok(())
+    }
+
+    fn chown_shallow_many(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError> {
+        for path in paths {
+            self.chown(path, uid, gid)?;
+        }
+        Ok(())
+    }
+
+    fn chmod_owner_write_many(
+        &mut self,
+        paths: &[(String, bool)],
+    ) -> Result<(), PermissionPrepError> {
+        for (path, directory) in paths {
+            self.chmod_owner_write(path, *directory)?;
+        }
+        Ok(())
+    }
+
+    fn probe_access_many(
+        &mut self,
+        identity: &ResolvedWorkspaceIdentity,
+        paths: &[(String, bool)],
+    ) -> Result<Vec<AccessProbe>, PermissionPrepError> {
+        paths
+            .iter()
+            .map(|(path, directory)| {
+                if !self.user_can_read_write(identity, path)? {
+                    return Ok(AccessProbe::Unwritable);
+                }
+                if *directory {
+                    return Ok(if self.user_create_lock(identity, path).is_ok() {
+                        AccessProbe::Ready
+                    } else {
+                        AccessProbe::LockFailed
+                    });
+                }
+                Ok(AccessProbe::Ready)
+            })
+            .collect()
+    }
 
     fn inspect_doctor_paths(
         &mut self,
@@ -175,15 +258,291 @@ pub(super) fn prepare_workspace_permissions(
     if targets.is_empty() {
         return Ok(());
     }
-    let identity = backend.resolve_identity(user)?;
+    let identity = backend.resolve_doctor_identity(user)?;
     if identity.uid == 0 {
         return Err(PermissionPrepError::new(format!(
             "workspace user `{}` resolved to uid 0 in container `{}` service `{}`; refusing to treat root as the declared workspace identity",
             identity.user, context.container_name, context.service
         )));
     }
+
+    let probe_paths = prepared_probe_paths(&targets);
+    let mut inspections = backend.inspect_many(&probe_paths)?;
+    require_batch_len("metadata", probe_paths.len(), inspections.len())?;
+    for (path, inspection) in probe_paths.iter().zip(&inspections) {
+        if inspection.presence == PathPresence::Symlink {
+            return Err(fail_with_identity(
+                &identity,
+                target_for_probe_path(&targets, path),
+                context,
+                format!("refusing to follow symlink `{path}`"),
+            ));
+        }
+    }
     for target in &targets {
-        prepare_one_target(&identity, target, context, backend)?;
+        if target.authority == WorkspaceRepairAuthority::OwnedDisposable
+            && inspection_for(&probe_paths, &inspections, &target.path)
+                .is_some_and(|inspection| inspection.presence == PathPresence::File)
+        {
+            return Err(fail_with_identity(
+                &identity,
+                target,
+                context,
+                format!("disposable path `{}` is not a directory", target.path),
+            ));
+        }
+    }
+    for target in &targets {
+        if target.authority == WorkspaceRepairAuthority::Forbidden && target.rust_cache.is_some() {
+            return Err(fail_with_identity(
+                &identity,
+                target,
+                context,
+                format!(
+                    "declared rust build/cache path `{}` is a foreign, shared, or read-only mount",
+                    target.path
+                ),
+            ));
+        }
+    }
+
+    let missing_owned_paths = targets
+        .iter()
+        .filter(|target| target.authority == WorkspaceRepairAuthority::OwnedDisposable)
+        .filter(|target| {
+            inspection_for(&probe_paths, &inspections, &target.path)
+                .is_some_and(|inspection| inspection.presence == PathPresence::Missing)
+        })
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    backend.mkdir_many(&missing_owned_paths).map_err(|error| {
+        PermissionPrepError::new(format!(
+            "failed to create owned workspace path: {}",
+            error.message
+        ))
+    })?;
+    if !missing_owned_paths.is_empty() {
+        inspections = backend.inspect_many(&probe_paths)?;
+        require_batch_len("metadata", probe_paths.len(), inspections.len())?;
+        for (path, inspection) in probe_paths.iter().zip(&inspections) {
+            if inspection.presence == PathPresence::Symlink {
+                return Err(fail_with_identity(
+                    &identity,
+                    target_for_probe_path(&targets, path),
+                    context,
+                    format!("refusing to follow symlink `{path}`"),
+                ));
+            }
+        }
+    }
+
+    let recursive_paths = targets
+        .iter()
+        .filter(|target| {
+            target.authority == WorkspaceRepairAuthority::OwnedDisposable
+                && target.mode == WorkspacePermissionMode::Recursive
+        })
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    let unowned = backend.find_unowned_many(&recursive_paths, identity.uid, identity.gid)?;
+    require_batch_len("ownership", recursive_paths.len(), unowned.len())?;
+    let dirty_paths = recursive_paths
+        .iter()
+        .zip(unowned)
+        .filter_map(|(path, first_unowned)| first_unowned.map(|_| path.clone()))
+        .collect::<Vec<_>>();
+
+    let shallow_repairs = targets
+        .iter()
+        .filter(|target| {
+            target.authority == WorkspaceRepairAuthority::OwnedDisposable
+                && target.mode == WorkspacePermissionMode::Shallow
+        })
+        .filter(|target| {
+            inspection_for(&probe_paths, &inspections, &target.path).is_some_and(|inspection| {
+                inspection.presence != PathPresence::Missing
+                    && (inspection.uid != Some(identity.uid)
+                        || inspection.gid != Some(identity.gid))
+            })
+        })
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+
+    for path in &dirty_paths {
+        let target = target_for_probe_path(&targets, path);
+        backend
+            .chown_tree_unowned(path, identity.uid, identity.gid)
+            .map_err(|error| {
+                fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!(
+                        "failed to repair ownership under `{path}`: {}",
+                        error.message
+                    ),
+                )
+            })?;
+    }
+    backend
+        .chown_shallow_many(&shallow_repairs, identity.uid, identity.gid)
+        .map_err(|error| {
+            PermissionPrepError::new(format!(
+                "failed to repair shallow workspace ownership: {}",
+                error.message
+            ))
+        })?;
+
+    if !dirty_paths.is_empty() || !shallow_repairs.is_empty() {
+        inspections = backend.inspect_many(&probe_paths)?;
+        require_batch_len("post-repair metadata", probe_paths.len(), inspections.len())?;
+        for path in &dirty_paths {
+            let inspection = inspection_for(&probe_paths, &inspections, path);
+            if inspection.is_none_or(|value| {
+                matches!(
+                    value.presence,
+                    PathPresence::Missing | PathPresence::Symlink
+                )
+            }) {
+                return Err(fail_with_identity(
+                    &identity,
+                    target_for_probe_path(&targets, path),
+                    context,
+                    format!(
+                        "`{path}` changed identity during ownership repair; refusing to continue"
+                    ),
+                ));
+            }
+        }
+        for (path, inspection) in probe_paths.iter().zip(&inspections) {
+            if inspection.presence == PathPresence::Symlink {
+                return Err(fail_with_identity(
+                    &identity,
+                    target_for_probe_path(&targets, path),
+                    context,
+                    format!("refusing to follow symlink `{path}` after repair"),
+                ));
+            }
+        }
+        if !dirty_paths.is_empty() {
+            let remaining = backend.find_unowned_many(&dirty_paths, identity.uid, identity.gid)?;
+            require_batch_len("post-repair ownership", dirty_paths.len(), remaining.len())?;
+            if let Some((path, Some(first))) = dirty_paths
+                .iter()
+                .zip(remaining)
+                .find(|(_, first)| first.is_some())
+            {
+                return Err(fail_with_identity(
+                    &identity,
+                    target_for_probe_path(&targets, path),
+                    context,
+                    format!(
+                        "ownership entries remain under `{path}` after repair (first: `{first}`)"
+                    ),
+                ));
+            }
+        }
+    }
+
+    let access_paths = probe_paths
+        .iter()
+        .filter_map(|path| {
+            let target = target_for_probe_path(&targets, path);
+            let inspection = inspection_for(&probe_paths, &inspections, path)?;
+            if inspection.presence == PathPresence::Missing
+                || (target.authority == WorkspaceRepairAuthority::Forbidden
+                    && target.rust_cache.is_none())
+            {
+                return None;
+            }
+            Some((path.clone(), inspection.presence == PathPresence::Directory))
+        })
+        .collect::<Vec<_>>();
+    let access = backend.probe_access_many(&identity, &access_paths)?;
+    require_batch_len("numeric-user access", access_paths.len(), access.len())?;
+    let mut chmod_paths = Vec::new();
+    for ((path, directory), result) in access_paths.iter().zip(access) {
+        let target = target_for_probe_path(&targets, path);
+        match result {
+            AccessProbe::Ready => {}
+            AccessProbe::Unwritable
+                if target.authority == WorkspaceRepairAuthority::OwnedDisposable =>
+            {
+                chmod_paths.push((path.clone(), *directory));
+            }
+            AccessProbe::Unwritable => {
+                return Err(fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!(
+                        "resolved user `{}` (uid={} gid={}) cannot read/write `{path}`",
+                        identity.user, identity.uid, identity.gid
+                    ),
+                ));
+            }
+            AccessProbe::LockFailed => {
+                return Err(fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!(
+                        "resolved user `{}` (uid={} gid={}) cannot create a lock under `{path}`",
+                        identity.user, identity.uid, identity.gid
+                    ),
+                ));
+            }
+            AccessProbe::Missing
+                if path == &target.path
+                    && target.authority == WorkspaceRepairAuthority::OwnedDisposable =>
+            {
+                return Err(fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!("disposable path `{path}` is missing after preparation"),
+                ));
+            }
+            AccessProbe::Missing => {}
+            AccessProbe::Symlink => {
+                return Err(fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!("refusing to follow symlink `{path}` during access verification"),
+                ));
+            }
+        }
+    }
+    if !chmod_paths.is_empty() {
+        backend
+            .chmod_owner_write_many(&chmod_paths)
+            .map_err(|error| {
+                PermissionPrepError::new(format!(
+                    "failed to restore owner write during workspace preparation: {}",
+                    error.message
+                ))
+            })?;
+        let repaired_access = backend.probe_access_many(&identity, &chmod_paths)?;
+        require_batch_len(
+            "post-chmod numeric-user access",
+            chmod_paths.len(),
+            repaired_access.len(),
+        )?;
+        for ((path, _), result) in chmod_paths.iter().zip(repaired_access) {
+            if result != AccessProbe::Ready {
+                let target = target_for_probe_path(&targets, path);
+                return Err(fail_with_identity(
+                    &identity,
+                    target,
+                    context,
+                    format!(
+                        "resolved user `{}` (uid={} gid={}) still cannot use `{path}` after owner-write repair",
+                        identity.user, identity.uid, identity.gid
+                    ),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -285,229 +644,53 @@ fn path_is_under(path: &str, parent: &str) -> bool {
     path.starts_with(parent) && path.as_bytes().get(parent.len()) == Some(&b'/')
 }
 
-fn prepare_one_target(
-    identity: &ResolvedWorkspaceIdentity,
-    target: &PreparedTarget,
-    context: &PermissionPrepContext,
-    backend: &mut impl WorkspaceAccessBackend,
-) -> Result<(), PermissionPrepError> {
-    let inspection = backend.inspect(&target.path)?;
-    if inspection.presence == PathPresence::Symlink {
-        return Err(fail_with_identity(
-            identity,
-            target,
-            context,
-            format!(
-                "refusing to mutate symlink `{}` (path escape or redirected mount)",
-                target.path
-            ),
-        ));
-    }
-    match target.authority {
-        WorkspaceRepairAuthority::Forbidden => {
-            if target.rust_cache.is_some() {
-                return Err(fail_with_identity(
-                    identity,
-                    target,
-                    context,
-                    format!(
-                        "declared rust build/cache path `{}` is a foreign, shared, or read-only mount",
-                        target.path
-                    ),
-                ));
+fn prepared_probe_paths(targets: &[PreparedTarget]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for target in targets {
+        for path in std::iter::once(target.path.clone()).chain(nested_verify_paths(target)) {
+            if !paths.contains(&path) {
+                paths.push(path);
             }
-            Ok(())
-        }
-        WorkspaceRepairAuthority::VerifyOnly => {
-            verify_target(identity, target, context, backend, false)
-        }
-        WorkspaceRepairAuthority::OwnedDisposable => {
-            repair_owned_target(identity, target, context, backend)?;
-            verify_target(identity, target, context, backend, true)
         }
     }
+    paths
 }
 
-fn repair_owned_target(
-    identity: &ResolvedWorkspaceIdentity,
-    target: &PreparedTarget,
-    context: &PermissionPrepContext,
-    backend: &mut impl WorkspaceAccessBackend,
-) -> Result<(), PermissionPrepError> {
-    backend.mkdir_p(&target.path).map_err(|error| {
-        fail_with_identity(
-            identity,
-            target,
-            context,
-            format!("failed to create `{}`: {}", target.path, error.message),
-        )
-    })?;
-    let inspection = backend.inspect(&target.path)?;
-    if inspection.presence == PathPresence::Symlink {
-        return Err(fail_with_identity(
-            identity,
-            target,
-            context,
-            format!("refusing to mutate symlink `{}`", target.path),
-        ));
-    }
-    match target.mode {
-        WorkspacePermissionMode::Shallow => {
-            backend
-                .chown(&target.path, identity.uid, identity.gid)
-                .map_err(|error| {
-                    fail_with_identity(
-                        identity,
-                        target,
-                        context,
-                        format!("failed to chown `{}`: {}", target.path, error.message),
-                    )
-                })?;
-        }
-        WorkspacePermissionMode::Recursive => {
-            backend
-                .chown_tree_unowned(&target.path, identity.uid, identity.gid)
-                .map_err(|error| {
-                    fail_with_identity(
-                        identity,
-                        target,
-                        context,
-                        format!(
-                            "failed to repair ownership under `{}`: {}",
-                            target.path, error.message
-                        ),
-                    )
-                })?;
-            // The scope must still be the same plain directory after the bulk
-            // operation; a swapped symlink or file means the repair is void.
-            let after = backend.inspect(&target.path)?;
-            if matches!(
-                after.presence,
-                PathPresence::Symlink | PathPresence::Missing
-            ) {
-                return Err(fail_with_identity(
-                    identity,
-                    target,
-                    context,
-                    format!(
-                        "`{}` changed identity during ownership repair; refusing to continue",
-                        target.path
-                    ),
-                ));
-            }
-            let remaining = backend
-                .list_unowned(&target.path, identity.uid, identity.gid)
-                .map_err(|error| {
-                    fail_with_identity(
-                        identity,
-                        target,
-                        context,
-                        format!(
-                            "failed to verify ownership under `{}`: {}",
-                            target.path, error.message
-                        ),
-                    )
-                })?;
-            if let Some(first) = remaining.first() {
-                return Err(fail_with_identity(
-                    identity,
-                    target,
-                    context,
-                    format!(
-                        "{} path(s) under `{}` remain not owned by uid={} gid={} after repair (first: `{}`)",
-                        remaining.len(),
-                        target.path,
-                        identity.uid,
-                        identity.gid,
-                        first
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
+fn target_for_probe_path<'a>(targets: &'a [PreparedTarget], path: &str) -> &'a PreparedTarget {
+    targets
+        .iter()
+        .find(|target| target.path == path)
+        .or_else(|| {
+            targets
+                .iter()
+                .filter(|target| path_is_under(path, &target.path))
+                .max_by_key(|target| target.path.len())
+        })
+        .expect("probe paths are derived from prepared targets")
 }
 
-fn verify_target(
-    identity: &ResolvedWorkspaceIdentity,
-    target: &PreparedTarget,
-    context: &PermissionPrepContext,
-    backend: &mut impl WorkspaceAccessBackend,
-    may_repair_mode: bool,
+fn inspection_for<'a>(
+    paths: &[String],
+    inspections: &'a [PathInspection],
+    path: &str,
+) -> Option<&'a PathInspection> {
+    paths
+        .iter()
+        .position(|candidate| candidate == path)
+        .and_then(|index| inspections.get(index))
+}
+
+fn require_batch_len(
+    label: &str,
+    expected: usize,
+    actual: usize,
 ) -> Result<(), PermissionPrepError> {
-    let inspection = backend.inspect(&target.path)?;
-    if inspection.presence == PathPresence::Missing {
-        if target.authority == WorkspaceRepairAuthority::OwnedDisposable {
-            return Err(fail_with_identity(
-                identity,
-                target,
-                context,
-                format!(
-                    "disposable path `{}` is missing after preparation",
-                    target.path
-                ),
-            ));
-        }
+    if actual == expected {
         return Ok(());
     }
-    let mut paths = vec![target.path.clone()];
-    paths.extend(nested_verify_paths(target));
-    for path in paths {
-        let nested = backend.inspect(&path)?;
-        if nested.presence == PathPresence::Missing {
-            continue;
-        }
-        if nested.presence == PathPresence::Symlink {
-            return Err(fail_with_identity(
-                identity,
-                target,
-                context,
-                format!("refusing to follow symlink `{}`", path),
-            ));
-        }
-        if !backend.user_can_read_write(identity, &path)? {
-            if may_repair_mode {
-                backend
-                    .chmod_owner_write(&path, nested.presence == PathPresence::Directory)
-                    .map_err(|error| {
-                        fail_with_identity(
-                            identity,
-                            target,
-                            context,
-                            format!(
-                                "failed to restore owner write on `{}`: {}",
-                                path, error.message
-                            ),
-                        )
-                    })?;
-            }
-            if !backend.user_can_read_write(identity, &path)? {
-                return Err(fail_with_identity(
-                    identity,
-                    target,
-                    context,
-                    format!(
-                        "resolved user `{}` (uid={} gid={}) cannot read/write `{}`",
-                        identity.user, identity.uid, identity.gid, path
-                    ),
-                ));
-            }
-        }
-        if nested.presence == PathPresence::Directory {
-            backend.user_create_lock(identity, &path).map_err(|error| {
-                fail_with_identity(
-                    identity,
-                    target,
-                    context,
-                    format!(
-                        "resolved user `{}` (uid={} gid={}) cannot create a lock under `{}`: {}",
-                        identity.user, identity.uid, identity.gid, path, error.message
-                    ),
-                )
-            })?;
-        }
-    }
-    Ok(())
+    Err(PermissionPrepError::new(format!(
+        "workspace ownership {label} batch returned {actual} records for {expected} paths"
+    )))
 }
 
 fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
@@ -846,19 +1029,19 @@ pub(in crate::runner) struct ComposeAccessBackend<'a> {
 const BULK_CHOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 const DOCTOR_METADATA_BATCH_SCRIPT: &str = "for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ -d \"$path\" ]; then\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'dir %s\\n' \"$metadata\"\n  else\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'file %s\\n' \"$metadata\"\n  fi\ndone";
 const DOCTOR_ACCESS_BATCH_SCRIPT: &str = "for path do\n  if [ -r \"$path\" ] && [ -w \"$path\" ]; then\n    printf 'read-write\\n'\n  else\n    printf 'unwritable\\n'\n  fi\ndone";
+const OWNERSHIP_FIND_BATCH_SCRIPT: &str = "uid=$1; gid=$2; shift 2; for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'clean\\n'\n  else\n    first=\"$(find -P \"$path\" -xdev ! -type l ! \\( -user \"$uid\" -a -group \"$gid\" \\) -print -quit)\" || exit 1\n    if [ -n \"$first\" ]; then printf 'dirty\\t%s\\n' \"$first\"; else printf 'clean\\n'; fi\n  fi\ndone";
+const WORKSPACE_ACCESS_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do\n  path=$1; directory=$2; shift 2\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ ! -r \"$path\" ] || [ ! -w \"$path\" ]; then\n    printf 'unwritable\\n'\n  elif [ \"$directory\" = yes ]; then\n    probe=\"${path%/}/.effigy-write-probe-$$\"\n    if touch \"$probe\" && rm -f -- \"$probe\"; then printf 'ready\\n'; else printf 'lock-failed\\n'; fi\n  else\n    printf 'ready\\n'\n  fi\ndone";
+const WORKSPACE_MKDIR_BATCH_SCRIPT: &str = "for path do mkdir -p -- \"$path\" || exit 1; done";
+const WORKSPACE_CHOWN_SHALLOW_BATCH_SCRIPT: &str =
+    "spec=$1; shift; for path do chown -h \"$spec\" -- \"$path\" || exit 1; done";
+const WORKSPACE_CHMOD_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do path=$1; kind=$2; shift 2; mode=u+w; [ \"$kind\" = dir ] && mode=u+wx; chmod \"$mode\" -- \"$path\" || exit 1; done";
 
 impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     fn resolve_identity(
         &self,
         user: &str,
     ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError> {
-        let uid = parse_id_output(&self.exec_root(&["id", "-u", user], "workspace user uid")?)?;
-        let gid = parse_id_output(&self.exec_root(&["id", "-g", user], "workspace user gid")?)?;
-        Ok(ResolvedWorkspaceIdentity {
-            user: user.to_owned(),
-            uid,
-            gid,
-        })
+        self.resolve_doctor_identity(user)
     }
 
     fn resolve_doctor_identity(
@@ -902,6 +1085,154 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
             "workspace path inspect",
         )?;
         parse_inspect_output(&output)
+    }
+
+    fn inspect_many(
+        &mut self,
+        paths: &[String],
+    ) -> Result<Vec<PathInspection>, PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut argv = vec![
+            "sh",
+            "-c",
+            DOCTOR_METADATA_BATCH_SCRIPT,
+            "effigy-perm-inspect-batch",
+        ];
+        argv.extend(paths.iter().map(String::as_str));
+        let context = paths
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let output = self.exec_root(
+            &argv,
+            &format!("workspace ownership metadata batch for {context}"),
+        )?;
+        parse_inspect_batch_output(&output, paths.len())
+    }
+
+    fn find_unowned_many(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+    ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let uid = uid.to_string();
+        let gid = gid.to_string();
+        let mut argv = vec![
+            "sh",
+            "-c",
+            OWNERSHIP_FIND_BATCH_SCRIPT,
+            "effigy-perm-find-batch",
+        ];
+        argv.extend([uid.as_str(), gid.as_str()]);
+        argv.extend(paths.iter().map(String::as_str));
+        let path_context = paths
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = format!("workspace ownership bounded scan for {path_context}");
+        let deadline = Some(match self.deadline {
+            Some(outer) => outer.min(Instant::now() + self.bulk_timeout),
+            None => Instant::now() + self.bulk_timeout,
+        });
+        let output = self.exec_as_user_until("0", &argv, &label, false, deadline)?;
+        parse_unowned_batch_output(&output.stdout, paths)
+    }
+
+    fn mkdir_many(&mut self, paths: &[String]) -> Result<(), PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut argv = vec![
+            "sh",
+            "-c",
+            WORKSPACE_MKDIR_BATCH_SCRIPT,
+            "effigy-perm-mkdir-batch",
+        ];
+        argv.extend(paths.iter().map(String::as_str));
+        self.exec_root(&argv, "workspace mkdir batch")?;
+        Ok(())
+    }
+
+    fn chown_shallow_many(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let owner = format!("{uid}:{gid}");
+        let mut argv = vec![
+            "sh",
+            "-c",
+            WORKSPACE_CHOWN_SHALLOW_BATCH_SCRIPT,
+            "effigy-perm-chown-batch",
+            owner.as_str(),
+        ];
+        argv.extend(paths.iter().map(String::as_str));
+        self.exec_root(&argv, "workspace shallow chown batch")?;
+        Ok(())
+    }
+
+    fn chmod_owner_write_many(
+        &mut self,
+        paths: &[(String, bool)],
+    ) -> Result<(), PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut argv = vec![
+            "sh",
+            "-c",
+            WORKSPACE_CHMOD_BATCH_SCRIPT,
+            "effigy-perm-chmod-batch",
+        ];
+        for (path, directory) in paths {
+            argv.push(path);
+            argv.push(if *directory { "dir" } else { "file" });
+        }
+        self.exec_root(&argv, "workspace owner-write batch")?;
+        Ok(())
+    }
+
+    fn probe_access_many(
+        &mut self,
+        identity: &ResolvedWorkspaceIdentity,
+        paths: &[(String, bool)],
+    ) -> Result<Vec<AccessProbe>, PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut argv = vec![
+            "sh",
+            "-c",
+            WORKSPACE_ACCESS_BATCH_SCRIPT,
+            "effigy-perm-access-batch",
+        ];
+        for (path, directory) in paths {
+            argv.push(path);
+            argv.push(if *directory { "yes" } else { "no" });
+        }
+        let context = paths
+            .iter()
+            .map(|(path, _)| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = format!(
+            "workspace ownership numeric-user access batch (uid={} gid={}) for {context}",
+            identity.uid, identity.gid
+        );
+        let output = self.exec_as(identity, &argv, &label, false)?;
+        parse_workspace_access_batch_output(&output.stdout, paths.len())
     }
 
     fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError> {
@@ -1292,6 +1623,75 @@ fn parse_access_batch_output(raw: &str, expected: usize) -> Result<Vec<bool>, Pe
         .collect()
 }
 
+fn parse_unowned_batch_output(
+    raw: &str,
+    paths: &[String],
+) -> Result<Vec<Option<String>>, PermissionPrepError> {
+    let lines = raw.lines().map(str::trim_end).collect::<Vec<_>>();
+    if lines.len() != paths.len() {
+        return Err(PermissionPrepError::new(format!(
+            "workspace ownership scan returned {} records for {} paths",
+            lines.len(),
+            paths.len()
+        )));
+    }
+    lines
+        .into_iter()
+        .zip(paths)
+        .map(|(line, path)| {
+            if line == "clean" {
+                return Ok(None);
+            }
+            if line == "symlink" {
+                return Err(PermissionPrepError::new(format!(
+                    "workspace ownership scope `{path}` changed to a symlink during verification"
+                )));
+            }
+            if let Some(first) = line.strip_prefix("dirty\t") {
+                if first.is_empty() {
+                    return Err(PermissionPrepError::new(format!(
+                        "workspace ownership scan returned an empty finding for `{path}`"
+                    )));
+                }
+                return Ok(Some(first.to_owned()));
+            }
+            Err(PermissionPrepError::new(format!(
+                "workspace ownership scan returned invalid record `{line}` for `{path}`"
+            )))
+        })
+        .collect()
+}
+
+fn parse_workspace_access_batch_output(
+    raw: &str,
+    expected: usize,
+) -> Result<Vec<AccessProbe>, PermissionPrepError> {
+    let lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() != expected {
+        return Err(PermissionPrepError::new(format!(
+            "workspace ownership numeric-user access batch returned {} records for {expected} paths",
+            lines.len()
+        )));
+    }
+    lines
+        .into_iter()
+        .map(|line| match line {
+            "ready" => Ok(AccessProbe::Ready),
+            "unwritable" => Ok(AccessProbe::Unwritable),
+            "lock-failed" => Ok(AccessProbe::LockFailed),
+            "missing" => Ok(AccessProbe::Missing),
+            "symlink" => Ok(AccessProbe::Symlink),
+            _ => Err(PermissionPrepError::new(format!(
+                "workspace ownership numeric-user access batch returned invalid record `{line}`"
+            ))),
+        })
+        .collect()
+}
+
 fn parse_inspect_output(raw: &str) -> Result<PathInspection, PermissionPrepError> {
     let line = raw.lines().next().unwrap_or("").trim();
     if line == "missing" {
@@ -1488,6 +1888,45 @@ mod memory_backend {
             walk_mut(&mut self.root, &parts)
         }
 
+        fn inspect_path(&self, path: &str) -> PathInspection {
+            let Some(node) = self.node(path) else {
+                return PathInspection {
+                    presence: PathPresence::Missing,
+                    uid: None,
+                    gid: None,
+                    mode: None,
+                };
+            };
+            let presence = match node.kind {
+                MemoryKind::Directory { .. } => PathPresence::Directory,
+                MemoryKind::File => PathPresence::File,
+                MemoryKind::Symlink { .. } => PathPresence::Symlink,
+            };
+            PathInspection {
+                presence,
+                uid: Some(node.uid),
+                gid: Some(node.gid),
+                mode: Some(node.mode),
+            }
+        }
+
+        fn mkdir_path(&mut self, path: &str) -> Result<(), PermissionPrepError> {
+            self.refuse_mutation(path)?;
+            match self.inspect_path(path).presence {
+                PathPresence::Directory => Ok(()),
+                PathPresence::Symlink => Err(PermissionPrepError::new(format!(
+                    "refusing to mkdir through symlink `{path}`"
+                ))),
+                PathPresence::File => Err(PermissionPrepError::new(format!(
+                    "refusing to mkdir over file `{path}`"
+                ))),
+                PathPresence::Missing => {
+                    self.add_dir(path, 0, 0, 0o755);
+                    Ok(())
+                }
+            }
+        }
+
         fn refuse_mutation(&self, path: &str) -> Result<(), PermissionPrepError> {
             if self
                 .protected
@@ -1595,6 +2034,7 @@ mod memory_backend {
             &self,
             user: &str,
         ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
             self.identities.get(user).cloned().ok_or_else(|| {
                 PermissionPrepError::new(format!("workspace user `{user}` is not present"))
             })
@@ -1603,42 +2043,32 @@ mod memory_backend {
         fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError> {
             self.inspect_log.borrow_mut().push(path.to_owned());
             self.exec_calls.set(self.exec_calls.get() + 1);
-            let Some(node) = self.node(path) else {
-                return Ok(PathInspection {
-                    presence: PathPresence::Missing,
-                    uid: None,
-                    gid: None,
-                    mode: None,
-                });
-            };
-            let presence = match node.kind {
-                MemoryKind::Directory { .. } => PathPresence::Directory,
-                MemoryKind::File => PathPresence::File,
-                MemoryKind::Symlink { .. } => PathPresence::Symlink,
-            };
-            Ok(PathInspection {
-                presence,
-                uid: Some(node.uid),
-                gid: Some(node.gid),
-                mode: Some(node.mode),
-            })
+            Ok(self.inspect_path(path))
+        }
+
+        fn inspect_many(
+            &mut self,
+            paths: &[String],
+        ) -> Result<Vec<PathInspection>, PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            self.inspect_log.borrow_mut().extend(paths.iter().cloned());
+            Ok(paths.iter().map(|path| self.inspect_path(path)).collect())
         }
 
         fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError> {
-            self.refuse_mutation(path)?;
-            match self.inspect(path)?.presence {
-                PathPresence::Directory => Ok(()),
-                PathPresence::Symlink => Err(PermissionPrepError::new(format!(
-                    "refusing to mkdir through symlink `{path}`"
-                ))),
-                PathPresence::File => Err(PermissionPrepError::new(format!(
-                    "refusing to mkdir over file `{path}`"
-                ))),
-                PathPresence::Missing => {
-                    self.add_dir(path, 0, 0, 0o755);
-                    Ok(())
-                }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            self.mkdir_path(path)
+        }
+
+        fn mkdir_many(&mut self, paths: &[String]) -> Result<(), PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(());
             }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            for path in paths {
+                self.mkdir_path(path)?;
+            }
+            Ok(())
         }
 
         fn chown_tree_unowned(
@@ -1692,6 +2122,33 @@ mod memory_backend {
             Ok(())
         }
 
+        fn chown_shallow_many(
+            &mut self,
+            paths: &[String],
+            uid: u32,
+            gid: u32,
+        ) -> Result<(), PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(());
+            }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            for path in paths {
+                self.refuse_mutation(path)?;
+                let node = self.node_mut(path).ok_or_else(|| {
+                    PermissionPrepError::new(format!("chown target `{path}` is missing"))
+                })?;
+                if matches!(node.kind, MemoryKind::Symlink { .. }) {
+                    return Err(PermissionPrepError::new(format!(
+                        "refusing to chown symlink `{path}`"
+                    )));
+                }
+                node.uid = uid;
+                node.gid = gid;
+                self.chown_log.push(path.clone());
+            }
+            Ok(())
+        }
+
         fn chmod_owner_write(
             &mut self,
             path: &str,
@@ -1703,6 +2160,25 @@ mod memory_backend {
             })?;
             node.mode |= if directory { 0o300 } else { 0o200 };
             self.chmod_log.push(path.to_owned());
+            Ok(())
+        }
+
+        fn chmod_owner_write_many(
+            &mut self,
+            paths: &[(String, bool)],
+        ) -> Result<(), PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(());
+            }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            for (path, directory) in paths {
+                self.refuse_mutation(path)?;
+                let node = self.node_mut(path).ok_or_else(|| {
+                    PermissionPrepError::new(format!("chmod target `{path}` is missing"))
+                })?;
+                node.mode |= if *directory { 0o300 } else { 0o200 };
+                self.chmod_log.push(path.clone());
+            }
             Ok(())
         }
 
@@ -1718,6 +2194,28 @@ mod memory_backend {
             let mut out = Vec::new();
             collect_unowned(self.node(path), path, uid, gid, &mut out);
             Ok(out)
+        }
+
+        fn find_unowned_many(
+            &mut self,
+            paths: &[String],
+            uid: u32,
+            gid: u32,
+        ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(Vec::new());
+            }
+            self.list_unowned_calls
+                .set(self.list_unowned_calls.get() + 1);
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            paths
+                .iter()
+                .map(|path| {
+                    let mut entries = Vec::new();
+                    collect_unowned(self.node(path), path, uid, gid, &mut entries);
+                    Ok(entries.into_iter().next())
+                })
+                .collect()
         }
 
         fn user_can_read_write(
@@ -1763,6 +2261,40 @@ mod memory_backend {
                 children.remove(".effigy-write-probe");
             }
             Ok(())
+        }
+
+        fn probe_access_many(
+            &mut self,
+            identity: &ResolvedWorkspaceIdentity,
+            paths: &[(String, bool)],
+        ) -> Result<Vec<AccessProbe>, PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(Vec::new());
+            }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            paths
+                .iter()
+                .map(|(path, directory)| {
+                    let inspection = self.inspect_path(path);
+                    if inspection.presence == PathPresence::Symlink {
+                        return Ok(AccessProbe::Symlink);
+                    }
+                    if inspection.presence == PathPresence::Missing {
+                        return Ok(AccessProbe::Missing);
+                    }
+                    if !self.user_can_read_write(identity, path)? {
+                        return Ok(AccessProbe::Unwritable);
+                    }
+                    if *directory {
+                        return Ok(if self.user_create_lock(identity, path).is_ok() {
+                            AccessProbe::Ready
+                        } else {
+                            AccessProbe::LockFailed
+                        });
+                    }
+                    Ok(AccessProbe::Ready)
+                })
+                .collect()
         }
     }
 
@@ -1974,6 +2506,105 @@ mod tests {
         };
         prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
         assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn exec_preparation_batches_three_clean_mounts_and_skips_repeat_repairs() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/cargo/registry", 501, 20, 0o755);
+        backend.add_dir("/cargo/registry/src", 501, 20, 0o755);
+        backend.add_dir("/cargo/git", 501, 20, 0o755);
+        backend.add_dir("/cargo/git/checkouts", 501, 20, 0o755);
+        backend.add_dir("/workspace/target", 501, 20, 0o755);
+        backend.add_dir("/workspace/target/debug", 501, 20, 0o755);
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 501, 20, 0o644);
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![
+                owned_target(
+                    "/cargo/registry",
+                    Some(WorkspaceRustCacheKind::CargoRegistry),
+                ),
+                owned_target("/cargo/git", Some(WorkspaceRustCacheKind::CargoGit)),
+                owned_target(
+                    "/workspace/target",
+                    Some(WorkspaceRustCacheKind::RustTarget),
+                ),
+            ],
+        };
+
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("first prep");
+        let first_calls = backend.exec_calls.get();
+        assert_eq!(
+            backend.bulk_calls, 0,
+            "clean paths need no ownership repair"
+        );
+        assert!(
+            first_calls <= 5,
+            "three mounts use bounded batches: {first_calls}"
+        );
+
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("repeat prep");
+        assert_eq!(backend.exec_calls.get() - first_calls, first_calls);
+        assert_eq!(backend.bulk_calls, 0, "unchanged paths launch no repair");
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn exec_preparation_rechecks_nested_permission_changes_without_a_cache() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 501, 20, 0o755);
+        backend.add_dir("/workspace/target/debug", 501, 20, 0o755);
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 501, 20, 0o644);
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![owned_target(
+                "/workspace/target",
+                Some(WorkspaceRustCacheKind::RustTarget),
+            )],
+        };
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("first prep");
+
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 0, 0, 0o444);
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("nested ownership and mode drift is repaired");
+        assert_eq!(
+            backend.owner_of("/workspace/target/debug/.cargo-build-lock"),
+            Some((501, 20))
+        );
+        assert_eq!(
+            backend.mode_of("/workspace/target/debug/.cargo-build-lock"),
+            Some(0o644)
+        );
+        assert_eq!(backend.bulk_calls, 1);
+    }
+
+    #[test]
+    fn exec_preparation_rechecks_external_bind_access_on_each_call() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 501, 20, 0o755);
+        backend.add_dir("/workspace/target/debug", 501, 20, 0o755);
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 501, 20, 0o644);
+        backend.protect("/workspace/target");
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![verify_target_spec(
+                "/workspace/target",
+                Some(WorkspaceRustCacheKind::RustTarget),
+            )],
+        };
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("first prep");
+
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 501, 20, 0o444);
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("changed bind permissions must not use a cached pass");
+        assert!(error.message.contains("cannot read/write"));
+        assert!(backend.chown_log.is_empty());
+        assert_eq!(
+            backend.mode_of("/workspace/target/debug/.cargo-build-lock"),
+            Some(0o444)
+        );
     }
 
     #[test]
@@ -2356,7 +2987,6 @@ services:
         ("/cargo/git", 3133, WorkspaceRustCacheKind::CargoGit),
     ];
     const EXEC_LATENCY_MS: u64 = 25;
-
     fn bulk_fixture(
         scale: usize,
         owner: (u32, u32),
@@ -2402,7 +3032,7 @@ services:
     }
 
     #[test]
-    fn bulk_repair_uses_o_volumes_round_trips_not_o_files() {
+    fn exec_preparation_bulk_repair_uses_o_volumes_round_trips_not_o_files() {
         let (mut legacy, _) = bulk_fixture(1, (0, 0));
         let entries: usize = BULK_VOLUMES.iter().map(|(_, n, _)| *n).sum();
         assert!(entries >= 44000);
@@ -2414,6 +3044,10 @@ services:
         let (mut backend, plan) = bulk_fixture(1, (0, 0));
         prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
         let bulk_calls = backend.exec_calls.get();
+        let first_repair_count = backend.bulk_calls;
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("unchanged repeat prep");
+        let repeated_calls = backend.exec_calls.get() - bulk_calls;
 
         let legacy_ms = legacy_calls as u64 * EXEC_LATENCY_MS;
         let bulk_ms = bulk_calls as u64 * EXEC_LATENCY_MS;
@@ -2422,11 +3056,20 @@ services:
              bulk calls={bulk_calls} (~{bulk_ms}ms) bulk_ops={}",
             backend.bulk_calls
         );
+        println!(
+            "unchanged repeat fixture calls={repeated_calls}; additional repair launches={}",
+            backend.bulk_calls - first_repair_count
+        );
         assert!(
             legacy_calls > 80000,
             "legacy scales per file: {legacy_calls}"
         );
-        assert_eq!(backend.bulk_calls, 3);
+        assert_eq!(first_repair_count, 3);
+        assert_eq!(backend.bulk_calls, first_repair_count);
+        assert_eq!(
+            repeated_calls, 4,
+            "identity, metadata, ownership, and access batches"
+        );
         assert!(bulk_calls < 60, "bulk must be O(volumes): {bulk_calls}");
         assert!(backend
             .list_unowned("/cargo/registry", 501, 20)
@@ -3137,82 +3780,319 @@ done' sh "$@""#;
     }
 
     #[cfg(unix)]
-    #[test]
-    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
-        use crate::contract_test_support::{lock_test, EnvGuard};
+    const BULK_HANG_CALLER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    #[cfg(unix)]
+    const BULK_HANG_UPPER_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
+
+    #[cfg(unix)]
+    fn install_fake_hung_bulk_docker(
+        root: &Path,
+        process_file: &Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::os::unix::fs::PermissionsExt;
-        let _lock = lock_test();
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-deadline-")
-            .tempdir()
-            .expect("tempdir");
-        let root = std::fs::canonicalize(temp.path()).expect("canon");
+
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let pending = process_file.with_extension("pending");
+        let docker = bin.join("docker");
+        let fake = format!(
+            r#"#!/bin/sh
+case "$*" in
+  *execdir*)
+    leader=$$
+    sleep 300 &
+    descendant=$!
+    printf '%s\n%s\n' "$leader" "$descendant" > '{pending}'
+    mv '{pending}' '{process_file}'
+    wait "$descendant"
+    ;;
+esac
+exit 0
+"#,
+            pending = pending.display(),
+            process_file = process_file.display(),
+        );
+        std::fs::write(&docker, fake).expect("write fake docker");
+        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake docker executable");
+        (bin, docker)
+    }
+
+    #[cfg(unix)]
+    fn with_fake_bulk_runtime(bin: &Path) -> crate::contract_test_support::EnvGuard {
+        let base = std::env::var("PATH").unwrap_or_default();
+        crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ])
+    }
+
+    #[cfg(unix)]
+    fn bulk_deadline_test_policy(root: &Path) -> EffectiveContainerPolicy {
         std::fs::write(
             root.join("effigy.toml"),
             "[containers]\ndefault = \"stack\"\n",
         )
-        .expect("manifest");
-        let bin = root.join("bin");
-        std::fs::create_dir_all(&bin).expect("bin");
-        let pids = root.join("pids");
-        let fake = format!(
-            "#!/bin/sh\ncase \"$*\" in *execdir*) echo $$ >> '{}'; exec sleep 60;; esac\nexit 0\n",
-            pids.display()
-        );
-        let docker = bin.join("docker");
-        std::fs::write(&docker, fake).expect("docker");
-        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let base = std::env::var("PATH").unwrap_or_default();
-        let _env = EnvGuard::set_many(&[
-            ("PATH", Some(format!("{}:{base}", bin.display()))),
-            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
-        ]);
+        .expect("write manifest");
         let mut policy = effective_container_policy(
             "stack",
             "demo-stack",
             "workspace",
             root.join("docker-compose.yml"),
         );
-        policy.repo_root = root.clone();
+        policy.repo_root = root.to_path_buf();
         policy.workspace_user = Some("dev".to_owned());
+        policy
+    }
 
-        // Normal production constructor: no caller deadline, but a finite bulk bound.
+    #[cfg(unix)]
+    fn bulk_fixture_pids(process_file: &Path) -> Vec<i32> {
+        let recorded = std::fs::read_to_string(process_file).unwrap_or_else(|error| {
+            panic!("fake bulk child did not record its leader and descendant ({error})")
+        });
+        let pids = recorded
+            .lines()
+            .filter_map(|line| line.trim().parse::<i32>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            pids.len() >= 2,
+            "fixture must record its exact leader and descendant: {recorded:?}"
+        );
+        pids
+    }
+
+    #[cfg(unix)]
+    fn wait_for_bulk_fixture_pids(process_file: &Path) -> Vec<i32> {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(recorded) = std::fs::read_to_string(process_file) {
+                if recorded
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count()
+                    >= 2
+                {
+                    return bulk_fixture_pids(process_file);
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture never reached its hung child: {}",
+                process_file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
+    fn bulk_fixture_pid_alive(pid: i32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    #[cfg(unix)]
+    fn assert_bulk_fixture_processes_gone(pids: &[i32]) {
+        let alive = pids
+            .iter()
+            .copied()
+            .filter(|pid| bulk_fixture_pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "bulk fixture processes still alive: {alive:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn wait_for_bulk_fixture_processes_gone(pids: &[i32]) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while pids.iter().any(|pid| bulk_fixture_pid_alive(*pid)) {
+            assert!(
+                Instant::now() < deadline,
+                "bulk fixture processes were not reaped: {pids:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Cleanup is limited to exact PIDs recorded by this private fixture.
+    #[cfg(unix)]
+    struct BulkFixtureProcessGuard {
+        process_file: std::path::PathBuf,
+        child: Option<std::process::Child>,
+    }
+
+    #[cfg(unix)]
+    impl BulkFixtureProcessGuard {
+        fn new(process_file: &Path, child: Option<std::process::Child>) -> Self {
+            Self {
+                process_file: process_file.to_path_buf(),
+                child,
+            }
+        }
+
+        fn reap(&mut self) {
+            let pids = std::fs::read_to_string(&self.process_file)
+                .ok()
+                .map(|recorded| {
+                    recorded
+                        .lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for pid in &pids {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(*pid),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+            }
+            let grace = Instant::now() + std::time::Duration::from_secs(2);
+            while pids.iter().any(|pid| bulk_fixture_pid_alive(*pid)) && Instant::now() < grace {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            for pid in &pids {
+                if bulk_fixture_pid_alive(*pid) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(*pid),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+            }
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            wait_for_bulk_fixture_processes_gone(&pids);
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for BulkFixtureProcessGuard {
+        fn drop(&mut self) {
+            self.reap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
+        use crate::contract_test_support::lock_test;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let policy = bulk_deadline_test_policy(&root);
+
+        // Keep the normal constructor and production 600s cap. This caller
+        // deadline bounds only the private hang proof on a loaded host.
         let mut backend = compose_backend(&root, &policy);
         assert!(backend.deadline.is_none());
         assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
         assert!(backend.bulk_timeout < std::time::Duration::from_secs(3600));
-        // Generous so child spawn under host load always precedes expiry; the
-        // bound being finite is what is asserted above, not its length.
-        backend.bulk_timeout = std::time::Duration::from_secs(5);
-
         let started = Instant::now();
-        let error = backend
-            .chown_tree_unowned("/cargo/git", 501, 20)
-            .expect_err("hung child must time out");
-        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        backend.deadline = Some(started + BULK_HANG_CALLER_DEADLINE);
+        let _fixture_guard = BulkFixtureProcessGuard::new(&process_file, None);
+
+        let result = backend.chown_tree_unowned("/cargo/git", 501, 20);
+        // Readiness is mandatory: establish the exact process tree before
+        // evaluating whether the bulk command timed out and was reaped.
+        let pids = bulk_fixture_pids(&process_file);
+        assert_eq!(pids.len(), 2, "leader plus one sleep descendant");
+        let error = result.expect_err("hung child must time out");
+        assert!(
+            pids.iter().all(|pid| !bulk_fixture_pid_alive(*pid)),
+            "owned leader and descendant must both be reaped: {pids:?}"
+        );
+        assert!(
+            started.elapsed() < BULK_HANG_UPPER_BOUND,
+            "caller deadline must bound the 300s fake hang"
+        );
         assert!(
             error.message.contains("timed out") || error.message.contains("deadline"),
             "{}",
             error.message
         );
-        let recorded = std::fs::read_to_string(&pids).unwrap_or_else(|_| {
-            panic!(
-                "fake bulk child never started; error was: {}",
-                error.message
-            )
-        });
-        let pid: i32 = recorded
-            .lines()
-            .next()
-            .expect("pid")
-            .trim()
-            .parse()
-            .expect("pid num");
-        let gone = Instant::now() + std::time::Duration::from_secs(10);
-        while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
-            assert!(Instant::now() < gone, "bulk child {pid} was not reaped");
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        assert_bulk_fixture_processes_gone(&pids);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_expired_caller_deadline_does_not_spawn() {
+        use crate::contract_test_support::lock_test;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-expired-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let policy = bulk_deadline_test_policy(&root);
+        let mut backend = compose_backend(&root, &policy);
+        assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
+        backend.deadline = Some(
+            Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .expect("expired deadline"),
+        );
+
+        let error = backend
+            .chown_tree_unowned("/cargo/git", 501, 20)
+            .expect_err("expired caller deadline must fail closed");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+        assert!(
+            !process_file.exists(),
+            "expired caller deadline must not spawn the fake bulk child"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_reap_oracle_fails_when_timeout_reap_is_disabled() {
+        use crate::contract_test_support::lock_test;
+        use std::panic::AssertUnwindSafe;
+        use std::process::Command;
+
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-reap-negative-control-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, docker) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let child = Command::new(&docker)
+            .args(["compose", "exec", "find", "-execdir"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn private hang with timeout/reap disabled");
+        let fixture_guard = BulkFixtureProcessGuard::new(&process_file, Some(child));
+        let pids = wait_for_bulk_fixture_pids(&process_file);
+        assert_eq!(pids.len(), 2, "leader plus one sleep descendant");
+        assert!(
+            pids.iter().all(|pid| bulk_fixture_pid_alive(*pid)),
+            "no-reap control must keep its exact leader and descendant alive: {pids:?}"
+        );
+
+        let reap_oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            assert_bulk_fixture_processes_gone(&pids);
+        }));
+        assert!(
+            reap_oracle.is_err(),
+            "reap oracle must fail while runtime timeout/reap is disabled"
+        );
+
+        drop(fixture_guard);
+        assert_bulk_fixture_processes_gone(&pids);
     }
 
     /// Host-fs seam: observes current-user access on a private fixture.
