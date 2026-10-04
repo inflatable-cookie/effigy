@@ -569,7 +569,10 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use effigy_containers::{BackendId, EffectiveContainerPolicy};
+    use effigy_containers::{
+        load_workspace_ownership_plan, BackendId, EffectiveContainerPolicy, WorkspaceMountKind,
+        WorkspaceRepairAuthority,
+    };
     use effigy_doctor::{check_id, DoctorRuntimeDiagnostics, DoctorSeverity};
 
     use super::{
@@ -577,6 +580,9 @@ mod tests {
         is_primary_service_running_with_deadline, workspace_ownership_finding,
     };
     use crate::contract_test_support::{lock_test, EnvGuard};
+    use crate::runner::system_command::workspace_permissions::{
+        compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
+    };
     use crate::runner::test_support::effective_container_policy;
 
     #[test]
@@ -684,6 +690,161 @@ mod tests {
         policy.repo_root = root.to_path_buf();
         policy.workspace_user = Some("dev".to_owned());
         policy
+    }
+
+    fn named_rust_volume_policy(root: &Path) -> EffectiveContainerPolicy {
+        let compose = root.join("docker-compose.yml");
+        fs::write(
+            &compose,
+            r#"
+services:
+  workspace:
+    volumes:
+      - cargo-home:/usr/local/cargo
+      - cargo-git:/usr/local/cargo/git
+      - cargo-registry:/usr/local/cargo/registry
+      - target:/workspace/target
+volumes:
+  cargo-home:
+  cargo-git:
+  cargo-registry:
+  target:
+"#,
+        )
+        .expect("write owned Rust volume fixture");
+        let mut policy = policy_for(root);
+        policy.compose_files = vec![compose];
+        policy
+    }
+
+    fn verify_only_rust_volume_policy(root: &Path) -> EffectiveContainerPolicy {
+        let compose = root.join("docker-compose.yml");
+        fs::write(
+            &compose,
+            r#"
+services:
+  workspace:
+    volumes:
+      - ./target:/workspace/target
+      - shared-cargo:/usr/local/cargo/git
+  helper:
+    volumes:
+      - shared-cargo:/usr/local/cargo/git
+volumes:
+  shared-cargo:
+"#,
+        )
+        .expect("write bind and shared volume fixture");
+        let mut policy = policy_for(root);
+        policy.compose_files = vec![compose];
+        policy
+    }
+
+    fn install_fake_ownership_colima(
+        root: &Path,
+        delay_secs: &str,
+        mode: &str,
+        wrong_path: &str,
+        process_group_file: &Path,
+    ) -> PathBuf {
+        let calls_file = root.join("ownership-execs.log");
+        let path_log = root.join("ownership-paths.log");
+        let access_log = root.join("ownership-access.log");
+        let script = format!(
+            r#"#!/bin/sh
+case "$1" in
+  status)
+    printf 'status: Running\n'
+    exit 0
+    ;;
+  nerdctl)
+    case "$*" in
+      *"ps"*) printf 'ps\n' >> '{calls_file}' ;;
+      *effigy-workspace-identity*) printf 'identity\n' >> '{calls_file}' ;;
+      *effigy-workspace-doctor-inspect-batch*) printf 'metadata\n' >> '{calls_file}' ;;
+      *effigy-workspace-doctor-access-batch*) printf 'access\n' >> '{calls_file}' ;;
+      *BUN_INSTALL*) printf 'bun\n' >> '{calls_file}' ;;
+      *) printf 'other\n' >> '{calls_file}' ;;
+    esac
+    case "$*" in
+      *"ps"*)
+        sleep {delay_secs}
+        printf 'demo-stack-1\tUp 2 minutes\t\tdemo-stack\t{root}\tworkspace\t0\n'
+        exit 0
+        ;;
+      *effigy-workspace-identity*)
+        sleep {delay_secs}
+        printf '501\n20\n'
+        exit 0
+        ;;
+      *effigy-workspace-doctor-inspect-batch*)
+        if [ '{mode}' = 'hang' ]; then
+          printf '%s\n' "$$" > '{process_group_file}'
+          sleep 300 &
+          printf '%s\n' "$!" >> '{process_group_file}'
+          wait
+        fi
+        sleep {delay_secs}
+        record=0
+        for arg do
+          if [ "$arg" = 'effigy-workspace-doctor-inspect-batch' ]; then
+            record=1
+            continue
+          fi
+          if [ "$record" -eq 1 ]; then
+            printf '%s\n' "$arg" >> '{path_log}'
+            if [ "$arg" = '{wrong_path}' ]; then
+              printf 'file 0 0 644\n'
+            else
+              printf 'dir 501 20 755\n'
+            fi
+          fi
+        done
+        exit 0
+        ;;
+      *effigy-workspace-doctor-access-batch*)
+        case "$*" in
+          *'501:20'*) printf '501:20\n' >> '{access_log}' ;;
+          *) printf 'wrong-identity\n' >> '{access_log}' ;;
+        esac
+        sleep {delay_secs}
+        record=0
+        for arg do
+          if [ "$arg" = 'effigy-workspace-doctor-access-batch' ]; then
+            record=1
+            continue
+          fi
+          if [ "$record" -eq 1 ]; then
+            if [ "$arg" = '{wrong_path}' ]; then
+              printf 'unwritable\n'
+            else
+              printf 'read-write\n'
+            fi
+          fi
+        done
+        exit 0
+        ;;
+      *BUN_INSTALL*)
+        sleep {delay_secs}
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"#,
+            calls_file = calls_file.display(),
+            path_log = path_log.display(),
+            access_log = access_log.display(),
+            process_group_file = process_group_file.display(),
+            root = root.display(),
+        );
+        install_fake_colima(root, &script)
     }
 
     /// Generous bound for a fixture that hangs for 300s. It must still be far
@@ -901,5 +1062,299 @@ mod tests {
             "timeout must never report clean ownership, got {:?}",
             diagnostics.evidence
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn healthy_named_volume_ownership_batches_probes_within_doctor_budget() {
+        const PER_EXEC_DELAY_MS: u64 = 270;
+        const DOCTOR_BUDGET_MS: u64 = 6_000;
+        // Before batching: four roots plus six nested Rust samples (including
+        // overlapping declarations), each with root and numeric-user execs,
+        // two identity execs, liveness, and Bun detection. This is a lower
+        // bound on launches because it counts liveness only once.
+        const SERIAL_EXEC_LOWER_BOUND: u64 = 24;
+        const BATCHED_EXEC_COUNT: u64 = 10;
+
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-latency");
+        let policy = named_rust_volume_policy(&root);
+        let pgfile = root.join("unused-process-group");
+        let bin = install_fake_ownership_colima(&root, "0.27", "healthy", "", &pgfile);
+        let _env = with_runtime_env(&bin);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        let started = Instant::now();
+
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(started + Duration::from_millis(DOCTOR_BUDGET_MS)),
+            &mut diagnostics,
+        );
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(DOCTOR_BUDGET_MS),
+            "healthy owned Rust volumes must fit the existing doctor budget; elapsed={elapsed:?}, warnings={:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            diagnostics.findings.is_empty(),
+            "healthy named Rust volumes must not produce findings: {:?}",
+            diagnostics.findings
+        );
+        assert!(
+            diagnostics.warnings.is_empty(),
+            "completed probes must not be reported unavailable: {:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            diagnostics
+                .evidence
+                .iter()
+                .any(|line| line.contains("workspace ownership: clean")),
+            "all sampled roots and nested paths must be verified clean: {:?}",
+            diagnostics.evidence
+        );
+
+        let calls = fs::read_to_string(root.join("ownership-execs.log")).expect("exec log");
+        assert_eq!(
+            calls.lines().count(),
+            BATCHED_EXEC_COUNT as usize,
+            "expected batched launch count, calls were {calls:?}"
+        );
+        println!(
+            "ownership latency: {} backend launches in {elapsed:?} ({calls:?})",
+            calls.lines().count()
+        );
+        assert!(
+            Duration::from_millis(PER_EXEC_DELAY_MS * SERIAL_EXEC_LOWER_BOUND)
+                > Duration::from_millis(DOCTOR_BUDGET_MS),
+            "the former serial path count must exceed the same budget"
+        );
+        assert!(
+            Duration::from_millis(PER_EXEC_DELAY_MS * BATCHED_EXEC_COUNT)
+                < Duration::from_millis(DOCTOR_BUDGET_MS),
+            "the batched path count must fit the same budget with controlled backend latency"
+        );
+        let paths = fs::read_to_string(root.join("ownership-paths.log")).expect("sample log");
+        for path in [
+            "/usr/local/cargo",
+            "/usr/local/cargo/registry/src",
+            "/usr/local/cargo/git/checkouts",
+            "/workspace/target",
+            "/workspace/target/debug",
+            "/workspace/target/debug/.cargo-build-lock",
+        ] {
+            assert!(
+                paths.lines().any(|sample| sample == path),
+                "expected exact sampled path {path}; samples were {paths:?}"
+            );
+        }
+        assert_eq!(
+            paths.lines().count(),
+            8,
+            "known paths are sampled once each"
+        );
+        let access = fs::read_to_string(root.join("ownership-access.log")).expect("access log");
+        assert_eq!(
+            access.lines().count(),
+            3,
+            "access checks run in three batches"
+        );
+        assert!(
+            access.lines().all(|identity| identity == "501:20"),
+            "access checks must run as the resolved numeric uid/gid: {access:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn named_volume_batch_keeps_wrong_permissions_as_path_specific_finding() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-wrong-permissions");
+        let bad_path = "/workspace/target/debug/.cargo-build-lock";
+        let policy = named_rust_volume_policy(&root);
+        let bin = install_fake_ownership_colima(
+            &root,
+            "0",
+            "wrong",
+            bad_path,
+            &root.join("unused-process-group"),
+        );
+        let _env = with_runtime_env(&bin);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(Instant::now() + Duration::from_secs(8)),
+            &mut diagnostics,
+        );
+
+        assert_eq!(
+            diagnostics.findings.len(),
+            1,
+            "wrong ownership remains a finding"
+        );
+        assert!(
+            diagnostics.findings[0]
+                .evidence
+                .contains(&format!("{bad_path}\tunwritable-by-uid-501")),
+            "numeric-user failure must identify its exact path: {:?}",
+            diagnostics.findings[0]
+        );
+        assert!(
+            diagnostics.findings[0]
+                .evidence
+                .contains(&format!("{bad_path}\t{bad_path}")),
+            "owner evidence must remain path-specific: {:?}",
+            diagnostics.findings[0]
+        );
+        assert!(
+            fs::read_to_string(root.join("ownership-access.log"))
+                .expect("access log")
+                .lines()
+                .all(|identity| identity == "501:20"),
+            "read/write checks must use the resolved uid and gid"
+        );
+    }
+
+    #[test]
+    fn doctor_batches_keep_bind_and_shared_volumes_verify_only() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-verify-only");
+        let policy = verify_only_rust_volume_policy(&root);
+        let plan = load_workspace_ownership_plan(&policy).expect("ownership plan");
+        let bind_target = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/workspace/target")
+            .expect("bind target");
+        assert_eq!(bind_target.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            bind_target.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
+        let shared_target = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/usr/local/cargo/git")
+            .expect("shared Cargo volume");
+        assert_eq!(shared_target.mount_kind, WorkspaceMountKind::NamedVolume);
+        assert_eq!(
+            shared_target.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
+
+        let bad_path = "/workspace/target/debug/.cargo-build-lock";
+        let bin = install_fake_ownership_colima(
+            &root,
+            "0",
+            "wrong",
+            bad_path,
+            &root.join("unused-process-group"),
+        );
+        let _env = with_runtime_env(&bin);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(Instant::now() + Duration::from_secs(8)),
+            &mut diagnostics,
+        );
+
+        assert_eq!(diagnostics.findings.len(), 1);
+        assert!(diagnostics.findings[0].evidence.contains(bad_path));
+        let samples = fs::read_to_string(root.join("ownership-paths.log")).expect("sample log");
+        assert!(
+            samples
+                .lines()
+                .any(|sample| sample == "/usr/local/cargo/git/checkouts"),
+            "the shared Cargo mount must retain its known nested sample: {samples:?}"
+        );
+        let calls = fs::read_to_string(root.join("ownership-execs.log")).expect("exec log");
+        assert!(
+            calls.lines().all(|kind| kind != "other"),
+            "doctor ownership diagnosis must not launch mutating commands: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn expired_ownership_deadline_does_not_spawn_identity_probe() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-expired");
+        let policy = named_rust_volume_policy(&root);
+        let bin = install_fake_ownership_colima(
+            &root,
+            "0",
+            "healthy",
+            "",
+            &root.join("unused-process-group"),
+        );
+        let _env = with_runtime_env(&bin);
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("expired deadline");
+        let mut backend = compose_backend_with_deadline(&root, &policy, Some(deadline));
+
+        let diagnosis = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+
+        assert_eq!(diagnosis.status, WorkspaceOwnershipProbeStatus::Unavailable);
+        assert!(diagnosis.evidence.is_none());
+        assert!(diagnosis.samples.is_empty());
+        assert!(
+            diagnosis
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("verification incomplete")
+                    && warning.contains("workspace identity probe timed out")),
+            "expired deadline must be reported as incomplete: {:?}",
+            diagnosis.warning
+        );
+        assert!(
+            !root.join("ownership-execs.log").exists(),
+            "an expired ownership deadline must not spawn a backend command"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hung_ownership_batch_is_bounded_and_reaps_its_process_group() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-hung-batch");
+        let policy = named_rust_volume_policy(&root);
+        let process_group = root.join("ownership-process-group");
+        let bin = install_fake_ownership_colima(&root, "0", "hang", "", &process_group);
+        let _env = with_runtime_env(&bin);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        let started = Instant::now();
+
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(started + Duration::from_secs(2)),
+            &mut diagnostics,
+        );
+
+        assert!(started.elapsed() < Duration::from_secs(15));
+        assert!(diagnostics.findings.is_empty());
+        assert!(
+            diagnostics
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("verification incomplete")
+                    && warning.contains("workspace ownership metadata batch")
+                    && warning.contains("/usr/local/cargo")),
+            "a genuine backend hang must be unavailable with its exact batch context: {:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            diagnostics
+                .evidence
+                .iter()
+                .all(|line| !line.contains("clean")),
+            "an incomplete batch must not claim clean ownership"
+        );
+        wait_for_processes_gone(&process_group);
     }
 }

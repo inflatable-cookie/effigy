@@ -605,14 +605,18 @@ For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their
 nested rust lock/cache paths, managed disposable volumes, or
 `$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
-check probes those paths with per-mount inspect subprocesses and stops
-nested probes on a mount after the first sample; it does not walk the
-mount. Every preliminary liveness probe (Colima `status`, the primary
-service Colima/`compose ps` check, `colima ssh` socket preflight) and every
-inspect child converts the same remaining doctor deadline once, just before
-it spawns, so none gets a fresh budget. An expired deadline never spawns a
-probe, and a hung probe is killed and reaped at the deadline. Timeout is
-unavailable, never clean, and a bounded doctor run never restarts Colima.
+check batches metadata reads for the known mount roots and each required
+nested path depth, then checks read/write access as the resolved numeric
+uid/gid for present non-symlink paths. Overlapping declared targets reuse a
+sampled nested path. A sample on a mount stops its later nested probes; it
+does not walk the mount. Every preliminary liveness probe (Colima `status`,
+the primary service Colima/`compose ps` check, `colima ssh` socket preflight)
+and every batch child converts the same remaining doctor deadline once, just
+before it spawns, so none gets a fresh budget. An expired deadline never
+spawns a probe, and a hung probe is killed and reaped at the deadline. An
+unavailable batch discards partial permission samples and reports verification
+incomplete with the sampled paths; it never reports clean or proves a
+permission fault. A bounded doctor run never restarts Colima.
 Stopped, unavailable, and no-workspace-user states are distinct from clean.
 The finding is not a license to chown the checkout.
 
