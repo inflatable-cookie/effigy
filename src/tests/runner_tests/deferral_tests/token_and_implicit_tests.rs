@@ -608,8 +608,8 @@ shared_root = "{}"
         "expected scoped find of unowned vendor contents, got {log}"
     );
     assert!(
-        log.contains(&format!("chown -h 501:20 -- {vendor}")),
-        "expected no-deref chown of isolated vendor as resolved uid:gid, got {log}"
+        log.contains("-execdir chown -h 501:20 -- {} +"),
+        "expected bulk no-deref chown of isolated vendor as resolved uid:gid, got {log}"
     );
     assert!(
         log.contains(&format!(
@@ -621,7 +621,7 @@ shared_root = "{}"
         .find(&format!("mkdir -p -- {vendor}"))
         .expect("mkdir marker");
     let chown_at = log
-        .find(&format!("chown -h 501:20 -- {vendor}"))
+        .find("-execdir chown -h 501:20 -- {} +")
         .expect("chown marker");
     let probe_at = log
         .find(&format!("test -r {vendor} -a -w {vendor}"))

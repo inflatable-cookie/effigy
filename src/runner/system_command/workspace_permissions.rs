@@ -76,6 +76,15 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
     fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError>;
     fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError>;
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError>;
+    /// Repairs ownership of every non-symlink entry under `path` inside one
+    /// bounded backend operation. Never follows symlinks or leaves the
+    /// filesystem of `path`. Runtime round trips must not scale with entries.
+    fn chown_tree_unowned(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError>;
     fn chmod_owner_write(&mut self, path: &str, directory: bool)
         -> Result<(), PermissionPrepError>;
     fn list_unowned(
@@ -356,7 +365,37 @@ fn repair_owned_target(
                 })?;
         }
         WorkspacePermissionMode::Recursive => {
-            let mut unowned = backend
+            backend
+                .chown_tree_unowned(&target.path, identity.uid, identity.gid)
+                .map_err(|error| {
+                    fail_with_identity(
+                        identity,
+                        target,
+                        context,
+                        format!(
+                            "failed to repair ownership under `{}`: {}",
+                            target.path, error.message
+                        ),
+                    )
+                })?;
+            // The scope must still be the same plain directory after the bulk
+            // operation; a swapped symlink or file means the repair is void.
+            let after = backend.inspect(&target.path)?;
+            if matches!(
+                after.presence,
+                PathPresence::Symlink | PathPresence::Missing
+            ) {
+                return Err(fail_with_identity(
+                    identity,
+                    target,
+                    context,
+                    format!(
+                        "`{}` changed identity during ownership repair; refusing to continue",
+                        target.path
+                    ),
+                ));
+            }
+            let remaining = backend
                 .list_unowned(&target.path, identity.uid, identity.gid)
                 .map_err(|error| {
                     fail_with_identity(
@@ -364,41 +403,25 @@ fn repair_owned_target(
                         target,
                         context,
                         format!(
-                            "failed to inspect ownership under `{}`: {}",
+                            "failed to verify ownership under `{}`: {}",
                             target.path, error.message
                         ),
                     )
                 })?;
-            if unowned.is_empty()
-                && (inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid))
-            {
-                unowned.push(target.path.clone());
-            }
-            for path in unowned {
-                let nested = backend.inspect(&path).map_err(|error| {
-                    fail_with_identity(
-                        identity,
-                        target,
-                        context,
-                        format!(
-                            "failed to inspect `{}` before chown: {}",
-                            path, error.message
-                        ),
-                    )
-                })?;
-                if nested.presence == PathPresence::Symlink {
-                    continue;
-                }
-                backend
-                    .chown(&path, identity.uid, identity.gid)
-                    .map_err(|error| {
-                        fail_with_identity(
-                            identity,
-                            target,
-                            context,
-                            format!("failed to chown `{}`: {}", path, error.message),
-                        )
-                    })?;
+            if let Some(first) = remaining.first() {
+                return Err(fail_with_identity(
+                    identity,
+                    target,
+                    context,
+                    format!(
+                        "{} path(s) under `{}` remain not owned by uid={} gid={} after repair (first: `{}`)",
+                        remaining.len(),
+                        target.path,
+                        identity.uid,
+                        identity.gid,
+                        first
+                    ),
+                ));
             }
         }
     }
@@ -810,8 +833,14 @@ pub(in crate::runner) struct ComposeAccessBackend<'a> {
     pub repo_root: &'a Path,
     pub policy: &'a EffectiveContainerPolicy,
     pub deadline: Option<Instant>,
+    /// Upper bound for the single bulk chown child, applied even when the
+    /// caller supplies no overall deadline.
+    pub bulk_timeout: std::time::Duration,
 }
 
+/// A volume of tens of thousands of entries repairs in seconds; this only
+/// bounds a hung or pathological child.
+const BULK_CHOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 const DOCTOR_METADATA_BATCH_SCRIPT: &str = "for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ -d \"$path\" ]; then\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'dir %s\\n' \"$metadata\"\n  else\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'file %s\\n' \"$metadata\"\n  fi\ndone";
 const DOCTOR_ACCESS_BATCH_SCRIPT: &str = "for path do\n  if [ -r \"$path\" ] && [ -w \"$path\" ]; then\n    printf 'read-write\\n'\n  else\n    printf 'unwritable\\n'\n  fi\ndone";
 
@@ -880,6 +909,25 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError> {
         let spec = format!("{uid}:{gid}");
         self.exec_root(&["chown", "-h", &spec, "--", path], "workspace chown")?;
+        Ok(())
+    }
+
+    fn chown_tree_unowned(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError> {
+        let argv = bulk_chown_argv(path, uid, gid);
+        let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let bulk_deadline = Instant::now() + self.bulk_timeout;
+        let deadline = Some(match self.deadline {
+            Some(outer) => outer.min(bulk_deadline),
+            None => bulk_deadline,
+        });
+        let output =
+            self.exec_as_user_until("0", &argv_refs, "workspace bulk chown", false, deadline)?;
+        let _ = output;
         Ok(())
     }
 
@@ -1076,6 +1124,17 @@ impl ComposeAccessBackend<'_> {
         label: &str,
         allow_failure: bool,
     ) -> Result<ExecOutput, PermissionPrepError> {
+        self.exec_as_user_until(user, argv, label, allow_failure, self.deadline)
+    }
+
+    fn exec_as_user_until(
+        &self,
+        user: &str,
+        argv: &[&str],
+        label: &str,
+        allow_failure: bool,
+        deadline: Option<Instant>,
+    ) -> Result<ExecOutput, PermissionPrepError> {
         let service = self.policy.primary_service.as_str();
         let mut args = effigy_containers::compose::compose_args(
             self.policy,
@@ -1094,7 +1153,7 @@ impl ComposeAccessBackend<'_> {
             &args,
             true,
             label,
-            self.deadline,
+            deadline,
         )
         .map_err(|error| PermissionPrepError::new(format!("{label}: {error}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1112,6 +1171,23 @@ impl ComposeAccessBackend<'_> {
             status_success: success,
         })
     }
+}
+
+/// Argument array for the single bulk repair exec. `-execdir` makes `chown` run
+/// from a directory fd held by `find` on `./name`, so a path component swapped
+/// for a symlink after traversal cannot redirect ownership changes outside the
+/// volume. Requires GNU findutils; an image without `-execdir` fails not-ready.
+fn bulk_chown_argv(path: &str, uid: u32, gid: u32) -> Vec<String> {
+    let spec = format!("{uid}:{gid}");
+    let uid = uid.to_string();
+    let gid = gid.to_string();
+    [
+        "find", "-P", path, "-xdev", "!", "-type", "l", "!", "(", "-user", &uid, "-a", "-group",
+        &gid, ")", "-execdir", "chown", "-h", &spec, "--", "{}", "+",
+    ]
+    .iter()
+    .map(|part| (*part).to_owned())
+    .collect()
 }
 
 fn parse_id_output(raw: &str) -> Result<u32, PermissionPrepError> {
@@ -1286,6 +1362,14 @@ mod memory_backend {
         pub created_locks: Vec<String>,
         pub inspect_log: RefCell<Vec<String>>,
         pub list_unowned_calls: Cell<usize>,
+        /// Every trait call is one simulated runtime round trip.
+        pub exec_calls: Cell<usize>,
+        pub bulk_calls: usize,
+        pub bulk_fail: Option<String>,
+        /// Fails the bulk operation at this path after partial progress.
+        pub bulk_fail_at: Option<String>,
+        /// Replaces the bulk scope with a symlink mid-operation.
+        pub bulk_swap_scope_to_symlink: bool,
         protected: BTreeSet<String>,
         foreign: BTreeSet<String>,
         read_only: BTreeSet<String>,
@@ -1312,6 +1396,11 @@ mod memory_backend {
                 created_locks: Vec::new(),
                 inspect_log: RefCell::new(Vec::new()),
                 list_unowned_calls: Cell::new(0),
+                exec_calls: Cell::new(0),
+                bulk_calls: 0,
+                bulk_fail: None,
+                bulk_fail_at: None,
+                bulk_swap_scope_to_symlink: false,
                 protected: BTreeSet::new(),
                 foreign: BTreeSet::new(),
                 read_only: BTreeSet::new(),
@@ -1510,6 +1599,7 @@ mod memory_backend {
 
         fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError> {
             self.inspect_log.borrow_mut().push(path.to_owned());
+            self.exec_calls.set(self.exec_calls.get() + 1);
             let Some(node) = self.node(path) else {
                 return Ok(PathInspection {
                     presence: PathPresence::Missing,
@@ -1548,7 +1638,42 @@ mod memory_backend {
             }
         }
 
+        fn chown_tree_unowned(
+            &mut self,
+            path: &str,
+            uid: u32,
+            gid: u32,
+        ) -> Result<(), PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            self.bulk_calls += 1;
+            if let Some(message) = self.bulk_fail.clone() {
+                return Err(PermissionPrepError::new(message));
+            }
+            let mut targets = Vec::new();
+            collect_unowned(self.node(path), path, uid, gid, &mut targets);
+            for target in &targets {
+                self.refuse_mutation(target)?;
+            }
+            for target in &targets {
+                if self.bulk_fail_at.as_deref() == Some(target.as_str()) {
+                    return Err(PermissionPrepError::new(format!(
+                        "workspace bulk chown failed: chown: cannot access '{target}': Permission denied"
+                    )));
+                }
+                if let Some(node) = self.node_mut(target) {
+                    node.uid = uid;
+                    node.gid = gid;
+                }
+                self.chown_log.push(target.clone());
+            }
+            if self.bulk_swap_scope_to_symlink {
+                self.add_symlink(path, "/etc");
+            }
+            Ok(())
+        }
+
         fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
             self.refuse_mutation(path)?;
             let node = self.node_mut(path).ok_or_else(|| {
                 PermissionPrepError::new(format!("chown target `{path}` is missing"))
@@ -1586,6 +1711,7 @@ mod memory_backend {
         ) -> Result<Vec<String>, PermissionPrepError> {
             self.list_unowned_calls
                 .set(self.list_unowned_calls.get() + 1);
+            self.exec_calls.set(self.exec_calls.get() + 1);
             let mut out = Vec::new();
             collect_unowned(self.node(path), path, uid, gid, &mut out);
             Ok(out)
@@ -1712,6 +1838,7 @@ pub(in crate::runner) fn compose_backend_with_deadline<'a>(
         repo_root,
         policy,
         deadline,
+        bulk_timeout: BULK_CHOWN_TIMEOUT,
     }
 }
 
@@ -2210,6 +2337,881 @@ services:
         );
     }
 
+    // ---- bulk ownership repair (papercut dab293be) ----
+
+    const BULK_VOLUMES: [(&str, usize, WorkspaceRustCacheKind); 3] = [
+        (
+            "/cargo/registry",
+            31497,
+            WorkspaceRustCacheKind::CargoRegistry,
+        ),
+        (
+            "/workspace/target",
+            9709,
+            WorkspaceRustCacheKind::RustTarget,
+        ),
+        ("/cargo/git", 3133, WorkspaceRustCacheKind::CargoGit),
+    ];
+    const EXEC_LATENCY_MS: u64 = 25;
+
+    fn bulk_fixture(
+        scale: usize,
+        owner: (u32, u32),
+    ) -> (MemoryAccessBackend, WorkspaceOwnershipPlan) {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        let mut targets = Vec::new();
+        for (path, entries, rust) in BULK_VOLUMES {
+            backend.add_dir(path, owner.0, owner.1, 0o755);
+            let nested = match rust {
+                WorkspaceRustCacheKind::CargoRegistry => format!("{path}/src"),
+                WorkspaceRustCacheKind::RustTarget => format!("{path}/debug"),
+                _ => format!("{path}/checkouts"),
+            };
+            backend.add_dir(&nested, owner.0, owner.1, 0o755);
+            for index in 0..(entries / scale).saturating_sub(2) {
+                backend.add_file(
+                    &format!("{nested}/d{}/f{index}", index % 50),
+                    owner.0,
+                    owner.1,
+                    0o644,
+                );
+            }
+            backend.add_file(
+                &format!("{path}/debug/.cargo-build-lock"),
+                owner.0,
+                owner.1,
+                0o644,
+            );
+            targets.push(owned_target(path, Some(rust)));
+        }
+        (backend, WorkspaceOwnershipPlan { targets })
+    }
+
+    /// The pre-fix algorithm: one listing, then inspect+chown round trips per path.
+    fn legacy_per_path_repair(backend: &mut MemoryAccessBackend, path: &str, uid: u32, gid: u32) {
+        for entry in backend.list_unowned(path, uid, gid).expect("list") {
+            let nested = backend.inspect(&entry).expect("inspect");
+            if nested.presence == PathPresence::Symlink {
+                continue;
+            }
+            backend.chown(&entry, uid, gid).expect("chown");
+        }
+    }
+
+    #[test]
+    fn bulk_repair_uses_o_volumes_round_trips_not_o_files() {
+        let (mut legacy, _) = bulk_fixture(1, (0, 0));
+        let entries: usize = BULK_VOLUMES.iter().map(|(_, n, _)| *n).sum();
+        assert!(entries >= 44000);
+        for (path, _, _) in BULK_VOLUMES {
+            legacy_per_path_repair(&mut legacy, path, 501, 20);
+        }
+        let legacy_calls = legacy.exec_calls.get();
+
+        let (mut backend, plan) = bulk_fixture(1, (0, 0));
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+        let bulk_calls = backend.exec_calls.get();
+
+        let legacy_ms = legacy_calls as u64 * EXEC_LATENCY_MS;
+        let bulk_ms = bulk_calls as u64 * EXEC_LATENCY_MS;
+        println!(
+            "bulk-ownership throughput: legacy calls={legacy_calls} (~{legacy_ms}ms @ {EXEC_LATENCY_MS}ms/exec) \
+             bulk calls={bulk_calls} (~{bulk_ms}ms) bulk_ops={}",
+            backend.bulk_calls
+        );
+        assert!(
+            legacy_calls > 80000,
+            "legacy scales per file: {legacy_calls}"
+        );
+        assert_eq!(backend.bulk_calls, 3);
+        assert!(bulk_calls < 60, "bulk must be O(volumes): {bulk_calls}");
+        assert!(backend
+            .list_unowned("/cargo/registry", 501, 20)
+            .expect("list")
+            .is_empty());
+    }
+
+    #[test]
+    fn bulk_repair_gives_numeric_user_access_and_preserves_contents() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 0, 0, 0o644);
+        backend.add_dir("/cargo/git/checkouts/repo", 1000, 1000, 0o755);
+        backend.add_file("/cargo/git/checkouts/repo/a.rs", 1000, 1000, 0o644);
+        backend.add_dir("/cargo/registry/src/crate", 501, 20, 0o755);
+        let before = backend.mode_of("/cargo/git/checkouts/repo/a.rs");
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+
+        let user = identity("dev", 501, 20);
+        for path in [
+            "/workspace/target/debug",
+            "/workspace/target/debug/.cargo-build-lock",
+            "/cargo/git/checkouts",
+            "/cargo/git/checkouts/repo/a.rs",
+            "/cargo/registry/src",
+        ] {
+            assert_eq!(backend.owner_of(path), Some((501, 20)), "{path}");
+            assert!(backend.user_can_read_write(&user, path).expect("access"));
+        }
+        for dir in [
+            "/workspace/target/debug",
+            "/cargo/git/checkouts",
+            "/cargo/registry/src",
+        ] {
+            backend.user_create_lock(&user, dir).expect("create lock");
+        }
+        assert_eq!(backend.mode_of("/cargo/git/checkouts/repo/a.rs"), before);
+        assert!(backend.chmod_log.is_empty(), "no chmod widening");
+    }
+
+    #[test]
+    fn bulk_repair_is_idempotent_on_reused_volumes() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("first");
+        let first = backend.chown_log.len();
+        assert!(first > 0);
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("second");
+        assert_eq!(backend.chown_log.len(), first, "second run must not chown");
+    }
+
+    #[test]
+    fn bulk_repair_skips_symlinks_inside_scope() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.add_symlink("/cargo/registry/src/escape", "/etc");
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+        assert_eq!(backend.owner_of("/cargo/registry/src/escape"), Some((0, 0)));
+        assert!(!backend
+            .chown_log
+            .iter()
+            .any(|path| path.ends_with("escape")));
+    }
+
+    #[test]
+    fn bulk_failure_is_not_ready_and_mutates_nothing() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.bulk_fail = Some("workspace bulk chown timed out".to_owned());
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must fail");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn bulk_deep_path_failure_after_partial_progress_names_path_and_stops() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        let deep = "/cargo/git/checkouts/formualizer-f6140fface89ddae/2a8303d/docs-site/content/docs/let-lambda-and-callables.mdx";
+        backend.add_file(deep, 0, 0, 0o640);
+        backend.bulk_fail_at = Some(deep.to_owned());
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must be not-ready");
+        assert!(error.message.contains(deep), "{}", error.message);
+        assert!(
+            error.message.contains("Permission denied"),
+            "{}",
+            error.message
+        );
+        // Partial progress happened, contents untouched, nothing after the failing volume ran.
+        assert!(!backend.chown_log.is_empty());
+        assert_eq!(backend.owner_of(deep), Some((0, 0)));
+        assert_eq!(backend.mode_of(deep), Some(0o640));
+        assert!(!backend.chown_log.iter().any(|path| path == deep));
+    }
+
+    #[test]
+    fn bulk_scope_swapped_to_symlink_mid_operation_is_not_ready() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.bulk_swap_scope_to_symlink = true;
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must fail");
+        assert!(
+            error.message.contains("changed identity"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn bulk_foreign_path_in_scope_refuses_without_partial_mutation() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.mark_foreign("/workspace/target/debug/d1/f1");
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("foreign must fail");
+        assert!(error.message.contains("foreign"), "{}", error.message);
+        assert!(
+            backend.chown_log.is_empty()
+                || !backend
+                    .chown_log
+                    .iter()
+                    .any(|p| p == "/workspace/target/debug/d1/f1")
+        );
+        assert_eq!(
+            backend.owner_of("/workspace/target/debug/d1/f1"),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn bulk_leaves_bind_shared_and_read_only_scopes_alone() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 0, 0, 0o755);
+        backend.add_file("/workspace/target/debug/x", 0, 0, 0o644);
+        let mut shared = owned_target(
+            "/workspace/target",
+            Some(WorkspaceRustCacheKind::RustTarget),
+        );
+        shared.repair_authority = WorkspaceRepairAuthority::VerifyOnly;
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![shared],
+        };
+        let _ = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend);
+        assert_eq!(backend.bulk_calls, 0);
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn compose_bulk_chown_honors_expired_deadline() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        let deadline = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("deadline");
+        let mut backend = compose_backend_with_deadline(Path::new("/tmp"), &policy, Some(deadline));
+        let error = backend
+            .chown_tree_unowned("/cargo/registry", 501, 20)
+            .expect_err("expired");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+    }
+
+    #[test]
+    fn bulk_argv_is_a_single_quoted_array_using_fd_relative_execdir() {
+        let argv = bulk_chown_argv("/cargo/git", 501, 20);
+        assert!(argv.iter().any(|part| part == "-execdir"));
+        assert!(!argv.iter().any(|part| part == "-exec"));
+        assert_eq!(argv.last().map(String::as_str), Some("+"));
+        assert!(argv.iter().any(|part| part == "-P"));
+        assert!(argv.iter().any(|part| part == "-xdev"));
+        assert!(argv.iter().any(|part| part == "501:20"));
+    }
+
+    #[cfg(unix)]
+    fn run_swap_race(argv: &[String]) -> (bool, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-swap-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let vol = root.join("vol");
+        let outside = root.join("outside");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(vol.join("a")).expect("vol");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(vol.join("a/f"), b"inside").expect("f");
+        std::fs::write(outside.join("f"), b"outside").expect("of");
+        let log = root.join("escaped.log");
+        // Fake chown: swaps the intermediate dir for a symlink once, then
+        // reports where its path argument physically resolves. No uid change.
+        let script = format!(
+            "#!/bin/sh\nshift; shift; shift\nif [ ! -e '{flag}' ]; then : > '{flag}'; mv '{vol}/a' '{vol}/a.real'; ln -s '{outside}' '{vol}/a'; fi\nfor p in \"$@\"; do\n  [ \"$p\" = -- ] && continue\n  d=$(cd \"$(dirname \"$p\")\" 2>/dev/null && pwd -P)\n  case \"$d\" in '{outside}'*) printf 'ESCAPED %s\\n' \"$d/$(basename \"$p\")\" >> '{log}';; esac\ndone\n",
+            flag = root.join("swapped").display(),
+            vol = vol.display(),
+            outside = outside.display(),
+            log = log.display(),
+        );
+        let chown = bin.join("chown");
+        std::fs::write(&chown, script).expect("chown");
+        std::fs::set_permissions(&chown, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let argv: Vec<String> = argv
+            .iter()
+            .map(|part| part.replace("/cargo/git", &vol.display().to_string()))
+            .collect();
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .env("PATH", path)
+            .output()
+            .expect("find");
+        let note = String::from_utf8_lossy(&out.stderr).into_owned();
+        (
+            std::fs::read_to_string(&log).is_ok_and(|text| text.contains("ESCAPED")),
+            note,
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_intermediate_symlink_swap_cannot_redirect_bulk_chown_outside_volume() {
+        let argv = bulk_chown_argv("/cargo/git", 424242, 424243);
+        let (escaped, note) = run_swap_race(&argv);
+        assert!(!escaped, "bulk chown resolved outside the volume: {note}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_negative_control_path_based_exec_is_redirected_by_the_same_swap() {
+        let mut legacy = bulk_chown_argv("/cargo/git", 424242, 424243);
+        for part in legacy.iter_mut() {
+            if part == "-execdir" {
+                *part = "-exec".to_owned();
+            }
+        }
+        let (escaped, _) = run_swap_race(&legacy);
+        assert!(escaped, "control must reproduce the original escape");
+    }
+
+    /// Real filesystem, real `find`: 44339 entries over three volumes. A fake
+    /// `chown` records every path it is handed (no uid change is possible
+    /// without root) so we can prove traversal reaches every entry in all three
+    /// volumes in few batched invocations while contents stay byte-identical.
+    #[cfg(unix)]
+    #[test]
+    fn bulk_real_find_reaches_all_44339_entries_in_batches_and_preserves_contents() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-real-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let log = root.join("chown.log");
+        let calls = root.join("chown.calls");
+        let script = format!(
+            "#!/bin/sh\nshift; shift; shift\necho x >> '{calls}'\nfor p in \"$@\"; do printf '%s/%s\\n' \"$(pwd -P)\" \"${{p#./}}\" >> '{log}'; done\n",
+            calls = calls.display(),
+            log = log.display()
+        );
+        let chown = bin.join("chown");
+        std::fs::write(&chown, script).expect("chown");
+        std::fs::set_permissions(&chown, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        // BSD/bfs `find -execdir +` spawns once per entry, so the full-size run
+        // is only affordable (and batching only meaningful) with GNU findutils,
+        // the canonical workspace image's find. Elsewhere run a 1/40 scale
+        // coverage-only fixture.
+        let gnu = std::process::Command::new("find")
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("GNU findutils"));
+        let scale = if gnu { 1 } else { 40 };
+        let mut expected = 0usize;
+        let mut manifest = Vec::new();
+        let mut volumes = Vec::new();
+        for (name, full_entries, _) in BULK_VOLUMES {
+            let entries = full_entries / scale;
+            let vol = root.join(name.trim_start_matches('/').replace('/', "_"));
+            let dirs = 40usize;
+            std::fs::create_dir_all(&vol).expect("vol");
+            for d in 0..dirs {
+                std::fs::create_dir_all(vol.join(format!("d{d}"))).expect("dir");
+            }
+            for f in 0..(entries - 1 - dirs) {
+                let path = vol.join(format!("d{}/f{f}", f % dirs));
+                std::fs::write(&path, format!("{name}-{f}")).expect("file");
+                manifest.push((path, format!("{name}-{f}")));
+            }
+            expected += entries;
+            volumes.push(vol);
+        }
+        if gnu {
+            assert_eq!(expected, 44339);
+        }
+
+        let path_env = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        for vol in &volumes {
+            let argv = bulk_chown_argv(&vol.display().to_string(), 424242, 424243);
+            let out = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .env("PATH", &path_env)
+                .output()
+                .expect("find");
+            assert!(
+                out.status.success(),
+                "find failed on {}: {}",
+                vol.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let handed: std::collections::BTreeSet<String> = std::fs::read_to_string(&log)
+            .expect("log")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let invocations = std::fs::read_to_string(&calls)
+            .expect("calls")
+            .lines()
+            .count();
+        println!(
+            "real find (gnu={gnu}): {} unique entries handed to chown in {invocations} invocations",
+            handed.len()
+        );
+        // Volume roots are handed over as `<parent>/<root>`; every entry exactly once.
+        assert_eq!(handed.len(), expected);
+        if gnu {
+            assert!(invocations < expected / 50, "batched: {invocations}");
+        }
+        for (path, body) in &manifest {
+            assert_eq!(&std::fs::read_to_string(path).expect("read"), body);
+        }
+    }
+
+    // ---- full-size GNU + native-chown acceptance in a private container ----
+    //
+    // Runs only inside a disposable container (no host mounts, no network) on
+    // the already-running `effigy` Colima profile from an already-local image.
+    // Marked `#[ignore]` so hosted CI (which has no Colima) does not run it; the
+    // `test:workspace:rust-ownership:bulk` selector runs it with `--ignored`
+    // and it FAILS, never skips, when the runtime or image is unavailable.
+
+    const GNU_ACCEPT_IMAGE: &str = "soundcheck-linux-arm-builder:local";
+    const GNU_ACCEPT_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+
+    /// Installs a counting wrapper for `chown` ahead of /usr/bin on PATH. It
+    /// always ends in the real native chown; marker files in /tmp/ctl add a
+    /// one-shot intermediate-directory swap or a failure on a deep path.
+    const GNU_ACCEPT_SETUP: &str = r#"set -eu
+mkdir -p /tmp/ctl /tmp/outside
+cat > /usr/local/bin/chown <<'WRAP'
+#!/bin/sh
+echo x >> /tmp/ctl/calls
+if [ -e /tmp/ctl/swap ] && [ ! -e /tmp/ctl/swapped ]; then
+  : > /tmp/ctl/swapped
+  mv /tmp/race/vol/a /tmp/race/vol/a.real
+  ln -s /tmp/race/outside /tmp/race/vol/a
+fi
+if [ -e /tmp/ctl/fail ]; then
+  for p in "$@"; do
+    case "$p" in *let-lambda-and-callables.mdx)
+      echo "chown: cannot access '$(pwd)/$p': Permission denied" >&2
+      exit 1;;
+    esac
+  done
+fi
+exec /usr/bin/chown "$@"
+WRAP
+chmod 755 /usr/local/bin/chown
+printf secret > /tmp/outside/secret
+/usr/bin/chown 0:12 /tmp/outside/secret
+"#;
+
+    /// args: root base total deep(0/1) link(0/1)
+    const GNU_ACCEPT_MAKE: &str = r#"set -eu
+root=$1; base=$2; total=$3; deep=$4; link=$5
+dirs=40
+mkdir -p "$root/$base"
+i=0; while [ $i -lt $dirs ]; do mkdir "$root/$base/d$i"; i=$((i+1)); done
+if [ "$deep" = 1 ]; then
+  mkdir -p "$root/$base/formualizer-f6140fface89ddae/2a8303d/docs-site/content/docs"
+  printf deep > "$root/$base/formualizer-f6140fface89ddae/2a8303d/docs-site/content/docs/let-lambda-and-callables.mdx"
+fi
+if [ "$base" = debug ]; then printf lock > "$root/debug/.cargo-build-lock"; fi
+if [ "$link" = 1 ]; then ln -s /tmp/outside/secret "$root/$base/escape-link"; fi
+have=$(find -P "$root" | wc -l)
+f=0; need=$((total-have))
+while [ $f -lt $need ]; do
+  printf 'content-%s-%s' "$root" "$f" > "$root/$base/d$((f%dirs))/f$f"; f=$((f+1))
+done
+# mixed owners: d0-d9 already 501:20, d10-d19 foreign 1000:1000, rest root
+i=0; while [ $i -lt 10 ]; do /usr/bin/chown -R 501:20 "$root/$base/d$i"; i=$((i+1)); done
+while [ $i -lt 20 ]; do /usr/bin/chown -R 1000:1000 "$root/$base/d$i"; i=$((i+1)); done
+"#;
+
+    /// args: root uid gid -> entries / content manifest hash / not-owned count
+    const GNU_ACCEPT_SNAP: &str = r#"set -eu
+root=$1; uid=$2; gid=$3
+echo "entries=$(find -P "$root" -xdev | wc -l)"
+echo "hash=$( (find -P "$root" -xdev -type f -exec sha256sum {} + ; find -P "$root" -xdev -type l -printf '%p -> %l\n') | sort | sha256sum | cut -d' ' -f1)"
+echo "unowned=$(find -P "$root" -xdev ! -type l ! \( -user "$uid" -a -group "$gid" \) | wc -l)"
+"#;
+
+    /// args: uid gid dir... -> read/write/create-and-remove as the numeric user
+    const GNU_ACCEPT_ACCESS: &str = r#"u=$1; g=$2; shift 2
+exec setpriv --reuid "$u" --regid "$g" --clear-groups sh -c 'for d; do
+  test -r "$d" && test -w "$d" || exit 1
+  : > "$d/.effigy-write-probe" && rm -f "$d/.effigy-write-probe" || exit 2
+done' sh "$@""#;
+
+    #[cfg(unix)]
+    struct AcceptContainer {
+        name: String,
+    }
+
+    #[cfg(unix)]
+    impl Drop for AcceptContainer {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("colima")
+                .args(["-p", "effigy", "nerdctl", "--", "rm", "-f", &self.name])
+                .output();
+        }
+    }
+
+    #[cfg(unix)]
+    fn nerd(args: &[&str]) -> (bool, String, String, std::time::Duration) {
+        let dir = tempfile::tempdir().expect("tmp");
+        let out_path = dir.path().join("out");
+        let err_path = dir.path().join("err");
+        let mut child = std::process::Command::new("colima")
+            .args(["-p", "effigy", "nerdctl", "--"])
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&out_path).expect("out"))
+            .stderr(std::fs::File::create(&err_path).expect("err"))
+            .spawn()
+            .unwrap_or_else(|error| panic!("BLOCKER: cannot run colima nerdctl: {error}"));
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("wait") {
+                break status;
+            }
+            if started.elapsed() > GNU_ACCEPT_STEP_TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("acceptance step timed out and its child was reaped: {args:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        (
+            status.success(),
+            std::fs::read_to_string(&out_path).unwrap_or_default(),
+            std::fs::read_to_string(&err_path).unwrap_or_default(),
+            started.elapsed(),
+        )
+    }
+
+    #[cfg(unix)]
+    fn kv(text: &str, key: &str) -> String {
+        text.lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("missing {key} in {text:?}"))
+            .to_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "private container acceptance; run via test:workspace:rust-ownership:bulk"]
+    fn bulk_gnu_container_full_acceptance() {
+        let name = format!(
+            "effigy-bulk-accept-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let (ok, _, err, _) = nerd(&[
+            "run",
+            "-d",
+            "--network",
+            "none",
+            "--name",
+            &name,
+            GNU_ACCEPT_IMAGE,
+            "sleep",
+            "3000",
+        ]);
+        assert!(ok, "BLOCKER: cannot start private fixture container: {err}");
+        let _guard = AcceptContainer { name: name.clone() };
+        let exec = |argv: &[&str]| {
+            let mut args = vec!["exec", name.as_str()];
+            args.extend_from_slice(argv);
+            nerd(&args)
+        };
+        let sh = |script: &str, extra: &[&str]| {
+            let mut argv = vec!["sh", "-c", script, "sh"];
+            argv.extend_from_slice(extra);
+            let (ok, out, err, took) = exec(&argv);
+            assert!(ok, "script failed: {err}\n{out}");
+            (out, took)
+        };
+
+        let find_version = sh("find --version | head -1", &[]).0;
+        assert!(find_version.contains("GNU findutils"), "{find_version}");
+        sh(GNU_ACCEPT_SETUP, &[]);
+
+        let vols: [(&str, &str, usize, &str, &str); 3] = [
+            ("/tmp/fx/cargo_registry", "src", 31497, "0", "1"),
+            ("/tmp/fx/target", "debug", 9709, "0", "0"),
+            ("/tmp/fx/cargo_git", "checkouts", 3133, "1", "0"),
+        ];
+        let build_started = Instant::now();
+        for (root, base, total, deep, link) in vols {
+            sh(
+                GNU_ACCEPT_MAKE,
+                &[root, base, &total.to_string(), deep, link],
+            );
+        }
+        println!("fixture built in {:?}", build_started.elapsed());
+
+        let snap = |root: &str, uid: u32, gid: u32| {
+            let out = sh(GNU_ACCEPT_SNAP, &[root, &uid.to_string(), &gid.to_string()]).0;
+            (
+                kv(&out, "entries").parse::<usize>().expect("entries"),
+                kv(&out, "hash"),
+                kv(&out, "unowned").parse::<usize>().expect("unowned"),
+            )
+        };
+        let reset_calls = || {
+            sh(": > /tmp/ctl/calls", &[]);
+        };
+        let calls = || -> usize {
+            sh("wc -l < /tmp/ctl/calls", &[])
+                .0
+                .trim()
+                .parse()
+                .expect("calls")
+        };
+
+        let before: Vec<_> = vols.iter().map(|v| snap(v.0, 501, 20)).collect();
+        let total_entries: usize = before.iter().map(|b| b.0).sum();
+        assert_eq!(total_entries, 44339, "fixture entry count");
+        for (vol, b) in vols.iter().zip(&before) {
+            assert_eq!(b.0, vol.2);
+            assert!(b.2 > 0, "{} must start with unowned entries", vol.0);
+        }
+        let mixed = sh(
+            "find -P /tmp/fx -xdev ! -type l -printf '%U:%G\\n' | sort | uniq -c",
+            &[],
+        )
+        .0;
+        println!("owners before:\n{mixed}");
+        assert!(mixed.contains("0:0") && mixed.contains("1000:1000") && mixed.contains("501:20"));
+
+        // --- pass A: repair to 501:20, production argv, one exec per volume.
+        let run_bulk = |uid: u32, gid: u32| {
+            reset_calls();
+            let mut elapsed = std::time::Duration::ZERO;
+            let mut execs = 0usize;
+            for vol in &vols {
+                let argv = bulk_chown_argv(vol.0, uid, gid);
+                let mut full = vec!["exec", name.as_str()];
+                full.extend(argv.iter().map(String::as_str));
+                let (ok, out, err, took) = nerd(&full);
+                assert!(ok, "bulk find failed on {}: {err}\n{out}", vol.0);
+                elapsed += took;
+                execs += 1;
+            }
+            (execs, elapsed, calls())
+        };
+        let (execs_a, took_a, chowns_a) = run_bulk(501, 20);
+        println!(
+            "bulk 501:20: runtime execs={execs_a} chown invocations={chowns_a} real elapsed={took_a:?} \
+             (legacy model: {} execs ~{}ms @25ms/exec)",
+            2 * total_entries,
+            2 * total_entries as u64 * 25
+        );
+        assert_eq!(execs_a, 3);
+        assert!(chowns_a < total_entries / 50, "GNU batching: {chowns_a}");
+        for (vol, b) in vols.iter().zip(&before) {
+            let after = snap(vol.0, 501, 20);
+            assert_eq!(after.0, b.0, "entry count preserved {}", vol.0);
+            assert_eq!(after.1, b.1, "content manifest preserved {}", vol.0);
+            assert_eq!(after.2, 0, "all entries owned 501:20 in {}", vol.0);
+        }
+        // Numeric 501:20 can read/write/create in the Rust-critical dirs.
+        let dirs = [
+            "/tmp/fx/target/debug",
+            "/tmp/fx/cargo_git/checkouts",
+            "/tmp/fx/cargo_git/checkouts/formualizer-f6140fface89ddae/2a8303d/docs-site/content/docs",
+            "/tmp/fx/cargo_registry/src",
+            "/tmp/fx/cargo_registry/src/d12",
+        ];
+        let mut access = vec!["sh", "-c", GNU_ACCEPT_ACCESS, "sh", "501", "20"];
+        access.extend(dirs);
+        let (ok, _, err, _) = exec(&access);
+        assert!(ok, "501:20 access/create failed: {err}");
+        let (ok, _, _, _) = exec(&[
+            "setpriv",
+            "--reuid",
+            "501",
+            "--regid",
+            "20",
+            "--clear-groups",
+            "sh",
+            "-c",
+            ": >> /tmp/fx/target/debug/.cargo-build-lock",
+        ]);
+        assert!(ok, "501:20 cannot write build lock");
+        // Ownership is real, not world-writable: another uid cannot write.
+        let mut other = vec!["sh", "-c", GNU_ACCEPT_ACCESS, "sh", "1000", "1000"];
+        other.push("/tmp/fx/target/debug");
+        assert!(!exec(&other).0, "uid 1000 must not gain write via repair");
+        // Protected symlink target unchanged.
+        let secret = sh(
+            "stat -c '%u:%g' /tmp/outside/secret; cat /tmp/outside/secret",
+            &[],
+        )
+        .0;
+        assert_eq!(secret, "0:12\nsecret", "symlink escape target untouched");
+
+        // --- idempotence: second run does no chown work at all.
+        let (_, _, chowns_idem) = run_bulk(501, 20);
+        assert_eq!(chowns_idem, 0, "idempotent run must not invoke chown");
+
+        // --- second numeric identity 1000:1000, mixed starting owners.
+        let (_, took_b, chowns_b) = run_bulk(1000, 1000);
+        println!("bulk 1000:1000: chown invocations={chowns_b} real elapsed={took_b:?}");
+        for (vol, b) in vols.iter().zip(&before) {
+            let after = snap(vol.0, 1000, 1000);
+            assert_eq!((after.0, &after.1, after.2), (b.0, &b.1, 0));
+        }
+        let mut access = vec!["sh", "-c", GNU_ACCEPT_ACCESS, "sh", "1000", "1000"];
+        access.extend(dirs);
+        let (ok, _, err, _) = exec(&access);
+        assert!(ok, "1000:1000 access/create failed: {err}");
+
+        // --- deep failed path after partial progress (not-ready, content kept).
+        sh("/usr/bin/chown -R 0:0 /tmp/fx/cargo_git", &[]);
+        let git_before = snap("/tmp/fx/cargo_git", 501, 20);
+        sh(": > /tmp/ctl/fail", &[]);
+        let argv = bulk_chown_argv("/tmp/fx/cargo_git", 501, 20);
+        let mut full = vec!["exec", name.as_str()];
+        full.extend(argv.iter().map(String::as_str));
+        let (ok, _, err, _) = nerd(&full);
+        assert!(!ok, "deep chown failure must fail the bulk exec");
+        assert!(err.contains("let-lambda-and-callables.mdx"), "{err}");
+        let git_partial = snap("/tmp/fx/cargo_git", 501, 20);
+        assert!(
+            git_partial.2 > 0,
+            "failing volume must still be unowned/not-ready"
+        );
+        assert!(
+            git_partial.2 < git_before.2,
+            "some entries repaired before failure"
+        );
+        assert_eq!(
+            (git_partial.0, &git_partial.1),
+            (git_before.0, &git_before.1)
+        );
+        sh("rm -f /tmp/ctl/fail", &[]);
+        let (ok, _, err, _) = nerd(&full);
+        assert!(ok, "retry after the failure clears: {err}");
+        assert_eq!(snap("/tmp/fx/cargo_git", 501, 20).2, 0);
+
+        // --- intermediate directory swap: production argv vs legacy -exec.
+        let race = |argv: &[String]| -> String {
+            sh(
+                "rm -rf /tmp/race /tmp/ctl/swapped; mkdir -p /tmp/race/vol/a /tmp/race/outside; \
+                 printf inside > /tmp/race/vol/a/f; printf outside > /tmp/race/outside/f; \
+                 /usr/bin/chown 0:12 /tmp/race/outside/f; : > /tmp/ctl/swap",
+                &[],
+            );
+            let mut full = vec!["exec", name.as_str()];
+            full.extend(argv.iter().map(String::as_str));
+            let _ = nerd(&full);
+            sh("rm -f /tmp/ctl/swap", &[]);
+            sh(
+                "stat -c '%u:%g' /tmp/race/outside/f; cat /tmp/race/outside/f",
+                &[],
+            )
+            .0
+        };
+        let safe = race(&bulk_chown_argv("/tmp/race/vol", 501, 20));
+        assert_eq!(
+            safe, "0:12\noutside",
+            "execdir must leave outside file untouched"
+        );
+        let mut legacy = bulk_chown_argv("/tmp/race/vol", 501, 20);
+        for part in legacy.iter_mut() {
+            if part == "-execdir" {
+                *part = "-exec".to_owned();
+            }
+        }
+        let escaped = race(&legacy);
+        assert_eq!(
+            escaped, "501:20\noutside",
+            "negative control must reproduce the escape"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
+        use crate::contract_test_support::{lock_test, EnvGuard};
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers]\ndefault = \"stack\"\n",
+        )
+        .expect("manifest");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let pids = root.join("pids");
+        let fake = format!(
+            "#!/bin/sh\ncase \"$*\" in *execdir*) echo $$ >> '{}'; exec sleep 60;; esac\nexit 0\n",
+            pids.display()
+        );
+        let docker = bin.join("docker");
+        std::fs::write(&docker, fake).expect("docker");
+        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let base = std::env::var("PATH").unwrap_or_default();
+        let _env = EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
+        let mut policy = effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            root.join("docker-compose.yml"),
+        );
+        policy.repo_root = root.clone();
+        policy.workspace_user = Some("dev".to_owned());
+
+        // Normal production constructor: no caller deadline, but a finite bulk bound.
+        let mut backend = compose_backend(&root, &policy);
+        assert!(backend.deadline.is_none());
+        assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
+        assert!(backend.bulk_timeout < std::time::Duration::from_secs(3600));
+        // Generous so child spawn under host load always precedes expiry; the
+        // bound being finite is what is asserted above, not its length.
+        backend.bulk_timeout = std::time::Duration::from_secs(5);
+
+        let started = Instant::now();
+        let error = backend
+            .chown_tree_unowned("/cargo/git", 501, 20)
+            .expect_err("hung child must time out");
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        assert!(
+            error.message.contains("timed out") || error.message.contains("deadline"),
+            "{}",
+            error.message
+        );
+        let recorded = std::fs::read_to_string(&pids).unwrap_or_else(|_| {
+            panic!(
+                "fake bulk child never started; error was: {}",
+                error.message
+            )
+        });
+        let pid: i32 = recorded
+            .lines()
+            .next()
+            .expect("pid")
+            .trim()
+            .parse()
+            .expect("pid num");
+        let gone = Instant::now() + std::time::Duration::from_secs(10);
+        while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
+            assert!(Instant::now() < gone, "bulk child {pid} was not reaped");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     /// Host-fs seam: observes current-user access on a private fixture.
     /// This process cannot switch to uid 501; numeric uid/gid acceptance is
     /// covered by `MemoryAccessBackend`, not by this OS probe.
@@ -2289,6 +3291,18 @@ services:
         fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError> {
             Err(PermissionPrepError::new(format!(
                 "host-fs seam refuses mkdir `{path}`"
+            )))
+        }
+
+        fn chown_tree_unowned(
+            &mut self,
+            path: &str,
+            _uid: u32,
+            _gid: u32,
+        ) -> Result<(), PermissionPrepError> {
+            self.chown_log.push(path.to_owned());
+            Err(PermissionPrepError::new(format!(
+                "host-fs seam cannot switch uid; refusing bulk chown `{path}`"
             )))
         }
 
