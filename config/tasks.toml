@@ -92,6 +92,7 @@
   "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers_inside_container -- --nocapture",
   "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container -- --nocapture",
   "cargo test -p effigy --lib run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
   "cargo test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
 ]
 "check:workspace:rust-ownership" = [
