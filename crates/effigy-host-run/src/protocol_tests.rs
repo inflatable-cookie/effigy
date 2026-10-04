@@ -260,6 +260,7 @@ impl Drop for HeldAcceptedPeer {
 
 struct ImmediateDropPeer {
     stop: Arc<AtomicBool>,
+    accepted: Option<mpsc::Receiver<()>>,
     server: Option<thread::JoinHandle<()>>,
 }
 
@@ -267,12 +268,17 @@ impl ImmediateDropPeer {
     fn spawn(listener: UnixListener) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
         let server = thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let deadline = Instant::now() + PEER_FIXTURE_BOUND;
             while Instant::now() < deadline && !stop_flag.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((_stream, _)) => return,
+                    Ok((stream, _)) => {
+                        drop(stream);
+                        let _ = accepted_tx.send(());
+                        return;
+                    }
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
@@ -282,7 +288,24 @@ impl ImmediateDropPeer {
         });
         Self {
             stop,
+            accepted: Some(accepted_rx),
             server: Some(server),
+        }
+    }
+
+    fn assert_accepted_and_dropped(&mut self, context: &str) {
+        let rx = self
+            .accepted
+            .take()
+            .expect("accepted channel still available");
+        match rx.recv_timeout(PEER_FIXTURE_BOUND) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("{context}: fixture did not accept and drop a peer")
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("{context}: fixture accept thread ended without accepting a peer")
+            }
         }
     }
 }
@@ -669,30 +692,33 @@ fn closed_peer_fails_closed_and_is_not_a_trust_match() {
             ..fixture.authority.clone()
         };
         let mut client = HostRunClient::open(root, wrong_pid);
-        let dropped = ImmediateDropPeer::spawn(fixture.listener);
-        let error = client.status(&json!({})).expect_err(
+        let mut dropped = ImmediateDropPeer::spawn(fixture.listener);
+        let result = client.status(&json!({}));
+        dropped.assert_accepted_and_dropped(
+            "old wrong-pid fixture that drops the accepted stream immediately",
+        );
+        let error = result.expect_err(
             "premature close of a mismatched peer must fail closed; success would be a false trust proof",
         );
         assert_closed_peer_fail_closed(
             error,
             "old wrong-pid fixture that drops the accepted stream immediately",
         );
-        drop(dropped);
     }
 
     {
         let fixture = make_fixture();
         assert_private_host_run_fixture(&fixture);
         let mut client = client(&fixture);
-        let dropped = ImmediateDropPeer::spawn(fixture.listener);
-        let error = client
-            .status(&json!({}))
+        let mut dropped = ImmediateDropPeer::spawn(fixture.listener);
+        let result = client.status(&json!({}));
+        dropped.assert_accepted_and_dropped("valid-identity peer dropped immediately after accept");
+        let error = result
             .expect_err("closed valid peer must fail closed; success would be a false trust proof");
         assert_closed_peer_fail_closed(
             error,
             "valid-identity peer dropped immediately after accept",
         );
-        drop(dropped);
     }
 }
 
