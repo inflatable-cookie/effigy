@@ -9,14 +9,15 @@ use crate::{
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::io::{BufRead, BufReader, Cursor, ErrorKind, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 struct FixedClock(DateTime<Utc>);
@@ -122,6 +123,210 @@ fn write_authority(root: &Path, authority: &Authority) {
 fn client(fixture: &Fixture) -> HostRunClient {
     let (root, authority) = HostRunRoot::open(&fixture.root_path).expect("trusted fixture root");
     HostRunClient::open(root, authority)
+}
+
+fn live_discover_root() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state/host-run"))
+}
+
+fn assert_private_host_run_fixture(fixture: &Fixture) {
+    assert_eq!(
+        fixture.authority.pid,
+        std::process::id(),
+        "fixture authority pid is the test process, not a live scheduler"
+    );
+    assert_eq!(
+        fixture.authority.endpoint,
+        fixture.root_path.join("run/scheduler.sock")
+    );
+    assert_eq!(fixture.socket_path, fixture.authority.endpoint);
+    let identity = canonical_start_identity(fixture.authority.pid).expect("test process identity");
+    assert_eq!(fixture.authority.start_identity, identity);
+    assert!(
+        !identity.contains(".local/state/host-run"),
+        "start identity is pid/kernel scoped, not a host-run path: {identity}"
+    );
+    if let Some(live) = live_discover_root() {
+        assert_ne!(
+            fixture.root_path, live,
+            "peer-trust fixture must not use HostRunRoot::discover live path"
+        );
+        assert!(
+            !fixture.root_path.starts_with(&live),
+            "fixture root {:?} must not nest under {:?}",
+            fixture.root_path,
+            live
+        );
+        assert!(
+            !fixture.socket_path.starts_with(&live),
+            "fixture socket {:?} must not nest under {:?}",
+            fixture.socket_path,
+            live
+        );
+    }
+}
+
+const PEER_FIXTURE_BOUND: Duration = Duration::from_secs(5);
+
+struct HeldAcceptedPeer {
+    stop: Arc<AtomicBool>,
+    accepted: Option<mpsc::Receiver<UnixStream>>,
+    stream: Option<UnixStream>,
+    server: Option<thread::JoinHandle<()>>,
+}
+
+impl HeldAcceptedPeer {
+    fn spawn(listener: UnixListener) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + PEER_FIXTURE_BOUND;
+            let stream = loop {
+                if stop_flag.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                    return;
+                }
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            };
+            let clone = match stream.try_clone() {
+                Ok(clone) => clone,
+                Err(_) => return,
+            };
+            if accepted_tx.send(clone).is_err() {
+                return;
+            }
+            while !stop_flag.load(Ordering::Relaxed) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            drop(stream);
+            drop(listener);
+        });
+        Self {
+            stop,
+            accepted: Some(accepted_rx),
+            stream: None,
+            server: Some(server),
+        }
+    }
+
+    fn assert_no_request_dispatched(&mut self, context: &str) {
+        let mut stream = self.held_stream(context);
+        let mut buf = [0u8; 32];
+        match stream.read(&mut buf) {
+            Ok(0) => {}
+            Ok(n) => panic!("{context}: {n} request byte(s) arrived before trust rejection"),
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => panic!("{context}: held peer read failed: {error}"),
+        }
+    }
+
+    fn held_stream(&mut self, context: &str) -> &UnixStream {
+        if self.stream.is_none() {
+            let rx = self
+                .accepted
+                .take()
+                .expect("accepted channel still available");
+            let stream = match rx.recv_timeout(PEER_FIXTURE_BOUND) {
+                Ok(stream) => stream,
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!("{context}: fixture listener did not accept a live peer")
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("{context}: fixture accept thread ended before a live peer")
+                }
+            };
+            stream.set_nonblocking(true).unwrap();
+            self.stream = Some(stream);
+        }
+        self.stream.as_ref().unwrap()
+    }
+}
+
+impl Drop for HeldAcceptedPeer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(server) = self.server.take() {
+            let _ = server.join();
+        }
+    }
+}
+
+struct ImmediateDropPeer {
+    stop: Arc<AtomicBool>,
+    server: Option<thread::JoinHandle<()>>,
+}
+
+impl ImmediateDropPeer {
+    fn spawn(listener: UnixListener) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let server = thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + PEER_FIXTURE_BOUND;
+            while Instant::now() < deadline && !stop_flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((_stream, _)) => return,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        Self {
+            stop,
+            server: Some(server),
+        }
+    }
+}
+
+impl Drop for ImmediateDropPeer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(server) = self.server.take() {
+            let _ = server.join();
+        }
+    }
+}
+
+struct BoundedServer(Option<thread::JoinHandle<()>>);
+
+impl Drop for BoundedServer {
+    fn drop(&mut self) {
+        if let Some(server) = self.0.take() {
+            let _ = server.join();
+        }
+    }
+}
+
+fn assert_scheduler_unreachable(error: ClientError, context: &str) {
+    assert!(
+        matches!(error, ClientError::SchedulerUnreachable),
+        "{context}: expected SchedulerUnreachable, got {error:?}"
+    );
+}
+
+fn assert_closed_peer_fail_closed(error: ClientError, context: &str) {
+    match error {
+        ClientError::Io(ref io) => {
+            eprintln!("{context}: fail-closed as Io({:?}): {io}", io.kind());
+        }
+        ClientError::SchedulerUnreachable => {
+            eprintln!(
+                "{context}: fail-closed as SchedulerUnreachable (peer credentials still readable after close on this platform); not a live-held identity proof"
+            );
+        }
+        other => panic!(
+            "{context}: closed peer must fail closed with Io or SchedulerUnreachable; got {other:?}"
+        ),
+    }
 }
 
 fn read_request(stream: &mut UnixStream) -> Value {
@@ -350,36 +555,41 @@ fn attach_idle_follow_still_accepts_cancel_settlement_while_waiting() {
 
 #[test]
 fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
-    let fixture = make_fixture();
-    let root = HostRunRoot::open(&fixture.root_path).unwrap().0;
-    let bad_authority = fixture.authority.clone();
-    let mut client = HostRunClient::open(root, bad_authority)
-        .with_identity_provider(Arc::new(FixedIdentity("wrong-generation")));
-    let (release, wait_for_release) = std::sync::mpsc::channel();
-    let server = thread::spawn(move || {
-        let (_stream, _) = fixture.listener.accept().unwrap();
-        wait_for_release.recv().unwrap();
-    });
-    let error = client.status(&json!({})).unwrap_err();
-    release.send(()).unwrap();
-    assert!(matches!(error, ClientError::SchedulerUnreachable));
-    server.join().unwrap();
+    {
+        let fixture = make_fixture();
+        assert_private_host_run_fixture(&fixture);
+        let (root, opened) = HostRunRoot::open(&fixture.root_path).unwrap();
+        assert_eq!(root.path(), fixture.root_path.as_path());
+        assert_eq!(opened.endpoint, fixture.socket_path);
+        let mut client = HostRunClient::open(root, opened)
+            .with_identity_provider(Arc::new(FixedIdentity("wrong-generation")));
+        let mut held = HeldAcceptedPeer::spawn(fixture.listener);
+        let error = client.status(&json!({})).unwrap_err();
+        held.assert_no_request_dispatched("wrong-generation live mismatch");
+        assert_scheduler_unreachable(
+            error,
+            "live generation mismatch on a held private peer must be refused before dispatch",
+        );
+    }
 
-    let fixture = make_fixture();
-    let root = HostRunRoot::open(&fixture.root_path).unwrap().0;
-    let wrong_pid = Authority {
-        pid: fixture.authority.pid.saturating_add(1),
-        ..fixture.authority.clone()
-    };
-    let mut client = HostRunClient::open(root, wrong_pid);
-    let server = thread::spawn(move || {
-        let _ = fixture.listener.accept().unwrap();
-    });
-    assert!(matches!(
-        client.status(&json!({})),
-        Err(ClientError::SchedulerUnreachable)
-    ));
-    server.join().unwrap();
+    {
+        let fixture = make_fixture();
+        assert_private_host_run_fixture(&fixture);
+        let (root, opened) = HostRunRoot::open(&fixture.root_path).unwrap();
+        assert_eq!(root.path(), fixture.root_path.as_path());
+        let wrong_pid = Authority {
+            pid: opened.pid.saturating_add(1),
+            ..opened
+        };
+        let mut client = HostRunClient::open(root, wrong_pid);
+        let mut held = HeldAcceptedPeer::spawn(fixture.listener);
+        let error = client.status(&json!({})).unwrap_err();
+        held.assert_no_request_dispatched("wrong-pid live mismatch");
+        assert_scheduler_unreachable(
+            error,
+            "live pid mismatch on a held private peer must be refused before dispatch",
+        );
+    }
 
     let fixture = make_fixture();
     std::fs::set_permissions(&fixture.socket_path, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -410,6 +620,80 @@ fn authority_and_socket_are_owned_private_and_peer_identity_must_match() {
     let fixture = make_fixture();
     std::fs::set_permissions(&fixture.root_path, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(HostRunRoot::open(&fixture.root_path).is_err());
+}
+
+#[test]
+fn valid_peer_identity_is_accepted_on_private_fixture() {
+    let fixture = make_fixture();
+    assert_private_host_run_fixture(&fixture);
+    let mut client = client(&fixture);
+    let listener = fixture.listener;
+    let _server = BoundedServer(Some(thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + PEER_FIXTURE_BOUND;
+        let mut stream = loop {
+            if Instant::now() >= deadline {
+                panic!("valid-peer fixture listener did not accept");
+            }
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("valid-peer accept failed: {error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(PEER_FIXTURE_BOUND)).unwrap();
+        let request = read_request(&mut stream);
+        assert_eq!(request["method"], "status");
+        send_response(
+            &mut stream,
+            &request,
+            json!({"runId":"peer-trust-positive","state":"running","epoch":3}),
+        );
+    })));
+    let status = client.status(&json!({})).expect("valid private peer");
+    assert_eq!(status["runId"], "peer-trust-positive");
+    assert_eq!(status["epoch"], 3);
+}
+
+#[test]
+fn closed_peer_fails_closed_and_is_not_a_trust_match() {
+    {
+        let fixture = make_fixture();
+        assert_private_host_run_fixture(&fixture);
+        let root = HostRunRoot::open(&fixture.root_path).unwrap().0;
+        let wrong_pid = Authority {
+            pid: fixture.authority.pid.saturating_add(1),
+            ..fixture.authority.clone()
+        };
+        let mut client = HostRunClient::open(root, wrong_pid);
+        let dropped = ImmediateDropPeer::spawn(fixture.listener);
+        let error = client.status(&json!({})).expect_err(
+            "premature close of a mismatched peer must fail closed; success would be a false trust proof",
+        );
+        assert_closed_peer_fail_closed(
+            error,
+            "old wrong-pid fixture that drops the accepted stream immediately",
+        );
+        drop(dropped);
+    }
+
+    {
+        let fixture = make_fixture();
+        assert_private_host_run_fixture(&fixture);
+        let mut client = client(&fixture);
+        let dropped = ImmediateDropPeer::spawn(fixture.listener);
+        let error = client
+            .status(&json!({}))
+            .expect_err("closed valid peer must fail closed; success would be a false trust proof");
+        assert_closed_peer_fail_closed(
+            error,
+            "valid-identity peer dropped immediately after accept",
+        );
+        drop(dropped);
+    }
 }
 
 #[test]
