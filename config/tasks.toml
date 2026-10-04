@@ -134,6 +134,15 @@
 "test:doctor:workspace-liveness" = [
   "cargo test -p effigy --lib runner::doctor_ports::tests -- --nocapture",
 ]
+"test:doctor:ownership-latency" = [
+  "cargo test -p effigy --lib runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::expired_ownership_deadline_does_not_spawn_identity_probe -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::doctor -- --nocapture",
+]
+"check:doctor:ownership-latency" = "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test"
 "check:doctor:workspace-liveness" = [
   "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
   "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",
