@@ -1039,8 +1039,58 @@ fn load_or_allocate_loopback_ip(
         identity,
         legacy_identity,
         source,
-        discover_running_compose_containers,
+        discover_loopback_inventory,
     )
+}
+
+fn discover_loopback_inventory() -> RunningComposeContainerInventory {
+    #[cfg(test)]
+    if let Some(inventory) = TEST_LOOPBACK_INVENTORY.with(|slot| {
+        slot.borrow_mut().as_mut().map(|(inventory, calls)| {
+            *calls += 1;
+            inventory.clone()
+        })
+    }) {
+        return inventory;
+    }
+
+    discover_running_compose_containers()
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_LOOPBACK_INVENTORY:
+        std::cell::RefCell<Option<(RunningComposeContainerInventory, usize)>> = const {
+            std::cell::RefCell::new(None)
+        };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_loopback_inventory<T>(
+    inventory: RunningComposeContainerInventory,
+    run: impl FnOnce() -> T,
+) -> (T, usize) {
+    struct ResetGuard(Option<(RunningComposeContainerInventory, usize)>);
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_LOOPBACK_INVENTORY.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+
+    let previous = TEST_LOOPBACK_INVENTORY.with(|slot| slot.borrow_mut().replace((inventory, 0)));
+    let _guard = ResetGuard(previous);
+    let result = run();
+    let calls = TEST_LOOPBACK_INVENTORY.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|(_, calls)| *calls)
+            .unwrap_or_default()
+    });
+    (result, calls)
 }
 
 fn load_or_allocate_loopback_ip_with_inventory(
