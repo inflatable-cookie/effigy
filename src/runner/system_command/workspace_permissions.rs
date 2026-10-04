@@ -737,7 +737,7 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
                     return false;
                 }
                 paths.pop_front();
-                return paths.len() > 0;
+                return !paths.is_empty();
             }
             false
         });
