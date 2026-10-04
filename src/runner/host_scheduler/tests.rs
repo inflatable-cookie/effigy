@@ -228,20 +228,26 @@ struct TerminationProofChildren {
 #[cfg(unix)]
 impl TerminationProofChildren {
     fn spawn_pair() -> Self {
+        // Put the first child under the RAII fixture *before* spawning the
+        // second, so a panic in the second spawn still unwinds through `Drop`
+        // and reaps the first child instead of leaking it.
+        let mut children = Self {
+            owned: Some(Self::spawn_one()),
+            foreign: None,
+        };
+        children.foreign = Some(Self::spawn_one());
+        children
+    }
+
+    fn spawn_one() -> std::process::Child {
         use std::os::unix::process::CommandExt;
         use std::process::Command;
 
-        let spawn = || {
-            Command::new("sleep")
-                .arg("30")
-                .process_group(0)
-                .spawn()
-                .expect("spawn sleep")
-        };
-        Self {
-            owned: Some(spawn()),
-            foreign: Some(spawn()),
-        }
+        Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep")
     }
 
     fn owned_mut(&mut self) -> &mut std::process::Child {
