@@ -146,6 +146,18 @@
   "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
   "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::doctor -- --nocapture",
 ]
+# Doctor hung workspace-ownership batch proof (papercut d773ae06). Private
+# fake-runtime fixture only: the metadata batch must record its own leader and
+# descendant before the proof judges the hang, order a controlled hung
+# preflight so it reports only its own unavailable context with no metadata
+# reap claim, and cover a timeout/reap-disabled negative control whose oracle
+# must fail before a private guard reaps the recorded owned child. No
+# production budget, readiness, or incomplete semantics change.
+"test:doctor:ownership-hang" = [
+  "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::ownership_preflight_hang_is_unavailable_without_metadata_reap_claim -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::ownership_hang_reap_oracle_fails_when_runtime_reap_is_disabled -- --exact --nocapture",
+]
 "check:doctor:ownership-latency" = "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test"
 "check:doctor:workspace-liveness" = [
   "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
