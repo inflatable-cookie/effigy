@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-09-28
+Last Updated: 2026-10-04
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -356,14 +356,28 @@ named after container ids.
 Start exit 0 is not readiness. A nerdctl warning that
 `Unit <id>.timer was already loaded or has a fragment file` is recorded when
 inspect then shows the owned container running; systemd units are not
-deleted. If the owned container stays stopped, or inspect/start times out,
-Effigy fails and names the service, its last observed status, the start
-backend text (including that stale-timer warning or a hang timeout), and the
-exact `colima nerdctl --profile <profile> -- start <container>` command (or
-`docker start <container>` on Docker). Inspect and start are bounded so a
-hung nerdctl command cannot present a partial stack as ready. `container status` lists those
-stopped owned rows instead of omitting them or reporting success by
-assumption.
+deleted. If the owned Colima/nerdctl container stays stopped with that
+collision, Effigy may recover once: inspect the container for a full
+64-character hexadecimal ID, require stopped status and the selected
+project/service labels (not one-off, orphan, foreign, running, or
+undeclared), confirm `{full_id}.timer` and `{full_id}.service` in the
+selected profile are transient or already gone, then `systemctl stop` only
+`{full_id}.timer` and `systemctl reset-failed` `{full_id}.service` and
+`{full_id}.timer`, retry start once, and treat inspect readiness as proof.
+Stop/reset of already-gone units is idempotent. Persistent fragments,
+mismatched unit identity, unknown status, missing inspect ID, unavailable
+systemctl/Colima authority, or Docker backends are not recovered
+automatically; the failure names the inspected identity, the refusal
+reason, and the exact profile-scoped operator commands. Unit files are
+never deleted, daemon-reloaded, or selected by wildcard. If the owned
+container stays stopped, or inspect/start times out, Effigy fails and
+names the service, its last observed status, the start backend text
+(including that stale-timer warning, a refusal, or a hang timeout), and
+the exact `colima nerdctl --profile <profile> -- start <container>`
+command (or `docker start <container>` on Docker). Inspect and start are
+bounded so a hung nerdctl command cannot present a partial stack as ready.
+`container status` lists those stopped owned rows instead of omitting them
+or reporting success by assumption.
 
 Runtime activation planning belongs to `effigy-runtime-plan`. The runner
 runtime-prep modules are side-effect adapters for that plan: they may start

@@ -446,8 +446,13 @@ Use this with `effigy.local.toml` for per-machine mounts.
 These waits are bounded. A timeout names the runtime or gateway readiness
 stage; a stopped Compose service is reported with its exit status. After a
 Colima VM restart, a stale nerdctl health-check timer warning is recorded
-when an owned container actually starts; if it stays Exited, `container up`
-fails with that backend text and
+when an owned container actually starts. If it stays Exited with that
+collision, Effigy inspects the full container ID and, when the unit pair is
+an exact-owned transient health-check timer/service in the selected
+profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
+retries start once, and proves readiness by inspect. Persistent, foreign,
+one-off, running, or unverified units are left alone; the error then names
+the inspected identity, the refusal reason, and
 `colima nerdctl --profile <profile> -- start <container>`.
 `container status` lists stopped owned services instead of omitting them.
 Gateway registration keeps the project, service, published-port and host-listener
@@ -825,21 +830,32 @@ while `nerdctl compose up` returns success. Manual `nerdctl start` works and
 may log `Unit <id>.timer was already loaded or has a fragment file`.
 
 Cause: `nerdctl compose up` can succeed without starting persisted
-containers. nerdctl health-check systemd timers are named after container
-ids; leftover timer units produce that warning. The warning is a nerdctl
-defect, not proof that Effigy owns those units.
+containers. nerdctl health-check systemd timers are named after the full
+container id (`{id}.timer` / `{id}.service`); leftover transient units
+produce that warning. The warning is a nerdctl defect, not proof that
+Effigy owns those units.
 
 Fix: re-run `effigy container up`. Effigy starts only currently declared
 Exited/Created services (Compose project label match), skips one-off
-`compose run` containers and undeclared orphans, keeps volumes, and does not
-delete systemd units. Inspect and start are bounded; a hung nerdctl
-command still names the last observed status. Start exit 0 is not
-readiness: if the service stays stopped, the error keeps the start
-backend text (including a stale-timer warning) and names:
+`compose run` containers and undeclared orphans, keeps volumes, and does
+not delete systemd units. When a stopped owned Colima container hits that
+collision, Effigy inspects the full hexadecimal ID and recovers only an
+exact-owned transient unit pair in the selected profile (`systemctl stop`
+of `{id}.timer`, then `reset-failed` of `{id}.service`/`{id}.timer`), then
+retries start once. It does not recover running, foreign, one-off,
+undeclared, persistent, or unverified units, and it does not change Docker
+start. Inspect and start are bounded; a hung nerdctl command still names
+the last observed status. Start exit 0 is not readiness: if the service
+stays stopped, the error keeps the start backend text (including a
+stale-timer warning or the refusal diagnostic) and names:
 
 ```bash
 colima nerdctl --profile <profile> -- start <container>
 ```
+
+When automatic recovery is refused, that error also names the inspected
+id/status/project/service and the exact `colima ssh --profile <profile>`
+`systemctl show` commands for `{id}.timer` and `{id}.service`.
 
 `effigy container status` shows the live `Exited` row rather than an empty
 or assumed-running service list.

@@ -55,6 +55,13 @@
   "cargo test -p effigy-containers full_pool_with_incomplete_inventory_fails_with_preservation_reason -- --nocapture",
 ]
 "test:containers:backend-selection" = "cargo test -p effigy-containers manager::tests:: -- --nocapture"
+# Exact-owned stale nerdctl health-check timer/service recovery: behavioral
+# fixtures plus existing restart-recovery cases, then compile the touched crate.
+"test:containers:healthcheck-timer" = [
+  "cargo test -p effigy-containers --lib healthcheck_timer:: -- --nocapture",
+  "cargo test -p effigy-containers --lib restart_recovery:: -- --nocapture",
+  "cargo check -p effigy-containers --lib --tests",
+]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
