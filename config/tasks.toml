@@ -109,6 +109,17 @@
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
   "cargo test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
 ]
+# Bulk ownership repair (papercut dab293be): O(volumes) runtime round trips
+# for owned Rust volumes, deadline/identity/protected-scope failures. Private
+# in-memory numeric-user backend only; no live VM/container/chown.
+"test:workspace:rust-ownership:bulk" = [
+  "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::bulk -- --nocapture",
+  "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::compose_bulk -- --nocapture",
+]
+"check:workspace:rust-ownership:bulk" = [
+  "cargo check -p effigy --lib --tests --profile test",
+  "cargo clippy -p effigy --lib -- -D warnings",
+]
 "check:workspace:rust-ownership" = [
   "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",
   "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",

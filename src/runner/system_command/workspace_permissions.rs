@@ -70,6 +70,15 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
     fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError>;
     fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError>;
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError>;
+    /// Repairs ownership of every non-symlink entry under `path` inside one
+    /// bounded backend operation. Never follows symlinks or leaves the
+    /// filesystem of `path`. Runtime round trips must not scale with entries.
+    fn chown_tree_unowned(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError>;
     fn chmod_owner_write(&mut self, path: &str, directory: bool)
         -> Result<(), PermissionPrepError>;
     fn list_unowned(
@@ -327,7 +336,37 @@ fn repair_owned_target(
                 })?;
         }
         WorkspacePermissionMode::Recursive => {
-            let mut unowned = backend
+            backend
+                .chown_tree_unowned(&target.path, identity.uid, identity.gid)
+                .map_err(|error| {
+                    fail_with_identity(
+                        identity,
+                        target,
+                        context,
+                        format!(
+                            "failed to repair ownership under `{}`: {}",
+                            target.path, error.message
+                        ),
+                    )
+                })?;
+            // The scope must still be the same plain directory after the bulk
+            // operation; a swapped symlink or file means the repair is void.
+            let after = backend.inspect(&target.path)?;
+            if matches!(
+                after.presence,
+                PathPresence::Symlink | PathPresence::Missing
+            ) {
+                return Err(fail_with_identity(
+                    identity,
+                    target,
+                    context,
+                    format!(
+                        "`{}` changed identity during ownership repair; refusing to continue",
+                        target.path
+                    ),
+                ));
+            }
+            let remaining = backend
                 .list_unowned(&target.path, identity.uid, identity.gid)
                 .map_err(|error| {
                     fail_with_identity(
@@ -335,41 +374,25 @@ fn repair_owned_target(
                         target,
                         context,
                         format!(
-                            "failed to inspect ownership under `{}`: {}",
+                            "failed to verify ownership under `{}`: {}",
                             target.path, error.message
                         ),
                     )
                 })?;
-            if unowned.is_empty()
-                && (inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid))
-            {
-                unowned.push(target.path.clone());
-            }
-            for path in unowned {
-                let nested = backend.inspect(&path).map_err(|error| {
-                    fail_with_identity(
-                        identity,
-                        target,
-                        context,
-                        format!(
-                            "failed to inspect `{}` before chown: {}",
-                            path, error.message
-                        ),
-                    )
-                })?;
-                if nested.presence == PathPresence::Symlink {
-                    continue;
-                }
-                backend
-                    .chown(&path, identity.uid, identity.gid)
-                    .map_err(|error| {
-                        fail_with_identity(
-                            identity,
-                            target,
-                            context,
-                            format!("failed to chown `{}`: {}", path, error.message),
-                        )
-                    })?;
+            if let Some(first) = remaining.first() {
+                return Err(fail_with_identity(
+                    identity,
+                    target,
+                    context,
+                    format!(
+                        "{} path(s) under `{}` remain not owned by uid={} gid={} after repair (first: `{}`)",
+                        remaining.len(),
+                        target.path,
+                        identity.uid,
+                        identity.gid,
+                        first
+                    ),
+                ));
             }
         }
     }
@@ -781,6 +804,27 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         Ok(())
     }
 
+    fn chown_tree_unowned(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), PermissionPrepError> {
+        let uid_text = uid.to_string();
+        let gid_text = gid.to_string();
+        let spec = format!("{uid}:{gid}");
+        // One exec: find batches paths into a few chown invocations (`+`), stays
+        // on the volume (-xdev), skips symlinks and never follows them (-P, -h).
+        self.exec_root(
+            &[
+                "find", "-P", path, "-xdev", "!", "-type", "l", "!", "(", "-user", &uid_text, "-a",
+                "-group", &gid_text, ")", "-exec", "chown", "-h", &spec, "--", "{}", "+",
+            ],
+            "workspace bulk chown",
+        )?;
+        Ok(())
+    }
+
     fn chmod_owner_write(
         &mut self,
         path: &str,
@@ -1020,6 +1064,14 @@ mod memory_backend {
         pub created_locks: Vec<String>,
         pub inspect_log: RefCell<Vec<String>>,
         pub list_unowned_calls: Cell<usize>,
+        /// Every trait call is one simulated runtime round trip.
+        pub exec_calls: Cell<usize>,
+        pub bulk_calls: usize,
+        pub bulk_fail: Option<String>,
+        /// Fails the bulk operation at this path after partial progress.
+        pub bulk_fail_at: Option<String>,
+        /// Replaces the bulk scope with a symlink mid-operation.
+        pub bulk_swap_scope_to_symlink: bool,
         protected: BTreeSet<String>,
         foreign: BTreeSet<String>,
         read_only: BTreeSet<String>,
@@ -1046,6 +1098,11 @@ mod memory_backend {
                 created_locks: Vec::new(),
                 inspect_log: RefCell::new(Vec::new()),
                 list_unowned_calls: Cell::new(0),
+                exec_calls: Cell::new(0),
+                bulk_calls: 0,
+                bulk_fail: None,
+                bulk_fail_at: None,
+                bulk_swap_scope_to_symlink: false,
                 protected: BTreeSet::new(),
                 foreign: BTreeSet::new(),
                 read_only: BTreeSet::new(),
@@ -1244,6 +1301,7 @@ mod memory_backend {
 
         fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError> {
             self.inspect_log.borrow_mut().push(path.to_owned());
+            self.exec_calls.set(self.exec_calls.get() + 1);
             let Some(node) = self.node(path) else {
                 return Ok(PathInspection {
                     presence: PathPresence::Missing,
@@ -1282,7 +1340,42 @@ mod memory_backend {
             }
         }
 
+        fn chown_tree_unowned(
+            &mut self,
+            path: &str,
+            uid: u32,
+            gid: u32,
+        ) -> Result<(), PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            self.bulk_calls += 1;
+            if let Some(message) = self.bulk_fail.clone() {
+                return Err(PermissionPrepError::new(message));
+            }
+            let mut targets = Vec::new();
+            collect_unowned(self.node(path), path, uid, gid, &mut targets);
+            for target in &targets {
+                self.refuse_mutation(target)?;
+            }
+            for target in &targets {
+                if self.bulk_fail_at.as_deref() == Some(target.as_str()) {
+                    return Err(PermissionPrepError::new(format!(
+                        "workspace bulk chown failed: chown: cannot access '{target}': Permission denied"
+                    )));
+                }
+                if let Some(node) = self.node_mut(target) {
+                    node.uid = uid;
+                    node.gid = gid;
+                }
+                self.chown_log.push(target.clone());
+            }
+            if self.bulk_swap_scope_to_symlink {
+                self.add_symlink(path, "/etc");
+            }
+            Ok(())
+        }
+
         fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError> {
+            self.exec_calls.set(self.exec_calls.get() + 1);
             self.refuse_mutation(path)?;
             let node = self.node_mut(path).ok_or_else(|| {
                 PermissionPrepError::new(format!("chown target `{path}` is missing"))
@@ -1320,6 +1413,7 @@ mod memory_backend {
         ) -> Result<Vec<String>, PermissionPrepError> {
             self.list_unowned_calls
                 .set(self.list_unowned_calls.get() + 1);
+            self.exec_calls.set(self.exec_calls.get() + 1);
             let mut out = Vec::new();
             collect_unowned(self.node(path), path, uid, gid, &mut out);
             Ok(out)
@@ -1944,6 +2038,252 @@ services:
         );
     }
 
+    // ---- bulk ownership repair (papercut dab293be) ----
+
+    const BULK_VOLUMES: [(&str, usize, WorkspaceRustCacheKind); 3] = [
+        (
+            "/cargo/registry",
+            31497,
+            WorkspaceRustCacheKind::CargoRegistry,
+        ),
+        (
+            "/workspace/target",
+            9709,
+            WorkspaceRustCacheKind::RustTarget,
+        ),
+        ("/cargo/git", 3133, WorkspaceRustCacheKind::CargoGit),
+    ];
+    const EXEC_LATENCY_MS: u64 = 25;
+
+    fn bulk_fixture(
+        scale: usize,
+        owner: (u32, u32),
+    ) -> (MemoryAccessBackend, WorkspaceOwnershipPlan) {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        let mut targets = Vec::new();
+        for (path, entries, rust) in BULK_VOLUMES {
+            backend.add_dir(path, owner.0, owner.1, 0o755);
+            let nested = match rust {
+                WorkspaceRustCacheKind::CargoRegistry => format!("{path}/src"),
+                WorkspaceRustCacheKind::RustTarget => format!("{path}/debug"),
+                _ => format!("{path}/checkouts"),
+            };
+            backend.add_dir(&nested, owner.0, owner.1, 0o755);
+            for index in 0..(entries / scale).saturating_sub(2) {
+                backend.add_file(
+                    &format!("{nested}/d{}/f{index}", index % 50),
+                    owner.0,
+                    owner.1,
+                    0o644,
+                );
+            }
+            backend.add_file(
+                &format!("{path}/debug/.cargo-build-lock"),
+                owner.0,
+                owner.1,
+                0o644,
+            );
+            targets.push(owned_target(path, Some(rust)));
+        }
+        (backend, WorkspaceOwnershipPlan { targets })
+    }
+
+    /// The pre-fix algorithm: one listing, then inspect+chown round trips per path.
+    fn legacy_per_path_repair(backend: &mut MemoryAccessBackend, path: &str, uid: u32, gid: u32) {
+        for entry in backend.list_unowned(path, uid, gid).expect("list") {
+            let nested = backend.inspect(&entry).expect("inspect");
+            if nested.presence == PathPresence::Symlink {
+                continue;
+            }
+            backend.chown(&entry, uid, gid).expect("chown");
+        }
+    }
+
+    #[test]
+    fn bulk_repair_uses_o_volumes_round_trips_not_o_files() {
+        let (mut legacy, _) = bulk_fixture(1, (0, 0));
+        let entries: usize = BULK_VOLUMES.iter().map(|(_, n, _)| *n).sum();
+        assert!(entries >= 44000);
+        for (path, _, _) in BULK_VOLUMES {
+            legacy_per_path_repair(&mut legacy, path, 501, 20);
+        }
+        let legacy_calls = legacy.exec_calls.get();
+
+        let (mut backend, plan) = bulk_fixture(1, (0, 0));
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+        let bulk_calls = backend.exec_calls.get();
+
+        let legacy_ms = legacy_calls as u64 * EXEC_LATENCY_MS;
+        let bulk_ms = bulk_calls as u64 * EXEC_LATENCY_MS;
+        println!(
+            "bulk-ownership throughput: legacy calls={legacy_calls} (~{legacy_ms}ms @ {EXEC_LATENCY_MS}ms/exec) \
+             bulk calls={bulk_calls} (~{bulk_ms}ms) bulk_ops={}",
+            backend.bulk_calls
+        );
+        assert!(
+            legacy_calls > 80000,
+            "legacy scales per file: {legacy_calls}"
+        );
+        assert_eq!(backend.bulk_calls, 3);
+        assert!(bulk_calls < 60, "bulk must be O(volumes): {bulk_calls}");
+        assert!(backend
+            .list_unowned("/cargo/registry", 501, 20)
+            .expect("list")
+            .is_empty());
+    }
+
+    #[test]
+    fn bulk_repair_gives_numeric_user_access_and_preserves_contents() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 0, 0, 0o644);
+        backend.add_dir("/cargo/git/checkouts/repo", 1000, 1000, 0o755);
+        backend.add_file("/cargo/git/checkouts/repo/a.rs", 1000, 1000, 0o644);
+        backend.add_dir("/cargo/registry/src/crate", 501, 20, 0o755);
+        let before = backend.mode_of("/cargo/git/checkouts/repo/a.rs");
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+
+        let user = identity("dev", 501, 20);
+        for path in [
+            "/workspace/target/debug",
+            "/workspace/target/debug/.cargo-build-lock",
+            "/cargo/git/checkouts",
+            "/cargo/git/checkouts/repo/a.rs",
+            "/cargo/registry/src",
+        ] {
+            assert_eq!(backend.owner_of(path), Some((501, 20)), "{path}");
+            assert!(backend.user_can_read_write(&user, path).expect("access"));
+        }
+        for dir in [
+            "/workspace/target/debug",
+            "/cargo/git/checkouts",
+            "/cargo/registry/src",
+        ] {
+            backend.user_create_lock(&user, dir).expect("create lock");
+        }
+        assert_eq!(backend.mode_of("/cargo/git/checkouts/repo/a.rs"), before);
+        assert!(backend.chmod_log.is_empty(), "no chmod widening");
+    }
+
+    #[test]
+    fn bulk_repair_is_idempotent_on_reused_volumes() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("first");
+        let first = backend.chown_log.len();
+        assert!(first > 0);
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect("second");
+        assert_eq!(backend.chown_log.len(), first, "second run must not chown");
+    }
+
+    #[test]
+    fn bulk_repair_skips_symlinks_inside_scope() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.add_symlink("/cargo/registry/src/escape", "/etc");
+        prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend).expect("prep");
+        assert_eq!(backend.owner_of("/cargo/registry/src/escape"), Some((0, 0)));
+        assert!(!backend
+            .chown_log
+            .iter()
+            .any(|path| path.ends_with("escape")));
+    }
+
+    #[test]
+    fn bulk_failure_is_not_ready_and_mutates_nothing() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.bulk_fail = Some("workspace bulk chown timed out".to_owned());
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must fail");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn bulk_deep_path_failure_after_partial_progress_names_path_and_stops() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        let deep = "/cargo/git/checkouts/formualizer-f6140fface89ddae/2a8303d/docs-site/content/docs/let-lambda-and-callables.mdx";
+        backend.add_file(deep, 0, 0, 0o640);
+        backend.bulk_fail_at = Some(deep.to_owned());
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must be not-ready");
+        assert!(error.message.contains(deep), "{}", error.message);
+        assert!(
+            error.message.contains("Permission denied"),
+            "{}",
+            error.message
+        );
+        // Partial progress happened, contents untouched, nothing after the failing volume ran.
+        assert!(!backend.chown_log.is_empty());
+        assert_eq!(backend.owner_of(deep), Some((0, 0)));
+        assert_eq!(backend.mode_of(deep), Some(0o640));
+        assert!(!backend.chown_log.iter().any(|path| path == deep));
+    }
+
+    #[test]
+    fn bulk_scope_swapped_to_symlink_mid_operation_is_not_ready() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.bulk_swap_scope_to_symlink = true;
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("must fail");
+        assert!(
+            error.message.contains("changed identity"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn bulk_foreign_path_in_scope_refuses_without_partial_mutation() {
+        let (mut backend, plan) = bulk_fixture(100, (0, 0));
+        backend.mark_foreign("/workspace/target/debug/d1/f1");
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("foreign must fail");
+        assert!(error.message.contains("foreign"), "{}", error.message);
+        assert!(
+            backend.chown_log.is_empty()
+                || !backend
+                    .chown_log
+                    .iter()
+                    .any(|p| p == "/workspace/target/debug/d1/f1")
+        );
+        assert_eq!(
+            backend.owner_of("/workspace/target/debug/d1/f1"),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn bulk_leaves_bind_shared_and_read_only_scopes_alone() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 0, 0, 0o755);
+        backend.add_file("/workspace/target/debug/x", 0, 0, 0o644);
+        let mut shared = owned_target(
+            "/workspace/target",
+            Some(WorkspaceRustCacheKind::RustTarget),
+        );
+        shared.repair_authority = WorkspaceRepairAuthority::VerifyOnly;
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![shared],
+        };
+        let _ = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend);
+        assert_eq!(backend.bulk_calls, 0);
+        assert!(backend.chown_log.is_empty());
+    }
+
+    #[test]
+    fn compose_bulk_chown_honors_expired_deadline() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        let deadline = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("deadline");
+        let mut backend = compose_backend_with_deadline(Path::new("/tmp"), &policy, Some(deadline));
+        let error = backend
+            .chown_tree_unowned("/cargo/registry", 501, 20)
+            .expect_err("expired");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+    }
+
     /// Host-fs seam: observes current-user access on a private fixture.
     /// This process cannot switch to uid 501; numeric uid/gid acceptance is
     /// covered by `MemoryAccessBackend`, not by this OS probe.
@@ -2023,6 +2363,18 @@ services:
         fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError> {
             Err(PermissionPrepError::new(format!(
                 "host-fs seam refuses mkdir `{path}`"
+            )))
+        }
+
+        fn chown_tree_unowned(
+            &mut self,
+            path: &str,
+            _uid: u32,
+            _gid: u32,
+        ) -> Result<(), PermissionPrepError> {
+            self.chown_log.push(path.to_owned());
+            Err(PermissionPrepError::new(format!(
+                "host-fs seam cannot switch uid; refusing bulk chown `{path}`"
             )))
         }
 

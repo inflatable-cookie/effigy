@@ -324,6 +324,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Provisioning Effigy-owned Rust target/Cargo volumes now repairs numeric-user
+  ownership in one bounded exec per volume instead of two container execs per
+  unowned file. Private 44339-entry fixture across three volumes: 88991 → 28
+  runtime calls (same per-exec latency model). Protected bind, shared,
+  persistent, foreign and read-only scopes are unchanged; timeouts and
+  permission failures report not-ready. Not yet accepted against an installed
+  consumer stack.
 - QA-group local `--json` list, plan, run, and status output now suppresses the
   CLI banner while keeping each QA-group schema as one complete stdout JSON
   document. Global `effigy --json` continues to emit the command envelope.

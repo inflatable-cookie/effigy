@@ -7832,6 +7832,8 @@ case "$*" in
           *"id -g"*)
             printf "20\n"
             ;;
+          *"find -P"*)
+            ;;
           *)
             printf "exec-ok\n"
             ;;
@@ -7989,6 +7991,8 @@ case "$subcmd" in
         ;;
       *"id -g"*)
         printf "20\n"
+        ;;
+      *"find -P"*)
         ;;
       *)
         printf "exec-ok\n"

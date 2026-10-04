@@ -505,7 +505,14 @@ source, not from the host login name:
 
 - Effigy-owned named volumes exclusive to the primary service, and
   image-layer home caches: repair unowned nested contents, then verify
-  actual read/write/create-lock as the resolved non-root user
+  actual read/write/create-lock as the resolved non-root user. Repair is one
+  bounded `find -P -xdev ! -type l ... -exec chown -h` exec per volume
+  (runtime round trips are O(volumes), not O(files); native traversal still
+  scales with entries). It runs under the existing deadline, never follows
+  symlinks or leaves the volume, and readiness requires a post-repair
+  unowned-listing, a scope identity re-check and the access probe, not chown
+  exit alone. Limit: `chown` addresses paths by name, so a concurrent swap of
+  an intermediate directory inside the volume is detected only afterwards
 - bind-mounted rust `target` or cargo paths: verify only; never chown host
   source, siblings, or shared caches
 - named volumes used by two or more compose or managed services: rust
