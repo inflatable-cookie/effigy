@@ -89,6 +89,8 @@ pub fn primary_checkout_fallback(repo_root: &Path, relative: &Path) -> Option<Pa
 /// - No `.git` marker: `Ok(None)` (not a Git working tree, including a bare
 ///   repo passed as the root).
 /// - `.git` is a real directory: that path, constructed from `repo_root`.
+/// - `.git` is a symlink to a directory: the canonical target, which must
+///   contain `HEAD` and must not be `core.bare`.
 /// - `.git` is a file (`gitdir:`): the shared common dir when `commondir`
 ///   exists, otherwise the pointer target (separate-git-dir). The target must
 ///   exist as a directory that contains `HEAD` and is not `core.bare`. An
@@ -127,18 +129,7 @@ fn resolve_gitfile_common_dir(repo_root: &Path) -> io::Result<Option<PathBuf>> {
             "linked worktree metadata is invalid",
         ));
     };
-    let git_dir = require_git_admin_dir(&layout.common_git_dir)?;
-    if git_dir_is_bare(&git_dir)? {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "gitfile at {} points at a bare git directory {}",
-                repo_root.display(),
-                git_dir.display()
-            ),
-        ));
-    }
-    Ok(Some(git_dir))
+    require_git_admin_dir(&layout.common_git_dir).map(Some)
 }
 
 fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
@@ -153,6 +144,15 @@ fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
             io::ErrorKind::InvalidData,
             format!(
                 "git admin directory at {} is not a git directory",
+                git_dir.display()
+            ),
+        ));
+    }
+    if git_dir_is_bare(git_dir)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "git admin directory at {} is a bare repository",
                 git_dir.display()
             ),
         ));

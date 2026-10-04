@@ -183,6 +183,49 @@ fn resolve_common_git_dir_rejects_last_wins_core_bare() {
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 }
 
+#[cfg(unix)]
+#[test]
+fn resolve_common_git_dir_rejects_a_symlink_to_a_bare_directory() {
+    let root = TempDir::new().expect("tempdir");
+    let checkout = root.path().join("checkout");
+    let bare = root.path().join("bare");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&bare).expect("bare");
+    fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        bare.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+    )
+    .expect("config");
+    std::os::unix::fs::symlink(&bare, checkout.join(".git")).expect("symlink .git");
+
+    let error = resolve_common_git_dir(&checkout).expect_err("symlink bare");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+}
+
+#[cfg(unix)]
+#[test]
+fn resolve_common_git_dir_accepts_a_symlink_to_a_non_bare_git_dir() {
+    let root = TempDir::new().expect("tempdir");
+    let checkout = root.path().join("checkout");
+    let admin = root.path().join("admin");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&admin).expect("admin");
+    fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        admin.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+    )
+    .expect("config");
+    std::os::unix::fs::symlink(&admin, checkout.join(".git")).expect("symlink .git");
+
+    assert_eq!(
+        resolve_common_git_dir(&checkout).expect("resolve"),
+        Some(admin.canonicalize().expect("canonical admin"))
+    );
+}
+
 #[test]
 fn resolve_common_git_dir_accepts_a_separate_git_dir_pointer() {
     let root = TempDir::new().expect("tempdir");

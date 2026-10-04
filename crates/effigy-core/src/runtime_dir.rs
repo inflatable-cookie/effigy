@@ -10,8 +10,9 @@ use crate::repo_markers::{LOCAL_OVERLAY_FILE, LOCAL_OVERLAY_GITIGNORE_ALIASES};
 ///
 /// `info/exclude` is shared by every worktree of that repository. This is
 /// Git's common exclude, not a worktree-private file. No-op when `repo_root`
-/// is not a Git working tree. An invalid `.git` file or unwritable admin
-/// path fails; there is no working-tree fallback.
+/// is not a Git working tree. An invalid `.git` file, a `.git` symlink to a
+/// bare admin dir, or an unwritable admin path fails; there is no
+/// working-tree fallback.
 pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
 }
@@ -31,8 +32,8 @@ pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> io::Result<
 ///
 /// Prefer the resolved common exclude file. When `repo_root` is not a Git
 /// working tree, keep the ordinary `.git/info/exclude` spelling. When
-/// resolution fails and `.git` is a file, report that marker; never invent
-/// `.git/info/exclude` through a gitfile.
+/// resolution fails and `.git` is a file or symlink, report that marker;
+/// never invent `.git/info/exclude` through a gitfile or symlink.
 pub fn git_local_exclude_path(repo_root: &Path) -> PathBuf {
     match resolve_common_git_dir(repo_root) {
         Ok(Some(git_dir)) => git_dir.join("info").join("exclude"),
@@ -44,8 +45,7 @@ pub fn git_local_exclude_path(repo_root: &Path) -> PathBuf {
 fn diagnostic_path_for_unresolved_git_marker(repo_root: &Path) -> PathBuf {
     let marker = repo_root.join(".git");
     match fs::symlink_metadata(&marker) {
-        Ok(metadata) if metadata.is_file() => marker,
-        Ok(metadata) if metadata.file_type().is_symlink() && !marker.is_dir() => marker,
+        Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => marker,
         _ => marker.join("info").join("exclude"),
     }
 }

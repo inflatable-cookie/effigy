@@ -417,6 +417,64 @@ fn gitfile_pointing_at_last_wins_bare_config_is_refused_without_writing_there() 
     assert_eq!(git_local_exclude_path(&checkout), checkout.join(".git"));
 }
 
+#[cfg(unix)]
+#[test]
+fn git_symlink_to_a_bare_admin_dir_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let checkout = tmp.path().join("checkout");
+    let bare = tmp.path().join("bare.git");
+    fs::create_dir_all(&checkout).expect("checkout");
+    git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+    std::os::unix::fs::symlink(&bare, checkout.join(".git")).expect("symlink .git");
+    fs::write(checkout.join("tracked.txt"), "keep\n").expect("tracked");
+    let exclude = bare.join("info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let status = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "status", "--porcelain"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git status");
+    assert!(
+        !status.status.success(),
+        "symlink .git → bare is not a work tree: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+
+    let error = ensure_effigy_ignored_in_git_root(&checkout).expect_err("symlink bare");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!checkout.join(".gitignore").exists());
+    assert_eq!(git_local_exclude_path(&checkout), checkout.join(".git"));
+}
+
+#[cfg(unix)]
+#[test]
+fn git_symlink_to_a_non_bare_git_dir_still_registers_exclude() {
+    let tmp = TempDir::new().expect("tempdir");
+    let primary = tmp.path().join("primary");
+    fs::create_dir_all(&primary).expect("primary");
+    git_init_with_tracked_manifest(&primary);
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir_all(&checkout).expect("checkout");
+    std::os::unix::fs::symlink(primary.join(".git"), checkout.join(".git")).expect("symlink .git");
+
+    let changed = ensure_effigy_ignored_in_git_root(&checkout).expect("ignore");
+    assert!(changed);
+    assert!(!checkout.join(".gitignore").exists());
+    let exclude = primary.join(".git/info/exclude");
+    assert!(
+        fs::read_to_string(&exclude)
+            .expect("shared exclude")
+            .lines()
+            .any(|line| line.trim() == ".effigy"),
+        "exclude at {}",
+        exclude.display()
+    );
+}
+
 #[test]
 fn separate_git_dir_still_registers_common_exclude() {
     let tmp = TempDir::new().expect("tempdir");
