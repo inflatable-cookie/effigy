@@ -338,11 +338,19 @@ During v0.x, MINOR bumps may include breaking changes.
   selected project/service labels, confirms `{id}.timer` and `{id}.service`
   in the selected profile are transient, then `systemctl stop`s only
   `{id}.timer` and `reset-failed` `{id}.service`/`{id}.timer` before one
-  bounded start retry and inspect readiness. Already-gone units are
-  idempotent; persistent, foreign, one-off, running, undeclared, mismatched,
+  bounded start retry and inspect readiness. A stop/reset that exits 0 while
+  the transient pair stays loaded is not recovery: Effigy proves the exact
+  pair actually unloaded with bounded re-probes, so a late unload recovers
+  once and a never-unloaded pair fails with its still-loaded load/fragment
+  state instead of a false success. A start that reports the collision while
+  inspect shows the container running is recorded as an unresolved health
+  check with the exact inspect/start commands, never as a clean recovery.
+  Already-gone units are idempotent; persistent, foreign, one-off, running,
+  undeclared, mismatched,
   or unverified units are refused with inspected identity, the reason, and
   profile-scoped operator commands. Unit files are never deleted. Docker
-  start is unchanged. Prove with `test:containers:healthcheck-timer`.
+  start is unchanged. Prove with `test:containers:healthcheck-timer` and
+  `test:containers:healthcheck-unload`.
 - Workspace permission prep no longer skips nested rust build/cache repair
   when the mount root already matches `workspace_user`, and no longer
   swallows chown failures with `|| true`. Headless workspace, primary-service

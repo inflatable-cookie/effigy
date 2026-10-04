@@ -62,6 +62,15 @@
   "cargo test -p effigy-containers --lib restart_recovery:: -- --nocapture",
   "cargo check -p effigy-containers --lib --tests",
 ]
+# Restart-safe proof for the exact-owned health-check unload: a stop/reset that
+# exits 0 while the transient pair stays loaded must fail bounded with an exact
+# diagnostic, a late unload recovers once, and a running container is never
+# mutated or reported as a clean health-check recovery.
+"test:containers:healthcheck-unload" = [
+  "cargo test -p effigy-containers --lib unload_proof_ -- --nocapture",
+  "cargo test -p effigy-containers --lib restart_recovery::tests::pathological_start_fatal -- --nocapture",
+  "cargo check -p effigy-containers --lib --tests",
+]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",

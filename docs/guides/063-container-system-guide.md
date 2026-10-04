@@ -866,10 +866,16 @@ Exited/Created services (Compose project label match), skips one-off
 not delete systemd units. When a stopped owned Colima container hits that
 collision, Effigy inspects the full hexadecimal ID and recovers only an
 exact-owned transient unit pair in the selected profile (`systemctl stop`
-of `{id}.timer`, then `reset-failed` of `{id}.service`/`{id}.timer`), then
-retries start once. It does not recover running, foreign, one-off,
-undeclared, persistent, or unverified units, and it does not change Docker
-start. Inspect and start are bounded; a hung nerdctl command still names
+of `{id}.timer`, then `reset-failed` of `{id}.service`/`{id}.timer`). After
+that stop/reset it verifies with short bounded re-probes that both units
+actually unloaded; a stopped-but-still-loaded pair fails with its
+load/fragment state rather than claiming recovery, and a start that reports
+the collision while inspect shows the container running is reported as an
+unresolved health check with the exact inspect/start commands instead of a
+clean recovery. It then retries start once. It does not recover running,
+foreign, one-off, undeclared, persistent, or unverified units, and it does
+not change Docker start. Inspect and start are bounded; a hung nerdctl
+command still names
 the last observed status. Start exit 0 is not readiness: if the service
 stays stopped, the error keeps the start backend text (including a
 stale-timer warning or the refusal diagnostic) and names:

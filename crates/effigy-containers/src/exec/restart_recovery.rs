@@ -265,9 +265,12 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
                     && compose_status_is_running(&current.status)
             })
         {
-            recovery
-                .warnings
-                .push(stale_timer_warning(row, &result.stderr, result.success));
+            recovery.warnings.push(stale_timer_warning(
+                row,
+                &result.stderr,
+                result.success,
+                profile,
+            ));
         }
     }
     Ok(recovery)
@@ -343,6 +346,7 @@ fn live_recover_stale_healthcheck_units(
                 "systemctl health-check unit recovery",
             )
         },
+        std::thread::sleep,
     )
 }
 
@@ -572,6 +576,7 @@ fn stale_timer_warning(
     row: &RunningComposeContainer,
     stderr: &str,
     start_succeeded: bool,
+    profile: &str,
 ) -> String {
     let service = row
         .service
@@ -584,8 +589,10 @@ fn stale_timer_warning(
         )
     } else {
         format!(
-            "nerdctl reported a stale health-check timer while starting owned service `{service}` (`{}`)",
-            excerpt_timer_line(stderr)
+            "unresolved nerdctl health-check unit collision while starting owned service `{service}` (`{}`): inspect shows the container running, but the failed start did not prove health-check readiness. Inspect with `{}` and retry the exact-owned pair with `{}` once the timer is unloaded; systemd units were not deleted",
+            excerpt_timer_line(stderr),
+            owned_inspect_recovery_command(ComposeBackend::ColimaNerdctl, profile, &row.container_name),
+            owned_start_recovery_command(ComposeBackend::ColimaNerdctl, profile, &row.container_name),
         )
     }
 }
@@ -611,6 +618,19 @@ fn owned_start_recovery_command(
         ComposeBackend::Docker => format!("docker start {container_name}"),
         ComposeBackend::ColimaNerdctl => {
             format!("colima nerdctl --profile {profile} -- start {container_name}")
+        }
+    }
+}
+
+fn owned_inspect_recovery_command(
+    backend: ComposeBackend,
+    profile: &str,
+    container_name: &str,
+) -> String {
+    match backend {
+        ComposeBackend::Docker => format!("docker inspect {container_name}"),
+        ComposeBackend::ColimaNerdctl => {
+            format!("colima nerdctl --profile {profile} -- inspect {container_name}")
         }
     }
 }
@@ -1502,6 +1522,82 @@ mod tests {
         assert!(detail.contains("docker start demo-app-1"), "got: {detail}");
         assert!(!detail.contains("reset-failed"), "got: {detail}");
         assert!(!detail.contains("systemctl stop"), "got: {detail}");
+    }
+
+    #[test]
+    fn pathological_start_fatal_with_running_container_reports_unresolved_healthcheck() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Up 1 second",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let mut recoveries = 0;
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["mysql"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                started.push(container.to_owned());
+                Ok(RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+            |_, _| {
+                recoveries += 1;
+                panic!("a now-running container must not be mutated");
+            },
+        )
+        .expect("a running container is not a failed service");
+
+        assert_eq!(started.len(), 1, "the single start is not retried");
+        assert_eq!(recoveries, 0, "no unit mutation on a now-running container");
+        assert_eq!(inspect_calls, 2);
+        assert_eq!(recovery.started, vec!["acowtancy-mysql-1".to_owned()]);
+        assert_eq!(recovery.warnings.len(), 1);
+        let warning = &recovery.warnings[0];
+        assert!(
+            warning.contains("unresolved nerdctl health-check unit collision"),
+            "got: {warning}"
+        );
+        assert!(
+            warning.contains("did not prove health-check readiness"),
+            "got: {warning}"
+        );
+        assert!(
+            warning.contains("Unit dd94022f7dd0.timer was already loaded"),
+            "got: {warning}"
+        );
+        assert!(
+            warning.contains("colima nerdctl --profile effigy -- inspect acowtancy-mysql-1"),
+            "got: {warning}"
+        );
+        assert!(
+            warning.contains("colima nerdctl --profile effigy -- start acowtancy-mysql-1"),
+            "got: {warning}"
+        );
+        assert!(
+            !warning.contains("the container is running and systemd units were not deleted"),
+            "running alone must not be reported as clean recovery: {warning}"
+        );
     }
 
     #[test]
