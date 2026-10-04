@@ -848,8 +848,9 @@ fn gate_persist_ignores_effigy_so_execute_plan_does_not_see_artifacts() {
     assert!(root
         .join(".effigy/reports/release/gates/environment.json")
         .is_file());
-    assert!(fs::read_to_string(root.join(".gitignore"))
-        .expect("gitignore")
+    assert!(!root.join(".gitignore").exists());
+    assert!(fs::read_to_string(root.join(".git/info/exclude"))
+        .expect("exclude")
         .lines()
         .any(|line| line.trim() == ".effigy" || line.trim() == ".effigy/"));
 

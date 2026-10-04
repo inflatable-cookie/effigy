@@ -60,7 +60,7 @@ pub use runtime::{
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 use effigy_manifest::ManifestDemoConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -74,7 +74,10 @@ pub const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 pub(crate) fn ensure_repo_effigy_ignored(repo_root: &Path) -> Result<(), DemoStateError> {
     ensure_effigy_ignored_in_git_root(repo_root)
         .map_err(|error| {
-            DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error))
+            DemoStateError::new(failed_to_write_path(
+                &git_local_exclude_path(repo_root),
+                error,
+            ))
         })
         .map(|_| ())
 }

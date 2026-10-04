@@ -2,7 +2,9 @@ use std::fs;
 
 use tempfile::TempDir;
 
-use super::{detect_linked_worktree, lexically_normalize, primary_checkout_fallback};
+use super::{
+    detect_linked_worktree, lexically_normalize, primary_checkout_fallback, resolve_common_git_dir,
+};
 
 struct WorktreeFixture {
     _root: TempDir,
@@ -90,4 +92,45 @@ fn lexically_normalize_collapses_parent_segments() {
         lexically_normalize(std::path::Path::new("/a/b/.git/worktrees/x/../..")),
         std::path::PathBuf::from("/a/b/.git")
     );
+}
+
+#[test]
+fn resolve_common_git_dir_uses_a_real_git_directory() {
+    let root = TempDir::new().expect("tempdir");
+    fs::create_dir_all(root.path().join(".git")).expect("git dir");
+    assert_eq!(
+        resolve_common_git_dir(root.path()).expect("resolve"),
+        Some(root.path().join(".git"))
+    );
+}
+
+#[test]
+fn resolve_common_git_dir_is_none_without_a_git_marker() {
+    let root = TempDir::new().expect("tempdir");
+    assert_eq!(resolve_common_git_dir(root.path()).expect("resolve"), None);
+}
+
+#[test]
+fn resolve_common_git_dir_follows_a_linked_worktree_commondir() {
+    let fixture = linked_worktree_fixture();
+    fs::write(fixture.primary.join(".git/HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    assert_eq!(
+        resolve_common_git_dir(&fixture.worktree).expect("resolve"),
+        Some(fixture.primary.join(".git"))
+    );
+}
+
+#[test]
+fn resolve_common_git_dir_rejects_a_dangling_gitfile() {
+    let root = TempDir::new().expect("tempdir");
+    fs::write(root.path().join(".git"), "gitdir: /nope/does/not/exist\n").expect("pointer");
+    let error = resolve_common_git_dir(root.path()).expect_err("dangling");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn resolve_common_git_dir_rejects_a_gitfile_whose_common_dir_has_no_head() {
+    let fixture = linked_worktree_fixture();
+    let error = resolve_common_git_dir(&fixture.worktree).expect_err("no HEAD");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 }

@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup, ManifestInlineWorkspaceContainerConfig,
@@ -28,7 +28,7 @@ pub fn load_inline_workspace_container_policy(
         .join("inline-workspaces")
         .join(synthetic_name);
     ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
+        path: git_local_exclude_path(repo_root),
         error,
     })?;
     std::fs::create_dir_all(&compose_dir).map_err(|error| ContainerPolicyError::Read {

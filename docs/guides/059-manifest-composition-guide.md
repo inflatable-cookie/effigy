@@ -141,10 +141,12 @@ The local file can carry its own `[manifest]` block — including
 `extend`, `include`, `override`, and further `optional` directives — to layer
 in additional env folders or per-machine fragments.
 
-The first time auto-discovery activates against a repo with a `.git`
-directory, Effigy idempotently appends `effigy.local.toml` to that
-repo's `.gitignore` so the local fragment is never committed
-accidentally.
+The first time auto-discovery activates against a Git working tree,
+Effigy idempotently appends `effigy.local.toml` to Git's local
+`$GIT_COMMON_DIR/info/exclude` so the local fragment is never committed
+accidentally. That file is shared by every worktree of the repository.
+Ordinary cache, lock, and overlay registration never creates or amends
+`.gitignore`; `effigy init` still writes its reviewed ignore block there.
 
 If the committed manifest already declares an `effigy.local.toml`
 include explicitly, Effigy detects that by canonical path and does not

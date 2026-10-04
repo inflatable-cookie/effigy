@@ -309,9 +309,9 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
     if already_declared {
         return;
     }
-    // Best-effort: amend `.gitignore` so the local overlay is never
-    // committed accidentally. Failures here are non-fatal — manifest
-    // loading should not depend on filesystem write access.
+    // Best-effort: register the overlay in Git's local exclude file so
+    // it is never committed accidentally. Failures here are non-fatal —
+    // manifest loading should not depend on filesystem write access.
     if let Some(repo_root) = locate_git_root(parent) {
         let _ = effigy_core::runtime_dir::ensure_local_overlay_ignored_in_git_root(&repo_root);
     }
@@ -322,12 +322,12 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
     });
 }
 
-/// Walk upward from `start` looking for a `.git` dir. Returns the
-/// directory containing it, if any.
+/// Walk upward from `start` looking for a `.git` directory or gitfile.
+/// Returns the directory containing it, if any.
 fn locate_git_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
     while let Some(dir) = current {
-        if dir.join(".git").is_dir() {
+        if dir.join(".git").exists() {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -1249,6 +1249,39 @@ paths = ["b"]
         assert_eq!(
             loaded.include_graph[0].child.file_name(),
             Some(std::ffi::OsStr::new("effigy.local.toml"))
+        );
+    }
+
+    #[test]
+    fn auto_discovered_local_overlay_registers_git_exclude_not_gitignore() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        std::fs::create_dir(dir.join(".git")).expect("git dir");
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[shell]
+run = "root"
+"#,
+        );
+        write_manifest(
+            dir,
+            "effigy.local.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(loaded.include_graph.len(), 1);
+        assert!(!dir.join(".gitignore").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".git/info/exclude")).expect("exclude"),
+            "effigy.local.toml\n"
         );
     }
 

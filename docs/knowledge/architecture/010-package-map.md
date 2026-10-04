@@ -98,7 +98,7 @@ Current authority surfaces:
 | `effigy-demo` | demo model and execution helpers |
 | `effigy-deps` | machine-local dependency-link identities, Cargo/Bun inventory, Cargo and Bun planning/application/verification, observed status, and atomic desired-state stores |
 | `effigy-scan` | repository scans used by doctor/policy surfaces |
-| `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers |
+| `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers (implicit `.effigy` / overlay ignore uses `$GIT_COMMON_DIR/info/exclude`, never `.gitignore`) |
 
 ## Top-Level Binary Surface
 

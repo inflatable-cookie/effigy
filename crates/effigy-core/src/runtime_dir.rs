@@ -1,15 +1,25 @@
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
+use crate::git_worktree::resolve_common_git_dir;
 use crate::repo_markers::{LOCAL_OVERLAY_FILE, LOCAL_OVERLAY_GITIGNORE_ALIASES};
 
-pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
+/// Ensure `.effigy` is ignored through Git's local exclude file
+/// (`$GIT_COMMON_DIR/info/exclude`). Does not create or amend `.gitignore`.
+///
+/// `info/exclude` is shared by every worktree of that repository. This is
+/// Git's common exclude, not a worktree-private file. No-op when `repo_root`
+/// is not a Git working tree. An invalid `.git` file or unwritable admin
+/// path fails; there is no working-tree fallback.
+pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
 }
 
-/// Append `effigy.local.toml` to the repo's `.gitignore` (creating the
-/// file if needed) the first time the auto-discovered local overlay is
-/// observed. Idempotent. No-op on non-git roots.
-pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
+/// Append `effigy.local.toml` to Git's local exclude file the first time the
+/// auto-discovered local overlay is observed. Idempotent. No-op on non-git
+/// roots. Never amends `.gitignore`.
+pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(
         repo_root,
         LOCAL_OVERLAY_FILE,
@@ -17,110 +27,128 @@ pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> std::io::Re
     )
 }
 
+/// Path used in caller diagnostics when ignore registration fails.
+///
+/// Prefer the resolved common exclude file; fall back to the ordinary
+/// `.git/info/exclude` spelling when the checkout is not a Git working tree.
+pub fn git_local_exclude_path(repo_root: &Path) -> PathBuf {
+    match resolve_common_git_dir(repo_root) {
+        Ok(Some(git_dir)) => git_dir.join("info").join("exclude"),
+        _ => repo_root.join(".git").join("info").join("exclude"),
+    }
+}
+
 fn ensure_pattern_ignored_in_git_root(
     repo_root: &Path,
     append_line: &str,
     accepted_aliases: &[&str],
-) -> std::io::Result<bool> {
-    if !repo_root.join(".git").is_dir() {
+) -> io::Result<bool> {
+    let Some(git_dir) = resolve_common_git_dir(repo_root)? else {
         return Ok(false);
-    }
+    };
+    let exclude_path = exclude_file_under_git_dir(&git_dir)?;
+    append_ignore_line(&exclude_path, append_line, accepted_aliases)
+}
 
-    let gitignore_path = repo_root.join(".gitignore");
-    let existing = match std::fs::read_to_string(&gitignore_path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+fn exclude_file_under_git_dir(git_dir: &Path) -> io::Result<PathBuf> {
+    let info_dir = git_dir.join("info");
+    match fs::create_dir(&info_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    ensure_admin_path_stays_inside(git_dir, &info_dir, true)?;
+    let exclude_path = info_dir.join("exclude");
+    ensure_admin_path_stays_inside(git_dir, &exclude_path, false)?;
+    Ok(exclude_path)
+}
+
+fn ensure_admin_path_stays_inside(
+    git_dir: &Path,
+    path: &Path,
+    must_be_dir: bool,
+) -> io::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !must_be_dir => return Ok(()),
         Err(error) => return Err(error),
     };
+    if metadata.file_type().is_symlink() {
+        if !must_be_dir {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("git exclude path is a symlink at {}", path.display()),
+            ));
+        }
+        let canonical_git = fs::canonicalize(git_dir)?;
+        let canonical_path = fs::canonicalize(path)?;
+        if !canonical_path.starts_with(&canonical_git) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "git admin path {} escapes git directory {}",
+                    path.display(),
+                    git_dir.display()
+                ),
+            ));
+        }
+        if !canonical_path.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("git info path is not a directory at {}", path.display()),
+            ));
+        }
+        return Ok(());
+    }
+    if must_be_dir && !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("git info path is not a directory at {}", path.display()),
+        ));
+    }
+    if !must_be_dir && !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("git exclude path is not a file at {}", path.display()),
+        ));
+    }
+    Ok(())
+}
 
-    if existing
-        .lines()
-        .map(str::trim)
-        .any(|line| accepted_aliases.contains(&line))
-    {
+fn append_ignore_line(
+    exclude_path: &Path,
+    append_line: &str,
+    accepted_aliases: &[&str],
+) -> io::Result<bool> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(exclude_path)?;
+    file.lock()?;
+    let mut existing = String::new();
+    file.read_to_string(&mut existing)?;
+    if pattern_already_listed(&existing, append_line, accepted_aliases) {
         return Ok(false);
     }
-
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
+    file.seek(SeekFrom::End(0))?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n")?;
     }
-    updated.push_str(append_line);
-    updated.push('\n');
-    std::fs::write(gitignore_path, updated)?;
+    file.write_all(append_line.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
     Ok(true)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{ensure_effigy_ignored_in_git_root, ensure_local_overlay_ignored_in_git_root};
-
-    #[test]
-    fn creates_gitignore_when_git_root_has_none() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
-
-        let changed = ensure_effigy_ignored_in_git_root(root.path()).expect("ignore");
-
-        assert!(changed);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join(".gitignore")).expect("read"),
-            ".effigy\n"
-        );
-    }
-
-    #[test]
-    fn appends_effigy_without_duplicate() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
-        std::fs::write(root.path().join(".gitignore"), "target").expect("write gitignore");
-
-        let changed = ensure_effigy_ignored_in_git_root(root.path()).expect("ignore");
-        let second = ensure_effigy_ignored_in_git_root(root.path()).expect("ignore again");
-
-        assert!(changed);
-        assert!(!second);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join(".gitignore")).expect("read"),
-            "target\n.effigy\n"
-        );
-    }
-
-    #[test]
-    fn skips_non_git_roots() {
-        let root = tempfile::tempdir().expect("tempdir");
-
-        let changed = ensure_effigy_ignored_in_git_root(root.path()).expect("ignore");
-
-        assert!(!changed);
-        assert!(!root.path().join(".gitignore").exists());
-    }
-
-    #[test]
-    fn local_overlay_is_appended_once() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
-
-        let changed = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore");
-        let again = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore again");
-
-        assert!(changed);
-        assert!(!again);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join(".gitignore")).expect("read"),
-            "effigy.local.toml\n"
-        );
-    }
-
-    #[test]
-    fn local_overlay_skips_when_alias_present() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
-        std::fs::write(root.path().join(".gitignore"), "/effigy.local.toml\n")
-            .expect("seed gitignore");
-
-        let changed = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore");
-
-        assert!(!changed);
-    }
+fn pattern_already_listed(existing: &str, append_line: &str, accepted_aliases: &[&str]) -> bool {
+    existing
+        .lines()
+        .map(str::trim)
+        .any(|line| !line.is_empty() && (line == append_line || accepted_aliases.contains(&line)))
 }
+
+#[cfg(test)]
+#[path = "runtime_dir/tests.rs"]
+mod tests;

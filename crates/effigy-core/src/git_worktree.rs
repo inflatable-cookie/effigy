@@ -9,11 +9,17 @@
 //! - machine-local state that is deliberately not version controlled (the
 //!   local secrets vault), which a fresh worktree does not inherit
 //!
+//! `$GIT_COMMON_DIR` is the shared admin directory (`info/exclude` lives
+//! there). A linked worktree's private git directory is not a substitute:
+//! Git reads `info/` from the common dir. A `.git` file without `commondir`
+//! is a separate-git-dir checkout; the pointer itself is the admin dir.
+//!
 //! Resolution is pure filesystem reading — no `git` subprocess — so it works
 //! inside minimal containers and costs two small reads.
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 /// Git directory layout behind a linked worktree checkout.
@@ -76,6 +82,78 @@ pub fn primary_checkout_fallback(repo_root: &Path, relative: &Path) -> Option<Pa
     }
     let candidate = primary.join(relative);
     candidate.exists().then_some(candidate)
+}
+
+/// Resolve `$GIT_COMMON_DIR` for a working tree at `repo_root`.
+///
+/// - No `.git` marker: `Ok(None)` (not a Git working tree, including a bare
+///   repo passed as the root).
+/// - `.git` is a real directory: that path, constructed from `repo_root`.
+/// - `.git` is a file (`gitdir:`): the shared common dir when `commondir`
+///   exists, otherwise the pointer target (separate-git-dir). The target must
+///   exist as a directory that contains `HEAD`. An unreadable or dangling
+///   marker is `InvalidData`, not a missing repo.
+///
+/// Never creates `.git`. Paths come from the marker and Git's `commondir`
+/// file; callers must not invent sibling, home, or working-tree fallbacks.
+pub fn resolve_common_git_dir(repo_root: &Path) -> io::Result<Option<PathBuf>> {
+    let marker = repo_root.join(".git");
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+
+    if metadata.is_dir() {
+        return Ok(Some(marker));
+    }
+
+    if metadata.file_type().is_symlink() && marker.is_dir() {
+        let canonical = fs::canonicalize(&marker)?;
+        return require_git_admin_dir(&canonical).map(Some);
+    }
+
+    if metadata.is_file() || (metadata.file_type().is_symlink() && marker.is_file()) {
+        return resolve_gitfile_common_dir(repo_root);
+    }
+
+    Err(invalid_git_marker(repo_root, "unexpected .git marker type"))
+}
+
+fn resolve_gitfile_common_dir(repo_root: &Path) -> io::Result<Option<PathBuf>> {
+    let Some(layout) = detect_linked_worktree(repo_root) else {
+        return Err(invalid_git_marker(
+            repo_root,
+            "linked worktree metadata is invalid",
+        ));
+    };
+    require_git_admin_dir(&layout.common_git_dir).map(Some)
+}
+
+fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
+    if !git_dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("git admin directory is missing at {}", git_dir.display()),
+        ));
+    }
+    if !git_dir.join("HEAD").exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "git admin directory at {} is not a git directory",
+                git_dir.display()
+            ),
+        ));
+    }
+    Ok(git_dir.to_path_buf())
+}
+
+fn invalid_git_marker(repo_root: &Path, reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{reason} at {}", repo_root.display()),
+    )
 }
 
 fn read_common_dir(worktree_git_dir: &Path) -> PathBuf {
