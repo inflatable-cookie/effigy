@@ -253,6 +253,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Host-run follow errors now direct unknown results to Queue/Nucleus for
+  reconciliation by run id; they no longer recommend a nonexistent
+  `host-run status` command.
 - Read-only doctor workspace ownership checks batch the known mount metadata
   samples and numeric uid/gid read/write tests under the shared doctor
   deadline. Overlapping Rust cache paths reuse nested samples; wrong
