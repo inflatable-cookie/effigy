@@ -399,7 +399,7 @@ fn attach_failure(run_id: &str, error: ClientError) -> RunnerError {
     refuse(
         code,
         format!(
-            "lost contact with the scheduler while following run {run_id}: {error}. The run's final state is unknown; inspect it with the host-run status for this run id"
+            "could not confirm settlement for run {run_id}: {error}. The final state is unknown; reconcile this run id with Queue/Nucleus, the host-run scheduler owner, before retrying"
         ),
     )
 }
