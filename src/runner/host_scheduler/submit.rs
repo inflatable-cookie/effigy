@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use effigy_core::task_selection::{TaskSelector, TaskSurface};
 use effigy_host_run::{
     new_client_request_id, AttachEvent, BudgetFallback, ClassSource, ClientError, HostRunClient,
     HostRunRoot, OutputStream, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
 };
-use effigy_core::task_selection::{TaskSelector, TaskSurface};
 use effigy_manifest::{
     LoadedCatalog, ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv, ManifestTask,
 };
@@ -392,14 +392,7 @@ fn collect_task_selector_env_names(
         return Ok(());
     }
     if let Some(run) = &task.run {
-        collect_run_selector_env_names(
-            run,
-            catalog,
-            catalogs,
-            invocation_cwd,
-            visited,
-            names,
-        )?;
+        collect_run_selector_env_names(run, catalog, catalogs, invocation_cwd, visited, names)?;
     }
     Ok(())
 }
@@ -442,10 +435,7 @@ fn collect_run_selector_env_names(
                     // Qualified catalog env references and local manifest
                     // profiles resolve from catalogs, never the caller's
                     // process environment.
-                    if !profile.is_empty()
-                        && !profile.contains(':')
-                        && !configured_in_catalog
-                    {
+                    if !profile.is_empty() && !profile.contains(':') && !configured_in_catalog {
                         names.insert(profile.to_owned());
                     }
                 }
@@ -488,17 +478,23 @@ fn collect_composed_task_selector_env_names(
 ) -> Result<(), String> {
     let (mut selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)?;
     if let Some(prefix) = selector.prefix.as_deref() {
-        effigy_routing::resolve_catalog_by_prefix(prefix, catalogs, invocation_cwd).ok_or_else(|| {
-            format!("unknown catalog prefix `{prefix}` for composed task `{}`", selector.task_name)
-        })?;
+        effigy_routing::resolve_catalog_by_prefix(prefix, catalogs, invocation_cwd).ok_or_else(
+            || {
+                format!(
+                    "unknown catalog prefix `{prefix}` for composed task `{}`",
+                    selector.task_name
+                )
+            },
+        )?;
     } else {
         // Sequence execution pins unqualified references to the catalog of
         // the task currently being executed, rather than rerouting by cwd.
         selector.prefix = Some(current_catalog.alias.clone());
     }
-    if effigy_managed::BUILTIN_TASKS
-        .iter()
-        .any(|(name, _)| *name == selector.task_name)
+    if surface == TaskSurface::Published
+        && effigy_managed::BUILTIN_TASKS
+            .iter()
+            .any(|(name, _)| *name == selector.task_name)
     {
         return Ok(());
     }
@@ -522,7 +518,7 @@ fn collect_composed_task_selector_env_names(
 }
 
 /// Project the caller's environment down to reviewed runtime controls and
-/// process variables explicitly referenced by the selected task. The
+/// process variables explicitly referenced by the selected task or group. The
 /// scheduler supplies PATH, HOME, run ID and token itself. Prefix matching is
 /// intentionally absent: arbitrary CARGO_* or EFFIGY_* names can carry
 /// credentials or application secrets.

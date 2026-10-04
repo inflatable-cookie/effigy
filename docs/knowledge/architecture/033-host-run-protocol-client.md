@@ -97,8 +97,15 @@ client; `EFFIGY_HOST_SCHEDULER=0` is retired and rejected. A present
   `RUSTDOCFLAGS`, `RUSTC`, `RUSTDOC`, `RUSTC_WRAPPER`,
   `RUSTC_WORKSPACE_WRAPPER`, `RUST_BACKTRACE`, `RUST_LIB_BACKTRACE`, `RUST_LOG`
   and `RUST_LOG_STYLE`. It also carries process variables explicitly named by
-  the selected task's `env = "NAME"` profile references, whose existing
-  resolution checks process environment before env-schema and dotenv fallback.
+  `env = "NAME"` profile references reachable from the selected task, including
+  transitively composed published tasks and drafts. Heavy QA-group submissions
+  union the reachable names from each resolved member on its declared task or
+  draft surface. Resolution uses the executor's existing catalog aliases and
+  selector rules, with a visited-task guard for cycles. A profile name declared
+  in that task's catalog `[env]` or qualified to a catalog is resolved there
+  and does not fall back to the caller's process environment; other explicitly
+  named profiles retain their process-environment-before-env-schema/dotenv
+  fallback behavior.
   PATH, HOME, `HOST_RUN_ID`, and `HOST_RUN_TOKEN` are supplied by the scheduler.
   Other ambient variables are omitted; the client does not forward whole
   `CARGO_*` or `EFFIGY_*` prefixes because registry credentials and application

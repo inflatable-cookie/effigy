@@ -1,11 +1,17 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
+use std::path::PathBuf;
 
+use effigy_core::task_selection::TaskSurface;
 use effigy_host_run::{
     BudgetFallback, ClassSource, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
 };
+use effigy_manifest::{LoadedCatalog, TaskManifest};
 use serde_json::{json, Value};
 
-use super::submit::{forward_env_from, interpret, launched_exit_code, selector_env_names};
+use super::submit::{
+    forward_env_from, interpret, launched_exit_code, selector_env_names_for_tasks,
+};
 use super::{
     is_scheduler_owned_env, parse_override_reason, parse_scheduler_setting, queue_wait_from_status,
     PreLaunch, Settled,
@@ -36,6 +42,21 @@ fn exited(code: i64) -> Option<Value> {
 
 fn signalled(signal: Value) -> Option<Value> {
     Some(json!({"exitCode": null, "signal": signal}))
+}
+
+fn loaded_catalog(alias: &str, root: &str, manifest: &str, depth: usize) -> LoadedCatalog {
+    let catalog_root = PathBuf::from(root);
+    LoadedCatalog {
+        alias: alias.to_owned(),
+        manifest_path: catalog_root.join("effigy.toml"),
+        catalog_root,
+        bundle_root: None,
+        manifest: toml::from_str::<TaskManifest>(manifest).expect("parse catalog fixture"),
+        defer_run: None,
+        deferred_builtins: BTreeSet::new(),
+        depth,
+        draft_sources: BTreeMap::new(),
+    }
 }
 
 #[test]
@@ -79,7 +100,101 @@ fn scheduler_owned_names_never_cross_boundaries() {
 }
 
 #[test]
-fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_credentials() {
+fn submitted_environment_projects_composed_release_and_group_needs_without_ambient_credentials() {
+    let catalogs = vec![
+        loaded_catalog(
+            "root",
+            "/workspace/project",
+            r#"
+[env]
+MANIFEST_VALUE = "catalog value"
+
+[tasks.release]
+run = [
+  "task:builder/package",
+  { run = "echo $TASK_MODE", env = "TASK_MODE" },
+  { run = "echo $TASK_API_TOKEN", env = "TASK_API_TOKEN" },
+  { run = "echo configured value", env = "MANIFEST_VALUE" },
+  { run = "echo configured cross-catalog value", env = "catalog:root:MANIFEST_VALUE" },
+]
+
+[tasks.cycle_a]
+run = [{ task = "cycle_b" }]
+
+[tasks.cycle_b]
+run = [
+  { task = "cycle_a" },
+  { run = "echo $CYCLE_CONTROL_TOKEN", env = "CYCLE_CONTROL_TOKEN" },
+]
+
+[tasks.unselected_release]
+run = [{ run = "echo $UNSELECTED_RELEASE_TOKEN", env = "UNSELECTED_RELEASE_TOKEN" }]
+
+[drafts.release_candidate]
+created = "2026-09-15"
+purpose = "Composed release draft fixture"
+run = [{ draft = "builder/release_candidate" }]
+"#,
+            0,
+        ),
+        loaded_catalog(
+            "builder",
+            "/workspace/project/build",
+            r#"
+[env]
+CHILD_MANIFEST_VALUE = "builder catalog value"
+
+[tasks.package]
+run = [{ task = "package_inner" }]
+
+[tasks.package_inner]
+run = [
+  { run = "echo $RELEASE_SIGNING_TOKEN", env = "RELEASE_SIGNING_TOKEN" },
+  { run = "echo configured child value", env = "CHILD_MANIFEST_VALUE" },
+  { run = "echo configured qualified child value", env = "catalog:builder:CHILD_MANIFEST_VALUE" },
+]
+
+[drafts.release_candidate]
+created = "2026-09-15"
+purpose = "Composed release draft fixture"
+run = [
+  { task = "package_inner" },
+  { run = "echo $DRAFT_RELEASE_TOKEN", env = "DRAFT_RELEASE_TOKEN" },
+]
+"#,
+            1,
+        ),
+    ];
+    // Each tuple is one resolved QA-group member (catalog alias, task name,
+    // surface). The release task, draft member, and cyclic member must all
+    // contribute only their reachable selector-declared environment names.
+    let selector_env_names = selector_env_names_for_tasks(
+        [
+            ("root", "release", TaskSurface::Published),
+            ("root", "release_candidate", TaskSurface::Draft),
+            ("root", "cycle_a", TaskSurface::Published),
+        ],
+        &catalogs,
+        &PathBuf::from("/workspace/project"),
+    )
+    .expect("resolve composed selector environment");
+    for name in [
+        "TASK_MODE",
+        "TASK_API_TOKEN",
+        "RELEASE_SIGNING_TOKEN",
+        "DRAFT_RELEASE_TOKEN",
+        "CYCLE_CONTROL_TOKEN",
+    ] {
+        assert!(selector_env_names.contains(name));
+    }
+    for name in [
+        "MANIFEST_VALUE",
+        "CHILD_MANIFEST_VALUE",
+        "UNSELECTED_RELEASE_TOKEN",
+    ] {
+        assert!(!selector_env_names.contains(name));
+    }
+
     let vars = vec![
         ("PATH", "caller-path"),
         ("HOME", "/caller/home"),
@@ -89,16 +204,46 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
         ("EFFIGY_HOST_SCHEDULER", "1"),
         ("EFFIGY_HOST_RUN_ROOT", "/state/host-run"),
         ("EFFIGY_APP_SECRET", "effigy-app-secret-canary"),
+        (
+            "EFFIGY_RELEASE_SIGNING_SECRET",
+            "effigy-release-secret-canary",
+        ),
+        ("EFFIGY_NUCLEUS_KEY", "effigy-nucleus-key-canary"),
         ("CARGO_HOME", "/cache/cargo"),
         ("CARGO_TARGET_DIR", "/cache/target"),
         ("CARGO_BUILD_JOBS", "7"),
+        ("CARGO_INCREMENTAL", "0"),
+        ("CARGO_NET_OFFLINE", "true"),
         ("CARGO_REGISTRIES_PRIVATE_TOKEN", "registry-token-canary"),
+        (
+            "CARGO_REGISTRIES_RELEASE_TOKEN",
+            "cargo-release-token-canary",
+        ),
+        ("CARGO_RELEASE_TOKEN", "cargo-release-prefix-canary"),
+        ("CARGO_HTTP_TOKEN", "cargo-http-token-canary"),
+        ("CARGO_NETRC_PASSWORD", "cargo-netrc-password-canary"),
+        ("EFFIGY_RELEASE_TOKEN", "effigy-release-prefix-canary"),
         ("RUSTFLAGS", "-D warnings"),
         ("CI", "true"),
         ("TASK_MODE", "release"),
         ("TASK_API_TOKEN", "selector-api-token-canary"),
         ("MANIFEST_VALUE", "manifest-shadow-canary"),
+        ("CHILD_MANIFEST_VALUE", "child-manifest-shadow-canary"),
+        ("RELEASE_SIGNING_TOKEN", "release-signing-canary"),
+        ("DRAFT_RELEASE_TOKEN", "draft-release-canary"),
+        ("CYCLE_CONTROL_TOKEN", "cycle-control-canary"),
+        ("UNSELECTED_RELEASE_TOKEN", "unselected-release-canary"),
+        ("APPLE_PASSWORD", "apple-password-canary"),
+        ("RELEASE_GITHUB_TOKEN", "release-github-token-canary"),
+        (
+            "UPDATE_SIGNING_SECRET_KEY_FILE",
+            "update-signing-key-file-canary",
+        ),
+        ("NUCLEUS_KEY", "nucleus-key-canary"),
+        ("MESSAGING_TOKEN", "messaging-token-canary"),
         ("MESSAGING_SESSION_TOKEN", "messaging-session-canary"),
+        ("SESSION_TOKEN", "session-token-canary"),
+        ("SESSION_COOKIE", "session-cookie-canary"),
         ("NUCLEUS_PLANE_KEY", "nucleus-plane-key-canary"),
         ("GITHUB_TOKEN", "github-token-canary"),
         ("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock"),
@@ -112,32 +257,19 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
     .into_iter()
     .map(|(key, value)| (OsString::from(key), OsString::from(value)))
     .collect::<Vec<_>>();
-    let task: effigy_manifest::ManifestTask = toml::from_str(
-        r#"
-        run = [
-          { run = "echo $TASK_MODE", env = "TASK_MODE" },
-          { run = "echo $TASK_API_TOKEN", env = "TASK_API_TOKEN" },
-          { run = "echo configured manifest value", env = "MANIFEST_VALUE" },
-          { run = "echo manifest configured value", env = "catalog:local:MANIFEST_VALUE" },
-        ]
-        "#,
-    )
-    .expect("parse selector fixture");
-    let manifest_env_names = ["MANIFEST_VALUE".to_owned()].into_iter().collect();
-    let selector_env_names = selector_env_names(&task, &manifest_env_names);
-    assert!(selector_env_names.contains("TASK_API_TOKEN"));
-    assert!(!selector_env_names.contains("catalog:local:MANIFEST_VALUE"));
-    assert!(!selector_env_names.contains("MANIFEST_VALUE"));
     let projected = forward_env_from(vars.into_iter(), &selector_env_names);
     let request = SubmitRequest {
         client_request_id: "request-1".to_owned(),
         caller: "test".to_owned(),
         repository: "/workspace/project".to_owned(),
         cwd: "/workspace/project".into(),
-        selector: "check:host-run:compile".to_owned(),
+        selector: "qa-group:root/release".to_owned(),
         argv: vec![
             "/usr/bin/effigy".to_owned(),
-            "check:host-run:compile".to_owned(),
+            "tasks".to_owned(),
+            "qa-group".to_owned(),
+            "run".to_owned(),
+            "root/release".to_owned(),
         ],
         class: RunClass::Heavy,
         class_source: ClassSource::Manifest,
@@ -154,17 +286,53 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
     let serialized = serde_json::to_string(&request).expect("serialize request");
     let wire = serde_json::from_str::<Value>(&serialized).expect("parse serialized request");
     let env = wire["env"].as_object().expect("serialized env map");
+    let actual_env_names = env.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    let expected_env_names = [
+        "EFFIGY_HOST_SCHEDULER",
+        "EFFIGY_HOST_RUN_ROOT",
+        "CI",
+        "CARGO_HOME",
+        "CARGO_TARGET_DIR",
+        "CARGO_BUILD_JOBS",
+        "CARGO_INCREMENTAL",
+        "CARGO_NET_OFFLINE",
+        "RUSTFLAGS",
+        "TASK_MODE",
+        "TASK_API_TOKEN",
+        "RELEASE_SIGNING_TOKEN",
+        "DRAFT_RELEASE_TOKEN",
+        "CYCLE_CONTROL_TOKEN",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    assert_eq!(actual_env_names, expected_env_names);
 
     for canary in [
         "host-run-token-canary",
         "host-run-id-canary",
         "retired-lease-canary",
         "effigy-app-secret-canary",
+        "effigy-release-secret-canary",
+        "effigy-nucleus-key-canary",
         "registry-token-canary",
+        "cargo-release-token-canary",
+        "cargo-release-prefix-canary",
+        "cargo-http-token-canary",
+        "cargo-netrc-password-canary",
+        "effigy-release-prefix-canary",
+        "apple-password-canary",
+        "release-github-token-canary",
+        "update-signing-key-file-canary",
+        "nucleus-key-canary",
+        "messaging-token-canary",
         "messaging-session-canary",
+        "session-token-canary",
+        "session-cookie-canary",
         "nucleus-plane-key-canary",
         "github-token-canary",
         "manifest-shadow-canary",
+        "child-manifest-shadow-canary",
+        "unselected-release-canary",
         "caller-path",
         "/caller/home",
         "/caller/worktree",
@@ -180,7 +348,22 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
     assert!(!env.contains_key("HOST_RUN_ID"));
     assert!(!env.contains_key("EFFIGY_ADMISSION_LEASE_ID"));
     assert!(!env.contains_key("CARGO_REGISTRIES_PRIVATE_TOKEN"));
+    assert!(!env.contains_key("CARGO_REGISTRIES_RELEASE_TOKEN"));
+    assert!(!env.contains_key("CARGO_RELEASE_TOKEN"));
+    assert!(!env.contains_key("CARGO_HTTP_TOKEN"));
+    assert!(!env.contains_key("CARGO_NETRC_PASSWORD"));
+    assert!(!env.contains_key("EFFIGY_APP_SECRET"));
+    assert!(!env.contains_key("EFFIGY_RELEASE_SIGNING_SECRET"));
+    assert!(!env.contains_key("EFFIGY_RELEASE_TOKEN"));
+    assert!(!env.contains_key("EFFIGY_NUCLEUS_KEY"));
+    assert!(!env.contains_key("APPLE_PASSWORD"));
+    assert!(!env.contains_key("RELEASE_GITHUB_TOKEN"));
+    assert!(!env.contains_key("UPDATE_SIGNING_SECRET_KEY_FILE"));
+    assert!(!env.contains_key("NUCLEUS_KEY"));
+    assert!(!env.contains_key("MESSAGING_TOKEN"));
     assert!(!env.contains_key("MESSAGING_SESSION_TOKEN"));
+    assert!(!env.contains_key("SESSION_TOKEN"));
+    assert!(!env.contains_key("SESSION_COOKIE"));
     assert!(!env.contains_key("NUCLEUS_PLANE_KEY"));
     assert!(!env.contains_key("SHELL"));
     assert!(!env.contains_key("TERM"));
@@ -207,6 +390,14 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
         Some("7")
     ));
     assert!(matches!(
+        env.get("CARGO_INCREMENTAL").and_then(Value::as_str),
+        Some("0")
+    ));
+    assert!(matches!(
+        env.get("CARGO_NET_OFFLINE").and_then(Value::as_str),
+        Some("true")
+    ));
+    assert!(matches!(
         env.get("RUSTFLAGS").and_then(Value::as_str),
         Some("-D warnings")
     ));
@@ -219,11 +410,23 @@ fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_cre
         Some("release")
     ));
     assert!(env.contains_key("TASK_API_TOKEN"));
+    assert!(env.contains_key("RELEASE_SIGNING_TOKEN"));
+    assert!(env.contains_key("DRAFT_RELEASE_TOKEN"));
+    assert!(env.contains_key("CYCLE_CONTROL_TOKEN"));
     assert!(serialized.contains("selector-api-token-canary"));
-    assert_eq!(wire["selector"], "check:host-run:compile");
+    assert!(serialized.contains("release-signing-canary"));
+    assert!(serialized.contains("draft-release-canary"));
+    assert!(serialized.contains("cycle-control-canary"));
+    assert_eq!(wire["selector"], "qa-group:root/release");
     assert_eq!(
         wire["argv"],
-        json!(["/usr/bin/effigy", "check:host-run:compile"])
+        json!([
+            "/usr/bin/effigy",
+            "tasks",
+            "qa-group",
+            "run",
+            "root/release"
+        ])
     );
     assert_eq!(wire["class"], "heavy");
     assert_eq!(wire["classSource"], "manifest");
