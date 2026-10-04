@@ -1,24 +1,57 @@
 //! Submit one heavy invocation to the scheduler, relay its output, follow
 //! cancellation, and translate the settlement into an honest process status.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use effigy_core::task_selection::{TaskSelector, TaskSurface};
 use effigy_host_run::{
     new_client_request_id, AttachEvent, BudgetFallback, ClassSource, ClientError, HostRunClient,
     HostRunRoot, OutputStream, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
 };
+use effigy_manifest::{
+    LoadedCatalog, ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv, ManifestTask,
+};
 use serde_json::Value;
 
-use super::{open_client, refuse, RUN_ID_ENV, TOKEN_ENV};
+use super::{open_client, refuse};
 use crate::runner::error::RunnerError;
 
 const DEFAULT_RUN_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const RUN_TIMEOUT_ENV: &str = "EFFIGY_HOST_SCHEDULER_RUN_TIMEOUT_SECS";
 const RETIRED_LEASE_ENV: &str = "EFFIGY_ADMISSION_LEASE_ID";
+const FORWARDED_RUNTIME_ENV: &[&str] = &[
+    super::SCHEDULER_ENV,
+    super::ROOT_ENV,
+    "CI",
+    "CARGO_HOME",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_JOBS",
+    "CARGO_INCREMENTAL",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_NET_OFFLINE",
+    "RUSTUP_HOME",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "RUSTC",
+    "RUSTDOC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUST_BACKTRACE",
+    "RUST_LIB_BACKTRACE",
+    "RUST_LOG",
+    "RUST_LOG_STYLE",
+];
+const SCHEDULER_PROVIDED_ENV: &[&str] = &[
+    "PATH",
+    "HOME",
+    super::TOKEN_ENV,
+    super::RUN_ID_ENV,
+    RETIRED_LEASE_ENV,
+];
 
 /// What the caller resolved before submitting.
 pub(in crate::runner) struct SubmitContext<'a> {
@@ -26,6 +59,7 @@ pub(in crate::runner) struct SubmitContext<'a> {
     pub(in crate::runner) class_source: ClassSource,
     pub(in crate::runner) repository: &'a Path,
     pub(in crate::runner) cwd: &'a Path,
+    pub(in crate::runner) selector_env_names: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +283,7 @@ fn build_request(ctx: &SubmitContext<'_>) -> Result<SubmitRequest, RunnerError> 
             .ok_or_else(|| refuse(2, format!("{RUN_TIMEOUT_ENV} must be a positive integer")))?,
         Err(_) => DEFAULT_RUN_TIMEOUT_SECS,
     };
-    let mut env = forwarded_env();
+    let mut env = forwarded_env(&ctx.selector_env_names);
     env.entry("CARGO_BUILD_JOBS".to_owned())
         .or_insert_with(|| cpu_units.to_string());
     let caller =
@@ -306,16 +340,191 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
     Ok(argv)
 }
 
-/// The caller's environment minus scheduler credentials and the retired lease
-/// name. The
-/// scheduler launches with only this map plus PATH, HOME and its own run
-/// variables, so nothing else crosses.
-fn forwarded_env() -> BTreeMap<String, String> {
-    forward_env_from(std::env::vars_os())
+/// Process environment names explicitly referenced by a selected task or any
+/// task/draft it composes. Selector resolution follows the executor's catalog
+/// and surface rules; a visited set bounds cycles in composition graphs.
+pub(in crate::runner) fn selector_env_names_for_tasks<'a>(
+    roots: impl IntoIterator<Item = (&'a str, &'a str, TaskSurface)>,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+) -> Result<BTreeSet<String>, String> {
+    let mut state = SelectorEnvState::default();
+    for (catalog_alias, task_name, surface) in roots {
+        let selector = TaskSelector {
+            prefix: Some(catalog_alias.to_owned()),
+            task_name: task_name.to_owned(),
+        };
+        let selection = effigy_routing::select_catalog_and_task_on_surface(
+            surface,
+            &selector,
+            catalogs,
+            invocation_cwd,
+        )
+        .map_err(|error| error.to_string())?;
+        collect_task_selector_env_names(
+            task_name,
+            selection.task,
+            selection.catalog,
+            surface,
+            catalogs,
+            invocation_cwd,
+            &mut state,
+        )?;
+    }
+    Ok(state.names)
 }
 
+type VisitedTask = (String, TaskSurface, String);
+
+#[derive(Default)]
+struct SelectorEnvState {
+    visited: BTreeSet<VisitedTask>,
+    names: BTreeSet<String>,
+}
+
+fn collect_task_selector_env_names(
+    task_name: &str,
+    task: &ManifestTask,
+    catalog: &LoadedCatalog,
+    surface: TaskSurface,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    state: &mut SelectorEnvState,
+) -> Result<(), String> {
+    if !state
+        .visited
+        .insert((catalog.alias.clone(), surface, task_name.to_owned()))
+    {
+        return Ok(());
+    }
+    if let Some(run) = &task.run {
+        collect_run_selector_env_names(run, catalog, catalogs, invocation_cwd, state)?;
+    }
+    Ok(())
+}
+
+fn collect_run_selector_env_names(
+    run: &ManifestManagedRun,
+    catalog: &LoadedCatalog,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    state: &mut SelectorEnvState,
+) -> Result<(), String> {
+    let ManifestManagedRun::Sequence(steps) = run else {
+        return Ok(());
+    };
+    for step in steps {
+        match step {
+            ManifestManagedRunStep::Command(command) => {
+                if let Some(task_ref) = command
+                    .strip_prefix("task:")
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    collect_composed_task_selector_env_names(
+                        task_ref,
+                        TaskSurface::Published,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        state,
+                    )?;
+                }
+            }
+            ManifestManagedRunStep::Step(table) => {
+                let table = table.as_ref();
+                if let Some(ManifestRunStepEnv::Profile(profile)) = table.env.as_ref() {
+                    let profile = profile.trim();
+                    let configured_in_catalog = catalog.manifest.env.contains_key(profile);
+                    // Qualified catalog env references and local manifest
+                    // profiles resolve from catalogs, never the caller's
+                    // process environment.
+                    if !profile.is_empty() && !profile.contains(':') && !configured_in_catalog {
+                        state.names.insert(profile.to_owned());
+                    }
+                }
+                if let Some(task_ref) = table.task.as_deref() {
+                    collect_composed_task_selector_env_names(
+                        task_ref,
+                        TaskSurface::Published,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        state,
+                    )?;
+                }
+                if let Some(draft_ref) = table.draft.as_deref() {
+                    collect_composed_task_selector_env_names(
+                        draft_ref,
+                        TaskSurface::Draft,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        state,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_composed_task_selector_env_names(
+    task_ref: &str,
+    surface: TaskSurface,
+    current_catalog: &LoadedCatalog,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    state: &mut SelectorEnvState,
+) -> Result<(), String> {
+    let (mut selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)?;
+    if let Some(prefix) = selector.prefix.as_deref() {
+        effigy_routing::resolve_catalog_by_prefix(prefix, catalogs, invocation_cwd).ok_or_else(
+            || {
+                format!(
+                    "unknown catalog prefix `{prefix}` for composed task `{}`",
+                    selector.task_name
+                )
+            },
+        )?;
+    } else {
+        // Sequence execution pins unqualified references to the catalog of
+        // the task currently being executed, rather than rerouting by cwd.
+        selector.prefix = Some(current_catalog.alias.clone());
+    }
+    if surface == TaskSurface::Published
+        && effigy_managed::BUILTIN_TASKS
+            .iter()
+            .any(|(name, _)| *name == selector.task_name)
+    {
+        return Ok(());
+    }
+    let selection = effigy_routing::select_catalog_and_task_on_surface(
+        surface,
+        &selector,
+        catalogs,
+        invocation_cwd,
+    )
+    .map_err(|error| error.to_string())?;
+    collect_task_selector_env_names(
+        &selector.task_name,
+        selection.task,
+        selection.catalog,
+        surface,
+        catalogs,
+        invocation_cwd,
+        state,
+    )
+}
+
+/// Project the caller's environment down to reviewed runtime controls and
+/// process variables explicitly referenced by the selected task or group. The
+/// scheduler supplies PATH, HOME, run ID and token itself. Prefix matching is
+/// intentionally absent: arbitrary CARGO_* or EFFIGY_* names can carry
+/// credentials or application secrets.
 pub(super) fn forward_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    selector_env_names: &BTreeSet<String>,
 ) -> BTreeMap<String, String> {
     vars.filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .filter(|(key, value)| {
@@ -323,11 +532,15 @@ pub(super) fn forward_env_from(
                 && !key.contains('=')
                 && !key.contains('\0')
                 && !value.contains('\0')
-                && key != TOKEN_ENV
-                && key != RUN_ID_ENV
-                && key != RETIRED_LEASE_ENV
+                && !SCHEDULER_PROVIDED_ENV.contains(&key.as_str())
+                && (FORWARDED_RUNTIME_ENV.contains(&key.as_str())
+                    || selector_env_names.contains(key))
         })
         .collect()
+}
+
+fn forwarded_env(selector_env_names: &BTreeSet<String>) -> BTreeMap<String, String> {
+    forward_env_from(std::env::vars_os(), selector_env_names)
 }
 
 #[derive(Default)]

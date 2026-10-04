@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_cli::{TasksArgs, TasksQaCommand};
 use effigy_context::EffigyRuntimeContext;
+use effigy_core::task_selection::TaskSurface;
 use effigy_execution::QaGroupStatusSnapshot;
 use effigy_manifest::ManifestDraftDate;
 use effigy_routing::load_effective_catalogs_allow_missing;
@@ -24,6 +25,7 @@ use effigy_tasks::{
 
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
+use super::host_scheduler;
 
 pub(super) fn run_tasks_qa(args: &TasksArgs, qa: &TasksQaCommand) -> Result<String, RunnerError> {
     // The global `--json` flag and a command-local `--json` both select the
@@ -113,7 +115,14 @@ fn resolve_run_plan(
     selector: &str,
     file: Option<&Path>,
     scopes: &[String],
-) -> Result<(std::path::PathBuf, effigy_tasks::QaGroupPlan), RunnerError> {
+) -> Result<
+    (
+        std::path::PathBuf,
+        effigy_tasks::QaGroupPlan,
+        std::collections::BTreeSet<String>,
+    ),
+    RunnerError,
+> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
     let root = context.resolved.resolved_root.clone();
     let catalogs = load_effective_catalogs_allow_missing(&root)?;
@@ -144,7 +153,30 @@ fn resolve_run_plan(
         commit: head.0,
         worktree: head.1,
     };
-    Ok((root, plan))
+    let selector_roots = plan
+        .members
+        .iter()
+        .map(|member| {
+            let surface = match member.surface.as_str() {
+                "published" => TaskSurface::Published,
+                "draft" => TaskSurface::Draft,
+                other => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "QA-group member `{}` has unsupported task surface `{other}`",
+                        member.id
+                    )))
+                }
+            };
+            Ok((member.catalog.as_str(), member.task.as_str(), surface))
+        })
+        .collect::<Result<Vec<_>, RunnerError>>()?;
+    let selector_env_names = host_scheduler::selector_env_names_for_tasks(
+        selector_roots,
+        &catalogs,
+        &context.invocation_cwd,
+    )
+    .map_err(RunnerError::task_invocation)?;
+    Ok((root, plan, selector_env_names))
 }
 
 fn run_qa_group(
@@ -155,7 +187,7 @@ fn run_qa_group(
     plan_only: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let (root, plan) = resolve_run_plan(args, selector, file, scopes)?;
+    let (root, plan, selector_env_names) = resolve_run_plan(args, selector, file, scopes)?;
     let render_json = |plan: &effigy_tasks::QaGroupPlan| {
         render_qa_group_plan_json(plan, true).map_err(map_tasks_error)
     };
@@ -179,7 +211,7 @@ fn run_qa_group(
             render_text(&plan)
         };
     }
-    execute::execute_group_run(&root, &plan, output_json)
+    execute::execute_group_run(&root, &plan, selector_env_names, output_json)
 }
 
 fn run_qa_group_status(
