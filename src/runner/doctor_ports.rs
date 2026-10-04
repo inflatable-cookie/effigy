@@ -825,6 +825,12 @@ case "$1" in
         exit 0
         ;;
       *BUN_INSTALL*)
+        if [ '{mode}' = 'hang-preflight' ]; then
+          printf '%s\n' "$$" > '{process_group_file}'
+          sleep 300 &
+          printf '%s\n' "$!" >> '{process_group_file}'
+          wait
+        fi
         sleep {delay_secs}
         exit 0
         ;;
@@ -853,14 +859,32 @@ esac
     const LIVENESS_DEADLINE: Duration = Duration::from_secs(10);
     const LIVENESS_UPPER_BOUND: Duration = Duration::from_secs(30);
 
+    /// Phase-reach budget for the ownership metadata hang proof. Preflight
+    /// (Colima `status`, `compose ps`, the BUN probe, and identity) shares this
+    /// monotonic deadline, so it must comfortably exceed worst-case preflight
+    /// under a loaded host while staying far below the fixture's 300s hang.
+    /// The old tight 2s budget let a slow earlier probe expire first, so the
+    /// proof judged a preflight timeout instead of the metadata child it owns.
+    const OWNERSHIP_HANG_DEADLINE: Duration = Duration::from_secs(10);
+    const OWNERSHIP_HANG_UPPER_BOUND: Duration = Duration::from_secs(30);
+
     #[cfg(unix)]
     fn pid_alive(pid: i32) -> bool {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
     }
 
+    /// The exact PIDs the fixture recorded for the phase it is hanging: the
+    /// shell leader plus its `sleep` descendant. This is the readiness proof
+    /// that the intended phase spawned; a missing or empty record means an
+    /// earlier phase consumed the shared deadline and starved the target, so
+    /// any reap judgement would be vacuous.
     #[cfg(unix)]
-    fn wait_for_processes_gone(pgfile: &Path) {
-        let text = fs::read_to_string(pgfile).expect("read recorded probe pids");
+    fn recorded_owned_pids(pgfile: &Path) -> Vec<i32> {
+        let text = fs::read_to_string(pgfile).unwrap_or_else(|error| {
+            panic!(
+                "fixture never recorded its own pids ({error}): the intended child never spawned"
+            )
+        });
         let pids = text
             .lines()
             .filter_map(|line| line.trim().parse::<i32>().ok())
@@ -869,13 +893,111 @@ esac
             !pids.is_empty(),
             "fixture must record its own process group: {text:?}"
         );
+        pids
+    }
+
+    /// Reap oracle: every PID the fixture recorded must be gone. The positive
+    /// proof expects this to hold after the runtime's deadline reap; the
+    /// negative control expects it to fail while timeout/reap is disabled.
+    #[cfg(unix)]
+    fn assert_owned_processes_gone(pgfile: &Path) {
+        let alive = recorded_owned_pids(pgfile)
+            .into_iter()
+            .filter(|pid| pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "recorded probe process group was not reaped: {alive:?} still alive"
+        );
+    }
+
+    #[cfg(unix)]
+    fn wait_for_processes_gone(pgfile: &Path) {
+        let pids = recorded_owned_pids(pgfile);
         let deadline = Instant::now() + Duration::from_secs(10);
         while pids.iter().any(|pid| pid_alive(*pid)) {
             assert!(
                 Instant::now() < deadline,
-                "recorded probe process group was not reaped: {text:?}"
+                "recorded probe process group was not reaped: {pids:?} still alive"
             );
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Private RAII cleanup for a fixture the test started itself. Only the
+    /// exact PIDs the fixture recorded are signalled, plus its own direct
+    /// `Child` handle: never a process pattern, never the test's own process
+    /// group. Waiting on the direct child reaps its zombie so the recorded
+    /// leader is genuinely gone rather than merely signalled.
+    #[cfg(unix)]
+    struct OwnedFixtureGuard {
+        pgfile: PathBuf,
+        child: std::process::Child,
+    }
+
+    #[cfg(unix)]
+    impl OwnedFixtureGuard {
+        fn new(pgfile: PathBuf, child: std::process::Child) -> Self {
+            Self { pgfile, child }
+        }
+
+        fn wait_until_recorded(&self) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if fs::read_to_string(&self.pgfile)
+                    .map(|text| !text.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture never recorded its own pids: {}",
+                    self.pgfile.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn reap(&mut self) {
+            let pids = fs::read_to_string(&self.pgfile)
+                .ok()
+                .map(|text| {
+                    text.lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let signal = |pids: &[i32], signal| {
+                for pid in pids {
+                    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), signal);
+                }
+            };
+            signal(&pids, nix::sys::signal::Signal::SIGTERM);
+            let grace = Instant::now() + Duration::from_secs(2);
+            while pids.iter().any(|pid| pid_alive(*pid)) && Instant::now() < grace {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if pids.iter().any(|pid| pid_alive(*pid)) {
+                signal(&pids, nix::sys::signal::Signal::SIGKILL);
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while pids.iter().any(|pid| pid_alive(*pid)) {
+                assert!(
+                    Instant::now() < deadline,
+                    "private guard could not reap recorded fixture pids: {pids:?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for OwnedFixtureGuard {
+        fn drop(&mut self) {
+            self.reap();
         }
     }
 
@@ -1333,11 +1455,24 @@ esac
         append_workspace_ownership_diagnostics(
             &root,
             std::slice::from_ref(&policy),
-            Some(started + Duration::from_secs(2)),
+            Some(started + OWNERSHIP_HANG_DEADLINE),
             &mut diagnostics,
         );
 
-        assert!(started.elapsed() < Duration::from_secs(15));
+        // Readiness before judgement: the fixture records its own leader and
+        // descendant when the metadata batch starts. An empty record means an
+        // earlier phase consumed the deadline and this proof never reached the
+        // child it owns, so the reap result below would be vacuous.
+        let recorded = recorded_owned_pids(&process_group);
+        assert!(
+            recorded.len() >= 2,
+            "the intended metadata batch recorded its leader and descendant: {recorded:?}"
+        );
+
+        assert!(
+            started.elapsed() < OWNERSHIP_HANG_UPPER_BOUND,
+            "the metadata batch must die at the deadline, not wait out sleep 300"
+        );
         assert!(diagnostics.findings.is_empty());
         assert!(
             diagnostics
@@ -1345,7 +1480,8 @@ esac
                 .iter()
                 .any(|warning| warning.contains("verification incomplete")
                     && warning.contains("workspace ownership metadata batch")
-                    && warning.contains("/usr/local/cargo")),
+                    && warning.contains("/usr/local/cargo")
+                    && warning.contains("timed out")),
             "a genuine backend hang must be unavailable with its exact batch context: {:?}",
             diagnostics.warnings
         );
@@ -1357,5 +1493,119 @@ esac
             "an incomplete batch must not claim clean ownership"
         );
         wait_for_processes_gone(&process_group);
+        assert_owned_processes_gone(&process_group);
+    }
+
+    /// Controlled earlier-phase delay. The BUN preflight hangs and consumes the
+    /// shared deadline, so the metadata batch is never spawned. This is exactly
+    /// the shape that failed milestone 4dee6cf6 under host load with the old
+    /// tight budget: the doctor correctly reported the earlier probe as
+    /// unavailable, but the old oracle demanded a metadata-batch context. The
+    /// doomed metadata assertion is deliberately absent here; instead the
+    /// proof requires the preflight's own context and forbids any metadata
+    /// reap claim.
+    #[cfg(unix)]
+    #[test]
+    fn ownership_preflight_hang_is_unavailable_without_metadata_reap_claim() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-preflight-hang");
+        let policy = named_rust_volume_policy(&root);
+        let preflight_group = root.join("preflight-process-group");
+        let metadata_group = root.join("ownership-process-group");
+        let bin = install_fake_ownership_colima(&root, "0", "hang-preflight", "", &preflight_group);
+        let _env = with_runtime_env(&bin);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        let started = Instant::now();
+
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(started + OWNERSHIP_HANG_DEADLINE),
+            &mut diagnostics,
+        );
+
+        // The hung earlier phase is reaped and reported with its own context;
+        // the metadata child is never spawned, so no metadata reap is claimed.
+        wait_for_processes_gone(&preflight_group);
+        assert!(diagnostics.findings.is_empty());
+        assert!(
+            diagnostics.warnings.iter().any(|warning| warning
+                .contains("workspace ownership probe skipped")
+                && warning.contains("BUN_INSTALL")
+                && warning.contains("timed out")),
+            "the hung preflight probe must report its own context: {:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            diagnostics
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("workspace ownership metadata batch")),
+            "a starved metadata batch must not be claimed as exercised: {:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            !metadata_group.exists(),
+            "no metadata child may be spawned once the preflight deadline expired"
+        );
+        assert!(
+            diagnostics
+                .evidence
+                .iter()
+                .all(|line| !line.contains("clean")),
+            "a preflight timeout must not claim clean ownership"
+        );
+    }
+
+    /// Negative control: with the runtime deadline/reap disabled, the owned
+    /// metadata hang stays alive, so the reap oracle used by the positive proof
+    /// must fail. The private guard then reaps exactly the recorded leader and
+    /// descendant, leaving no leaked process behind.
+    #[cfg(unix)]
+    #[test]
+    fn ownership_hang_reap_oracle_fails_when_runtime_reap_is_disabled() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-hang-negative-control");
+        let process_group = root.join("ownership-process-group");
+        let bin = install_fake_ownership_colima(&root, "0", "hang", "", &process_group);
+        let fixture = bin.join("colima");
+        let child = std::process::Command::new(&fixture)
+            .args([
+                "nerdctl",
+                "--profile",
+                "effigy",
+                "--",
+                "exec",
+                "-u",
+                "0",
+                "demo-stack-1",
+                "sh",
+                "-c",
+                "effigy-workspace-doctor-inspect-batch /usr/local/cargo",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the metadata hang fixture without runtime reap");
+
+        let guard = OwnedFixtureGuard::new(process_group.clone(), child);
+        guard.wait_until_recorded();
+        let recorded = recorded_owned_pids(&process_group);
+        assert!(
+            recorded.iter().all(|pid| pid_alive(*pid)),
+            "timeout/reap disabled: the recorded owned hang must still be alive: {recorded:?}"
+        );
+
+        let oracle = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_owned_processes_gone(&process_group);
+        }));
+        assert!(
+            oracle.is_err(),
+            "the reap oracle must fail while the owned hang is still alive"
+        );
+
+        drop(guard);
+        assert_owned_processes_gone(&process_group);
     }
 }
