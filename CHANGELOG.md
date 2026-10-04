@@ -253,6 +253,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Read-only doctor workspace ownership checks batch the known mount metadata
+  samples and numeric uid/gid read/write tests under the shared doctor
+  deadline. Overlapping Rust cache paths reuse nested samples; wrong
+  permissions remain path-specific findings, while an expired or hung batch
+  reports verification incomplete without partial permission samples. The
+  focused proof runs through `test:doctor:ownership-latency`.
 - The embedded catalog baseline now tracks published catalog-pack `v1.1.1`
   (`ghcr.io/inflatable-cookie/effigy-catalog-pack@sha256:a83b723e14a131d9bba0eaddeb931c8b881157948f5a8e47e68610e62ba91989`).
   The generated `workspace-rust-bun` and `php-fpm` entrypoints start safely

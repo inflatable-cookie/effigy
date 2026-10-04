@@ -67,6 +67,12 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
         &self,
         user: &str,
     ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError>;
+    fn resolve_doctor_identity(
+        &self,
+        user: &str,
+    ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError> {
+        self.resolve_identity(user)
+    }
     fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError>;
     fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError>;
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), PermissionPrepError>;
@@ -88,6 +94,29 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
         identity: &ResolvedWorkspaceIdentity,
         directory: &str,
     ) -> Result<(), PermissionPrepError>;
+
+    fn inspect_doctor_paths(
+        &mut self,
+        identity: &ResolvedWorkspaceIdentity,
+        paths: &[String],
+    ) -> Result<Vec<Vec<String>>, PermissionPrepError> {
+        paths
+            .iter()
+            .map(|path| {
+                let inspection = self.inspect(path)?;
+                let can_read_write = match inspection.presence {
+                    PathPresence::Missing | PathPresence::Symlink => None,
+                    _ => Some(self.user_can_read_write(identity, path)?),
+                };
+                Ok(doctor_path_samples(
+                    identity,
+                    path,
+                    &inspection,
+                    can_read_write,
+                ))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -616,14 +645,14 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
             };
         }
     };
-    let identity = match backend.resolve_identity(user) {
+    let identity = match backend.resolve_doctor_identity(user) {
         Ok(identity) => identity,
         Err(error) => {
             return WorkspaceOwnershipDiagnosis {
                 status: WorkspaceOwnershipProbeStatus::Unavailable,
                 evidence: None,
                 warning: Some(format!(
-                    "container `{}` workspace ownership probe failed: {}",
+                    "container `{}` workspace ownership verification incomplete (workspace ownership probe failed): {}",
                     policy.name, error.message
                 )),
                 samples: Vec::new(),
@@ -631,45 +660,90 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
             };
         }
     };
-    let mut samples = Vec::new();
-    for target in &plan.targets {
-        if target.rust_cache.is_none()
-            && target.repair_authority != WorkspaceRepairAuthority::OwnedDisposable
-        {
-            continue;
+    let targets = plan
+        .targets
+        .iter()
+        .filter(|target| {
+            target.rust_cache.is_some()
+                || target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
+        })
+        .collect::<Vec<_>>();
+    let mut target_samples = vec![Vec::new(); targets.len()];
+    let mut root_paths = targets
+        .iter()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    root_paths.extend(extra_env_targets.iter().cloned());
+    let root_results = match backend.inspect_doctor_paths(&identity, &root_paths) {
+        Ok(results) => results,
+        Err(error) => {
+            return unavailable_workspace_diagnosis(policy, Some(identity), error);
         }
-        match inspect_declared_mount(backend, &identity, &target.path, target.rust_cache) {
-            Ok(found) => samples.extend(found),
-            Err(error) => {
-                return WorkspaceOwnershipDiagnosis {
-                    status: WorkspaceOwnershipProbeStatus::Unavailable,
-                    evidence: None,
-                    warning: Some(format!(
-                        "container `{}` workspace ownership probe failed: {}",
-                        policy.name, error.message
-                    )),
-                    samples: Vec::new(),
-                    identity: Some(identity),
-                };
-            }
-        }
+    };
+    for (index, result) in root_results.iter().take(targets.len()).enumerate() {
+        target_samples[index].extend(result.iter().cloned());
     }
-    for extra in extra_env_targets {
-        match inspect_doctor_path(backend, &identity, extra) {
-            Ok(found) => samples.extend(found),
-            Err(error) => {
-                return WorkspaceOwnershipDiagnosis {
-                    status: WorkspaceOwnershipProbeStatus::Unavailable,
-                    evidence: None,
-                    warning: Some(format!(
-                        "container `{}` workspace ownership probe failed: {}",
-                        policy.name, error.message
-                    )),
-                    samples: Vec::new(),
-                    identity: Some(identity),
-                };
+    let mut samples = root_results
+        .iter()
+        .skip(targets.len())
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // Batch each nested depth across clean mounts. These are still the exact
+    // bounded Cargo/target paths the doctor has always sampled; missing paths
+    // are not walked and a sample on a mount stops its later nested probes.
+    let mut pending = targets
+        .iter()
+        .enumerate()
+        .filter(|(index, target)| target_samples[*index].is_empty() && target.rust_cache.is_some())
+        .map(|(index, target)| {
+            (
+                index,
+                std::collections::VecDeque::from(rust_nested_probe_paths(
+                    &target.path,
+                    target.rust_cache,
+                )),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut cached_nested = std::collections::HashMap::<String, Vec<String>>::new();
+    while !pending.is_empty() {
+        let mut next_paths = Vec::new();
+        for (_, paths) in &mut pending {
+            if let Some(path) = paths.front() {
+                if !cached_nested.contains_key(path) && !next_paths.contains(path) {
+                    next_paths.push(path.clone());
+                }
             }
         }
+        if !next_paths.is_empty() {
+            let results = match backend.inspect_doctor_paths(&identity, &next_paths) {
+                Ok(results) => results,
+                Err(error) => {
+                    return unavailable_workspace_diagnosis(policy, Some(identity), error);
+                }
+            };
+            cached_nested.extend(next_paths.into_iter().zip(results));
+        }
+
+        pending.retain_mut(|(index, paths)| {
+            let Some(path) = paths.front() else {
+                return false;
+            };
+            if let Some(found) = cached_nested.get(path) {
+                if !found.is_empty() {
+                    target_samples[*index].extend(found.iter().cloned());
+                    return false;
+                }
+                paths.pop_front();
+                return !paths.is_empty();
+            }
+            false
+        });
+    }
+    for target_result in target_samples {
+        samples.extend(target_result);
     }
     if samples.is_empty() {
         WorkspaceOwnershipDiagnosis {
@@ -693,47 +767,43 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
     }
 }
 
-fn inspect_declared_mount(
-    backend: &mut impl WorkspaceAccessBackend,
-    identity: &ResolvedWorkspaceIdentity,
-    path: &str,
-    rust_cache: Option<WorkspaceRustCacheKind>,
-) -> Result<Vec<String>, PermissionPrepError> {
-    let mut samples = inspect_doctor_path(backend, identity, path)?;
-    if !samples.is_empty() {
-        return Ok(samples);
+fn unavailable_workspace_diagnosis(
+    policy: &EffectiveContainerPolicy,
+    identity: Option<ResolvedWorkspaceIdentity>,
+    error: PermissionPrepError,
+) -> WorkspaceOwnershipDiagnosis {
+    WorkspaceOwnershipDiagnosis {
+        status: WorkspaceOwnershipProbeStatus::Unavailable,
+        evidence: None,
+        warning: Some(format!(
+            "container `{}` workspace ownership verification incomplete (workspace ownership probe failed): {}",
+            policy.name, error.message
+        )),
+        samples: Vec::new(),
+        identity,
     }
-    for nested in rust_nested_probe_paths(path, rust_cache) {
-        let found = inspect_doctor_path(backend, identity, &nested)?;
-        if !found.is_empty() {
-            samples.extend(found);
-            break;
-        }
-    }
-    Ok(samples)
 }
 
-fn inspect_doctor_path(
-    backend: &mut impl WorkspaceAccessBackend,
+fn doctor_path_samples(
     identity: &ResolvedWorkspaceIdentity,
     path: &str,
-) -> Result<Vec<String>, PermissionPrepError> {
-    let inspection = backend.inspect(path)?;
+    inspection: &PathInspection,
+    can_read_write: Option<bool>,
+) -> Vec<String> {
     if inspection.presence == PathPresence::Missing {
-        return Ok(Vec::new());
+        return Vec::new();
+    }
+    if inspection.presence == PathPresence::Symlink {
+        return vec![format!("{path}\tsymlink")];
     }
     let mut samples = Vec::new();
-    if inspection.presence == PathPresence::Symlink {
-        samples.push(format!("{path}\tsymlink"));
-        return Ok(samples);
-    }
-    if !backend.user_can_read_write(identity, path)? {
+    if can_read_write == Some(false) {
         samples.push(format!("{path}\tunwritable-by-uid-{}", identity.uid));
     }
     if inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid) {
         samples.push(format!("{path}\t{path}"));
     }
-    Ok(samples)
+    samples
 }
 
 pub(in crate::runner) struct ComposeAccessBackend<'a> {
@@ -742,6 +812,9 @@ pub(in crate::runner) struct ComposeAccessBackend<'a> {
     pub deadline: Option<Instant>,
 }
 
+const DOCTOR_METADATA_BATCH_SCRIPT: &str = "for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ -d \"$path\" ]; then\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'dir %s\\n' \"$metadata\"\n  else\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'file %s\\n' \"$metadata\"\n  fi\ndone";
+const DOCTOR_ACCESS_BATCH_SCRIPT: &str = "for path do\n  if [ -r \"$path\" ] && [ -w \"$path\" ]; then\n    printf 'read-write\\n'\n  else\n    printf 'unwritable\\n'\n  fi\ndone";
+
 impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     fn resolve_identity(
         &self,
@@ -749,6 +822,35 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError> {
         let uid = parse_id_output(&self.exec_root(&["id", "-u", user], "workspace user uid")?)?;
         let gid = parse_id_output(&self.exec_root(&["id", "-g", user], "workspace user gid")?)?;
+        Ok(ResolvedWorkspaceIdentity {
+            user: user.to_owned(),
+            uid,
+            gid,
+        })
+    }
+
+    fn resolve_doctor_identity(
+        &self,
+        user: &str,
+    ) -> Result<ResolvedWorkspaceIdentity, PermissionPrepError> {
+        let output = self.exec_root(
+            &[
+                "sh",
+                "-c",
+                r#"uid="$(id -u "$1")" && gid="$(id -g "$1")" && printf '%s\n%s\n' "$uid" "$gid""#,
+                "effigy-workspace-identity",
+                user,
+            ],
+            "workspace identity probe",
+        )?;
+        let mut lines = output.lines();
+        let uid = parse_id_output(lines.next().unwrap_or_default())?;
+        let gid = parse_id_output(lines.next().unwrap_or_default())?;
+        if lines.next().is_some() {
+            return Err(PermissionPrepError::new(
+                "workspace identity probe returned unexpected extra output",
+            ));
+        }
         Ok(ResolvedWorkspaceIdentity {
             user: user.to_owned(),
             uid,
@@ -826,6 +928,79 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
             true,
         )?;
         Ok(output.status_success)
+    }
+
+    fn inspect_doctor_paths(
+        &mut self,
+        identity: &ResolvedWorkspaceIdentity,
+        paths: &[String],
+    ) -> Result<Vec<Vec<String>>, PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let path_context = paths
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let metadata_label = format!("workspace ownership metadata batch for {path_context}");
+        let mut metadata_argv = vec![
+            "sh",
+            "-c",
+            DOCTOR_METADATA_BATCH_SCRIPT,
+            "effigy-workspace-doctor-inspect-batch",
+        ];
+        metadata_argv.extend(paths.iter().map(String::as_str));
+        let metadata_output = self.exec_root(&metadata_argv, &metadata_label)?;
+        let inspections = parse_inspect_batch_output(&metadata_output, paths.len())?;
+
+        let access_indexes = inspections
+            .iter()
+            .enumerate()
+            .filter_map(|(index, inspection)| {
+                (!matches!(
+                    inspection.presence,
+                    PathPresence::Missing | PathPresence::Symlink
+                ))
+                .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let mut can_read_write = vec![None; paths.len()];
+        if !access_indexes.is_empty() {
+            let access_paths = access_indexes
+                .iter()
+                .map(|index| paths[*index].as_str())
+                .collect::<Vec<_>>();
+            let access_context = access_indexes
+                .iter()
+                .map(|index| format!("`{}`", paths[*index]))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let access_label = format!(
+                "workspace ownership numeric-user access batch (uid={} gid={}) for {access_context}",
+                identity.uid, identity.gid
+            );
+            let mut access_argv = vec![
+                "sh",
+                "-c",
+                DOCTOR_ACCESS_BATCH_SCRIPT,
+                "effigy-workspace-doctor-access-batch",
+            ];
+            access_argv.extend(access_paths);
+            let output = self.exec_as(identity, &access_argv, &access_label, false)?;
+            let results = parse_access_batch_output(&output.stdout, access_indexes.len())?;
+            for (index, result) in access_indexes.into_iter().zip(results) {
+                can_read_write[index] = Some(result);
+            }
+        }
+
+        Ok(paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                doctor_path_samples(identity, path, &inspections[index], can_read_write[index])
+            })
+            .collect())
     }
 
     fn user_create_lock(
@@ -921,7 +1096,7 @@ impl ComposeAccessBackend<'_> {
             label,
             self.deadline,
         )
-        .map_err(|error| PermissionPrepError::new(error.to_string()))?;
+        .map_err(|error| PermissionPrepError::new(format!("{label}: {error}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let success = output.status.success();
@@ -945,6 +1120,97 @@ fn parse_id_output(raw: &str) -> Result<u32, PermissionPrepError> {
             "workspace identity probe returned non-numeric id `{raw}`"
         ))
     })
+}
+
+fn parse_inspect_batch_output(
+    raw: &str,
+    expected: usize,
+) -> Result<Vec<PathInspection>, PermissionPrepError> {
+    let lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() != expected {
+        return Err(PermissionPrepError::new(format!(
+            "workspace ownership metadata batch returned {} records for {expected} paths",
+            lines.len()
+        )));
+    }
+    lines.into_iter().map(parse_doctor_inspect_record).collect()
+}
+
+fn parse_doctor_inspect_record(raw: &str) -> Result<PathInspection, PermissionPrepError> {
+    match raw {
+        "missing" => {
+            return Ok(PathInspection {
+                presence: PathPresence::Missing,
+                uid: None,
+                gid: None,
+                mode: None,
+            });
+        }
+        "symlink" => {
+            return Ok(PathInspection {
+                presence: PathPresence::Symlink,
+                uid: None,
+                gid: None,
+                mode: None,
+            });
+        }
+        _ => {}
+    }
+    let mut parts = raw.split_whitespace();
+    let kind = parts.next().unwrap_or_default();
+    let presence = match kind {
+        "dir" => PathPresence::Directory,
+        "file" => PathPresence::File,
+        _ => {
+            return Err(PermissionPrepError::new(format!(
+                "workspace ownership metadata batch returned invalid record `{raw}`"
+            )));
+        }
+    };
+    let uid = parts.next().and_then(|value| value.parse::<u32>().ok());
+    let gid = parts.next().and_then(|value| value.parse::<u32>().ok());
+    let mode = parts
+        .next()
+        .and_then(|value| u32::from_str_radix(value, 8).ok());
+    if uid.is_none() || gid.is_none() || mode.is_none() || parts.next().is_some() {
+        return Err(PermissionPrepError::new(format!(
+            "workspace ownership metadata batch returned invalid record `{raw}`"
+        )));
+    }
+    Ok(PathInspection {
+        presence,
+        uid,
+        gid,
+        mode,
+    })
+}
+
+fn parse_access_batch_output(raw: &str, expected: usize) -> Result<Vec<bool>, PermissionPrepError> {
+    let lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() != expected {
+        return Err(PermissionPrepError::new(format!(
+            "workspace ownership numeric-user access batch returned {} records for {expected} paths",
+            lines.len()
+        )));
+    }
+    lines
+        .into_iter()
+        .map(|line| match line {
+            "read-write" => Ok(true),
+            "unwritable" => Ok(false),
+            _ => Err(PermissionPrepError::new(format!(
+                "workspace ownership numeric-user access batch returned invalid record `{line}`"
+            ))),
+        })
+        .collect()
 }
 
 fn parse_inspect_output(raw: &str) -> Result<PathInspection, PermissionPrepError> {
