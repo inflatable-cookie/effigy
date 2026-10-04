@@ -580,8 +580,12 @@ mod tests {
         is_primary_service_running_with_deadline, workspace_ownership_finding,
     };
     use crate::contract_test_support::{lock_test, EnvGuard};
+    use crate::runner::scripted_doctor::{
+        self, OwnershipFixture, ScriptedPhase, ScriptedStatus, SCRIPTED_OPERATION_COST,
+    };
     use crate::runner::system_command::workspace_permissions::{
-        compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
+        compose_backend_with_deadline, diagnose_workspace_ownership, rust_nested_probe_paths,
+        WorkspaceOwnershipProbeStatus,
     };
     use crate::runner::test_support::effective_container_policy;
 
@@ -852,6 +856,128 @@ esac
         );
         install_fake_colima(root, &script)
     }
+    /// Deterministic scripted handler for one private fake-VM fixture. No
+    /// subprocess is launched: the production argv decides the phase, the
+    /// fixture answers it, and the runtime records the exact operation.
+    fn scripted_ownership_handler(
+        policy: &EffectiveContainerPolicy,
+        fixture: OwnershipFixture,
+    ) -> Box<scripted_doctor::ScriptedHandler> {
+        scripted_doctor::ownership_handler(
+            fixture,
+            policy.project_name.clone(),
+            policy.primary_service.clone(),
+            policy.repo_root.display().to_string(),
+        )
+    }
+
+    /// Pin the Colima backend without putting a fake runtime on PATH: if the
+    /// scripted seam ever misses a launch, the real spawn fails loudly instead
+    /// of silently answering.
+    fn with_scripted_backend_env() -> EnvGuard {
+        EnvGuard::set_many(&[("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned()))])
+    }
+
+    /// Pre-batching serial reference derived from the SAME workload: every
+    /// applicable target root and each of its per-target nested rust probes is
+    /// one metadata exec plus one numeric-user access exec, plus the Colima
+    /// status/compose-ps/service-resolve, the Bun exec and the two identity
+    /// execs the old path issued. It counts the pre-batching shape (no
+    /// overlapping-path reuse) and is derived from the plan, not hardcoded.
+    fn serial_reference_operations(policy: &EffectiveContainerPolicy) -> usize {
+        let plan = load_workspace_ownership_plan(policy).expect("ownership plan");
+        let mut path_operations = 0usize;
+        for target in plan.targets.iter().filter(|target| {
+            target.rust_cache.is_some()
+                || target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
+        }) {
+            path_operations += 2;
+            path_operations += 2 * rust_nested_probe_paths(&target.path, target.rust_cache).len();
+        }
+        const PREFLIGHT_AND_IDENTITY_OPERATIONS: usize = 6;
+        path_operations + PREFLIGHT_AND_IDENTITY_OPERATIONS
+    }
+
+    fn assert_numeric_access_user(
+        operations: &[scripted_doctor::ScriptedOperation],
+        expected: &str,
+    ) -> Result<(), String> {
+        for operation in operations {
+            if operation.phase != ScriptedPhase::AccessBatch {
+                continue;
+            }
+            if operation.user.as_deref() != Some(expected) {
+                return Err(format!(
+                    "access batch ran as {:?}, expected {expected}: {}",
+                    operation.user,
+                    operation.rendered()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_no_mutating_operations(
+        operations: &[scripted_doctor::ScriptedOperation],
+    ) -> Result<(), String> {
+        for operation in operations {
+            if operation.mutating {
+                return Err(format!(
+                    "read-only doctor issued a mutating command: {}",
+                    operation.rendered()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_batched_metadata(
+        operations: &[scripted_doctor::ScriptedOperation],
+    ) -> Result<(), String> {
+        let batches = operations
+            .iter()
+            .filter(|operation| operation.phase == ScriptedPhase::MetadataBatch)
+            .collect::<Vec<_>>();
+        if batches.is_empty() {
+            return Err("no metadata batch was executed".to_owned());
+        }
+        let requested = batches
+            .iter()
+            .map(|operation| operation.paths.len())
+            .sum::<usize>();
+        if batches.len() >= requested {
+            return Err(format!(
+                "metadata was not batched: {} batches for {requested} paths",
+                batches.len()
+            ));
+        }
+        Ok(())
+    }
+
+    fn assert_no_unexpected_operations(
+        operations: &[scripted_doctor::ScriptedOperation],
+    ) -> Result<(), String> {
+        for operation in operations {
+            if operation.phase == ScriptedPhase::Unexpected {
+                return Err(format!("unexpected launch: {}", operation.rendered()));
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_phase_absent(
+        operations: &[scripted_doctor::ScriptedOperation],
+        phase: ScriptedPhase,
+    ) -> Result<(), String> {
+        if let Some(operation) = operations.iter().find(|operation| operation.phase == phase) {
+            return Err(format!(
+                "phase {} ran after it was forbidden: {}",
+                phase.label(),
+                operation.rendered()
+            ));
+        }
+        Ok(())
+    }
 
     /// Generous bound for a fixture that hangs for 300s. It must still be far
     /// below the sleep it would otherwise wait out, so the bounded probe is
@@ -1100,42 +1226,120 @@ esac
     fn successful_and_stopped_liveness_distinctions_survive_a_deadline() {
         let _lock = lock_test();
         let (_temp, root) = fresh_root("liveness-distinctions");
-        let running_marker = root.join("stopped-probe-spawned");
-        let bin = install_fake_colima(
-            &root,
-            &format!(
-                "#!/bin/sh\ncase \"$1\" in\n  status) printf 'status: Running\\n'; exit 0 ;;\n  nerdctl) printf 'demo-stack-1\\tUp 2 minutes\\t\\tdemo-stack\\t{}\\tworkspace\\t0\\n'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
-                root.display()
-            ),
-        );
-        {
-            let _env = with_runtime_env(&bin);
-            let policy = policy_for(&root);
-            let deadline = Some(Instant::now() + LIVENESS_DEADLINE);
-            let running = is_primary_service_running_with_deadline(&root, &policy, deadline)
-                .expect("bounded successful liveness probe");
-            assert!(running, "running primary service must read as live");
-        }
-
-        let stopped_marker_bin = install_fake_colima(
-            &root,
-            &format!(
-                "#!/bin/sh\ncase \"$1\" in\n  status) printf 'status: Stopped\\n'; exit 0 ;;\n  *) touch '{}'; exit 0 ;;\nesac\n",
-                running_marker.display()
-            ),
-        );
-        let _env = with_runtime_env(&stopped_marker_bin);
         let policy = policy_for(&root);
+        let _env = with_scripted_backend_env();
+
+        let running_guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture::default(),
+        ));
+        let running = is_primary_service_running_with_deadline(
+            &root,
+            &policy,
+            Some(running_guard.deadline(LIVENESS_DEADLINE)),
+        )
+        .expect("bounded successful liveness probe");
+        assert!(running, "running primary service must read as live");
+        let running_operations = running_guard.runtime().operations();
+        assert_eq!(
+            running_operations
+                .iter()
+                .map(|operation| operation.phase)
+                .collect::<Vec<_>>(),
+            vec![
+                ScriptedPhase::ColimaStatus,
+                ScriptedPhase::LivenessComposePs
+            ],
+            "production order is status then compose ps: {:?}",
+            running_operations
+        );
+        assert!(
+            running_guard.runtime().logical_elapsed() < LIVENESS_DEADLINE,
+            "production parsing must settle the running distinction inside the deadline"
+        );
+        drop(running_guard);
+
+        let stopped_guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                status: ScriptedStatus::Stopped,
+                ..OwnershipFixture::default()
+            },
+        ));
         let stopped = is_primary_service_running_with_deadline(
             &root,
             &policy,
-            Some(Instant::now() + LIVENESS_DEADLINE),
+            Some(stopped_guard.deadline(LIVENESS_DEADLINE)),
         )
         .expect("bounded stopped liveness probe");
         assert!(!stopped, "stopped Colima must read as not running");
+        assert_phase_absent(
+            &stopped_guard.runtime().operations(),
+            ScriptedPhase::LivenessComposePs,
+        )
+        .expect("a stopped profile must not run the compose probe");
+
+        // A stopped profile must not reach ownership at all.
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(stopped_guard.deadline(LIVENESS_DEADLINE)),
+            &mut diagnostics,
+        );
+        assert_eq!(
+            diagnostics.evidence,
+            vec![format!(
+                "container `{}` workspace ownership: not probed (primary service stopped)",
+                policy.name
+            )],
+            "stopped must be a distinct not-probed state"
+        );
+        assert_phase_absent(
+            &stopped_guard.runtime().operations(),
+            ScriptedPhase::MetadataBatch,
+        )
+        .expect("stopped must not run the ownership batches");
+        assert_phase_absent(
+            &stopped_guard.runtime().operations(),
+            ScriptedPhase::AccessBatch,
+        )
+        .expect("stopped must not run the numeric-user batches");
+        drop(stopped_guard);
+
+        // A timeout is unavailable, never stopped and never clean.
+        let timeout_guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                status: ScriptedStatus::Timeout,
+                ..OwnershipFixture::default()
+            },
+        ));
+        let mut timeout_diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(timeout_guard.deadline(LIVENESS_DEADLINE)),
+            &mut timeout_diagnostics,
+        );
+        let warnings = format!("{:?}", timeout_diagnostics.warnings);
         assert!(
-            !running_marker.exists(),
-            "a stopped profile must not run the compose probe"
+            timeout_diagnostics.findings.is_empty(),
+            "a timed-out liveness probe must never produce a finding: {warnings}"
+        );
+        assert!(
+            timeout_diagnostics.warnings.iter().any(|warning| warning
+                .contains("workspace ownership probe skipped")
+                && warning.contains("timed out")),
+            "timeout must be reported as unavailable: {warnings}"
+        );
+        assert!(
+            !timeout_diagnostics
+                .evidence
+                .iter()
+                .any(|line| line.contains("clean") || line.contains("not probed")),
+            "timeout must never read as clean or stopped: {:?}",
+            timeout_diagnostics.evidence
         );
     }
 
@@ -1185,41 +1389,52 @@ esac
             diagnostics.evidence
         );
     }
-    #[cfg(unix)]
     #[test]
     fn healthy_named_volume_ownership_batches_probes_within_doctor_budget() {
-        const PER_EXEC_DELAY_MS: u64 = 430;
         // Keep this aligned with effigy-doctor's existing fast-doctor budget.
         const DOCTOR_BUDGET_MS: u64 = 10_000;
-        // Before batching: four roots plus six nested Rust samples (including
-        // overlapping declarations), each with root and numeric-user execs,
-        // two identity execs, liveness, and Bun detection. This is a lower
-        // bound on launches because it counts liveness only once.
-        const SERIAL_EXEC_LOWER_BOUND: u64 = 24;
-        const BATCHED_EXEC_COUNT: u64 = 10;
 
         let _lock = lock_test();
         let (_temp, root) = fresh_root("ownership-latency");
         let policy = named_rust_volume_policy(&root);
-        let pgfile = root.join("unused-process-group");
-        let bin = install_fake_ownership_colima(&root, "0.43", "healthy", "", &pgfile);
-        let _env = with_runtime_env(&bin);
+        let budget = Duration::from_millis(DOCTOR_BUDGET_MS);
+        let _env = with_scripted_backend_env();
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture::default(),
+        ));
         let mut diagnostics = DoctorRuntimeDiagnostics::default();
-        let started = Instant::now();
 
         append_workspace_ownership_diagnostics(
             &root,
             std::slice::from_ref(&policy),
-            Some(started + Duration::from_millis(DOCTOR_BUDGET_MS)),
+            Some(guard.deadline(budget)),
             &mut diagnostics,
         );
 
-        let elapsed = started.elapsed();
+        let runtime = guard.runtime();
+        let executed = runtime.applicable_operations();
+        let model = executed
+            .iter()
+            .map(|operation| operation.cost)
+            .sum::<Duration>();
+        assert_eq!(
+            runtime.logical_elapsed(),
+            model + SCRIPTED_OPERATION_COST,
+            "the model charges every executed script operation, including the preliminary status"
+        );
         assert!(
-            elapsed < Duration::from_millis(DOCTOR_BUDGET_MS),
-            "healthy owned Rust volumes must fit the existing doctor budget; elapsed={elapsed:?}, warnings={:?}",
+            model < budget,
+            "the batched model must fit the existing doctor budget; model={model:?}, \
+             executed={} operations={:?}, warnings={:?}",
+            executed.len(),
+            executed
+                .iter()
+                .map(|operation| operation.phase.label())
+                .collect::<Vec<_>>(),
             diagnostics.warnings
         );
+        assert!(runtime.logical_elapsed() > Duration::ZERO);
         assert!(
             diagnostics.findings.is_empty(),
             "healthy named Rust volumes must not produce findings: {:?}",
@@ -1238,28 +1453,21 @@ esac
             "all sampled roots and nested paths must be verified clean: {:?}",
             diagnostics.evidence
         );
+        assert_no_unexpected_operations(&executed).expect("no unexpected launch");
+        assert_no_mutating_operations(&executed).expect("read-only diagnosis");
+        assert_batched_metadata(&executed).expect("metadata must stay batched");
 
-        let calls = fs::read_to_string(root.join("ownership-execs.log")).expect("exec log");
         assert_eq!(
-            calls.lines().count(),
-            BATCHED_EXEC_COUNT as usize,
-            "expected batched launch count, calls were {calls:?}"
+            executed.len(),
+            10,
+            "the applicable trace is the pre-batching workload shape: {:?}",
+            executed
+                .iter()
+                .map(|operation| operation.phase.label())
+                .collect::<Vec<_>>()
         );
-        println!(
-            "ownership latency: {} backend launches in {elapsed:?} ({calls:?})",
-            calls.lines().count()
-        );
-        assert!(
-            Duration::from_millis(PER_EXEC_DELAY_MS * SERIAL_EXEC_LOWER_BOUND)
-                > Duration::from_millis(DOCTOR_BUDGET_MS),
-            "the former serial path count must exceed the same budget"
-        );
-        assert!(
-            Duration::from_millis(PER_EXEC_DELAY_MS * BATCHED_EXEC_COUNT)
-                < Duration::from_millis(DOCTOR_BUDGET_MS),
-            "the batched path count must fit the same budget with controlled backend latency"
-        );
-        let paths = fs::read_to_string(root.join("ownership-paths.log")).expect("sample log");
+
+        let paths = runtime.requested_metadata_paths();
         for path in [
             "/usr/local/cargo",
             "/usr/local/cargo/registry/src",
@@ -1269,55 +1477,86 @@ esac
             "/workspace/target/debug/.cargo-build-lock",
         ] {
             assert!(
-                paths.lines().any(|sample| sample == path),
+                paths.iter().any(|sample| sample == path),
                 "expected exact sampled path {path}; samples were {paths:?}"
             );
         }
-        assert_eq!(
-            paths.lines().count(),
-            8,
-            "known paths are sampled once each"
-        );
-        let access = fs::read_to_string(root.join("ownership-access.log")).expect("access log");
-        assert_eq!(
-            access.lines().count(),
-            3,
-            "access checks run in three batches"
+        assert_eq!(paths.len(), 8, "known paths are sampled once each");
+
+        let access = runtime.operations_for(ScriptedPhase::AccessBatch);
+        assert_eq!(access.len(), 3, "access checks run in three batches");
+        assert_numeric_access_user(&access, "501:20")
+            .expect("numeric-user batches must use the resolved uid/gid");
+
+        // Serial reference over the SAME workload, then the model budget. The
+        // executed batched trace fits; the pre-batching shape does not.
+        let serial = serial_reference_operations(&policy);
+        assert!(
+            serial >= 24,
+            "the pre-batching serial reference must stay a real lower bound: {serial}"
         );
         assert!(
-            access.lines().all(|identity| identity == "501:20"),
-            "access checks must run as the resolved numeric uid/gid: {access:?}"
+            SCRIPTED_OPERATION_COST * (executed.len() as u32) < budget,
+            "batched model {} * {}ms must fit {budget:?}",
+            executed.len(),
+            SCRIPTED_OPERATION_COST.as_millis()
+        );
+        assert!(
+            SCRIPTED_OPERATION_COST * (serial as u32) >= budget,
+            "serial model {serial} * {}ms must exceed {budget:?}",
+            SCRIPTED_OPERATION_COST.as_millis()
+        );
+        println!(
+            "ownership latency model: {} batched calls vs {serial} serial calls at {}ms each \
+             (model, not real performance); trace={:?}",
+            executed.len(),
+            SCRIPTED_OPERATION_COST.as_millis(),
+            executed
+                .iter()
+                .map(|operation| operation.phase.label())
+                .collect::<Vec<_>>()
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn named_volume_batch_keeps_wrong_permissions_as_path_specific_finding() {
         let _lock = lock_test();
         let (_temp, root) = fresh_root("ownership-wrong-permissions");
         let bad_path = "/workspace/target/debug/.cargo-build-lock";
         let policy = named_rust_volume_policy(&root);
-        let bin = install_fake_ownership_colima(
-            &root,
-            "0",
-            "wrong",
-            bad_path,
-            &root.join("unused-process-group"),
-        );
-        let _env = with_runtime_env(&bin);
+        let budget = Duration::from_secs(8);
+        let _env = with_scripted_backend_env();
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                bad_path: Some(bad_path.to_owned()),
+                ..OwnershipFixture::default()
+            },
+        ));
         let mut diagnostics = DoctorRuntimeDiagnostics::default();
 
         append_workspace_ownership_diagnostics(
             &root,
             std::slice::from_ref(&policy),
-            Some(Instant::now() + Duration::from_secs(8)),
+            Some(guard.deadline(budget)),
             &mut diagnostics,
         );
 
+        let runtime = guard.runtime();
+        let executed = runtime.applicable_operations();
+        assert!(
+            runtime.logical_elapsed() < budget,
+            "the wrong-permission workload must settle inside the existing budget: {:?}",
+            executed
+                .iter()
+                .map(|operation| operation.phase.label())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             diagnostics.findings.len(),
             1,
-            "wrong ownership remains a finding"
+            "wrong ownership remains a finding: {:?}",
+            diagnostics.findings
         );
         assert!(
             diagnostics.findings[0]
@@ -1334,12 +1573,24 @@ esac
             diagnostics.findings[0]
         );
         assert!(
-            fs::read_to_string(root.join("ownership-access.log"))
-                .expect("access log")
-                .lines()
-                .all(|identity| identity == "501:20"),
-            "read/write checks must use the resolved uid and gid"
+            runtime
+                .requested_metadata_paths()
+                .iter()
+                .any(|path| path == bad_path),
+            "the bad path must be sampled, not dropped: {:?}",
+            runtime.requested_metadata_paths()
         );
+        assert!(
+            runtime
+                .requested_access_paths()
+                .iter()
+                .any(|path| path == bad_path),
+            "the bad path must receive a numeric-user access check"
+        );
+        assert_numeric_access_user(&executed, "501:20")
+            .expect("read/write checks must use the resolved uid and gid");
+        assert_no_mutating_operations(&executed).expect("read-only diagnosis");
+        assert_no_unexpected_operations(&executed).expect("no unexpected launch");
     }
 
     #[test]
@@ -1370,36 +1621,599 @@ esac
         );
 
         let bad_path = "/workspace/target/debug/.cargo-build-lock";
-        let bin = install_fake_ownership_colima(
-            &root,
-            "0",
-            "wrong",
-            bad_path,
-            &root.join("unused-process-group"),
-        );
-        let _env = with_runtime_env(&bin);
+        let budget = Duration::from_secs(8);
+        let _env = with_scripted_backend_env();
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture {
+                bad_path: Some(bad_path.to_owned()),
+                ..OwnershipFixture::default()
+            },
+        ));
         let mut diagnostics = DoctorRuntimeDiagnostics::default();
         append_workspace_ownership_diagnostics(
             &root,
             std::slice::from_ref(&policy),
-            Some(Instant::now() + Duration::from_secs(8)),
+            Some(guard.deadline(budget)),
             &mut diagnostics,
         );
 
-        assert_eq!(diagnostics.findings.len(), 1);
+        let runtime = guard.runtime();
+        let executed = runtime.applicable_operations();
+        assert!(
+            runtime.logical_elapsed() < budget,
+            "verify-only workload must settle inside the existing budget"
+        );
+        assert_eq!(
+            diagnostics.findings.len(),
+            1,
+            "verify-only wrong ownership remains a finding: {:?}",
+            diagnostics.findings
+        );
         assert!(diagnostics.findings[0].evidence.contains(bad_path));
-        let samples = fs::read_to_string(root.join("ownership-paths.log")).expect("sample log");
+        let samples = runtime.requested_metadata_paths();
         assert!(
             samples
-                .lines()
+                .iter()
                 .any(|sample| sample == "/usr/local/cargo/git/checkouts"),
             "the shared Cargo mount must retain its known nested sample: {samples:?}"
         );
-        let calls = fs::read_to_string(root.join("ownership-execs.log")).expect("exec log");
+        assert_no_mutating_operations(&executed)
+            .expect("doctor ownership diagnosis must not launch mutating commands");
+        assert_no_unexpected_operations(&executed).expect("no unexpected launch");
         assert!(
-            calls.lines().all(|kind| kind != "other"),
-            "doctor ownership diagnosis must not launch mutating commands: {calls:?}"
+            diagnostics.findings.iter().all(|finding| !finding.fixable),
+            "verify-only findings are not fixable"
         );
+    }
+    // ------------------------------------------------------------------
+    // Fixture contract (papercut 4ee28d2c): the deterministic capture seams,
+    // the bounded negative controls that keep an oracle from going vacuous,
+    // the bounded real crosscheck of argv/parse against a private fake
+    // runtime, and the model deadline controls.
+    // ------------------------------------------------------------------
+
+    fn synthetic_operation(
+        phase: ScriptedPhase,
+        program: &str,
+        args: Vec<String>,
+        paths: Vec<String>,
+        user: Option<String>,
+        mutating: bool,
+    ) -> scripted_doctor::ScriptedOperation {
+        scripted_doctor::ScriptedOperation {
+            phase,
+            program: program.to_owned(),
+            args,
+            paths,
+            user,
+            mutating,
+            cost: SCRIPTED_OPERATION_COST,
+        }
+    }
+
+    fn assert_unavailable_not_clean(
+        status: WorkspaceOwnershipProbeStatus,
+        warnings: &[String],
+        evidence: &[String],
+    ) -> Result<(), String> {
+        if status != WorkspaceOwnershipProbeStatus::Unavailable {
+            return Err(format!("expected unavailable, got {status:?}"));
+        }
+        if evidence.iter().any(|line| line.contains("clean")) {
+            return Err(format!("unavailable must never report clean: {evidence:?}"));
+        }
+        if !warnings.iter().any(|warning| warning.contains("timed out")) {
+            return Err(format!("unavailable must name its timeout: {warnings:?}"));
+        }
+        Ok(())
+    }
+
+    fn assert_single_actionable_finding(
+        diagnostics: &DoctorRuntimeDiagnostics,
+        bad_path: &str,
+    ) -> Result<(), String> {
+        if diagnostics.findings.len() != 1 {
+            return Err(format!(
+                "expected exactly one actionable finding, got {:?}",
+                diagnostics.findings
+            ));
+        }
+        let evidence = &diagnostics.findings[0].evidence;
+        if !evidence.contains(&format!("{bad_path}\tunwritable-by-uid-501")) {
+            return Err(format!(
+                "finding must carry the numeric-user failure for {bad_path}: {evidence}"
+            ));
+        }
+        if !evidence.contains(&format!("{bad_path}\t{bad_path}")) {
+            return Err(format!(
+                "finding must carry path-specific owner evidence: {evidence}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// One owned Rust target so the bounded real crosscheck reaches exactly one
+    /// metadata batch and one access batch after the identity probe.
+    fn crosscheck_rust_volume_policy(root: &Path) -> EffectiveContainerPolicy {
+        let compose = root.join("docker-compose.yml");
+        fs::write(
+            &compose,
+            r#"
+services:
+  workspace:
+    volumes:
+      - cargo-git:/usr/local/cargo/git
+volumes:
+  cargo-git:
+"#,
+        )
+        .expect("write crosscheck volume fixture");
+        let mut policy = policy_for(root);
+        policy.compose_files = vec![compose];
+        policy
+    }
+
+    /// Private fake runtime for the bounded crosscheck. It answers
+    /// identity/metadata/access for real and appends a canonical summary of the
+    /// received argv (`phase|user|paths`) so the real launches can be compared
+    /// to the scripted trace for the SAME workload.
+    fn install_crosscheck_colima(root: &Path, argv_log: &Path) -> PathBuf {
+        let script = format!(
+            r#"#!/bin/sh
+log='{argv_log}'
+case "$1" in
+  status)
+    printf 'status: Running\n'
+    exit 0
+    ;;
+  nerdctl)
+    user=''
+    prev=''
+    for arg do
+      if [ "$prev" = '-u' ]; then user="$arg"; fi
+      prev="$arg"
+    done
+    case "$*" in
+      *effigy-workspace-identity*)
+        printf 'identity|%s\n' "$user" >> "$log"
+        printf '501\n20\n'
+        exit 0
+        ;;
+      *effigy-workspace-doctor-inspect-batch*)
+        paths=''
+        record=0
+        for arg do
+          if [ "$arg" = 'effigy-workspace-doctor-inspect-batch' ]; then
+            record=1
+            continue
+          fi
+          if [ "$record" -eq 1 ]; then
+            if [ -z "$paths" ]; then paths="$arg"; else paths="$paths,$arg"; fi
+            printf 'dir 501 20 755\n'
+          fi
+        done
+        printf 'metadata|%s|%s\n' "$user" "$paths" >> "$log"
+        exit 0
+        ;;
+      *effigy-workspace-doctor-access-batch*)
+        paths=''
+        record=0
+        for arg do
+          if [ "$arg" = 'effigy-workspace-doctor-access-batch' ]; then
+            record=1
+            continue
+          fi
+          if [ "$record" -eq 1 ]; then
+            if [ -z "$paths" ]; then paths="$arg"; else paths="$paths,$arg"; fi
+            printf 'read-write\n'
+          fi
+        done
+        printf 'access|%s|%s\n' "$user" "$paths" >> "$log"
+        exit 0
+        ;;
+      *"ps"*)
+        printf 'demo-stack-1\tUp 2 minutes\t\tdemo-stack\t{root}\tworkspace\t0\n'
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"#,
+            argv_log = argv_log.display(),
+            root = root.display(),
+        );
+        install_fake_colima(root, &script)
+    }
+
+    fn scripted_summary(operation: &scripted_doctor::ScriptedOperation) -> String {
+        let user = operation.user.as_deref().unwrap_or("");
+        match operation.phase {
+            ScriptedPhase::Identity => format!("identity|{user}"),
+            ScriptedPhase::MetadataBatch => {
+                format!("metadata|{user}|{}", operation.paths.join(","))
+            }
+            ScriptedPhase::AccessBatch => {
+                format!("access|{user}|{}", operation.paths.join(","))
+            }
+            other => format!("{}|{user}", other.label()),
+        }
+    }
+
+    #[test]
+    fn fixture_contract_negative_controls_reject_vacuous_fixtures() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("fixture-contract-negative");
+        let policy = named_rust_volume_policy(&root);
+        let budget = Duration::from_secs(10);
+        let bad_path = "/workspace/target/debug/.cargo-build-lock";
+        let _env = with_scripted_backend_env();
+
+        // Root access: if the access batch ran as uid 0 the trace oracle must
+        // reject it even though the workload otherwise succeeds.
+        let guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture::default(),
+        ));
+        guard
+            .runtime()
+            .override_recorded_user(ScriptedPhase::AccessBatch, "0");
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(guard.deadline(budget)),
+            &mut diagnostics,
+        );
+        let access = guard.runtime().operations_for(ScriptedPhase::AccessBatch);
+        assert!(
+            access
+                .iter()
+                .all(|operation| operation.user.as_deref() == Some("0")),
+            "fixture switch must expose the forced root access: {access:?}"
+        );
+        assert!(
+            assert_numeric_access_user(&access, "501:20").is_err(),
+            "the numeric-user oracle must reject an access batch that ran as root"
+        );
+        drop(guard);
+
+        // Dropped bad sample: answering a declared-bad path as missing loses the
+        // finding, and the finding oracle must reject that.
+        let mut fixture = OwnershipFixture {
+            bad_path: Some(bad_path.to_owned()),
+            ..OwnershipFixture::default()
+        };
+        fixture
+            .path_records
+            .insert(bad_path.to_owned(), "missing".to_owned());
+        let guard = scripted_doctor::install(scripted_ownership_handler(&policy, fixture));
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(guard.deadline(budget)),
+            &mut diagnostics,
+        );
+        assert!(
+            diagnostics.findings.is_empty(),
+            "dropping the bad sample would hide the finding: {:?}",
+            diagnostics.findings
+        );
+        assert!(
+            assert_single_actionable_finding(&diagnostics, bad_path).is_err(),
+            "the finding oracle must reject a clean result for a declared-bad fixture"
+        );
+        drop(guard);
+
+        // All read-write: keeping the owner mismatch but dropping the
+        // numeric-user failure must not satisfy the actionable-finding oracle.
+        let mut fixture = OwnershipFixture {
+            bad_path: Some(bad_path.to_owned()),
+            ..OwnershipFixture::default()
+        };
+        fixture
+            .access_records
+            .insert(bad_path.to_owned(), "read-write".to_owned());
+        let guard = scripted_doctor::install(scripted_ownership_handler(&policy, fixture));
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(guard.deadline(budget)),
+            &mut diagnostics,
+        );
+        assert_eq!(diagnostics.findings.len(), 1);
+        assert!(
+            !diagnostics.findings[0].evidence.contains("unwritable"),
+            "fixture switch must drop the numeric-user evidence: {:?}",
+            diagnostics.findings
+        );
+        assert!(
+            assert_single_actionable_finding(&diagnostics, bad_path).is_err(),
+            "the actionable-finding oracle must reject a missing access failure"
+        );
+        drop(guard);
+
+        // Protected scope mutation: any mutating command in the read-only
+        // doctor trace must be rejected.
+        let mutating = vec![synthetic_operation(
+            ScriptedPhase::MetadataBatch,
+            "colima",
+            vec!["nerdctl".to_owned(), "chown".to_owned()],
+            vec!["/usr/local/cargo".to_owned()],
+            Some("0".to_owned()),
+            true,
+        )];
+        assert!(
+            assert_no_mutating_operations(&mutating).is_err(),
+            "the read-only oracle must reject a mutating command"
+        );
+
+        // Per-path batch regression: a metadata op per path must be rejected so
+        // the batching claim cannot silently regress.
+        let per_path = vec![
+            synthetic_operation(
+                ScriptedPhase::MetadataBatch,
+                "colima",
+                vec!["nerdctl".to_owned()],
+                vec!["/a".to_owned()],
+                Some("0".to_owned()),
+                false,
+            ),
+            synthetic_operation(
+                ScriptedPhase::MetadataBatch,
+                "colima",
+                vec!["nerdctl".to_owned()],
+                vec!["/b".to_owned()],
+                Some("0".to_owned()),
+                false,
+            ),
+        ];
+        assert!(
+            assert_batched_metadata(&per_path).is_err(),
+            "the batching oracle must reject one metadata op per path"
+        );
+
+        // Stopped still compose: a compose probe after a stopped status must be
+        // rejected.
+        let stopped_trace = vec![synthetic_operation(
+            ScriptedPhase::LivenessComposePs,
+            "colima",
+            vec!["nerdctl".to_owned()],
+            Vec::new(),
+            None,
+            false,
+        )];
+        assert!(
+            assert_phase_absent(&stopped_trace, ScriptedPhase::LivenessComposePs).is_err(),
+            "the stopped oracle must reject a compose probe after stopped"
+        );
+
+        // Timeout as clean: an oracle must never accept clean evidence for an
+        // unavailable timeout.
+        let timeout_as_clean = assert_unavailable_not_clean(
+            WorkspaceOwnershipProbeStatus::Clean,
+            &["workspace ownership probe skipped: colima status timed out".to_owned()],
+            &["container `stack` workspace ownership: clean".to_owned()],
+        );
+        assert!(
+            timeout_as_clean.is_err(),
+            "the unavailable oracle must reject clean evidence after a timeout"
+        );
+    }
+
+    #[test]
+    fn fixture_contract_deadline_controls_are_model_clocked() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("fixture-contract-deadline");
+        let policy = named_rust_volume_policy(&root);
+        let _env = with_scripted_backend_env();
+
+        // Already-expired model deadline: the liveness probe never executes and
+        // is unavailable, never stopped and never clean.
+        let expired_guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture::default(),
+        ));
+        let mut expired_diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(expired_guard.deadline(Duration::ZERO)),
+            &mut expired_diagnostics,
+        );
+        assert!(
+            expired_guard.runtime().operations().is_empty(),
+            "an expired deadline must never execute a scripted operation: {:?}",
+            expired_guard.runtime().operations()
+        );
+        assert_unavailable_not_clean(
+            WorkspaceOwnershipProbeStatus::Unavailable,
+            &expired_diagnostics.warnings,
+            &expired_diagnostics.evidence,
+        )
+        .expect("expired model deadline must be unavailable, not clean");
+        assert!(
+            !expired_diagnostics
+                .evidence
+                .iter()
+                .any(|line| line.contains("not probed")),
+            "expired must not read as stopped: {:?}",
+            expired_diagnostics.evidence
+        );
+        drop(expired_guard);
+
+        // A model deadline that expires mid-workload: the earlier phases run,
+        // the following phase times out, and no clean claim survives.
+        let mid_guard = scripted_doctor::install(scripted_ownership_handler(
+            &policy,
+            OwnershipFixture::default(),
+        ));
+        let mut mid_diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(mid_guard.deadline(SCRIPTED_OPERATION_COST + SCRIPTED_OPERATION_COST)),
+            &mut mid_diagnostics,
+        );
+        let recorded = mid_guard.runtime().operations();
+        assert!(
+            !recorded.is_empty(),
+            "the first scripted operations must fit the mid-workload model budget"
+        );
+        assert!(
+            mid_diagnostics.findings.is_empty(),
+            "a starved workload must not report a finding: {:?}",
+            mid_diagnostics.findings
+        );
+        assert!(
+            mid_diagnostics
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("timed out")),
+            "a starved workload must report its timeout: {:?}",
+            mid_diagnostics.warnings
+        );
+        assert!(
+            !mid_diagnostics
+                .evidence
+                .iter()
+                .any(|line| line.contains("clean")),
+            "a starved workload must never claim clean ownership: {:?}",
+            mid_diagnostics.evidence
+        );
+        assert_phase_absent(&recorded, ScriptedPhase::MetadataBatch)
+            .expect("the mid-workload deadline must starve the metadata batch");
+    }
+
+    #[test]
+    fn fixture_contract_real_crosscheck_matches_scripted_trace() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("fixture-contract-crosscheck");
+        let policy = crosscheck_rust_volume_policy(&root);
+        let budget = Duration::from_secs(10);
+        let fixture = OwnershipFixture::default();
+        let argv_log = root.join("crosscheck-argv.log");
+
+        // Scripted trace for the workload.
+        crate::runner::exec_command::clear_service_container_name_cache();
+        let _env = with_scripted_backend_env();
+        let scripted_guard =
+            scripted_doctor::install(scripted_ownership_handler(&policy, fixture.clone()));
+        let mut scripted_diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(scripted_guard.deadline(budget)),
+            &mut scripted_diagnostics,
+        );
+        let scripted_trace = scripted_guard.runtime().applicable_operations();
+        drop(scripted_guard);
+
+        // Same workload, with identity/metadata/access passed through to the
+        // private fake runtime; liveness, service resolve and Bun stay scripted.
+        crate::runner::exec_command::clear_service_container_name_cache();
+        let bin = install_crosscheck_colima(&root, &argv_log);
+        let _real_env = with_runtime_env(&bin);
+        let real_guard = scripted_doctor::install(scripted_ownership_handler(&policy, fixture));
+        real_guard.passthrough([
+            ScriptedPhase::Identity,
+            ScriptedPhase::MetadataBatch,
+            ScriptedPhase::AccessBatch,
+        ]);
+        let mut real_diagnostics = DoctorRuntimeDiagnostics::default();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(real_guard.deadline(budget)),
+            &mut real_diagnostics,
+        );
+        let real_trace = real_guard.runtime().applicable_operations();
+        let real_summary = fs::read_to_string(&argv_log).expect("crosscheck argv log");
+
+        let expected = scripted_trace
+            .iter()
+            .filter(|operation| {
+                matches!(
+                    operation.phase,
+                    ScriptedPhase::Identity
+                        | ScriptedPhase::MetadataBatch
+                        | ScriptedPhase::AccessBatch
+                )
+            })
+            .map(scripted_summary)
+            .collect::<Vec<_>>();
+        let observed = real_summary
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+
+        let context = || {
+            format!(
+                "resolved executable={}, scripted phases={:?}, real phases={:?}, \
+                 remaining model budget={:?}, argv log={real_summary:?}, \
+                 findings={:?}, warnings={:?}, evidence={:?}",
+                bin.join("colima").display(),
+                scripted_trace
+                    .iter()
+                    .map(|operation| operation.phase.label())
+                    .collect::<Vec<_>>(),
+                real_trace
+                    .iter()
+                    .map(|operation| operation.phase.label())
+                    .collect::<Vec<_>>(),
+                budget.saturating_sub(real_guard.runtime().logical_elapsed()),
+                real_diagnostics.findings,
+                real_diagnostics.warnings,
+                real_diagnostics.evidence,
+            )
+        };
+
+        assert_eq!(
+            observed.len(),
+            expected.len(),
+            "real launches must match the scripted passthrough count; {}",
+            context()
+        );
+        assert_eq!(
+            observed,
+            expected,
+            "real argv summaries must match the scripted trace for the same workload; {}",
+            context()
+        );
+        assert!(
+            observed.len() <= 6,
+            "the real crosscheck must stay bounded to a handful of launches; {}",
+            context()
+        );
+        assert_eq!(
+            real_diagnostics.findings,
+            scripted_diagnostics.findings,
+            "parsed findings must match the scripted workload; {}",
+            context()
+        );
+        assert_eq!(
+            real_diagnostics.warnings,
+            scripted_diagnostics.warnings,
+            "parsed warnings must match the scripted workload; {}",
+            context()
+        );
+        assert_eq!(
+            real_diagnostics.evidence,
+            scripted_diagnostics.evidence,
+            "parsed evidence must match the scripted workload; {}",
+            context()
+        );
+        assert_no_mutating_operations(&real_trace).expect("read-only crosscheck");
     }
 
     #[test]

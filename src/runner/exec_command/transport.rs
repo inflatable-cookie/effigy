@@ -28,6 +28,9 @@ use crate::runner::error::RunnerError;
 
 mod colima;
 
+#[cfg(test)]
+pub(in crate::runner) use self::colima::clear_service_container_name_cache;
+
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
     ("EFFIGY_COLOR", "always"),
@@ -373,6 +376,15 @@ pub(in crate::runner) fn run_command_capture_until(
     stdin_file: Option<&Path>,
     deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
+    // Test-only deterministic seam. Production runs contain no scripted
+    // runtime, so this compiles to a no-op branch and keeps the real capture,
+    // argv and deadline semantics below unchanged.
+    #[cfg(test)]
+    if let Some(scripted) =
+        crate::runner::scripted_doctor::intercept_capture(program, args, deadline)
+    {
+        return scripted;
+    }
     let resolved_program = resolve_host_program(program);
     let command_label = format!(
         "{} {}",

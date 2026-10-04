@@ -28,8 +28,8 @@ pub use implementation::{
     RuntimeInventoryFailure,
 };
 pub use parse::{
-    compose_status_is_running, RunningComposeContainer, RunningComposeContainerProfiled,
-    RunningContainerStats, RunningContainerStatsCapture,
+    compose_status_is_running, parse_running_compose_containers, RunningComposeContainer,
+    RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,
 };
 pub use process::{run_command_capture, run_command_capture_allow_failure};
 pub use restart_recovery::{

@@ -514,7 +514,10 @@ fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
     rust_nested_probe_paths(&target.path, target.rust_cache)
 }
 
-fn rust_nested_probe_paths(path: &str, rust_cache: Option<WorkspaceRustCacheKind>) -> Vec<String> {
+pub(in crate::runner) fn rust_nested_probe_paths(
+    path: &str,
+    rust_cache: Option<WorkspaceRustCacheKind>,
+) -> Vec<String> {
     match rust_cache {
         Some(WorkspaceRustCacheKind::RustTarget) => {
             vec![

@@ -150,6 +150,13 @@ pub(in crate::runner) fn is_primary_service_running_with_deadline(
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<bool, RunnerError> {
+    // Test-only deterministic seam: when the scripted doctor runtime is active
+    // it answers the raw Colima `status` and compose `ps` captures and this
+    // production function still owns the order, short-circuit and parsing.
+    #[cfg(test)]
+    if let Some(scripted) = sequence_scripted_liveness(repo_root, policy, deadline) {
+        return scripted;
+    }
     if !colima_is_running_with_deadline(policy, repo_root, deadline)
         .map_err(Into::<RunnerError>::into)?
     {
@@ -169,6 +176,45 @@ pub(in crate::runner) fn is_primary_service_running_with_deadline(
         &policy.project_name,
         &policy.primary_service,
     ))
+}
+
+/// Deterministic liveness sequencing for the scripted doctor oracles. Uses the
+/// same order (status, then compose `ps` only while running), the same
+/// short-circuit, and the production parsers `parse_colima_running` and
+/// `parse_running_compose_containers`. Returns `None` when no scripted runtime
+/// is installed so production keeps its real path.
+#[cfg(test)]
+fn sequence_scripted_liveness(
+    repo_root: &std::path::Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+) -> Option<Result<bool, RunnerError>> {
+    use effigy_containers::colima::parse_colima_running;
+    use effigy_containers::exec::parse_running_compose_containers;
+
+    let status = crate::runner::scripted_doctor::intercept_colima_status(policy, deadline)?;
+    let sequenced = (|| -> Result<bool, RunnerError> {
+        let status = status?;
+        if !status.status.success() {
+            return Ok(false);
+        }
+        let stdout = String::from_utf8_lossy(&status.stdout);
+        let stderr = String::from_utf8_lossy(&status.stderr);
+        if !parse_colima_running(&stdout, &stderr) {
+            return Ok(false);
+        }
+        let ps = crate::runner::scripted_doctor::intercept_liveness_ps(policy, deadline)
+            .expect("scripted runtime answers the compose ps probe after a running status")?;
+        let rows = parse_running_compose_containers(&String::from_utf8_lossy(&ps.stdout))
+            .map_err(RunnerError::from)?;
+        Ok(has_running_primary_service(
+            &rows,
+            repo_root,
+            &policy.project_name,
+            &policy.primary_service,
+        ))
+    })();
+    Some(sequenced)
 }
 
 pub(super) fn has_running_primary_service(

@@ -34,6 +34,9 @@ use transport::build_routed_task_exec_args;
 mod surface;
 mod transport;
 
+#[cfg(test)]
+pub(in crate::runner) use transport::clear_service_container_name_cache;
+
 pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, probe_container_capabilities,
     run_command_capture_until, run_compose_exec, run_compose_exec_plan_with_options,
