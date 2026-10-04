@@ -161,6 +161,29 @@ fn resolve_common_git_dir_rejects_a_gitfile_pointing_at_a_bare_directory() {
 }
 
 #[test]
+fn resolve_common_git_dir_rejects_last_wins_core_bare() {
+    let root = TempDir::new().expect("tempdir");
+    let checkout = root.path().join("checkout");
+    let bare = root.path().join("bare");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&bare).expect("bare");
+    fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        bare.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tbare = true\n",
+    )
+    .expect("config");
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", bare.display()),
+    )
+    .expect("gitfile");
+
+    let error = resolve_common_git_dir(&checkout).expect_err("last-wins bare");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
 fn resolve_common_git_dir_accepts_a_separate_git_dir_pointer() {
     let root = TempDir::new().expect("tempdir");
     let checkout = root.path().join("checkout");
@@ -198,4 +221,11 @@ fn core_bare_true_matches_git_booleans_and_ignores_other_sections() {
     ));
     assert!(!core_bare_is_true("[remote \"origin\"]\nbare = true\n"));
     assert!(!core_bare_is_true(""));
+    assert!(core_bare_is_true("[core]\n\tbare = false\n\tbare = true\n"));
+    assert!(!core_bare_is_true(
+        "[core]\n\tbare = true\n\tbare = false\n"
+    ));
+    assert!(core_bare_is_true(
+        "[core]\n\tbare = false\n[other]\n\tbare = false\n[core]\n\tbare = true\n"
+    ));
 }

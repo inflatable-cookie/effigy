@@ -376,6 +376,48 @@ fn gitfile_pointing_at_a_bare_admin_dir_is_refused_without_writing_there() {
 }
 
 #[test]
+fn gitfile_pointing_at_last_wins_bare_config_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let checkout = tmp.path().join("checkout");
+    let bare = tmp.path().join("bare.git");
+    fs::create_dir_all(&checkout).expect("checkout");
+    git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+    let config = bare.join("config");
+    let existing = fs::read_to_string(&config).expect("bare config");
+    fs::write(
+        &config,
+        format!("{existing}[core]\n\tbare = false\n\tbare = true\n"),
+    )
+    .expect("duplicate core.bare");
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", bare.display()),
+    )
+    .expect("gitfile");
+    let exclude = bare.join("info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let status = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "status", "--porcelain"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git status");
+    assert!(
+        !status.status.success(),
+        "last-wins core.bare=true is not a work tree: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+
+    let error = ensure_effigy_ignored_in_git_root(&checkout).expect_err("last-wins bare");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!checkout.join(".gitignore").exists());
+    assert_eq!(git_local_exclude_path(&checkout), checkout.join(".git"));
+}
+
+#[test]
 fn separate_git_dir_still_registers_common_exclude() {
     let tmp = TempDir::new().expect("tempdir");
     let checkout = tmp.path().join("checkout");

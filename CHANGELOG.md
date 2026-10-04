@@ -334,8 +334,8 @@ During v0.x, MINOR bumps may include breaking changes.
   local `$GIT_COMMON_DIR/info/exclude` and leaves the working tree, including
   tracked or missing `.gitignore`, unchanged. Linked worktrees resolve the
   shared admin dir from the `.git` file; invalid markers, a gitfile pointing
-  at a bare repository, read-only metadata, and symlink escapes fail without
-  a working-tree fallback. Failures whose `.git` is a file report that marker
+  at a bare repository (Git last-wins for duplicate `core.bare`), read-only
+  metadata, and symlink escapes fail without a working-tree fallback. Failures whose `.git` is a file report that marker
   rather than a fabricated `.git/info/exclude` path. `effigy init` still
   generates its reviewed `.gitignore` block.
 - Provisioning Effigy-owned Rust target/Cargo volumes now repairs numeric-user

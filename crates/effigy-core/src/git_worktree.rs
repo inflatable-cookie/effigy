@@ -161,6 +161,7 @@ fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
 }
 
 /// Local `core.bare` only. Missing config is not bare. Unreadable config fails.
+/// Duplicate keys last-win, matching Git.
 fn git_dir_is_bare(git_dir: &Path) -> io::Result<bool> {
     let raw = match fs::read_to_string(git_dir.join("config")) {
         Ok(raw) => raw,
@@ -172,6 +173,7 @@ fn git_dir_is_bare(git_dir: &Path) -> io::Result<bool> {
 
 fn core_bare_is_true(raw: &str) -> bool {
     let mut in_core = false;
+    let mut bare = false;
     for line in raw.lines() {
         let line = strip_unquoted_config_comment(line).trim();
         if line.is_empty() {
@@ -189,13 +191,13 @@ fn core_bare_is_true(raw: &str) -> bool {
         }
         match line.split_once('=') {
             Some((name, value)) if name.trim().eq_ignore_ascii_case("bare") => {
-                return git_bool_is_true(value.trim());
+                bare = git_bool_is_true(value.trim());
             }
-            None if line.eq_ignore_ascii_case("bare") => return true,
+            None if line.eq_ignore_ascii_case("bare") => bare = true,
             _ => {}
         }
     }
-    false
+    bare
 }
 
 fn git_bool_is_true(value: &str) -> bool {
