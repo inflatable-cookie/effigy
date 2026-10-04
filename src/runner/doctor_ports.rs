@@ -1066,8 +1066,9 @@ esac
     #[cfg(unix)]
     #[test]
     fn healthy_named_volume_ownership_batches_probes_within_doctor_budget() {
-        const PER_EXEC_DELAY_MS: u64 = 270;
-        const DOCTOR_BUDGET_MS: u64 = 6_000;
+        const PER_EXEC_DELAY_MS: u64 = 430;
+        // Keep this aligned with effigy-doctor's existing fast-doctor budget.
+        const DOCTOR_BUDGET_MS: u64 = 10_000;
         // Before batching: four roots plus six nested Rust samples (including
         // overlapping declarations), each with root and numeric-user execs,
         // two identity execs, liveness, and Bun detection. This is a lower
@@ -1079,7 +1080,7 @@ esac
         let (_temp, root) = fresh_root("ownership-latency");
         let policy = named_rust_volume_policy(&root);
         let pgfile = root.join("unused-process-group");
-        let bin = install_fake_ownership_colima(&root, "0.27", "healthy", "", &pgfile);
+        let bin = install_fake_ownership_colima(&root, "0.43", "healthy", "", &pgfile);
         let _env = with_runtime_env(&bin);
         let mut diagnostics = DoctorRuntimeDiagnostics::default();
         let started = Instant::now();
