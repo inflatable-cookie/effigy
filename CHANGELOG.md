@@ -331,6 +331,16 @@ During v0.x, MINOR bumps may include breaking changes.
   or unverified units are refused with inspected identity, the reason, and
   profile-scoped operator commands. Unit files are never deleted. Docker
   start is unchanged. Prove with `test:containers:healthcheck-timer`.
+- Workspace permission prep no longer skips nested rust build/cache repair
+  when the mount root already matches `workspace_user`, and no longer
+  swallows chown failures with `|| true`. Headless workspace, primary-service
+  exec, and routed tasks resolve numeric uid/gid, classify named cargo/target
+  volumes as owned-disposable versus bind rust paths as verify-only, then
+  verify actual read/write/create-lock as that non-root user before claiming
+  ready. `effigy doctor` `container.workspace-ownership` stays read-only,
+  covers Cargo paths and declared target mounts, and distinguishes
+  not-probed/stopped/unavailable from clean. Bind host sources, shared
+  volumes, and symlinks are not mutated.
 - Generated `AGENTS.md` Effigy Agent Contract now links its reference docs as
   upstream Effigy repository URLs instead of nonexistent consumer-relative
   paths; rerunning init rewrites the managed block only.

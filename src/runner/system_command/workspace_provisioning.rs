@@ -1,4 +1,4 @@
-use effigy_containers::{load_workspace_ownership_targets, EffectiveContainerPolicy};
+use effigy_containers::{load_workspace_ownership_plan, EffectiveContainerPolicy};
 use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
 use std::ffi::OsString;
@@ -88,31 +88,26 @@ pub(super) fn ensure_workspace_permissions_ready(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
-    let Some(user) = policy.workspace_user.as_deref() else {
+    let Some(_user) = policy.workspace_user.as_deref() else {
         return Ok(());
     };
-    let targets = load_workspace_ownership_targets(policy)
+    let plan = load_workspace_ownership_plan(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if targets.is_empty() {
-        return Ok(());
-    }
-
-    let plan = plan_workspace_permission_prep(&targets);
     if plan.targets.is_empty() {
         return Ok(());
     }
-    let progress_label = render_workspace_permission_progress_label(&plan);
+    let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
+    let progress_label = render_workspace_permission_progress_label(&perm_plan);
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
         &progress_label,
         false,
     );
-    run_workspace_permission_prep(
-        workspace_repo_root,
+    let mut backend = super::workspace_permissions::compose_backend(workspace_repo_root, policy);
+    super::workspace_permissions::ensure_workspace_permissions_ready_with(
         policy,
         container_name,
-        &render_workspace_permission_command(user, &plan.targets),
-        repo_override.as_deref(),
+        &mut backend,
     )
     .inspect_err(|_| progress.finish(false))?;
     progress.finish(true);
@@ -250,84 +245,6 @@ fn path_depth(path: &str) -> usize {
         .split('/')
         .filter(|part| !part.is_empty())
         .count()
-}
-
-pub(super) fn run_workspace_permission_prep(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    _container_name: Option<&str>,
-    command: &str,
-    repo_override: Option<&Path>,
-) -> Result<String, RunnerError> {
-    let service = policy.primary_service.as_str();
-    let mut args = effigy_containers::compose::compose_args(
-        policy,
-        ["exec", "-T", "-u", "0", service, "sh", "-lc"],
-    );
-    args.push(OsString::from(command));
-    let output = crate::runner::exec_command::run_compose_exec(
-        repo_root,
-        policy,
-        &args,
-        true,
-        "docker compose exec",
-    )?;
-    if output.status.success() {
-        return Ok(String::new());
-    }
-
-    Err(RunnerError::task_invocation(match repo_override {
-        Some(repo_override) => format!(
-            "failed to prepare workspace permissions in service `{}` with repo root `{}`",
-            service,
-            repo_override.display()
-        ),
-        None => format!("failed to prepare workspace permissions in service `{service}`"),
-    }))
-}
-
-pub(super) fn render_workspace_permission_command(
-    user: &str,
-    targets: &[WorkspacePermissionTarget],
-) -> String {
-    let workspace_home = targets
-        .iter()
-        .find(|target| target.path.starts_with("/home/"))
-        .map(|target| target.path.clone());
-    let volume_targets = targets
-        .iter()
-        .filter(|target| Some(target.path.as_str()) != workspace_home.as_deref())
-        .collect::<Vec<_>>();
-    let mut command = format!(
-        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); total={total}; index=0; prep_path() {{ path=\"$1\"; mode=\"$2\"; index=$((index + 1)); printf 'permission prep [%s/%s] %s (%s)\\n' \"$index\" \"$total\" \"$path\" \"$mode\"; mkdir -p \"$path\" && owner=$(stat -c '%u:%g' \"$path\" 2>/dev/null || printf ''); if [ \"$owner\" != \"$uid:$gid\" ]; then if [ \"$mode\" = recursive ]; then chown -fR \"$uid:$gid\" \"$path\" || true; else chown -f \"$uid:$gid\" \"$path\" || true; fi; fi; }};",
-        user = shell_quote(user),
-        total = permission_prep_step_count(workspace_home.is_some(), volume_targets.len()),
-    );
-    if let Some(workspace_home) = workspace_home {
-        let quoted_home = shell_quote(&workspace_home);
-        command.push_str(&format!(
-            " prep_path {home} shallow; prep_path {home}/.cache recursive; prep_path {home}/.config recursive; prep_path {home}/.local recursive;",
-            home = quoted_home,
-        ));
-    }
-    for target in volume_targets {
-        let mode = match target.mode {
-            WorkspacePermissionMode::Recursive => "recursive",
-            WorkspacePermissionMode::Shallow => "shallow",
-        };
-        command.push_str(&format!(
-            " prep_path {path} {mode};",
-            path = shell_quote(&target.path),
-            mode = mode,
-        ));
-    }
-    command.push_str(" fi");
-    command
-}
-
-fn permission_prep_step_count(has_workspace_home: bool, volume_target_count: usize) -> usize {
-    let home_steps = if has_workspace_home { 4 } else { 0 };
-    home_steps + volume_target_count
 }
 
 pub(super) fn ensure_workspace_effigy_available_for_policy(

@@ -11,7 +11,7 @@ pub(crate) fn render_doctor_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
             "Default budgets are 10 seconds for structural doctor and 120 seconds for `--deep`; `EFFIGY_DOCTOR_TIMEOUT_MS` overrides either budget (`0` disables it).",
             "Explain task resolution with `effigy doctor <task> <args>`.",
             "Also surfaces runtime/backend context when Docker Desktop and Colima coexist.",
-            "For running workspaces, reports `container.workspace-ownership` when managed volumes or the Bun install cache contain root-owned paths that conflict with the declared workspace user.",
+            "For running workspaces, reports `container.workspace-ownership` when declared cargo/target mounts, managed disposable volumes, or the Bun install cache are unusable by the resolved workspace uid/gid. Stopped and unavailable services are distinct from clean.",
         ],
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",

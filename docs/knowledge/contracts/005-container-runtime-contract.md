@@ -481,6 +481,40 @@ This is the required shared contract for warm non-shell container reuse.
 Task-shaped requests should reach this contract through
 `TaskExecutionRequestBuilder` and a resolved execution plan.
 
+## Workspace identity and disposable build paths
+
+When a container declares `workspace_user`, these entry paths must prepare
+declared disposable Rust build/cache paths for the resolved numeric uid/gid
+before children launch:
+
+- headless workspace / public session handoff
+- primary-service `effigy exec`
+- routed and deferred container tasks
+
+Preparation classifies each declared mount from current policy and compose
+source, not from the host login name:
+
+- Effigy-owned named volumes and image-layer home caches: repair unowned
+  nested contents, then verify actual read/write/create-lock as the
+  resolved non-root user
+- bind-mounted rust `target` or cargo paths: verify only; never chown host
+  source, siblings, or shared caches
+- read-only, external, or foreign mounts: refuse mutation; fail closed when
+  they are declared rust caches
+
+A matching owner at the mount root is not enough. Nested unwritable
+`target/debug/.cargo-build-lock` and Cargo `registry/src` / `git/checkouts`
+must be repaired when the path is owned-disposable, or reported with an
+exact safe command (runtime profile, container, path, numeric identity)
+when it is not. Failures are not swallowed and must not claim ready.
+Symlinks and path escapes are not followed. World-writable `chmod 777` and
+recursive host-source chown are forbidden. Repair may restore owner write
+(`u+w` / `u+wx`) on owned disposable paths after a failed write probe.
+
+`effigy doctor` remains read-only. Finding id `container.workspace-ownership`
+covers declared cargo/target mounts and managed disposable paths. Stopped,
+unavailable, and no-workspace-user states are distinct from clean.
+
 ## Alias contract
 
 Effigy owns two related but distinct alias surfaces:

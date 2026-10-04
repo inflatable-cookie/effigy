@@ -586,10 +586,21 @@ Explicit execs against another service keep that service's configured user.
 Interactive terminals retain a TTY; pipes, agents, and other non-console
 callers run without one.
 
-For a running workspace, `effigy doctor` scans primary-service managed volumes
-and `$BUN_INSTALL/install` for root-owned paths. A regression is reported as
-`container.workspace-ownership`, with one sample from each affected mount.
-The check is read-only and skips stopped workspace services.
+Headless workspace, primary-service exec, and routed tasks prepare declared
+disposable Rust build/cache paths for that resolved numeric user before
+children launch. Named cargo/target volumes are repaired and then verified
+with an actual read/write/create-lock probe. Bind-mounted rust paths are
+probed only; Effigy never recursively chowns host source, siblings, or
+shared caches. Isolate `target` with catalog `isolated_dirs` when the host
+bind is unwritable inside the container. A matching owner at the mount root
+is not enough: nested `target/debug/.cargo-build-lock` and Cargo
+`registry/src` / `git/checkouts` must be usable by the resolved user.
+
+For a running workspace, `effigy doctor` remains read-only and reports
+`container.workspace-ownership` when declared cargo/target mounts, managed
+disposable volumes, or `$BUN_INSTALL/install` are unusable by the resolved
+workspace uid/gid. Stopped, unavailable, and no-workspace-user states are
+distinct from clean. The finding is not a license to chown the checkout.
 
 ## Data Lifecycle
 

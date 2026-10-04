@@ -512,9 +512,12 @@ Use `system reset-runtime` when:
 
 ### Symptom: doctor reports `container.workspace-ownership`
 
-The running primary service contains root-owned paths in an Effigy-managed
-workspace volume or `$BUN_INSTALL/install`, while workspace commands are
-declared to run as another user.
+The running primary service has declared rust/cargo/target mounts, managed
+disposable volumes, or `$BUN_INSTALL/install` that the resolved workspace
+user (numeric uid/gid) cannot use. A writable mount root with an unwritable
+nested `target/debug/.cargo-build-lock` or Cargo `registry/src` /
+`git/checkouts` is enough. Host `tom:staff` ownership does not prove
+in-container write access.
 
 Diagnosis:
 
@@ -523,15 +526,19 @@ effigy doctor --verbose
 ```
 
 Fix:
-- use the reported mount samples to locate the affected paths
-- repair their ownership for the declared workspace user inside the workspace
-  environment
+- use the reported samples, numeric identity, and mount kind
+- owned named volumes are repaired on the next headless workspace,
+  primary-service exec, or routed task; rerun that path, then doctor
+- bind-mounted rust paths stay verify-only: isolate `target` with catalog
+  `isolated_dirs`, or repair the host mount for the resolved uid without a
+  recursive host-source chown
 - rerun `effigy doctor --verbose`
 
-The finding is read-only. Host-routed workspace tasks and primary-service
-`effigy exec` calls use the declared workspace user and HOME. Explicit
-non-primary `--service` execs keep that service's configured user; pipes,
-agents, and other non-console callers run without requesting a TTY.
+The finding is read-only. Stopped or unavailable workspaces are not reported
+as clean. Host-routed workspace tasks and primary-service `effigy exec`
+calls use the declared workspace user and HOME. Explicit non-primary
+`--service` execs keep that service's configured user; pipes, agents, and
+other non-console callers run without requesting a TTY.
 
 ### Symptom: caches or named volumes are piling up
 

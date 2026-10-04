@@ -64,7 +64,11 @@ pub use runtime::scope::{
     upsert as upsert_scope_record, volume_has_ownership_proof, ScopeComposeKind, ScopeRecord,
     COMPOSE_PROJECT_LABEL, MANAGED_LABEL, PERSIST_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
-pub use workspace::load_workspace_ownership_targets;
+pub use workspace::{
+    load_workspace_ownership_plan, load_workspace_ownership_targets, rust_cache_kind,
+    WorkspaceMountKind, WorkspaceOwnershipPlan, WorkspaceOwnershipTarget, WorkspaceRepairAuthority,
+    WorkspaceRustCacheKind,
+};
 
 #[cfg(test)]
 pub(crate) use compose::with_test_compose_backend;
