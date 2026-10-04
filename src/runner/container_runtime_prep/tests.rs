@@ -1,6 +1,6 @@
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
-    ensure_primary_service_exec_ready_with_recovery_using,
+    ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_using,
     ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
     ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
     prepare_runtime_mounts_stage, reconcile_runtime_aliases_stage_using,
@@ -1109,9 +1109,9 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
         &policy,
         {
             let events = Arc::clone(&events);
-            move |repo_root, policy, container_name, repo_override| {
+            move |repo_root, policy, route, container_name, repo_override| {
                 events.lock().expect("events lock").push(format!(
-                    "prepare:{container_name:?}:{repo_override:?}:{}:{}",
+                    "prepare:{route:?}:{container_name:?}:{repo_override:?}:{}:{}",
                     repo_root.display(),
                     policy.name
                 ));
@@ -1158,7 +1158,7 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
         *events.lock().expect("events lock"),
         vec![
             format!(
-                "prepare:Some(\"web\"):Some(\"{}\"):{}:{}",
+                "prepare:Task:Some(\"web\"):Some(\"{}\"):{}:{}",
                 repo_root.display(),
                 repo_root.display(),
                 policy.name
@@ -1187,6 +1187,20 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
 }
 
 #[test]
+fn exec_preparation_stopped_runtime_gate_returns_explicit_start_guidance() {
+    let policy = test_policy(PathBuf::from("compose.yml"));
+    let mut checked_running_state = false;
+    let error = ensure_exec_container_running_with(&policy, Some("web"), || {
+        checked_running_state = true;
+        Ok(false)
+    })
+    .expect_err("plain exec must leave a stopped primary service down");
+
+    assert!(checked_running_state);
+    assert!(error.to_string().contains("effigy container up web"));
+}
+
+#[test]
 fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
@@ -1210,7 +1224,7 @@ fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness
         &policy,
         {
             let events = Arc::clone(&events);
-            move |_, _, _, _| {
+            move |_, _, _, _, _| {
                 events.lock().expect("events lock").push("prepare");
                 Ok(true)
             }
@@ -1289,7 +1303,7 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
             &policy,
             {
                 let events = Arc::clone(&events);
-                move |_, _, _, _| {
+                move |_, _, _, _, _| {
                     events.lock().expect("events lock").push("prepare");
                     Ok(true)
                 }
@@ -1354,7 +1368,7 @@ fn task_activation_surfaces_workspace_permission_failure_before_lease_refresh() 
         &policy,
         {
             let events = Arc::clone(&events);
-            move |_, _, _, _| {
+            move |_, _, _, _, _| {
                 events.lock().expect("events lock").push("prepare");
                 Ok(false)
             }

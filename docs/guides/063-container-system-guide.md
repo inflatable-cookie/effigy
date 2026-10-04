@@ -586,6 +586,12 @@ Explicit execs against another service keep that service's configured user.
 Interactive terminals retain a TTY; pipes, agents, and other non-console
 callers run without one.
 
+Plain primary-service `effigy exec` requires the primary service to already
+be running. If it is down, Effigy gives the explicit `effigy container up
+<NAME>` command and returns without starting the VM, service, or gateway.
+`effigy dev` is also a project start path. Routed tasks keep their existing
+activation lifecycle.
+
 Headless workspace, primary-service exec, and routed tasks prepare declared
 disposable Rust build/cache paths for that resolved numeric user before
 children launch. Named cargo/target volumes exclusive to the primary
@@ -600,6 +606,12 @@ nested `target/debug/.cargo-build-lock` and Cargo `registry/src` /
 `git/checkouts` must be usable by the resolved user. Anonymous colon-less
 compose mounts such as `/workspace-root/api/target` stay classified as
 named-volume owned-disposable rust targets.
+
+Exec preparation batches metadata and numeric-user access probes for the
+whole ownership plan, and scans owned paths together before repairing only
+dirty volumes. Clean paths launch no repair. Each invocation still checks
+current ownership and access because nested paths can change externally and
+there is no exact invalidation proof for a cached result.
 
 For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their
