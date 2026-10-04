@@ -138,6 +138,17 @@
   "cargo check -p effigy --lib --tests --profile test",
   "cargo clippy -p effigy --lib -- -D warnings",
 ]
+"test:workspace:rust-ownership:fake-runtime-identity" = [
+  "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers -- --nocapture",
+]
+# Deadline/reap proof uses only a fresh private temp root, a fake Docker command,
+# and exact fixture PIDs. Includes the expired-no-spawn and disabled-reap controls.
+"test:workspace:rust-ownership:bulk-deadline" = [
+  "cargo test -p effigy --lib bulk_production_constructor -- --nocapture",
+]
+"check:workspace:rust-ownership:bulk-deadline" = [
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 "check:workspace:rust-ownership" = [
   "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",
   "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",

@@ -3780,82 +3780,319 @@ done' sh "$@""#;
     }
 
     #[cfg(unix)]
-    #[test]
-    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
-        use crate::contract_test_support::{lock_test, EnvGuard};
+    const BULK_HANG_CALLER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    #[cfg(unix)]
+    const BULK_HANG_UPPER_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
+
+    #[cfg(unix)]
+    fn install_fake_hung_bulk_docker(
+        root: &Path,
+        process_file: &Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::os::unix::fs::PermissionsExt;
-        let _lock = lock_test();
-        let temp = tempfile::Builder::new()
-            .prefix("effigy-bulk-deadline-")
-            .tempdir()
-            .expect("tempdir");
-        let root = std::fs::canonicalize(temp.path()).expect("canon");
+
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let pending = process_file.with_extension("pending");
+        let docker = bin.join("docker");
+        let fake = format!(
+            r#"#!/bin/sh
+case "$*" in
+  *execdir*)
+    leader=$$
+    sleep 300 &
+    descendant=$!
+    printf '%s\n%s\n' "$leader" "$descendant" > '{pending}'
+    mv '{pending}' '{process_file}'
+    wait "$descendant"
+    ;;
+esac
+exit 0
+"#,
+            pending = pending.display(),
+            process_file = process_file.display(),
+        );
+        std::fs::write(&docker, fake).expect("write fake docker");
+        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake docker executable");
+        (bin, docker)
+    }
+
+    #[cfg(unix)]
+    fn with_fake_bulk_runtime(bin: &Path) -> crate::contract_test_support::EnvGuard {
+        let base = std::env::var("PATH").unwrap_or_default();
+        crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ])
+    }
+
+    #[cfg(unix)]
+    fn bulk_deadline_test_policy(root: &Path) -> EffectiveContainerPolicy {
         std::fs::write(
             root.join("effigy.toml"),
             "[containers]\ndefault = \"stack\"\n",
         )
-        .expect("manifest");
-        let bin = root.join("bin");
-        std::fs::create_dir_all(&bin).expect("bin");
-        let pids = root.join("pids");
-        let fake = format!(
-            "#!/bin/sh\ncase \"$*\" in *execdir*) echo $$ >> '{}'; exec sleep 60;; esac\nexit 0\n",
-            pids.display()
-        );
-        let docker = bin.join("docker");
-        std::fs::write(&docker, fake).expect("docker");
-        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let base = std::env::var("PATH").unwrap_or_default();
-        let _env = EnvGuard::set_many(&[
-            ("PATH", Some(format!("{}:{base}", bin.display()))),
-            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
-        ]);
+        .expect("write manifest");
         let mut policy = effective_container_policy(
             "stack",
             "demo-stack",
             "workspace",
             root.join("docker-compose.yml"),
         );
-        policy.repo_root = root.clone();
+        policy.repo_root = root.to_path_buf();
         policy.workspace_user = Some("dev".to_owned());
+        policy
+    }
 
-        // Normal production constructor: no caller deadline, but a finite bulk bound.
+    #[cfg(unix)]
+    fn bulk_fixture_pids(process_file: &Path) -> Vec<i32> {
+        let recorded = std::fs::read_to_string(process_file).unwrap_or_else(|error| {
+            panic!("fake bulk child did not record its leader and descendant ({error})")
+        });
+        let pids = recorded
+            .lines()
+            .filter_map(|line| line.trim().parse::<i32>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            pids.len() >= 2,
+            "fixture must record its exact leader and descendant: {recorded:?}"
+        );
+        pids
+    }
+
+    #[cfg(unix)]
+    fn wait_for_bulk_fixture_pids(process_file: &Path) -> Vec<i32> {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(recorded) = std::fs::read_to_string(process_file) {
+                if recorded
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count()
+                    >= 2
+                {
+                    return bulk_fixture_pids(process_file);
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture never reached its hung child: {}",
+                process_file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
+    fn bulk_fixture_pid_alive(pid: i32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    #[cfg(unix)]
+    fn assert_bulk_fixture_processes_gone(pids: &[i32]) {
+        let alive = pids
+            .iter()
+            .copied()
+            .filter(|pid| bulk_fixture_pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "bulk fixture processes still alive: {alive:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn wait_for_bulk_fixture_processes_gone(pids: &[i32]) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while pids.iter().any(|pid| bulk_fixture_pid_alive(*pid)) {
+            assert!(
+                Instant::now() < deadline,
+                "bulk fixture processes were not reaped: {pids:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Cleanup is limited to exact PIDs recorded by this private fixture.
+    #[cfg(unix)]
+    struct BulkFixtureProcessGuard {
+        process_file: std::path::PathBuf,
+        child: Option<std::process::Child>,
+    }
+
+    #[cfg(unix)]
+    impl BulkFixtureProcessGuard {
+        fn new(process_file: &Path, child: Option<std::process::Child>) -> Self {
+            Self {
+                process_file: process_file.to_path_buf(),
+                child,
+            }
+        }
+
+        fn reap(&mut self) {
+            let pids = std::fs::read_to_string(&self.process_file)
+                .ok()
+                .map(|recorded| {
+                    recorded
+                        .lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for pid in &pids {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(*pid),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+            }
+            let grace = Instant::now() + std::time::Duration::from_secs(2);
+            while pids.iter().any(|pid| bulk_fixture_pid_alive(*pid)) && Instant::now() < grace {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            for pid in &pids {
+                if bulk_fixture_pid_alive(*pid) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(*pid),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+            }
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            wait_for_bulk_fixture_processes_gone(&pids);
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for BulkFixtureProcessGuard {
+        fn drop(&mut self) {
+            self.reap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
+        use crate::contract_test_support::lock_test;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let policy = bulk_deadline_test_policy(&root);
+
+        // Keep the normal constructor and production 600s cap. This caller
+        // deadline bounds only the private hang proof on a loaded host.
         let mut backend = compose_backend(&root, &policy);
         assert!(backend.deadline.is_none());
         assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
         assert!(backend.bulk_timeout < std::time::Duration::from_secs(3600));
-        // Generous so child spawn under host load always precedes expiry; the
-        // bound being finite is what is asserted above, not its length.
-        backend.bulk_timeout = std::time::Duration::from_secs(5);
-
         let started = Instant::now();
-        let error = backend
-            .chown_tree_unowned("/cargo/git", 501, 20)
-            .expect_err("hung child must time out");
-        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        backend.deadline = Some(started + BULK_HANG_CALLER_DEADLINE);
+        let _fixture_guard = BulkFixtureProcessGuard::new(&process_file, None);
+
+        let result = backend.chown_tree_unowned("/cargo/git", 501, 20);
+        // Readiness is mandatory: establish the exact process tree before
+        // evaluating whether the bulk command timed out and was reaped.
+        let pids = bulk_fixture_pids(&process_file);
+        assert_eq!(pids.len(), 2, "leader plus one sleep descendant");
+        let error = result.expect_err("hung child must time out");
+        assert!(
+            pids.iter().all(|pid| !bulk_fixture_pid_alive(*pid)),
+            "owned leader and descendant must both be reaped: {pids:?}"
+        );
+        assert!(
+            started.elapsed() < BULK_HANG_UPPER_BOUND,
+            "caller deadline must bound the 300s fake hang"
+        );
         assert!(
             error.message.contains("timed out") || error.message.contains("deadline"),
             "{}",
             error.message
         );
-        let recorded = std::fs::read_to_string(&pids).unwrap_or_else(|_| {
-            panic!(
-                "fake bulk child never started; error was: {}",
-                error.message
-            )
-        });
-        let pid: i32 = recorded
-            .lines()
-            .next()
-            .expect("pid")
-            .trim()
-            .parse()
-            .expect("pid num");
-        let gone = Instant::now() + std::time::Duration::from_secs(10);
-        while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
-            assert!(Instant::now() < gone, "bulk child {pid} was not reaped");
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        assert_bulk_fixture_processes_gone(&pids);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_expired_caller_deadline_does_not_spawn() {
+        use crate::contract_test_support::lock_test;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-expired-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, _) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let policy = bulk_deadline_test_policy(&root);
+        let mut backend = compose_backend(&root, &policy);
+        assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
+        backend.deadline = Some(
+            Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .expect("expired deadline"),
+        );
+
+        let error = backend
+            .chown_tree_unowned("/cargo/git", 501, 20)
+            .expect_err("expired caller deadline must fail closed");
+        assert!(error.message.contains("timed out"), "{}", error.message);
+        assert!(
+            !process_file.exists(),
+            "expired caller deadline must not spawn the fake bulk child"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_reap_oracle_fails_when_timeout_reap_is_disabled() {
+        use crate::contract_test_support::lock_test;
+        use std::panic::AssertUnwindSafe;
+        use std::process::Command;
+
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-reap-negative-control-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let process_file = root.join("bulk-process-group");
+        let (bin, docker) = install_fake_hung_bulk_docker(&root, &process_file);
+        let _env = with_fake_bulk_runtime(&bin);
+        let child = Command::new(&docker)
+            .args(["compose", "exec", "find", "-execdir"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn private hang with timeout/reap disabled");
+        let fixture_guard = BulkFixtureProcessGuard::new(&process_file, Some(child));
+        let pids = wait_for_bulk_fixture_pids(&process_file);
+        assert_eq!(pids.len(), 2, "leader plus one sleep descendant");
+        assert!(
+            pids.iter().all(|pid| bulk_fixture_pid_alive(*pid)),
+            "no-reap control must keep its exact leader and descendant alive: {pids:?}"
+        );
+
+        let reap_oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            assert_bulk_fixture_processes_gone(&pids);
+        }));
+        assert!(
+            reap_oracle.is_err(),
+            "reap oracle must fail while runtime timeout/reap is disabled"
+        );
+
+        drop(fixture_guard);
+        assert_bulk_fixture_processes_gone(&pids);
     }
 
     /// Host-fs seam: observes current-user access on a private fixture.

@@ -29,7 +29,87 @@ fn setup_fake_docker_deferral_runtime(
     write_executable(
         &bin_dir.join("docker"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nsaw_id=\nid_mode=\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    id) saw_id=1 ;;\n    -u) if [ -n \"$saw_id\" ]; then id_mode=uid; fi ;;\n    -g) if [ -n \"$saw_id\" ]; then id_mode=gid; fi ;;\n  esac\ndone\nif [ \"$id_mode\" = uid ]; then printf '501\\n'; exit 0; fi\nif [ \"$id_mode\" = gid ]; then printf '20\\n'; exit 0; fi\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t\\tapp\\n'\n    printf 'legacy-dev-web-1\\tUp 2 minutes\\t0.0.0.0:8201->80/tcp\\tlegacy-dev\\t\\tweb\\n'\n    printf 'legacy-dev-pma-1\\tUp 2 minutes\\t0.0.0.0:8202->80/tcp\\tlegacy-dev\\t\\tpma\\n'\n    printf 'legacy-dev-db-1\\tUp 2 minutes\\t0.0.0.0:3306->3306/tcp\\tlegacy-dev\\t\\tdb\\n'\n    printf 'legacy-dev-redis-1\\tUp 2 minutes\\t0.0.0.0:6379->6379/tcp\\tlegacy-dev\\t\\tredis\\n'\n    printf 'legacy-dev-memcache-1\\tUp 2 minutes\\t0.0.0.0:11211->11211/tcp\\tlegacy-dev\\t\\tmemcache\\n'\n    printf 'legacy-dev-mail-1\\tUp 2 minutes\\t0.0.0.0:23625->8025/tcp\\tlegacy-dev\\t\\tmail\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+saw_id=
+id_mode=
+for arg in "$@"; do
+  case "$arg" in
+    id) saw_id=1 ;;
+    -u) if [ -n "$saw_id" ]; then id_mode=uid; fi ;;
+    -g) if [ -n "$saw_id" ]; then id_mode=gid; fi ;;
+  esac
+done
+case "$*" in
+  *'id -u'*'id -g'*) printf '501\n20\n'; exit 0 ;;
+esac
+case "$*" in
+  *effigy-perm-inspect-batch*)
+    record=0
+    for arg in "$@"; do
+      if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+      if [ "$record" -eq 1 ]; then
+        case "$arg" in
+          */.cargo-build-lock) printf 'file 501 20 644\n' ;;
+          *) printf 'dir 501 20 755\n' ;;
+        esac
+      fi
+    done
+    exit 0
+    ;;
+  *effigy-perm-find-batch*)
+    record=0
+    skip=2
+    for arg in "$@"; do
+      if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+      if [ "$record" -eq 1 ]; then
+        if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf 'clean\n'; fi
+      fi
+    done
+    exit 0
+    ;;
+  *effigy-perm-access-batch*)
+    record=0
+    directory=0
+    for arg in "$@"; do
+      if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+      if [ "$record" -eq 1 ]; then
+        if [ "$directory" -eq 0 ]; then directory=1; else printf 'ready\n'; directory=0; fi
+      fi
+    done
+    exit 0
+    ;;
+esac
+if [ "$id_mode" = uid ]; then printf '501\n'; exit 0; fi
+if [ "$id_mode" = gid ]; then printf '20\n'; exit 0; fi
+if [ "$1" = ps ]; then
+  if [ -f '{}' ]; then
+    printf 'legacy-dev-app-1\tUp 2 minutes\t\tlegacy-dev\t\tapp\n'
+    printf 'legacy-dev-web-1\tUp 2 minutes\t0.0.0.0:8201->80/tcp\tlegacy-dev\t\tweb\n'
+    printf 'legacy-dev-pma-1\tUp 2 minutes\t0.0.0.0:8202->80/tcp\tlegacy-dev\t\tpma\n'
+    printf 'legacy-dev-db-1\tUp 2 minutes\t0.0.0.0:3306->3306/tcp\tlegacy-dev\t\tdb\n'
+    printf 'legacy-dev-redis-1\tUp 2 minutes\t0.0.0.0:6379->6379/tcp\tlegacy-dev\t\tredis\n'
+    printf 'legacy-dev-memcache-1\tUp 2 minutes\t0.0.0.0:11211->11211/tcp\tlegacy-dev\t\tmemcache\n'
+    printf 'legacy-dev-mail-1\tUp 2 minutes\t0.0.0.0:23625->8025/tcp\tlegacy-dev\t\tmail\n'
+  fi
+  exit 0
+fi
+if [ "$1" = compose ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      up)
+        printf 'running\n' > '{}'
+        exit 0
+        ;;
+      down)
+        rm -f '{}'
+        exit 0
+        ;;
+    esac
+  done
+fi
+exit 0
+"#,
             docker_log.display(),
             runtime_state.display(),
             runtime_state.display(),
