@@ -387,6 +387,7 @@ fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
     Some((source, target, options))
 }
 
+#[allow(dead_code)]
 pub(super) fn compose_volume_ownership_target(entry: &serde_yaml::Value) -> Option<String> {
     let raw = entry.as_str()?.trim();
     if raw.is_empty() {

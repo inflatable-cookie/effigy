@@ -155,7 +155,8 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/system_command/workspace_session.rs`](../../../src/runner/system_command/workspace_session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
-| [`src/runner/system_command/workspace_provisioning.rs`](../../../src/runner/system_command/workspace_provisioning.rs) | workspace artifact install, permission prep, linux workspace binary provisioning |
+| [`src/runner/system_command/workspace_provisioning.rs`](../../../src/runner/system_command/workspace_provisioning.rs) | workspace artifact install, permission-prep progress, linux workspace binary provisioning |
+| [`src/runner/system_command/workspace_permissions.rs`](../../../src/runner/system_command/workspace_permissions.rs) | resolved-user rust/cache permission prep, non-root write/lock verification, read-only doctor diagnosis |
 | [`src/runner/system_command/workspace.rs`](../../../src/runner/system_command/workspace/mod.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
 | [`src/runner/interactive_session.rs`](../../../src/runner/interactive_session.rs) | shared interactive ownership classification model |
 
@@ -187,7 +188,7 @@ These are the current `effigy-containers` ownership seams that matter most to
 | [`crates/effigy-containers/src/policy_support.rs`](../../../crates/effigy-containers/src/policy_support.rs) | facade for generated-compose support |
 | [`crates/effigy-containers/src/policy_support/generated_compose.rs`](../../../crates/effigy-containers/src/policy_support/generated_compose.rs) | typed generated-compose document, policy application over compose assembly, generated mount and env attachment |
 | [`crates/effigy-containers/src/workspace.rs`](../../../crates/effigy-containers/src/workspace.rs) | workspace compatibility facade and top-level mount assembly |
-| [`crates/effigy-containers/src/workspace/`](../../../crates/effigy-containers/src/workspace/) | host integration, library mounts, isolation mounts, and compose path/volume rewrite helpers |
+| [`crates/effigy-containers/src/workspace/`](../../../crates/effigy-containers/src/workspace/) | host integration, library mounts, isolation mounts, compose path/volume rewrite, and workspace rust/cache ownership classification |
 | [`crates/effigy-containers/src/runtime/`](../../../crates/effigy-containers/src/runtime/mod.rs) | runtime DNS override materialization and generated compose eject helpers |
 | [`crates/effigy-containers/src/compose.rs`](../../../crates/effigy-containers/src/compose.rs) | lower-level compose backend compatibility wrappers and compose invocation argument building |
 | [`crates/effigy-containers/src/exec.rs`](../../../crates/effigy-containers/src/exec.rs) | exec compatibility facade for process, parsing, Colima runtime, and runtime-inspection helpers |

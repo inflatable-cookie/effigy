@@ -586,10 +586,31 @@ Explicit execs against another service keep that service's configured user.
 Interactive terminals retain a TTY; pipes, agents, and other non-console
 callers run without one.
 
-For a running workspace, `effigy doctor` scans primary-service managed volumes
-and `$BUN_INSTALL/install` for root-owned paths. A regression is reported as
-`container.workspace-ownership`, with one sample from each affected mount.
-The check is read-only and skips stopped workspace services.
+Headless workspace, primary-service exec, and routed tasks prepare declared
+disposable Rust build/cache paths for that resolved numeric user before
+children launch. Named cargo/target volumes exclusive to the primary
+service are repaired and then verified with an actual read/write/create-lock
+probe. Named volumes also mounted by another compose or managed service are
+not mutated: rust caches are probed only, and other shared named volumes
+are refused. Bind-mounted rust paths are probed only; Effigy never
+recursively chowns host source, siblings, or shared caches. Isolate
+`target` with catalog `isolated_dirs` when the host bind is unwritable
+inside the container. A matching owner at the mount root is not enough:
+nested `target/debug/.cargo-build-lock` and Cargo `registry/src` /
+`git/checkouts` must be usable by the resolved user. Anonymous colon-less
+compose mounts such as `/workspace-root/api/target` stay classified as
+named-volume owned-disposable rust targets.
+
+For a running workspace, `effigy doctor` remains read-only and reports
+`container.workspace-ownership` when declared cargo/target mounts, their
+nested rust lock/cache paths, managed disposable volumes, or
+`$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
+check probes those paths with per-mount inspect subprocesses and stops
+nested probes on a mount after the first sample; it does not walk the
+mount. Inspect children share the remaining doctor budget and are killed at
+that deadline; timeout is unavailable, never clean. Stopped, unavailable,
+and no-workspace-user states are distinct from clean. The finding is not a
+license to chown the checkout.
 
 ## Data Lifecycle
 

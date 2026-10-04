@@ -12,11 +12,10 @@ mod compose_rewrite;
 mod host_integration;
 mod isolation;
 mod library_mounts;
+mod ownership;
 #[cfg(test)]
 use compose_rewrite::inject_workspace_service_environment;
-use compose_rewrite::{
-    compose_volume_ownership_target, rewrite_workspace_mounts_for_direct_compose,
-};
+use compose_rewrite::rewrite_workspace_mounts_for_direct_compose;
 pub(crate) use host_integration::{
     build_host_composer_home_mount, build_host_git_config_mount, build_host_mkcert_ca_mount,
     build_host_ssh_agent_mount, build_host_ssh_config_mount, build_host_ssh_dir_mount,
@@ -54,52 +53,15 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     Ok(())
 }
 
+pub use ownership::{
+    load_workspace_ownership_plan, rust_cache_kind, WorkspaceMountKind, WorkspaceOwnershipPlan,
+    WorkspaceOwnershipTarget, WorkspaceRepairAuthority, WorkspaceRustCacheKind,
+};
+
 pub fn load_workspace_ownership_targets(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, ContainerPolicyError> {
-    let mut targets = std::collections::BTreeSet::new();
-    if let Some(home) = policy
-        .workspace_home
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        targets.insert(home.to_owned());
-    }
-    for compose_file in &policy.compose_files {
-        let content =
-            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-                path: compose_file.clone(),
-                error,
-            })?;
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "failed to parse compose file {} for workspace ownership targets: {error}",
-                compose_file.display()
-            ))
-        })?;
-        let Some(service) = parsed
-            .get("services")
-            .and_then(|services| services.get(policy.primary_service.as_str()))
-            .and_then(serde_yaml::Value::as_mapping)
-        else {
-            continue;
-        };
-        let Some(volumes) = service
-            .get("volumes")
-            .and_then(serde_yaml::Value::as_sequence)
-        else {
-            continue;
-        };
-        for target in volumes
-            .iter()
-            .filter_map(compose_volume_ownership_target)
-            .filter(|value| !value.trim().is_empty())
-        {
-            targets.insert(target);
-        }
-    }
-    Ok(targets.into_iter().collect())
+    Ok(load_workspace_ownership_plan(policy)?.owned_disposable_paths())
 }
 
 #[derive(Debug, Clone)]

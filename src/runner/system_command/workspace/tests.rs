@@ -7,7 +7,6 @@ use crate::runner::runtime_session_context::{
     with_runtime_session_context, PublicWorkspaceCleanupOverride, RuntimeSessionContext,
 };
 use crate::runner::system_command::workspace_provisioning::persist_effigy_source_repo_root;
-use crate::runner::system_command::workspace_provisioning::render_workspace_permission_command;
 use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
@@ -23,7 +22,7 @@ use crate::runner::system_command::workspace_provisioning::{
     workspace_effigy_install_identity_file, workspace_effigy_install_is_current,
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
-    WorkspacePermissionTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use crate::runner::test_support::effective_container_policy;
@@ -45,48 +44,6 @@ fn temp_repo(manifest: &str) -> std::path::PathBuf {
     std::fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
         .expect("write compose");
     root
-}
-
-#[test]
-fn permission_command_tolerates_read_only_bind_mounts() {
-    let cmd = render_workspace_permission_command(
-        "dev",
-        &[
-            WorkspacePermissionTarget {
-                path: "/home/dev".to_owned(),
-                mode: WorkspacePermissionMode::Recursive,
-            },
-            WorkspacePermissionTarget {
-                path: "/cache".to_owned(),
-                mode: WorkspacePermissionMode::Recursive,
-            },
-        ],
-    );
-    assert!(
-        cmd.contains("chown -fR"),
-        "permission prep should use `chown -fR` so the per-entry error \
-         message on read-only host bind mounts is suppressed:\n{cmd}"
-    );
-    assert!(
-        cmd.contains("|| true"),
-        "permission prep should tolerate per-entry chown failures via \
-         `|| true` — `chown -f` only hides the message, it still exits \
-         non-zero when a read-only bind mount can't be chowned:\n{cmd}"
-    );
-    assert!(
-        !cmd.contains("chown -R "),
-        "permission prep must not fall back to plain `chown -R` — that \
-         dies on read-only host bind mounts under /home/dev:\n{cmd}"
-    );
-    assert!(cmd.contains("prep_path '/home/dev' shallow"));
-    assert!(cmd.contains("prep_path '/home/dev'/.cache recursive"));
-    assert!(cmd.contains("prep_path '/home/dev'/.config recursive"));
-    assert!(cmd.contains("prep_path '/home/dev'/.local recursive"));
-    assert!(cmd.contains("prep_path '/cache' recursive"));
-    assert!(
-        cmd.contains("permission prep ["),
-        "permission prep should report per-path progress:\n{cmd}"
-    );
 }
 
 #[test]

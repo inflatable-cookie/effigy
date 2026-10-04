@@ -61,6 +61,10 @@ does not provide them directly:
 - container-local TCP alias visibility inside Effigy-owned execution targets
 - generated Compose values that need a literal `$` for the container shell
   (`$code` written as `$$code` so Compose interpolation does not blank it)
+- exclusive owned disposable rust/cargo/target named volumes prepared for
+  the resolved workspace uid/gid, with actual non-root write/lock
+  verification before children launch; named volumes shared by two or more
+  compose or managed services are not mutated
 
 These are legitimate product behaviors as long as:
 
@@ -76,6 +80,8 @@ Effigy does not currently promise:
 - alias visibility inside every compose service regardless of whether Effigy
   dispatches work there
 - zero-repair semantics on the Colima + `nerdctl compose` path
+- recursive chown of host bind sources, shared/external volumes, or
+  arbitrary checkout trees to make rust `target`/cargo writable
 
 Those may widen later, but they are not current contract.
 
@@ -255,6 +261,11 @@ The first useful coverage set is:
 - one proof that standard routed exec and workspace handoff both pass through
   the shared runtime-prep path
 - one proof that bind-mount preparation happens before exec runtime dispatch
+- one proof that workspace rust ownership prep classifies named volumes as
+  owned-disposable and bind rust paths as verify-only, then observes
+  non-root write/lock rather than mount-root owner heuristics
+- one proof that doctor ownership inspects share the remaining doctor budget
+  and report timeout as unavailable rather than clean
 - one proof that exec-readiness recovery is attempted after recreate-style
   failure
 - one proof that owned Exited services after a Colima restart are started or

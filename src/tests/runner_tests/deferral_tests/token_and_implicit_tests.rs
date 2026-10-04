@@ -29,7 +29,7 @@ fn setup_fake_docker_deferral_runtime(
     write_executable(
         &bin_dir.join("docker"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t\\tapp\\n'\n    printf 'legacy-dev-web-1\\tUp 2 minutes\\t0.0.0.0:8201->80/tcp\\tlegacy-dev\\t\\tweb\\n'\n    printf 'legacy-dev-pma-1\\tUp 2 minutes\\t0.0.0.0:8202->80/tcp\\tlegacy-dev\\t\\tpma\\n'\n    printf 'legacy-dev-db-1\\tUp 2 minutes\\t0.0.0.0:3306->3306/tcp\\tlegacy-dev\\t\\tdb\\n'\n    printf 'legacy-dev-redis-1\\tUp 2 minutes\\t0.0.0.0:6379->6379/tcp\\tlegacy-dev\\t\\tredis\\n'\n    printf 'legacy-dev-memcache-1\\tUp 2 minutes\\t0.0.0.0:11211->11211/tcp\\tlegacy-dev\\t\\tmemcache\\n'\n    printf 'legacy-dev-mail-1\\tUp 2 minutes\\t0.0.0.0:23625->8025/tcp\\tlegacy-dev\\t\\tmail\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nsaw_id=\nid_mode=\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    id) saw_id=1 ;;\n    -u) if [ -n \"$saw_id\" ]; then id_mode=uid; fi ;;\n    -g) if [ -n \"$saw_id\" ]; then id_mode=gid; fi ;;\n  esac\ndone\nif [ \"$id_mode\" = uid ]; then printf '501\\n'; exit 0; fi\nif [ \"$id_mode\" = gid ]; then printf '20\\n'; exit 0; fi\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t\\tapp\\n'\n    printf 'legacy-dev-web-1\\tUp 2 minutes\\t0.0.0.0:8201->80/tcp\\tlegacy-dev\\t\\tweb\\n'\n    printf 'legacy-dev-pma-1\\tUp 2 minutes\\t0.0.0.0:8202->80/tcp\\tlegacy-dev\\t\\tpma\\n'\n    printf 'legacy-dev-db-1\\tUp 2 minutes\\t0.0.0.0:3306->3306/tcp\\tlegacy-dev\\t\\tdb\\n'\n    printf 'legacy-dev-redis-1\\tUp 2 minutes\\t0.0.0.0:6379->6379/tcp\\tlegacy-dev\\t\\tredis\\n'\n    printf 'legacy-dev-memcache-1\\tUp 2 minutes\\t0.0.0.0:11211->11211/tcp\\tlegacy-dev\\t\\tmemcache\\n'\n    printf 'legacy-dev-mail-1\\tUp 2 minutes\\t0.0.0.0:23625->8025/tcp\\tlegacy-dev\\t\\tmail\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
             docker_log.display(),
             runtime_state.display(),
             runtime_state.display(),
@@ -586,20 +586,52 @@ shared_root = "{}"
     );
 
     let log = fs::read_to_string(&docker_log).expect("read fake docker log");
+    let vendor = "/workspace-root/zest/vendor";
     assert!(
-        log.contains("exec -T -u 0 app sh -lc"),
-        "expected root-owned permission prep exec before deferred command, got {log}"
+        !log.contains("chown -fR"),
+        "removed recursive -fR chown must stay gone, got {log}"
     );
     assert!(
-        log.contains("/workspace-root/zest/vendor"),
-        "expected permission prep to include isolated vendor target, got {log}"
+        !log.contains("exec -T -u 0 app sh -lc"),
+        "permission prep must use argument arrays instead of a root login shell, got {log}"
     );
     assert!(
-        log.contains("chown -fR"),
-        "expected permission prep chown command, got {log}"
+        log.contains("exec -T -u 0 app id -u"),
+        "expected numeric workspace identity probe before prep, got {log}"
     );
     assert!(
-        log.contains("exec -T -w /workspace-root/zest -u dev"),
-        "expected deferred workspace exec as dev user after prep, got {log}"
+        log.contains(&format!("mkdir -p -- {vendor}")),
+        "expected argument-array mkdir for isolated vendor, got {log}"
+    );
+    assert!(
+        log.contains(&format!("find -P {vendor} -xdev")),
+        "expected scoped find of unowned vendor contents, got {log}"
+    );
+    assert!(
+        log.contains(&format!("chown -h 501:20 -- {vendor}")),
+        "expected no-deref chown of isolated vendor as resolved uid:gid, got {log}"
+    );
+    assert!(
+        log.contains(&format!(
+            "exec -T -u 501:20 app test -r {vendor} -a -w {vendor}"
+        )),
+        "expected actual non-root read/write probe of isolated vendor, got {log}"
+    );
+    let mkdir_at = log
+        .find(&format!("mkdir -p -- {vendor}"))
+        .expect("mkdir marker");
+    let chown_at = log
+        .find(&format!("chown -h 501:20 -- {vendor}"))
+        .expect("chown marker");
+    let probe_at = log
+        .find(&format!("test -r {vendor} -a -w {vendor}"))
+        .expect("access probe marker");
+    let deferred = "exec -T -w /workspace-root/zest -u dev";
+    let deferred_at = log.find(deferred).unwrap_or_else(|| {
+        panic!("expected deferred workspace exec as dev user after prep, got {log}")
+    });
+    assert!(
+        mkdir_at < deferred_at && chown_at < deferred_at && probe_at < deferred_at,
+        "permission prep must finish before deferred exec, got {log}"
     );
 }

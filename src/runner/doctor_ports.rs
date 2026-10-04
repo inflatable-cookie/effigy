@@ -7,7 +7,6 @@
 //! converting `RunnerError` to `DoctorError` at the port boundary so
 //! the doctor layer only speaks its own error type.
 
-use std::ffi::OsString;
 #[cfg(not(test))]
 use std::io::Read;
 #[cfg(all(unix, not(test)))]
@@ -18,9 +17,7 @@ use std::process::Command;
 use std::process::Stdio;
 #[cfg(not(test))]
 use std::thread;
-use std::time::Duration;
-#[cfg(not(test))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(all(unix, not(test)))]
 use nix::unistd::{setpgid, Pid};
@@ -42,9 +39,12 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::run_compose_exec;
+use crate::runner::exec_command::run_compose_exec_with_deadline;
 use crate::runner::execute::api;
 use crate::runner::system_command::is_primary_service_running;
+use crate::runner::system_command::workspace_permissions::{
+    compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
+};
 
 #[derive(Debug, Default)]
 pub(in crate::runner) struct RunnerDoctorPorts;
@@ -99,7 +99,15 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
         &self,
         resolved_root: &Path,
     ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
-        collect_runtime_diagnostics(resolved_root)
+        collect_runtime_diagnostics(resolved_root, None)
+    }
+
+    fn runtime_diagnostics_bounded(
+        &self,
+        resolved_root: &Path,
+        remaining_budget: Option<Duration>,
+    ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+        collect_runtime_diagnostics(resolved_root, remaining_budget)
     }
 }
 
@@ -222,6 +230,7 @@ fn runner_to_doctor(error: RunnerError) -> DoctorError {
 
 fn collect_runtime_diagnostics(
     resolved_root: &Path,
+    remaining_budget: Option<Duration>,
 ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
     let mut diagnostics = DoctorRuntimeDiagnostics::default();
 
@@ -305,7 +314,12 @@ fn collect_runtime_diagnostics(
             .push(format!("docker context probe failed: {error}")),
     }
 
-    append_workspace_ownership_diagnostics(resolved_root, &policies, &mut diagnostics);
+    append_workspace_ownership_diagnostics(
+        resolved_root,
+        &policies,
+        remaining_budget,
+        &mut diagnostics,
+    );
 
     Ok(diagnostics)
 }
@@ -313,121 +327,111 @@ fn collect_runtime_diagnostics(
 fn append_workspace_ownership_diagnostics(
     repo_root: &Path,
     policies: &[effigy_containers::EffectiveContainerPolicy],
+    remaining_budget: Option<Duration>,
     diagnostics: &mut DoctorRuntimeDiagnostics,
 ) {
+    let deadline = remaining_budget.map(|budget| Instant::now() + budget);
     for policy in policies {
-        let Some(workspace_user) = policy.workspace_user.as_deref() else {
-            continue;
-        };
-        match is_primary_service_running(repo_root, policy) {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(error) => {
-                diagnostics.warnings.push(format!(
-                    "container `{}` workspace ownership probe skipped: {error}",
-                    policy.name
-                ));
-                continue;
-            }
-        }
-
-        let script = workspace_ownership_scan_script(policy);
-        let args = vec![
-            OsString::from("exec"),
-            OsString::from("-T"),
-            OsString::from("-u"),
-            OsString::from("0"),
-            OsString::from(policy.primary_service.as_str()),
-            OsString::from("sh"),
-            OsString::from("-lc"),
-            OsString::from(script),
-        ];
-        match run_compose_exec(repo_root, policy, &args, true, "workspace ownership probe") {
-            Ok(output) if output.status.success() => {
-                let root_owned = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>();
-                if root_owned.is_empty() {
-                    diagnostics.evidence.push(format!(
-                        "container `{}` workspace ownership: clean for user `{workspace_user}`",
+        let running =
+            is_primary_service_running(repo_root, policy).map_err(|error| error.to_string());
+        let extra = match running {
+            Ok(true) => match bun_install_scan_target(repo_root, policy, deadline) {
+                Ok(extra) => extra,
+                Err(error) => {
+                    diagnostics.warnings.push(format!(
+                        "container `{}` workspace ownership probe skipped: {error}",
                         policy.name
                     ));
-                } else {
-                    diagnostics.findings.push(workspace_ownership_finding(
-                        &policy.name,
-                        workspace_user,
-                        &root_owned,
-                    ));
+                    continue;
                 }
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-                diagnostics.warnings.push(format!(
-                    "container `{}` workspace ownership probe failed (exit={}){}",
-                    policy.name,
-                    output
-                        .status
-                        .code()
-                        .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
-                    if stderr.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {stderr}")
-                    }
-                ));
-            }
-            Err(error) => diagnostics.warnings.push(format!(
-                "container `{}` workspace ownership probe failed: {error}",
-                policy.name
-            )),
+            },
+            _ => Vec::new(),
+        };
+        let mut backend = compose_backend_with_deadline(repo_root, policy, deadline);
+        let diagnosis = diagnose_workspace_ownership(policy, running, &extra, &mut backend);
+        if let Some(evidence) = diagnosis.evidence {
+            diagnostics.evidence.push(evidence);
+        }
+        if let Some(warning) = diagnosis.warning {
+            diagnostics.warnings.push(warning);
+        }
+        if diagnosis.status == WorkspaceOwnershipProbeStatus::Finding {
+            let user = policy.workspace_user.as_deref().unwrap_or("workspace-user");
+            diagnostics.findings.push(workspace_ownership_finding(
+                &policy.name,
+                user,
+                &diagnosis.samples,
+                diagnosis
+                    .identity
+                    .as_ref()
+                    .map(|identity| (identity.uid, identity.gid)),
+            ));
         }
     }
 }
 
-fn workspace_ownership_scan_script(policy: &effigy_containers::EffectiveContainerPolicy) -> String {
-    let mut targets = policy
-        .managed_volumes
-        .iter()
-        .filter(|volume| volume.service == policy.primary_service)
-        .filter_map(|volume| volume.mount_target.as_deref())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    targets.sort();
-    targets.dedup();
-    let quoted_targets = targets
-        .iter()
-        .map(|target| effigy_core::shell::shell_quote(target))
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "set -- {quoted_targets}; \
-         if [ -n \"${{BUN_INSTALL:-}}\" ]; then set -- \"$@\" \"$BUN_INSTALL/install\"; fi; \
-         for ownership_root in \"$@\"; do \
-           [ ! -e \"$ownership_root\" ] && continue; \
-           root_owned=$(find \"$ownership_root\" -xdev -user root -print -quit 2>/dev/null); \
-           [ -z \"$root_owned\" ] || printf '%s\\t%s\\n' \"$ownership_root\" \"$root_owned\"; \
-         done"
-    )
+fn bun_install_scan_target(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+) -> Result<Vec<String>, String> {
+    let args = effigy_containers::compose::compose_args(
+        policy,
+        [
+            "exec",
+            "-T",
+            "-u",
+            "0",
+            policy.primary_service.as_str(),
+            "sh",
+            "-c",
+            r#"if [ -n "$BUN_INSTALL" ]; then printf '%s/install\n' "$BUN_INSTALL"; fi"#,
+        ],
+    );
+    match run_compose_exec_with_deadline(
+        repo_root,
+        policy,
+        &args,
+        true,
+        "workspace bun cache path probe",
+        deadline,
+    ) {
+        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("timed out") {
+                Err(message)
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        _ => Ok(Vec::new()),
+    }
 }
 
 fn workspace_ownership_finding(
     container_name: &str,
     workspace_user: &str,
-    root_owned: &[String],
+    samples: &[String],
+    numeric: Option<(u32, u32)>,
 ) -> DoctorFinding {
+    let identity = match numeric {
+        Some((uid, gid)) => format!("`{workspace_user}` (uid={uid} gid={gid})"),
+        None => format!("`{workspace_user}`"),
+    };
     DoctorFinding {
         check_id: check_id::CONTAINER_WORKSPACE_OWNERSHIP.to_owned(),
         severity: DoctorSeverity::Warning,
         evidence: format!(
-            "container `{container_name}` has root-owned paths in workspace volumes or the Bun cache, while workspace commands run as `{workspace_user}`: {}",
-            root_owned.join(", ")
+            "container `{container_name}` has rust build/cache or managed workspace paths that the declared workspace user {identity} cannot use: {}",
+            samples.join(", ")
         ),
-        remediation: format!(
-            "Repair these paths to user `{workspace_user}`, then rerun `effigy doctor`. Host-routed tasks and `effigy exec` targeting the primary service must use the declared workspace user."
-        ),
+        remediation: "Headless workspace, primary-service exec, and routed tasks repair owned disposable rust/cargo/target named volumes before children launch. If doctor still reports this, rerun `effigy doctor --verbose`. Do not recursively chown host source, sibling, or shared binds; isolate `target` with catalog `isolated_dirs` when the path is a host bind.".to_owned(),
         fixable: false,
     }
 }
@@ -552,14 +556,9 @@ fn docker_context_name() -> Result<Option<String>, DoctorError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        docker_context_mismatch_warning, workspace_ownership_finding,
-        workspace_ownership_scan_script,
-    };
+    use super::{docker_context_mismatch_warning, workspace_ownership_finding};
     use effigy_containers::BackendId;
     use effigy_doctor::{check_id, DoctorSeverity};
-
-    use crate::runner::test_support::effective_container_policy;
 
     #[test]
     fn docker_context_warning_shows_when_colima_repo_has_no_pinned_containerd_preference() {
@@ -587,49 +586,21 @@ mod tests {
     }
 
     #[test]
-    fn workspace_ownership_scan_covers_primary_volumes_and_bun_cache() {
-        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
-        policy.managed_volumes = vec![
-            effigy_catalog::volumes::ManagedVolume {
-                name: "root-node-modules".to_owned(),
-                service: "workspace".to_owned(),
-                persist: false,
-                size_bytes: None,
-                mount_point: None,
-                mount_target: Some("/workspace/root/node_modules".to_owned()),
-            },
-            effigy_catalog::volumes::ManagedVolume {
-                name: "db-data".to_owned(),
-                service: "postgres".to_owned(),
-                persist: true,
-                size_bytes: None,
-                mount_point: None,
-                mount_target: Some("/var/lib/postgresql/data".to_owned()),
-            },
-        ];
-
-        let script = workspace_ownership_scan_script(&policy);
-
-        assert!(script.contains("'/workspace/root/node_modules'"));
-        assert!(!script.contains("/var/lib/postgresql/data"));
-        assert!(script.contains("$BUN_INSTALL/install"));
-        assert!(script.contains("-user root"));
-        assert!(script.contains("-print -quit"));
-        assert!(script.contains("$ownership_root"));
-    }
-
-    #[test]
     fn workspace_ownership_finding_is_named_and_actionable() {
         let finding = workspace_ownership_finding(
             "workspace",
             "dev",
-            &["/workspace/root/node_modules/pkg".to_owned()],
+            &["/workspace/target/debug/.cargo-build-lock".to_owned()],
+            Some((501, 20)),
         );
 
         assert_eq!(finding.check_id, check_id::CONTAINER_WORKSPACE_OWNERSHIP);
         assert_eq!(finding.severity, DoctorSeverity::Warning);
-        assert!(finding.evidence.contains("node_modules/pkg"));
-        assert!(finding.remediation.contains("user `dev`"));
+        assert!(finding.evidence.contains("target/debug/.cargo-build-lock"));
+        assert!(finding.evidence.contains("uid=501"));
+        assert!(finding.evidence.contains("gid=20"));
+        assert!(finding.remediation.contains("isolated_dirs"));
         assert!(finding.remediation.contains("effigy doctor"));
+        assert!(!finding.fixable);
     }
 }

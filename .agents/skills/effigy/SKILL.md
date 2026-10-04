@@ -236,10 +236,17 @@ even during forced local-dev unlock. Guide:
 
 **Workspace identity** — primary-service `effigy exec` and host-routed
 workspace tasks use the declared `workspace_user` and `workspace_home`.
+Those paths, plus headless workspace handoff, prepare owned disposable
+rust/cargo/target named volumes exclusive to the primary service for the
+resolved uid/gid and verify read/write/lock before children launch. Bind
+rust paths and named volumes shared with another compose or managed
+service are probed only.
 `effigy exec` from a non-console caller does not request a TTY. Use
 `effigy doctor --verbose` to find
-read-only `container.workspace-ownership` findings for root-owned managed
-volume or Bun-cache paths. Guide: `docs/guides/063-container-system-guide.md`.
+read-only `container.workspace-ownership` findings for cargo/target,
+managed volume, or Bun-cache paths the resolved user cannot use. A
+deadline-expired inspect is unavailable, never clean. Guide:
+`docs/guides/063-container-system-guide.md`.
 
 **Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
 `[secrets]` is declared. An operator can run `effigy secrets unlock` to enable
