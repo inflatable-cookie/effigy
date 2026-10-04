@@ -4,7 +4,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Output;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::colima_runtime::{
     default_runtime_profile, detect_container_backend, repair_colima_runtime,
@@ -198,6 +198,38 @@ pub fn list_running_compose_containers_for_policy(
         ],
         "runtime ps",
         None,
+        None,
+    )?;
+
+    Ok(
+        parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
+            .into_iter()
+            .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
+            .collect(),
+    )
+}
+
+/// Deadline-aware compose `ps` probe. One caller-visible monotonic deadline is
+/// converted to a per-spawn remainder, so a preceding liveness probe consumes
+/// the same budget instead of granting this probe a fresh timeout. An expired
+/// deadline never spawns; timeouts stay `unavailable` (distinct from stopped or
+/// clean) and the bounded doctor path never triggers a Colima runtime repair.
+pub fn list_running_compose_containers_for_policy_with_deadline(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let output = run_runtime_command_capture_with_repair(
+        repo_root,
+        policy,
+        &[
+            OsString::from("ps"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps",
+        None,
+        deadline,
     )?;
 
     Ok(
@@ -248,6 +280,7 @@ pub fn list_compose_containers_for_project_including_stopped(
         ],
         "runtime ps --all",
         Some(COMPOSE_PS_TIMEOUT),
+        None,
     )?;
     Ok(
         parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
@@ -299,12 +332,16 @@ fn run_runtime_command_capture_with_repair(
     args: &[OsString],
     label: &str,
     timeout: Option<Duration>,
+    deadline: Option<Instant>,
 ) -> Result<Output, ContainerExecError> {
-    match capture_runtime_command(repo_root, policy, args, label, timeout) {
+    match capture_runtime_command(repo_root, policy, args, label, timeout, deadline) {
         Ok(output) => Ok(output),
-        Err(error) if runtime_failure_should_repair(&error) => {
+        // A bounded (doctor) probe is read-only: it never pays for a Colima
+        // runtime repair that could outlive the shared deadline. Timeouts and
+        // state-loss failures surface as unavailable instead.
+        Err(error) if deadline.is_none() && runtime_failure_should_repair(&error) => {
             repair_colima_runtime(policy, repo_root)?;
-            capture_runtime_command(repo_root, policy, args, label, timeout).map_err(
+            capture_runtime_command(repo_root, policy, args, label, timeout, None).map_err(
                 |retry_error| match retry_error {
                     ContainerExecError::Failure {
                         command,
@@ -334,7 +371,14 @@ fn capture_runtime_command(
     args: &[OsString],
     label: &str,
     timeout: Option<Duration>,
+    deadline: Option<Instant>,
 ) -> Result<Output, ContainerExecError> {
+    if let Some(deadline) = deadline {
+        let remaining = super::process::remaining_until_deadline(deadline, label)?;
+        return run_runtime_command_capture_for_policy_with_timeout(
+            repo_root, policy, args, label, remaining,
+        );
+    }
     match timeout {
         Some(timeout) => run_runtime_command_capture_for_policy_with_timeout(
             repo_root, policy, args, label, timeout,

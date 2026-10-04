@@ -7,8 +7,9 @@ use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
 use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
 use effigy_containers::{
     exec::{
-        colima_is_running, list_running_compose_containers_for_policy, recover_colima_runtime,
-        reset_colima_runtime, ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
+        colima_is_running_with_deadline, list_running_compose_containers_for_policy_with_deadline,
+        recover_colima_runtime, reset_colima_runtime, ColimaRecoveryReport, ContainerExecError,
+        RunningComposeContainer,
     },
     load_container_policy, validate_compose_backend_runtime, validate_container_policy,
     EffectiveContainerPolicy,
@@ -17,6 +18,7 @@ use effigy_ui::theme::is_ci_environment;
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use std::io::IsTerminal;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::container_command::run_container;
@@ -136,15 +138,31 @@ pub(in crate::runner) fn is_primary_service_running(
     repo_root: &std::path::Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
-    if !colima_is_running(policy, repo_root).map_err(Into::<RunnerError>::into)? {
+    is_primary_service_running_with_deadline(repo_root, policy, None)
+}
+
+/// Deadline-aware primary-service liveness probe. Every preliminary probe
+/// (Colima status, then compose `ps`) converts the same monotonic deadline, so
+/// an expired deadline never spawns and a slow first probe consumes the budget
+/// the second one would otherwise have had.
+pub(in crate::runner) fn is_primary_service_running_with_deadline(
+    repo_root: &std::path::Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+) -> Result<bool, RunnerError> {
+    if !colima_is_running_with_deadline(policy, repo_root, deadline)
+        .map_err(Into::<RunnerError>::into)?
+    {
         return Ok(false);
     }
 
-    let running = match list_running_compose_containers_for_policy(repo_root, policy) {
-        Ok(running) => running,
-        Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
+    let running =
+        match list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline)
+        {
+            Ok(running) => running,
+            Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
     Ok(has_running_primary_service(
         &running,
         repo_root,

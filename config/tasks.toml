@@ -105,6 +105,20 @@
   "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",
 ]
 
+# Preliminary doctor container-liveness probes (papercut effigy#074). Private
+# fresh-root fixtures with a fake `colima` on PATH prove the shared monotonic
+# deadline: expired never spawns, a hung Colima/compose-ps probe dies at the
+# deadline and reaps only its recorded process group, the
+# running/stopped/unavailable distinction survives, and the ownership probe
+# shares one budget instead of getting a fresh one per subprocess.
+"test:doctor:workspace-liveness" = [
+  "cargo test -p effigy --lib runner::doctor_ports::tests -- --nocapture",
+]
+"check:doctor:workspace-liveness" = [
+  "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
+  "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",
+]
+
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.
 "test:rhai:storage-retirement" = "cargo test -p effigy-rhai --lib storage_retirement -- --nocapture"

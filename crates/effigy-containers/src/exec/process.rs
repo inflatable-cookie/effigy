@@ -146,6 +146,46 @@ pub(super) fn run_command_capture_with_timeout(
     }
 }
 
+/// Build the canonical timeout failure without spawning a child. A shared
+/// monotonic deadline that has already elapsed must never spawn the
+/// subprocess; callers see the same "timed out" verdict they get after a
+/// real timeout, and never a false success.
+pub(super) fn deadline_already_elapsed(label: &str) -> ContainerExecError {
+    timeout_error(label)
+}
+
+/// Resolve the remaining slice of a shared monotonic deadline, failing closed
+/// when it has nothing left. Each probe converts the deadline exactly once,
+/// immediately before it spawns, so sibling probes share one budget instead of
+/// receiving a fresh per-subprocess timeout.
+pub(super) fn remaining_until_deadline(
+    deadline: Instant,
+    label: &str,
+) -> Result<Duration, ContainerExecError> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(deadline_already_elapsed(label));
+    }
+    Ok(remaining)
+}
+
+/// Deadline-aware variant of [`run_command_capture_allow_failure`]. With no
+/// deadline it keeps the unbounded production behavior; with one it computes
+/// the remaining slice of the shared budget and never spawns once it expires.
+pub(super) fn run_command_capture_allow_failure_with_deadline(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let Some(deadline) = deadline else {
+        return run_command_capture_allow_failure(repo_root, program, args);
+    };
+    let remaining = remaining_until_deadline(deadline, label)?;
+    run_command_capture_allow_failure_with_timeout(repo_root, program, args, label, remaining)
+}
+
 pub(super) fn run_command_capture_allow_failure_with_timeout(
     repo_root: &Path,
     program: &str,
@@ -192,6 +232,15 @@ pub(super) fn run_command_capture_allow_failure_with_timeout(
                 });
             }
         }
+    }
+}
+
+fn timeout_error(label: &str) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: label.to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] command timed out".to_owned(),
     }
 }
 

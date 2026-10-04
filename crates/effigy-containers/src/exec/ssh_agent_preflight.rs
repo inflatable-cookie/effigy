@@ -13,8 +13,9 @@
 //! naming the `colima restart <profile>` remediation (g08.017).
 
 use std::path::Path;
+use std::time::Instant;
 
-use super::process::run_command_capture_allow_failure;
+use super::process::run_command_capture_allow_failure_with_deadline;
 use crate::EffectiveContainerPolicy;
 
 /// Path inside the colima VM where colima forwards the host SSH-agent socket.
@@ -87,6 +88,18 @@ pub fn inspect_colima_ssh_agent_socket_for_profile(
     profile: &str,
     repo_root: &Path,
 ) -> SshAgentSocketHealth {
+    inspect_colima_ssh_agent_socket_for_profile_with_deadline(profile, repo_root, None)
+}
+
+/// Deadline-aware probe of the forwarded SSH-agent socket. A bounded (doctor)
+/// caller shares one monotonic deadline; an expired deadline never spawns and a
+/// timeout resolves to [`SshAgentSocketHealth::Unknown`], which never blocks and
+/// is never mistaken for a healthy socket.
+pub fn inspect_colima_ssh_agent_socket_for_profile_with_deadline(
+    profile: &str,
+    repo_root: &Path,
+    deadline: Option<Instant>,
+) -> SshAgentSocketHealth {
     let probe = ssh_agent_socket_probe_script();
     let args = [
         "ssh",
@@ -97,7 +110,13 @@ pub fn inspect_colima_ssh_agent_socket_for_profile(
         "-c",
         probe.as_str(),
     ];
-    match run_command_capture_allow_failure(repo_root, "colima", &args) {
+    match run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        "colima",
+        &args,
+        "colima SSH-agent socket probe",
+        deadline,
+    ) {
         Ok(output) if output.status.success() => {
             classify_ssh_agent_probe_output(&String::from_utf8_lossy(&output.stdout))
         }

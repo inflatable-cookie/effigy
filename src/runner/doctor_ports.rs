@@ -7,6 +7,7 @@
 //! converting `RunnerError` to `DoctorError` at the port boundary so
 //! the doctor layer only speaks its own error type.
 
+use std::ffi::{OsStr, OsString};
 #[cfg(not(test))]
 use std::io::Read;
 #[cfg(all(unix, not(test)))]
@@ -26,7 +27,7 @@ use effigy_cli::TaskInvocation;
 use effigy_containers::{
     colima::parse_colima_running,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
-    exec::{inspect_colima_ssh_agent_socket_for_profile, SshAgentSocketHealth},
+    exec::{inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth},
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
 };
 use effigy_doctor::{
@@ -39,9 +40,9 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::run_compose_exec_with_deadline;
+use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_with_deadline};
 use crate::runner::execute::api;
-use crate::runner::system_command::is_primary_service_running;
+use crate::runner::system_command::is_primary_service_running_with_deadline;
 use crate::runner::system_command::workspace_permissions::{
     compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
 };
@@ -232,6 +233,10 @@ fn collect_runtime_diagnostics(
     resolved_root: &Path,
     remaining_budget: Option<Duration>,
 ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+    // One monotonic deadline for every preliminary probe that follows. Each
+    // probe converts its own remainder from this deadline, so no subprocess
+    // gets a fresh budget of its own.
+    let deadline = remaining_budget.map(|budget| Instant::now() + budget);
     let mut diagnostics = DoctorRuntimeDiagnostics::default();
 
     // Gateway route-table trust is machine-global and independent of container
@@ -268,14 +273,19 @@ fn collect_runtime_diagnostics(
             profiles.join(", ")
         ));
         for profile in &profiles {
-            match colima_profile_running(profile) {
+            match colima_profile_running(profile, deadline) {
                 Ok(running) => {
                     diagnostics.evidence.push(format!(
                         "colima-profile `{profile}`: {}",
                         if running { "running" } else { "stopped" }
                     ));
                     if running {
-                        append_ssh_agent_socket_warning(profile, resolved_root, &mut diagnostics);
+                        append_ssh_agent_socket_warning(
+                            profile,
+                            resolved_root,
+                            deadline,
+                            &mut diagnostics,
+                        );
                     }
                 }
                 Err(error) => diagnostics
@@ -314,26 +324,20 @@ fn collect_runtime_diagnostics(
             .push(format!("docker context probe failed: {error}")),
     }
 
-    append_workspace_ownership_diagnostics(
-        resolved_root,
-        &policies,
-        remaining_budget,
-        &mut diagnostics,
-    );
+    append_workspace_ownership_diagnostics(resolved_root, &policies, deadline, &mut diagnostics);
 
     Ok(diagnostics)
 }
 
-fn append_workspace_ownership_diagnostics(
+pub(in crate::runner) fn append_workspace_ownership_diagnostics(
     repo_root: &Path,
     policies: &[effigy_containers::EffectiveContainerPolicy],
-    remaining_budget: Option<Duration>,
+    deadline: Option<Instant>,
     diagnostics: &mut DoctorRuntimeDiagnostics,
 ) {
-    let deadline = remaining_budget.map(|budget| Instant::now() + budget);
     for policy in policies {
-        let running =
-            is_primary_service_running(repo_root, policy).map_err(|error| error.to_string());
+        let running = is_primary_service_running_with_deadline(repo_root, policy, deadline)
+            .map_err(|error| error.to_string());
         let extra = match running {
             Ok(true) => match bun_install_scan_target(repo_root, policy, deadline) {
                 Ok(extra) => extra,
@@ -485,9 +489,12 @@ fn append_route_table_trust_diagnostics(diagnostics: &mut DoctorRuntimeDiagnosti
 fn append_ssh_agent_socket_warning(
     profile: &str,
     repo_root: &Path,
+    deadline: Option<Instant>,
     diagnostics: &mut DoctorRuntimeDiagnostics,
 ) {
-    let detail = match inspect_colima_ssh_agent_socket_for_profile(profile, repo_root) {
+    let detail = match inspect_colima_ssh_agent_socket_for_profile_with_deadline(
+        profile, repo_root, deadline,
+    ) {
         SshAgentSocketHealth::Stale => "is stale (host SSH-agent socket rotated)",
         SshAgentSocketHealth::Absent => "is not set up",
         SshAgentSocketHealth::Healthy | SshAgentSocketHealth::Unknown => return,
@@ -513,15 +520,15 @@ fn docker_context_mismatch_warning(
     ))
 }
 
-fn colima_profile_running(profile: &str) -> Result<bool, DoctorError> {
-    let output = Command::new("colima")
-        .args(["status", "--profile", profile])
-        .output()
-        .map_err(|error| {
-            DoctorError::task_invocation(format!(
-                "failed to launch `colima status --profile {profile}`: {error}"
-            ))
-        })?;
+fn colima_profile_running(profile: &str, deadline: Option<Instant>) -> Result<bool, DoctorError> {
+    let args = [
+        OsString::from("status"),
+        OsString::from("--profile"),
+        OsString::from(profile),
+    ];
+    let output =
+        run_command_capture_until(Path::new("."), OsStr::new("colima"), &args, None, deadline)
+            .map_err(|error| DoctorError::task_invocation(error.to_string()))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     Ok(parse_colima_running(&stdout, &stderr))
@@ -556,9 +563,21 @@ fn docker_context_name() -> Result<Option<String>, DoctorError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{docker_context_mismatch_warning, workspace_ownership_finding};
-    use effigy_containers::BackendId;
-    use effigy_doctor::{check_id, DoctorSeverity};
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+
+    use effigy_containers::{BackendId, EffectiveContainerPolicy};
+    use effigy_doctor::{check_id, DoctorRuntimeDiagnostics, DoctorSeverity};
+
+    use super::{
+        append_workspace_ownership_diagnostics, docker_context_mismatch_warning,
+        is_primary_service_running_with_deadline, workspace_ownership_finding,
+    };
+    use crate::contract_test_support::{lock_test, EnvGuard};
+    use crate::runner::test_support::effective_container_policy;
 
     #[test]
     fn docker_context_warning_shows_when_colima_repo_has_no_pinned_containerd_preference() {
@@ -602,5 +621,285 @@ mod tests {
         assert!(finding.remediation.contains("isolated_dirs"));
         assert!(finding.remediation.contains("effigy doctor"));
         assert!(!finding.fixable);
+    }
+
+    // ------------------------------------------------------------------
+    // Preliminary doctor liveness probes (papercut effigy#074).
+    //
+    // These use private fresh-root fixtures only: a temporary directory with
+    // a fake `colima` executable on PATH. They never touch a live endpoint, VM
+    // or container, and they only observe child processes they started.
+    // ------------------------------------------------------------------
+
+    fn write_executable(path: &Path, body: &str) {
+        fs::write(path, body).expect("write fixture executable");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(path).expect("stat").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).expect("chmod fixture executable");
+        }
+    }
+
+    /// Create a fresh fixture root with a manifest marker so a compose working
+    /// directory resolves back to this repository root.
+    fn fresh_root(label: &str) -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::Builder::new()
+            .prefix(&format!("effigy-doctor-liveness-{label}-"))
+            .tempdir()
+            .expect("tempdir");
+        let root = fs::canonicalize(temp.path()).expect("canonicalize fixture root");
+        fs::write(
+            root.join("effigy.toml"),
+            "[containers]\ndefault = \"stack\"\n",
+        )
+        .expect("write manifest marker");
+        (temp, root)
+    }
+
+    fn install_fake_colima(root: &Path, script: &str) -> PathBuf {
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("mkdir fake runtime bin");
+        write_executable(&bin.join("colima"), script);
+        bin
+    }
+
+    /// Prepend the fixture bin to PATH and pin the Colima backend. Holds the
+    /// global test lock (reentrant) for the lifetime of the guard.
+    fn with_runtime_env(bin: &Path) -> EnvGuard {
+        let base = std::env::var("PATH").unwrap_or_default();
+        EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+        ])
+    }
+
+    fn policy_for(root: &Path) -> EffectiveContainerPolicy {
+        let mut policy = effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            root.join("docker-compose.yml"),
+        );
+        policy.repo_root = root.to_path_buf();
+        policy.workspace_user = Some("dev".to_owned());
+        policy
+    }
+
+    /// Generous bound for a fixture that hangs for 300s. It must still be far
+    /// below the sleep it would otherwise wait out, so the bounded probe is
+    /// proven without depending on exact host spawn latency.
+    const LIVENESS_DEADLINE: Duration = Duration::from_secs(10);
+    const LIVENESS_UPPER_BOUND: Duration = Duration::from_secs(30);
+
+    #[cfg(unix)]
+    fn pid_alive(pid: i32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    #[cfg(unix)]
+    fn wait_for_processes_gone(pgfile: &Path) {
+        let text = fs::read_to_string(pgfile).expect("read recorded probe pids");
+        let pids = text
+            .lines()
+            .filter_map(|line| line.trim().parse::<i32>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            !pids.is_empty(),
+            "fixture must record its own process group: {text:?}"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while pids.iter().any(|pid| pid_alive(*pid)) {
+            assert!(
+                Instant::now() < deadline,
+                "recorded probe process group was not reaped: {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn expired_deadline_never_spawns_the_colima_liveness_probe() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("expired-liveness");
+        let marker = root.join("colima-spawned");
+        let bin = install_fake_colima(
+            &root,
+            &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+        );
+        let _env = with_runtime_env(&bin);
+        let policy = policy_for(&root);
+        let expired = Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .expect("expired instant");
+
+        let error = is_primary_service_running_with_deadline(&root, &policy, Some(expired))
+            .expect_err("expired deadline must not report a live runtime");
+
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            !marker.exists(),
+            "expired deadline must never spawn the probe"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hung_colima_liveness_probe_is_bounded_and_reaps_its_process_group() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("hung-colima-liveness");
+        let pgfile = root.join("colima-process-group");
+        let bin = install_fake_colima(
+            &root,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{pg}'\nsleep 300 &\nprintf '%s\\n' \"$!\" >> '{pg}'\nwait\n",
+                pg = pgfile.display()
+            ),
+        );
+        let _env = with_runtime_env(&bin);
+        let policy = policy_for(&root);
+
+        let started = Instant::now();
+        let error = is_primary_service_running_with_deadline(
+            &root,
+            &policy,
+            Some(Instant::now() + LIVENESS_DEADLINE),
+        )
+        .expect_err("hung probe must time out");
+
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            started.elapsed() < LIVENESS_UPPER_BOUND,
+            "hung probe must die at the deadline, not wait out sleep 300"
+        );
+        wait_for_processes_gone(&pgfile);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hung_compose_ps_probe_is_bounded_by_the_shared_deadline() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("hung-compose-ps");
+        let marker = root.join("ps-spawned");
+        let spawn_log = root.join("ps-argv");
+        let bin = install_fake_colima(
+            &root,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log}'\ncase \"$1\" in\n  status) printf 'status: Running\\n'; exit 0 ;;\n  nerdctl) printf 'spawned\\n' >> '{}'; sleep 300 ;;\n  *) exit 0 ;;\nesac\n",
+                marker.display(),
+                log = spawn_log.display()
+            ),
+        );
+        let _env = with_runtime_env(&bin);
+        let policy = policy_for(&root);
+
+        let started = Instant::now();
+        let error = is_primary_service_running_with_deadline(
+            &root,
+            &policy,
+            Some(Instant::now() + LIVENESS_DEADLINE),
+        )
+        .expect_err("hung compose ps must time out");
+
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            started.elapsed() < LIVENESS_UPPER_BOUND,
+            "compose ps probe must die at the shared deadline"
+        );
+        assert!(
+            marker.exists(),
+            "the composed probe must have been exercised; argv log: {:?}",
+            fs::read_to_string(&spawn_log).unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn successful_and_stopped_liveness_distinctions_survive_a_deadline() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("liveness-distinctions");
+        let running_marker = root.join("stopped-probe-spawned");
+        let bin = install_fake_colima(
+            &root,
+            &format!(
+                "#!/bin/sh\ncase \"$1\" in\n  status) printf 'status: Running\\n'; exit 0 ;;\n  nerdctl) printf 'demo-stack-1\\tUp 2 minutes\\t\\tdemo-stack\\t{}\\tworkspace\\t0\\n'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                root.display()
+            ),
+        );
+        {
+            let _env = with_runtime_env(&bin);
+            let policy = policy_for(&root);
+            let deadline = Some(Instant::now() + LIVENESS_DEADLINE);
+            let running = is_primary_service_running_with_deadline(&root, &policy, deadline)
+                .expect("bounded successful liveness probe");
+            assert!(running, "running primary service must read as live");
+        }
+
+        let stopped_marker_bin = install_fake_colima(
+            &root,
+            &format!(
+                "#!/bin/sh\ncase \"$1\" in\n  status) printf 'status: Stopped\\n'; exit 0 ;;\n  *) touch '{}'; exit 0 ;;\nesac\n",
+                running_marker.display()
+            ),
+        );
+        let _env = with_runtime_env(&stopped_marker_bin);
+        let policy = policy_for(&root);
+        let stopped = is_primary_service_running_with_deadline(
+            &root,
+            &policy,
+            Some(Instant::now() + LIVENESS_DEADLINE),
+        )
+        .expect("bounded stopped liveness probe");
+        assert!(!stopped, "stopped Colima must read as not running");
+        assert!(
+            !running_marker.exists(),
+            "a stopped profile must not run the compose probe"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ownership_probe_reports_unavailable_not_clean_when_liveness_times_out() {
+        let _lock = lock_test();
+        let (_temp, root) = fresh_root("ownership-budget");
+        let bin = install_fake_colima(
+            &root,
+            "#!/bin/sh\ncase \"$1\" in\n  status) sleep 300 ;;\n  *) sleep 300 ;;\nesac\n",
+        );
+        let _env = with_runtime_env(&bin);
+        let policy = policy_for(&root);
+        let mut diagnostics = DoctorRuntimeDiagnostics::default();
+
+        let started = Instant::now();
+        append_workspace_ownership_diagnostics(
+            &root,
+            std::slice::from_ref(&policy),
+            Some(Instant::now() + LIVENESS_DEADLINE),
+            &mut diagnostics,
+        );
+
+        assert!(
+            started.elapsed() < LIVENESS_UPPER_BOUND,
+            "ownership diagnostics must share the liveness deadline"
+        );
+        assert!(
+            diagnostics.findings.is_empty(),
+            "a timed-out liveness probe must never produce a workspace finding"
+        );
+        assert!(
+            diagnostics
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("workspace ownership probe skipped")),
+            "timeout must be reported as unavailable, got {:?}",
+            diagnostics.warnings
+        );
+        assert!(
+            diagnostics
+                .evidence
+                .iter()
+                .all(|line| !line.contains("clean")),
+            "timeout must never report clean ownership, got {:?}",
+            diagnostics.evidence
+        );
     }
 }
