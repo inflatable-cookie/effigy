@@ -329,7 +329,9 @@ During v0.x, MINOR bumps may include breaking changes.
   unowned file. Private 44339-entry fixture across three volumes: 88991 → 28
   runtime calls (same per-exec latency model). Protected bind, shared,
   persistent, foreign and read-only scopes are unchanged; timeouts and
-  permission failures report not-ready. Not yet accepted against an installed
+  permission failures report not-ready. The bulk child uses `-execdir`
+  (GNU find) so a mid-run symlink swap cannot redirect ownership outside the
+  volume, and is capped at 600 s. Not yet accepted against an installed
   consumer stack.
 - QA-group local `--json` list, plan, run, and status output now suppresses the
   CLI banner while keeping each QA-group schema as one complete stdout JSON

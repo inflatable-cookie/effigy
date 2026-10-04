@@ -763,7 +763,14 @@ pub(in crate::runner) struct ComposeAccessBackend<'a> {
     pub repo_root: &'a Path,
     pub policy: &'a EffectiveContainerPolicy,
     pub deadline: Option<Instant>,
+    /// Upper bound for the single bulk chown child, applied even when the
+    /// caller supplies no overall deadline.
+    pub bulk_timeout: std::time::Duration,
 }
+
+/// A volume of tens of thousands of entries repairs in seconds; this only
+/// bounds a hung or pathological child.
+const BULK_CHOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     fn resolve_identity(
@@ -810,18 +817,16 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         uid: u32,
         gid: u32,
     ) -> Result<(), PermissionPrepError> {
-        let uid_text = uid.to_string();
-        let gid_text = gid.to_string();
-        let spec = format!("{uid}:{gid}");
-        // One exec: find batches paths into a few chown invocations (`+`), stays
-        // on the volume (-xdev), skips symlinks and never follows them (-P, -h).
-        self.exec_root(
-            &[
-                "find", "-P", path, "-xdev", "!", "-type", "l", "!", "(", "-user", &uid_text, "-a",
-                "-group", &gid_text, ")", "-exec", "chown", "-h", &spec, "--", "{}", "+",
-            ],
-            "workspace bulk chown",
-        )?;
+        let argv = bulk_chown_argv(path, uid, gid);
+        let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let bulk_deadline = Instant::now() + self.bulk_timeout;
+        let deadline = Some(match self.deadline {
+            Some(outer) => outer.min(bulk_deadline),
+            None => bulk_deadline,
+        });
+        let output =
+            self.exec_as_user_until("0", &argv_refs, "workspace bulk chown", false, deadline)?;
+        let _ = output;
         Ok(())
     }
 
@@ -945,6 +950,17 @@ impl ComposeAccessBackend<'_> {
         label: &str,
         allow_failure: bool,
     ) -> Result<ExecOutput, PermissionPrepError> {
+        self.exec_as_user_until(user, argv, label, allow_failure, self.deadline)
+    }
+
+    fn exec_as_user_until(
+        &self,
+        user: &str,
+        argv: &[&str],
+        label: &str,
+        allow_failure: bool,
+        deadline: Option<Instant>,
+    ) -> Result<ExecOutput, PermissionPrepError> {
         let service = self.policy.primary_service.as_str();
         let mut args = effigy_containers::compose::compose_args(
             self.policy,
@@ -963,7 +979,7 @@ impl ComposeAccessBackend<'_> {
             &args,
             true,
             label,
-            self.deadline,
+            deadline,
         )
         .map_err(|error| PermissionPrepError::new(error.to_string()))?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -981,6 +997,23 @@ impl ComposeAccessBackend<'_> {
             status_success: success,
         })
     }
+}
+
+/// Argument array for the single bulk repair exec. `-execdir` makes `chown` run
+/// from a directory fd held by `find` on `./name`, so a path component swapped
+/// for a symlink after traversal cannot redirect ownership changes outside the
+/// volume. Requires GNU findutils; an image without `-execdir` fails not-ready.
+fn bulk_chown_argv(path: &str, uid: u32, gid: u32) -> Vec<String> {
+    let spec = format!("{uid}:{gid}");
+    let uid = uid.to_string();
+    let gid = gid.to_string();
+    [
+        "find", "-P", path, "-xdev", "!", "-type", "l", "!", "(", "-user", &uid, "-a", "-group",
+        &gid, ")", "-execdir", "chown", "-h", &spec, "--", "{}", "+",
+    ]
+    .iter()
+    .map(|part| (*part).to_owned())
+    .collect()
 }
 
 fn parse_id_output(raw: &str) -> Result<u32, PermissionPrepError> {
@@ -1540,6 +1573,7 @@ pub(in crate::runner) fn compose_backend_with_deadline<'a>(
         repo_root,
         policy,
         deadline,
+        bulk_timeout: BULK_CHOWN_TIMEOUT,
     }
 }
 
@@ -2282,6 +2316,160 @@ services:
             .chown_tree_unowned("/cargo/registry", 501, 20)
             .expect_err("expired");
         assert!(error.message.contains("timed out"), "{}", error.message);
+    }
+
+    #[test]
+    fn bulk_argv_is_a_single_quoted_array_using_fd_relative_execdir() {
+        let argv = bulk_chown_argv("/cargo/git", 501, 20);
+        assert!(argv.iter().any(|part| part == "-execdir"));
+        assert!(!argv.iter().any(|part| part == "-exec"));
+        assert_eq!(argv.last().map(String::as_str), Some("+"));
+        assert!(argv.iter().any(|part| part == "-P"));
+        assert!(argv.iter().any(|part| part == "-xdev"));
+        assert!(argv.iter().any(|part| part == "501:20"));
+    }
+
+    #[cfg(unix)]
+    fn run_swap_race(argv: &[String]) -> (bool, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-swap-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        let vol = root.join("vol");
+        let outside = root.join("outside");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(vol.join("a")).expect("vol");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(vol.join("a/f"), b"inside").expect("f");
+        std::fs::write(outside.join("f"), b"outside").expect("of");
+        let log = root.join("escaped.log");
+        // Fake chown: swaps the intermediate dir for a symlink once, then
+        // reports where its path argument physically resolves. No uid change.
+        let script = format!(
+            "#!/bin/sh\nshift; shift; shift\nif [ ! -e '{flag}' ]; then : > '{flag}'; mv '{vol}/a' '{vol}/a.real'; ln -s '{outside}' '{vol}/a'; fi\nfor p in \"$@\"; do\n  [ \"$p\" = -- ] && continue\n  d=$(cd \"$(dirname \"$p\")\" 2>/dev/null && pwd -P)\n  case \"$d\" in '{outside}'*) printf 'ESCAPED %s\\n' \"$d/$(basename \"$p\")\" >> '{log}';; esac\ndone\n",
+            flag = root.join("swapped").display(),
+            vol = vol.display(),
+            outside = outside.display(),
+            log = log.display(),
+        );
+        let chown = bin.join("chown");
+        std::fs::write(&chown, script).expect("chown");
+        std::fs::set_permissions(&chown, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let argv: Vec<String> = argv
+            .iter()
+            .map(|part| part.replace("/cargo/git", &vol.display().to_string()))
+            .collect();
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .env("PATH", path)
+            .output()
+            .expect("find");
+        let note = String::from_utf8_lossy(&out.stderr).into_owned();
+        (
+            std::fs::read_to_string(&log).is_ok_and(|text| text.contains("ESCAPED")),
+            note,
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_intermediate_symlink_swap_cannot_redirect_bulk_chown_outside_volume() {
+        let argv = bulk_chown_argv("/cargo/git", 424242, 424243);
+        let (escaped, note) = run_swap_race(&argv);
+        assert!(!escaped, "bulk chown resolved outside the volume: {note}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_negative_control_path_based_exec_is_redirected_by_the_same_swap() {
+        let mut legacy = bulk_chown_argv("/cargo/git", 424242, 424243);
+        for part in legacy.iter_mut() {
+            if part == "-execdir" {
+                *part = "-exec".to_owned();
+            }
+        }
+        let (escaped, _) = run_swap_race(&legacy);
+        assert!(escaped, "control must reproduce the original escape");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bulk_production_constructor_bounds_and_reaps_a_hung_bulk_child() {
+        use crate::contract_test_support::{lock_test, EnvGuard};
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = lock_test();
+        let temp = tempfile::Builder::new()
+            .prefix("effigy-bulk-deadline-")
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canon");
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers]\ndefault = \"stack\"\n",
+        )
+        .expect("manifest");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let pids = root.join("pids");
+        let fake = format!(
+            "#!/bin/sh\ncase \"$*\" in *execdir*) echo $$ >> '{}'; exec sleep 60;; esac\nexit 0\n",
+            pids.display()
+        );
+        let docker = bin.join("docker");
+        std::fs::write(&docker, fake).expect("docker");
+        std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let base = std::env::var("PATH").unwrap_or_default();
+        let _env = EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
+        let mut policy = effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            root.join("docker-compose.yml"),
+        );
+        policy.repo_root = root.clone();
+        policy.workspace_user = Some("dev".to_owned());
+
+        // Normal production constructor: no caller deadline, but a finite bulk bound.
+        let mut backend = compose_backend(&root, &policy);
+        assert!(backend.deadline.is_none());
+        assert_eq!(backend.bulk_timeout, BULK_CHOWN_TIMEOUT);
+        assert!(backend.bulk_timeout < std::time::Duration::from_secs(3600));
+        backend.bulk_timeout = std::time::Duration::from_millis(400);
+
+        let started = Instant::now();
+        let error = backend
+            .chown_tree_unowned("/cargo/git", 501, 20)
+            .expect_err("hung child must time out");
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        assert!(
+            error.message.contains("timed out") || error.message.contains("deadline"),
+            "{}",
+            error.message
+        );
+        let recorded = std::fs::read_to_string(&pids).expect("pid log");
+        let pid: i32 = recorded
+            .lines()
+            .next()
+            .expect("pid")
+            .trim()
+            .parse()
+            .expect("pid num");
+        let gone = Instant::now() + std::time::Duration::from_secs(10);
+        while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
+            assert!(Instant::now() < gone, "bulk child {pid} was not reaped");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     /// Host-fs seam: observes current-user access on a private fixture.

@@ -506,13 +506,16 @@ source, not from the host login name:
 - Effigy-owned named volumes exclusive to the primary service, and
   image-layer home caches: repair unowned nested contents, then verify
   actual read/write/create-lock as the resolved non-root user. Repair is one
-  bounded `find -P -xdev ! -type l ... -exec chown -h` exec per volume
+  bounded `find -P -xdev ! -type l ... -execdir chown -h` exec per volume
   (runtime round trips are O(volumes), not O(files); native traversal still
-  scales with entries). It runs under the existing deadline, never follows
-  symlinks or leaves the volume, and readiness requires a post-repair
-  unowned-listing, a scope identity re-check and the access probe, not chown
-  exit alone. Limit: `chown` addresses paths by name, so a concurrent swap of
-  an intermediate directory inside the volume is detected only afterwards
+  scales with entries). `-execdir` runs `chown` on `./name` from a directory
+  fd held by `find`, so an intermediate directory swapped for a symlink
+  mid-run cannot redirect ownership changes outside the volume. It needs GNU
+  findutils in the image; without it repair fails not-ready. The child is
+  bounded by a 600 s cap (or the caller deadline if sooner) and reaped on
+  expiry. It never follows symlinks or leaves the volume. Readiness requires
+  a post-repair unowned listing, a scope identity re-check and the access
+  probe, not chown exit alone
 - bind-mounted rust `target` or cargo paths: verify only; never chown host
   source, siblings, or shared caches
 - named volumes used by two or more compose or managed services: rust
