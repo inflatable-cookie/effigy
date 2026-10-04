@@ -88,13 +88,15 @@ pub fn primary_checkout_fallback(repo_root: &Path, relative: &Path) -> Option<Pa
 ///
 /// - No `.git` marker: `Ok(None)` (not a Git working tree, including a bare
 ///   repo passed as the root).
-/// - `.git` is a real directory: that path, constructed from `repo_root`.
+/// - `.git` is a real directory: that path, constructed from `repo_root`,
+///   unless local `core.bare` last-wins true (`InvalidData`).
 /// - `.git` is a symlink to a directory: the canonical target, which must
-///   contain `HEAD` and must not be `core.bare`.
+///   contain `HEAD` and must not be last-wins `core.bare`.
 /// - `.git` is a file (`gitdir:`): the shared common dir when `commondir`
 ///   exists, otherwise the pointer target (separate-git-dir). The target must
-///   exist as a directory that contains `HEAD` and is not `core.bare`. An
-///   unreadable, dangling, or bare marker is `InvalidData`, not a missing repo.
+///   exist as a directory that contains `HEAD` and is not last-wins
+///   `core.bare`. An unreadable, dangling, or bare marker is `InvalidData`,
+///   not a missing repo.
 ///
 /// Never creates `.git`. Paths come from the marker and Git's `commondir`
 /// file; callers must not invent sibling, home, or working-tree fallbacks.
@@ -107,6 +109,7 @@ pub fn resolve_common_git_dir(repo_root: &Path) -> io::Result<Option<PathBuf>> {
     };
 
     if metadata.is_dir() {
+        refuse_if_bare(&marker)?;
         return Ok(Some(marker));
     }
 
@@ -148,6 +151,11 @@ fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
             ),
         ));
     }
+    refuse_if_bare(git_dir)?;
+    Ok(git_dir.to_path_buf())
+}
+
+fn refuse_if_bare(git_dir: &Path) -> io::Result<()> {
     if git_dir_is_bare(git_dir)? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -157,7 +165,7 @@ fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
             ),
         ));
     }
-    Ok(git_dir.to_path_buf())
+    Ok(())
 }
 
 /// Local `core.bare` only. Missing config is not bare. Unreadable config fails.

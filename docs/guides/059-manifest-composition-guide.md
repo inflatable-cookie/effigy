@@ -147,9 +147,10 @@ Effigy idempotently appends `effigy.local.toml` to Git's local
 accidentally. That file is shared by every worktree of the repository.
 Ordinary cache, lock, and overlay registration never creates or amends
 `.gitignore`; `effigy init` still writes its reviewed ignore block there.
-A `.git` file or symlink that does not resolve to a non-bare admin
-directory fails without writing working-tree files or inventing
-`.git/info/exclude`.
+A `.git` file, symlink, linked worktree, separate git dir, or real
+directory that does not resolve to a non-bare admin directory — including
+a dangling marker or last-wins `core.bare=true` — fails without writing
+working-tree files or inventing `.git/info/exclude`.
 
 If the committed manifest already declares an `effigy.local.toml`
 include explicitly, Effigy detects that by canonical path and does not

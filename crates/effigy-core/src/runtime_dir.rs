@@ -10,9 +10,10 @@ use crate::repo_markers::{LOCAL_OVERLAY_FILE, LOCAL_OVERLAY_GITIGNORE_ALIASES};
 ///
 /// `info/exclude` is shared by every worktree of that repository. This is
 /// Git's common exclude, not a worktree-private file. No-op when `repo_root`
-/// is not a Git working tree. An invalid `.git` file, a `.git` symlink to a
-/// bare admin dir, or an unwritable admin path fails; there is no
-/// working-tree fallback.
+/// is not a Git working tree. An invalid or dangling `.git` marker, a `.git`
+/// directory, symlink, gitfile, or linked common dir that is `core.bare`
+/// (last-wins), or an unwritable admin path fails; there is no working-tree
+/// fallback.
 pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> io::Result<bool> {
     ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
 }

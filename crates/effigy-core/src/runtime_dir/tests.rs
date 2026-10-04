@@ -376,6 +376,112 @@ fn gitfile_pointing_at_a_bare_admin_dir_is_refused_without_writing_there() {
 }
 
 #[test]
+fn real_bare_git_directory_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir_all(&checkout).expect("checkout");
+    git(&checkout, &["init", "--quiet", "--bare", ".git"]);
+    fs::write(checkout.join("tracked.txt"), "keep\n").expect("tracked");
+    let exclude = checkout.join(".git/info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let status = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "status", "--porcelain"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git status");
+    assert!(
+        !status.status.success(),
+        "real bare .git is not a work tree: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+
+    let error = ensure_effigy_ignored_in_git_root(&checkout).expect_err("bare .git dir");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!checkout.join(".gitignore").exists());
+    assert_eq!(
+        fs::read(checkout.join("tracked.txt")).expect("tracked after"),
+        b"keep\n"
+    );
+    assert_eq!(
+        git_local_exclude_path(&checkout),
+        checkout.join(".git/info/exclude")
+    );
+}
+
+#[test]
+fn real_git_directory_last_wins_bare_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    git_init_with_tracked_manifest(root);
+    let config = root.join(".git/config");
+    let existing = fs::read_to_string(&config).expect("config");
+    fs::write(
+        &config,
+        format!("{existing}[core]\n\tbare = false\n\tbare = true\n"),
+    )
+    .expect("duplicate core.bare");
+    let exclude = root.join(".git/info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let tracked = fs::read(root.join("effigy.toml")).expect("tracked");
+    let status = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "status", "--porcelain"])
+        .current_dir(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git status");
+    assert!(
+        !status.status.success(),
+        "last-wins core.bare=true on a real .git dir is not a work tree: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+
+    let error = ensure_effigy_ignored_in_git_root(root).expect_err("last-wins bare .git dir");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!root.join(".gitignore").exists());
+    assert_eq!(
+        fs::read(root.join("effigy.toml")).expect("tracked after"),
+        tracked
+    );
+    assert_eq!(git_local_exclude_path(root), root.join(".git/info/exclude"));
+}
+
+#[test]
+fn real_git_directory_last_wins_not_bare_still_registers_exclude() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    git_init_with_tracked_manifest(root);
+    let config = root.join(".git/config");
+    let existing = fs::read_to_string(&config).expect("config");
+    fs::write(
+        &config,
+        format!("{existing}[core]\n\tbare = true\n\tbare = false\n"),
+    )
+    .expect("duplicate core.bare");
+    assert_eq!(porcelain(root), "");
+
+    let changed = ensure_effigy_ignored_in_git_root(root).expect("ignore");
+    assert!(changed);
+    assert!(!root.join(".gitignore").exists());
+    assert!(
+        fs::read_to_string(root.join(".git/info/exclude"))
+            .expect("exclude")
+            .lines()
+            .any(|line| line.trim() == ".effigy"),
+        "last-wins core.bare=false must keep Git working-tree exclude writes"
+    );
+    assert_eq!(porcelain(root), "");
+}
+
+#[test]
 fn gitfile_pointing_at_last_wins_bare_config_is_refused_without_writing_there() {
     let tmp = TempDir::new().expect("tempdir");
     let checkout = tmp.path().join("checkout");
@@ -425,6 +531,13 @@ fn git_symlink_to_a_bare_admin_dir_is_refused_without_writing_there() {
     let bare = tmp.path().join("bare.git");
     fs::create_dir_all(&checkout).expect("checkout");
     git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+    let config = bare.join("config");
+    let existing = fs::read_to_string(&config).expect("bare config");
+    fs::write(
+        &config,
+        format!("{existing}[core]\n\tbare = false\n\tbare = true\n"),
+    )
+    .expect("duplicate core.bare");
     std::os::unix::fs::symlink(&bare, checkout.join(".git")).expect("symlink .git");
     fs::write(checkout.join("tracked.txt"), "keep\n").expect("tracked");
     let exclude = bare.join("info/exclude");
@@ -509,6 +622,67 @@ fn separate_git_dir_still_registers_common_exclude() {
     );
     assert!(check_ignore(&checkout, ".effigy"));
     assert_eq!(porcelain(&checkout), "");
+}
+
+#[test]
+fn linked_worktree_bare_common_dir_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let primary = tmp.path().join("primary");
+    fs::create_dir_all(&primary).expect("primary");
+    git_init_with_tracked_manifest(&primary);
+    git(&primary, &["worktree", "add", "--quiet", "../linked"]);
+    let linked = tmp.path().join("linked");
+    let config = primary.join(".git/config");
+    let existing = fs::read_to_string(&config).expect("config");
+    fs::write(
+        &config,
+        format!("{existing}[core]\n\tbare = false\n\tbare = true\n"),
+    )
+    .expect("duplicate core.bare");
+    fs::write(linked.join("tracked.txt"), "keep\n").expect("tracked");
+    let exclude = primary.join(".git/info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let gitfile = fs::read(linked.join(".git")).expect("gitfile");
+
+    let error = ensure_effigy_ignored_in_git_root(&linked).expect_err("bare common dir");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!linked.join(".gitignore").exists());
+    assert!(!primary.join(".gitignore").exists());
+    assert_eq!(
+        fs::read(linked.join("tracked.txt")).expect("tracked after"),
+        b"keep\n"
+    );
+    assert_eq!(
+        fs::read(linked.join(".git")).expect("gitfile after"),
+        gitfile
+    );
+    assert_eq!(git_local_exclude_path(&linked), linked.join(".git"));
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_git_symlink_fails_without_worktree_writes() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    std::os::unix::fs::symlink("/nope/does/not/exist", root.join(".git")).expect("dangling");
+    fs::write(root.join("tracked.txt"), "keep\n").expect("tracked");
+
+    let error = ensure_effigy_ignored_in_git_root(root).expect_err("dangling symlink");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(!root.join(".gitignore").exists());
+    assert_eq!(
+        fs::read(root.join("tracked.txt")).expect("tracked after"),
+        b"keep\n"
+    );
+    assert_eq!(git_local_exclude_path(root), root.join(".git"));
+    assert!(
+        !git_local_exclude_path(root)
+            .to_string_lossy()
+            .ends_with("info/exclude"),
+        "must not invent .git/info/exclude through a dangling symlink"
+    );
 }
 
 #[test]

@@ -161,6 +161,72 @@ fn resolve_common_git_dir_rejects_a_gitfile_pointing_at_a_bare_directory() {
 }
 
 #[test]
+fn resolve_common_git_dir_rejects_a_real_bare_git_directory() {
+    let root = TempDir::new().expect("tempdir");
+    let git_dir = root.path().join(".git");
+    fs::create_dir_all(&git_dir).expect("git dir");
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        git_dir.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+    )
+    .expect("config");
+
+    let error = resolve_common_git_dir(root.path()).expect_err("bare .git dir");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+}
+
+#[test]
+fn resolve_common_git_dir_rejects_last_wins_core_bare_on_a_real_git_directory() {
+    let root = TempDir::new().expect("tempdir");
+    let git_dir = root.path().join(".git");
+    fs::create_dir_all(&git_dir).expect("git dir");
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        git_dir.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tbare = true\n",
+    )
+    .expect("config");
+
+    let error = resolve_common_git_dir(root.path()).expect_err("last-wins bare .git dir");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+}
+
+#[test]
+fn resolve_common_git_dir_accepts_last_wins_not_bare_on_a_real_git_directory() {
+    let root = TempDir::new().expect("tempdir");
+    let git_dir = root.path().join(".git");
+    fs::create_dir_all(&git_dir).expect("git dir");
+    fs::write(
+        git_dir.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n\tbare = false\n",
+    )
+    .expect("config");
+
+    assert_eq!(
+        resolve_common_git_dir(root.path()).expect("resolve"),
+        Some(git_dir)
+    );
+}
+
+#[test]
+fn resolve_common_git_dir_rejects_a_linked_worktree_whose_common_dir_is_bare() {
+    let fixture = linked_worktree_fixture();
+    fs::write(fixture.primary.join(".git/HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        fixture.primary.join(".git/config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tbare = true\n",
+    )
+    .expect("config");
+
+    let error = resolve_common_git_dir(&fixture.worktree).expect_err("bare common dir");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+}
+
+#[test]
 fn resolve_common_git_dir_rejects_last_wins_core_bare() {
     let root = TempDir::new().expect("tempdir");
     let checkout = root.path().join("checkout");
@@ -194,7 +260,7 @@ fn resolve_common_git_dir_rejects_a_symlink_to_a_bare_directory() {
     fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
     fs::write(
         bare.join("config"),
-        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tbare = true\n",
     )
     .expect("config");
     std::os::unix::fs::symlink(&bare, checkout.join(".git")).expect("symlink .git");
@@ -248,6 +314,23 @@ fn resolve_common_git_dir_accepts_a_separate_git_dir_pointer() {
     assert_eq!(
         resolve_common_git_dir(&checkout).expect("resolve"),
         Some(admin)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn resolve_common_git_dir_rejects_a_dangling_symlink() {
+    let root = TempDir::new().expect("tempdir");
+    std::os::unix::fs::symlink("/nope/does/not/exist", root.path().join(".git"))
+        .expect("dangling symlink");
+
+    let error = resolve_common_git_dir(root.path()).expect_err("dangling symlink");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        error
+            .to_string()
+            .contains(&root.path().display().to_string()),
+        "dangling symlink diagnostic should name the checkout, got {error}"
     );
 }
 
