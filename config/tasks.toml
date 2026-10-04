@@ -139,6 +139,13 @@
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
 ]
+# Exact Queue152 follower restart and cancellation acceptance. The caller must
+# provide EFFIGY_HOST_RUN_PRIVATE_SERVER pointing at the clean reviewed f53a9d0
+# checkout; required-fixture mode prevents either ignored case from skipping.
+"test:host-run:idle-follow:restart" = [
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_follower_recovers_across_five_queue152_supervisor_rolls -- --include-ignored --nocapture --test-threads=1",
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_sigterm_cancels_during_queue152_supervisor_roll -- --include-ignored --nocapture --test-threads=1",
+]
 
 # Documentation QA
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
