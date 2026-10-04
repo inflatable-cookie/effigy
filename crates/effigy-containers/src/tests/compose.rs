@@ -1,4 +1,133 @@
 use super::*;
+use std::process::Command;
+
+fn run_git(repo: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .expect("launch git fixture command");
+    assert!(
+        output.status.success(),
+        "git {} failed in {}\nstdout:\n{}\nstderr:\n{}",
+        args.join(" "),
+        repo.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn create_linked_worktree_fixture(
+    root: &Path,
+    manifest: &str,
+    names: &[&str],
+) -> (PathBuf, Vec<PathBuf>) {
+    let primary = root.join("primary");
+    fs::create_dir_all(&primary).expect("create primary checkout");
+    fs::write(primary.join("effigy.toml"), manifest).expect("write primary manifest");
+    run_git(&primary, &["init", "--quiet"]);
+    run_git(
+        &primary,
+        &["config", "--local", "user.name", "Effigy Fixture"],
+    );
+    run_git(
+        &primary,
+        &[
+            "config",
+            "--local",
+            "user.email",
+            "effigy-fixture@example.invalid",
+        ],
+    );
+    run_git(&primary, &["add", "effigy.toml"]);
+    run_git(&primary, &["commit", "--quiet", "-m", "fixture manifest"]);
+
+    let checkouts = names
+        .iter()
+        .map(|name| {
+            let checkout = root.join(name);
+            run_git(
+                &primary,
+                &[
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "-b",
+                    name,
+                    checkout.to_str().expect("fixture path is UTF-8"),
+                ],
+            );
+            checkout
+        })
+        .collect();
+    let common_git_dir = primary.join(".git");
+    assert_eq!(
+        effigy_core::git_worktree::resolve_common_git_dir(&primary)
+            .expect("resolve fixture primary git directory")
+            .as_deref(),
+        Some(common_git_dir.as_path())
+    );
+    assert!(effigy_core::git_worktree::detect_linked_worktree(&primary).is_none());
+    (primary, checkouts)
+}
+
+fn assert_linked_worktree_git_layout(primary: &Path, checkout: &Path, name: &str) {
+    let layout = effigy_core::git_worktree::detect_linked_worktree(checkout)
+        .expect("Git-created linked-worktree metadata");
+    let expected_worktree_git_dir =
+        fs::canonicalize(primary.join(".git/worktrees").join(name)).unwrap();
+    let expected_common_git_dir = fs::canonicalize(primary.join(".git")).unwrap();
+    assert_eq!(
+        fs::canonicalize(layout.worktree_git_dir).unwrap(),
+        expected_worktree_git_dir
+    );
+    assert_eq!(
+        fs::canonicalize(layout.common_git_dir).unwrap(),
+        expected_common_git_dir
+    );
+    assert_eq!(
+        fs::canonicalize(
+            effigy_core::git_worktree::resolve_common_git_dir(checkout)
+                .expect("resolve fixture common git directory")
+                .expect("fixture common git directory")
+        )
+        .unwrap(),
+        expected_common_git_dir
+    );
+}
+
+fn fixture_inventory(
+    policies: &[crate::EffectiveContainerPolicy],
+) -> crate::exec::RunningComposeContainerInventory {
+    // Rows stay inside this temporary repository; the linked policy proof
+    // never discovers profiles from the host runtime.
+    crate::exec::RunningComposeContainerInventory {
+        rows: policies
+            .iter()
+            .map(|policy| crate::exec::RunningComposeContainerProfiled {
+                profile: "fixture".to_owned(),
+                row: crate::exec::RunningComposeContainer {
+                    container_name: format!("{}-app-1", policy.project_name),
+                    status: "Up 10 seconds".to_owned(),
+                    ports: Vec::new(),
+                    project_name: Some(policy.project_name.clone()),
+                    working_dir: Some(policy.repo_root.display().to_string()),
+                    service: Some("app".to_owned()),
+                    oneoff: false,
+                },
+            })
+            .collect(),
+        failures: Vec::new(),
+    }
+}
+
+fn managed_volume_names(policy: &crate::EffectiveContainerPolicy) -> Vec<String> {
+    policy
+        .managed_volumes
+        .iter()
+        .map(|volume| volume.name.clone())
+        .collect()
+}
 
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -20,22 +149,7 @@ fn linked_worktrees_generate_distinct_compose_resources_and_source_mounts() {
     with_temp_effigy_home("linked-worktree-resources", |_| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("linked-worktree-resources");
-        let primary = root.join("primary");
-        let mut policies = Vec::new();
-        for name in ["one", "two"] {
-            let checkout = root.join(name);
-            let private = primary.join(".git/worktrees").join(name);
-            fs::create_dir_all(&checkout).unwrap();
-            fs::create_dir_all(&private).unwrap();
-            fs::write(
-                checkout.join(".git"),
-                format!("gitdir: {}\n", private.display()),
-            )
-            .unwrap();
-            fs::write(private.join("commondir"), "../..\n").unwrap();
-            fs::write(
-                checkout.join("effigy.toml"),
-                r#"
+        let manifest = r#"
 [containers]
 default = "web"
 [containers.web]
@@ -44,9 +158,11 @@ primary_service = "app"
 [containers.web.services.app]
 catalog = "workspace-rust-bun"
 host_ports = ["41001:41001"]
-"#,
-            )
-            .unwrap();
+"#;
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
+        let mut policies = Vec::new();
+        for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
+            assert_linked_worktree_git_layout(&primary, checkout, name);
             let policy = load_container_policy(&checkout, None).unwrap();
             let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
             assert!(
@@ -61,9 +177,17 @@ host_ports = ["41001:41001"]
         }
         assert_ne!(policies[0].project_name, policies[1].project_name);
         assert_ne!(policies[0].declared_ports, policies[1].declared_ports);
+        assert_ne!(
+            managed_volume_names(&policies[0]),
+            managed_volume_names(&policies[1])
+        );
         let again = load_container_policy(&policies[0].repo_root, None).unwrap();
         assert_eq!(again.project_name, policies[0].project_name);
         assert_eq!(again.declared_ports, policies[0].declared_ports);
+        assert_eq!(
+            managed_volume_names(&again),
+            managed_volume_names(&policies[0])
+        );
     });
 }
 
@@ -72,8 +196,6 @@ fn linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared() {
     with_temp_effigy_home("linked-worktree-hosts", |_| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("linked-worktree-hosts");
-        let primary = root.join("primary");
-        fs::create_dir_all(primary.join(".git/worktrees")).unwrap();
         let manifest = r#"
 [containers]
 default = "web"
@@ -88,25 +210,23 @@ routes = [
 [containers.web.services.app]
 catalog = "workspace-rust-bun"
 "#;
-        fs::write(primary.join("effigy.toml"), manifest).unwrap();
+        let (primary, checkouts) = create_linked_worktree_fixture(&root, manifest, &["one", "two"]);
         let primary_policy = load_container_policy(&primary, None).unwrap();
         assert_eq!(primary_policy.dns_domain.as_deref(), Some("app.test"));
         assert_eq!(primary_policy.dns_routes[0].declared(), "app.test");
         assert_eq!(primary_policy.dns_routes[0].domain, "app.test");
         let mut effective = Vec::new();
-        for name in ["one", "two"] {
-            let checkout = root.join(name);
-            let private = primary.join(".git/worktrees").join(name);
-            fs::create_dir_all(&checkout).unwrap();
-            fs::create_dir_all(&private).unwrap();
-            fs::write(
-                checkout.join(".git"),
-                format!("gitdir: {}\n", private.display()),
-            )
-            .unwrap();
-            fs::write(private.join("commondir"), "../..\n").unwrap();
-            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-            let policy = load_container_policy(&checkout, None).unwrap();
+        let mut preceding_policies = vec![primary_policy.clone()];
+        for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
+            assert_linked_worktree_git_layout(&primary, checkout, name);
+            let (policy, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
+                fixture_inventory(&preceding_policies),
+                || load_container_policy(checkout, None).unwrap(),
+            );
+            assert_eq!(
+                inventory_calls, 1,
+                "loopback reclamation must use the fixture inventory exactly once"
+            );
             assert_eq!(policy.dns_routes[0].declared(), "app.test");
             assert_ne!(policy.dns_routes[0].domain, "app.test");
             assert!(policy.dns_routes[0].domain.contains("-w"));
@@ -115,10 +235,48 @@ catalog = "workspace-rust-bun"
             let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
             assert!(compose.contains("com.effigy.scope"), "{compose}");
             effective.push(policy.dns_routes[0].domain.clone());
+            preceding_policies.push(policy);
         }
+        assert_ne!(
+            preceding_policies[1].project_name,
+            preceding_policies[2].project_name
+        );
         assert_ne!(effective[0], effective[1]);
         assert_ne!(effective[0], "app.test");
+
+        let (again, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
+            fixture_inventory(&preceding_policies),
+            || load_container_policy(&checkouts[0], None).unwrap(),
+        );
+        assert_eq!(
+            inventory_calls, 0,
+            "stable identities must not rediscover inventory"
+        );
+        assert_eq!(again.project_name, preceding_policies[1].project_name);
+        assert_eq!(again.dns_routes[0].domain, effective[0]);
     });
+}
+
+#[test]
+fn invalid_linked_worktree_admin_directory_is_refused() {
+    let root = temp_repo("invalid-linked-worktree-admin");
+    let checkout = root.join("checkout");
+    let private = root.join("private");
+    let common = root.join("common");
+    fs::create_dir_all(&checkout).unwrap();
+    fs::create_dir_all(&private).unwrap();
+    fs::create_dir_all(&common).unwrap();
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", private.display()),
+    )
+    .unwrap();
+    fs::write(private.join("commondir"), format!("{}\n", common.display())).unwrap();
+
+    let error = effigy_core::git_worktree::resolve_common_git_dir(&checkout)
+        .expect_err("missing Git admin HEAD must be refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("not a git directory"));
 }
 
 #[test]

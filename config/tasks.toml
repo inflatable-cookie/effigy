@@ -49,6 +49,11 @@
   "cargo test -p effigy-containers inventory_tests:: -- --nocapture",
   "cargo test -p effigy-containers participation::tests:: -- --nocapture",
 ]
+"test:containers:linked-compose" = [
+  "cargo test -p effigy-containers --lib linked_worktrees_generate_distinct_compose_resources_and_source_mounts -- --nocapture",
+  "cargo test -p effigy-containers --lib linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared -- --nocapture",
+  "cargo test -p effigy-containers --lib invalid_linked_worktree_admin_directory_is_refused -- --nocapture",
+]
 "test:containers:loopback" = "cargo test -p effigy-containers runtime::loopback::tests:: -- --nocapture"
 "test:containers:loopback-policy" = [
   "cargo test -p effigy-containers loopback_allocator_reclaims_complete_stale_pool_before_exhaustion -- --nocapture",
