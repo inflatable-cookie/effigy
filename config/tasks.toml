@@ -146,6 +146,18 @@
   "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
   "cargo test -p effigy --lib runner::system_command::workspace_permissions::tests::doctor -- --nocapture",
 ]
+# Doctor hung workspace-ownership batch proof (papercut d773ae06). Private
+# fake-runtime fixture only: the metadata batch must record its own leader and
+# descendant before the proof judges the hang, order a controlled hung
+# preflight so it reports only its own unavailable context with no metadata
+# reap claim, and cover a timeout/reap-disabled negative control whose oracle
+# must fail before a private guard reaps the recorded owned child. No
+# production budget, readiness, or incomplete semantics change.
+"test:doctor:ownership-hang" = [
+  "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::ownership_preflight_hang_is_unavailable_without_metadata_reap_claim -- --exact --nocapture",
+  "cargo test -p effigy --lib runner::doctor_ports::tests::ownership_hang_reap_oracle_fails_when_runtime_reap_is_disabled -- --exact --nocapture",
+]
 "check:doctor:ownership-latency" = "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test"
 "check:doctor:workspace-liveness" = [
   "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
@@ -161,6 +173,20 @@
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration --test cli_output_tests"
+# Peer identity refusal on a live private fixture (papercut 8947d524): held
+# accepted stream through trust, closed-peer fail-closed distinction, and
+# directory/socket mode refusals. Private tempfile only; no live endpoint.
+"test:host-run:peer-trust" = [
+  "cargo test -p effigy-host-run --lib protocol_tests::authority_and_socket_are_owned_private_and_peer_identity_must_match -- --exact --nocapture",
+  "cargo test -p effigy-host-run --lib protocol_tests::valid_peer_identity_is_accepted_on_private_fixture -- --exact --nocapture",
+  "cargo test -p effigy-host-run --lib protocol_tests::closed_peer_fails_closed_and_is_not_a_trust_match -- --exact --nocapture",
+  "cargo test -p effigy-host-run --lib protocol_tests::unknown_identity_and_legacy_fractional_identity_never_match -- --exact --nocapture",
+  "cargo test -p effigy-host-run --lib identity::tests -- --nocapture",
+]
+"check:host-run:peer-trust" = [
+  "cargo check -p effigy-host-run --lib --tests --profile test",
+  "cargo clippy -p effigy-host-run --lib --tests -- -D warnings",
+]
 # Implicit runtime ignore registration (papercut 082): Git-local
 # info/exclude, never working-tree .gitignore. Private fixtures only.
 "test:runtime:local-ignores" = [
