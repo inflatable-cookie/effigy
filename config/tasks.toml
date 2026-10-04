@@ -82,7 +82,9 @@
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
 # Workspace rust/cache ownership: mount classification, permission prep,
 # doctor diagnosis, and the activation routing that must fail closed before
-# lease refresh. Private fixtures only; no live VM/container/cache mutation.
+# lease refresh. Includes fake-runtime container data-seed routes that run
+# permission prep (numeric id -u/-g probe) before exec. Private fixtures
+# only; no live VM/container/cache mutation.
 "test:workspace:rust-ownership" = [
   "cargo test -p effigy-containers --lib workspace::ownership -- --nocapture",
   "cargo test -p effigy --lib runner::system_command::workspace_permissions -- --nocapture",
@@ -93,6 +95,8 @@
   "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container -- --nocapture",
   "cargo test -p effigy --lib run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin -- --nocapture",
   "cargo test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
+  "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
+  "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
   "cargo test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
 ]
 "check:workspace:rust-ownership" = [

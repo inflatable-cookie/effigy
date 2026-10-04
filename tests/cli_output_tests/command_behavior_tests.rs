@@ -7826,6 +7826,12 @@ case "$*" in
           *"uname -m"*)
             printf "x86_64\n"
             ;;
+          *"id -u"*)
+            printf "501\n"
+            ;;
+          *"id -g"*)
+            printf "20\n"
+            ;;
           *)
             printf "exec-ok\n"
             ;;
@@ -7977,6 +7983,12 @@ case "$subcmd" in
     case "$*" in
       *"uname -m"*)
         printf "x86_64\n"
+        ;;
+      *"id -u"*)
+        printf "501\n"
+        ;;
+      *"id -g"*)
+        printf "20\n"
         ;;
       *)
         printf "exec-ok\n"
