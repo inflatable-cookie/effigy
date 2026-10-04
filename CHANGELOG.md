@@ -320,6 +320,17 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- After a Colima/nerdctl restart, a stopped owned stack container can recover
+  its own stale transient health-check timer/service collision. Effigy
+  inspects the full hexadecimal container ID, requires stopped status and the
+  selected project/service labels, confirms `{id}.timer` and `{id}.service`
+  in the selected profile are transient, then `systemctl stop`s only
+  `{id}.timer` and `reset-failed` `{id}.service`/`{id}.timer` before one
+  bounded start retry and inspect readiness. Already-gone units are
+  idempotent; persistent, foreign, one-off, running, undeclared, mismatched,
+  or unverified units are refused with inspected identity, the reason, and
+  profile-scoped operator commands. Unit files are never deleted. Docker
+  start is unchanged. Prove with `test:containers:healthcheck-timer`.
 - Generated `AGENTS.md` Effigy Agent Contract now links its reference docs as
   upstream Effigy repository URLs instead of nonexistent consumer-relative
   paths; rerunning init rewrites the managed block only.

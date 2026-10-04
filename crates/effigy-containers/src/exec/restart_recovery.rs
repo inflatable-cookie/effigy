@@ -6,6 +6,12 @@
 //! whose Compose project label matches an owned project, skips one-off
 //! `compose run` containers and undeclared orphans, does not recreate them
 //! (volumes stay), and does not delete systemd units.
+//!
+//! When a stopped owned Colima/nerdctl container stays down after start and
+//! the backend reports a stale health-check timer, Effigy may stop
+//! `{full_id}.timer` and `reset-failed` `{full_id}.service`/`{full_id}.timer`
+//! after inspect proves the full hexadecimal ID, selected labels, and
+//! transient unit identity. Docker start behavior is unchanged.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -13,6 +19,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::colima_runtime::run_runtime_command_capture_for_policy_allow_failure_with_timeout;
+use super::healthcheck_timer::{
+    expected_ownership_from_row, recover_owned_stale_healthcheck_units, show_unit_invocation,
+    CommandOutcome, StaleTimerAction, UnitProbe,
+};
 use super::implementation::{
     list_compose_containers_for_project_including_stopped, ContainerExecError,
 };
@@ -20,10 +30,13 @@ use super::parse::{
     compose_status_is_running, compose_status_needs_start, looks_like_stale_healthcheck_timer,
     RunningComposeContainer,
 };
+use super::process::run_command_capture_allow_failure_with_timeout;
 use crate::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use crate::EffectiveContainerPolicy;
 
 const OWNED_SERVICE_START_TIMEOUT: Duration = Duration::from_secs(30);
+const OWNED_INSPECT_TIMEOUT: Duration = Duration::from_secs(15);
+const HEALTHCHECK_UNIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OwnedServiceStartRecovery {
@@ -69,7 +82,7 @@ pub fn recover_exited_owned_compose_services_for_project(
     let backend = resolve_compose_backend_for_repo(repo_root, policy);
     let declared = declared_service_names(&compose_files_for_project(policy, project_name))?;
     let declared: Vec<&str> = declared.iter().map(String::as_str).collect();
-    recover_exited_owned_services_with(
+    recover_exited_owned_services_with_stale_timer(
         project_name,
         &policy.profile,
         backend,
@@ -89,16 +102,46 @@ pub fn recover_exited_owned_compose_services_for_project(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         },
+        |row, _start_result| {
+            if backend != ComposeBackend::ColimaNerdctl {
+                return Ok(StaleTimerAction::Skip);
+            }
+            live_recover_stale_healthcheck_units(repo_root, policy, project_name, &declared, row)
+        },
     )
 }
 
+#[cfg(test)]
 pub fn recover_exited_owned_services_with(
+    project_name: &str,
+    profile: &str,
+    backend: ComposeBackend,
+    declared_services: &[&str],
+    inspect: impl FnMut() -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
+    start: impl FnMut(&str) -> Result<RuntimeStartResult, ContainerExecError>,
+) -> Result<OwnedServiceStartRecovery, ContainerExecError> {
+    recover_exited_owned_services_with_stale_timer(
+        project_name,
+        profile,
+        backend,
+        declared_services,
+        inspect,
+        start,
+        |_, _| Ok(StaleTimerAction::Skip),
+    )
+}
+
+pub(crate) fn recover_exited_owned_services_with_stale_timer(
     project_name: &str,
     profile: &str,
     backend: ComposeBackend,
     declared_services: &[&str],
     mut inspect: impl FnMut() -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
     mut start: impl FnMut(&str) -> Result<RuntimeStartResult, ContainerExecError>,
+    mut recover_timer: impl FnMut(
+        &RunningComposeContainer,
+        &RuntimeStartResult,
+    ) -> Result<StaleTimerAction, ContainerExecError>,
 ) -> Result<OwnedServiceStartRecovery, ContainerExecError> {
     let before = inspect()?;
     let targets = owned_services_needing_start(project_name, declared_services, &before);
@@ -141,6 +184,69 @@ pub fn recover_exited_owned_services_with(
             ));
         }
     };
+    let mut retried = false;
+    for (row, result) in &mut start_results {
+        let current = after.iter().find(|current| {
+            current.container_name == row.container_name
+                && current.project_name.as_deref() == Some(project_name)
+        });
+        let still_down = current
+            .map(|row| !compose_status_is_running(&row.status))
+            .unwrap_or(true);
+        if backend != ComposeBackend::ColimaNerdctl
+            || !still_down
+            || !looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr)
+        {
+            continue;
+        }
+        match recover_timer(row, result)? {
+            StaleTimerAction::Skip => {}
+            StaleTimerAction::Recovered { warning, .. } => {
+                recovery.warnings.push(warning.clone());
+                retried = true;
+                match start(&row.container_name) {
+                    Ok(mut retry) => {
+                        if !retry.stderr.is_empty() {
+                            retry.stderr.push('\n');
+                        }
+                        retry.stderr.push_str(&warning);
+                        *result = retry;
+                    }
+                    Err(error) => {
+                        *result = RuntimeStartResult {
+                            success: false,
+                            stdout: String::new(),
+                            stderr: format!("{error}\n{warning}"),
+                        };
+                    }
+                }
+            }
+            StaleTimerAction::Refused { diagnostic } => {
+                if !result.stderr.is_empty() {
+                    result.stderr.push('\n');
+                }
+                result.stderr.push_str(&diagnostic);
+            }
+        }
+    }
+    let after = if retried {
+        match inspect() {
+            Ok(rows) => rows,
+            Err(error) => {
+                return Err(failure_from_last_observed_state(
+                    project_name,
+                    profile,
+                    backend,
+                    &targets,
+                    &before,
+                    &start_results,
+                    error,
+                ));
+            }
+        }
+    } else {
+        after
+    };
     if let Some(error) = persistent_start_failure(
         project_name,
         profile,
@@ -165,6 +271,105 @@ pub fn recover_exited_owned_services_with(
         }
     }
     Ok(recovery)
+}
+
+fn live_recover_stale_healthcheck_units(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+    declared_services: &[&str],
+    row: &RunningComposeContainer,
+) -> Result<StaleTimerAction, ContainerExecError> {
+    let Some(expected) = expected_ownership_from_row(
+        row,
+        project_name,
+        policy.profile.as_str(),
+        declared_services,
+    ) else {
+        return Ok(StaleTimerAction::Refused {
+            diagnostic: format!(
+                "refused stale nerdctl health-check unit recovery for container `{}`\ninspected: id=unknown status={} project={} service=unknown oneoff={} profile={}\nreason: compose row is missing a service label; undeclared orphans are not recovered\nEffigy did not stop, reset, or delete systemd units.\nnext:\n  colima nerdctl --profile {} -- inspect {}\n  colima nerdctl --profile {} -- start {}",
+                row.container_name,
+                row.status,
+                row.project_name.as_deref().unwrap_or("unknown"),
+                row.oneoff,
+                policy.profile,
+                policy.profile,
+                row.container_name,
+                policy.profile,
+                row.container_name
+            ),
+        });
+    };
+
+    let inspect_output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
+        repo_root,
+        policy,
+        &[
+            OsString::from("inspect"),
+            OsString::from(row.container_name.as_str()),
+        ],
+        &format!("inspect owned container `{}`", row.container_name),
+        OWNED_INSPECT_TIMEOUT,
+    )?;
+    let inspect = UnitProbe {
+        success: inspect_output.status.success(),
+        stdout: String::from_utf8_lossy(&inspect_output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&inspect_output.stderr).into_owned(),
+    };
+
+    recover_owned_stale_healthcheck_units(
+        expected,
+        &inspect,
+        |unit| {
+            let (program, args) = show_unit_invocation(policy.profile.as_str(), unit);
+            run_vm_command_allow_failure(
+                repo_root,
+                &program,
+                &args,
+                &format!("systemctl show {unit}"),
+            )
+            .map(|outcome| UnitProbe {
+                success: outcome.success,
+                stdout: outcome.stdout,
+                stderr: outcome.stderr,
+            })
+        },
+        |program, args| {
+            run_vm_command_allow_failure(
+                repo_root,
+                &OsString::from(program),
+                args,
+                "systemctl health-check unit recovery",
+            )
+        },
+    )
+}
+
+fn run_vm_command_allow_failure(
+    repo_root: &Path,
+    program: &OsString,
+    args: &[OsString],
+    label: &str,
+) -> Result<CommandOutcome, ContainerExecError> {
+    let program_name = program.to_string_lossy().into_owned();
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let borrowed: Vec<&str> = rendered.iter().map(String::as_str).collect();
+    let output = run_command_capture_allow_failure_with_timeout(
+        repo_root,
+        &program_name,
+        &borrowed,
+        label,
+        HEALTHCHECK_UNIT_TIMEOUT,
+    )?;
+    Ok(CommandOutcome {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 fn owned_services_needing_start(
@@ -994,5 +1199,328 @@ mod tests {
             !detail.contains("the container is running"),
             "got: {detail}"
         );
+    }
+
+    const FULL_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn recovered_action() -> StaleTimerAction {
+        StaleTimerAction::Recovered {
+            warning: format!(
+                "recovered stale nerdctl health-check timer for owned service `mysql` (`{FULL_ID}`); stopped `{FULL_ID}.timer` and reset-failed `{FULL_ID}.service`/`{FULL_ID}.timer` without deleting units"
+            ),
+            volume_refs: Vec::new(),
+            stop_timer: vec![
+                OsString::from("ssh"),
+                OsString::from("--profile"),
+                OsString::from("effigy"),
+                OsString::from("--"),
+                OsString::from("sudo"),
+                OsString::from("systemctl"),
+                OsString::from("stop"),
+                OsString::from(format!("{FULL_ID}.timer")),
+            ],
+            reset_failed: vec![
+                OsString::from("ssh"),
+                OsString::from("--profile"),
+                OsString::from("effigy"),
+                OsString::from("--"),
+                OsString::from("sudo"),
+                OsString::from("systemctl"),
+                OsString::from("reset-failed"),
+                OsString::from(format!("{FULL_ID}.service")),
+                OsString::from(format!("{FULL_ID}.timer")),
+            ],
+        }
+    }
+
+    #[test]
+    fn stale_timer_collision_recovers_exact_units_then_retries_until_inspect_ready() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Up 1 second",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let mut recoveries = 0;
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["mysql"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                started.push(container.to_owned());
+                if started.len() == 1 {
+                    Ok(RuntimeStartResult {
+                        success: false,
+                        stdout: String::new(),
+                        stderr: STALE_TIMER.to_owned(),
+                    })
+                } else {
+                    Ok(RuntimeStartResult {
+                        success: true,
+                        stdout: container.to_owned(),
+                        stderr: String::new(),
+                    })
+                }
+            },
+            |row, result| {
+                recoveries += 1;
+                assert_eq!(row.container_name, "acowtancy-mysql-1");
+                assert!(looks_like_stale_healthcheck_timer(
+                    &result.stdout,
+                    &result.stderr
+                ));
+                Ok(recovered_action())
+            },
+        )
+        .expect("exact-owned stale timer should recover and retry");
+
+        assert_eq!(
+            started,
+            vec![
+                "acowtancy-mysql-1".to_owned(),
+                "acowtancy-mysql-1".to_owned()
+            ]
+        );
+        assert_eq!(recoveries, 1);
+        assert_eq!(inspect_calls, 3);
+        assert_eq!(recovery.started, vec!["acowtancy-mysql-1".to_owned()]);
+        assert_eq!(recovery.warnings.len(), 1);
+        assert!(recovery.warnings[0].contains(FULL_ID));
+        assert!(recovery.warnings[0].contains("without deleting units"));
+        if let StaleTimerAction::Recovered {
+            stop_timer,
+            reset_failed,
+            ..
+        } = recovered_action()
+        {
+            let timer = format!("{FULL_ID}.timer");
+            let service = format!("{FULL_ID}.service");
+            let stop = stop_timer
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let reset = reset_failed
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(stop.last(), Some(&timer));
+            assert!(!stop.contains(&service));
+            assert!(reset.contains(&service));
+            assert!(reset.contains(&timer));
+            assert!(!stop.iter().any(|arg| arg.contains('*') || arg == "rm"));
+        }
+    }
+
+    #[test]
+    fn refused_persistent_unit_does_not_retry_start_and_keeps_diagnostics() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let error = recover_exited_owned_services_with_stale_timer(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["mysql"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                started.push(container.to_owned());
+                Ok(RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+            |_, _| {
+                Ok(StaleTimerAction::Refused {
+                    diagnostic: format!(
+                        "refused stale nerdctl health-check unit recovery for container `acowtancy-mysql-1`\ninspected: id={FULL_ID} status=exited project=acowtancy-shared-mysql service=mysql oneoff=false profile=effigy\nreason: unit `{FULL_ID}.timer` has a persistent fragment at `/etc/systemd/system/{FULL_ID}.timer`\nEffigy did not stop, reset, or delete systemd units.\nnext:\n  colima nerdctl --profile effigy -- inspect acowtancy-mysql-1\n  colima nerdctl --profile effigy -- start acowtancy-mysql-1"
+                    ),
+                })
+            },
+        )
+        .expect_err("persistent unit must not be recovered");
+
+        assert_eq!(started, vec!["acowtancy-mysql-1".to_owned()]);
+        assert_eq!(inspect_calls, 2);
+        let detail = error.to_string();
+        assert!(detail.contains("service `mysql`"), "got: {detail}");
+        assert!(detail.contains("persistent fragment"), "got: {detail}");
+        assert!(detail.contains(FULL_ID), "got: {detail}");
+        assert!(
+            detail.contains("did not stop, reset, or delete"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("colima nerdctl --profile effigy -- start acowtancy-mysql-1"),
+            "got: {detail}"
+        );
+        assert!(!detail.contains("rm -f"), "got: {detail}");
+        assert!(!detail.contains("daemon-reload"), "got: {detail}");
+    }
+
+    #[test]
+    fn recovered_collision_that_stays_down_after_one_retry_is_bounded() {
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 1 second ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let mut recoveries = 0;
+        let error = recover_exited_owned_services_with_stale_timer(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["mysql"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                started.push(container.to_owned());
+                Ok(RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+            |_, _| {
+                recoveries += 1;
+                Ok(recovered_action())
+            },
+        )
+        .expect_err("one retry is bounded");
+
+        assert_eq!(started.len(), 2);
+        assert_eq!(recoveries, 1);
+        assert_eq!(inspect_calls, 3);
+        let detail = error.to_string();
+        assert!(detail.contains("service `mysql`"), "got: {detail}");
+        assert!(detail.contains("Exited (255)"), "got: {detail}");
+        assert!(detail.contains("without deleting units"), "got: {detail}");
+        assert!(
+            detail.contains("will not delete timer units"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn docker_backend_does_not_recover_healthcheck_units() {
+        let inspect_states = [
+            vec![row(
+                "demo-web",
+                "app",
+                "demo-app-1",
+                "Exited (1) 3 seconds ago",
+            )],
+            vec![row(
+                "demo-web",
+                "app",
+                "demo-app-1",
+                "Exited (1) 3 seconds ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::Docker,
+            &["app"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+            |_, _| panic!("docker must not recover nerdctl health-check units"),
+        )
+        .expect_err("docker persistent failure");
+
+        let detail = error.to_string();
+        assert!(detail.contains("docker start demo-app-1"), "got: {detail}");
+        assert!(!detail.contains("reset-failed"), "got: {detail}");
+        assert!(!detail.contains("systemctl stop"), "got: {detail}");
+    }
+
+    #[test]
+    fn running_container_never_invokes_timer_recovery() {
+        let mut recoveries = 0;
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["app"],
+            || Ok(vec![row("demo-web", "app", "demo-app-1", "Up 10 seconds")]),
+            |container| panic!("start must not run for running containers, got {container}"),
+            |_, _| {
+                recoveries += 1;
+                panic!("running containers must not recover health-check units");
+            },
+        )
+        .expect("running owned service is left alone");
+        assert_eq!(recoveries, 0);
+        assert!(recovery.started.is_empty());
     }
 }

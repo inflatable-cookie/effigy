@@ -130,6 +130,9 @@ Expected product guarantee:
 - after Compose up, owned services that are still `Exited` or `Created` are
   started or the failure names the live status and a start command
 - persistent volumes stay; systemd health-check timer units are not deleted
+- a stopped owned Colima/nerdctl container may recover its own stale
+  transient `{full_id}.timer` / `{full_id}.service` collision once, after
+  inspect proves the full hexadecimal ID and selected labels
 
 Backend status:
 
@@ -137,6 +140,8 @@ Backend status:
   stopped after a VM restart
 - `nerdctl start` of an owned container can succeed while logging
   `Unit <id>.timer was already loaded or has a fragment file`
+- leftover transient health-check units named after the full container ID
+  can block a later `systemd-run`
 
 Effigy ownership:
 
@@ -148,8 +153,17 @@ Effigy ownership:
 - bound inspect and start so a hung nerdctl command still names live status
 - treat a stale timer warning as a warning only after inspect shows the
   container running; start exit 0 is not readiness
+- when the owned Colima container stays stopped with that collision,
+  inspect the full ID, require stopped exact-owned labels, confirm the
+  unit pair is transient in the selected profile, stop only
+  `{full_id}.timer`, `reset-failed` `{full_id}.service`/`{full_id}.timer`,
+  retry start once, and prove readiness by inspect
+- refuse automatic repair for running, unknown, foreign, one-off,
+  undeclared, persistent, mismatched, wrong-profile, or missing-authority
+  cases; keep Docker start unchanged; never delete unit files
 - if the container stays stopped or post-start inspect fails, keep the start
-  backend text (including a stale-timer warning) in the bounded failure with
+  backend text (including a stale-timer warning or refusal diagnostic) in
+  the bounded failure with
   `colima nerdctl --profile <profile> -- start <container>`
 
 Contract detail: `005-container-runtime-contract.md`.
@@ -157,11 +171,15 @@ Contract detail: `005-container-runtime-contract.md`.
 Target compatibility cases:
 
 - `recoverable_exited_service_is_started_despite_stale_timer`
+- `stale_timer_collision_recovers_exact_units_then_retries_until_inspect_ready`
+- `refused_persistent_unit_does_not_retry_start_and_keeps_diagnostics`
+- `recoverable_transient_pair_stops_only_exact_timer_and_resets_pair`
 - `persistent_exited_service_is_a_bounded_backend_failure`
 - `successful_start_with_stale_timer_still_exited_is_a_bounded_failure`
 - `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
 - `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
 - `start_timeout_reports_observed_exited_status`
+- `docker_backend_does_not_recover_healthcheck_units`
 
 ### Primary-service exec readiness
 
