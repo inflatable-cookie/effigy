@@ -264,6 +264,8 @@ The first useful coverage set is:
 - one proof that workspace rust ownership prep classifies named volumes as
   owned-disposable and bind rust paths as verify-only, then observes
   non-root write/lock rather than mount-root owner heuristics
+- one proof that doctor ownership inspects share the remaining doctor budget
+  and report timeout as unavailable rather than clean
 - one proof that exec-readiness recovery is attempted after recreate-style
   failure
 - one proof that owned Exited services after a Colima restart are started or

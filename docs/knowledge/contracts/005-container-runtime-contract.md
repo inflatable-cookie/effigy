@@ -517,8 +517,10 @@ recursive host-source chown are forbidden. Repair may restore owner write
 covers declared cargo/target mounts, their nested rust lock/cache paths, and
 managed disposable paths. It probes those paths with per-mount inspect
 subprocesses and stops nested probes on a mount after the first sample; it
-does not walk the whole tree. Stopped, unavailable, and no-workspace-user
-states are distinct from clean.
+does not walk the whole tree. Each inspect subprocess shares the remaining
+doctor budget and is killed at that deadline; timeout and unavailable never
+report clean. Stopped, unavailable, and no-workspace-user states are distinct
+from clean.
 
 ## Alias contract
 

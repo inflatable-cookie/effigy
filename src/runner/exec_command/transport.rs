@@ -2,8 +2,13 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use effigy_containers::{
     compose::{
@@ -97,7 +102,18 @@ pub(in crate::runner) fn run_compose_exec(
     capture: bool,
     label: &str,
 ) -> Result<Output, RunnerError> {
-    run_compose_exec_with_options(repo_root, policy, args, capture, label, None)
+    run_compose_exec_with_deadline(repo_root, policy, args, capture, label, None)
+}
+
+pub(in crate::runner) fn run_compose_exec_with_deadline(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    capture: bool,
+    label: &str,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
+    run_compose_exec_with_options(repo_root, policy, args, capture, label, None, deadline)
 }
 
 pub(in crate::runner) fn run_compose_exec_with_options(
@@ -107,6 +123,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
     capture: bool,
     label: &str,
     stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
     let (program, resolved_args) = compose_invocation_for_repo(repo_root, policy, args);
     let plan = ContainerComposeInvocationPlan {
@@ -118,7 +135,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
         args: resolved_args,
         label: label.to_owned(),
     };
-    run_compose_exec_plan_with_options(policy, &plan, capture, stdin_file)
+    run_compose_exec_plan_with_deadline(policy, &plan, capture, stdin_file, deadline)
 }
 
 pub(in crate::runner) fn run_compose_exec_plan_with_options(
@@ -126,6 +143,16 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     plan: &ContainerComposeInvocationPlan,
     capture: bool,
     stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
+    run_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
+}
+
+fn run_compose_exec_plan_with_deadline(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
     if plan.backend_id == BackendId::colima_nerdctl() {
         return colima::run_colima_direct_exec(
@@ -137,20 +164,24 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
             stdin_file,
             colima::ColimaExecAdapters {
                 parse_compose_exec_args: &parse_compose_exec_args,
-                run_command_capture_allow_failure: &run_command_capture_allow_failure,
-                run_command_capture_allow_failure_with_stdin:
-                    &run_command_capture_allow_failure_with_stdin,
+                run_command_capture_allow_failure: &move |root, program, args| {
+                    run_command_capture_until(root, program, args, None, deadline)
+                },
+                run_command_capture_allow_failure_with_stdin: &move |root, program, args, stdin| {
+                    run_command_capture_until(root, program, args, stdin, deadline)
+                },
                 format_args: &format_args,
             },
         );
     }
 
     if capture {
-        return run_command_capture_allow_failure_with_stdin(
+        return run_command_capture_until(
             &plan.repo_root,
             plan.program.as_os_str(),
             &plan.args,
             stdin_file,
+            deadline,
         );
     }
 
@@ -332,33 +363,116 @@ pub(super) fn run_command_capture_allow_failure_with_stdin(
     args: &[OsString],
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
+    run_command_capture_until(repo_root, program, args, stdin_file, None)
+}
+
+pub(in crate::runner) fn run_command_capture_until(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+    deadline: Option<Instant>,
+) -> Result<Output, RunnerError> {
     let resolved_program = resolve_host_program(program);
+    let command_label = format!(
+        "{} {}",
+        resolved_program.to_string_lossy(),
+        format_args(args)
+    );
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(RunnerError::task_invocation(format!(
+            "{command_label} timed out"
+        )));
+    }
     let mut command = ProcessCommand::new(&resolved_program);
     command.current_dir(repo_root).args(args);
     if let Some(stdin_file) = stdin_file {
         let file =
             std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {
-                command: format!(
-                    "{} {}",
-                    resolved_program.to_string_lossy(),
-                    format_args(args)
-                ),
+                command: command_label.clone(),
                 error,
             })?;
         command.stdin(Stdio::from(file));
     } else {
         command.stdin(Stdio::null());
     }
-    command
-        .output()
+    let Some(deadline) = deadline else {
+        return command
+            .output()
+            .map_err(|error| RunnerError::TaskCommandLaunch {
+                command: command_label,
+                error,
+            });
+    };
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
+    }
+    let mut child = command
+        .spawn()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!(
-                "{} {}",
-                resolved_program.to_string_lossy(),
-                format_args(args)
-            ),
+            command: command_label.clone(),
             error,
-        })
+        })?;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        RunnerError::task_invocation(format!("{command_label} stdout unavailable"))
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        RunnerError::task_invocation(format!("{command_label} stderr unavailable"))
+    })?;
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        bytes
+    });
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| RunnerError::TaskCommandLaunch {
+                command: command_label.clone(),
+                error,
+            })?
+        {
+            let stdout = stdout_reader.join().unwrap_or_default();
+            let stderr = stderr_reader.join().unwrap_or_default();
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
+        }
+        if Instant::now() >= deadline {
+            effigy_process::terminate_process_tree(child.id(), false);
+            let grace_deadline = Instant::now() + Duration::from_millis(500);
+            loop {
+                if child.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                if Instant::now() >= grace_deadline {
+                    effigy_process::terminate_process_tree(child.id(), true);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(RunnerError::task_invocation(format!(
+                "{command_label} timed out"
+            )));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub(super) fn resolve_host_program(program: impl AsRef<OsStr>) -> OsString {
@@ -436,4 +550,52 @@ fn format_args(args: &[OsString]) -> String {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod capture_deadline_tests {
+    use super::*;
+
+    #[test]
+    fn run_command_capture_until_expired_deadline_does_not_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("deadline");
+        let error = run_command_capture_until(
+            temp.path(),
+            OsStr::new("/definitely-not-a-binary-effigy-deadline-probe"),
+            &[],
+            None,
+            Some(deadline),
+        )
+        .expect_err("expired deadline must fail closed");
+        assert!(
+            error.to_string().contains("timed out"),
+            "expected timeout, got {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_capture_until_kills_hung_child() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let started = Instant::now();
+        let error = run_command_capture_until(
+            temp.path(),
+            OsStr::new("/bin/sleep"),
+            &[OsString::from("30")],
+            None,
+            Some(Instant::now() + Duration::from_millis(250)),
+        )
+        .expect_err("hung child must time out");
+        assert!(
+            error.to_string().contains("timed out"),
+            "expected timeout, got {error}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "deadline must kill the child instead of waiting out sleep 30"
+        );
+    }
 }

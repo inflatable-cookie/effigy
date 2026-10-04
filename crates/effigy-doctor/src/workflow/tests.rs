@@ -1,11 +1,18 @@
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use effigy_cli::TaskInvocation;
 use effigy_core::resolver::ResolvedTarget;
-use effigy_tasks::ResolutionMode;
+use effigy_manifest::{DeferredCommand, LoadedCatalog};
+use effigy_tasks::{ResolutionMode, TaskSelector};
 
 use super::*;
 use crate::contracts::{check_id, remediation};
-use crate::{manifest_snapshot::ManifestSnapshot, DoctorSeverity, DoctorState};
+use crate::{
+    manifest_snapshot::ManifestSnapshot, DoctorRuntimeDiagnostics, DoctorRuntimePorts,
+    DoctorSeverity, DoctorState,
+};
 use effigy_manifest::TASK_MANIFEST_FILE;
 
 fn empty_manifest_snapshot() -> ManifestSnapshot {
@@ -127,4 +134,94 @@ fn runtime_diagnostic_findings_are_included_before_summary() {
         output.report.findings[0].check_id,
         check_id::CONTAINER_WORKSPACE_OWNERSHIP
     );
+}
+
+#[test]
+fn runtime_diagnostics_run_when_budget_already_expired() {
+    struct RecordingPorts {
+        remaining: Cell<Option<Option<Duration>>>,
+    }
+
+    impl DoctorRuntimePorts for RecordingPorts {
+        fn run_manifest_task(
+            &self,
+            _invocation: &TaskInvocation,
+            _cwd: PathBuf,
+        ) -> Result<String, crate::DoctorError> {
+            Ok(String::new())
+        }
+
+        fn select_deferral(
+            &self,
+            _selector: &TaskSelector,
+            _catalogs: &[LoadedCatalog],
+            _cwd: &Path,
+            _workspace_root: &Path,
+        ) -> Option<DeferredCommand> {
+            None
+        }
+
+        fn runtime_diagnostics(
+            &self,
+            _resolved_root: &Path,
+        ) -> Result<DoctorRuntimeDiagnostics, crate::DoctorError> {
+            panic!("unbounded runtime_diagnostics must not be used once a budget exists");
+        }
+
+        fn runtime_diagnostics_bounded(
+            &self,
+            _resolved_root: &Path,
+            remaining_budget: Option<Duration>,
+        ) -> Result<DoctorRuntimeDiagnostics, crate::DoctorError> {
+            self.remaining.set(Some(remaining_budget));
+            Ok(DoctorRuntimeDiagnostics {
+                evidence: Vec::new(),
+                warnings: vec!["workspace ownership probe skipped: timed out".to_owned()],
+                findings: Vec::new(),
+            })
+        }
+    }
+
+    let ports = RecordingPorts {
+        remaining: Cell::new(None),
+    };
+    let config = DoctorRunConfig {
+        mode: crate::DoctorMode::Fast,
+        catalog: None,
+        all_catalogs: false,
+        refresh: false,
+        budget: Some(Duration::ZERO),
+    };
+    let mut handler = handler::DefaultWorkflowPhaseHandler::new(
+        PathBuf::from("/tmp/doctor-workspace"),
+        config,
+        None,
+        &ports,
+    );
+    let output = phases::WorkflowPhaseHandler::summarize_and_report(
+        &mut handler,
+        DoctorState::new(),
+        ResolvedTarget {
+            resolved_root: PathBuf::from("/tmp/doctor-workspace"),
+            resolution_mode: ResolutionMode::Explicit,
+            evidence: Vec::new(),
+            warnings: Vec::new(),
+        },
+    );
+
+    assert_eq!(ports.remaining.get(), Some(Some(Duration::ZERO)));
+    assert!(
+        output
+            .report
+            .root_warnings
+            .iter()
+            .any(|warning| warning.contains("timed out")),
+        "expired budget must still emit an unavailable warning, got {:?}",
+        output.report.root_warnings
+    );
+    assert_eq!(
+        output.report.timeout_phase.as_deref(),
+        Some("runtime_diagnostics")
+    );
+    assert!(!output.report.complete);
 }

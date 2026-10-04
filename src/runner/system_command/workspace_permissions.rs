@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Instant;
 
 use effigy_containers::{
     load_workspace_ownership_plan, EffectiveContainerPolicy, WorkspaceMountKind,
@@ -9,7 +10,7 @@ use effigy_containers::{
 
 use super::workspace_provisioning::{plan_workspace_permission_prep, WorkspacePermissionMode};
 use super::RunnerError;
-use crate::runner::exec_command::run_compose_exec;
+use crate::runner::exec_command::run_compose_exec_with_deadline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct ResolvedWorkspaceIdentity {
@@ -339,10 +340,10 @@ fn repair_owned_target(
                         ),
                     )
                 })?;
-            if unowned.is_empty() {
-                if inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid) {
-                    unowned.push(target.path.clone());
-                }
+            if unowned.is_empty()
+                && (inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid))
+            {
+                unowned.push(target.path.clone());
             }
             for path in unowned {
                 let nested = backend.inspect(&path).map_err(|error| {
@@ -738,6 +739,7 @@ fn inspect_doctor_path(
 pub(in crate::runner) struct ComposeAccessBackend<'a> {
     pub repo_root: &'a Path,
     pub policy: &'a EffectiveContainerPolicy,
+    pub deadline: Option<Instant>,
 }
 
 impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
@@ -905,8 +907,21 @@ impl ComposeAccessBackend<'_> {
             ["exec", "-T", "-u", user, service],
         );
         args.extend(argv.iter().map(OsString::from));
-        let output = run_compose_exec(self.repo_root, self.policy, &args, true, label)
-            .map_err(|error| PermissionPrepError::new(error.to_string()))?;
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(PermissionPrepError::new(format!("{label} timed out")));
+        }
+        let output = run_compose_exec_with_deadline(
+            self.repo_root,
+            self.policy,
+            &args,
+            true,
+            label,
+            self.deadline,
+        )
+        .map_err(|error| PermissionPrepError::new(error.to_string()))?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let success = output.status.success();
@@ -1419,7 +1434,19 @@ pub(in crate::runner) fn compose_backend<'a>(
     repo_root: &'a Path,
     policy: &'a EffectiveContainerPolicy,
 ) -> ComposeAccessBackend<'a> {
-    ComposeAccessBackend { repo_root, policy }
+    compose_backend_with_deadline(repo_root, policy, None)
+}
+
+pub(in crate::runner) fn compose_backend_with_deadline<'a>(
+    repo_root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+) -> ComposeAccessBackend<'a> {
+    ComposeAccessBackend {
+        repo_root,
+        policy,
+        deadline,
+    }
 }
 
 #[cfg(test)]
@@ -1768,6 +1795,28 @@ mod tests {
             .samples
             .iter()
             .any(|sample| sample.contains("/workspace/target")));
+    }
+
+    #[test]
+    fn doctor_expired_probe_deadline_is_unavailable_not_clean() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        let deadline = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("deadline");
+        let mut backend = compose_backend_with_deadline(Path::new("/tmp"), &policy, Some(deadline));
+        let diagnosis = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+        assert_eq!(diagnosis.status, WorkspaceOwnershipProbeStatus::Unavailable);
+        assert!(
+            diagnosis
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("timed out")),
+            "timeout must be unavailable, got {:?}",
+            diagnosis.warning
+        );
+        assert!(diagnosis.evidence.is_none());
     }
 
     #[test]

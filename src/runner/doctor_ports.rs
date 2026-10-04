@@ -17,9 +17,7 @@ use std::process::Command;
 use std::process::Stdio;
 #[cfg(not(test))]
 use std::thread;
-use std::time::Duration;
-#[cfg(not(test))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(all(unix, not(test)))]
 use nix::unistd::{setpgid, Pid};
@@ -41,11 +39,11 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::run_compose_exec;
+use crate::runner::exec_command::run_compose_exec_with_deadline;
 use crate::runner::execute::api;
 use crate::runner::system_command::is_primary_service_running;
 use crate::runner::system_command::workspace_permissions::{
-    compose_backend, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
+    compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
 };
 
 #[derive(Debug, Default)]
@@ -101,7 +99,15 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
         &self,
         resolved_root: &Path,
     ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
-        collect_runtime_diagnostics(resolved_root)
+        collect_runtime_diagnostics(resolved_root, None)
+    }
+
+    fn runtime_diagnostics_bounded(
+        &self,
+        resolved_root: &Path,
+        remaining_budget: Option<Duration>,
+    ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+        collect_runtime_diagnostics(resolved_root, remaining_budget)
     }
 }
 
@@ -224,6 +230,7 @@ fn runner_to_doctor(error: RunnerError) -> DoctorError {
 
 fn collect_runtime_diagnostics(
     resolved_root: &Path,
+    remaining_budget: Option<Duration>,
 ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
     let mut diagnostics = DoctorRuntimeDiagnostics::default();
 
@@ -307,7 +314,12 @@ fn collect_runtime_diagnostics(
             .push(format!("docker context probe failed: {error}")),
     }
 
-    append_workspace_ownership_diagnostics(resolved_root, &policies, &mut diagnostics);
+    append_workspace_ownership_diagnostics(
+        resolved_root,
+        &policies,
+        remaining_budget,
+        &mut diagnostics,
+    );
 
     Ok(diagnostics)
 }
@@ -315,16 +327,27 @@ fn collect_runtime_diagnostics(
 fn append_workspace_ownership_diagnostics(
     repo_root: &Path,
     policies: &[effigy_containers::EffectiveContainerPolicy],
+    remaining_budget: Option<Duration>,
     diagnostics: &mut DoctorRuntimeDiagnostics,
 ) {
+    let deadline = remaining_budget.map(|budget| Instant::now() + budget);
     for policy in policies {
         let running =
             is_primary_service_running(repo_root, policy).map_err(|error| error.to_string());
         let extra = match running {
-            Ok(true) => bun_install_scan_target(repo_root, policy),
+            Ok(true) => match bun_install_scan_target(repo_root, policy, deadline) {
+                Ok(extra) => extra,
+                Err(error) => {
+                    diagnostics.warnings.push(format!(
+                        "container `{}` workspace ownership probe skipped: {error}",
+                        policy.name
+                    ));
+                    continue;
+                }
+            },
             _ => Vec::new(),
         };
-        let mut backend = compose_backend(repo_root, policy);
+        let mut backend = compose_backend_with_deadline(repo_root, policy, deadline);
         let diagnosis = diagnose_workspace_ownership(policy, running, &extra, &mut backend);
         if let Some(evidence) = diagnosis.evidence {
             diagnostics.evidence.push(evidence);
@@ -350,7 +373,8 @@ fn append_workspace_ownership_diagnostics(
 fn bun_install_scan_target(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Vec<String> {
+    deadline: Option<Instant>,
+) -> Result<Vec<String>, String> {
     let args = effigy_containers::compose::compose_args(
         policy,
         [
@@ -364,20 +388,29 @@ fn bun_install_scan_target(
             r#"if [ -n "$BUN_INSTALL" ]; then printf '%s/install\n' "$BUN_INSTALL"; fi"#,
         ],
     );
-    match run_compose_exec(
+    match run_compose_exec_with_deadline(
         repo_root,
         policy,
         &args,
         true,
         "workspace bun cache path probe",
+        deadline,
     ) {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
-            .collect(),
-        _ => Vec::new(),
+            .collect()),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("timed out") {
+                Err(message)
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        _ => Ok(Vec::new()),
     }
 }
 

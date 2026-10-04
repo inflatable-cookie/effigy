@@ -54,4 +54,12 @@ pub trait DoctorRuntimePorts {
         &self,
         resolved_root: &Path,
     ) -> Result<DoctorRuntimeDiagnostics, DoctorError>;
+
+    fn runtime_diagnostics_bounded(
+        &self,
+        resolved_root: &Path,
+        _remaining_budget: Option<Duration>,
+    ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+        self.runtime_diagnostics(resolved_root)
+    }
 }

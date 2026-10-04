@@ -537,7 +537,8 @@ Fix:
 - rerun `effigy doctor --verbose`
 
 The finding is read-only. Stopped or unavailable workspaces are not reported
-as clean. Host-routed workspace tasks and primary-service `effigy exec`
+as clean. A hung or deadline-expired inspect is unavailable, never clean.
+Host-routed workspace tasks and primary-service `effigy exec`
 calls use the declared workspace user and HOME. Explicit non-primary
 `--service` execs keep that service's configured user; pipes, agents, and
 other non-console callers run without requesting a TTY.

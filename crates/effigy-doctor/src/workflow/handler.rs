@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
@@ -160,24 +160,31 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
         mut state: DoctorState,
         resolved: ResolvedTarget,
     ) -> DoctorRunOutput {
+        let remaining = self.deadline().map(|deadline| {
+            deadline
+                .checked_duration_since(Instant::now())
+                .unwrap_or(Duration::ZERO)
+        });
         let diagnostics = if !state.is_complete() {
             crate::DoctorRuntimeDiagnostics::default()
-        } else if self
-            .deadline()
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            state.record_budget_exhausted("runtime_diagnostics", std::time::Duration::ZERO);
-            crate::DoctorRuntimeDiagnostics::default()
         } else {
-            self.ports
-                .runtime_diagnostics(&resolved.resolved_root)
+            let diagnostics = self
+                .ports
+                .runtime_diagnostics_bounded(&resolved.resolved_root, remaining)
                 .unwrap_or_else(|error| crate::DoctorRuntimeDiagnostics {
                     evidence: Vec::new(),
                     warnings: vec![format!(
                         "container runtime diagnostics unavailable: {error}"
                     )],
                     findings: Vec::new(),
-                })
+                });
+            if self
+                .deadline()
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                state.record_budget_exhausted("runtime_diagnostics", Duration::ZERO);
+            }
+            diagnostics
         };
         summarize_and_report_with_diagnostics(state, resolved, diagnostics).with_run_metadata(
             self.config.mode,

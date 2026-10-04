@@ -342,8 +342,9 @@ During v0.x, MINOR bumps may include breaking changes.
   forbidden). `effigy doctor` `container.workspace-ownership` stays
   read-only, covers Cargo paths and declared target mounts, probes nested
   rust lock/cache paths with per-mount inspect subprocesses and early-exit
-  after the first sample, and distinguishes not-probed/stopped/unavailable
-  from clean. Bind host sources, shared volumes, and symlinks are not
+  after the first sample, kills those inspect children at the remaining
+  doctor deadline, and distinguishes not-probed/stopped/unavailable from
+  clean. Bind host sources, shared volumes, and symlinks are not
   mutated. Anonymous colon-less rust target mounts stay owned-disposable.
 - Generated `AGENTS.md` Effigy Agent Contract now links its reference docs as
   upstream Effigy repository URLs instead of nonexistent consumer-relative

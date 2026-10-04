@@ -354,12 +354,12 @@ fn compose_external_volume_names(parsed: &serde_yaml::Value) -> std::collections
         let external = match value {
             serde_yaml::Value::Mapping(mapping) => mapping
                 .get(serde_yaml::Value::String("external".to_owned()))
-                .map(|flag| match flag {
-                    serde_yaml::Value::Bool(true) => true,
-                    serde_yaml::Value::Mapping(_) => true,
-                    _ => false,
-                })
-                .unwrap_or(false),
+                .is_some_and(|flag| {
+                    matches!(
+                        flag,
+                        serde_yaml::Value::Bool(true) | serde_yaml::Value::Mapping(_)
+                    )
+                }),
             _ => false,
         };
         if external {

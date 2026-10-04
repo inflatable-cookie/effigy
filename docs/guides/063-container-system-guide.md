@@ -607,8 +607,10 @@ nested rust lock/cache paths, managed disposable volumes, or
 `$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
 check probes those paths with per-mount inspect subprocesses and stops
 nested probes on a mount after the first sample; it does not walk the
-mount. Stopped, unavailable, and no-workspace-user states are distinct from
-clean. The finding is not a license to chown the checkout.
+mount. Inspect children share the remaining doctor budget and are killed at
+that deadline; timeout is unavailable, never clean. Stopped, unavailable,
+and no-workspace-user states are distinct from clean. The finding is not a
+license to chown the checkout.
 
 ## Data Lifecycle
 

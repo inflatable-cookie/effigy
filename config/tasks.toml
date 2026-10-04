@@ -88,8 +88,16 @@
   "cargo test -p effigy --lib runner::system_command::workspace_permissions -- --nocapture",
   "cargo test -p effigy --lib workspace_ownership_finding_is_named_and_actionable -- --nocapture",
   "cargo test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
+  "cargo test -p effigy --lib run_command_capture_until -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers_inside_container -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin -- --nocapture",
+  "cargo test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
 ]
-"check:workspace:rust-ownership" = "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test"
+"check:workspace:rust-ownership" = [
+  "cargo check -p effigy-containers -p effigy --lib --tests --bins --profile test",
+  "cargo clippy -p effigy-containers -p effigy-doctor -p effigy --lib -- -D warnings",
+]
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.
