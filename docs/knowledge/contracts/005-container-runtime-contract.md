@@ -662,3 +662,24 @@ Update this contract when Effigy changes:
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution
 - runtime activation request/plan/report fields
+
+## Verified local runtime refresh — 2026-10-04
+
+Under Tom’s standing authority `b16abcd4`, the planner refreshed the local host,
+ARM64 Linux artifact and canonical skill to `v0.13.1+local.ffdfc1f9`, from
+reviewed main `ffdfc1f9b6368461ed87cc745859532d422a6e27`. Queue milestone
+`c15c9959-2329-4d4f-ad5e-01728a70acbc` passed setup, QA and teardown, with
+no escaped descendants and automatic capacity release. Both private native
+candidates and installed host routing checks passed. The Linux build’s
+original scheduler run settled passed after its follower lost contact while
+queued; the idle-read failure remains separately owned by Effigy #077.
+
+This refresh includes the exact-owned stale healthcheck recovery and Rust-path
+ownership diagnostics/provisioning. Automatic repair remains limited to
+exclusively owned disposable volumes. Bind-mounted targets and shared caches
+are verified only; real consumer UID/mount acceptance is still required and
+was not established by private numeric-UID memory fixtures. No live ownership
+repair, VM start, stack restart or release was performed. Historical admission
+state was preserved. The actual prior host `056111f` and Linux `47078933`
+channels, skill files and hashes are backed up in
+`~/.cache/effigy/rollbacks/runtime-ffdfc1f9-4cquw2gs/rollout-receipt.json`.
