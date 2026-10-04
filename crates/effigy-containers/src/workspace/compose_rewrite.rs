@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::ContainerPolicyError;
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts, RenderedWorkspaceMount,
@@ -92,7 +92,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
 
     let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
     ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
+        path: git_local_exclude_path(repo_root),
         error,
     })?;
     std::fs::create_dir_all(&rewrite_dir).map_err(|error| ContainerPolicyError::Read {

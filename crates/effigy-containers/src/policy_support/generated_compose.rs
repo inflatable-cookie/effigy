@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use effigy_catalog::{
     assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler, ComposeOutput,
 };
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 use effigy_gateway::loopback::{project_loopback_identity, LoopbackRegistry};
 use effigy_gateway::ports::PortRegistry;
 use effigy_gateway::routes::RouteTable;
@@ -450,7 +450,7 @@ pub(crate) fn resolve_compose_source(
     )?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
     ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
+        path: git_local_exclude_path(repo_root),
         error,
     })?;
     let manifest_cache_key = if effective_ports.is_empty() {

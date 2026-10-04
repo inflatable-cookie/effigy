@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_core::runtime_dir::{ensure_effigy_ignored_in_git_root, git_local_exclude_path};
 
 use crate::{ContainerPolicyError, EffectiveDnsRoute, EffectiveServiceAlias};
 
@@ -25,7 +25,7 @@ pub(crate) fn materialize_runtime_dns_override(
     }
     let override_dir = repo_root.join(".effigy").join("runtime").join("dns");
     ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
+        path: git_local_exclude_path(repo_root),
         error,
     })?;
     std::fs::create_dir_all(&override_dir).map_err(|error| ContainerPolicyError::Read {

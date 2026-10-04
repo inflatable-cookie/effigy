@@ -187,6 +187,18 @@
   "cargo check -p effigy-host-run --lib --tests --profile test",
   "cargo clippy -p effigy-host-run --lib --tests -- -D warnings",
 ]
+# Implicit runtime ignore registration (papercut 082): Git-local
+# info/exclude, never working-tree .gitignore. Private fixtures only.
+"test:runtime:local-ignores" = [
+  "cargo test -p effigy-core --lib runtime_dir:: -- --nocapture",
+  "cargo test -p effigy-core --lib git_worktree:: -- --nocapture",
+  "cargo test -p effigy-manifest --lib auto_discovered_local_overlay_registers_git_exclude_not_gitignore -- --nocapture",
+  "cargo test -p effigy --lib run_manifest_task_builtin_init -- --nocapture",
+]
+"check:runtime:local-ignores" = [
+  "cargo check -p effigy-core -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-demo -p effigy --lib --tests --profile test",
+  "cargo clippy -p effigy-core -p effigy-manifest --lib -- -D warnings",
+]
 # Env-isolation regressions (papercut batch 067): parallel process-env
 # readers and writers. Build-identity readers take injected values and the
 # runner's remaining global writers share one proved boundary.

@@ -483,8 +483,9 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
 
     let policy =
         load_inline_workspace_container_policy(&root, "dev__app", &inline, None).expect("policy");
+    assert!(!root.join(".gitignore").exists());
     assert_eq!(
-        fs::read_to_string(root.join(".gitignore")).expect("gitignore"),
+        fs::read_to_string(root.join(".git/info/exclude")).expect("exclude"),
         ".effigy\n"
     );
     let working_dir =

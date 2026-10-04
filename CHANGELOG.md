@@ -330,6 +330,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Implicit cache, lock, and local-overlay ignore registration now writes Git's
+  local `$GIT_COMMON_DIR/info/exclude` and leaves the working tree, including
+  tracked or missing `.gitignore`, unchanged. Linked worktrees resolve the
+  shared admin dir from the `.git` file; invalid or dangling markers, a
+  gitfile, `.git` symlink, linked common dir, or real `.git` directory
+  that is a bare repository (Git last-wins for duplicate `core.bare`),
+  read-only metadata, and symlink escapes fail without a working-tree
+  fallback. Failures whose `.git` is a file or symlink report that marker
+  rather than a fabricated `.git/info/exclude` path. `effigy init` still
+  generates its reviewed `.gitignore` block.
 - Provisioning Effigy-owned Rust target/Cargo volumes now repairs numeric-user
   ownership in one bounded exec per volume instead of two container execs per
   unowned file. Private 44339-entry fixture across three volumes: 88991 → 28
