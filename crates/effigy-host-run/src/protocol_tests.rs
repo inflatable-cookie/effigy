@@ -3,8 +3,8 @@ use crate::transport::{
 };
 use crate::{
     canonical_start_identity, container_started_fact, start_identity_matches, AttachEvent,
-    Authority, ClientError, Clock, HostRunClient, HostRunRoot, IdentityProvider, OutputStream,
-    TokenKeys,
+    Authority, BudgetFallback, ClassSource, ClientError, Clock, HostRunClient, HostRunRoot,
+    IdentityProvider, OutputStream, Priority, RunClass, SubmitRequest, TokenKeys,
 };
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
@@ -392,6 +392,40 @@ fn passed_settlement(run_id: &str) -> Value {
     })
 }
 
+fn capacity_timeout_settlement(run_id: &str) -> Value {
+    json!({
+        "format":"host.run.settlement", "version":1,"runId":run_id,
+        "outcome":"capacity_timeout","launched":false,
+        "settledAt":"2026-10-01T14:00:00Z","result":null,"containers":[]
+    })
+}
+
+fn queued_submit_request(
+    fixture: &Fixture,
+    capacity_deadline_ms: u64,
+    run_timeout_ms: u64,
+) -> SubmitRequest {
+    SubmitRequest {
+        client_request_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+        caller: "private-fixture".to_owned(),
+        repository: fixture.root_path.to_string_lossy().into_owned(),
+        cwd: fixture.root_path.clone(),
+        selector: "qa:private".to_owned(),
+        argv: vec!["effigy".to_owned(), "qa:private".to_owned()],
+        class: RunClass::Heavy,
+        class_source: ClassSource::Manifest,
+        priority: Priority::Validation,
+        budget_fallback: BudgetFallback {
+            cpu: 1,
+            memory_bytes: 64 * 1024 * 1024,
+        },
+        capacity_deadline_ms,
+        run_timeout_ms,
+        env: std::collections::BTreeMap::new(),
+        cancel_on_disconnect: false,
+    }
+}
+
 const TEST_ATTACH_READ_TIMEOUT: Duration = Duration::from_millis(40);
 
 #[test]
@@ -417,7 +451,7 @@ fn attach_idle_follow_recognizes_socket_read_timeout_kinds() {
 }
 
 #[test]
-fn attach_idle_follow_keeps_queued_run_and_partial_frame_until_settlement() {
+fn attach_queued_follow_keeps_queued_run_and_partial_frame_until_settlement() {
     let fixture = make_fixture();
     let mut client = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
     let listener = fixture.listener;
@@ -484,6 +518,141 @@ fn attach_idle_follow_keeps_queued_run_and_partial_frame_until_settlement() {
         AttachEvent::Output { stream: OutputStream::Stdout, offset: 0, data }
             if data == b"ready\n"
     )));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_queued_follow_waits_past_runtime_timeout_for_scheduler_settlement() {
+    const RUN_TIMEOUT_MS: u64 = 60;
+    const QUEUE_WAIT: Duration = Duration::from_millis(RUN_TIMEOUT_MS + 50);
+
+    let fixture = make_fixture();
+    let submit_request = queued_submit_request(&fixture, 500, RUN_TIMEOUT_MS);
+    let mut client = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut submit, _) = listener.accept().unwrap();
+        let request = read_request(&mut submit);
+        assert_eq!(request["method"], "submit");
+        assert_eq!(request["body"]["capacityDeadlineMs"], 500);
+        assert_eq!(request["body"]["runTimeoutMs"], RUN_TIMEOUT_MS);
+        send_response(
+            &mut submit,
+            &request,
+            json!({"runId":"r-queued-runtime-window","state":"queued","position":1}),
+        );
+
+        let (mut attach, _) = listener.accept().unwrap();
+        let request = read_request(&mut attach);
+        assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-queued-runtime-window");
+        send_response(
+            &mut attach,
+            &request,
+            json!({"event":"state","state":"queued","position":1}),
+        );
+        thread::sleep(QUEUE_WAIT);
+        send_response(
+            &mut attach,
+            &request,
+            json!({"event":"state","state":"running"}),
+        );
+        send_response(
+            &mut attach,
+            &request,
+            json!({"event":"settled","settlement":passed_settlement("r-queued-runtime-window")}),
+        );
+    });
+
+    let submitted = client.submit_request(&submit_request).unwrap();
+    assert_eq!(submitted.run_id, "r-queued-runtime-window");
+    let started = Instant::now();
+    let mut events = Vec::new();
+    let settlement = client
+        .attach_stream(&submitted.run_id, 0, 0, |event| events.push(event))
+        .unwrap();
+    assert!(started.elapsed() >= QUEUE_WAIT);
+    assert_eq!(settlement.outcome, crate::SettlementOutcome::Passed);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, position: Some(1) } if state == "queued"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, .. } if state == "running"
+    )));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AttachEvent::Settled(_)))
+            .count(),
+        1
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_queued_follow_reports_capacity_timeout_only_from_scheduler_settlement() {
+    const RUN_TIMEOUT_MS: u64 = 40;
+    const CAPACITY_DEADLINE_MS: u64 = 120;
+
+    let fixture = make_fixture();
+    let submit_request = queued_submit_request(&fixture, CAPACITY_DEADLINE_MS, RUN_TIMEOUT_MS);
+    let mut client = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut submit, _) = listener.accept().unwrap();
+        let request = read_request(&mut submit);
+        assert_eq!(request["method"], "submit");
+        assert_eq!(request["body"]["capacityDeadlineMs"], CAPACITY_DEADLINE_MS);
+        assert_eq!(request["body"]["runTimeoutMs"], RUN_TIMEOUT_MS);
+        send_response(
+            &mut submit,
+            &request,
+            json!({"runId":"r-queued-capacity-timeout","state":"queued","position":1}),
+        );
+
+        let (mut attach, _) = listener.accept().unwrap();
+        let request = read_request(&mut attach);
+        assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-queued-capacity-timeout");
+        send_response(
+            &mut attach,
+            &request,
+            json!({"event":"state","state":"queued","position":1}),
+        );
+        thread::sleep(Duration::from_millis(CAPACITY_DEADLINE_MS + 20));
+        send_response(
+            &mut attach,
+            &request,
+            json!({"event":"settled","settlement":capacity_timeout_settlement("r-queued-capacity-timeout")}),
+        );
+    });
+
+    let submitted = client.submit_request(&submit_request).unwrap();
+    let started = Instant::now();
+    let mut events = Vec::new();
+    let settlement = client
+        .attach_stream(&submitted.run_id, 0, 0, |event| events.push(event))
+        .unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(CAPACITY_DEADLINE_MS));
+    assert_eq!(
+        settlement.outcome,
+        crate::SettlementOutcome::CapacityTimeout
+    );
+    assert!(!settlement.launched);
+    assert!(settlement.result.is_none());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, position: Some(1) } if state == "queued"
+    )));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AttachEvent::Settled(_)))
+            .count(),
+        1
+    );
     server.join().unwrap();
 }
 
@@ -981,7 +1150,7 @@ fn attach_reports_expiration_and_preserves_stream_byte_offsets_without_duplicate
 }
 
 #[test]
-fn attach_recovers_across_endpoint_absence_with_current_status_and_exact_offsets() {
+fn attach_queued_follow_recovers_after_short_endpoint_roll_with_exact_offsets() {
     let fixture = make_fixture();
     let mut client = client(&fixture);
     let listener = fixture.listener;
@@ -990,8 +1159,10 @@ fn attach_recovers_across_endpoint_absence_with_current_status_and_exact_offsets
         let (mut first, _) = listener.accept().unwrap();
         let request = read_request(&mut first);
         assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-reconnect");
         let id = request["id"].clone();
         for body in [
+            json!({"event":"state","state":"queued","position":1}),
             json!({"event":"output","stream":"stdout","offset":0,"dataB64":"YWJj"}),
             json!({"event":"output","stream":"stderr","offset":0,"dataB64":"ZXJy"}),
         ] {
@@ -1024,6 +1195,7 @@ fn attach_recovers_across_endpoint_absence_with_current_status_and_exact_offsets
         let (mut second, _) = replacement.accept().unwrap();
         let request = read_request(&mut second);
         assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-reconnect");
         assert_eq!(request["body"]["fromOffset"]["stdout"], 3);
         assert_eq!(request["body"]["fromOffset"]["stderr"], 3);
         let id = request["id"].clone();
@@ -1040,11 +1212,24 @@ fn attach_recovers_across_endpoint_absence_with_current_status_and_exact_offsets
             second.write_all(b"\n").unwrap();
         }
     });
+    let started = Instant::now();
     let mut events = Vec::new();
     let settlement = client
         .attach_stream("r-reconnect", 0, 0, |event| events.push(event))
         .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(settlement.run_id, "r-reconnect");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AttachEvent::Settled(_)))
+            .count(),
+        1
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, position: Some(1) } if state == "queued"
+    )));
     let collect = |stream| {
         events
             .iter()
@@ -1125,7 +1310,7 @@ fn output_expired_is_preserved_through_bounded_recovery() {
 }
 
 #[test]
-fn attach_recovery_exhaustion_is_bounded_and_reports_unknown_scheduler_state() {
+fn attach_queued_follow_reports_unknown_after_recovery_budget_exhaustion() {
     let fixture = make_fixture();
     let timer = Arc::new(FakeReconnectTimer::default());
     let mut client = client(&fixture).with_reconnect_timer(timer.clone());
@@ -1135,15 +1320,29 @@ fn attach_recovery_exhaustion_is_bounded_and_reports_unknown_scheduler_state() {
         let (mut first, _) = listener.accept().unwrap();
         let request = read_request(&mut first);
         assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-exhausted");
+        send_response(
+            &mut first,
+            &request,
+            json!({"event":"state","state":"queued","position":1}),
+        );
         drop(listener);
         std::fs::remove_file(socket_path).unwrap();
         drop(first);
     });
+    let mut events = Vec::new();
     let error = client
-        .attach_stream("r-exhausted", 0, 0, |_| {})
+        .attach_stream("r-exhausted", 0, 0, |event| events.push(event))
         .unwrap_err();
     assert!(matches!(error, ClientError::SchedulerUnreachable));
     assert_eq!(timer.now(), Duration::from_secs(5));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, position: Some(1) } if state == "queued"
+    )));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, AttachEvent::Settled(_))));
     server.join().unwrap();
 }
 

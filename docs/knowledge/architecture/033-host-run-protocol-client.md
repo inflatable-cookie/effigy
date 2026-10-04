@@ -51,7 +51,10 @@ used.
   same socket and retains any partial frame bytes. Request and status reads
   keep their existing timeout behavior. Unlaunched cancellations and capacity
   timeouts have no result. A lost launched run remains result-unknown; the
-  client never invents exit, signal or telemetry.
+  client never invents exit, signal or telemetry. If bounded attach recovery
+  cannot confirm settlement, Effigy has no operator-facing `host-run status`
+  command; Queue/Nucleus owns reconciliation through the host-run record. The
+  caller should reconcile the run id there before retrying.
 - Parent tokens use HMAC-SHA256 with current or immediately previous epoch
   keys, realpath root containment and expiry checks. Previous-epoch tokens also
   require status proof that the run is running at the current authority epoch.

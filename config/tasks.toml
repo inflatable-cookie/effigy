@@ -196,6 +196,13 @@
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
+# Private queued-follow causes plus bounded outage and fail-closed controls.
+"test:host-run:queued-follow" = [
+  "cargo test -p effigy-host-run --lib attach_queued_follow -- --nocapture",
+  "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture",
+  "cargo test -p effigy-host-run --lib protocol_tests::attach_recovery_fails_closed_on_token_key_mode_change_without_retry -- --exact --nocapture",
+  "cargo test -p effigy-host-run --lib protocol_tests::attach_recovery_does_not_retry_malformed_protocol -- --exact --nocapture",
+]
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration --test cli_output_tests"
 # Peer identity refusal on a live private fixture (papercut 8947d524): held
 # accepted stream through trust, closed-peer fail-closed distinction, and
