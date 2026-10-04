@@ -43,6 +43,7 @@ type MemberAttempt = Result<(String, String), (Box<RunnerError>, String, String)
 pub(super) fn execute_group_run(
     root: &Path,
     plan: &QaGroupPlan,
+    selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let run_id = generate_run_id();
@@ -59,7 +60,14 @@ pub(super) fn execute_group_run(
         None
     };
     if route == Some(Route::Submit) {
-        return submit_group_run(root, plan, output_json, &run_id, &selector);
+        return submit_group_run(
+            root,
+            plan,
+            selector_env_names,
+            output_json,
+            &run_id,
+            &selector,
+        );
     }
     let run_mode = if heavy {
         RunMode::Owned
@@ -143,6 +151,7 @@ fn backend_for(route: &Route, heavy: bool) -> Option<QaGroupBackend> {
 fn submit_group_run(
     root: &Path,
     plan: &QaGroupPlan,
+    selector_env_names: std::collections::BTreeSet<String>,
     output_json: bool,
     run_id: &str,
     selector: &str,
@@ -153,7 +162,7 @@ fn submit_group_run(
         class_source: effigy_host_run::ClassSource::Manifest,
         repository: root,
         cwd: &cwd,
-        selector_env_names: std::collections::BTreeSet::new(),
+        selector_env_names,
     })?;
     let host_scheduler::Settled::NotLaunched {
         run_id: scheduler_run_id,

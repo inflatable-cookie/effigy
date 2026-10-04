@@ -11,8 +11,9 @@ use effigy_host_run::{
     new_client_request_id, AttachEvent, BudgetFallback, ClassSource, ClientError, HostRunClient,
     HostRunRoot, OutputStream, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
 };
+use effigy_core::task_selection::{TaskSelector, TaskSurface};
 use effigy_manifest::{
-    ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv, ManifestTask,
+    LoadedCatalog, ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv, ManifestTask,
 };
 use serde_json::Value;
 
@@ -339,43 +340,185 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
     Ok(argv)
 }
 
-/// Environment names explicitly referenced by this selected task's `env`
-/// profile directives. These references already resolve from the process
-/// environment before env-schema and dotenv fallback, so carrying just those
-/// names preserves the selector's existing resolution behavior.
-pub(in crate::runner) fn selector_env_names(
-    task: &ManifestTask,
-    manifest_env_names: &BTreeSet<String>,
-) -> BTreeSet<String> {
+/// Process environment names explicitly referenced by a selected task or any
+/// task/draft it composes. Selector resolution follows the executor's catalog
+/// and surface rules; a visited set bounds cycles in composition graphs.
+pub(in crate::runner) fn selector_env_names_for_tasks<'a>(
+    roots: impl IntoIterator<Item = (&'a str, &'a str, TaskSurface)>,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+) -> Result<BTreeSet<String>, String> {
     let mut names = BTreeSet::new();
-    if let Some(run) = &task.run {
-        collect_selector_env_names(run, manifest_env_names, &mut names);
+    let mut visited = BTreeSet::new();
+    for (catalog_alias, task_name, surface) in roots {
+        let selector = TaskSelector {
+            prefix: Some(catalog_alias.to_owned()),
+            task_name: task_name.to_owned(),
+        };
+        let selection = effigy_routing::select_catalog_and_task_on_surface(
+            surface,
+            &selector,
+            catalogs,
+            invocation_cwd,
+        )
+        .map_err(|error| error.to_string())?;
+        collect_task_selector_env_names(
+            task_name,
+            selection.task,
+            selection.catalog,
+            surface,
+            catalogs,
+            invocation_cwd,
+            &mut visited,
+            &mut names,
+        )?;
     }
-    names
+    Ok(names)
 }
 
-fn collect_selector_env_names(
-    run: &ManifestManagedRun,
-    manifest_env_names: &BTreeSet<String>,
+type VisitedTask = (String, TaskSurface, String);
+
+fn collect_task_selector_env_names(
+    task_name: &str,
+    task: &ManifestTask,
+    catalog: &LoadedCatalog,
+    surface: TaskSurface,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    visited: &mut BTreeSet<VisitedTask>,
     names: &mut BTreeSet<String>,
-) {
+) -> Result<(), String> {
+    if !visited.insert((catalog.alias.clone(), surface, task_name.to_owned())) {
+        return Ok(());
+    }
+    if let Some(run) = &task.run {
+        collect_run_selector_env_names(
+            run,
+            catalog,
+            catalogs,
+            invocation_cwd,
+            visited,
+            names,
+        )?;
+    }
+    Ok(())
+}
+
+fn collect_run_selector_env_names(
+    run: &ManifestManagedRun,
+    catalog: &LoadedCatalog,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    visited: &mut BTreeSet<VisitedTask>,
+    names: &mut BTreeSet<String>,
+) -> Result<(), String> {
     let ManifestManagedRun::Sequence(steps) = run else {
-        return;
+        return Ok(());
     };
     for step in steps {
-        let ManifestManagedRunStep::Step(table) = step else {
-            continue;
-        };
-        let Some(ManifestRunStepEnv::Profile(profile)) = table.env.as_ref() else {
-            continue;
-        };
-        let profile = profile.trim();
-        // Qualified catalog env references resolve from manifests and never
-        // fall back to the caller's process environment.
-        if !profile.is_empty() && !profile.contains(':') && !manifest_env_names.contains(profile) {
-            names.insert(profile.to_owned());
+        match step {
+            ManifestManagedRunStep::Command(command) => {
+                if let Some(task_ref) = command
+                    .strip_prefix("task:")
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    collect_composed_task_selector_env_names(
+                        task_ref,
+                        TaskSurface::Published,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        visited,
+                        names,
+                    )?;
+                }
+            }
+            ManifestManagedRunStep::Step(table) => {
+                let table = table.as_ref();
+                if let Some(ManifestRunStepEnv::Profile(profile)) = table.env.as_ref() {
+                    let profile = profile.trim();
+                    let configured_in_catalog = catalog.manifest.env.contains_key(profile);
+                    // Qualified catalog env references and local manifest
+                    // profiles resolve from catalogs, never the caller's
+                    // process environment.
+                    if !profile.is_empty()
+                        && !profile.contains(':')
+                        && !configured_in_catalog
+                    {
+                        names.insert(profile.to_owned());
+                    }
+                }
+                if let Some(task_ref) = table.task.as_deref() {
+                    collect_composed_task_selector_env_names(
+                        task_ref,
+                        TaskSurface::Published,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        visited,
+                        names,
+                    )?;
+                }
+                if let Some(draft_ref) = table.draft.as_deref() {
+                    collect_composed_task_selector_env_names(
+                        draft_ref,
+                        TaskSurface::Draft,
+                        catalog,
+                        catalogs,
+                        invocation_cwd,
+                        visited,
+                        names,
+                    )?;
+                }
+            }
         }
     }
+    Ok(())
+}
+
+fn collect_composed_task_selector_env_names(
+    task_ref: &str,
+    surface: TaskSurface,
+    current_catalog: &LoadedCatalog,
+    catalogs: &[LoadedCatalog],
+    invocation_cwd: &Path,
+    visited: &mut BTreeSet<VisitedTask>,
+    names: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let (mut selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)?;
+    if let Some(prefix) = selector.prefix.as_deref() {
+        effigy_routing::resolve_catalog_by_prefix(prefix, catalogs, invocation_cwd).ok_or_else(|| {
+            format!("unknown catalog prefix `{prefix}` for composed task `{}`", selector.task_name)
+        })?;
+    } else {
+        // Sequence execution pins unqualified references to the catalog of
+        // the task currently being executed, rather than rerouting by cwd.
+        selector.prefix = Some(current_catalog.alias.clone());
+    }
+    if effigy_managed::BUILTIN_TASKS
+        .iter()
+        .any(|(name, _)| *name == selector.task_name)
+    {
+        return Ok(());
+    }
+    let selection = effigy_routing::select_catalog_and_task_on_surface(
+        surface,
+        &selector,
+        catalogs,
+        invocation_cwd,
+    )
+    .map_err(|error| error.to_string())?;
+    collect_task_selector_env_names(
+        &selector.task_name,
+        selection.task,
+        selection.catalog,
+        surface,
+        catalogs,
+        invocation_cwd,
+        visited,
+        names,
+    )
 }
 
 /// Project the caller's environment down to reviewed runtime controls and
