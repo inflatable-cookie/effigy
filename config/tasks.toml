@@ -249,6 +249,7 @@
 # them and sets the required-fixture gate so a missing server fails instead of
 # silently skipping proofs. The separate protocol selector covers the client
 # crate.
+"test:host-run:env-projection" = "cargo test -p effigy --lib host_scheduler::tests::submitted_environment_ -- --nocapture"
 "test:host-run:integration" = [
   "cargo test -p effigy --lib host_scheduler:: -- --nocapture",
   "cargo test -p effigy --lib container_command::shell_prep::tests::scheduler_tokens_are_not_forwarded_to_container_exec -- --nocapture",

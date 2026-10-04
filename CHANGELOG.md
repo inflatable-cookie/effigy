@@ -253,6 +253,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Heavy host-run submissions now send only reviewed Cargo/Rust runtime controls,
+  routing settings, and process variables explicitly referenced by the selected
+  task or its transitively composed published tasks and drafts. Heavy QA-group
+  submissions union those names from each resolved member using its declared
+  task or draft surface. Resolution follows existing catalog selectors and
+  guards composition cycles. Explicitly named process profiles retain their
+  existing process-environment fallback, while catalog-defined and qualified
+  profiles resolve from their manifests. Scheduler-provided PATH, HOME, run ID
+  and token, ambient credentials, and unrelated shell variables are excluded.
 - Host-run follow errors now direct unknown results to Queue/Nucleus for
   reconciliation by run id; they no longer recommend a nonexistent
   `host-run status` command.
