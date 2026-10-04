@@ -91,8 +91,8 @@ pub fn primary_checkout_fallback(repo_root: &Path, relative: &Path) -> Option<Pa
 /// - `.git` is a real directory: that path, constructed from `repo_root`.
 /// - `.git` is a file (`gitdir:`): the shared common dir when `commondir`
 ///   exists, otherwise the pointer target (separate-git-dir). The target must
-///   exist as a directory that contains `HEAD`. An unreadable or dangling
-///   marker is `InvalidData`, not a missing repo.
+///   exist as a directory that contains `HEAD` and is not `core.bare`. An
+///   unreadable, dangling, or bare marker is `InvalidData`, not a missing repo.
 ///
 /// Never creates `.git`. Paths come from the marker and Git's `commondir`
 /// file; callers must not invent sibling, home, or working-tree fallbacks.
@@ -127,7 +127,18 @@ fn resolve_gitfile_common_dir(repo_root: &Path) -> io::Result<Option<PathBuf>> {
             "linked worktree metadata is invalid",
         ));
     };
-    require_git_admin_dir(&layout.common_git_dir).map(Some)
+    let git_dir = require_git_admin_dir(&layout.common_git_dir)?;
+    if git_dir_is_bare(&git_dir)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "gitfile at {} points at a bare git directory {}",
+                repo_root.display(),
+                git_dir.display()
+            ),
+        ));
+    }
+    Ok(Some(git_dir))
 }
 
 fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
@@ -147,6 +158,64 @@ fn require_git_admin_dir(git_dir: &Path) -> io::Result<PathBuf> {
         ));
     }
     Ok(git_dir.to_path_buf())
+}
+
+/// Local `core.bare` only. Missing config is not bare. Unreadable config fails.
+fn git_dir_is_bare(git_dir: &Path) -> io::Result<bool> {
+    let raw = match fs::read_to_string(git_dir.join("config")) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    Ok(core_bare_is_true(&raw))
+}
+
+fn core_bare_is_true(raw: &str) -> bool {
+    let mut in_core = false;
+    for line in raw.lines() {
+        let line = strip_unquoted_config_comment(line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(header) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            in_core = header.trim().eq_ignore_ascii_case("core");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        match line.split_once('=') {
+            Some((name, value)) if name.trim().eq_ignore_ascii_case("bare") => {
+                return git_bool_is_true(value.trim());
+            }
+            None if line.eq_ignore_ascii_case("bare") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn git_bool_is_true(value: &str) -> bool {
+    let value = value.trim_matches('"');
+    value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("yes")
+        || value.eq_ignore_ascii_case("on")
+        || value == "1"
+}
+
+fn strip_unquoted_config_comment(line: &str) -> &str {
+    let mut in_quotes = false;
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            '#' | ';' if !in_quotes => return &line[..index],
+            _ => {}
+        }
+    }
+    line
 }
 
 fn invalid_git_marker(repo_root: &Path, reason: &str) -> io::Error {

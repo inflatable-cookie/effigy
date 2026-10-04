@@ -29,12 +29,24 @@ pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> io::Result<
 
 /// Path used in caller diagnostics when ignore registration fails.
 ///
-/// Prefer the resolved common exclude file; fall back to the ordinary
-/// `.git/info/exclude` spelling when the checkout is not a Git working tree.
+/// Prefer the resolved common exclude file. When `repo_root` is not a Git
+/// working tree, keep the ordinary `.git/info/exclude` spelling. When
+/// resolution fails and `.git` is a file, report that marker; never invent
+/// `.git/info/exclude` through a gitfile.
 pub fn git_local_exclude_path(repo_root: &Path) -> PathBuf {
     match resolve_common_git_dir(repo_root) {
         Ok(Some(git_dir)) => git_dir.join("info").join("exclude"),
-        _ => repo_root.join(".git").join("info").join("exclude"),
+        Ok(None) => repo_root.join(".git").join("info").join("exclude"),
+        Err(_) => diagnostic_path_for_unresolved_git_marker(repo_root),
+    }
+}
+
+fn diagnostic_path_for_unresolved_git_marker(repo_root: &Path) -> PathBuf {
+    let marker = repo_root.join(".git");
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) if metadata.is_file() => marker,
+        Ok(metadata) if metadata.file_type().is_symlink() && !marker.is_dir() => marker,
+        _ => marker.join("info").join("exclude"),
     }
 }
 

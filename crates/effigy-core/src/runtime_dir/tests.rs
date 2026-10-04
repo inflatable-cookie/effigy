@@ -320,6 +320,7 @@ fn invalid_gitfile_fails_without_worktree_writes() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(!root.join(".gitignore").exists());
     assert!(!root.join(".git/info").exists());
+    assert_eq!(git_local_exclude_path(root), root.join(".git"));
 }
 
 #[test]
@@ -336,6 +337,78 @@ fn gitfile_pointing_at_a_non_git_directory_fails_without_writing_there() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(!decoy.join("info").exists());
     assert!(!root.join(".gitignore").exists());
+    assert_eq!(git_local_exclude_path(&root), root.join(".git"));
+}
+
+#[test]
+fn gitfile_pointing_at_a_bare_admin_dir_is_refused_without_writing_there() {
+    let tmp = TempDir::new().expect("tempdir");
+    let checkout = tmp.path().join("checkout");
+    let bare = tmp.path().join("bare.git");
+    fs::create_dir_all(&checkout).expect("checkout");
+    git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", bare.display()),
+    )
+    .expect("gitfile");
+    fs::write(checkout.join("tracked.txt"), "keep\n").expect("tracked");
+    let exclude = bare.join("info/exclude");
+    let before = fs::read(&exclude).unwrap_or_default();
+    let status = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "status", "--porcelain"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git status");
+    assert!(
+        !status.status.success(),
+        "gitfile → bare is not a work tree"
+    );
+
+    let error = ensure_effigy_ignored_in_git_root(&checkout).expect_err("bare gitfile");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(fs::read(&exclude).unwrap_or_default(), before);
+    assert!(!checkout.join(".gitignore").exists());
+    assert_eq!(git_local_exclude_path(&checkout), checkout.join(".git"));
+}
+
+#[test]
+fn separate_git_dir_still_registers_common_exclude() {
+    let tmp = TempDir::new().expect("tempdir");
+    let checkout = tmp.path().join("checkout");
+    let admin = tmp.path().join("admin.git");
+    fs::create_dir_all(&checkout).expect("checkout");
+    git(
+        &checkout,
+        &[
+            "init",
+            "--quiet",
+            "--separate-git-dir",
+            admin.to_str().expect("utf8 admin"),
+        ],
+    );
+    fs::write(checkout.join("effigy.toml"), "[tasks]\nprobe = \"true\"\n").expect("manifest");
+    git(&checkout, &["add", "effigy.toml"]);
+    git(&checkout, &["commit", "--quiet", "-m", "init"]);
+    assert!(checkout.join(".git").is_file());
+
+    let changed = ensure_effigy_ignored_in_git_root(&checkout).expect("ignore");
+    assert!(changed);
+    assert!(!checkout.join(".gitignore").exists());
+    let exclude = admin.join("info/exclude");
+    assert!(
+        fs::read_to_string(&exclude)
+            .expect("admin exclude")
+            .lines()
+            .any(|line| line.trim() == ".effigy"),
+        "separate-git-dir exclude at {}",
+        exclude.display()
+    );
+    assert!(check_ignore(&checkout, ".effigy"));
+    assert_eq!(porcelain(&checkout), "");
 }
 
 #[test]
@@ -430,6 +503,20 @@ fn git_local_exclude_path_uses_common_dir_for_a_primary_checkout() {
     let root = tmp.path();
     fs::create_dir(root.join(".git")).expect("git dir");
     assert_eq!(git_local_exclude_path(root), root.join(".git/info/exclude"));
+}
+
+#[test]
+fn dangling_gitfile_diagnostic_does_not_invent_exclude_path() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    fs::write(root.join(".git"), "gitdir: /nope/does/not/exist\n").expect("pointer");
+    assert_eq!(git_local_exclude_path(root), root.join(".git"));
+    assert!(
+        !git_local_exclude_path(root)
+            .to_string_lossy()
+            .ends_with("info/exclude"),
+        "must not invent .git/info/exclude through a gitfile"
+    );
 }
 
 #[test]

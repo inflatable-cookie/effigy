@@ -3,7 +3,8 @@ use std::fs;
 use tempfile::TempDir;
 
 use super::{
-    detect_linked_worktree, lexically_normalize, primary_checkout_fallback, resolve_common_git_dir,
+    core_bare_is_true, detect_linked_worktree, lexically_normalize, primary_checkout_fallback,
+    resolve_common_git_dir,
 };
 
 struct WorktreeFixture {
@@ -133,4 +134,68 @@ fn resolve_common_git_dir_rejects_a_gitfile_whose_common_dir_has_no_head() {
     let fixture = linked_worktree_fixture();
     let error = resolve_common_git_dir(&fixture.worktree).expect_err("no HEAD");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn resolve_common_git_dir_rejects_a_gitfile_pointing_at_a_bare_directory() {
+    let root = TempDir::new().expect("tempdir");
+    let checkout = root.path().join("checkout");
+    let bare = root.path().join("bare");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&bare).expect("bare");
+    fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        bare.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+    )
+    .expect("config");
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", bare.display()),
+    )
+    .expect("gitfile");
+
+    let error = resolve_common_git_dir(&checkout).expect_err("bare gitfile");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("bare"));
+}
+
+#[test]
+fn resolve_common_git_dir_accepts_a_separate_git_dir_pointer() {
+    let root = TempDir::new().expect("tempdir");
+    let checkout = root.path().join("checkout");
+    let admin = root.path().join("admin");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&admin).expect("admin");
+    fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    fs::write(
+        admin.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = ../checkout\n",
+    )
+    .expect("config");
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", admin.display()),
+    )
+    .expect("gitfile");
+
+    assert_eq!(
+        resolve_common_git_dir(&checkout).expect("resolve"),
+        Some(admin)
+    );
+}
+
+#[test]
+fn core_bare_true_matches_git_booleans_and_ignores_other_sections() {
+    assert!(core_bare_is_true("[core]\n\tbare = true\n"));
+    assert!(core_bare_is_true("[core]\nbare = YES\n"));
+    assert!(core_bare_is_true("[core]\nbare = on # comment\n"));
+    assert!(core_bare_is_true("[core]\nbare = 1\n"));
+    assert!(core_bare_is_true("[core]\nbare\n"));
+    assert!(!core_bare_is_true("[core]\n\tbare = false\n"));
+    assert!(!core_bare_is_true(
+        "[core]\n\trepositoryformatversion = 0\n"
+    ));
+    assert!(!core_bare_is_true("[remote \"origin\"]\nbare = true\n"));
+    assert!(!core_bare_is_true(""));
 }
