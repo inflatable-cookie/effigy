@@ -697,3 +697,33 @@ repair, VM start, stack restart or release was performed. Historical admission
 state was preserved. The actual prior host `056111f` and Linux `47078933`
 channels, skill files and hashes are backed up in
 `~/.cache/effigy/rollbacks/runtime-ffdfc1f9-4cquw2gs/rollout-receipt.json`.
+
+## Release-unblock local refresh — 2026-10-04
+
+Under standing authority `b16abcd4`, the planner refreshed the host, ARM64
+Linux artifact and canonical skill to `v0.13.1+local.c6f4f33c`, pinned to
+`c6f4f33c0038b1f25cae335a35708a063f16c0d0`. Queue milestone
+`132db11b-5876-4099-abae-3aa9c2451735` passed setup, QA and teardown.
+Its capture recorded inherited parent-token children, the QA nested fact,
+unchanged historical admission state, no escaped descendants or reapers,
+and automatic capacity release at settlement.
+
+Host and native ARM64 Linux candidates passed version, light routing,
+unavailable-scheduler exit 75 and retired explicit-zero exit 2 checks, with
+no heavy-task effects. Whole JSON output parsed successfully on the host.
+Installed host checks passed and the previous `ffdfc1f9` binary remained
+usable as a rollback artifact. Backups, hashes, private checks and the
+install receipt are in
+`~/.cache/effigy/rollbacks/runtime-c6f4f33c-e7ycg0c7/rollout-receipt.json`.
+A private build-routing mistake stopped the first candidate attempt before
+compilation; the corrected attempt completed. No milestone rerun occurred.
+
+This includes #077 idle follower and #079 exact-unit unload verification;
+#078 doctor latency and #080 bulk ownership remain separate. Actual fresh
+Acowtancy stack acceptance of #073 failed provisioning throughput, and its
+log also recorded a deep Cargo checkout chown failure. The owning worker
+stopped that bootstrap, preserving services, volumes, logs and worktree.
+#080 must pass independent protection/throughput review, a later gated
+refresh and real consumer acceptance before that blocker is resolved.
+No live ownership cleanup, stack restart, VM start or release was performed
+by this refresh. Historical admission state stayed unchanged.
