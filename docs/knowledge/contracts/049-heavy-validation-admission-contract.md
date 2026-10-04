@@ -1,7 +1,7 @@
 # 049 - Heavy Validation Admission Contract
 
 Owner: Platform
-Last Updated: 2026-10-02
+Last Updated: 2026-10-04
 
 Heavy Effigy validation runs through the Queue/Nucleus host-run scheduler.
 Queue and Nucleus own admission, capacity, fairness, scheduling, run identity,
@@ -20,8 +20,8 @@ Tom's 2026-10-02 ruling (decision `219dc10a`) approves the coordinated
 retirement after Queue removes its legacy admission joins and that change is
 live. Queue PR 211 was reviewed at `c60d2333f6d1f4b7d056a142e31dafae638eff42`,
 merged as `42accd88473572ee192dde7439e1098547028b1e`, and the planner confirmed
-the current live source `d421820` contains that merge. The planner recorded
-live build `1ec45a12ce4f8a91` at 08:52:01Z. Current build
+the prerequisite live source `d421820` contains that merge. The planner recorded
+live build `1ec45a12ce4f8a91` at 08:52:01Z. The subsequent prerequisite build
 `2d9d4b1faeb17fcf`, PID `89978`, has been live since 08:59:09Z; its scheduler
 socket connection succeeded at 08:59:51Z. This evidence resolves the
 prerequisite for removing Effigy's former store and joins. The
@@ -44,6 +44,34 @@ history reader or migration product is introduced.
 Host-container lease reapers and other independent leases are not heavy-run
 admission and remain unchanged. Container execution continues to strip
 `HOST_RUN_TOKEN` and `HOST_RUN_ID` at container and `sudo` boundaries.
+
+## Verified local-channel retirement rollout
+
+Under ruling `219dc10a`, the planner refreshed the host, ARM64 Linux artifact
+and canonical installed skill on 2026-10-04 to `v0.13.1+local.47078933`, from
+exact reviewed source `47078933e81aca0c5e1477b8107ffd36339183ad`.
+Combined Queue milestone `55d6e801-afa1-4393-af4a-43d97bb79309` passed at
+that source with parent-token reuse, no legacy lease or escaped descendant,
+and automatic capacity release.
+
+The live follower proof `f972e238…` survived one supported Queue roll with
+an ENOENT gap of 1791 ms inside contract 010's 5 s window. Authority PID
+changed while epoch 1 and the signing key stayed unchanged. The follower
+received all 323 output markers exactly once; nested invocations before and
+after the roll reused the original run. Queue recorded one original
+submission, launch and passed settlement, with automatic capacity release.
+The bounded cancellation and installed nested-call proofs also settled
+cleanly, without escaped descendants or containers.
+
+Private host and native ARM64 Linux smokes passed. The new binary rejects
+explicit zero before effects; the backed-up prior binary passed a private
+legacy rollback proof. Historical admission files were hash-verified
+unchanged. Channel and skill backups, hashes, proof outputs and rollback
+instructions are in
+`~/.cache/effigy/rollbacks/retirement-47078933-bvk4csh1/rollout-receipt.json`.
+This was a local-channel refresh, with no release, global environment change,
+VM start, forced process restart or live cleanup. Later source-only catalog
+imports are not silently included in this pinned rollout.
 
 ## Scheduler routing
 
