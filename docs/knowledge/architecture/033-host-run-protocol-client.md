@@ -46,9 +46,12 @@ used.
   authority rediscovery and status recovery.
 - Attach tracks stdout and stderr byte offsets independently, trims duplicate
   retained prefixes, rejects gaps, reports `output_expired`, reconnects after
-  interrupted streams, and validates the final settlement. Unlaunched
-  cancellations and capacity timeouts have no result. A lost launched run
-  remains result-unknown; the client never invents exit, signal or telemetry.
+  interrupted streams, and validates the final settlement. Read timeouts while
+  waiting for an attach frame are transient idleness: the follower keeps the
+  same socket and retains any partial frame bytes. Request and status reads
+  keep their existing timeout behavior. Unlaunched cancellations and capacity
+  timeouts have no result. A lost launched run remains result-unknown; the
+  client never invents exit, signal or telemetry.
 - Parent tokens use HMAC-SHA256 with current or immediately previous epoch
   keys, realpath root containment and expiry checks. Previous-epoch tokens also
   require status proof that the run is running at the current authority epoch.

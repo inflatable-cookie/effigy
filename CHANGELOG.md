@@ -40,6 +40,10 @@ During v0.x, MINOR bumps may include breaking changes.
   or `output_expired` offsets do. Interrupt cancellation retries the same run
   ID through the same bounded endpoint roll. It never resubmits; trust/protocol
   failures fail closed, and exhaustion reports exit 75 with final state unknown.
+- Host-run followers now treat socket read timeouts during attach as temporary
+  idleness. They keep the same connection and any partial frame bytes while
+  waiting for later output or settlement; request/status deadlines and the
+  bounded endpoint recovery window are unchanged.
 - Bounded QA groups (contract 051) land through the existing task pipeline:
   `effigy tasks qa-groups list [FILTER] [--file PATH]` inventories maintained
   `[qa.groups]` definitions plus at most one explicit temporary definition

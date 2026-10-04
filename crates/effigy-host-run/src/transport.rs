@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 const ATTACH_RECONNECT_WINDOW: Duration = Duration::from_secs(5);
 const ATTACH_RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(50);
 const ATTACH_RECONNECT_MAX_BACKOFF: Duration = Duration::from_millis(500);
+const ATTACH_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -391,6 +392,7 @@ pub struct HostRunClient {
     clock: Arc<dyn Clock>,
     identity: Arc<dyn IdentityProvider>,
     reconnect_timer: Arc<dyn ReconnectTimer>,
+    attach_read_timeout: Duration,
 }
 
 impl HostRunClient {
@@ -401,6 +403,7 @@ impl HostRunClient {
             clock: Arc::new(SystemClock),
             identity: Arc::new(SystemIdentityProvider),
             reconnect_timer: Arc::new(SystemReconnectTimer::default()),
+            attach_read_timeout: ATTACH_READ_TIMEOUT,
         }
     }
 
@@ -415,6 +418,11 @@ impl HostRunClient {
     #[cfg(test)]
     pub(crate) fn with_reconnect_timer(mut self, timer: Arc<dyn ReconnectTimer>) -> Self {
         self.reconnect_timer = timer;
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn with_attach_read_timeout(mut self, timeout: Duration) -> Self {
+        self.attach_read_timeout = timeout;
         self
     }
     pub fn authority(&self) -> &Authority {
@@ -726,6 +734,7 @@ impl HostRunClient {
                     Err(error) => return Err(error),
                 }
             };
+            stream.set_read_timeout(Some(self.attach_read_timeout))?;
             let body =
                 json!({"runId":run_id,"fromOffset":{"stdout":expected[0],"stderr":expected[1]}});
             let request = request("attach", self.authority.epoch, &body)?;
@@ -739,7 +748,7 @@ impl HostRunClient {
             }
             let mut reader = BufReader::new(stream);
             loop {
-                let frame = match read_frame(&mut reader) {
+                let frame = match read_attach_frame(&mut reader) {
                     Ok(frame) => frame,
                     Err(error) if is_transport_closure(&error) => {
                         schedule_attach_recovery(&mut recovery, self.reconnect_timer.now());
@@ -887,10 +896,7 @@ impl HostRunClient {
             .map_err(classify_recovery_connect_error)?;
         self.recovery_time_left(started_at)?;
         stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .map_err(|error| RecoveryError::Fail(ClientError::Io(error)))?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(60)))
+            .set_write_timeout(Some(ATTACH_READ_TIMEOUT))
             .map_err(|error| RecoveryError::Fail(ClientError::Io(error)))?;
         Ok(stream)
     }
@@ -1324,10 +1330,32 @@ fn write_request(writer: &mut impl Write, value: &Value) -> Result<(), ClientErr
     Ok(())
 }
 
+pub(crate) fn is_attach_idle_read_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
+}
+
 fn read_frame(reader: &mut impl BufRead) -> Result<Vec<u8>, ClientError> {
+    read_frame_with_idle_timeouts(reader, false)
+}
+
+fn read_attach_frame(reader: &mut impl BufRead) -> Result<Vec<u8>, ClientError> {
+    read_frame_with_idle_timeouts(reader, true)
+}
+
+fn read_frame_with_idle_timeouts(
+    reader: &mut impl BufRead,
+    retry_idle_timeouts: bool,
+) -> Result<Vec<u8>, ClientError> {
     let mut frame = Vec::new();
     loop {
-        let available = reader.fill_buf()?;
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if retry_idle_timeouts && is_attach_idle_read_error(&error) => continue,
+            Err(error) => return Err(ClientError::Io(error)),
+        };
         if available.is_empty() {
             return Err(ClientError::Io(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
