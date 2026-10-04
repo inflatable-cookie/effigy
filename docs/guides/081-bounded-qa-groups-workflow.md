@@ -14,6 +14,11 @@ Architecture: [031](../knowledge/architecture/031-bounded-qa-groups-runtime.md)
 
 ## Group workflow
 
+Use the global `--json` prefix for automation so each QA-group response uses
+the canonical `effigy.command.v1` envelope. The local `--json` forms on list,
+run/plan, and status suppress the banner and return the QA-group schema
+directly; `logs` accepts only the global form.
+
 Inventory maintained groups and run a selected group through the `tasks`
 dispatcher. Repositories (or environments) without groups keep the plain
 selector workflow — `effigy tasks`, `effigy <selector> --plan`,

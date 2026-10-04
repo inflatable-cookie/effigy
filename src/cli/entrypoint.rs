@@ -6,7 +6,7 @@ use crate::{
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command,
     runtime_flag_present_before_passthrough, strip_global_cli_flags, Command, GlobalCliOptions,
-    GraphSubcommand,
+    GraphSubcommand, TasksQaCommand,
 };
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
@@ -99,8 +99,11 @@ pub fn run_cli(raw_args: Vec<String>) {
     let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
-    let suppress_header = internal_suppress_header || command_requests_json(&cmd, global_json_mode);
-    let emit_json_envelope = !internal_suppress_header && suppress_header;
+    let local_qa_json = !global_json_mode && command_requests_local_qa_json(&cmd);
+    let suppress_header =
+        internal_suppress_header || command_requests_json(&cmd, global_json_mode) || local_qa_json;
+    let emit_json_envelope =
+        !internal_suppress_header && command_requests_json(&cmd, global_json_mode);
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let runtime_context = match EffigyRuntimeContext::capture_lossy(
         Some(cwd.clone()),
@@ -278,6 +281,18 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
 
 fn command_owns_task_stdout(command: &Command) -> bool {
     matches!(command, Command::Task(_) | Command::Draft(_))
+}
+
+fn command_requests_local_qa_json(command: &Command) -> bool {
+    let Command::Tasks(args) = command else {
+        return false;
+    };
+    match args.qa.as_ref() {
+        Some(TasksQaCommand::GroupsList { output_json, .. })
+        | Some(TasksQaCommand::GroupRun { output_json, .. })
+        | Some(TasksQaCommand::GroupStatus { output_json, .. }) => *output_json,
+        Some(TasksQaCommand::GroupLogs { .. } | TasksQaCommand::GroupStop { .. }) | None => false,
+    }
 }
 
 fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Command) -> bool {

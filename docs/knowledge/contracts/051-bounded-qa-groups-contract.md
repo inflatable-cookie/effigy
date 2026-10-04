@@ -445,8 +445,14 @@ member role/selector/args/state, admission wait, execution wall time, expected
 time, budget state, and log/status commands. It labels unavailable timing
 `unknown`.
 
-Result payloads use versioned schemas inside Effigy's existing JSON
-command envelope:
+Global `effigy --json` wraps QA-group responses in Effigy's existing
+`effigy.command.v1` envelope. For convenience, local `--json` on list, run
+(including `--plan`), and status emits the QA-group payload directly and
+suppresses the CLI banner. Prefer the global prefix for machine integrations.
+`logs` supports the global JSON envelope only; a local `logs --json` remains
+unsupported because logs render text.
+
+The QA-group payload schemas are:
 
 - `effigy.qa-groups.v1` for inventory and definition provenance;
 - `effigy.qa-group-plan.v1` for non-executing resolution and target/member
