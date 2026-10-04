@@ -61,9 +61,10 @@ does not provide them directly:
 - container-local TCP alias visibility inside Effigy-owned execution targets
 - generated Compose values that need a literal `$` for the container shell
   (`$code` written as `$$code` so Compose interpolation does not blank it)
-- owned disposable rust/cargo/target named volumes prepared for the
-  resolved workspace uid/gid, with actual non-root write/lock verification
-  before children launch
+- exclusive owned disposable rust/cargo/target named volumes prepared for
+  the resolved workspace uid/gid, with actual non-root write/lock
+  verification before children launch; named volumes shared by two or more
+  compose or managed services are not mutated
 
 These are legitimate product behaviors as long as:
 

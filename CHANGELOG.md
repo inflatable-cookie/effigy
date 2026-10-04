@@ -337,10 +337,14 @@ During v0.x, MINOR bumps may include breaking changes.
   exec, and routed tasks resolve numeric uid/gid, classify named cargo/target
   volumes as owned-disposable versus bind rust paths as verify-only, then
   verify actual read/write/create-lock as that non-root user before claiming
-  ready. `effigy doctor` `container.workspace-ownership` stays read-only,
-  covers Cargo paths and declared target mounts, and distinguishes
-  not-probed/stopped/unavailable from clean. Bind host sources, shared
-  volumes, and symlinks are not mutated.
+  ready. Named volumes used by two or more compose or managed services are
+  not mutated (rust caches verify-only; other shared named volumes
+  forbidden). `effigy doctor` `container.workspace-ownership` stays
+  read-only, covers Cargo paths and declared target mounts, probes nested
+  rust lock/cache paths with per-mount inspect subprocesses and early-exit
+  after the first sample, and distinguishes not-probed/stopped/unavailable
+  from clean. Bind host sources, shared volumes, and symlinks are not
+  mutated. Anonymous colon-less rust target mounts stay owned-disposable.
 - Generated `AGENTS.md` Effigy Agent Contract now links its reference docs as
   upstream Effigy repository URLs instead of nonexistent consumer-relative
   paths; rerunning init rewrites the managed block only.

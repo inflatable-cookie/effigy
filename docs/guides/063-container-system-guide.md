@@ -588,19 +588,27 @@ callers run without one.
 
 Headless workspace, primary-service exec, and routed tasks prepare declared
 disposable Rust build/cache paths for that resolved numeric user before
-children launch. Named cargo/target volumes are repaired and then verified
-with an actual read/write/create-lock probe. Bind-mounted rust paths are
-probed only; Effigy never recursively chowns host source, siblings, or
-shared caches. Isolate `target` with catalog `isolated_dirs` when the host
-bind is unwritable inside the container. A matching owner at the mount root
-is not enough: nested `target/debug/.cargo-build-lock` and Cargo
-`registry/src` / `git/checkouts` must be usable by the resolved user.
+children launch. Named cargo/target volumes exclusive to the primary
+service are repaired and then verified with an actual read/write/create-lock
+probe. Named volumes also mounted by another compose or managed service are
+not mutated: rust caches are probed only, and other shared named volumes
+are refused. Bind-mounted rust paths are probed only; Effigy never
+recursively chowns host source, siblings, or shared caches. Isolate
+`target` with catalog `isolated_dirs` when the host bind is unwritable
+inside the container. A matching owner at the mount root is not enough:
+nested `target/debug/.cargo-build-lock` and Cargo `registry/src` /
+`git/checkouts` must be usable by the resolved user. Anonymous colon-less
+compose mounts such as `/workspace-root/api/target` stay classified as
+named-volume owned-disposable rust targets.
 
 For a running workspace, `effigy doctor` remains read-only and reports
-`container.workspace-ownership` when declared cargo/target mounts, managed
-disposable volumes, or `$BUN_INSTALL/install` are unusable by the resolved
-workspace uid/gid. Stopped, unavailable, and no-workspace-user states are
-distinct from clean. The finding is not a license to chown the checkout.
+`container.workspace-ownership` when declared cargo/target mounts, their
+nested rust lock/cache paths, managed disposable volumes, or
+`$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
+check probes those paths with per-mount inspect subprocesses and stops
+nested probes on a mount after the first sample; it does not walk the
+mount. Stopped, unavailable, and no-workspace-user states are distinct from
+clean. The finding is not a license to chown the checkout.
 
 ## Data Lifecycle
 

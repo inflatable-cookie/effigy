@@ -458,22 +458,26 @@ fn verify_target(
 }
 
 fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
-    match target.rust_cache {
+    rust_nested_probe_paths(&target.path, target.rust_cache)
+}
+
+fn rust_nested_probe_paths(path: &str, rust_cache: Option<WorkspaceRustCacheKind>) -> Vec<String> {
+    match rust_cache {
         Some(WorkspaceRustCacheKind::RustTarget) => {
             vec![
-                format!("{}/debug", target.path),
-                format!("{}/debug/.cargo-build-lock", target.path),
+                format!("{path}/debug"),
+                format!("{path}/debug/.cargo-build-lock"),
             ]
         }
         Some(WorkspaceRustCacheKind::CargoGit) => {
-            vec![format!("{}/checkouts", target.path)]
+            vec![format!("{path}/checkouts")]
         }
         Some(WorkspaceRustCacheKind::CargoRegistry) => {
-            vec![format!("{}/src", target.path)]
+            vec![format!("{path}/src")]
         }
         Some(WorkspaceRustCacheKind::CargoHome) => vec![
-            format!("{}/registry/src", target.path),
-            format!("{}/git/checkouts", target.path),
+            format!("{path}/registry/src"),
+            format!("{path}/git/checkouts"),
         ],
         None => Vec::new(),
     }
@@ -627,20 +631,30 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
         }
     };
     let mut samples = Vec::new();
-    let mut paths: Vec<String> = plan
-        .targets
-        .iter()
-        .filter(|target| {
-            target.rust_cache.is_some()
-                || target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
-        })
-        .map(|target| target.path.clone())
-        .collect();
-    paths.extend(extra_env_targets.iter().cloned());
-    paths.sort();
-    paths.dedup();
-    for path in paths {
-        match inspect_doctor_path(backend, &identity, &path) {
+    for target in &plan.targets {
+        if target.rust_cache.is_none()
+            && target.repair_authority != WorkspaceRepairAuthority::OwnedDisposable
+        {
+            continue;
+        }
+        match inspect_declared_mount(backend, &identity, &target.path, target.rust_cache) {
+            Ok(found) => samples.extend(found),
+            Err(error) => {
+                return WorkspaceOwnershipDiagnosis {
+                    status: WorkspaceOwnershipProbeStatus::Unavailable,
+                    evidence: None,
+                    warning: Some(format!(
+                        "container `{}` workspace ownership probe failed: {}",
+                        policy.name, error.message
+                    )),
+                    samples: Vec::new(),
+                    identity: Some(identity),
+                };
+            }
+        }
+    }
+    for extra in extra_env_targets {
+        match inspect_doctor_path(backend, &identity, extra) {
             Ok(found) => samples.extend(found),
             Err(error) => {
                 return WorkspaceOwnershipDiagnosis {
@@ -678,6 +692,26 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
     }
 }
 
+fn inspect_declared_mount(
+    backend: &mut impl WorkspaceAccessBackend,
+    identity: &ResolvedWorkspaceIdentity,
+    path: &str,
+    rust_cache: Option<WorkspaceRustCacheKind>,
+) -> Result<Vec<String>, PermissionPrepError> {
+    let mut samples = inspect_doctor_path(backend, identity, path)?;
+    if !samples.is_empty() {
+        return Ok(samples);
+    }
+    for nested in rust_nested_probe_paths(path, rust_cache) {
+        let found = inspect_doctor_path(backend, identity, &nested)?;
+        if !found.is_empty() {
+            samples.extend(found);
+            break;
+        }
+    }
+    Ok(samples)
+}
+
 fn inspect_doctor_path(
     backend: &mut impl WorkspaceAccessBackend,
     identity: &ResolvedWorkspaceIdentity,
@@ -695,9 +729,8 @@ fn inspect_doctor_path(
     if !backend.user_can_read_write(identity, path)? {
         samples.push(format!("{path}\tunwritable-by-uid-{}", identity.uid));
     }
-    let unowned = backend.list_unowned(path, identity.uid, identity.gid)?;
-    if let Some(sample) = unowned.into_iter().next() {
-        samples.push(format!("{path}\t{sample}"));
+    if inspection.uid != Some(identity.uid) || inspection.gid != Some(identity.gid) {
+        samples.push(format!("{path}\t{path}"));
     }
     Ok(samples)
 }
@@ -940,6 +973,7 @@ fn parse_inspect_output(raw: &str) -> Result<PathInspection, PermissionPrepError
 #[cfg(test)]
 mod memory_backend {
     use super::*;
+    use std::cell::{Cell, RefCell};
     use std::collections::{BTreeMap, BTreeSet};
 
     #[derive(Debug, Clone)]
@@ -969,6 +1003,8 @@ mod memory_backend {
         pub chown_log: Vec<String>,
         pub chmod_log: Vec<String>,
         pub created_locks: Vec<String>,
+        pub inspect_log: RefCell<Vec<String>>,
+        pub list_unowned_calls: Cell<usize>,
         protected: BTreeSet<String>,
         foreign: BTreeSet<String>,
         read_only: BTreeSet<String>,
@@ -993,6 +1029,8 @@ mod memory_backend {
                 chown_log: Vec::new(),
                 chmod_log: Vec::new(),
                 created_locks: Vec::new(),
+                inspect_log: RefCell::new(Vec::new()),
+                list_unowned_calls: Cell::new(0),
                 protected: BTreeSet::new(),
                 foreign: BTreeSet::new(),
                 read_only: BTreeSet::new(),
@@ -1190,6 +1228,7 @@ mod memory_backend {
         }
 
         fn inspect(&self, path: &str) -> Result<PathInspection, PermissionPrepError> {
+            self.inspect_log.borrow_mut().push(path.to_owned());
             let Some(node) = self.node(path) else {
                 return Ok(PathInspection {
                     presence: PathPresence::Missing,
@@ -1264,6 +1303,8 @@ mod memory_backend {
             uid: u32,
             gid: u32,
         ) -> Result<Vec<String>, PermissionPrepError> {
+            self.list_unowned_calls
+                .set(self.list_unowned_calls.get() + 1);
             let mut out = Vec::new();
             collect_unowned(self.node(path), path, uid, gid, &mut out);
             Ok(out)
@@ -1669,6 +1710,107 @@ mod tests {
             .unwrap_or_default()
             .contains("compose ps failed"));
         assert!(diagnosis.evidence.is_none());
+    }
+
+    #[test]
+    fn doctor_does_not_walk_unowned_tree() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        policy.managed_volumes = vec![ManagedVolume {
+            name: "demo-cargo-registry".to_owned(),
+            service: "workspace".to_owned(),
+            persist: true,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/usr/local/cargo/registry".to_owned()),
+        }];
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/usr/local/cargo/registry", 501, 20, 0o755);
+        backend.add_dir("/usr/local/cargo/registry/src", 0, 0, 0o755);
+        backend.add_dir("/usr/local/cargo/registry/src/crate-a", 0, 0, 0o755);
+        backend.add_file("/usr/local/cargo/registry/src/crate-a/lib.rs", 0, 0, 0o644);
+        backend.add_dir("/usr/local/cargo/registry/src/crate-b", 0, 0, 0o755);
+        let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        let inspected = backend.inspect_log.borrow().clone();
+        assert!(inspected.contains(&"/usr/local/cargo/registry".to_owned()));
+        assert!(inspected.contains(&"/usr/local/cargo/registry/src".to_owned()));
+        assert!(!inspected
+            .iter()
+            .any(|path| path.contains("crate-a") || path.contains("crate-b")));
+    }
+
+    #[test]
+    fn doctor_stops_nested_probes_after_first_sample() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        policy.managed_volumes = vec![ManagedVolume {
+            name: "demo-target".to_owned(),
+            service: "workspace".to_owned(),
+            persist: false,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/workspace/target".to_owned()),
+        }];
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 0, 0, 0o755);
+        backend.add_dir("/workspace/target/debug", 0, 0, 0o755);
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 0, 0, 0o644);
+        let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        let inspected = backend.inspect_log.borrow().clone();
+        assert_eq!(inspected, vec!["/workspace/target".to_owned()]);
+        assert!(finding
+            .samples
+            .iter()
+            .any(|sample| sample.contains("/workspace/target")));
+    }
+
+    #[test]
+    fn shared_named_rust_volume_prep_does_not_chown() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let compose = temp.path().join("docker-compose.yml");
+        std::fs::write(
+            &compose,
+            r#"
+services:
+  workspace:
+    volumes:
+      - demo-cargo-git:/usr/local/cargo/git
+  sidecar:
+    volumes:
+      - demo-cargo-git:/usr/local/cargo/git
+"#,
+        )
+        .expect("compose");
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", compose);
+        policy.workspace_user = Some("dev".to_owned());
+        policy.repo_root = temp.path().to_path_buf();
+        let plan = load_workspace_ownership_plan(&policy).expect("plan");
+        let git = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/usr/local/cargo/git")
+            .expect("git");
+        assert_eq!(git.repair_authority, WorkspaceRepairAuthority::VerifyOnly);
+
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/usr/local/cargo/git", 0, 0, 0o755);
+        backend.add_dir("/usr/local/cargo/git/checkouts", 0, 0, 0o755);
+        let error = prepare_workspace_permissions("dev", &plan, None, &context(), &mut backend)
+            .expect_err("shared rust named volume must fail closed");
+        assert!(error.message.contains("uid=501"));
+        assert!(error.message.contains("gid=20"));
+        assert!(backend.chown_log.is_empty());
+        assert_eq!(backend.owner_of("/usr/local/cargo/git"), Some((0, 0)));
+        assert_eq!(
+            backend.owner_of("/usr/local/cargo/git/checkouts"),
+            Some((0, 0))
+        );
     }
 
     #[test]

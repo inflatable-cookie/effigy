@@ -532,6 +532,8 @@ Fix:
 - bind-mounted rust paths stay verify-only: isolate `target` with catalog
   `isolated_dirs`, or repair the host mount for the resolved uid without a
   recursive host-source chown
+- named volumes also mounted by another compose or managed service are not
+  mutated; isolate them or give the primary service an exclusive volume
 - rerun `effigy doctor --verbose`
 
 The finding is read-only. Stopped or unavailable workspaces are not reported

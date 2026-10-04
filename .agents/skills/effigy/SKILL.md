@@ -237,8 +237,10 @@ even during forced local-dev unlock. Guide:
 **Workspace identity** — primary-service `effigy exec` and host-routed
 workspace tasks use the declared `workspace_user` and `workspace_home`.
 Those paths, plus headless workspace handoff, prepare owned disposable
-rust/cargo/target named volumes for the resolved uid/gid and verify
-read/write/lock before children launch. Bind rust paths are probed only.
+rust/cargo/target named volumes exclusive to the primary service for the
+resolved uid/gid and verify read/write/lock before children launch. Bind
+rust paths and named volumes shared with another compose or managed
+service are probed only.
 `effigy exec` from a non-console caller does not request a TTY. Use
 `effigy doctor --verbose` to find
 read-only `container.workspace-ownership` findings for cargo/target,

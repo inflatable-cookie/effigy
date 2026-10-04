@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
@@ -86,6 +86,25 @@ pub fn load_workspace_ownership_plan(
         );
     }
 
+    let mut named_volume_users = named_volume_users_from_managed(&policy.managed_volumes);
+    let mut parsed_compose = Vec::new();
+    for compose_file in &policy.compose_files {
+        let content =
+            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+                path: compose_file.clone(),
+                error,
+            })?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to parse compose file {} for workspace ownership targets: {error}",
+                compose_file.display()
+            ))
+        })?;
+        merge_named_volume_users(&mut named_volume_users, &parsed);
+        parsed_compose.push(parsed);
+    }
+    let shared_named_volumes = shared_named_volume_names(&named_volume_users);
+
     for volume in &policy.managed_volumes {
         if volume.service != policy.primary_service {
             continue;
@@ -99,31 +118,19 @@ pub fn load_workspace_ownership_plan(
             continue;
         };
         let rust_cache = rust_cache_kind(path, Some(volume.name.as_str()));
-        insert_target(
-            &mut by_path,
-            WorkspaceOwnershipTarget {
-                path: path.to_owned(),
-                mount_kind: WorkspaceMountKind::NamedVolume,
-                source: Some(volume.name.clone()),
-                repair_authority: WorkspaceRepairAuthority::OwnedDisposable,
-                rust_cache,
-                read_only: false,
-            },
-        );
+        let mut target = WorkspaceOwnershipTarget {
+            path: path.to_owned(),
+            mount_kind: WorkspaceMountKind::NamedVolume,
+            source: Some(volume.name.clone()),
+            repair_authority: WorkspaceRepairAuthority::OwnedDisposable,
+            rust_cache,
+            read_only: false,
+        };
+        apply_shared_named_volume_policy(&mut target, &shared_named_volumes);
+        insert_target(&mut by_path, target);
     }
 
-    for compose_file in &policy.compose_files {
-        let content =
-            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-                path: compose_file.clone(),
-                error,
-            })?;
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "failed to parse compose file {} for workspace ownership targets: {error}",
-                compose_file.display()
-            ))
-        })?;
+    for parsed in &parsed_compose {
         let Some(service) = parsed
             .get("services")
             .and_then(|services| services.get(policy.primary_service.as_str()))
@@ -137,7 +144,7 @@ pub fn load_workspace_ownership_plan(
         else {
             continue;
         };
-        let external_volumes = compose_external_volume_names(&parsed);
+        let external_volumes = compose_external_volume_names(parsed);
         for entry in volumes {
             let Some(mut classified) = classify_compose_volume_entry(entry) else {
                 continue;
@@ -149,6 +156,7 @@ pub fn load_workspace_ownership_plan(
                     }
                 }
             }
+            apply_shared_named_volume_policy(&mut classified, &shared_named_volumes);
             insert_target(&mut by_path, classified);
         }
     }
@@ -210,6 +218,12 @@ fn classify_short_volume(raw: &str) -> Option<WorkspaceOwnershipTarget> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
+    }
+    if !raw.contains(':') {
+        return raw
+            .starts_with('/')
+            .then(|| classify_mount("", raw, false))
+            .flatten();
     }
     let (source, target, options) = parse_mount_parts(raw)?;
     if target.trim().is_empty() {
@@ -362,6 +376,113 @@ fn mapping_string(mapping: &serde_yaml::Mapping, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn apply_shared_named_volume_policy(
+    target: &mut WorkspaceOwnershipTarget,
+    shared_named_volumes: &BTreeSet<String>,
+) {
+    if target.mount_kind != WorkspaceMountKind::NamedVolume {
+        return;
+    }
+    if target.repair_authority == WorkspaceRepairAuthority::Forbidden {
+        return;
+    }
+    let Some(source) = target.source.as_deref() else {
+        return;
+    };
+    if !shared_named_volumes.contains(source) {
+        return;
+    }
+    target.repair_authority = if target.rust_cache.is_some() {
+        WorkspaceRepairAuthority::VerifyOnly
+    } else {
+        WorkspaceRepairAuthority::Forbidden
+    };
+}
+
+fn named_volume_users_from_managed(
+    volumes: &[effigy_catalog::volumes::ManagedVolume],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut users: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for volume in volumes {
+        let name = volume.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        users
+            .entry(name.to_owned())
+            .or_default()
+            .insert(volume.service.clone());
+    }
+    users
+}
+
+fn merge_named_volume_users(
+    users: &mut BTreeMap<String, BTreeSet<String>>,
+    parsed: &serde_yaml::Value,
+) {
+    let Some(services) = parsed
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return;
+    };
+    for (service_key, service) in services {
+        let Some(service_name) = service_key.as_str() else {
+            continue;
+        };
+        let Some(volumes) = service
+            .get("volumes")
+            .and_then(serde_yaml::Value::as_sequence)
+        else {
+            continue;
+        };
+        for entry in volumes {
+            if let Some(name) = named_volume_source_from_entry(entry) {
+                users
+                    .entry(name)
+                    .or_default()
+                    .insert(service_name.to_owned());
+            }
+        }
+    }
+}
+
+fn named_volume_source_from_entry(entry: &serde_yaml::Value) -> Option<String> {
+    match entry {
+        serde_yaml::Value::String(raw) => {
+            let raw = raw.trim();
+            if !raw.contains(':') {
+                return None;
+            }
+            let (source, _target, _options) = parse_mount_parts(raw)?;
+            if source.is_empty() || looks_like_bind_mount_source(source) {
+                return None;
+            }
+            Some(source.to_owned())
+        }
+        serde_yaml::Value::Mapping(mapping) => {
+            let type_hint = mapping_string(mapping, "type");
+            if type_hint.as_deref() == Some("bind") || type_hint.as_deref() == Some("tmpfs") {
+                return None;
+            }
+            let source = mapping_string(mapping, "source").unwrap_or_default();
+            if source.is_empty() || looks_like_bind_mount_source(&source) {
+                return None;
+            }
+            Some(source)
+        }
+        _ => None,
+    }
+}
+
+fn shared_named_volume_names(users: &BTreeMap<String, BTreeSet<String>>) -> BTreeSet<String> {
+    users
+        .iter()
+        .filter(|(_, services)| services.len() >= 2)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +622,133 @@ services:
             .targets
             .iter()
             .any(|target| target.path == "/workspace-root"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn anonymous_rust_target_volume_is_owned_disposable() {
+        let root = temp_root("anon-target");
+        let policy = policy_with_compose(
+            &root,
+            r#"
+services:
+  workspace:
+    volumes:
+      - /workspace-root/api/target
+      - /workspace-root
+"#,
+        );
+        let plan = load_workspace_ownership_plan(&policy).expect("plan");
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/workspace-root/api/target")
+            .expect("anonymous target");
+        assert_eq!(target.mount_kind, WorkspaceMountKind::NamedVolume);
+        assert_eq!(
+            target.repair_authority,
+            WorkspaceRepairAuthority::OwnedDisposable
+        );
+        assert_eq!(target.rust_cache, Some(WorkspaceRustCacheKind::RustTarget));
+        assert!(plan
+            .owned_disposable_paths()
+            .iter()
+            .any(|path| path == "/workspace-root/api/target"));
+        assert!(plan
+            .targets
+            .iter()
+            .any(|target| target.path == "/workspace-root"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shared_named_volume_across_workspace_and_sidecar_is_not_owned_disposable() {
+        let root = temp_root("shared-named");
+        let policy = policy_with_compose(
+            &root,
+            r#"
+services:
+  workspace:
+    volumes:
+      - demo-cargo-git:/usr/local/cargo/git
+      - demo-cargo-registry:/usr/local/cargo/registry
+      - demo-cache:/cache
+  sidecar:
+    volumes:
+      - demo-cargo-git:/usr/local/cargo/git
+      - demo-cache:/cache
+"#,
+        );
+        let plan = load_workspace_ownership_plan(&policy).expect("plan");
+        let git = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/usr/local/cargo/git")
+            .expect("git");
+        assert_eq!(git.mount_kind, WorkspaceMountKind::NamedVolume);
+        assert_eq!(git.rust_cache, Some(WorkspaceRustCacheKind::CargoGit));
+        assert_eq!(git.repair_authority, WorkspaceRepairAuthority::VerifyOnly);
+        assert!(!plan
+            .owned_disposable_paths()
+            .iter()
+            .any(|path| path == "/usr/local/cargo/git"));
+
+        let registry = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/usr/local/cargo/registry")
+            .expect("registry");
+        assert_eq!(
+            registry.repair_authority,
+            WorkspaceRepairAuthority::OwnedDisposable
+        );
+
+        let cache = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/cache")
+            .expect("cache");
+        assert_eq!(cache.rust_cache, None);
+        assert_eq!(cache.repair_authority, WorkspaceRepairAuthority::Forbidden);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn managed_volume_shared_with_another_service_is_verify_only() {
+        let root = temp_root("managed-shared");
+        let mut policy = policy_with_compose(
+            &root,
+            r#"
+services:
+  workspace:
+    volumes: []
+"#,
+        );
+        policy.managed_volumes = vec![
+            ManagedVolume {
+                name: "demo-cargo-git".to_owned(),
+                service: "workspace".to_owned(),
+                persist: true,
+                size_bytes: None,
+                mount_point: None,
+                mount_target: Some("/usr/local/cargo/git".to_owned()),
+            },
+            ManagedVolume {
+                name: "demo-cargo-git".to_owned(),
+                service: "sidecar".to_owned(),
+                persist: true,
+                size_bytes: None,
+                mount_point: None,
+                mount_target: Some("/usr/local/cargo/git".to_owned()),
+            },
+        ];
+        let plan = load_workspace_ownership_plan(&policy).expect("plan");
+        let git = plan
+            .targets
+            .iter()
+            .find(|target| target.path == "/usr/local/cargo/git")
+            .expect("git");
+        assert_eq!(git.repair_authority, WorkspaceRepairAuthority::VerifyOnly);
         let _ = fs::remove_dir_all(root);
     }
 

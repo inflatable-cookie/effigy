@@ -494,11 +494,13 @@ before children launch:
 Preparation classifies each declared mount from current policy and compose
 source, not from the host login name:
 
-- Effigy-owned named volumes and image-layer home caches: repair unowned
-  nested contents, then verify actual read/write/create-lock as the
-  resolved non-root user
+- Effigy-owned named volumes exclusive to the primary service, and
+  image-layer home caches: repair unowned nested contents, then verify
+  actual read/write/create-lock as the resolved non-root user
 - bind-mounted rust `target` or cargo paths: verify only; never chown host
   source, siblings, or shared caches
+- named volumes used by two or more compose or managed services: rust
+  caches verify only; other shared named volumes are forbidden
 - read-only, external, or foreign mounts: refuse mutation; fail closed when
   they are declared rust caches
 
@@ -512,8 +514,11 @@ recursive host-source chown are forbidden. Repair may restore owner write
 (`u+w` / `u+wx`) on owned disposable paths after a failed write probe.
 
 `effigy doctor` remains read-only. Finding id `container.workspace-ownership`
-covers declared cargo/target mounts and managed disposable paths. Stopped,
-unavailable, and no-workspace-user states are distinct from clean.
+covers declared cargo/target mounts, their nested rust lock/cache paths, and
+managed disposable paths. It probes those paths with per-mount inspect
+subprocesses and stops nested probes on a mount after the first sample; it
+does not walk the whole tree. Stopped, unavailable, and no-workspace-user
+states are distinct from clean.
 
 ## Alias contract
 
