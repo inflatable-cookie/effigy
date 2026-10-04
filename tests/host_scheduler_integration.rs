@@ -365,9 +365,11 @@ fn collect_until<F>(
             !remaining.is_zero(),
             "timed out waiting for follower output"
         );
-        let (kind, line) = receiver
-            .recv_timeout(remaining)
-            .expect("follower output remained readable through the bounded roll");
+        let (kind, line) = receiver.recv_timeout(remaining).unwrap_or_else(|error| {
+            panic!(
+                "follower output stopped during the bounded roll ({error}); stdout={stdout:?}; stderr={stderr:?}"
+            )
+        });
         match kind {
             OutputPipe::Stdout => stdout.push(line),
             OutputPipe::Stderr => stderr.push(line),

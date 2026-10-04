@@ -135,6 +135,7 @@
 
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
+"test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
 "check:host-run:compile" = "cargo check -p effigy-host-run -p effigy --lib --bin effigy --test host_scheduler_integration --test cli_output_tests"
 # Env-isolation regressions (papercut batch 067): parallel process-env
 # readers and writers. Build-identity readers take injected values and the
@@ -161,6 +162,13 @@
   "cargo test -p effigy --lib host_scheduler::tests::owned_children_scope_forwards_termination_only_to_registered_groups -- --nocapture",
   "cargo test -p effigy --lib container_removal_state -- --nocapture",
   "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration -- --include-ignored --nocapture --test-threads=1",
+]
+# Exact Queue152 follower restart and cancellation acceptance. The caller must
+# provide EFFIGY_HOST_RUN_PRIVATE_SERVER pointing at the clean reviewed f53a9d0
+# checkout; required-fixture mode prevents either ignored case from skipping.
+"test:host-run:idle-follow:restart" = [
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_follower_recovers_across_five_queue152_supervisor_rolls -- --include-ignored --nocapture --test-threads=1",
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER=1 cargo test --test host_scheduler_integration real_effigy_sigterm_cancels_during_queue152_supervisor_roll -- --include-ignored --nocapture --test-threads=1",
 ]
 
 # Owned-child termination proof (papercut 075): the real scope must terminate a

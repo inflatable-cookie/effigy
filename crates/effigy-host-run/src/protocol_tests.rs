@@ -1,4 +1,6 @@
-use crate::transport::{parse_settlement, parse_test_frame, ReconnectTimer};
+use crate::transport::{
+    is_attach_idle_read_error, parse_settlement, parse_test_frame, ReconnectTimer,
+};
 use crate::{
     canonical_start_identity, container_started_fact, start_identity_matches, AttachEvent,
     Authority, ClientError, Clock, HostRunClient, HostRunRoot, IdentityProvider, OutputStream,
@@ -146,6 +148,204 @@ fn ok_settlement(run_id: &str) -> Value {
         "format":"host.run.settlement", "version":1,"runId":run_id,"outcome":"cancelled",
         "launched":false,"settledAt":"2026-10-01T14:00:00Z","result":null,"containers":[]
     })
+}
+
+fn passed_settlement(run_id: &str) -> Value {
+    json!({
+        "format":"host.run.settlement", "version":1,"runId":run_id,"outcome":"passed",
+        "launched":true,"settledAt":"2026-10-01T14:00:00Z",
+        "result":{
+            "format":"host.run.result","version":1,"runId":run_id,"epoch":3,"pgid":42,
+            "startIdentity":"42@boot:1","exitCode":0,"signal":null,
+            "startedAt":"2026-10-01T13:59:00Z","endedAt":"2026-10-01T14:00:00Z",
+            "wallMs":60000,"cpuMs":null,"escapedDescendants":[]
+        },
+        "containers":[]
+    })
+}
+
+const TEST_ATTACH_READ_TIMEOUT: Duration = Duration::from_millis(40);
+
+#[test]
+fn attach_idle_follow_recognizes_socket_read_timeout_kinds() {
+    assert!(is_attach_idle_read_error(&std::io::Error::from(
+        std::io::ErrorKind::WouldBlock
+    )));
+    assert!(is_attach_idle_read_error(&std::io::Error::from(
+        std::io::ErrorKind::TimedOut
+    )));
+
+    let (_writer, reader_stream) = UnixStream::pair().unwrap();
+    reader_stream
+        .set_read_timeout(Some(TEST_ATTACH_READ_TIMEOUT))
+        .unwrap();
+    let mut reader = BufReader::new(reader_stream);
+    let error = reader.fill_buf().unwrap_err();
+    assert!(
+        is_attach_idle_read_error(&error),
+        "platform socket read timeout was {:?}",
+        error.kind()
+    );
+}
+
+#[test]
+fn attach_idle_follow_keeps_queued_run_and_partial_frame_until_settlement() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        assert_eq!(request["method"], "attach");
+        assert_eq!(request["body"]["runId"], "r-idle-queued");
+        send_response(
+            &mut stream,
+            &request,
+            json!({"event":"state","state":"queued","position":1}),
+        );
+        thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+
+        send_response(
+            &mut stream,
+            &request,
+            json!({"event":"state","state":"running"}),
+        );
+
+        let output = json!({
+            "v":1,"id":request["id"],"ok":true,
+            "body":{"event":"output","stream":"stdout","offset":0,
+                "dataB64":base64::engine::general_purpose::STANDARD.encode(b"ready\n")}
+        });
+        let mut frame = serde_json::to_vec(&output).unwrap();
+        frame.push(b'\n');
+        let split = frame.len() / 2;
+        stream.write_all(&frame[..split]).unwrap();
+        thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+        stream.write_all(&frame[split..]).unwrap();
+        thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+
+        send_response(
+            &mut stream,
+            &request,
+            json!({"event":"settled","settlement":passed_settlement("r-idle-queued")}),
+        );
+    });
+
+    let mut events = Vec::new();
+    let settlement = client
+        .attach_stream("r-idle-queued", 0, 0, |event| events.push(event))
+        .unwrap();
+    assert_eq!(settlement.outcome, crate::SettlementOutcome::Passed);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AttachEvent::Output { .. }))
+            .count(),
+        1
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, position: Some(1) } if state == "queued"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::State { state, .. } if state == "running"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::Output { stream: OutputStream::Stdout, offset: 0, data }
+            if data == b"ready\n"
+    )));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_idle_follow_keeps_silent_running_job_until_output_and_settlement() {
+    let fixture = make_fixture();
+    let mut client = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
+    let listener = fixture.listener;
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        assert_eq!(request["method"], "attach");
+        send_response(
+            &mut stream,
+            &request,
+            json!({"event":"state","state":"running"}),
+        );
+        thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+        send_response(
+            &mut stream,
+            &request,
+            json!({
+                "event":"output","stream":"stderr","offset":0,
+                "dataB64":base64::engine::general_purpose::STANDARD.encode(b"still alive")
+            }),
+        );
+        thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+        send_response(
+            &mut stream,
+            &request,
+            json!({"event":"settled","settlement":passed_settlement("r-idle-running")}),
+        );
+    });
+
+    let mut events = Vec::new();
+    let settlement = client
+        .attach_stream("r-idle-running", 0, 0, |event| events.push(event))
+        .unwrap();
+    assert_eq!(settlement.outcome, crate::SettlementOutcome::Passed);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AttachEvent::Output { stream: OutputStream::Stderr, offset: 0, data }
+            if data == b"still alive"
+    )));
+    server.join().unwrap();
+}
+
+#[test]
+fn attach_idle_follow_still_accepts_cancel_settlement_while_waiting() {
+    let fixture = make_fixture();
+    let mut follower = client(&fixture).with_attach_read_timeout(TEST_ATTACH_READ_TIMEOUT);
+    let mut canceller = client(&fixture);
+    let listener = fixture.listener.try_clone().unwrap();
+    let server = thread::spawn(move || {
+        let (mut attach, _) = listener.accept().unwrap();
+        let attach_request = read_request(&mut attach);
+        assert_eq!(attach_request["method"], "attach");
+        send_response(
+            &mut attach,
+            &attach_request,
+            json!({"event":"state","state":"running"}),
+        );
+
+        let (mut cancel, _) = listener.accept().unwrap();
+        let cancel_request = read_request(&mut cancel);
+        assert_eq!(cancel_request["method"], "cancel");
+        assert_eq!(cancel_request["body"]["runId"], "r-idle-cancel");
+        send_response(&mut cancel, &cancel_request, json!({"stopping":true}));
+        send_response(
+            &mut attach,
+            &attach_request,
+            json!({"event":"settled","settlement":ok_settlement("r-idle-cancel")}),
+        );
+    });
+    let follower_thread = thread::spawn(move || {
+        follower
+            .attach_stream("r-idle-cancel", 0, 0, |_| {})
+            .unwrap()
+    });
+
+    thread::sleep(TEST_ATTACH_READ_TIMEOUT * 4);
+    assert_eq!(
+        canceller.cancel("r-idle-cancel", "interrupted").unwrap()["stopping"],
+        true
+    );
+    assert_eq!(
+        follower_thread.join().unwrap().outcome,
+        crate::SettlementOutcome::Cancelled
+    );
+    server.join().unwrap();
 }
 
 #[test]
