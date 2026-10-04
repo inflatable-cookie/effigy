@@ -323,6 +323,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - QA-group local `--json` list, plan, run, and status output now suppresses the
   CLI banner while keeping each QA-group schema as one complete stdout JSON
   document. Global `effigy --json` continues to emit the command envelope.
+- `effigy doctor` preliminary container liveness probes (Colima profile
+  `status`, the primary-service Colima/`compose ps` check, and the SSH-agent
+  socket preflight) now share one monotonic remaining-doctor-budget deadline
+  instead of each granting a fresh per-subprocess timeout. An expired deadline
+  never spawns a probe, a hung probe is killed and reaped at the deadline
+  (only its own recorded process group), and timeout/unavailable never report
+  a running, stopped, or clean result. The bounded doctor path stays read-only:
+  it does not trigger a Colima runtime repair. Prove with
+  `test:doctor:workspace-liveness`.
 - After a Colima/nerdctl restart, a stopped owned stack container can recover
   its own stale transient health-check timer/service collision. Effigy
   inspects the full hexadecimal container ID, requires stopped status and the

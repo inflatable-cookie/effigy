@@ -607,10 +607,14 @@ nested rust lock/cache paths, managed disposable volumes, or
 `$BUN_INSTALL/install` are unusable by the resolved workspace uid/gid. The
 check probes those paths with per-mount inspect subprocesses and stops
 nested probes on a mount after the first sample; it does not walk the
-mount. Inspect children share the remaining doctor budget and are killed at
-that deadline; timeout is unavailable, never clean. Stopped, unavailable,
-and no-workspace-user states are distinct from clean. The finding is not a
-license to chown the checkout.
+mount. Every preliminary liveness probe (Colima `status`, the primary
+service Colima/`compose ps` check, `colima ssh` socket preflight) and every
+inspect child converts the same remaining doctor deadline once, just before
+it spawns, so none gets a fresh budget. An expired deadline never spawns a
+probe, and a hung probe is killed and reaped at the deadline. Timeout is
+unavailable, never clean, and a bounded doctor run never restarts Colima.
+Stopped, unavailable, and no-workspace-user states are distinct from clean.
+The finding is not a license to chown the checkout.
 
 ## Data Lifecycle
 

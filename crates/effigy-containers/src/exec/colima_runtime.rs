@@ -9,6 +9,7 @@ use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
     error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
+    run_command_capture_allow_failure_with_deadline,
     run_command_capture_allow_failure_with_timeout, run_command_capture_os,
     run_command_capture_with_timeout,
 };
@@ -144,17 +145,43 @@ pub fn colima_is_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {
+    colima_is_running_with_deadline(policy, repo_root, None)
+}
+
+/// Deadline-aware Colima liveness probe. A bounded (doctor) call shares one
+/// monotonic deadline: an expired deadline never spawns, timeouts/unavailable
+/// never report clean, and the read-only probe never triggers a runtime repair
+/// (no start/restart/cleanup) while a deadline is in force. The unbounded
+/// production path keeps the existing state-loss repair behavior.
+pub fn colima_is_running_with_deadline(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    deadline: Option<Instant>,
+) -> Result<bool, ContainerExecError> {
     let cmd = colima_status_command(policy);
     let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-    let output = run_command_capture_allow_failure(repo_root, &cmd.program, &args)?;
+    let output = run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        &cmd.program,
+        &args,
+        &cmd.label,
+        deadline,
+    )?;
     if !output.status.success()
+        && deadline.is_none()
         && docker_failure_looks_like_colima_runtime_state_loss(
             &String::from_utf8_lossy(&output.stdout),
             &String::from_utf8_lossy(&output.stderr),
         )
     {
         repair_colima_runtime(policy, repo_root)?;
-        let retried = run_command_capture_allow_failure(repo_root, &cmd.program, &args)?;
+        let retried = run_command_capture_allow_failure_with_deadline(
+            repo_root,
+            &cmd.program,
+            &args,
+            &cmd.label,
+            None,
+        )?;
         if !retried.status.success() {
             return Ok(false);
         }
