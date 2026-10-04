@@ -1,9 +1,11 @@
 use std::ffi::OsString;
 
-use effigy_host_run::{Settlement, SettlementOutcome};
+use effigy_host_run::{
+    BudgetFallback, ClassSource, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
+};
 use serde_json::{json, Value};
 
-use super::submit::{forward_env_from, interpret, launched_exit_code};
+use super::submit::{forward_env_from, interpret, launched_exit_code, selector_env_names};
 use super::{
     is_scheduler_owned_env, parse_override_reason, parse_scheduler_setting, queue_wait_from_status,
     PreLaunch, Settled,
@@ -77,25 +79,181 @@ fn scheduler_owned_names_never_cross_boundaries() {
 }
 
 #[test]
-fn submitted_environment_drops_tokens_retired_lease_and_unrepresentable_entries() {
+fn submitted_environment_projects_runtime_and_selector_needs_without_ambient_credentials() {
     let vars = vec![
-        ("PATH", "/bin"),
-        ("HOST_RUN_TOKEN", "secret-token"),
-        ("HOST_RUN_ID", "run"),
-        ("EFFIGY_ADMISSION_LEASE_ID", "retired lease"),
+        ("PATH", "caller-path"),
+        ("HOME", "/caller/home"),
+        ("HOST_RUN_TOKEN", "host-run-token-canary"),
+        ("HOST_RUN_ID", "host-run-id-canary"),
+        ("EFFIGY_ADMISSION_LEASE_ID", "retired-lease-canary"),
         ("EFFIGY_HOST_SCHEDULER", "1"),
-        ("A=B", "bad-name"),
-        ("", "empty-name"),
+        ("EFFIGY_HOST_RUN_ROOT", "/state/host-run"),
+        ("EFFIGY_APP_SECRET", "effigy-app-secret-canary"),
+        ("CARGO_HOME", "/cache/cargo"),
+        ("CARGO_TARGET_DIR", "/cache/target"),
+        ("CARGO_BUILD_JOBS", "7"),
+        ("CARGO_REGISTRIES_PRIVATE_TOKEN", "registry-token-canary"),
+        ("RUSTFLAGS", "-D warnings"),
+        ("CI", "true"),
+        ("TASK_MODE", "release"),
+        ("TASK_API_TOKEN", "selector-api-token-canary"),
+        ("MANIFEST_VALUE", "manifest-shadow-canary"),
+        ("MESSAGING_SESSION_TOKEN", "messaging-session-canary"),
+        ("NUCLEUS_PLANE_KEY", "nucleus-plane-key-canary"),
+        ("GITHUB_TOKEN", "github-token-canary"),
+        ("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock"),
+        ("SHELL", "/bin/zsh"),
+        ("TERM", "xterm-256color"),
+        ("PWD", "/caller/worktree"),
+        ("OLDPWD", "/caller/previous"),
+        ("A=B", "invalid-name-canary"),
+        ("", "empty-name-canary"),
     ]
     .into_iter()
     .map(|(key, value)| (OsString::from(key), OsString::from(value)))
     .collect::<Vec<_>>();
-    let forwarded = forward_env_from(vars.into_iter());
-    let keys: Vec<_> = forwarded.keys().map(String::as_str).collect();
-    assert_eq!(keys, ["EFFIGY_HOST_SCHEDULER", "PATH"]);
-    assert!(!forwarded
-        .values()
-        .any(|value| value.contains("secret-token")));
+    let task: effigy_manifest::ManifestTask = toml::from_str(
+        r#"
+        run = [
+          { run = "echo $TASK_MODE", env = "TASK_MODE" },
+          { run = "echo $TASK_API_TOKEN", env = "TASK_API_TOKEN" },
+          { run = "echo configured manifest value", env = "MANIFEST_VALUE" },
+          { run = "echo manifest configured value", env = "catalog:local:MANIFEST_VALUE" },
+        ]
+        "#,
+    )
+    .expect("parse selector fixture");
+    let manifest_env_names = ["MANIFEST_VALUE".to_owned()].into_iter().collect();
+    let selector_env_names = selector_env_names(&task, &manifest_env_names);
+    assert!(selector_env_names.contains("TASK_API_TOKEN"));
+    assert!(!selector_env_names.contains("catalog:local:MANIFEST_VALUE"));
+    assert!(!selector_env_names.contains("MANIFEST_VALUE"));
+    let projected = forward_env_from(vars.into_iter(), &selector_env_names);
+    let request = SubmitRequest {
+        client_request_id: "request-1".to_owned(),
+        caller: "test".to_owned(),
+        repository: "/workspace/project".to_owned(),
+        cwd: "/workspace/project".into(),
+        selector: "check:host-run:compile".to_owned(),
+        argv: vec![
+            "/usr/bin/effigy".to_owned(),
+            "check:host-run:compile".to_owned(),
+        ],
+        class: RunClass::Heavy,
+        class_source: ClassSource::Manifest,
+        priority: Priority::Validation,
+        budget_fallback: BudgetFallback {
+            cpu: 4,
+            memory_bytes: 4 * 1024 * 1024 * 1024,
+        },
+        capacity_deadline_ms: 30_000,
+        run_timeout_ms: 60_000,
+        env: projected,
+        cancel_on_disconnect: false,
+    };
+    let serialized = serde_json::to_string(&request).expect("serialize request");
+    let wire = serde_json::from_str::<Value>(&serialized).expect("parse serialized request");
+    let env = wire["env"].as_object().expect("serialized env map");
+
+    for canary in [
+        "host-run-token-canary",
+        "host-run-id-canary",
+        "retired-lease-canary",
+        "effigy-app-secret-canary",
+        "registry-token-canary",
+        "messaging-session-canary",
+        "nucleus-plane-key-canary",
+        "github-token-canary",
+        "manifest-shadow-canary",
+        "caller-path",
+        "/caller/home",
+        "/caller/worktree",
+        "/caller/previous",
+        "invalid-name-canary",
+        "empty-name-canary",
+    ] {
+        assert!(!serialized.contains(canary));
+    }
+    assert!(!env.contains_key("PATH"));
+    assert!(!env.contains_key("HOME"));
+    assert!(!env.contains_key("HOST_RUN_TOKEN"));
+    assert!(!env.contains_key("HOST_RUN_ID"));
+    assert!(!env.contains_key("EFFIGY_ADMISSION_LEASE_ID"));
+    assert!(!env.contains_key("CARGO_REGISTRIES_PRIVATE_TOKEN"));
+    assert!(!env.contains_key("MESSAGING_SESSION_TOKEN"));
+    assert!(!env.contains_key("NUCLEUS_PLANE_KEY"));
+    assert!(!env.contains_key("SHELL"));
+    assert!(!env.contains_key("TERM"));
+    assert!(!env.contains_key("PWD"));
+    assert!(!env.contains_key("OLDPWD"));
+    assert!(matches!(
+        env.get("EFFIGY_HOST_SCHEDULER").and_then(Value::as_str),
+        Some("1")
+    ));
+    assert!(matches!(
+        env.get("EFFIGY_HOST_RUN_ROOT").and_then(Value::as_str),
+        Some("/state/host-run")
+    ));
+    assert!(matches!(
+        env.get("CARGO_HOME").and_then(Value::as_str),
+        Some("/cache/cargo")
+    ));
+    assert!(matches!(
+        env.get("CARGO_TARGET_DIR").and_then(Value::as_str),
+        Some("/cache/target")
+    ));
+    assert!(matches!(
+        env.get("CARGO_BUILD_JOBS").and_then(Value::as_str),
+        Some("7")
+    ));
+    assert!(matches!(
+        env.get("RUSTFLAGS").and_then(Value::as_str),
+        Some("-D warnings")
+    ));
+    assert!(matches!(
+        env.get("CI").and_then(Value::as_str),
+        Some("true")
+    ));
+    assert!(matches!(
+        env.get("TASK_MODE").and_then(Value::as_str),
+        Some("release")
+    ));
+    assert!(env.contains_key("TASK_API_TOKEN"));
+    assert!(serialized.contains("selector-api-token-canary"));
+    assert_eq!(wire["selector"], "check:host-run:compile");
+    assert_eq!(
+        wire["argv"],
+        json!(["/usr/bin/effigy", "check:host-run:compile"])
+    );
+    assert_eq!(wire["class"], "heavy");
+    assert_eq!(wire["classSource"], "manifest");
+}
+
+#[cfg(unix)]
+#[test]
+fn submitted_environment_drops_invalid_utf8_and_nul_entries() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let declared = ["MALFORMED_VALUE".to_owned(), "NUL_VALUE".to_owned()]
+        .into_iter()
+        .collect();
+    let vars = vec![
+        (
+            OsString::from_vec(vec![0xff]),
+            OsString::from("invalid-key-canary"),
+        ),
+        (
+            OsString::from("MALFORMED_VALUE"),
+            OsString::from_vec(vec![0xfe]),
+        ),
+        (OsString::from("NUL_VALUE"), OsString::from("nul\0value")),
+        (
+            OsString::from("NUL_NAME\0"),
+            OsString::from("nul-name-canary"),
+        ),
+    ];
+    let projected = forward_env_from(vars.into_iter(), &declared);
+    assert!(projected.is_empty());
 }
 
 #[test]

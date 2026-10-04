@@ -1,7 +1,7 @@
 //! Submit one heavy invocation to the scheduler, relay its output, follow
 //! cancellation, and translate the settlement into an honest process status.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -11,14 +11,46 @@ use effigy_host_run::{
     new_client_request_id, AttachEvent, BudgetFallback, ClassSource, ClientError, HostRunClient,
     HostRunRoot, OutputStream, Priority, RunClass, Settlement, SettlementOutcome, SubmitRequest,
 };
+use effigy_manifest::{
+    ManifestManagedRun, ManifestManagedRunStep, ManifestRunStepEnv, ManifestTask,
+};
 use serde_json::Value;
 
-use super::{open_client, refuse, RUN_ID_ENV, TOKEN_ENV};
+use super::{open_client, refuse};
 use crate::runner::error::RunnerError;
 
 const DEFAULT_RUN_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const RUN_TIMEOUT_ENV: &str = "EFFIGY_HOST_SCHEDULER_RUN_TIMEOUT_SECS";
 const RETIRED_LEASE_ENV: &str = "EFFIGY_ADMISSION_LEASE_ID";
+const FORWARDED_RUNTIME_ENV: &[&str] = &[
+    super::SCHEDULER_ENV,
+    super::ROOT_ENV,
+    "CI",
+    "CARGO_HOME",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_JOBS",
+    "CARGO_INCREMENTAL",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_NET_OFFLINE",
+    "RUSTUP_HOME",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "RUSTC",
+    "RUSTDOC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUST_BACKTRACE",
+    "RUST_LIB_BACKTRACE",
+    "RUST_LOG",
+    "RUST_LOG_STYLE",
+];
+const SCHEDULER_PROVIDED_ENV: &[&str] = &[
+    "PATH",
+    "HOME",
+    super::TOKEN_ENV,
+    super::RUN_ID_ENV,
+    RETIRED_LEASE_ENV,
+];
 
 /// What the caller resolved before submitting.
 pub(in crate::runner) struct SubmitContext<'a> {
@@ -26,6 +58,7 @@ pub(in crate::runner) struct SubmitContext<'a> {
     pub(in crate::runner) class_source: ClassSource,
     pub(in crate::runner) repository: &'a Path,
     pub(in crate::runner) cwd: &'a Path,
+    pub(in crate::runner) selector_env_names: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +282,7 @@ fn build_request(ctx: &SubmitContext<'_>) -> Result<SubmitRequest, RunnerError> 
             .ok_or_else(|| refuse(2, format!("{RUN_TIMEOUT_ENV} must be a positive integer")))?,
         Err(_) => DEFAULT_RUN_TIMEOUT_SECS,
     };
-    let mut env = forwarded_env();
+    let mut env = forwarded_env(&ctx.selector_env_names);
     env.entry("CARGO_BUILD_JOBS".to_owned())
         .or_insert_with(|| cpu_units.to_string());
     let caller =
@@ -306,16 +339,53 @@ fn invocation_argv() -> Result<Vec<String>, RunnerError> {
     Ok(argv)
 }
 
-/// The caller's environment minus scheduler credentials and the retired lease
-/// name. The
-/// scheduler launches with only this map plus PATH, HOME and its own run
-/// variables, so nothing else crosses.
-fn forwarded_env() -> BTreeMap<String, String> {
-    forward_env_from(std::env::vars_os())
+/// Environment names explicitly referenced by this selected task's `env`
+/// profile directives. These references already resolve from the process
+/// environment before env-schema and dotenv fallback, so carrying just those
+/// names preserves the selector's existing resolution behavior.
+pub(in crate::runner) fn selector_env_names(
+    task: &ManifestTask,
+    manifest_env_names: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(run) = &task.run {
+        collect_selector_env_names(run, manifest_env_names, &mut names);
+    }
+    names
 }
 
+fn collect_selector_env_names(
+    run: &ManifestManagedRun,
+    manifest_env_names: &BTreeSet<String>,
+    names: &mut BTreeSet<String>,
+) {
+    let ManifestManagedRun::Sequence(steps) = run else {
+        return;
+    };
+    for step in steps {
+        let ManifestManagedRunStep::Step(table) = step else {
+            continue;
+        };
+        let Some(ManifestRunStepEnv::Profile(profile)) = table.env.as_ref() else {
+            continue;
+        };
+        let profile = profile.trim();
+        // Qualified catalog env references resolve from manifests and never
+        // fall back to the caller's process environment.
+        if !profile.is_empty() && !profile.contains(':') && !manifest_env_names.contains(profile) {
+            names.insert(profile.to_owned());
+        }
+    }
+}
+
+/// Project the caller's environment down to reviewed runtime controls and
+/// process variables explicitly referenced by the selected task. The
+/// scheduler supplies PATH, HOME, run ID and token itself. Prefix matching is
+/// intentionally absent: arbitrary CARGO_* or EFFIGY_* names can carry
+/// credentials or application secrets.
 pub(super) fn forward_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    selector_env_names: &BTreeSet<String>,
 ) -> BTreeMap<String, String> {
     vars.filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .filter(|(key, value)| {
@@ -323,11 +393,15 @@ pub(super) fn forward_env_from(
                 && !key.contains('=')
                 && !key.contains('\0')
                 && !value.contains('\0')
-                && key != TOKEN_ENV
-                && key != RUN_ID_ENV
-                && key != RETIRED_LEASE_ENV
+                && !SCHEDULER_PROVIDED_ENV.contains(&key.as_str())
+                && (FORWARDED_RUNTIME_ENV.contains(&key.as_str())
+                    || selector_env_names.contains(key))
         })
         .collect()
+}
+
+fn forwarded_env(selector_env_names: &BTreeSet<String>) -> BTreeMap<String, String> {
+    forward_env_from(std::env::vars_os(), selector_env_names)
 }
 
 #[derive(Default)]

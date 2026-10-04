@@ -120,11 +120,15 @@ fn run_selected_task_with_scheduler(
             result
         }
         Route::Submit => {
+            let manifest_env_names = selection.catalog.manifest.env.keys().cloned().collect();
+            let selector_env_names =
+                host_scheduler::selector_env_names(selection.task, &manifest_env_names);
             let settled = host_scheduler::submit_and_settle(SubmitContext {
                 selector: &selector,
                 class_source: host_scheduler::class_source(selected_heavy),
                 repository: &preflight.invocation_cwd,
                 cwd: &preflight.invocation_cwd,
+                selector_env_names,
             })?;
             Err(settled.into_error())
         }

@@ -23,7 +23,7 @@ use super::error::RunnerError;
 
 use config::{capacity_wait_secs, default_caller_identity, requested_reservation_units};
 pub(super) use facts::{report_container_removed, report_container_started};
-pub(super) use submit::{submit_and_settle, PreLaunch, Settled, SubmitContext};
+pub(super) use submit::{selector_env_names, submit_and_settle, PreLaunch, Settled, SubmitContext};
 
 pub(super) const SCHEDULER_ENV: &str = "EFFIGY_HOST_SCHEDULER";
 pub(super) const ROOT_ENV: &str = "EFFIGY_HOST_RUN_ROOT";

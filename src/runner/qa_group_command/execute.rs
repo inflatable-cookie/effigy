@@ -153,6 +153,7 @@ fn submit_group_run(
         class_source: effigy_host_run::ClassSource::Manifest,
         repository: root,
         cwd: &cwd,
+        selector_env_names: std::collections::BTreeSet::new(),
     })?;
     let host_scheduler::Settled::NotLaunched {
         run_id: scheduler_run_id,

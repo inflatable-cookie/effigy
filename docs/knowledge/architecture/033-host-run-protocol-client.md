@@ -89,11 +89,23 @@ client; `EFFIGY_HOST_SCHEDULER=0` is retired and rejected. A present
 - `mod.rs` parses the backend setting and override, validates a present token,
   and picks one route per heavy invocation: nested (in place), audited override
   (recorded, direct) or submit. Refusals happen here, before any effect.
-- `submit.rs` builds the request from the process's own argv, cwd and
-  environment, streams attach output, turns the first interrupt into one cancel
-  and maps the settlement to an exit status. A launched run exits with the
-  child's real status through `RunnerError::HostRunSettled`; unlaunched
-  outcomes are typed refusals.
+- `submit.rs` builds the request from the process's own argv and cwd, plus a
+  reviewed environment projection. It carries `CI`, the host-scheduler setting
+  and root, and these explicit build/runtime controls: `CARGO_HOME`,
+  `CARGO_TARGET_DIR`, `CARGO_BUILD_JOBS`, `CARGO_INCREMENTAL`,
+  `CARGO_ENCODED_RUSTFLAGS`, `CARGO_NET_OFFLINE`, `RUSTUP_HOME`, `RUSTFLAGS`,
+  `RUSTDOCFLAGS`, `RUSTC`, `RUSTDOC`, `RUSTC_WRAPPER`,
+  `RUSTC_WORKSPACE_WRAPPER`, `RUST_BACKTRACE`, `RUST_LIB_BACKTRACE`, `RUST_LOG`
+  and `RUST_LOG_STYLE`. It also carries process variables explicitly named by
+  the selected task's `env = "NAME"` profile references, whose existing
+  resolution checks process environment before env-schema and dotenv fallback.
+  PATH, HOME, `HOST_RUN_ID`, and `HOST_RUN_TOKEN` are supplied by the scheduler.
+  Other ambient variables are omitted; the client does not forward whole
+  `CARGO_*` or `EFFIGY_*` prefixes because registry credentials and application
+  secrets can use those names. It streams attach output, turns the first
+  interrupt into one cancel and maps the settlement to an exit status. A
+  launched run exits with the child's real status through
+  `RunnerError::HostRunSettled`; unlaunched outcomes are typed refusals.
 - `facts.rs` reports `nested`, `override` and owned-container facts, journaling
   before any send.
 - A nested or overridden run installs `OwnedChildrenScope`, a signal-forwarding

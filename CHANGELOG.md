@@ -253,6 +253,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - The default `effigy docs` log index path and distribution closeout output move from `docs/logs/` to `docs/notes/`. Pass explicit paths for repositories retaining the former layout.
 
 ### Changed
+- Heavy host-run submissions now send only reviewed Cargo/Rust runtime controls,
+  routing settings, and process variables explicitly referenced by the selected
+  task's `env = "NAME"` profile directives. Scheduler-provided PATH, HOME, run
+  ID and token, ambient credentials, and unrelated shell variables are excluded.
 - Read-only doctor workspace ownership checks batch the known mount metadata
   samples and numeric uid/gid read/write tests under the shared doctor
   deadline. Overlapping Rust cache paths reuse nested samples; wrong
