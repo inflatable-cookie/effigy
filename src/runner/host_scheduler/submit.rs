@@ -348,8 +348,7 @@ pub(in crate::runner) fn selector_env_names_for_tasks<'a>(
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
 ) -> Result<BTreeSet<String>, String> {
-    let mut names = BTreeSet::new();
-    let mut visited = BTreeSet::new();
+    let mut state = SelectorEnvState::default();
     for (catalog_alias, task_name, surface) in roots {
         let selector = TaskSelector {
             prefix: Some(catalog_alias.to_owned()),
@@ -369,14 +368,19 @@ pub(in crate::runner) fn selector_env_names_for_tasks<'a>(
             surface,
             catalogs,
             invocation_cwd,
-            &mut visited,
-            &mut names,
+            &mut state,
         )?;
     }
-    Ok(names)
+    Ok(state.names)
 }
 
 type VisitedTask = (String, TaskSurface, String);
+
+#[derive(Default)]
+struct SelectorEnvState {
+    visited: BTreeSet<VisitedTask>,
+    names: BTreeSet<String>,
+}
 
 fn collect_task_selector_env_names(
     task_name: &str,
@@ -385,14 +389,16 @@ fn collect_task_selector_env_names(
     surface: TaskSurface,
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
-    visited: &mut BTreeSet<VisitedTask>,
-    names: &mut BTreeSet<String>,
+    state: &mut SelectorEnvState,
 ) -> Result<(), String> {
-    if !visited.insert((catalog.alias.clone(), surface, task_name.to_owned())) {
+    if !state
+        .visited
+        .insert((catalog.alias.clone(), surface, task_name.to_owned()))
+    {
         return Ok(());
     }
     if let Some(run) = &task.run {
-        collect_run_selector_env_names(run, catalog, catalogs, invocation_cwd, visited, names)?;
+        collect_run_selector_env_names(run, catalog, catalogs, invocation_cwd, state)?;
     }
     Ok(())
 }
@@ -402,8 +408,7 @@ fn collect_run_selector_env_names(
     catalog: &LoadedCatalog,
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
-    visited: &mut BTreeSet<VisitedTask>,
-    names: &mut BTreeSet<String>,
+    state: &mut SelectorEnvState,
 ) -> Result<(), String> {
     let ManifestManagedRun::Sequence(steps) = run else {
         return Ok(());
@@ -422,8 +427,7 @@ fn collect_run_selector_env_names(
                         catalog,
                         catalogs,
                         invocation_cwd,
-                        visited,
-                        names,
+                        state,
                     )?;
                 }
             }
@@ -436,7 +440,7 @@ fn collect_run_selector_env_names(
                     // profiles resolve from catalogs, never the caller's
                     // process environment.
                     if !profile.is_empty() && !profile.contains(':') && !configured_in_catalog {
-                        names.insert(profile.to_owned());
+                        state.names.insert(profile.to_owned());
                     }
                 }
                 if let Some(task_ref) = table.task.as_deref() {
@@ -446,8 +450,7 @@ fn collect_run_selector_env_names(
                         catalog,
                         catalogs,
                         invocation_cwd,
-                        visited,
-                        names,
+                        state,
                     )?;
                 }
                 if let Some(draft_ref) = table.draft.as_deref() {
@@ -457,8 +460,7 @@ fn collect_run_selector_env_names(
                         catalog,
                         catalogs,
                         invocation_cwd,
-                        visited,
-                        names,
+                        state,
                     )?;
                 }
             }
@@ -473,8 +475,7 @@ fn collect_composed_task_selector_env_names(
     current_catalog: &LoadedCatalog,
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
-    visited: &mut BTreeSet<VisitedTask>,
-    names: &mut BTreeSet<String>,
+    state: &mut SelectorEnvState,
 ) -> Result<(), String> {
     let (mut selector, _) = effigy_tasks::parse_task_reference_invocation(task_ref)?;
     if let Some(prefix) = selector.prefix.as_deref() {
@@ -512,8 +513,7 @@ fn collect_composed_task_selector_env_names(
         surface,
         catalogs,
         invocation_cwd,
-        visited,
-        names,
+        state,
     )
 }
 
