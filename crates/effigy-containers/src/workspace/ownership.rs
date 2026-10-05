@@ -7,6 +7,7 @@ use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 pub enum WorkspaceMountKind {
     NamedVolume,
     Bind,
+    Tmpfs,
     Image,
 }
 
@@ -57,7 +58,7 @@ impl WorkspaceOwnershipPlan {
     pub fn rust_and_disposable_targets(&self) -> impl Iterator<Item = &WorkspaceOwnershipTarget> {
         self.targets.iter().filter(|target| {
             target.rust_cache.is_some()
-                || target.repair_authority != WorkspaceRepairAuthority::Forbidden
+                || target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
         })
     }
 }
@@ -246,7 +247,18 @@ fn classify_long_volume(mapping: &serde_yaml::Mapping) -> Option<WorkspaceOwners
     let is_bind = type_hint.as_deref() == Some("bind")
         || (!source.is_empty() && looks_like_bind_mount_source(&source));
     if type_hint.as_deref() == Some("tmpfs") {
-        return None;
+        return Some(WorkspaceOwnershipTarget {
+            path: target.trim().trim_end_matches('/').to_owned(),
+            mount_kind: WorkspaceMountKind::Tmpfs,
+            source: None,
+            repair_authority: if read_only {
+                WorkspaceRepairAuthority::Forbidden
+            } else {
+                WorkspaceRepairAuthority::VerifyOnly
+            },
+            rust_cache: rust_cache_kind(target.as_str(), None),
+            read_only,
+        });
     }
     if is_bind {
         return classify_mount(&source, &target, read_only);
@@ -272,11 +284,7 @@ fn classify_mount(source: &str, target: &str, read_only: bool) -> Option<Workspa
     let repair_authority = if read_only {
         WorkspaceRepairAuthority::Forbidden
     } else if is_bind {
-        if rust_cache.is_some() {
-            WorkspaceRepairAuthority::VerifyOnly
-        } else {
-            return None;
-        }
+        WorkspaceRepairAuthority::VerifyOnly
     } else {
         WorkspaceRepairAuthority::OwnedDisposable
     };
@@ -618,10 +626,16 @@ services:
         );
 
         assert!(plan.targets.iter().any(|target| target.path == "/cache"));
-        assert!(!plan
+        let workspace_bind = plan
             .targets
             .iter()
-            .any(|target| target.path == "/workspace-root"));
+            .find(|target| target.path == "/workspace-root")
+            .expect("workspace checkout bind remains a traversal boundary");
+        assert_eq!(workspace_bind.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            workspace_bind.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -782,14 +796,27 @@ services:
             .owned_disposable_paths()
             .iter()
             .any(|path| path == "/workspace-root/app/target"));
-        assert!(!plan
+        let workspace_bind = plan
             .targets
             .iter()
-            .any(|target| target.path == "/workspace-root"));
-        assert!(!plan
+            .find(|target| target.path == "/workspace-root")
+            .expect("workspace checkout bind remains a traversal boundary");
+        assert_eq!(workspace_bind.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            workspace_bind.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
+        let cache_bind = plan
             .targets
             .iter()
-            .any(|target| target.path == "/workspace-root/host-cache"));
+            .find(|target| target.path == "/workspace-root/host-cache")
+            .expect("non-rust bind remains declared as a traversal boundary");
+        assert_eq!(cache_bind.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            cache_bind.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
+        assert_eq!(cache_bind.rust_cache, None);
         let _ = fs::remove_dir_all(root);
     }
 

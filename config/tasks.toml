@@ -123,6 +123,21 @@
   "cargo test -p effigy --lib bulk_ -- --nocapture",
 ]
 "check:exec:workspace-preparation" = "cargo check -p effigy --lib --tests --profile test"
+# Nested host bind mount boundaries and numeric-user access checks. Private
+# fixtures only; Effigy does not mutate host bind sources or start a runtime.
+"test:workspace:nested-mounts" = [
+  { id = "nested-bind-preparation", run = "cargo test -p effigy --lib nested_host_bind -- --nocapture", timeout_ms = 240000 },
+  { id = "nested-volume-scope", run = "cargo test -p effigy --lib nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope -- --nocapture", timeout_ms = 240000 },
+  { id = "named-rust-volume-classification", run = "cargo test -p effigy-containers --lib named_cargo_and_target_volumes_are_owned_disposable -- --nocapture", timeout_ms = 240000 },
+  { id = "mount-plan-classification", run = "cargo test -p effigy-containers --lib bind_mounted_rust_target_is_verify_only -- --nocapture", timeout_ms = 240000 },
+]
+"check:workspace:nested-mounts" = [
+  "cargo check -p effigy-containers -p effigy --all-targets --profile test",
+  # Effigy all-targets includes the changed permission-prep tests. Lint the
+  # container library separately; its unrelated existing test lints are noisy.
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+  "cargo clippy -p effigy-containers --lib -- -D warnings",
+]
 # Bulk ownership repair (papercut dab293be): O(volumes) runtime round trips
 # for owned Rust volumes, deadline/identity/protected-scope failures. Private
 # in-memory numeric-user backend only; no live VM/container/chown.
@@ -139,8 +154,8 @@
   "cargo clippy -p effigy --lib -- -D warnings",
 ]
 "test:workspace:rust-ownership:fake-runtime-identity" = [
-  "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers -- --nocapture",
-  "cargo test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
+  { id = "php-app-bundle-deferral-fake-runtime", run = "cargo test -p effigy --lib run_manifest_task_php_app_bundle_defers -- --nocapture", timeout_ms = 240000 },
+  { id = "php-app-library-bundle-fake-runtime", run = "cargo test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture", timeout_ms = 240000 },
 ]
 # Deadline/reap proof uses only a fresh private temp root, a fake Docker command,
 # and exact fixture PIDs. Includes the expired-no-spawn and disabled-reap controls.

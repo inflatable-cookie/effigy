@@ -607,6 +607,16 @@ nested `target/debug/.cargo-build-lock` and Cargo `registry/src` /
 compose mounts such as `/workspace-root/api/target` stay classified as
 named-volume owned-disposable rust targets.
 
+Recursive repair also prunes every declared child mount from its parent scan,
+including nested binds and volumes on the same filesystem device. A nested
+host bind under an image-owned cache is checked for read/write access as the
+numeric workspace user. Effigy does not compare its root-observed owner to the
+workspace uid or write a probe file in the bind; a root-owned cache passes when
+the numeric user's access works. An unwritable bind fails with its mount
+source and guidance to grant that uid access, while its root and contents stay
+untouched. The host-mount ruling is recorded in
+[`005-container-runtime-contract.md`](../knowledge/contracts/005-container-runtime-contract.md).
+
 Exec preparation batches metadata and numeric-user access probes for the
 whole ownership plan, and scans owned paths together before repairing only
 dirty volumes. Clean paths launch no repair. Each invocation still checks
