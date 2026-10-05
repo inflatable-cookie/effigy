@@ -65,6 +65,10 @@ schema artifacts live beside these files.
   validation surfaces.
 - [JSON selection contract](json-selection-contract.json) defines the CI
   selection artifact.
+- [Rust quality profile](rust-quality-profile.json) is the repository-owned
+  strict Northstar Rust quality profile, including MSRV sources and exclusions.
+- [Rust quality deviations](rust-quality-deviations.json) holds accepted
+  deviations from that profile. Empty means none are accepted.
 
 A behavior or schema change updates its owning contract and examples in the
 same PR. Historical task cards, status, and outcomes are not indexed here.
