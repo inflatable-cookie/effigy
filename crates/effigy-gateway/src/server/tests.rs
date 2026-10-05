@@ -333,6 +333,58 @@ fn server_probe_state_real_ps_confirms_private_child_then_absence() {
     }
 }
 
+/// Recording-only: a live non-gateway PID in the PID file is treated as the
+/// gateway. The probe checks an exact `ps` row, not command, uid, boot id, or
+/// start identity. This test does not signal the child.
+#[cfg(unix)]
+#[test]
+fn server_probe_state_live_non_gateway_pid_is_reported_running() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
+    let owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private owned child"),
+    );
+    let pid = owned.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            Instant::now() < deadline,
+            "private owned child was never observed running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, pid.to_string()).unwrap();
+
+    let status = get_status(&config).expect("live non-gateway PID is reported running");
+    assert_eq!(status.pid, pid);
+    assert!(
+        check_existing_gateway_pid(&config, probe_gateway_process)
+            .expect_err("live non-gateway PID must refuse a replacement start")
+            .to_string()
+            .contains(&format!("already running (PID {pid})")),
+        "replacement start must treat the foreign PID as the gateway"
+    );
+    assert_eq!(owned.0.id(), pid);
+}
+
 #[tokio::test]
 async fn run_gateway_propagates_proxy_bind_failure() {
     let dir = tempfile::tempdir().unwrap();

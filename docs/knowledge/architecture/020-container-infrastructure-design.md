@@ -371,9 +371,7 @@ The gateway PID file remains a decimal `u32`, but reads accept only values
 greater than 1 that fit the signed Unix PID type. Status probes require `ps`
 to return exactly that PID, and stop/elevation paths validate the target again
 before probing or signaling. This prevents PID 0 and out-of-range values from
-becoming process-group or broadcast targets. The file does not record process
-start identity: an exact PID probe confirms current liveness, but cannot rule
-out PID reuse between the probe and a later signal.
+becoming process-group or broadcast targets.
 
 A gateway process probe is three-valued: a single exact non-zombie `ps` row is
 running, a zombie row or the `ps` no-such-process result is confirmed absent,
@@ -382,9 +380,177 @@ malformed, mismatched or multiple rows is unknown. `effigy gateway status`,
 `up` and `down` and daemon start consume that value; unknown is never reported
 as stopped, never deletes the PID/version records and never starts a
 replacement daemon. Confirmed absence still clears the records and stop stays
-idempotent. The numeric-domain and exact-row checks still do not prove gateway
-ownership, so PID reuse between a probe and a later signal remains a separate,
-unresolved release-disposition limitation.
+idempotent.
+
+Those checks prove numeric domain and current liveness of some process. They
+do not prove that the live process is the gateway that wrote the file. See
+[Gateway process identity](#gateway-process-identity).
+
+### Gateway process identity
+
+This subsection is the owner for gateway start-identity / PID-reuse
+disposition. Current behavior, a bounded correction proposal, and the
+unresolved operator ruling are distinct. The proposal is not implemented.
+Disclosure in this file is not risk acceptance.
+
+#### Current behavior (HEAD, verified in source)
+
+Persisted control record (`crates/effigy-gateway/src/server.rs`):
+
+- `write_pid_file` writes `std::process::id()` as decimal text. No owner-only
+  mode (unlike `routes.json` at `0o600`), no atomic publish, no boot id, no
+  start identity, no comm/exe/uid.
+- `gateway.version` beside it records the daemon binary version only.
+- `read_pid_file` parses `u32` then `checked_gateway_pid` (reject 0, 1, and
+  values that do not fit positive `pid_t`).
+
+Liveness (`probe_gateway_process`): Unix `ps -p <pid> -o pid= -o stat=`, one
+exact non-zombie row → `Running`. No command, uid, start time, or boot id.
+Non-Unix reports a valid-domain PID as `Running` with no probe.
+
+Lifecycle consumers:
+
+- `get_status` / `check_existing_gateway_pid`: `Running` means the gateway is
+  up (`AlreadyRunning` on start). `ConfirmedAbsent` clears the PID and version
+  files. `Unknown` leaves them byte-identical and returns
+  `ProcessStateUnknown`.
+- `run_gateway_status` / `gateway_up_for_managed_task` use that status.
+- `handle_existing_gateway_for_up`: matching binary version returns
+  already-running; otherwise it may elevate, then
+  `stop_gateway_process(status.pid)` and start a replacement.
+- `run_gateway_down`: `stop_gateway_process(running.pid)` then
+  `remove_pid_file` after a confirmed-absent re-probe.
+- `stop_gateway_process` (`src/runner/gateway_command/daemon.rs`): domain
+  check, refuse the caller PID, then SIGTERM, wait, SIGKILL. Each step
+  re-probes liveness only.
+- Elevation (`process_signal_accessible`): `kill(pid, 0)` after the same
+  domain check. A `false` result asks for elevation (fail-closed for
+  privilege). It does not prove identity. An unsignalable leftover PID after
+  reboot therefore elevates, then the privileged path can TERM/KILL whatever
+  now holds that number.
+
+Memory safety of the signal integer is closed: `checked_gateway_pid` plus
+`gateway_signal_target_is_safe` reject PID 0/group and the `u32::MAX as i32`
+→ `-1` broadcast that v0.13.1 could reach. That is the numeric domain, not
+ownership.
+
+#### Baseline v0.13.1 (`08e17227021778b5126adfe06d8a141b05776d70`)
+
+Unchanged across the baseline and HEAD: decimal PID only, `ps` liveness, no
+start identity, `stop` signals that PID, elevation `kill(pid, 0)` without
+identity. v0.13.1 also used an unchecked `pid as i32` for TERM/KILL and
+`kill(pid as i32, 0)`, and collapsed any failed `ps` to not-running (then
+deleted the PID file and could start a replacement).
+
+099 (`3991ecbc1`) closed the numeric domain. 101 (`3dea18c91`) closed the
+unknown-probe collapse. Ownership is the same as v0.13.1.
+
+#### Source counterexample (recording-only)
+
+A live `sleep` child whose decimal PID is written to `gateway.pid` is
+`GatewayProcessProbe::Running`. `get_status` returns that PID as the gateway;
+`check_existing_gateway_pid` returns `AlreadyRunning`. The probe never reads
+comm, uid, boot id, or start identity. Prove with
+`server_probe_state_live_non_gateway_pid_is_reported_running` in
+`test:gateway:probe-state`. The test does not signal the child.
+
+The same PID, once treated as running, is the argument to
+`stop_gateway_process` on `down` and on `up` replacement when
+`gateway.version` does not match the current binary. The in-tree private-child
+stop test `gateway_pid_domain_stops_exact_private_owned_child` already shows
+TERM/KILL of a `sleep` child given only its PID.
+
+Static sequence for a leftover file after crash or reboot, no live
+exploitation claimed:
+
+1. Daemon writes `N` and later dies without unlinking the file.
+2. The kernel reuses `N` for an unrelated process (common after reboot).
+3. `get_status` sees one `ps` row for `N` → running gateway.
+4. `gateway down`, or `gateway up` with a mismatched version file, sends
+   SIGTERM then SIGKILL to `N`. If `kill(N, 0)` is `EPERM`, elevation runs
+   first and the privileged path can signal a process the unprivileged user
+   could not.
+
+A second, narrower race remains even for a true gateway PID: the process can
+exit and be reused between the last `Running` probe and `kill`. A pre-signal
+start-time check would still be a TOCTOU, not an atomic signal.
+
+uid/`ps` row matching would not close this. The live foreign process can share
+uid with the operator, and an exact PID row is what the probe already
+requires.
+
+#### Platform identity primitives (inventory)
+
+Already in the product, not used by gateway lifecycle:
+
+| Primitive | Where | Precision | Gateway use |
+| --- | --- | --- | --- |
+| `effigy_process::boot_identity` | Linux `/proc/sys/kernel/random/boot_id`; macOS `sysctl kern.boottime` | Per boot | None |
+| `effigy_process::process_start_identity` | Linux `/proc/<pid>/stat` field 22 (ticks); macOS `ps -o lstart=` | Linux: tick-granularity within a boot. macOS `lstart` is locale-dependent and must not be persisted as a generation key | QA-group owner liveness (`qa_group_status.rs`); not gateway |
+| `effigy_host_run::canonical_start_identity` | Linux `{pid}@{boot}:{ticks}`; macOS `{pid}@UTC-whole-seconds` | macOS whole-second residual is documented: two generations of the same PID in the same UTC second can collide | Host-run peer proof only. Nucleus contract 010 wire format. Do not change it and do not persist it as the gateway record |
+| Linux pidfd | not used | Would make open-then-signal atomic on Linux 5.3+ | Not portable to macOS; out of the smallest fix |
+
+Unknown identities already fail closed in host-run and in
+`process_start_identity_matches`. Gateway has no equivalent match step.
+
+#### Proposed smallest correction (not implemented)
+
+Do not add a control plane, helper CLI, host-run contract change, or
+scheduler policy.
+
+1. Keep the decimal `gateway.pid` for compatibility. Add a sidecar next to it
+   (same directory, owner-only `0o600`, atomic publish) written at daemon
+   start with format version, `pid`, `boot_identity`, and a gateway-private
+   start identity. Linux: persist field 22 plus boot id. macOS: persist kernel
+   start seconds from `proc_pidinfo` / `pbi_start_tvsec` as an integer, not
+   `ps -o lstart=` and not the host-run `YYYY-MM-DDTHH:MM:SSZ` string.
+2. Status, start, stop, and elevation `kill(0)` load that sidecar. Match only
+   when pid, boot id, and start identity all equal the live process.
+   Readable mismatch: the recorded generation is gone; do not signal the live
+   PID; treat as `ConfirmedAbsent` for this record. Unreadable identity,
+   unknown probe, or missing authority: `ProcessStateUnknown`; leave bytes in
+   place; do not signal; do not start a replacement.
+3. Re-read the live identity immediately before each TERM/KILL. Mismatch:
+   refuse the signal. This still races the syscall; say so. Do not claim
+   reuse-safety from uid or a `ps` row. Linux pidfd is a later optional
+   tightening, not the portable minimum.
+4. Legacy numeric-only PID file (v0.13.1 and current HEAD): fail closed as
+   unknown. Do not signal. Operator steps: confirm whether a gateway is
+   actually listening; if it is, stop it out of band or remove
+   `~/.effigy/gateway/gateway.pid` and `gateway.version` only after that
+   confirmation; then `effigy gateway up` writes identity-bearing records.
+5. Rollback to v0.13.1: old binary ignores the sidecar and reads the decimal
+   PID. Forward: new binary must not signal a numeric-only file.
+6. Direct callers to keep on the same match policy:
+   `get_status`, `check_existing_gateway_pid`, `run_gateway`,
+   `handle_existing_gateway_for_up`, `run_gateway_down`,
+   `stop_gateway_process`, `process_signal_accessible`. No other in-tree
+   production caller of `stop_gateway_process`.
+
+Private follow-up tests (recording-only; no foreign live signal): legacy
+numeric-only is unknown; mismatched identity is not `Running` and the stop
+oracle dispatches nothing; matched private child is `Running`; unknown
+identity refuses signal. The existing owned-child TERM/KILL test stays a
+positive control for the signal path, not a foreign-PID proof.
+
+Residual after that fix: TOCTOU between the last identity read and `kill`;
+macOS same-second PID reuse at whole-second kernel start time; non-Unix still
+unimplemented for `down`.
+
+#### v0.14.0 ruling (unresolved)
+
+Recommendation: do not publish v0.14.0 until this sidecar and fail-closed
+legacy policy land, unless Tom explicitly accepts the residual.
+
+Acceptance would mean: leftover `gateway.pid` after crash or reboot can cause
+`status` / `up` / `down` / elevation to treat a live unrelated process as the
+gateway and SIGTERM/SIGKILL it, including after privilege escalation. 099/101
+remain; ownership does not. Mitigation if accepted: inspect and remove a
+stale PID file before `gateway down` or `up` when the recorded PID is not the
+gateway.
+
+This assessment does not grant that acceptance. The live question is
+[Q-001](../questions.md#q-001-gateway-pid-identity-for-v0-14-0).
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.

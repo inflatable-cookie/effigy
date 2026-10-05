@@ -94,17 +94,24 @@ no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-
 Passing audit or CI does not assert that all Rust is safe or bug-free.
 
 The numeric PID domain of the gateway's `process_signal_accessible` probe and
-signal paths is now checked by the prerequisite gateway PID-domain repair:
+signal paths is checked by the gateway PID-domain repair (099, `3991ecbc1`):
 `read_pid_file` and `server::process_is_running` run
 `effigy_gateway::server::checked_gateway_pid`, which rejects PID 0, PID 1 and
 any `u32` above `i32::MAX` before dispatch, and Unix status requires one exact
 `ps` PID/stat row. The `kill(pid, 0)` SAFETY comment therefore discharges a
-checked positive signed PID rather than an unchecked cast. The residual
-limitation is gateway identity, not the numeric domain: the PID file does not
-establish process start identity, so PID reuse between a probe and a signal
-remains possible (`CHANGELOG.md`). An independent review also found that an
-unknown or absent probe result collapses to `false` and that a `false`
-stop-success can delete the status record; that distinct unknown-probe
-lifecycle gap is owned by the separate bounded task 101, and the remaining
-allocating-callback/selector lint gaps are owned by task 100, not by this
-unsafe-invariant wave.
+checked positive signed PID rather than an unchecked cast.
+
+The unknown-probe lifecycle gap is closed (101, `3dea18c91`): an unavailable
+or ambiguous `ps` is `Unknown`, never collapsed to stopped, and does not
+delete PID/version records or start a replacement. Allocating-callback and
+selector lint gaps remain owned by task 100, not by this unsafe-invariant
+wave.
+
+Gateway process ownership is a separate v0.14.0 disposition, not accepted by
+those repairs. The PID file is still decimal-only; an exact live `ps` row is
+not the gateway that wrote it. Stale/foreign PID and probe-to-signal reuse
+remain current behavior. Current truth, the bounded sidecar proposal, and the
+unresolved ruling live in
+[architecture 020](../architecture/020-container-infrastructure-design.md#gateway-process-identity)
+and [Q-001](../questions.md#q-001-gateway-pid-identity-for-v0-14-0).
+This release procedure does not accept that residual.

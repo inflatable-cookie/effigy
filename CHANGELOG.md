@@ -363,14 +363,17 @@ During v0.x, MINOR bumps may include breaking changes.
   version records byte-identical for reconciliation, and never start a
   replacement. Confirmed absence still clears those records and stop stays
   idempotent. The probe result is now explicit (`GatewayProcessProbe`), so it is
-  no longer collapsed to a `bool`. PID reuse between a probe and a later signal
-  remains a separate, documented limitation that numeric and exact-row checks
-  do not resolve. Prove with `test:gateway:probe-state`.
+  no longer collapsed to a `bool`. The PID file is still decimal-only: an exact
+  live `ps` row is not proof the process is the gateway, so a leftover PID after
+  crash or reboot, and PID reuse between a probe and a later signal, remain
+  current behavior. That ownership gap is an unresolved v0.14.0 ruling
+  ([Q-001](docs/knowledge/questions.md#q-001-gateway-pid-identity-for-v0-14-0)),
+  not an accepted residual. Prove with `test:gateway:probe-state`.
 - Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
   and values outside the positive signed PID domain before dispatch. Unix status
   requires one exact PID row from `ps`; the PID file remains numeric and does
-  not establish process start identity, so PID reuse between a probe and signal
-  remains a documented limitation. Prove with `test:gateway:pid-domain`.
+  not establish process start identity. Numeric-domain repair does not close
+  stale/foreign PID or probe-to-signal reuse. Prove with `test:gateway:pid-domain`.
 - In-process run-array shell timeouts and managed lifecycle cleanup now stop
   the owned Unix process group on expiry and reap the direct child, so
   descendants cannot leak after a sequence `124` or a cleanup timeout,
