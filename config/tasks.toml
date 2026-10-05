@@ -282,6 +282,24 @@
   "cargo check -p effigy-core -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-demo -p effigy --lib --tests --profile test",
   "cargo clippy -p effigy-core -p effigy-manifest --lib -- -D warnings",
 ]
+# Caller deadline continuity through Colima service discovery and container
+# capture (task effigy#093). Private fake-runtime fixtures plus one controlled
+# spawn-delay seam prove the caller's absolute deadline is not rebased, an
+# expired deadline never spawns, a hung discovery is bounded and reaped by its
+# own process group, and cache hits still skip discovery. Real process
+# supervision is retained; no live runtime, VM or container is touched.
+"test:runtime:deadline-continuity" = [
+  { id = "containers-absolute-deadline", run = "cargo test -p effigy-containers --lib exec::process::tests -- --nocapture", timeout_ms = 300000 },
+  { id = "colima-discovery-deadline", run = "cargo test -p effigy --lib runner::exec_command::transport::colima::tests -- --nocapture", timeout_ms = 300000 },
+]
+"check:runtime:deadline-continuity" = [
+  "cargo check -p effigy-containers -p effigy --all-targets --profile test",
+  # Match the existing selector convention: the root package is linted with
+  # `--all-targets`, while effigy-containers is linted `--lib` because its
+  # unrelated pre-existing test-target lints are noisy.
+  "cargo clippy -p effigy-containers --lib -- -D warnings",
+  "cargo clippy --all-targets -- -D warnings",
+]
 # Env-isolation regressions (papercut batch 067): parallel process-env
 # readers and writers. Build-identity readers take injected values and the
 # runner's remaining global writers share one proved boundary.

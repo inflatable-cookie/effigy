@@ -60,3 +60,14 @@ candidate validation and distribution evidence. A prior passing milestone or
 a local consumer smoke alone does not establish release readiness. Preparation
 is distinct from publishing: the release execution, tag and binary workflow
 still require Tom's explicit release authorization.
+
+Use the [v0.14.0 consumer migration checklist](../../guides/083-v0.14.0-consumer-migration.md)
+for upgrade actions; the linked contracts remain the owners of each behavior.
+The current catalog-pack policy is still checked against Effigy v0.13.1 and
+the embedded official pack is v1.1.1. At the authorized release prepare, set
+`as_of_release` to the actual target and recompute `required_versions` from the
+target plus every still-supported release that exposes `service pack update`;
+`oldest_update_capable_release` must equal the minimum of that set. The
+capability is already present in released Effigy, with v0.13.0 recorded as its
+oldest supported version today. This assessment does not update version or
+catalog-pack files.

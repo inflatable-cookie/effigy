@@ -37,7 +37,7 @@ detail.
   - `json-contracts.yml` — pull-request or on-demand JSON contract and docs link validation
 - Distribution channels:
   - **Homebrew** — `brew install inflatable-cookie/tap/effigy` (macOS, prebuilt binaries)
-  - **GitHub Releases** — prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64)
+  - **GitHub Releases** — prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64)
   - **`cargo install` from tag** — fallback when prebuilt binaries are unavailable
 
 ## 2) Target Channel Stack for CI
@@ -139,6 +139,13 @@ same. These checksums are unsigned and published alongside the binaries; the
 workflow has no artifact-signing step, so a sidecar alone does not establish
 artifact provenance.
 
+The local `test:release:macos-checksums` selector exercises sidecar generation,
+verification, and both release-asset selection paths with fixture bytes and a
+stub `gh` command. It does not build or run any platform binary, or exercise the
+hosted release workflow. Those proofs remain separate: the release job builds
+and smoke-tests its four target binaries, and publication still requires the
+exact-candidate hosted gates and post-publish verification below.
+
 ## 5) Consumer CI Install Pattern
 
 ### 5a) Recommended: `setup-effigy` Action
@@ -201,6 +208,11 @@ cargo install \
 This is the supported source-build path. Effigy does not publish to crates.io
 because its workspace contains app-specific internal crates that are not
 intended as reusable library dependencies.
+
+The source checkout currently pins `rust-toolchain.toml` to Rust 1.97.1.
+Workspace package manifests do not declare `rust-version`, and CI uses stable
+Rust rather than a lower-toolchain compatibility matrix. The pin documents the
+current build toolchain; it is not evidence of a wider supported MSRV range.
 
 ### 5c) Caching
 
