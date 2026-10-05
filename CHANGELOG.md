@@ -348,6 +348,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Recursive workspace ownership scans now prune every declared child mount,
+  including same-device nested binds and volumes. Nested host binds are checked
+  as the numeric workspace user without owner-equality requirements or probe
+  writes, while nested owned volumes retain separate repair scopes.
 - Implicit cache, lock, and local-overlay ignore registration now writes Git's
   local `$GIT_COMMON_DIR/info/exclude` and leaves the working tree, including
   tracked or missing `.gitignore`, unchanged. Linked worktrees resolve the

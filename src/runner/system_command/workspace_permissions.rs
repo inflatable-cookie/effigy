@@ -7,6 +7,7 @@ use effigy_containers::{
     WorkspaceOwnershipPlan, WorkspaceOwnershipTarget, WorkspaceRepairAuthority,
     WorkspaceRustCacheKind,
 };
+use effigy_core::shell::shell_quote;
 
 use super::workspace_provisioning::{plan_workspace_permission_prep, WorkspacePermissionMode};
 use super::RunnerError;
@@ -94,6 +95,15 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
         uid: u32,
         gid: u32,
     ) -> Result<(), PermissionPrepError>;
+    fn chown_tree_unowned_with_boundaries(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+        _mount_boundaries: &[String],
+    ) -> Result<(), PermissionPrepError> {
+        self.chown_tree_unowned(path, uid, gid)
+    }
     fn chmod_owner_write(&mut self, path: &str, directory: bool)
         -> Result<(), PermissionPrepError>;
     fn list_unowned(
@@ -133,6 +143,16 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
                     .map(|unowned| unowned.into_iter().next())
             })
             .collect()
+    }
+
+    fn find_unowned_many_with_boundaries(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+        _mount_boundaries: &[String],
+    ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+        self.find_unowned_many(paths, uid, gid)
     }
 
     fn mkdir_many(&mut self, paths: &[String]) -> Result<(), PermissionPrepError> {
@@ -219,6 +239,7 @@ struct PreparedTarget {
     rust_cache: Option<WorkspaceRustCacheKind>,
     mount_kind: WorkspaceMountKind,
     source: Option<String>,
+    read_only: bool,
 }
 
 pub(super) fn ensure_workspace_permissions_ready_with(
@@ -266,6 +287,12 @@ pub(super) fn prepare_workspace_permissions(
         )));
     }
 
+    let mount_boundaries = plan
+        .targets
+        .iter()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+
     let probe_paths = prepared_probe_paths(&targets);
     let mut inspections = backend.inspect_many(&probe_paths)?;
     require_batch_len("metadata", probe_paths.len(), inspections.len())?;
@@ -276,6 +303,21 @@ pub(super) fn prepare_workspace_permissions(
                 target_for_probe_path(&targets, path),
                 context,
                 format!("refusing to follow symlink `{path}`"),
+            ));
+        }
+    }
+    for target in targets.iter().filter(|target| {
+        target.mount_kind != WorkspaceMountKind::Image
+            && target.authority != WorkspaceRepairAuthority::OwnedDisposable
+    }) {
+        if inspection_for(&probe_paths, &inspections, &target.path)
+            .is_some_and(|inspection| inspection.presence == PathPresence::Missing)
+        {
+            return Err(fail_with_identity(
+                &identity,
+                target,
+                context,
+                format!("declared child mount `{}` is missing", target.path),
             ));
         }
     }
@@ -344,7 +386,12 @@ pub(super) fn prepare_workspace_permissions(
         })
         .map(|target| target.path.clone())
         .collect::<Vec<_>>();
-    let unowned = backend.find_unowned_many(&recursive_paths, identity.uid, identity.gid)?;
+    let unowned = backend.find_unowned_many_with_boundaries(
+        &recursive_paths,
+        identity.uid,
+        identity.gid,
+        &mount_boundaries,
+    )?;
     require_batch_len("ownership", recursive_paths.len(), unowned.len())?;
     let dirty_paths = recursive_paths
         .iter()
@@ -371,7 +418,7 @@ pub(super) fn prepare_workspace_permissions(
     for path in &dirty_paths {
         let target = target_for_probe_path(&targets, path);
         backend
-            .chown_tree_unowned(path, identity.uid, identity.gid)
+            .chown_tree_unowned_with_boundaries(path, identity.uid, identity.gid, &mount_boundaries)
             .map_err(|error| {
                 fail_with_identity(
                     &identity,
@@ -425,7 +472,12 @@ pub(super) fn prepare_workspace_permissions(
             }
         }
         if !dirty_paths.is_empty() {
-            let remaining = backend.find_unowned_many(&dirty_paths, identity.uid, identity.gid)?;
+            let remaining = backend.find_unowned_many_with_boundaries(
+                &dirty_paths,
+                identity.uid,
+                identity.gid,
+                &mount_boundaries,
+            )?;
             require_batch_len("post-repair ownership", dirty_paths.len(), remaining.len())?;
             if let Some((path, Some(first))) = dirty_paths
                 .iter()
@@ -455,7 +507,11 @@ pub(super) fn prepare_workspace_permissions(
             {
                 return None;
             }
-            Some((path.clone(), inspection.presence == PathPresence::Directory))
+            Some((
+                path.clone(),
+                inspection.presence == PathPresence::Directory
+                    && target.authority == WorkspaceRepairAuthority::OwnedDisposable,
+            ))
         })
         .collect::<Vec<_>>();
     let access = backend.probe_access_many(&identity, &access_paths)?;
@@ -494,13 +550,14 @@ pub(super) fn prepare_workspace_permissions(
             }
             AccessProbe::Missing
                 if path == &target.path
-                    && target.authority == WorkspaceRepairAuthority::OwnedDisposable =>
+                    && (target.authority == WorkspaceRepairAuthority::OwnedDisposable
+                        || target.mount_kind != WorkspaceMountKind::Image) =>
             {
                 return Err(fail_with_identity(
                     &identity,
                     target,
                     context,
-                    format!("disposable path `{path}` is missing after preparation"),
+                    format!("declared workspace mount path `{path}` is missing after preparation"),
                 ));
             }
             AccessProbe::Missing => {}
@@ -553,6 +610,7 @@ fn prepared_targets(
 ) -> Vec<PreparedTarget> {
     let mut prepared = Vec::new();
     let mut owned_paths = Vec::new();
+    let mut verification_targets = Vec::new();
     for target in &plan.targets {
         if let Some(home) = workspace_home {
             if target.path == home && authority_allows_home_expansion(target) {
@@ -563,6 +621,7 @@ fn prepared_targets(
                     rust_cache: target.rust_cache,
                     mount_kind: target.mount_kind,
                     source: target.source.clone(),
+                    read_only: target.read_only,
                 });
                 if target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable {
                     for suffix in [".cache", ".config", ".local"] {
@@ -573,6 +632,7 @@ fn prepared_targets(
                             rust_cache: None,
                             mount_kind: target.mount_kind,
                             source: target.source.clone(),
+                            read_only: false,
                         });
                     }
                 }
@@ -584,10 +644,7 @@ fn prepared_targets(
                 owned_paths.push(target.path.clone());
             }
             WorkspaceRepairAuthority::VerifyOnly | WorkspaceRepairAuthority::Forbidden => {
-                prepared.push(PreparedTarget::from_ownership(
-                    target,
-                    WorkspacePermissionMode::Recursive,
-                ));
+                verification_targets.push(target);
             }
         }
     }
@@ -609,8 +666,51 @@ fn prepared_targets(
                 .as_ref()
                 .map(|value| value.mount_kind)
                 .unwrap_or(WorkspaceMountKind::NamedVolume),
-            source: source.and_then(|value| value.source),
+            source: source.as_ref().and_then(|value| value.source.clone()),
+            read_only: source.is_some_and(|value| value.read_only),
         });
+    }
+
+    // A declared nested volume is a separate repair scope even when its path
+    // sits below an image-owned cache. The parent scope prunes that mount; the
+    // nested volume gets its own bounded scan and repair.
+    let nested_owned_targets = plan
+        .targets
+        .iter()
+        .filter(|target| {
+            target.repair_authority == WorkspaceRepairAuthority::OwnedDisposable
+                && target.mount_kind != WorkspaceMountKind::Image
+                && !prepared.iter().any(|prepared| prepared.path == target.path)
+        })
+        .collect::<Vec<_>>();
+    for target in nested_owned_targets {
+        prepared.push(PreparedTarget::from_ownership(
+            target,
+            WorkspacePermissionMode::Recursive,
+        ));
+    }
+
+    let recursive_owned_paths = prepared
+        .iter()
+        .filter(|target| {
+            target.authority == WorkspaceRepairAuthority::OwnedDisposable
+                && target.mode == WorkspacePermissionMode::Recursive
+        })
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    for target in verification_targets.into_iter().filter(|target| {
+        target.rust_cache.is_some()
+            || (target.mount_kind != WorkspaceMountKind::Image
+                && recursive_owned_paths
+                    .iter()
+                    .any(|parent| path_is_under(&target.path, parent)))
+    }) {
+        if !prepared.iter().any(|prepared| prepared.path == target.path) {
+            prepared.push(PreparedTarget::from_ownership(
+                target,
+                WorkspacePermissionMode::Recursive,
+            ));
+        }
     }
     prepared
 }
@@ -628,6 +728,7 @@ impl PreparedTarget {
             rust_cache: target.rust_cache,
             mount_kind: target.mount_kind,
             source: target.source.clone(),
+            read_only: target.read_only,
         }
     }
 }
@@ -750,6 +851,7 @@ fn mount_kind_label(kind: WorkspaceMountKind) -> &'static str {
     match kind {
         WorkspaceMountKind::NamedVolume => "named-volume",
         WorkspaceMountKind::Bind => "bind",
+        WorkspaceMountKind::Tmpfs => "tmpfs",
         WorkspaceMountKind::Image => "image",
     }
 }
@@ -768,6 +870,26 @@ fn safe_repair_guidance(
             identity.gid,
             target.path
         ),
+        WorkspaceRepairAuthority::VerifyOnly | WorkspaceRepairAuthority::Forbidden
+            if target.mount_kind == WorkspaceMountKind::Bind
+                && target.rust_cache.is_none()
+                && target.read_only =>
+        {
+            format!(
+                "Effigy will not change read-only host bind source `{}`. If this cache must be writable, change the declared mount to read/write and grant numeric uid {} access to the source.",
+                target.source.as_deref().unwrap_or("-"),
+                identity.uid
+            )
+        }
+        WorkspaceRepairAuthority::VerifyOnly | WorkspaceRepairAuthority::Forbidden
+            if target.mount_kind == WorkspaceMountKind::Bind && target.rust_cache.is_none() =>
+        {
+            format!(
+                "Effigy will not chown this host bind source `{}`. Grant numeric uid {} read/write access to the mounted path without recursively changing shared host contents.",
+                target.source.as_deref().unwrap_or("-"),
+                identity.uid
+            )
+        }
         WorkspaceRepairAuthority::VerifyOnly | WorkspaceRepairAuthority::Forbidden => format!(
             "Effigy will not chown this {} path. Isolate disposable rust caches with catalog `isolated_dirs`, or repair the host mount for uid {} without a recursive host-source chown.",
             mount_kind_label(target.mount_kind),
@@ -1029,12 +1151,54 @@ pub(in crate::runner) struct ComposeAccessBackend<'a> {
 const BULK_CHOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 const DOCTOR_METADATA_BATCH_SCRIPT: &str = "for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ -d \"$path\" ]; then\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'dir %s\\n' \"$metadata\"\n  else\n    metadata=\"$(stat -c '%u %g %a' -- \"$path\")\" || exit 1\n    printf 'file %s\\n' \"$metadata\"\n  fi\ndone";
 const DOCTOR_ACCESS_BATCH_SCRIPT: &str = "for path do\n  if [ -r \"$path\" ] && [ -w \"$path\" ]; then\n    printf 'read-write\\n'\n  else\n    printf 'unwritable\\n'\n  fi\ndone";
-const OWNERSHIP_FIND_BATCH_SCRIPT: &str = "uid=$1; gid=$2; shift 2; for path do\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'clean\\n'\n  else\n    first=\"$(find -P \"$path\" -xdev ! -type l ! \\( -user \"$uid\" -a -group \"$gid\" \\) -print -quit)\" || exit 1\n    if [ -n \"$first\" ]; then printf 'dirty\\t%s\\n' \"$first\"; else printf 'clean\\n'; fi\n  fi\ndone";
 const WORKSPACE_ACCESS_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do\n  path=$1; directory=$2; shift 2\n  if [ -L \"$path\" ]; then\n    printf 'symlink\\n'\n  elif [ ! -e \"$path\" ]; then\n    printf 'missing\\n'\n  elif [ ! -r \"$path\" ] || [ ! -w \"$path\" ]; then\n    printf 'unwritable\\n'\n  elif [ \"$directory\" = yes ]; then\n    probe=\"${path%/}/.effigy-write-probe-$$\"\n    if touch \"$probe\" && rm -f -- \"$probe\"; then printf 'ready\\n'; else printf 'lock-failed\\n'; fi\n  else\n    printf 'ready\\n'\n  fi\ndone";
 const WORKSPACE_MKDIR_BATCH_SCRIPT: &str = "for path do mkdir -p -- \"$path\" || exit 1; done";
 const WORKSPACE_CHOWN_SHALLOW_BATCH_SCRIPT: &str =
     "spec=$1; shift; for path do chown -h \"$spec\" -- \"$path\" || exit 1; done";
 const WORKSPACE_CHMOD_BATCH_SCRIPT: &str = "while [ \"$#\" -ge 2 ]; do path=$1; kind=$2; shift 2; mode=u+w; [ \"$kind\" = dir ] && mode=u+wx; chmod \"$mode\" -- \"$path\" || exit 1; done";
+
+fn ownership_find_batch_script(
+    paths: &[String],
+    mount_boundaries: &[String],
+    uid: &str,
+    gid: &str,
+) -> String {
+    let mut script = String::new();
+    for path in paths {
+        let quoted_path = shell_quote(path);
+        script.push_str(&format!(
+            "if [ -L {quoted_path} ]; then\n  printf 'symlink\\n'\nelif [ ! -e {quoted_path} ]; then\n  printf 'clean\\n'\nelse\n"
+        ));
+        let mut find = format!("find -P {quoted_path} -xdev");
+        for boundary in mount_boundaries
+            .iter()
+            .filter(|boundary| path_is_under(boundary, path))
+        {
+            find.push_str(&format!(
+                " \\( -path {} -prune \\) -o",
+                shell_quote(&find_path_pattern_literal(boundary))
+            ));
+        }
+        find.push_str(&format!(
+            " ! -type l ! \\( -user {uid} -a -group {gid} \\) -print -quit"
+        ));
+        script.push_str(&format!(
+            "  first=\"$({find})\" || exit 1\n  if [ -n \"$first\" ]; then printf 'dirty\\t%s\\n' \"$first\"; else printf 'clean\\n'; fi\nfi\n"
+        ));
+    }
+    script
+}
+
+fn find_path_pattern_literal(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for character in path.chars() {
+        if matches!(character, '\\' | '[' | ']' | '*' | '?') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
 
 impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
     fn resolve_identity(
@@ -1119,19 +1283,23 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         uid: u32,
         gid: u32,
     ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+        self.find_unowned_many_with_boundaries(paths, uid, gid, &[])
+    }
+
+    fn find_unowned_many_with_boundaries(
+        &mut self,
+        paths: &[String],
+        uid: u32,
+        gid: u32,
+        mount_boundaries: &[String],
+    ) -> Result<Vec<Option<String>>, PermissionPrepError> {
         if paths.is_empty() {
             return Ok(Vec::new());
         }
         let uid = uid.to_string();
         let gid = gid.to_string();
-        let mut argv = vec![
-            "sh",
-            "-c",
-            OWNERSHIP_FIND_BATCH_SCRIPT,
-            "effigy-perm-find-batch",
-        ];
-        argv.extend([uid.as_str(), gid.as_str()]);
-        argv.extend(paths.iter().map(String::as_str));
+        let script = ownership_find_batch_script(paths, mount_boundaries, &uid, &gid);
+        let argv = vec!["sh", "-c", script.as_str(), "effigy-perm-find-batch"];
         let path_context = paths
             .iter()
             .map(|path| format!("`{path}`"))
@@ -1252,7 +1420,17 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         uid: u32,
         gid: u32,
     ) -> Result<(), PermissionPrepError> {
-        let argv = bulk_chown_argv(path, uid, gid);
+        self.chown_tree_unowned_with_boundaries(path, uid, gid, &[])
+    }
+
+    fn chown_tree_unowned_with_boundaries(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+        mount_boundaries: &[String],
+    ) -> Result<(), PermissionPrepError> {
+        let argv = bulk_chown_argv_with_boundaries(path, uid, gid, mount_boundaries);
         let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
         let bulk_deadline = Instant::now() + self.bulk_timeout;
         let deadline = Some(match self.deadline {
@@ -1507,21 +1685,64 @@ impl ComposeAccessBackend<'_> {
     }
 }
 
-/// Argument array for the single bulk repair exec. `-execdir` makes `chown` run
-/// from a directory fd held by `find` on `./name`, so a path component swapped
-/// for a symlink after traversal cannot redirect ownership changes outside the
-/// volume. Requires GNU findutils; an image without `-execdir` fails not-ready.
+#[cfg(test)]
 fn bulk_chown_argv(path: &str, uid: u32, gid: u32) -> Vec<String> {
+    bulk_chown_argv_with_boundaries(path, uid, gid, &[])
+}
+
+/// Argument array for one bounded repair. `-execdir` makes `chown` run from a
+/// directory fd held by `find` on `./name`, so a path component swapped for a
+/// symlink after traversal cannot redirect ownership changes outside the
+/// volume. Requires GNU findutils; an image without `-execdir` fails not-ready.
+fn bulk_chown_argv_with_boundaries(
+    path: &str,
+    uid: u32,
+    gid: u32,
+    mount_boundaries: &[String],
+) -> Vec<String> {
     let spec = format!("{uid}:{gid}");
     let uid = uid.to_string();
     let gid = gid.to_string();
-    [
-        "find", "-P", path, "-xdev", "!", "-type", "l", "!", "(", "-user", &uid, "-a", "-group",
-        &gid, ")", "-execdir", "chown", "-h", &spec, "--", "{}", "+",
-    ]
-    .iter()
-    .map(|part| (*part).to_owned())
-    .collect()
+    let mut argv = vec![
+        "find".to_owned(),
+        "-P".to_owned(),
+        path.to_owned(),
+        "-xdev".to_owned(),
+    ];
+    for boundary in mount_boundaries
+        .iter()
+        .filter(|boundary| path_is_under(boundary, path))
+    {
+        argv.extend([
+            "(".to_owned(),
+            "-path".to_owned(),
+            find_path_pattern_literal(boundary),
+            "-prune".to_owned(),
+            ")".to_owned(),
+            "-o".to_owned(),
+        ]);
+    }
+    argv.extend([
+        "!".to_owned(),
+        "-type".to_owned(),
+        "l".to_owned(),
+        "!".to_owned(),
+        "(".to_owned(),
+        "-user".to_owned(),
+        uid,
+        "-a".to_owned(),
+        "-group".to_owned(),
+        gid,
+        ")".to_owned(),
+        "-execdir".to_owned(),
+        "chown".to_owned(),
+        "-h".to_owned(),
+        spec,
+        "--".to_owned(),
+        "{}".to_owned(),
+        "+".to_owned(),
+    ]);
+    argv
 }
 
 fn parse_id_output(raw: &str) -> Result<u32, PermissionPrepError> {
@@ -2077,13 +2298,31 @@ mod memory_backend {
             uid: u32,
             gid: u32,
         ) -> Result<(), PermissionPrepError> {
+            self.chown_tree_unowned_with_boundaries(path, uid, gid, &[])
+        }
+
+        fn chown_tree_unowned_with_boundaries(
+            &mut self,
+            path: &str,
+            uid: u32,
+            gid: u32,
+            mount_boundaries: &[String],
+        ) -> Result<(), PermissionPrepError> {
             self.exec_calls.set(self.exec_calls.get() + 1);
             self.bulk_calls += 1;
             if let Some(message) = self.bulk_fail.clone() {
                 return Err(PermissionPrepError::new(message));
             }
             let mut targets = Vec::new();
-            collect_unowned(self.node(path), path, uid, gid, &mut targets);
+            collect_unowned(
+                self.node(path),
+                path,
+                path,
+                uid,
+                gid,
+                mount_boundaries,
+                &mut targets,
+            );
             for target in &targets {
                 self.refuse_mutation(target)?;
             }
@@ -2192,7 +2431,7 @@ mod memory_backend {
                 .set(self.list_unowned_calls.get() + 1);
             self.exec_calls.set(self.exec_calls.get() + 1);
             let mut out = Vec::new();
-            collect_unowned(self.node(path), path, uid, gid, &mut out);
+            collect_unowned(self.node(path), path, path, uid, gid, &[], &mut out);
             Ok(out)
         }
 
@@ -2201,6 +2440,16 @@ mod memory_backend {
             paths: &[String],
             uid: u32,
             gid: u32,
+        ) -> Result<Vec<Option<String>>, PermissionPrepError> {
+            self.find_unowned_many_with_boundaries(paths, uid, gid, &[])
+        }
+
+        fn find_unowned_many_with_boundaries(
+            &mut self,
+            paths: &[String],
+            uid: u32,
+            gid: u32,
+            mount_boundaries: &[String],
         ) -> Result<Vec<Option<String>>, PermissionPrepError> {
             if paths.is_empty() {
                 return Ok(Vec::new());
@@ -2212,7 +2461,15 @@ mod memory_backend {
                 .iter()
                 .map(|path| {
                     let mut entries = Vec::new();
-                    collect_unowned(self.node(path), path, uid, gid, &mut entries);
+                    collect_unowned(
+                        self.node(path),
+                        path,
+                        path,
+                        uid,
+                        gid,
+                        mount_boundaries,
+                        &mut entries,
+                    );
                     Ok(entries.into_iter().next())
                 })
                 .collect()
@@ -2301,10 +2558,15 @@ mod memory_backend {
     fn collect_unowned(
         node: Option<&MemoryNode>,
         path: &str,
+        scope_root: &str,
         uid: u32,
         gid: u32,
+        mount_boundaries: &[String],
         out: &mut Vec<String>,
     ) {
+        if path != scope_root && mount_boundaries.iter().any(|boundary| boundary == path) {
+            return;
+        }
         let Some(node) = node else {
             return;
         };
@@ -2324,7 +2586,15 @@ mod memory_backend {
                 } else {
                     format!("{path}/{name}")
                 };
-                collect_unowned(Some(child), &child_path, uid, gid, out);
+                collect_unowned(
+                    Some(child),
+                    &child_path,
+                    scope_root,
+                    uid,
+                    gid,
+                    mount_boundaries,
+                    out,
+                );
             }
         }
     }
@@ -2427,6 +2697,41 @@ mod tests {
             rust_cache: rust,
             read_only: false,
         }
+    }
+
+    fn image_home_target() -> WorkspaceOwnershipTarget {
+        WorkspaceOwnershipTarget {
+            path: "/home/dev".to_owned(),
+            mount_kind: WorkspaceMountKind::Image,
+            source: None,
+            repair_authority: WorkspaceRepairAuthority::OwnedDisposable,
+            rust_cache: None,
+            read_only: false,
+        }
+    }
+
+    fn nested_composer_fixture(bind_mode: u32) -> MemoryAccessBackend {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/home/dev", 0, 0, 0o755);
+        backend.add_dir("/home/dev/.cache", 0, 0, 0o755);
+        backend.add_dir("/home/dev/.cache/composer", 0, 0, bind_mode);
+        backend.add_file("/home/dev/.cache/composer/cache.db", 0, 0, 0o666);
+        backend.add_file("/home/dev/.cache/image-owned", 0, 0, 0o644);
+        backend.protect("/home/dev/.cache/composer");
+        backend
+    }
+
+    fn nested_composer_policy(root: &Path) -> EffectiveContainerPolicy {
+        let compose_path = root.join("compose.yml");
+        std::fs::write(
+            &compose_path,
+            "services:\n  workspace:\n    volumes:\n      - /Users/tom/.effigy/shared/composer-cache:/home/dev/.cache/composer\n",
+        )
+        .expect("private compose fixture");
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", compose_path);
+        policy.workspace_user = Some("dev".to_owned());
+        policy.workspace_home = Some("/home/dev".to_owned());
+        policy
     }
 
     #[test]
@@ -2653,6 +2958,112 @@ mod tests {
             backend.mode_of("/workspace/target/debug/.cargo-build-lock"),
             Some(0o444)
         );
+    }
+
+    #[test]
+    fn nested_host_bind_is_pruned_and_checked_as_numeric_user_without_mutation() {
+        let mut backend = nested_composer_fixture(0o777);
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = nested_composer_policy(root.path());
+
+        ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect("root-owned host bind is usable by the numeric workspace user");
+
+        assert_eq!(
+            backend.owner_of("/home/dev/.cache/image-owned"),
+            Some((501, 20))
+        );
+        assert_eq!(backend.owner_of("/home/dev/.cache/composer"), Some((0, 0)));
+        assert_eq!(
+            backend.owner_of("/home/dev/.cache/composer/cache.db"),
+            Some((0, 0))
+        );
+        assert!(!backend
+            .chown_log
+            .iter()
+            .any(|path| path == "/home/dev/.cache/composer"
+                || path.starts_with("/home/dev/.cache/composer/")));
+        assert!(!backend.created_locks.iter().any(|path| {
+            path == "/home/dev/.cache/composer" || path.starts_with("/home/dev/.cache/composer/")
+        }));
+    }
+
+    #[test]
+    fn nested_host_bind_that_is_unwritable_fails_with_source_and_no_mutation() {
+        let mut backend = nested_composer_fixture(0o755);
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = nested_composer_policy(root.path());
+
+        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect_err("the numeric user cannot write to this host bind");
+        let error = error.to_string();
+
+        assert!(error.contains("cannot read/write `/home/dev/.cache/composer`"));
+        assert!(error.contains("mount=bind"));
+        assert!(error.contains("source=`/Users/tom/.effigy/shared/composer-cache`"));
+        assert!(error.contains("Grant numeric uid 501 read/write access"));
+        assert_eq!(backend.owner_of("/home/dev/.cache/composer"), Some((0, 0)));
+        assert_eq!(
+            backend.owner_of("/home/dev/.cache/composer/cache.db"),
+            Some((0, 0))
+        );
+        assert!(!backend.chown_log.iter().any(|path| {
+            path == "/home/dev/.cache/composer" || path.starts_with("/home/dev/.cache/composer/")
+        }));
+        assert!(!backend.created_locks.iter().any(|path| {
+            path == "/home/dev/.cache/composer" || path.starts_with("/home/dev/.cache/composer/")
+        }));
+    }
+
+    #[test]
+    fn missing_nested_host_bind_fails_closed_before_parent_repair() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/home/dev", 0, 0, 0o755);
+        backend.add_dir("/home/dev/.cache", 0, 0, 0o755);
+        backend.add_file("/home/dev/.cache/image-owned", 0, 0, 0o644);
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let policy = nested_composer_policy(root.path());
+
+        let error = ensure_workspace_permissions_ready_with(&policy, None, &mut backend)
+            .expect_err("a missing declared child bind fails closed");
+        let error = error.to_string();
+
+        assert!(error.contains("declared child mount `/home/dev/.cache/composer` is missing"));
+        assert!(error.contains("mount=bind"));
+        assert!(backend.chown_log.is_empty());
+        assert_eq!(
+            backend.owner_of("/home/dev/.cache/image-owned"),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/home/dev", 0, 0, 0o755);
+        backend.add_dir("/home/dev/.cache", 0, 0, 0o755);
+        backend.add_dir("/home/dev/.config", 501, 20, 0o755);
+        backend.add_dir("/home/dev/.local", 501, 20, 0o755);
+        backend.add_file("/home/dev/.cache/image-owned", 0, 0, 0o644);
+        backend.add_dir("/home/dev/.cache/cache-volume", 0, 0, 0o755);
+        backend.add_file("/home/dev/.cache/cache-volume/cache.db", 0, 0, 0o644);
+        let mut nested_volume = owned_target("/home/dev/.cache/cache-volume", None);
+        nested_volume.mount_kind = WorkspaceMountKind::NamedVolume;
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![image_home_target(), nested_volume],
+        };
+
+        prepare_workspace_permissions("dev", &plan, Some("/home/dev"), &context(), &mut backend)
+            .expect("nested owned volume gets its own repair scope");
+
+        for path in [
+            "/home/dev/.cache/image-owned",
+            "/home/dev/.cache/cache-volume",
+            "/home/dev/.cache/cache-volume/cache.db",
+        ] {
+            assert_eq!(backend.owner_of(path), Some((501, 20)), "{path}");
+        }
+        assert_eq!(backend.bulk_calls, 2);
     }
 
     #[test]
@@ -3238,6 +3649,28 @@ services:
         assert!(argv.iter().any(|part| part == "-P"));
         assert!(argv.iter().any(|part| part == "-xdev"));
         assert!(argv.iter().any(|part| part == "501:20"));
+    }
+
+    #[test]
+    fn ownership_scans_and_repairs_prune_declared_child_mounts() {
+        let boundaries = vec![
+            "/home/dev/.cache/composer".to_owned(),
+            "/home/dev/.cache/other[volume]".to_owned(),
+            "/unrelated".to_owned(),
+        ];
+        let scan =
+            ownership_find_batch_script(&["/home/dev/.cache".to_owned()], &boundaries, "501", "20");
+        let repair = bulk_chown_argv_with_boundaries("/home/dev/.cache", 501, 20, &boundaries);
+
+        assert!(scan.contains("-prune"));
+        assert!(scan.contains("/home/dev/.cache/composer"));
+        assert!(scan.contains(r"other\[volume\]"));
+        assert!(!scan.contains("/unrelated"));
+        assert!(repair.iter().any(|part| part == "-prune"));
+        assert!(repair
+            .iter()
+            .any(|part| part == r"/home/dev/.cache/other\[volume\]"));
+        assert!(!repair.iter().any(|part| part == "/unrelated"));
     }
 
     #[cfg(unix)]

@@ -526,9 +526,18 @@ source, not from the host login name:
   outside the volume. It needs GNU findutils in the image; without it repair
   fails not-ready. The child is bounded by a 600 s cap (or the caller deadline
   if sooner) and reaped on expiry. The batched ownership scan has the same cap.
-  It never follows symlinks or leaves the volume. Readiness requires
-  a post-repair unowned listing, a scope identity re-check and the access
-  probe, not chown exit alone. Private acceptance (disposable container from a
+  Recursive scans prune every declared child mount path from the current
+  compose ownership plan, including bind and nested-volume targets. `-xdev`
+  remains an additional guard; path pruning also protects mounts that share a
+  filesystem device. A nested owned volume is scanned in its own scope after
+  the parent scan skips it. A nested host bind is checked for read/write access
+  as the resolved numeric workspace user, without comparing its observed owner
+  to that identity and without creating a probe file in the bind. Unwritable
+  binds fail with the mount source and numeric-user repair guidance; Effigy
+  never repairs their root or contents. Scans never follow symlinks or leave
+  the current repair scope. Readiness requires a post-repair unowned listing,
+  a scope identity re-check and the access probe, not chown exit alone.
+  Private acceptance (disposable container from a
   local GNU-find image, no host mounts or network, `--ignored` case in
   `test:workspace:rust-ownership:bulk`): 44339 entries over three volumes were
   repaired to 501:20 in 3 runtime execs and 193 batched native `chown`
@@ -553,6 +562,12 @@ when it is not. Failures are not swallowed and must not claim ready.
 Symlinks and path escapes are not followed. World-writable `chmod 777` and
 recursive host-source chown are forbidden. Repair may restore owner write
 (`u+w` / `u+wx`) on owned disposable paths after a failed write probe.
+
+Tom's 2026-10-05 ruling: “host-mounted ownership is expected, do not
+restructure the container to appease ownership.” Preserve intended host bind
+layout; do not move a shared cache to a named volume or disable its mount to
+avoid ownership preparation. Root-observed ownership differences are
+acceptable when numeric-user access works.
 
 `effigy doctor` remains read-only. Finding id `container.workspace-ownership`
 covers declared cargo/target mounts, their nested rust lock/cache paths, and
