@@ -398,8 +398,10 @@ publication when the payload already lives in a source file:
 - The published file is an independent copy: later writes to `source` do not
   change the destination. The helper does not hard-link the source inode.
 - Occupied destinations, including dangling symlinks, still lose without
-  replacement. Filesystems without hard links fail instead of falling back to
-  an overwriting copy.
+  replacement. Occupancy is decided before the source is opened, so a missing
+  or unreadable source does not turn an occupied destination into an error.
+  Filesystems without hard links fail instead of falling back to an
+  overwriting copy.
 
 `fs::copy(source, destination)` still replaces an existing destination.
 `fs::move_path(source, destination)` delegates to `std::fs::rename`. It

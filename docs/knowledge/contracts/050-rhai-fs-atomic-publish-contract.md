@@ -29,6 +29,9 @@ publisher overwriting the winner.
   destination was already occupied. Exactly one concurrent publisher wins; a
   losing publisher returns `false` and never alters the winner. `copy_if_missing`
   reports `true` only when its complete copy is the published destination.
+  Occupancy is decided from the destination name before the source is opened,
+  so an occupied destination still returns `false` when the source is missing
+  or unreadable.
 - An existing destination counts as occupied whether it is a regular file, a
   directory, or a symlink, including a dangling symlink. Publication never
   follows or replaces a symlink destination.
@@ -61,7 +64,9 @@ Reject the implementation if any counterexample survives:
 3. A losing publisher replaces or truncates the winner, including a
    `copy_if_missing` caller that observed absence then copied after another
    writer published.
-4. An occupied destination, including a dangling symlink, is replaced.
+4. An occupied destination, including a dangling symlink, is replaced, or
+   `copy_if_missing` errors on a missing or unreadable source instead of
+   returning `false` for that occupied name.
 5. A failed staged write, staged copy, or link leaves a destination or staged
    file behind.
 6. The helper silently falls back to a non-atomic write or overwriting copy on

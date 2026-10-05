@@ -487,9 +487,17 @@ fn publish_absent_payload(destination: &Path, contents: &[u8]) -> Result<bool, B
 /// loading the payload into memory. Returns `Ok(true)` only when this call's
 /// complete copy is the published destination, and `Ok(false)` when the
 /// destination was already occupied (including by a symlink or directory).
-/// Filesystems without hard-link support fail with the underlying OS error
-/// rather than falling back to an overwriting copy.
+/// Occupancy is decided from the destination name before the source is opened,
+/// so a missing or unreadable source does not turn an occupied destination
+/// into an error. Filesystems without hard-link support fail with the
+/// underlying OS error rather than falling back to an overwriting copy.
 fn copy_absent_file(source: &Path, destination: &Path) -> Result<bool, Box<EvalAltResult>> {
+    // Occupied includes dangling symlinks (`exists()` would miss those). Any
+    // other lstat error, including ENOTDIR when a parent is a file, is not an
+    // occupied name; parent creation and publication still report it.
+    if std::fs::symlink_metadata(destination).is_ok() {
+        return Ok(false);
+    }
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;

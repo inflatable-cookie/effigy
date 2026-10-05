@@ -229,6 +229,68 @@ fn copy_if_missing_treats_symlink_and_dangling_symlink_as_occupied() {
 }
 
 #[test]
+fn copy_if_missing_returns_false_for_occupied_destination_without_reading_source() {
+    let (root, context) = context_at("fs-copy-if-missing-occupied-unread-source");
+    fs::write(root.join("existing.txt"), "keep-file").expect("existing file");
+    fs::create_dir_all(root.join("existing-dir")).expect("existing dir");
+    fs::write(root.join("existing-dir/child.txt"), "keep-dir").expect("dir child");
+    fs::write(root.join("unreadable.txt"), "secret").expect("unreadable source");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            root.join("unreadable.txt"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .expect("chmod");
+    }
+
+    assert!(!copy_if_missing_via_rhai(
+        &context,
+        "absent-source.txt",
+        "existing.txt"
+    ));
+    assert!(!copy_if_missing_via_rhai(
+        &context,
+        "absent-source.txt",
+        "existing-dir"
+    ));
+    #[cfg(unix)]
+    {
+        assert!(!copy_if_missing_via_rhai(
+            &context,
+            "unreadable.txt",
+            "existing.txt"
+        ));
+        std::os::unix::fs::symlink(root.join("missing-target.txt"), root.join("dangling.txt"))
+            .expect("dangling");
+        assert!(!copy_if_missing_via_rhai(
+            &context,
+            "absent-source.txt",
+            "dangling.txt"
+        ));
+        assert!(fs::symlink_metadata(root.join("dangling.txt"))
+            .expect("dangling metadata")
+            .file_type()
+            .is_symlink());
+        fs::set_permissions(root.join("unreadable.txt"), {
+            use std::os::unix::fs::PermissionsExt;
+            fs::Permissions::from_mode(0o644)
+        })
+        .expect("restore mode");
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("existing.txt")).expect("file dest"),
+        "keep-file"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("existing-dir/child.txt")).expect("dir child"),
+        "keep-dir"
+    );
+    assert_no_staging(&root);
+}
+
+#[test]
 fn copy_if_missing_failure_leaves_no_destination_or_staging() {
     let (root, context) = context_at("fs-copy-if-missing-failure");
     fs::write(root.join("blocker"), "a file, not a directory").expect("blocker");

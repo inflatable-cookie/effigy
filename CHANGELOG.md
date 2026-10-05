@@ -353,10 +353,11 @@ During v0.x, MINOR bumps may include breaking changes.
   streamed into a staged file on the destination filesystem and linked into
   place, so a concurrent winner is never overwritten and the helper returns
   `true` only when its complete independent copy is published. Occupied
-  destinations, including dangling symlinks, stay in place; a later write to
-  the source cannot change the copy; unsupported filesystems fail instead of
-  falling back to an overwriting copy. `fs::copy` and `fs::move_path` keep
-  their replacement behavior.
+  destinations, including dangling symlinks, stay in place even when the
+  source is missing or unreadable; a later write to the source cannot change
+  the copy; unsupported filesystems fail instead of falling back to an
+  overwriting copy. `fs::copy` and `fs::move_path` keep their replacement
+  behavior.
 - Recursive workspace ownership scans now prune every declared child mount,
   including same-device nested binds and volumes. Nested host binds are checked
   as the numeric workspace user without owner-equality requirements or probe
