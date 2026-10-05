@@ -182,7 +182,8 @@ fn terminate_owned_child_tree(child: &mut Child) {
 
 /// Signal the child's process group (pgid == child pid after
 /// `process_group(0)`). Never group-signals the caller. Non-group fallback is
-/// pid-only `Child::kill`.
+/// pid-only `Child::kill`. SIGTERM returns early only when the leader has
+/// exited and the group is gone; otherwise SIGKILL the group after grace.
 #[cfg(unix)]
 fn terminate_owned_unix_tree(child: &mut Child) {
     use nix::sys::signal::{kill, Signal};
@@ -213,9 +214,9 @@ fn terminate_owned_unix_tree(child: &mut Child) {
     let grace = Instant::now() + Duration::from_millis(800);
     while Instant::now() < grace {
         match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Ok(Some(_)) if process_group_is_live(pid) == Some(false) => return,
             Err(_) => break,
+            _ => thread::sleep(Duration::from_millis(20)),
         }
     }
     let _ = kill(group, Signal::SIGKILL);
@@ -498,6 +499,16 @@ pub(super) mod timeout_descendant_proof {
             )
         }
 
+        /// Leader waits; descendant ignores SIGTERM so group SIGKILL must fire.
+        pub fn hang_command_ignoring_term(&self) -> String {
+            let pending = self.ready.with_extension("pids.pending");
+            format!(
+                "/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 300' &\n descendant=$!\n printf '%s\\n%s\\n' \"$$\" \"$descendant\" > '{pending}'\n mv '{pending}' '{ready}'\n wait\n",
+                pending = pending.display(),
+                ready = self.ready.display(),
+            )
+        }
+
         pub fn spawn_unrelated_sibling(&mut self) {
             use std::os::unix::process::CommandExt;
             let child = Command::new("/bin/sleep")
@@ -569,6 +580,25 @@ pub(super) mod timeout_descendant_proof {
                 alive.is_empty(),
                 "recorded owned leader/descendant still alive: {alive:?}"
             );
+        }
+
+        pub fn wait_until_owned_gone(&self, pids: &[i32]) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let alive = pids
+                    .iter()
+                    .copied()
+                    .filter(|pid| Self::pid_alive(*pid))
+                    .collect::<Vec<_>>();
+                if alive.is_empty() {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "recorded owned leader/descendant still alive after SIGKILL: {alive:?}"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
         }
 
         pub fn assert_sibling_alive(&self) {

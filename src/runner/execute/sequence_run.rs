@@ -1278,6 +1278,35 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
+    fn timeout_descendants_sequence_reaps_term_immune_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-term-immune-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command_ignoring_term();
+        let started = Instant::now();
+        let error = super::run_shell_step_once(
+            &command,
+            fixture.cwd(),
+            &empty_step_env(),
+            None,
+            Some(2_000),
+        )
+        .expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        assert_eq!(error.task_exit_status(), Some(124), "{error}");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn timeout_descendants_sequence_group_cleanup_disabled_fails_reap_oracle() {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;

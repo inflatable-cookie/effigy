@@ -179,7 +179,8 @@ The following must converge across covered surfaces.
 
 - in-process run-array shell steps that set `timeout_ms` spawn the step in a
   new Unix process group, stop that group on expiry, reap the direct child, and
-  report exit `124`. The caller process group is never signalled.
+  report exit `124`. Expiry sends SIGTERM, then SIGKILL if the group remains
+  live after the grace interval. The caller process group is never signalled.
 - managed lifecycle cleanup uses the same owned-group timeout reap (90s budget)
   and still reports a cleanup timeout as a task-invocation error.
 - without `timeout_ms`, a sequence shell stays in the caller group unless a

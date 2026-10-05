@@ -350,7 +350,8 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - In-process run-array shell timeouts and managed lifecycle cleanup now stop
   the owned Unix process group on expiry and reap the direct child, so
-  descendants cannot leak after a sequence `124` or a cleanup timeout. The
+  descendants cannot leak after a sequence `124` or a cleanup timeout,
+  including descendants that ignore SIGTERM (group SIGKILL after grace). The
   caller group is never targeted. Non-Unix hosts keep pid-only kill. Prove
   with `test:runner:timeout-descendants`.
 - Recursive workspace ownership scans now prune every declared child mount,

@@ -1602,6 +1602,37 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn timeout_descendants_managed_reaps_term_immune_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-term-immune-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command_ignoring_term();
+        let started = Instant::now();
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            &command,
+            Duration::from_millis(2_000),
+            Duration::from_millis(20),
+        )
+        .expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("timed out"),
+            "expected cleanup timeout, got: {rendered}"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn timeout_descendants_managed_group_cleanup_disabled_fails_reap_oracle() {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;
