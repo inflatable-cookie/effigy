@@ -388,10 +388,10 @@ do not prove that the live process is the gateway that wrote the file. See
 
 ### Gateway process identity
 
-This subsection is the owner for gateway start-identity / PID-reuse
-disposition. Current behavior, a bounded correction proposal, and the
-unresolved operator ruling are distinct. The proposal is not implemented.
-Disclosure in this file is not risk acceptance.
+This subsection is the owner for current behavior, the bounded correction
+proposal, and source evidence. Tom's ruling lives in
+[Gateway process identity ruling](#gateway-process-identity-ruling).
+The proposal is authorized and not implemented.
 
 #### Current behavior (HEAD, verified in source)
 
@@ -497,13 +497,13 @@ Already in the product, not used by gateway lifecycle:
 | `effigy_process::boot_identity` | Linux `/proc/sys/kernel/random/boot_id`; macOS `sysctl kern.boottime` | Per boot | None |
 | `effigy_process::process_start_identity` | Linux `/proc/<pid>/stat` field 22 (ticks); macOS `ps -o lstart=` | Linux: tick-granularity within a boot. macOS `lstart` is locale-dependent and must not be persisted as a generation key | QA-group owner liveness (`qa_group_status.rs`); not gateway |
 | `effigy_host_run::canonical_start_identity` | Linux `{pid}@{boot}:{ticks}`; macOS `{pid}@UTC-whole-seconds` from `pbi_start_tvsec` only | Host-run contract 010 wire format truncates macOS start time to whole seconds. Do not change 010. Do not persist that string as the gateway record | Host-run peer proof only |
-| macOS `libc::proc_bsdinfo` | `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` and `pbi_start_tvusec` (`u64` each). Locked `libc` 0.2.189 and SDK `sys/proc_info.h` both expose the usec field. Host-run ignores usec | Strongest macOS start-time primitive in this tree: pid + boot + sec + usec. Whole-second collision is avoidable truncation, not a platform limit | Unused by gateway |
+| macOS `libc::proc_bsdinfo` | `proc_pidinfo(PROC_PIDTBSDINFO)` → `pbi_start_tvsec` and `pbi_start_tvusec` (`u64` each). Locked `libc` 0.2.189 and SDK `sys/proc_info.h` both expose the usec field. Host-run ignores usec. XNU `proc_info.c` applies `CHECK_SAME_USER`; a cross-uid read needs `PRIV_GLOBAL_PROC_INFO` | Strongest macOS start-time primitive in this tree: pid + boot + sec + usec. Whole-second collision is avoidable truncation. A root-owned gateway is unverifiable through this API from the ordinary operator uid ([Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)) | Unused by gateway |
 | Linux pidfd | not used | Would make open-then-signal atomic on Linux 5.3+ | Not portable to macOS; out of the smallest fix |
 
 Unknown identities already fail closed in host-run and in
 `process_start_identity_matches`. Gateway has no equivalent match step.
 
-#### Proposed smallest correction (not implemented)
+#### Proposed smallest correction (authorized, not implemented)
 
 Do not add a control plane, helper CLI, host-run contract change, or
 scheduler policy.
@@ -561,22 +561,44 @@ positive control for the signal path, not a foreign-PID proof.
 Residual after that fix: TOCTOU between the last identity read and `kill`
 (a pre-signal start-time check is not atomic). macOS usec-granularity plus
 pid still races that syscall; it does not reintroduce whole-second truncation.
-Non-Unix `down` stays unimplemented.
+Non-Unix `down` stays unimplemented. A readable sidecar does not let an
+ordinary operator uid read live `PROC_PIDTBSDINFO` of a root-owned daemon;
+that live-identity access boundary is [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access)
+and is not authorized here.
 
-#### v0.14.0 ruling (unresolved)
+### Gateway process identity ruling
 
-Recommendation: do not publish v0.14.0 until this sidecar and fail-closed
-legacy policy land, unless Tom explicitly accepts the residual.
+Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
+start-identity sidecar and fail-closed legacy policy are implemented. He does
+not accept the current PID-only ownership risk and authorized the bounded fix.
 
-Acceptance would mean: leftover `gateway.pid` after crash or reboot can cause
-`status` / `up` / `down` / elevation to treat a live unrelated process as the
-gateway and SIGTERM/SIGKILL it, including after privilege escalation. 099/101
-remain; ownership does not. Mitigation if accepted: leave records unknown
-while the owned daemon may still be running; do not delete them merely because
-a listener is present.
+The correction must match the recorded PID, boot identity and precise process
+start identity before treating a process as the gateway or signaling it.
+Use Linux boot identity plus start ticks; on macOS retain both start seconds
+and microseconds. Missing or unreadable identity is unknown: preserve records,
+do not signal, and do not start a replacement. A numeric-only legacy record
+must not authorize a signal. Migration must confirm the exact owned daemon
+stopped/gone before removing its records.
 
-This assessment does not grant that acceptance. The live question is
-[Q-001](../questions.md#q-001--gateway-pid-identity).
+The legitimate unelevated reader must be able to read the trusted sidecar
+published by an elevated daemon. Private proofs must establish that read policy
+and live identity access; no new helper, elevation route or host-run contract
+change is authorized. A last identity check still races the signal syscall;
+implementation and release documentation must disclose that limit rather than
+claim atomic ownership. No live gateway migration or release publication is
+part of this authorization.
+
+The macOS supported-reader constraint is now established: Apple's XNU
+`proc_info.c` applies `CHECK_SAME_USER` to `PROC_PIDTBSDINFO`; a cross-uid
+read requires `PRIV_GLOBAL_PROC_INFO`. The existing root-owned gateway is
+therefore unverifiable through this API by an ordinary operator client.
+A readable sidecar alone does not solve live identity access. See
+[Apple's process security policy](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c).
+Do not weaken the identity match or use deprecated `kern.proc` SPI to hide
+this support limit. A new elevated-reader route or changed daemon privilege
+model needs an explicit ruling in [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access).
+The implementation is not approved to cross that boundary; Q-001 still blocks
+publication until the correction is implemented and verified.
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.

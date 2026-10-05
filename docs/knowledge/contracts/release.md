@@ -137,8 +137,10 @@ conversion and named containers test-lint sites are closed by task 100
 Gateway process ownership is a separate v0.14.0 disposition, not accepted by
 those repairs. The PID file is still decimal-only; an exact live `ps` row is
 not the gateway that wrote it. Stale/foreign PID and probe-to-signal reuse
-remain current behavior. Current truth, the bounded sidecar proposal, and the
-unresolved ruling live in
+remain current behavior. Tom blocked publication until the sidecar is
+implemented
+([Q-001](../questions.md#q-001--gateway-pid-identity), answered).
+Current truth, the authorized unimplemented proposal, and the ruling live in
 [architecture 020](../architecture/020-container-infrastructure-design.md#gateway-process-identity)
-and [Q-001](../questions.md#q-001--gateway-pid-identity).
+and the [ruling subsection](../architecture/020-container-infrastructure-design.md#gateway-process-identity-ruling).
 This release procedure does not accept that residual.
