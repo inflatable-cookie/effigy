@@ -306,3 +306,61 @@ fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
     assert!(plan.conflicts.is_empty());
     assert!(plan.repairable_domains.is_empty());
 }
+
+fn gateway_status_fixture(pid: u32) -> GatewayStatus {
+    GatewayStatus {
+        pid,
+        dns_addr: "127.0.0.1:15353".parse().expect("dns"),
+        proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+        route_count: 0,
+        routes: Vec::new(),
+        binary_version: Some("v0.3.2+local.test".to_owned()),
+    }
+}
+
+#[test]
+fn probe_state_resolver_refuses_unknown_instead_of_reporting_stopped() {
+    let result = resolve_gateway_status(Err(effigy_gateway::GatewayError::ProcessStateUnknown {
+        pid: 4242,
+    }));
+    assert!(
+        result.is_err(),
+        "an unavailable probe must not resolve to a stopped gateway"
+    );
+}
+
+#[test]
+fn probe_state_resolver_maps_confirmed_absence_to_stopped() {
+    let result = resolve_gateway_status(Err(effigy_gateway::GatewayError::NotRunning));
+    assert!(matches!(result, Ok(None)));
+}
+
+#[test]
+fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
+    let resolved =
+        resolve_gateway_status(Ok(gateway_status_fixture(4242))).expect("running status resolves");
+    assert_eq!(resolved.map(|status| status.pid), Some(4242));
+}
+
+#[test]
+fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
+    // `run_gateway_up` only reaches `spawn_gateway_daemon` when this returns
+    // `Ok(None)`, so a `GatewayProcessProbe::Unknown` must surface as `Err`.
+    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+    let unknown = handle_existing_gateway_for_up(
+        &config,
+        Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
+        false,
+    );
+    assert!(
+        unknown.is_err(),
+        "up must not start a replacement when the probe is unknown"
+    );
+
+    let stopped = handle_existing_gateway_for_up(
+        &config,
+        Err(effigy_gateway::GatewayError::NotRunning),
+        false,
+    );
+    assert!(matches!(stopped, Ok(None)));
+}

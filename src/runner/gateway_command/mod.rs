@@ -5,7 +5,7 @@ use std::process::Command as ProcessCommand;
 use effigy_cli::{GatewayArgs, GatewaySubcommand, InternalGatewayArgs};
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::routes::RouteTable;
-use effigy_gateway::server::{self, GatewayConfig, GatewayStatus};
+use effigy_gateway::server::{self, GatewayConfig, GatewayProcessProbe, GatewayStatus};
 use effigy_gateway::tls::TlsConfig;
 use effigy_ui::style_text;
 use effigy_ui::theme::is_ci_environment;
@@ -84,7 +84,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     if effigy_core::executable_override::current().is_none() {
         let config = gateway_config()?;
-        if let Ok(status) = server::get_status(&config) {
+        if let Some(status) = resolve_gateway_status(server::get_status(&config))? {
             if gateway_status_matches_current_binary(&status) {
                 return Ok(());
             }
@@ -127,29 +127,67 @@ pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String,
     Ok(String::new())
 }
 
+/// Resolve a `get_status` result for a lifecycle command.
+///
+/// Returns `Ok(Some(status))` for a confirmed running gateway, `Ok(None)` when
+/// the records prove the gateway is stopped, and an error when the process
+/// probe was unavailable or ambiguous. Callers must never treat that error as
+/// "stopped": the PID records stay in place for reconciliation.
+fn resolve_gateway_status(
+    status: Result<GatewayStatus, effigy_gateway::GatewayError>,
+) -> Result<Option<GatewayStatus>, RunnerError> {
+    match status {
+        Ok(status) => Ok(Some(status)),
+        Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
+        Err(error) => Err(RunnerError::task_invocation(format!(
+            "cannot determine gateway state ({error}); refusing to guess. The gateway PID record is left in place for reconciliation"
+        ))),
+    }
+}
+
+/// Handle any existing gateway before `up` starts a new daemon.
+///
+/// Returns `Ok(Some(rendered))` when `up` already has its answer, `Ok(None)`
+/// when no gateway is running and the caller should start one, and `Err` when
+/// the probe was ambiguous. An unknown probe must never fall through to
+/// `spawn_gateway_daemon`, so it returns before the start path.
+fn handle_existing_gateway_for_up(
+    config: &GatewayConfig,
+    status: Result<GatewayStatus, effigy_gateway::GatewayError>,
+    output_json: bool,
+) -> Result<Option<String>, RunnerError> {
+    let Some(status) = resolve_gateway_status(status)? else {
+        return Ok(None);
+    };
+    if gateway_status_matches_current_binary(&status) {
+        let route_table = RouteTable::load(&config.route_table_path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let tls = gateway_tls_summary(config, &route_table);
+        return render_gateway_up_result(
+            config,
+            GatewayUpState::AlreadyRunning(status),
+            &tls,
+            &[],
+            output_json,
+        )
+        .map(Some);
+    }
+    if !gateway_invocation_is_escalated() && gateway_down_requires_elevation(config, Some(&status))
+    {
+        prepare_gateway_state_for_elevated_run(config)?;
+        return run_gateway_elevated(GatewaySubcommand::Up, output_json).map(Some);
+    }
+    stop_gateway_process(status.pid)?;
+    server::remove_pid_file(&config.pid_file_path);
+    Ok(None)
+}
+
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    if let Ok(status) = server::get_status(&config) {
-        if gateway_status_matches_current_binary(&status) {
-            let route_table = RouteTable::load(&config.route_table_path)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let tls = gateway_tls_summary(&config, &route_table);
-            return render_gateway_up_result(
-                &config,
-                GatewayUpState::AlreadyRunning(status),
-                &tls,
-                &[],
-                output_json,
-            );
-        }
-        if !gateway_invocation_is_escalated()
-            && gateway_down_requires_elevation(&config, Some(&status))
-        {
-            prepare_gateway_state_for_elevated_run(&config)?;
-            return run_gateway_elevated(GatewaySubcommand::Up, output_json);
-        }
-        stop_gateway_process(status.pid)?;
-        server::remove_pid_file(&config.pid_file_path);
+    if let Some(rendered) =
+        handle_existing_gateway_for_up(&config, server::get_status(&config), output_json)?
+    {
+        return Ok(rendered);
     }
     if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
         prepare_gateway_state_for_elevated_run(&config)?;
@@ -177,7 +215,7 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
 
 fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
-    let status = server::get_status(&config).ok();
+    let status = resolve_gateway_status(server::get_status(&config))?;
     if !gateway_invocation_is_escalated()
         && gateway_down_requires_elevation(&config, status.as_ref())
     {
@@ -193,11 +231,20 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
         stop_gateway_process(running.pid)?;
     }
     if let Some(ref running) = status {
-        if server::process_is_running(running.pid) {
-            return Err(RunnerError::task_invocation(format!(
-                "gateway process {} is still running after shutdown attempt",
-                running.pid
-            )));
+        match server::probe_gateway_process(running.pid) {
+            GatewayProcessProbe::ConfirmedAbsent => {}
+            GatewayProcessProbe::Running => {
+                return Err(RunnerError::task_invocation(format!(
+                    "gateway process {} is still running after shutdown attempt",
+                    running.pid
+                )));
+            }
+            GatewayProcessProbe::Unknown => {
+                return Err(RunnerError::task_invocation(format!(
+                    "cannot confirm gateway process {} stopped after shutdown attempt; PID record left in place",
+                    running.pid
+                )));
+            }
         }
     }
     server::remove_pid_file(&config.pid_file_path);
@@ -256,7 +303,7 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let tls = gateway_tls_summary(&config, &route_table);
     let routes = gateway_route_dashboard(&config, &route_table, &tls);
     let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
-    let status = server::get_status(&config).ok();
+    let status = resolve_gateway_status(server::get_status(&config))?;
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
     );

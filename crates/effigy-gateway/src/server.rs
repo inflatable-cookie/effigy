@@ -184,49 +184,139 @@ pub fn remove_pid_file(path: &Path) {
     let _ = std::fs::remove_file(gateway_version_file_for(path));
 }
 
-/// Check whether a process with the given PID is running.
+/// Outcome of probing whether a recorded gateway PID is alive.
+///
+/// A probe that cannot run or returns ambiguous output is [`Self::Unknown`],
+/// not [`Self::ConfirmedAbsent`]. Lifecycle decisions must branch on this
+/// value instead of collapsing it to a `bool`, so an unavailable probe can
+/// never be reported as a stopped gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayProcessProbe {
+    /// A live, non-zombie process with exactly this PID was confirmed.
+    Running,
+    /// The probe confirmed that no live process with this PID exists.
+    ConfirmedAbsent,
+    /// The probe was unavailable or its output could not be interpreted.
+    Unknown,
+}
+
+impl GatewayProcessProbe {
+    /// True only when the probe confirmed a running process.
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Running)
+    }
+
+    /// True only when the probe confirmed the process is gone.
+    pub fn is_confirmed_absent(self) -> bool {
+        matches!(self, Self::ConfirmedAbsent)
+    }
+
+    /// True only when the probe could not determine the process state.
+    pub fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+}
+
+/// Captured `ps` invocation result used to classify a probe.
 #[cfg(unix)]
-pub fn process_is_running(pid: u32) -> bool {
-    process_is_running_with(pid, |pid_t| {
+#[derive(Debug, Clone)]
+struct PsProbeOutput {
+    /// Whether `ps` exited zero.
+    success: bool,
+    /// Standard output bytes.
+    stdout: Vec<u8>,
+    /// Standard error bytes.
+    stderr: Vec<u8>,
+}
+
+/// Probe whether the process with `pid` is alive.
+///
+/// A `ps` launch failure, a non-empty diagnostic from a failed `ps`, or
+/// malformed/ambiguous rows all yield [`GatewayProcessProbe::Unknown`]. Only a
+/// completed `ps` with no matching row (the documented absent result on macOS
+/// and Linux) or an exact zombie row is [`GatewayProcessProbe::ConfirmedAbsent`].
+#[cfg(unix)]
+pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
+    probe_gateway_process_with(pid, |pid_t| {
         let pid_text = pid_t.to_string();
         let output = std::process::Command::new("ps")
             .args(["-p", pid_text.as_str(), "-o", "pid=", "-o", "stat="])
             .output()
             .ok()?;
-        output.status.success().then_some(output.stdout)
+        Some(PsProbeOutput {
+            success: output.status.success(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
     })
 }
 
 #[cfg(unix)]
-fn process_is_running_with(pid: u32, probe: impl FnOnce(i32) -> Option<Vec<u8>>) -> bool {
+fn probe_gateway_process_with(
+    pid: u32,
+    probe: impl FnOnce(i32) -> Option<PsProbeOutput>,
+) -> GatewayProcessProbe {
     let Some(pid_t) = checked_gateway_pid(pid) else {
-        return false;
+        // PID 0, PID 1, and values outside the signed PID domain can never be
+        // the gateway, so no probe is dispatched.
+        return GatewayProcessProbe::ConfirmedAbsent;
     };
-    let Some(stdout) = probe(pid_t) else {
-        return false;
+    let Some(output) = probe(pid_t) else {
+        return GatewayProcessProbe::Unknown;
     };
+    if !output.success {
+        // `ps -p <pid>` exits non-zero with no output when no process matches
+        // (macOS and Linux). Any diagnostic output means `ps` itself failed,
+        // which is not proof of absence.
+        return if output.stdout.is_empty() && output.stderr.is_empty() {
+            GatewayProcessProbe::ConfirmedAbsent
+        } else {
+            GatewayProcessProbe::Unknown
+        };
+    }
+    classify_ps_rows(pid_t, &output.stdout)
+}
 
-    let output = String::from_utf8_lossy(&stdout);
+#[cfg(unix)]
+fn classify_ps_rows(pid_t: i32, stdout: &[u8]) -> GatewayProcessProbe {
+    let output = String::from_utf8_lossy(stdout);
     let mut rows = output
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty());
     let Some(row) = rows.next() else {
-        return false;
+        return GatewayProcessProbe::Unknown;
     };
     if rows.next().is_some() {
-        return false;
+        return GatewayProcessProbe::Unknown;
     }
 
     let mut fields = row.split_whitespace();
     let Some(row_pid) = fields.next().and_then(|pid| pid.parse::<i32>().ok()) else {
-        return false;
+        return GatewayProcessProbe::Unknown;
     };
     let Some(state) = fields.next() else {
-        return false;
+        return GatewayProcessProbe::Unknown;
     };
+    if row_pid != pid_t || fields.next().is_some() {
+        return GatewayProcessProbe::Unknown;
+    }
+    if state.starts_with('Z') {
+        // A zombie has already exited; it cannot serve traffic and its parent
+        // will reap it, so it counts as confirmed absent for lifecycle use.
+        GatewayProcessProbe::ConfirmedAbsent
+    } else {
+        GatewayProcessProbe::Running
+    }
+}
 
-    row_pid == pid_t && !state.starts_with('Z') && fields.next().is_none()
+/// Compatibility predicate: true only for a confirmed running process.
+///
+/// Lifecycle decisions use [`probe_gateway_process`] directly so an
+/// [`GatewayProcessProbe::Unknown`] result is never collapsed to `false`.
+#[cfg(unix)]
+pub fn process_is_running(pid: u32) -> bool {
+    probe_gateway_process(pid).is_running()
 }
 
 #[cfg(not(unix))]
@@ -235,8 +325,26 @@ pub fn process_is_running(pid: u32) -> bool {
     checked_gateway_pid(pid).is_some()
 }
 
+#[cfg(not(unix))]
+pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
+    // On non-Unix there is no portable probe; report a valid domain as running
+    // so lifecycle callers never claim a stop they did not observe.
+    if checked_gateway_pid(pid).is_some() {
+        GatewayProcessProbe::Running
+    } else {
+        GatewayProcessProbe::ConfirmedAbsent
+    }
+}
+
 /// Get the status of the gateway, if running.
 pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError> {
+    get_status_with_probe(config, probe_gateway_process)
+}
+
+fn get_status_with_probe(
+    config: &GatewayConfig,
+    probe: impl Fn(u32) -> GatewayProcessProbe,
+) -> Result<GatewayStatus, GatewayError> {
     let pid = read_pid_file(&config.pid_file_path)?;
 
     // The command reading this PID file is not the detached daemon it owns.
@@ -245,9 +353,18 @@ pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError>
         return Err(GatewayError::NotRunning);
     }
 
-    if !process_is_running(pid) {
-        remove_pid_file(&config.pid_file_path);
-        return Err(GatewayError::NotRunning);
+    match probe(pid) {
+        GatewayProcessProbe::Running => {}
+        GatewayProcessProbe::ConfirmedAbsent => {
+            // The PID is confirmed gone; clear the stale records.
+            remove_pid_file(&config.pid_file_path);
+            return Err(GatewayError::NotRunning);
+        }
+        GatewayProcessProbe::Unknown => {
+            // Ambiguous probe: keep the PID and version records in place for
+            // reconciliation and refuse to claim the gateway is stopped.
+            return Err(GatewayError::ProcessStateUnknown { pid });
+        }
     }
 
     let table = RouteTable::load(&config.route_table_path)?;
@@ -264,6 +381,27 @@ pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError>
     })
 }
 
+/// Refuse to start when an existing gateway PID is live or cannot be probed.
+///
+/// A stale record is cleared only when the probe confirms absence. An
+/// unavailable probe must not replace a possibly-live daemon, so it returns
+/// [`GatewayError::ProcessStateUnknown`] and leaves the records in place.
+fn check_existing_gateway_pid(
+    config: &GatewayConfig,
+    probe: impl Fn(u32) -> GatewayProcessProbe,
+) -> Result<(), GatewayError> {
+    if let Ok(pid) = read_pid_file(&config.pid_file_path) {
+        match probe(pid) {
+            GatewayProcessProbe::Running => return Err(GatewayError::AlreadyRunning { pid }),
+            GatewayProcessProbe::ConfirmedAbsent => remove_pid_file(&config.pid_file_path),
+            GatewayProcessProbe::Unknown => {
+                return Err(GatewayError::ProcessStateUnknown { pid });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Run the gateway server.
 ///
 /// This function blocks until a shutdown signal is received (SIGTERM/SIGINT).
@@ -271,13 +409,7 @@ pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError>
 /// concurrently.
 pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Check if already running.
-    if let Ok(pid) = read_pid_file(&config.pid_file_path) {
-        if process_is_running(pid) {
-            return Err(GatewayError::AlreadyRunning { pid });
-        }
-        // Stale PID file — clean up.
-        remove_pid_file(&config.pid_file_path);
-    }
+    check_existing_gateway_pid(&config, probe_gateway_process)?;
 
     // Write PID file.
     write_pid_file(&config.pid_file_path)?;

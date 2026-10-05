@@ -93,6 +93,16 @@
   "cargo check -p effigy-gateway -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
 ]
+# Gateway process probe state: a failed or ambiguous `ps` probe is `Unknown`,
+# never `ConfirmedAbsent`, so lifecycle (status/up/down/start/stop) cannot
+# report a false stop, delete PID/version records, or start a replacement.
+"test:gateway:probe-state" = [
+  { id = "gateway-probe-state", run = "cargo test -p effigy-gateway -p effigy --lib probe_state -- --nocapture", timeout_ms = 240000 },
+]
+"check:gateway:probe-state" = [
+  "cargo check -p effigy-gateway -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
+]
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
