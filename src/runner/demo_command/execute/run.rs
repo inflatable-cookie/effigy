@@ -196,11 +196,15 @@ fn build_run_backed_process(
             .stderr(Stdio::inherit());
     }
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and places the child in a new process group whose id
+    // is the child's own pid; the error path uses the allocation-free
+    // `io::Error::from` conversion. `request_demo_termination` signals
+    // `kill(-pid, SIGTERM)` for that same group.
     unsafe {
-        process.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        process
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     if let Some((cols, rows)) = current_terminal_size() {
         process

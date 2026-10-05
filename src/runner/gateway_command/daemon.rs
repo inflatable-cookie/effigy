@@ -26,6 +26,10 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setsid` is
+    // async-signal-safe. On failure, `io::Error::last_os_error()` captures
+    // errno without allocating.
     unsafe {
         command.pre_exec(|| {
             #[cfg(unix)]

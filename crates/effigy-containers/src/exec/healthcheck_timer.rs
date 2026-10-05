@@ -1557,12 +1557,12 @@ mod tests {
             assert!(!rendered.contains('|'));
             assert!(!rendered.contains(';'));
             assert!(!rendered.contains('$'));
-            assert!(args.windows(2).any(|pair| {
-                pair[0] == OsString::from("--profile") && pair[1] == OsString::from("effigy")
-            }));
-            assert!(!args.windows(2).any(|pair| {
-                pair[0] == OsString::from("--profile") && pair[1] != OsString::from("effigy")
-            }));
+            assert!(args
+                .windows(2)
+                .any(|pair| pair[0] == "--profile" && pair[1] == "effigy"));
+            assert!(!args
+                .windows(2)
+                .any(|pair| pair[0] == "--profile" && pair[1] != "effigy"));
         }
         let timer = timer_unit_name(FULL_ID);
         let service = service_unit_name(FULL_ID);

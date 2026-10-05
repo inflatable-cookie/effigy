@@ -1615,7 +1615,7 @@ mod tests {
                 &identity,
                 Some("new-project"),
                 "/tmp/new-project",
-                || RunningComposeContainerInventory::default(),
+                RunningComposeContainerInventory::default,
             )
             .expect("recover stale capacity before allocation")
             .expect("allocated loopback IP");

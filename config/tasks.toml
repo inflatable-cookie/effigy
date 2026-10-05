@@ -132,17 +132,23 @@
 "check:rust:release-invariants" = [
   "cargo check -p effigy-containers -p effigy-host-run -p effigy-gateway -p effigy-rhai -p effigy --all-targets --profile test",
   # Root all-target clippy mirrors hosted CI, and the touched libraries are
-  # linted all-target as well.
+  # linted all-target as well. Containers test-target lints named by task 100
+  # are repaired; keep `--all-targets` so those sites cannot silently drop.
   "cargo clippy -p effigy --all-targets -- -D warnings",
   "cargo clippy -p effigy-host-run -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
-  # effigy-containers `--all-targets` has 8 unrelated pre-existing test lint
-  # diagnostics: exec/healthcheck_timer.rs:1561,1564 cmp_owned;
-  # exec/participation.rs:508,522 cmp_owned;
-  # policy_support/generated_compose.rs:1618 redundant closure;
-  # tests/compose.rs:166 needless borrow. None are in this task's changed Rust;
-  # task 100 owns the repair. This selector lints the library target; hosted CI
-  # still runs its own all-target lint.
-  "cargo clippy -p effigy-containers --lib -- -D warnings",
+  "cargo clippy -p effigy-containers --all-targets -- -D warnings",
+]
+# Remaining post-fork pre_exec conversions and the named containers
+# changed-test lint sites (task 100). Private errno/allocation/process
+# proofs live in effigy-process; containers all-target lint covers the
+# reported test idioms.
+"test:rust:postfork-safety" = [
+  { id = "postfork-safety", run = "cargo test -p effigy-process --lib postfork -- --nocapture", timeout_ms = 240000 },
+]
+"check:rust:postfork-safety" = [
+  "cargo check -p effigy-process -p effigy-scan -p effigy-deps -p effigy-runtime -p effigy-containers -p effigy --all-targets --profile test",
+  "cargo clippy -p effigy-process -p effigy-scan -p effigy-deps -p effigy-runtime -p effigy --all-targets -- -D warnings",
+  "cargo clippy -p effigy-containers --all-targets -- -D warnings",
 ]
 "test:rust:release-invariants" = [
   { id = "host-run-root-debug", run = "cargo test -p effigy-host-run --lib host_run_root_debug_is_available_and_redacts_the_directory_descriptor -- --nocapture", timeout_ms = 600000 },

@@ -505,7 +505,7 @@ mod tests {
     fn default_local_endpoint_with_one_reachable_candidate_is_participating() {
         let participation =
             classify_docker_participation(vec![DockerEndpoint::DefaultLocal], |path| {
-                if path == PathBuf::from("/var/run/docker.sock") {
+                if path == Path::new("/var/run/docker.sock") {
                     SocketProbe::Reachable
                 } else {
                     SocketProbe::Absent
@@ -519,7 +519,7 @@ mod tests {
     fn default_local_endpoint_with_one_stale_candidate_is_participating() {
         let participation =
             classify_docker_participation(vec![DockerEndpoint::DefaultLocal], |path| {
-                if path == PathBuf::from("/var/run/docker.sock") {
+                if path == Path::new("/var/run/docker.sock") {
                     SocketProbe::Indeterminate
                 } else {
                     SocketProbe::Absent

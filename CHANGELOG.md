@@ -356,6 +356,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Remaining Unix `pre_exec` `setpgid` error paths now convert `nix::Error` with
+  the allocation-free `io::Error::from` mapping used by the earlier doctor,
+  exec-transport, and container spawn callbacks. A failed group setup cannot
+  allocate in the forked child. Spawn still fails closed; the reported
+  `io::Error` now carries the original errno (`raw_os_error`) rather than
+  `ErrorKind::Other` plus a formatted message. Prove with
+  `test:rust:postfork-safety`.
 - Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
   and values outside the positive signed PID domain before dispatch. Unix status
   requires one exact PID row from `ps`; the PID file remains numeric and does
