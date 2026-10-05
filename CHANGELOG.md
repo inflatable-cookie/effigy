@@ -360,6 +360,13 @@ During v0.x, MINOR bumps may include breaking changes.
   background descendant may ignore SIGINT. The caller group is never
   targeted. Non-Unix hosts keep pid-only kill. Prove with
   `test:runner:timeout-descendants`.
+- Owned in-process waits now terminate and reap the already-spawned child tree
+  when signal-supervision initialization fails. The wait guard takes ownership
+  of the child before the fallible signal-scope install, so a `Signals::new` or
+  forwarder-thread error reports the original failure (never a command exit or
+  success) and cleans up exactly that child's process group. The caller group
+  and unrelated siblings are never targeted, and non-Unix hosts keep pid-only
+  kill. Prove with `test:runner:supervision-init`.
 - `effigy container <NAME> retire` now fails before scope resolution or
   runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
   checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.

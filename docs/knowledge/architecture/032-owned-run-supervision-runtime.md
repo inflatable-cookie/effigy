@@ -53,7 +53,10 @@ The design reuses what exists today and names the gap.
 - `src/runner/execute/entry.rs` enters `OwnedChildrenScope` only for a validated
   scheduler parent or recorded operator override. Isolated sequence-timeout and
   managed-cleanup waits acquire the same scope (nested/shared) so interrupt
-  still reaches those groups when no heavy-run scope is active.
+  still reaches those groups when no heavy-run scope is active. Those waits
+  own the already-spawned child before the fallible scope install, so a
+  signal-supervision initialization error terminates and reaps exactly that
+  owned group instead of dropping a bare child.
   `process_run.rs` registers each spawned group only inside that scope; this is
   graceful signal forwarding, not a general run journal or stop surface.
 - `crates/effigy-managed` runs a supervisor process for a headless managed
