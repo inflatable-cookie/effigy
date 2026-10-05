@@ -45,3 +45,18 @@ Release prepare may reuse a hosted CI result for a gate explicitly configured wi
 - For a broken published binary, pause new publishes, tell consumers the affected version, point install guidance at the last good version, and prepare a PATCH fix.
 
 [Release workflow guide](../../guides/051-release-orchestration.md) documents the CLI. [Distribution policy](../../guides/049-ci-binary-distribution-and-release-protocol.md) covers the channel and platform matrix.
+
+## v0.14.0 preparation boundary — 2026-10-05
+
+Tom requested a release-readiness assessment of all work since v0.13.1,
+targeting v0.14.0: code quality, gaps and flaws, documentation and general
+readiness. This authorizes the assessment and bounded repairs through approved
+Queue briefs, with independent exact-head review and CI. The baseline is the
+published v0.13.1 tag, not an intermediate local install.
+
+Readiness requires a complete change inventory, explicit migration guidance
+for breaking surfaces, reconciled findings and known limitations, and exact
+candidate validation and distribution evidence. A prior passing milestone or
+a local consumer smoke alone does not establish release readiness. Preparation
+is distinct from publishing: the release execution, tag and binary workflow
+still require Tom's explicit release authorization.
