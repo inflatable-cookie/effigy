@@ -21,6 +21,8 @@ use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::gateway_command::{gateway_dir, remove_gateway_tls_cert};
 
+const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
+
 pub(super) fn run_container_retire(
     repo_override: Option<PathBuf>,
     name: Option<&str>,
@@ -28,7 +30,13 @@ pub(super) fn run_container_retire(
     yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let records = resolve_retire_records(repo_override, name, scope)?;
+    if name.is_some() {
+        return Err(RunnerError::task_invocation(
+            NAMED_CONTAINER_RETIRE_ERROR.to_owned(),
+        ));
+    }
+
+    let records = resolve_retire_records(repo_override, scope)?;
     if records.is_empty() {
         return Ok(render_container_report(
             retire_report(None, None, &[], &[], false),
@@ -55,7 +63,6 @@ pub(super) fn run_container_retire(
 
 fn resolve_retire_records(
     repo_override: Option<PathBuf>,
-    _name: Option<&str>,
     scope: Option<&str>,
 ) -> Result<Vec<ScopeRecord>, RunnerError> {
     if let Some(token) = scope {
@@ -764,7 +771,48 @@ mod tests {
     }
 
     #[test]
-    fn checkout_retirement_lookup_preserves_existing_unknown_profile_record() {
+    fn container_retire_named_environment_refusal_precedes_scope_resolution() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let checkout = temp.path().join("checkout");
+        let home = temp.path().join("home");
+        std::fs::create_dir(&checkout).expect("private checkout fixture");
+
+        let errors = effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+            let refusal_for = |scope| {
+                run_container_retire(Some(checkout.clone()), Some("web"), scope, true, true)
+                    .expect_err("named retirement must fail before resolving a scope")
+                    .to_string()
+            };
+            [refusal_for(None), refusal_for(Some("invalid-token"))]
+        });
+
+        let refusal = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
+        assert_eq!(errors, [refusal; 2]);
+        assert!(!home.join(".effigy/runtime-scopes").exists());
+    }
+
+    #[test]
+    fn container_retire_explicit_scope_lookup_selects_only_requested_record() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let home = temp.path().join("home");
+
+        effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+            let first = sample_record();
+            let mut second = sample_record();
+            second.token = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned();
+            second.host_key = "bbbbbbbb".to_owned();
+            upsert_scope_record(&first).expect("write first scope record");
+            upsert_scope_record(&second).expect("write second scope record");
+
+            let records = resolve_retire_records(None, Some(&second.token))
+                .expect("resolve the explicit scope token");
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].token, second.token);
+        });
+    }
+
+    #[test]
+    fn container_retire_checkout_lookup_preserves_existing_unknown_profile_record() {
         let temp = tempfile::tempdir().expect("temporary fixture root");
         let checkout = temp.path().join("worker");
         let home = temp.path().join("home");
@@ -806,7 +854,7 @@ mod tests {
                 .join(format!("{token}.json"));
             let before = std::fs::read(&record_path).expect("read record before lookup");
 
-            let records = resolve_retire_records(Some(checkout), None, None)
+            let records = resolve_retire_records(Some(checkout), None)
                 .expect("resolve existing retirement record");
             let after = std::fs::read(&record_path).expect("read record after lookup");
 

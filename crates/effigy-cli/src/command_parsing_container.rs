@@ -10,6 +10,8 @@ use crate::value_parsing::{next_required_value, parse_repo_path};
 use super::container_data::parse_container_data;
 use super::{unknown_argument, CliParseError};
 
+const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
+
 pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -301,6 +303,12 @@ where
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
+    }
+
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            NAMED_CONTAINER_RETIRE_ERROR.to_owned(),
+        ));
     }
 
     Ok(Command::Container(ContainerArgs {

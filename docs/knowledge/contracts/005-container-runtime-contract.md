@@ -136,6 +136,14 @@ network, isolated route, port, loopback, or TLS certificate remains. A
 second retire with nothing left is success, including a shared-only scope
 whose durable record is then removed.
 
+Retirement does not accept a container environment name. `container <NAME>
+retire` fails before checkout or token record lookup, runtime inventory,
+confirmation, or mutation, including when `--scope` or `--yes` is supplied.
+`container retire` selects the recorded generation for the current checkout;
+`container retire --scope <TOKEN>` selects only that exact record after the
+checkout is gone. A record aggregates all environments and runtime profiles
+for its generation, so named partial retirement is not supported.
+
 Resolving, discovering, planning, or reporting container policy does not
 register runtime ownership. Runtime activation records the scope before
 starting the backend or creating containers, networks, shared services,

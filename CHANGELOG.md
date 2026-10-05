@@ -350,6 +350,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `effigy container <NAME> retire` now fails before scope resolution or
+  runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
+  checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.
 - Recursive workspace ownership scans now prune every declared child mount,
   including same-device nested binds and volumes. Nested host binds are checked
   as the numeric workspace user without owner-equality requirements or probe

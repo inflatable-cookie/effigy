@@ -21,6 +21,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container hosts` prints the effective HTTP and TCP host map for this checkout. Linked worktrees use `<apex>-w<scope>.test` while the primary checkout keeps declared names.",
         "`container scope` reports this checkout's full runtime token and scope kind without loading a container policy or contacting a backend.",
         "`container retire` removes only this runtime scope's owned containers (running, stopped, or Created), disposable caches, networks, routes and ports. Cleanup is idempotent, uses backend labels, and keeps a durable record outside the worktree so a deleted checkout can still retry. Call it from `paseo.json` worktree teardown, or retry with `--scope` after the checkout is gone.",
+        "`container <NAME> retire` is unsupported and fails before scope lookup or runtime inventory. Omit the name to select the checkout record, or use `--scope <TOKEN>` to select one recorded scope.",
     ],
     usage: text_lines![
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
