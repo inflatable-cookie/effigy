@@ -1457,4 +1457,47 @@ run = [{ task = "db:migrate" }]
             "fixture RAII must reap recorded pids after failure: {alive:?}"
         );
     }
+
+    /// The real owned sequence caller spawns its child, then the shared
+    /// supervisor's scope install fails. The caller must report the original
+    /// launch error (never a timeout or success) and the already-owned tree
+    /// must be reaped. The readiness-gated injection lets the child record
+    /// itself before the failure fires.
+    #[cfg(unix)]
+    #[test]
+    fn supervision_init_sequence_owned_caller_reports_error_and_reaps_tree() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use crate::runner::owned_children::SupervisionInitFailurePointForTest;
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-supervision-init-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let _inject =
+            crate::runner::owned_children::inject_supervision_init_failure_when_ready_for_test(
+                SupervisionInitFailurePointForTest::BeforeSignals,
+                fixture.ready_path().to_path_buf(),
+            );
+        let error = super::run_shell_step_once_owned(
+            &command,
+            fixture.cwd(),
+            &empty_step_env(),
+            None,
+            Some(30_000),
+        )
+        .expect_err("initialization failure must fail the owned step");
+        let pids = fixture.wait_for_recorded_pids();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("injected signal supervision initialization failure"),
+            "original initialization error must be preserved: {rendered}"
+        );
+        assert_eq!(
+            error.task_exit_status(),
+            None,
+            "an initialization failure must not report a command exit code"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+    }
 }

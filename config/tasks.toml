@@ -86,6 +86,13 @@
   "cargo check -p effigy-containers --lib --tests",
 ]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+"test:gateway:pid-domain" = [
+  { id = "gateway-pid-domain", run = "cargo test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },
+]
+"check:gateway:pid-domain" = [
+  "cargo check -p effigy-gateway -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
+]
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
@@ -128,8 +135,13 @@
   # linted all-target as well.
   "cargo clippy -p effigy --all-targets -- -D warnings",
   "cargo clippy -p effigy-host-run -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
-  # effigy-containers `--all-targets` carries unrelated pre-existing test lints
-  # (see check:workspace:nested-mounts), so lint its library target.
+  # effigy-containers `--all-targets` has 8 unrelated pre-existing test lint
+  # diagnostics: exec/healthcheck_timer.rs:1561,1564 cmp_owned;
+  # exec/participation.rs:508,522 cmp_owned;
+  # policy_support/generated_compose.rs:1618 redundant closure;
+  # tests/compose.rs:166 needless borrow. None are in this task's changed Rust;
+  # task 100 owns the repair. This selector lints the library target; hosted CI
+  # still runs its own all-target lint.
   "cargo clippy -p effigy-containers --lib -- -D warnings",
 ]
 "test:rust:release-invariants" = [
@@ -137,6 +149,17 @@
   { id = "route-table-lock-debug", run = "cargo test -p effigy-gateway --lib route_table_lock_debug_is_available_and_redacts_the_lock_descriptor -- --nocapture", timeout_ms = 600000 },
   { id = "live-route-table-debug", run = "cargo test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
   { id = "script-context-debug", run = "cargo test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
+]
+# Signal-supervision initialization failure must preserve the original error
+# and terminate/reap exactly the already-owned child tree. Private tempfile
+# fixtures with recorded pids/groups and a private test-only injection at the
+# real initialization boundary; no OS exhaustion or live-process sabotage.
+"test:runner:supervision-init" = [
+  { id = "supervision-init", run = "cargo test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
+]
+"check:runner:supervision-init" = [
+  "cargo check -p effigy --all-targets --profile test",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"

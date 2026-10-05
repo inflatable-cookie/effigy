@@ -91,12 +91,18 @@ The `rust-toolchain.toml` comment now records the current pin only and claims
 no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
 Passing audit or CI does not assert that all Rust is safe or bug-free.
 
-One reported `unsafe` operation, `process_signal_accessible`'s
-`kill(pid, 0)`, is memory-sound, but its numeric PID domain is not validated
-before the `u32`-to-`i32` cast: `read_pid_file` accepts any `u32` and
-`process_is_running` relies on the `ps` exit status. A value of `0` or above
-`i32::MAX` would select POSIX process-group or `kill(-1, ...)` semantics, and
-the same cast reaches `SIGTERM`/`SIGKILL` in the gateway shutdown path. This is
-a pre-existing authority/domain gap, not an unsound `unsafe` call. It is
-documented here and requires a separately approved bounded PID-domain repair;
-this documentation wave does not change that behavior.
+The numeric PID domain of the gateway's `process_signal_accessible` probe and
+signal paths is now checked by the prerequisite gateway PID-domain repair:
+`read_pid_file` and `server::process_is_running` run
+`effigy_gateway::server::checked_gateway_pid`, which rejects PID 0, PID 1 and
+any `u32` above `i32::MAX` before dispatch, and Unix status requires one exact
+`ps` PID/stat row. The `kill(pid, 0)` SAFETY comment therefore discharges a
+checked positive signed PID rather than an unchecked cast. The residual
+limitation is gateway identity, not the numeric domain: the PID file does not
+establish process start identity, so PID reuse between a probe and a signal
+remains possible (`CHANGELOG.md`). An independent review also found that an
+unknown or absent probe result collapses to `false` and that a `false`
+stop-success can delete the status record; that distinct unknown-probe
+lifecycle gap is owned by the separate bounded task 101, and the remaining
+allocating-callback/selector lint gaps are owned by task 100, not by this
+unsafe-invariant wave.

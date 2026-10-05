@@ -290,16 +290,27 @@ fn gateway_requires_privileged_bind(config: &GatewayConfig) -> bool {
 fn process_signal_accessible(pid: u32) -> bool {
     // SAFETY: `kill` takes only integer arguments, so this call has no
     // memory-safety preconditions, and signal `0` delivers no signal; it is
-    // only the POSIX existence/permission probe. The numeric domain of `pid`
-    // is *not* validated at this layer: `server::get_status` accepts any `u32`
-    // from the pid file (`read_pid_file`) and `server::process_is_running`
-    // only checks the exit status of `ps -p <pid>`. A value of `0` or one
-    // above `i32::MAX` would therefore select POSIX process-group or
-    // `kill(-1, 0)` semantics through this cast. That pre-existing
-    // authority/domain gap is unchanged by this documentation wave and is
-    // recorded as a remaining blocker for a separately approved bounded
-    // PID-domain repair; it does not make this call unsound.
-    unsafe { nix::libc::kill(pid as i32, 0) == 0 }
+    // only the POSIX existence/permission probe. `pid_t` is the checked
+    // positive signed PID from `effigy_gateway::server::checked_gateway_pid`,
+    // which rejects 0, 1 and any `u32` above `i32::MAX`, so the probe cannot
+    // target a process group or the `kill(-1, ...)` broadcast.
+    //
+    // The numeric domain is fully checked; gateway identity is not. A reused
+    // PID can still match, and that residual identity limitation is unchanged
+    // by this wave. The unknown-probe lifecycle gap (an unverifiable probe
+    // collapsing to `false`) is owned by the separate bounded task 101.
+    process_signal_accessible_with(pid, |pid_t| unsafe { nix::libc::kill(pid_t, 0) == 0 })
+}
+
+#[cfg(unix)]
+fn process_signal_accessible_with(pid: u32, probe: impl FnOnce(i32) -> bool) -> bool {
+    let Some(pid_t) = effigy_gateway::server::checked_gateway_pid(pid) else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return false;
+    }
+    probe(pid_t)
 }
 
 #[cfg(target_os = "macos")]
@@ -556,6 +567,39 @@ fn missing_loopback_aliases_from_output(output: &str) -> Vec<Ipv4Addr> {
     loopback_alias_pool()
         .filter(|ip| !loopback_alias_present_in_output(output, *ip))
         .collect()
+}
+
+#[cfg(test)]
+mod pid_domain_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_invalid_targets_do_not_dispatch_signal_zero_probes() {
+        use std::cell::Cell;
+
+        let dispatches = Cell::new(0);
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX, std::process::id()] {
+            assert!(!process_signal_accessible_with(pid, |_| {
+                dispatches.set(dispatches.get() + 1);
+                true
+            }));
+        }
+        assert_eq!(dispatches.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_signal_zero_probe_receives_checked_pid_t() {
+        use std::cell::Cell;
+
+        let observed = Cell::new(None);
+        assert!(process_signal_accessible_with(i32::MAX as u32, |pid_t| {
+            observed.set(Some(pid_t));
+            true
+        }));
+        assert_eq!(observed.get(), Some(i32::MAX));
+    }
 }
 
 #[cfg(target_os = "macos")]

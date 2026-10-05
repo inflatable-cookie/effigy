@@ -1732,4 +1732,41 @@ mod tests {
         );
         fixture.assert_sibling_alive();
     }
+
+    /// The real managed-lifecycle caller spawns its cleanup child, then the
+    /// shared supervisor's scope install fails. The caller must report the
+    /// original launch error (never a timeout or success) and the already-owned
+    /// tree must be reaped. The readiness-gated injection lets the child record
+    /// itself before the failure fires.
+    #[cfg(unix)]
+    #[test]
+    fn supervision_init_managed_caller_reports_error_and_reaps_tree() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use crate::runner::owned_children::SupervisionInitFailurePointForTest;
+        use std::time::Duration;
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-supervision-init-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let _inject =
+            crate::runner::owned_children::inject_supervision_init_failure_when_ready_for_test(
+                SupervisionInitFailurePointForTest::BeforeSignals,
+                fixture.ready_path().to_path_buf(),
+            );
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            &command,
+            Duration::from_secs(30),
+            Duration::from_millis(20),
+        )
+        .expect_err("initialization failure must fail managed cleanup");
+        let pids = fixture.wait_for_recorded_pids();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("injected signal supervision initialization failure"),
+            "original initialization error must be preserved: {rendered}"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+    }
 }
