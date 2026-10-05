@@ -350,6 +350,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `fs::copy_if_missing(source, destination)` now publishes through the same
+  atomic create-if-absent path as `fs::write_file_if_absent`: the source is
+  streamed into a staged file on the destination filesystem and linked into
+  place, so a concurrent winner is never overwritten and the helper returns
+  `true` only when its complete independent copy is published. Occupied
+  destinations, including dangling symlinks, stay in place even when the
+  source is missing or unreadable; a later write to the source cannot change
+  the copy; unsupported filesystems fail instead of falling back to an
+  overwriting copy. `fs::copy` and `fs::move_path` keep their replacement
+  behavior.
 - Container exec discovery and capture now keep the caller's absolute
   deadline. Colima service-name resolution shares the remaining budget
   instead of probing unbounded on a cache miss, and a spawned capture is
