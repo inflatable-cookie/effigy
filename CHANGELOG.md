@@ -367,6 +367,16 @@ During v0.x, MINOR bumps may include breaking changes.
   (`raw_os_error().unwrap_or(EINVAL)` in `sys/process/unix/unix.rs`). The
   mapper now preserves the original errno, so the parent sees that errno
   rather than the `EINVAL` fallback. Prove with `test:rust:postfork-safety`.
+- Gateway lifecycle now distinguishes a confirmed-absent PID from an
+  unavailable or ambiguous process probe. A `ps` launch failure, a failed `ps`
+  with a diagnostic, or malformed/mismatched/multiple rows is `Unknown`; status,
+  up, down and daemon start refuse to report a false stop, keep the PID and
+  version records byte-identical for reconciliation, and never start a
+  replacement. Confirmed absence still clears those records and stop stays
+  idempotent. The probe result is now explicit (`GatewayProcessProbe`), so it is
+  no longer collapsed to a `bool`. PID reuse between a probe and a later signal
+  remains a separate, documented limitation that numeric and exact-row checks
+  do not resolve. Prove with `test:gateway:probe-state`.
 - Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
   and values outside the positive signed PID domain before dispatch. Unix status
   requires one exact PID row from `ps`; the PID file remains numeric and does

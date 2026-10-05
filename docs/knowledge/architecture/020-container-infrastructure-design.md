@@ -375,6 +375,17 @@ becoming process-group or broadcast targets. The file does not record process
 start identity: an exact PID probe confirms current liveness, but cannot rule
 out PID reuse between the probe and a later signal.
 
+A gateway process probe is three-valued: a single exact non-zombie `ps` row is
+running, a zombie row or the `ps` no-such-process result is confirmed absent,
+and a `ps` launch failure, a failed `ps` carrying a diagnostic, or empty,
+malformed, mismatched or multiple rows is unknown. `effigy gateway status`,
+`up` and `down` and daemon start consume that value; unknown is never reported
+as stopped, never deletes the PID/version records and never starts a
+replacement daemon. Confirmed absence still clears the records and stop stays
+idempotent. The numeric-domain and exact-row checks still do not prove gateway
+ownership, so PID reuse between a probe and a later signal remains a separate,
+unresolved release-disposition limitation.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
