@@ -626,10 +626,16 @@ services:
         );
 
         assert!(plan.targets.iter().any(|target| target.path == "/cache"));
-        assert!(!plan
+        let workspace_bind = plan
             .targets
             .iter()
-            .any(|target| target.path == "/workspace-root"));
+            .find(|target| target.path == "/workspace-root")
+            .expect("workspace checkout bind remains a traversal boundary");
+        assert_eq!(workspace_bind.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            workspace_bind.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -790,10 +796,16 @@ services:
             .owned_disposable_paths()
             .iter()
             .any(|path| path == "/workspace-root/app/target"));
-        assert!(!plan
+        let workspace_bind = plan
             .targets
             .iter()
-            .any(|target| target.path == "/workspace-root"));
+            .find(|target| target.path == "/workspace-root")
+            .expect("workspace checkout bind remains a traversal boundary");
+        assert_eq!(workspace_bind.mount_kind, WorkspaceMountKind::Bind);
+        assert_eq!(
+            workspace_bind.repair_authority,
+            WorkspaceRepairAuthority::VerifyOnly
+        );
         let cache_bind = plan
             .targets
             .iter()

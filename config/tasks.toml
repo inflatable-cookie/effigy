@@ -128,6 +128,7 @@
 "test:workspace:nested-mounts" = [
   { id = "nested-bind-preparation", run = "cargo test -p effigy --lib nested_host_bind -- --nocapture", timeout_ms = 240000 },
   { id = "nested-volume-scope", run = "cargo test -p effigy --lib nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope -- --nocapture", timeout_ms = 240000 },
+  { id = "named-rust-volume-classification", run = "cargo test -p effigy-containers --lib named_cargo_and_target_volumes_are_owned_disposable -- --nocapture", timeout_ms = 240000 },
   { id = "mount-plan-classification", run = "cargo test -p effigy-containers --lib bind_mounted_rust_target_is_verify_only -- --nocapture", timeout_ms = 240000 },
 ]
 "check:workspace:nested-mounts" = [
