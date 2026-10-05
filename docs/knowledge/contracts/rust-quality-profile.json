@@ -29,6 +29,7 @@
       "crates/effigy-exec/Cargo.toml",
       "crates/effigy-execution/Cargo.toml",
       "crates/effigy-gateway/Cargo.toml",
+      "crates/effigy-host-run/Cargo.toml",
       "crates/effigy-managed/Cargo.toml",
       "crates/effigy-manifest/Cargo.toml",
       "crates/effigy-process/Cargo.toml",
