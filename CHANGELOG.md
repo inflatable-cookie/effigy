@@ -353,6 +353,23 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy container <NAME> retire` now fails before scope resolution or
   runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
   checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.
+- `fs::copy_if_missing(source, destination)` now publishes through the same
+  atomic create-if-absent path as `fs::write_file_if_absent`: the source is
+  streamed into a staged file on the destination filesystem and linked into
+  place, so a concurrent winner is never overwritten and the helper returns
+  `true` only when its complete independent copy is published. Occupied
+  destinations, including dangling symlinks, stay in place even when the
+  source is missing or unreadable; a later write to the source cannot change
+  the copy; unsupported filesystems fail instead of falling back to an
+  overwriting copy. `fs::copy` and `fs::move_path` keep their replacement
+  behavior.
+- Container exec discovery and capture now keep the caller's absolute
+  deadline. Colima service-name resolution shares the remaining budget
+  instead of probing unbounded on a cache miss, and a spawned capture is
+  supervised against the original deadline rather than a fresh timeout
+  measured after spawn. An expired deadline never spawns, a slow spawn
+  cannot extend the budget, and a timed-out child is terminated and reaped
+  by its own process group. Cache hits and unbounded callers are unchanged.
 - Recursive workspace ownership scans now prune every declared child mount,
   including same-device nested binds and volumes. Nested host binds are checked
   as the numeric workspace user without owner-equality requirements or probe
