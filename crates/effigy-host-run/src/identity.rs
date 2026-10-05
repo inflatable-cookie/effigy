@@ -19,6 +19,10 @@ pub fn canonical_start_identity(pid: u32) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        // SAFETY: `info` is an aligned, writable `MaybeUninit<proc_bsdinfo>` and
+        // the buffer length passed matches its size, so `proc_pidinfo` may fill
+        // at most that many bytes. The syscall is given only integer arguments
+        // besides the buffer.
         let result = unsafe {
             libc::proc_pidinfo(
                 pid as libc::c_int,
@@ -31,6 +35,8 @@ pub fn canonical_start_identity(pid: u32) -> Option<String> {
         if result != std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int {
             return None;
         }
+        // SAFETY: `proc_pidinfo` returned exactly `size_of::<proc_bsdinfo>()`,
+        // so it initialized the whole struct and the value is valid to assume.
         let info = unsafe { info.assume_init() };
         if info.pbi_pid != pid {
             return None;

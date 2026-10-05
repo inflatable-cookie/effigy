@@ -1227,6 +1227,9 @@ pub(crate) fn effigy_home_dir() -> Option<PathBuf> {
 fn host_workspace_identity() -> (u32, u32) {
     #[cfg(unix)]
     {
+        // SAFETY: `geteuid`/`getegid` are always defined on Unix, take no
+        // arguments, read only this process's effective credentials, and have
+        // no memory-safety preconditions.
         return unsafe { (nix::libc::geteuid(), nix::libc::getegid()) };
     }
 

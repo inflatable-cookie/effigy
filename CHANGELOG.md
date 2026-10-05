@@ -222,6 +222,12 @@ During v0.x, MINOR bumps may include breaking changes.
   (`test:containers:loopback`, `test:containers:loopback-policy`), backend
   selection (`test:containers:backend-selection`), and gateway registration
   (`test:gateway:registration-loopback`).
+- The public `HostRunRoot`, `ScriptContext`, `RouteTableLock` and
+  `LiveRouteTable` types now implement `Debug` for caller diagnostics.
+  `HostRunRoot` and `RouteTableLock` redact their raw descriptors, and
+  `LiveRouteTable` neither locks nor traverses the live table, so formatter
+  output cannot block on the route lock or expose live route contents.
+  `TokenKeys` and other secret-bearing types remain without `Debug`.
 
 ### Security
 - Managed host task secrets now reach child processes through their

@@ -318,3 +318,31 @@ fn route_deserialization_defaults_missing_target() {
     let parsed: Route = serde_json::from_str(json).unwrap();
     assert_eq!(parsed.target, None);
 }
+
+#[test]
+fn route_table_lock_debug_is_available_and_redacts_the_lock_descriptor() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let lock = RouteTableLock::acquire(&path).unwrap();
+    let rendered = format!("{lock:?}");
+    assert_eq!(rendered, "RouteTableLock { .. }");
+    assert!(!rendered.contains("fd:"));
+}
+
+#[test]
+fn live_route_table_debug_does_not_lock_or_print_route_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let mut table = RouteTable::new();
+    table.upsert(test_route("canary-domain.invalid", "127.0.0.1:8080"));
+    table.save(&path).unwrap();
+
+    let live = LiveRouteTable::new(path).unwrap();
+    let rendered = format!("{live:?}");
+    assert!(rendered.contains("LiveRouteTable"));
+    assert!(rendered.contains("path"));
+    // The formatter must not lock or traverse the table, so neither the live
+    // route domain nor its project path may appear.
+    assert!(!rendered.contains("canary-domain.invalid"));
+    assert!(!rendered.contains("/tmp/test"));
+}

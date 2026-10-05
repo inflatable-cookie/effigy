@@ -407,11 +407,16 @@ fn spawn_capture_child(
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and places the child in a new process group whose id
+    // is the child's own pid; the error path uses the allocation-free
+    // `io::Error::from` conversion. `terminate_child_process_tree` signals
+    // `kill(-pid, ...)` for that same group, so timeout cleanup owns the child
+    // and every descendant still in its group.
     unsafe {
-        command.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        command
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     command.spawn()
 }
@@ -431,11 +436,14 @@ fn spawn_stream_child(
         .stderr(Stdio::inherit())
         .stdin(Stdio::null());
     #[cfg(unix)]
+    // SAFETY: same contract as `spawn_capture_child`: `pre_exec` runs before
+    // `exec` where only async-signal-safe calls are permitted, `setpgid` is
+    // async-signal-safe, the error conversion allocates nothing, and the new
+    // child-owned process group is what `terminate_child_process_tree` targets
+    // with `kill(-pid, ...)`.
     unsafe {
-        command.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        command
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     command.spawn()
 }

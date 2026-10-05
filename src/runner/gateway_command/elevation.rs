@@ -272,6 +272,9 @@ pub(super) fn uninstall_resolver_if_needed(config: &GatewayConfig) -> Vec<String
 
 #[cfg(unix)]
 fn is_running_as_root() -> bool {
+    // SAFETY: `geteuid` is always defined on Unix, takes no arguments, reads
+    // only this process's effective credentials, and has no memory-safety
+    // preconditions.
     unsafe { nix::libc::geteuid() == 0 }
 }
 
@@ -285,6 +288,14 @@ fn gateway_requires_privileged_bind(config: &GatewayConfig) -> bool {
 
 #[cfg(unix)]
 fn process_signal_accessible(pid: u32) -> bool {
+    // SAFETY: `kill` takes only integer arguments, so the call has no
+    // memory-safety preconditions. Signal `0` delivers no signal and performs
+    // only the POSIX existence/permission probe. `pid` is the `GatewayStatus`
+    // pid produced by `server::get_status`, whose sole caller path reaches
+    // here only after `process_is_running` ran `ps -p <pid>`; a pid that is
+    // `0` or greater than `i32::MAX` cannot name that live process, so the
+    // cast stays in the signed POSIX `pid_t` domain and cannot wrap into a
+    // process-group target.
     unsafe { nix::libc::kill(pid as i32, 0) == 0 }
 }
 

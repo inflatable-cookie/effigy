@@ -71,3 +71,22 @@ target plus every still-supported release that exposes `service pack update`;
 capability is already present in released Effigy, with v0.13.0 recorded as its
 oldest supported version today. This assessment does not update version or
 catalog-pack files.
+
+### Unsafe-invariant and public-diagnostics reconciliation
+
+The strict post-v0.13.1 audit's reported unsafe-documentation and public
+`Debug` gaps were reconciled in a bounded repair wave. Every reported
+production `unsafe` block now carries a per-operation `SAFETY` comment that
+discharges its actual libc/FFI contract: descriptor ownership and lifetime,
+`MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
+the `fork`-to-`exec` `pre_exec` contract. The two reported `pre_exec` closures
+also use the allocation-free `io::Error::from(nix::Error)` conversion so their
+`SAFETY` comments honestly discharge async-signal-safety. This documents and
+reconciles existing operations; it changes no trust, uid, mount, lock,
+cancellation, scheduling or protocol behavior. Public `Debug` was added only
+for the reported `HostRunRoot`, `ScriptContext`, `RouteTableLock` and
+`LiveRouteTable` types; descriptor state is redacted, `LiveRouteTable` does not
+lock or traverse live routes, and secret-bearing `TokenKeys` remains excluded.
+The `rust-toolchain.toml` comment now records the current pin only and claims
+no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
+Passing audit or CI does not assert that all Rust is safe or bug-free.

@@ -66,6 +66,19 @@ pub struct HostRunRoot {
     uid: u32,
 }
 
+impl std::fmt::Debug for HostRunRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Expose the discovered path and owner for diagnostics but redact the
+        // raw directory descriptor; fd numbers are not useful to callers and
+        // must not leak through formatter output.
+        f.debug_struct("HostRunRoot")
+            .field("path", &self.path)
+            .field("directory", &"<directory fd redacted>")
+            .field("uid", &self.uid)
+            .finish()
+    }
+}
+
 impl HostRunRoot {
     /// Discover `~/.local/state/host-run`; no directory is created or repaired.
     pub fn discover(home: &Path) -> Result<(Self, Authority), TrustError> {
@@ -86,6 +99,9 @@ impl HostRunRoot {
         let path = std::fs::canonicalize(path)?;
         let cpath = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| TrustError::Invalid("root path contains NUL"))?;
+        // SAFETY: `cpath` is a live NUL-terminated `CString` borrowed for the
+        // call, and `open` reads only that pointer plus the integer flags. A
+        // successful return yields a descriptor that no other `File` owns.
         let fd = unsafe {
             libc::open(
                 cpath.as_ptr(),
@@ -95,7 +111,13 @@ impl HostRunRoot {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
+        // SAFETY: `fd` is the fresh, non-negative descriptor returned by the
+        // successful `open` above; `from_raw_fd` transfers sole ownership and
+        // the resulting `File` closes it exactly once.
         let directory = unsafe { File::from_raw_fd(fd) };
+        // SAFETY: `geteuid` is always defined on Unix, takes no arguments,
+        // reads only this process's effective credentials, and has no
+        // memory-safety preconditions.
         let uid = unsafe { libc::geteuid() } as u32;
         verify_fd(&directory, libc::S_IFDIR as u32, DIRECTORY_MODE, uid)?;
         let root = Self {
@@ -123,6 +145,9 @@ impl HostRunRoot {
         let path = std::fs::canonicalize(path)?;
         let cpath = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| TrustError::Invalid("root path contains NUL"))?;
+        // SAFETY: `cpath` is a live NUL-terminated `CString` borrowed for the
+        // call; `open` reads only that pointer plus the integer flags. A
+        // successful return yields a descriptor that no other `File` owns.
         let fd = unsafe {
             libc::open(
                 cpath.as_ptr(),
@@ -132,7 +157,13 @@ impl HostRunRoot {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
+        // SAFETY: `fd` is the fresh, non-negative descriptor returned by the
+        // successful `open` above; `from_raw_fd` transfers sole ownership and
+        // the resulting `File` closes it exactly once.
         let directory = unsafe { File::from_raw_fd(fd) };
+        // SAFETY: `geteuid` is always defined on Unix, takes no arguments,
+        // reads only this process's effective credentials, and has no
+        // memory-safety preconditions.
         let uid = unsafe { libc::geteuid() } as u32;
         verify_fd(&directory, libc::S_IFDIR as u32, DIRECTORY_MODE, uid)?;
         Ok(Self {
@@ -180,6 +211,9 @@ impl HostRunRoot {
         let run = open_dir(self.directory.as_raw_fd(), "run", self.uid)?;
         let name = CString::new("scheduler.sock").expect("static name");
         let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        // SAFETY: `run` owns a live directory descriptor, `name` is a live
+        // NUL-terminated `CString`, and `stat` is an aligned, writable
+        // `MaybeUninit<libc::stat>` that the syscall may fill.
         let result = unsafe {
             libc::fstatat(
                 run.as_raw_fd(),
@@ -191,6 +225,8 @@ impl HostRunRoot {
         if result != 0 {
             return Err(std::io::Error::last_os_error().into());
         }
+        // SAFETY: the `fstatat` above returned 0, so it initialized the entire
+        // `libc::stat`; the value is valid to assume.
         let stat = unsafe { stat.assume_init() };
         if (stat.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFSOCK as u32
             || stat.st_uid as u32 != self.uid
@@ -225,6 +261,10 @@ impl HostRunRoot {
             let suffix = PENDING_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let name = format!(".pending-facts.{}.{}.tmp", std::process::id(), suffix);
             let cname = CString::new(name.as_str()).expect("generated filename has no NUL");
+            // SAFETY: `parent` owns a live directory descriptor, `cname` is a
+            // live NUL-terminated name, and the remaining arguments are
+            // integer flags and mode. On success `openat` returns a descriptor
+            // that no other `File` owns yet.
             let fd = unsafe {
                 libc::openat(
                     parent,
@@ -239,6 +279,8 @@ impl HostRunRoot {
             };
             if fd >= 0 {
                 temp_name = Some(name);
+                // SAFETY: `fd` is the fresh descriptor just returned; the
+                // `File` takes sole ownership and closes it exactly once.
                 file = Some(unsafe { File::from_raw_fd(fd) });
                 break;
             }
@@ -257,6 +299,9 @@ impl HostRunRoot {
             file.sync_all()?;
             let from = CString::new(name.as_str()).expect("generated filename has no NUL");
             let to = CString::new("pending-facts.jsonl").expect("static name");
+            // SAFETY: `from` and `to` are live NUL-terminated names and
+            // `parent` is the live directory descriptor; `renameat` reads only
+            // those pointers and neither retains nor closes them.
             if unsafe { libc::renameat(parent, from.as_ptr(), parent, to.as_ptr()) } != 0 {
                 return Err(TrustError::Io(std::io::Error::last_os_error()));
             }
@@ -265,6 +310,9 @@ impl HostRunRoot {
         })();
         if result.is_err() {
             let cname = CString::new(name.as_str()).expect("generated filename has no NUL");
+            // SAFETY: `parent` is the live directory descriptor and `cname` is
+            // a live NUL-terminated name; `unlinkat` reads only those and does
+            // not retain or close them.
             unsafe {
                 libc::unlinkat(parent, cname.as_ptr(), 0);
             }
@@ -288,6 +336,8 @@ pub(super) fn read_bounded(reader: &mut impl Read, max: usize) -> Result<Vec<u8>
 
 fn open_dir(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
     let name = CString::new(name).map_err(|_| TrustError::Invalid("invalid path component"))?;
+    // SAFETY: `parent` is a live directory descriptor, `name` is a live
+    // NUL-terminated component, and the remaining arguments are integer flags.
     let fd = unsafe {
         libc::openat(
             parent,
@@ -298,6 +348,8 @@ fn open_dir(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
     if fd < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
+    // SAFETY: `fd` is the fresh descriptor just returned; the `File` takes
+    // sole ownership and closes it exactly once.
     let file = unsafe { File::from_raw_fd(fd) };
     verify_fd(&file, libc::S_IFDIR as u32, DIRECTORY_MODE, uid)?;
     Ok(file)
@@ -305,6 +357,8 @@ fn open_dir(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
 
 fn open_file(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
     let name = CString::new(name).map_err(|_| TrustError::Invalid("invalid path component"))?;
+    // SAFETY: `parent` is a live directory descriptor, `name` is a live
+    // NUL-terminated component, and the remaining arguments are integer flags.
     let fd = unsafe {
         libc::openat(
             parent,
@@ -315,6 +369,8 @@ fn open_file(parent: RawFd, name: &str, uid: u32) -> Result<File, TrustError> {
     if fd < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
+    // SAFETY: `fd` is the fresh descriptor just returned; the `File` takes
+    // sole ownership and closes it exactly once.
     let file = unsafe { File::from_raw_fd(fd) };
     verify_fd(&file, libc::S_IFREG as u32, FILE_MODE, uid)?;
     Ok(file)
@@ -332,6 +388,9 @@ fn open_or_create_private_file(parent: RawFd, name: &str, uid: u32) -> Result<Fi
             libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOFOLLOW,
             libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         ] {
+            // SAFETY: `parent` is a live directory descriptor, `name` is a
+            // live NUL-terminated component, and `flags`/the mode are integers.
+            // On success `openat` returns a descriptor no other `File` owns.
             let fd = unsafe {
                 libc::openat(
                     parent,
@@ -341,6 +400,8 @@ fn open_or_create_private_file(parent: RawFd, name: &str, uid: u32) -> Result<Fi
                 )
             };
             if fd >= 0 {
+                // SAFETY: `fd` is the fresh descriptor just returned; the
+                // `File` takes sole ownership and closes it exactly once.
                 let file = unsafe { File::from_raw_fd(fd) };
                 verify_fd(&file, libc::S_IFREG as u32, FILE_MODE, uid)?;
                 return Ok(file);

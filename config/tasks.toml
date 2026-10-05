@@ -117,6 +117,27 @@
   "cargo check -p effigy --all-targets --profile test",
   "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
+# v0.14.0 Rust unsafe-invariant and safe-diagnostics wave (strict audit091
+# findings). Compiles every touched target, lints the root all-target surface
+# that hosted CI lints, and lints the touched library crates. The pairing tests
+# cover the new public Debug surfaces, redaction of private descriptor state,
+# and the no-lock/no-traverse route-table boundary.
+"check:rust:release-invariants" = [
+  "cargo check -p effigy-containers -p effigy-host-run -p effigy-gateway -p effigy-rhai -p effigy --all-targets --profile test",
+  # Root all-target clippy mirrors hosted CI, and the touched libraries are
+  # linted all-target as well.
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+  "cargo clippy -p effigy-host-run -p effigy-gateway -p effigy-rhai --all-targets -- -D warnings",
+  # effigy-containers `--all-targets` carries unrelated pre-existing test lints
+  # (see check:workspace:nested-mounts), so lint its library target.
+  "cargo clippy -p effigy-containers --lib -- -D warnings",
+]
+"test:rust:release-invariants" = [
+  { id = "host-run-root-debug", run = "cargo test -p effigy-host-run --lib host_run_root_debug_is_available_and_redacts_the_directory_descriptor -- --nocapture", timeout_ms = 600000 },
+  { id = "route-table-lock-debug", run = "cargo test -p effigy-gateway --lib route_table_lock_debug_is_available_and_redacts_the_lock_descriptor -- --nocapture", timeout_ms = 600000 },
+  { id = "live-route-table-debug", run = "cargo test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
+  { id = "script-context-debug", run = "cargo test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
+]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"

@@ -8,6 +8,9 @@ const DEFAULT_WAIT_SECS: u64 = 30 * 60;
 pub(super) fn default_caller_identity() -> String {
     #[cfg(unix)]
     {
+        // SAFETY: `geteuid` is always defined on Unix, takes no arguments,
+        // reads only this process's effective credentials, and has no
+        // memory-safety preconditions.
         format!("interactive:{}", unsafe { libc::geteuid() })
     }
     #[cfg(not(unix))]

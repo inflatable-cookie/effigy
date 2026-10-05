@@ -1245,6 +1245,10 @@ fn verify_peer(
     {
         let mut credentials = std::mem::MaybeUninit::<libc::ucred>::zeroed();
         let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: `fd` is a live connected socket, `credentials` is an aligned,
+        // writable `MaybeUninit<ucred>`, and `len` reports its capacity so the
+        // kernel writes at most that many bytes and updates `len` with the
+        // bytes actually written.
         let result = unsafe {
             libc::getsockopt(
                 fd,
@@ -1257,6 +1261,9 @@ fn verify_peer(
         if result != 0 {
             return Err(ClientError::Io(io::Error::last_os_error()));
         }
+        // SAFETY: the buffer was created with `zeroed()`, so every byte is
+        // initialized regardless of how much `getsockopt` wrote; the `len`
+        // equality check below still rejects a short credential before use.
         let credentials = unsafe { credentials.assume_init() };
         if len as usize != std::mem::size_of::<libc::ucred>()
             || credentials.uid != uid
@@ -1270,6 +1277,9 @@ fn verify_peer(
     {
         let mut peer_pid: libc::pid_t = 0;
         let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: `fd` is a live connected socket, `peer_pid` is an initialized,
+        // writable `pid_t`, and `len` reports its capacity so the kernel writes
+        // at most that many bytes and records the written length.
         let result = unsafe {
             libc::getsockopt(
                 fd,
@@ -1284,6 +1294,8 @@ fn verify_peer(
         }
         let mut peer_uid: libc::uid_t = 0;
         let mut peer_gid: libc::gid_t = 0;
+        // SAFETY: `fd` is a live connected socket and both out-parameters are
+        // initialized, aligned, writable locals that `getpeereid` only writes.
         let result = unsafe { libc::getpeereid(fd, &mut peer_uid, &mut peer_gid) };
         if result != 0 {
             return Err(ClientError::Io(io::Error::last_os_error()));

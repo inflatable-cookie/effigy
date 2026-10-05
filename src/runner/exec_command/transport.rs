@@ -422,10 +422,18 @@ pub(in crate::runner) fn run_command_capture_until(
     };
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and runs before any image is loaded, placing the child
+    // in a new process group whose id is the child's own pid; the error path
+    // uses the allocation-free `io::Error::from` conversion. On deadline the
+    // caller calls `effigy_process::terminate_process_tree(child.id())`, which
+    // signals the negative of that same process-group id, so the TERM/KILL
+    // contract covers the started child and its descendants.
     unsafe {
         command.pre_exec(|| {
             nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
+                .map_err(std::io::Error::from)
         });
     }
     let mut child = command
