@@ -117,6 +117,17 @@
   "cargo check -p effigy --all-targets --profile test",
   "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
+# Signal-supervision initialization failure must preserve the original error
+# and terminate/reap exactly the already-owned child tree. Private tempfile
+# fixtures with recorded pids/groups and a private test-only injection at the
+# real initialization boundary; no OS exhaustion or live-process sabotage.
+"test:runner:supervision-init" = [
+  { id = "supervision-init", run = "cargo test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
+]
+"check:runner:supervision-init" = [
+  "cargo check -p effigy --all-targets --profile test",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"

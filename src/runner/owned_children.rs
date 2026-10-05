@@ -130,15 +130,23 @@ pub(super) fn wait_for_owned_child(
     deadline: Instant,
     poll: Duration,
 ) -> io::Result<OwnedChildOutcome> {
+    // Own the already-spawned child before the fallible scope install. If
+    // `OwnedChildrenScope::enter` fails, the session guard's `Drop` still
+    // terminates and reaps exactly this owned tree instead of leaking it as a
+    // bare `Child` (whose drop never kills).
+    let session = OwnedChildSession::new(child);
     let _scope = OwnedChildrenScope::enter()?;
-    OwnedChildSession::new(child).wait_until(deadline, poll)
+    session.register();
+    session.wait_until(deadline, poll)
 }
 
 /// Wait until the owned child exits. Drop still terminates the tree if this
 /// wait is abandoned. Acquires the signal scope the same way as the timed wait.
 pub(super) fn wait_for_owned_child_unbounded(child: Child) -> io::Result<std::process::ExitStatus> {
+    let session = OwnedChildSession::new(child);
     let _scope = OwnedChildrenScope::enter()?;
-    OwnedChildSession::new(child).wait()
+    session.register();
+    session.wait()
 }
 
 struct OwnedChildSession {
@@ -149,13 +157,18 @@ struct OwnedChildSession {
 
 impl OwnedChildSession {
     fn new(child: Child) -> Self {
-        let pid = child.id();
-        register_process_group(pid);
         Self {
+            pid: child.id(),
             child: Some(child),
-            pid,
             finished: false,
         }
+    }
+
+    /// Register the owned group in the active signal scope. Called only after
+    /// `OwnedChildrenScope::enter` succeeds, so the registration ordering
+    /// relative to the scope is unchanged from the previous implementation.
+    fn register(&self) {
+        register_process_group(self.pid);
     }
 
     fn wait(mut self) -> io::Result<std::process::ExitStatus> {
@@ -342,7 +355,15 @@ impl SignalListener {
         use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
         use signal_hook::iterator::Signals;
 
+        #[cfg(all(test, unix))]
+        if injected_supervision_init_failure(SupervisionInitFailurePointForTest::BeforeSignals) {
+            return Err(injected_supervision_init_error());
+        }
         let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM])?;
+        #[cfg(all(test, unix))]
+        if injected_supervision_init_failure(SupervisionInitFailurePointForTest::AfterSignals) {
+            return Err(injected_supervision_init_error());
+        }
         let handle = signals.handle();
         let thread = std::thread::Builder::new()
             .name("effigy-heavy-signal-forwarder".to_owned())
@@ -502,6 +523,126 @@ fn group_cleanup_disabled_for_test() -> bool {
     GROUP_CLEANUP_DISABLED_FOR_TEST.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Test-only injection at the real signal-supervision initialization boundary.
+/// While set for the current thread, `SignalListener::install` fails at the
+/// requested point so tests can prove an initialization error still terminates
+/// and reaps an already-owned child tree. Callers hold
+/// [`hold_group_cleanup_test_lock`] so no other scope install is active and the
+/// real `SignalListener::install` is reached. Never compiled into a release
+/// build.
+#[cfg(all(test, unix))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum SupervisionInitFailurePointForTest {
+    /// Fail before `Signals::new`, so no partial listener exists.
+    BeforeSignals,
+    /// Fail after `Signals::new` succeeds but before the forwarder thread
+    /// starts, exercising partial initialization state.
+    AfterSignals,
+}
+
+#[cfg(all(test, unix))]
+struct InjectedSupervisionInitFailure {
+    point: SupervisionInitFailurePointForTest,
+    ready: Option<std::path::PathBuf>,
+}
+
+#[cfg(all(test, unix))]
+static SUPERVISION_INIT_FAILURE_FOR_TEST: Mutex<
+    Option<(std::thread::ThreadId, InjectedSupervisionInitFailure)>,
+> = Mutex::new(None);
+
+/// Holds the injected initialization failure until dropped. The failure is
+/// scoped to the thread that requested it, so parallel tests that install the
+/// real scope are unaffected.
+#[cfg(all(test, unix))]
+pub(super) struct SupervisionInitFailureForTest;
+
+#[cfg(all(test, unix))]
+impl Drop for SupervisionInitFailureForTest {
+    fn drop(&mut self) {
+        *SUPERVISION_INIT_FAILURE_FOR_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn inject_supervision_init_failure_for_test(
+    point: SupervisionInitFailurePointForTest,
+) -> SupervisionInitFailureForTest {
+    set_supervision_init_failure(point, None)
+}
+
+/// Like [`inject_supervision_init_failure_for_test`], but the injected failure
+/// waits (bounded) for `ready` to appear before failing. This lets a production
+/// caller that spawns its own child record the already-owned tree first.
+#[cfg(all(test, unix))]
+pub(super) fn inject_supervision_init_failure_when_ready_for_test(
+    point: SupervisionInitFailurePointForTest,
+    ready: std::path::PathBuf,
+) -> SupervisionInitFailureForTest {
+    set_supervision_init_failure(point, Some(ready))
+}
+
+#[cfg(all(test, unix))]
+fn set_supervision_init_failure(
+    point: SupervisionInitFailurePointForTest,
+    ready: Option<std::path::PathBuf>,
+) -> SupervisionInitFailureForTest {
+    *SUPERVISION_INIT_FAILURE_FOR_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
+        std::thread::current().id(),
+        InjectedSupervisionInitFailure { point, ready },
+    ));
+    SupervisionInitFailureForTest
+}
+
+#[cfg(all(test, unix))]
+fn injected_supervision_init_failure(point: SupervisionInitFailurePointForTest) -> bool {
+    let ready = {
+        let state = SUPERVISION_INIT_FAILURE_FOR_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match state.as_ref() {
+            Some((thread, injected))
+                if *thread == std::thread::current().id() && injected.point == point =>
+            {
+                injected.ready.clone()
+            }
+            _ => return false,
+        }
+    };
+    if let Some(ready) = ready {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+    true
+}
+
+#[cfg(all(test, unix))]
+fn injected_supervision_init_error() -> io::Error {
+    io::Error::other("injected signal supervision initialization failure")
+}
+
+/// Test-only control reproducing the pre-repair ordering: the fallible
+/// `OwnedChildrenScope::enter` runs while the spawned `Child` is still an
+/// unnested local, so an entry error drops the bare `Child` and leaks its
+/// owned process group. Never compiled into a release build.
+#[cfg(all(test, unix))]
+pub(super) fn pre_repair_ordering_control_for_test(
+    child: Child,
+    deadline: Instant,
+    poll: Duration,
+) -> io::Result<OwnedChildOutcome> {
+    let _scope = OwnedChildrenScope::enter()?;
+    let session = OwnedChildSession::new(child);
+    session.register();
+    session.wait_until(deadline, poll)
+}
+
 #[cfg(unix)]
 fn forward_signal_to_process_group(process_group: i32, signal: i32) {
     #[cfg(test)]
@@ -593,6 +734,13 @@ pub(super) mod timeout_descendant_proof {
 
         pub fn cwd(&self) -> &Path {
             self.dir.path()
+        }
+
+        /// Readiness file the leader writes after recording its pid and its
+        /// descendant. Tests injecting a failure into a production caller can
+        /// wait for this before the failure fires.
+        pub fn ready_path(&self) -> &Path {
+            &self.ready
         }
 
         pub fn sibling_pid(&self) -> i32 {
@@ -721,8 +869,172 @@ pub(super) mod timeout_descendant_proof {
                     Instant::now() < deadline,
                     "private fixture guard could not reap recorded pids: {extra:?}"
                 );
+                // A deliberately leaked direct child (a control that dropped a
+                // bare `Child`) is left as a zombie and only this parent can
+                // reap it. Non-child pids return ECHILD and are ignored.
+                for pid in &extra {
+                    let _ = nix::sys::wait::waitpid(
+                        nix::unistd::Pid::from_raw(*pid),
+                        Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+                    );
+                }
                 thread::sleep(Duration::from_millis(20));
             }
         }
+    }
+}
+
+/// Supervision-initialization failure proofs. Every case spawns a real owned
+/// leader plus descendant, waits until both are recorded and ready, then makes
+/// `SignalListener::install` fail at the real initialization boundary and
+/// requires the already-owned tree to be terminated and reaped. The unrelated
+/// sibling is a separate process group and must survive.
+#[cfg(all(test, unix))]
+mod supervision_init_tests {
+    use super::timeout_descendant_proof::TimeoutDescendantFixture;
+    use super::{
+        inject_supervision_init_failure_for_test, pre_repair_ordering_control_for_test,
+        signal_scope_active, wait_for_owned_child, wait_for_owned_child_unbounded,
+        OwnedChildrenScope, SupervisionInitFailurePointForTest,
+    };
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn spawn_owned_hang(fixture: &TimeoutDescendantFixture) -> Child {
+        Command::new("sh")
+            .arg("-c")
+            .arg(fixture.hang_command())
+            .current_dir(fixture.cwd())
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn owned hang")
+    }
+
+    fn assert_init_failure_reaps(
+        prefix: &str,
+        point: SupervisionInitFailurePointForTest,
+        wait: impl FnOnce(Child) -> std::io::Result<()>,
+    ) {
+        let _lock = super::hold_group_cleanup_test_lock();
+        let _inject = inject_supervision_init_failure_for_test(point);
+        let mut fixture = TimeoutDescendantFixture::new(prefix);
+        fixture.spawn_unrelated_sibling();
+        let child = spawn_owned_hang(&fixture);
+        let pids = fixture.wait_for_recorded_pids();
+        let error = wait(child).expect_err("initialization failure must be reported, never hidden");
+        assert!(
+            error
+                .to_string()
+                .contains("injected signal supervision initialization failure"),
+            "original initialization error must be preserved: {error}"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+    }
+
+    #[test]
+    fn supervision_init_timed_wait_failure_reaps_owned_tree() {
+        assert_init_failure_reaps(
+            "effigy-supervision-init-timed-",
+            SupervisionInitFailurePointForTest::BeforeSignals,
+            |child| {
+                wait_for_owned_child(
+                    child,
+                    Instant::now() + Duration::from_secs(30),
+                    Duration::from_millis(10),
+                )
+                .map(|_| ())
+            },
+        );
+    }
+
+    #[test]
+    fn supervision_init_unbounded_wait_failure_reaps_owned_tree() {
+        assert_init_failure_reaps(
+            "effigy-supervision-init-unbounded-",
+            SupervisionInitFailurePointForTest::BeforeSignals,
+            |child| wait_for_owned_child_unbounded(child).map(|_| ()),
+        );
+    }
+
+    #[test]
+    fn supervision_init_partial_initialization_failure_reaps_owned_tree() {
+        assert_init_failure_reaps(
+            "effigy-supervision-init-partial-",
+            SupervisionInitFailurePointForTest::AfterSignals,
+            |child| wait_for_owned_child_unbounded(child).map(|_| ()),
+        );
+    }
+
+    #[test]
+    fn supervision_init_error_leaves_scope_installable() {
+        let _lock = super::hold_group_cleanup_test_lock();
+        let inject = inject_supervision_init_failure_for_test(
+            SupervisionInitFailurePointForTest::BeforeSignals,
+        );
+        let mut fixture = TimeoutDescendantFixture::new("effigy-supervision-init-recover-");
+        fixture.spawn_unrelated_sibling();
+        let child = spawn_owned_hang(&fixture);
+        let pids = fixture.wait_for_recorded_pids();
+        let error =
+            wait_for_owned_child_unbounded(child).expect_err("init failure must be reported");
+        assert!(
+            error
+                .to_string()
+                .contains("injected signal supervision initialization failure"),
+            "original initialization error must be preserved: {error}"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        drop(inject);
+        let scope = OwnedChildrenScope::enter().expect("scope installs after a failed install");
+        assert!(signal_scope_active(), "scope must be active after recovery");
+        drop(scope);
+        assert!(
+            !signal_scope_active(),
+            "scope must uninstall when the last holder drops"
+        );
+    }
+
+    #[test]
+    fn supervision_init_pre_repair_ordering_control_leaks_until_fixture_drop() {
+        let _lock = super::hold_group_cleanup_test_lock();
+        let _inject = inject_supervision_init_failure_for_test(
+            SupervisionInitFailurePointForTest::BeforeSignals,
+        );
+        let fixture = TimeoutDescendantFixture::new("effigy-supervision-init-negative-");
+        let child = spawn_owned_hang(&fixture);
+        let pids = fixture.wait_for_recorded_pids();
+        let error = pre_repair_ordering_control_for_test(
+            child,
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_millis(10),
+        )
+        .expect_err("pre-repair ordering must report the entry failure");
+        assert!(
+            error
+                .to_string()
+                .contains("injected signal supervision initialization failure"),
+            "control must reach the injected entry failure: {error}"
+        );
+        assert!(
+            pids.iter()
+                .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+            "pre-repair ordering must leak the already-owned tree: {pids:?}"
+        );
+        drop(fixture);
+        let alive = pids
+            .iter()
+            .copied()
+            .filter(|pid| TimeoutDescendantFixture::pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "fixture RAII must reap the pre-repair control tree: {alive:?}"
+        );
     }
 }
