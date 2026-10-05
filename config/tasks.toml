@@ -92,6 +92,11 @@
 "test:qa-groups:json-clean" = "cargo test --test cli_output_tests qa_group_json_forms_emit_one_banner_free_document -- --nocapture"
 "test:qa-groups:parse" = "cargo test -p effigy --lib qa_group_option_tests -- --nocapture"
 "test:cli:command-surface" = "cargo test -p effigy-cli --lib command_surface -- --nocapture"
+"test:cli:lock-conflict" = "cargo test --test cli_output_tests lock_conflict -- --nocapture"
+"check:cli:lock-conflict" = [
+  "cargo check -p effigy --test cli_output_tests --profile test",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
