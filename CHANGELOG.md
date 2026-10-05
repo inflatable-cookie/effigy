@@ -359,10 +359,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - Remaining Unix `pre_exec` `setpgid` error paths now convert `nix::Error` with
   the allocation-free `io::Error::from` mapping used by the earlier doctor,
   exec-transport, and container spawn callbacks. A failed group setup cannot
-  allocate in the forked child. Spawn still fails closed; the reported
-  `io::Error` now carries the original errno (`raw_os_error`) rather than
-  `ErrorKind::Other` plus a formatted message. Prove with
-  `test:rust:postfork-safety`.
+  allocate in the forked child. Spawn still fails closed. The old direct
+  mapper (`Error::other(error.to_string())`) returned `ErrorKind::Other` with
+  a formatted message and no `raw_os_error`. On rustc 1.97.1 Unix,
+  `Command::spawn` then surfaced that to the parent as `EINVAL` /
+  `ErrorKind::InvalidInput` through std's errno-pipe fallback
+  (`raw_os_error().unwrap_or(EINVAL)` in `sys/process/unix/unix.rs`). The
+  mapper now preserves the original errno, so the parent sees that errno
+  rather than the `EINVAL` fallback. Prove with `test:rust:postfork-safety`.
 - Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
   and values outside the positive signed PID domain before dispatch. Unix status
   requires one exact PID row from `ps`; the PID file remains numeric and does

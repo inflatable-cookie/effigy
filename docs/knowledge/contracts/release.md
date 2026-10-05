@@ -81,17 +81,27 @@ discharges its actual libc/FFI contract: descriptor ownership and lifetime,
 `MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
 the `fork`-to-`exec` `pre_exec` contract. Every `pre_exec` callback under
 `src/` and `crates/` now has an allocation-free error path and an adjacent
-`SAFETY` comment. The twelve callbacks are: nine production `setpgid` sites
-(`doctor_ports.rs`, `exec_command/transport.rs`, containers
+`SAFETY` comment. The twelve audited callbacks are: nine production `setpgid`
+sites (`doctor_ports.rs`, `exec_command/transport.rs`, containers
 `spawn_capture_child`, both `effigy-process` spawn helpers,
 `effigy-scan` doctor inventory, `effigy-deps` bounded process, demo run,
 and `effigy-runtime` inherit spawn), two production `setsid` sites
 (`host_process.rs` best-effort ignore, gateway daemon `last_os_error`),
-and the test-only containers `spawn_stream_child` `setpgid` callback. `setpgid`
+and the test-only containers `spawn_stream_child` `setpgid` callback. The
+current tree has thirteen callbacks: those twelve plus the new test-only
+missing-binary proof
+(`effigy-process` `setpgid_pre_exec_preserves_missing_binary_launch_error`),
+which uses the same allocation-free `setpgid` conversion. `setpgid`
 failures now use `io::Error::from(nix::Error)`, which preserves errno and
-allocates nothing; a failed group setup still fails the spawn. That
-conversion reports `raw_os_error` and the matching `ErrorKind` instead of
-`ErrorKind::Other` plus a formatted message. The `setsid` callbacks already
+allocates nothing; a failed group setup still fails the spawn. The old
+direct mapper (`Error::other(error.to_string())`) returned `ErrorKind::Other`
+with a formatted message and no `raw_os_error` (private negative control).
+That is not the caller-visible `Command::spawn` error: on rustc 1.97.1 Unix,
+std's process layer transmits `raw_os_error().unwrap_or(EINVAL)`
+(`library/std/src/sys/process/unix/unix.rs`), so a pre-fix callback error
+without `raw_os_error` reached the parent as `EINVAL` /
+`ErrorKind::InvalidInput`. The new mapper preserves the true errno through
+that pipe. The `setsid` callbacks already
 avoided allocation (ignored result, or `last_os_error`) and were left
 behaviorally unchanged. This documents and
 reconciles existing operations; it changes no trust, uid, mount, lock,
