@@ -348,6 +348,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- In-process run-array shell timeouts and managed lifecycle cleanup now stop
+  the owned Unix process group on expiry and reap the direct child, so
+  descendants cannot leak after a sequence `124` or a cleanup timeout. The
+  caller group is never targeted. Non-Unix hosts keep pid-only kill. Prove
+  with `test:runner:timeout-descendants`.
 - Recursive workspace ownership scans now prune every declared child mount,
   including same-device nested binds and volumes. Nested host binds are checked
   as the numeric workspace user without owner-equality requirements or probe
