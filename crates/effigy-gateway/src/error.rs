@@ -118,6 +118,17 @@ pub enum GatewayError {
     #[error("gateway is not running")]
     NotRunning,
 
+    /// The recorded gateway PID could not be probed.
+    ///
+    /// Distinct from [`Self::NotRunning`]: the process state is ambiguous, so
+    /// callers must not report a stop, delete the PID records, or start a
+    /// replacement. The PID and version records stay in place for
+    /// reconciliation.
+    #[error(
+        "cannot determine whether gateway process {pid} is running; leaving PID state in place for reconciliation"
+    )]
+    ProcessStateUnknown { pid: u32 },
+
     /// Resolver suffix is invalid.
     #[error("resolver suffix `{suffix}` is invalid: {reason}")]
     InvalidResolverSuffix { suffix: String, reason: String },

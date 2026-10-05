@@ -297,8 +297,11 @@ fn process_signal_accessible(pid: u32) -> bool {
     //
     // The numeric domain is fully checked; gateway identity is not. A reused
     // PID can still match, and that residual identity limitation is unchanged
-    // by this wave. The unknown-probe lifecycle gap (an unverifiable probe
-    // collapsing to `false`) is owned by the separate bounded task 101.
+    // by this wave. This signal-zero check answers only "is the PID signalable
+    // as this user": a `false` result asks for elevation, which is
+    // fail-closed. The unavailable-`ps`-probe lifecycle gap (an unverifiable
+    // probe collapsing to `false`) was closed by task 101 in
+    // `effigy_gateway::server::probe_gateway_process`.
     process_signal_accessible_with(pid, |pid_t| unsafe { nix::libc::kill(pid_t, 0) == 0 })
 }
 

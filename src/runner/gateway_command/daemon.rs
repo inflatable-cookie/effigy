@@ -91,7 +91,7 @@ pub(super) fn stop_gateway_process(pid: u32) -> Result<(), RunnerError> {
     {
         stop_gateway_process_with(
             pid,
-            server::process_is_running,
+            server::probe_gateway_process,
             |pid_t, signal| {
                 nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_t), signal)
                     .map_err(|error| error.to_string())
@@ -140,43 +140,54 @@ fn send_gateway_signal_with(
 #[cfg(unix)]
 fn stop_gateway_process_with(
     pid: u32,
-    mut process_is_running: impl FnMut(u32) -> bool,
+    mut process_state: impl FnMut(u32) -> server::GatewayProcessProbe,
     mut dispatch: impl FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
     mut wait: impl FnMut(Duration),
 ) -> Result<(), RunnerError> {
     // Validate before even the first liveness probe; callers may bypass the
     // PID-file reader and this function owns the signal boundary.
     checked_gateway_signal_pid(pid)?;
-    if !process_is_running(pid) {
-        return Ok(());
+    match process_state(pid) {
+        server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
+        server::GatewayProcessProbe::Unknown => return Err(gateway_process_state_unknown(pid)),
+        server::GatewayProcessProbe::Running => {}
     }
 
     send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
         dispatch(pid_t, signal)
     })?;
     for _ in 0..40 {
-        if !process_is_running(pid) {
-            return Ok(());
+        match process_state(pid) {
+            server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
+            server::GatewayProcessProbe::Unknown => {
+                // Do not escalate to SIGKILL or report success on ambiguity.
+                return Err(gateway_process_state_unknown(pid));
+            }
+            server::GatewayProcessProbe::Running => wait(Duration::from_millis(50)),
         }
-        wait(Duration::from_millis(50));
     }
 
-    if !process_is_running(pid) {
-        return Ok(());
-    }
     send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGKILL, |pid_t, signal| {
         dispatch(pid_t, signal)
     })?;
     for _ in 0..20 {
-        if !process_is_running(pid) {
-            return Ok(());
+        match process_state(pid) {
+            server::GatewayProcessProbe::ConfirmedAbsent => return Ok(()),
+            server::GatewayProcessProbe::Unknown => return Err(gateway_process_state_unknown(pid)),
+            server::GatewayProcessProbe::Running => wait(Duration::from_millis(50)),
         }
-        wait(Duration::from_millis(50));
     }
 
     Err(RunnerError::task_invocation(format!(
         "gateway process {pid} did not stop after SIGTERM/SIGKILL"
     )))
+}
+
+#[cfg(unix)]
+fn gateway_process_state_unknown(pid: u32) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "cannot determine whether gateway process {pid} is running; refusing to report it stopped"
+    ))
 }
 
 pub(super) fn normalize_gateway_daemon_output(text: &str) -> String {
@@ -239,7 +250,7 @@ mod pid_domain_tests {
                 pid,
                 |_| {
                     probes.set(probes.get() + 1);
-                    true
+                    server::GatewayProcessProbe::Running
                 },
                 |_, _| {
                     signals.set(signals.get() + 1);
@@ -287,7 +298,7 @@ mod pid_domain_tests {
         let signals = Cell::new(0);
         let result = stop_gateway_process_with(
             i32::MAX as u32,
-            |_| false,
+            |_| server::GatewayProcessProbe::ConfirmedAbsent,
             |_, _| {
                 signals.set(signals.get() + 1);
                 Ok(())
@@ -295,6 +306,90 @@ mod pid_domain_tests {
             |_| {},
         );
         result.expect("already-stopped gateway target should be idempotent");
+        assert_eq!(signals.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_probe_state_unknown_before_stop_dispatches_no_signal() {
+        use std::cell::Cell;
+
+        let signals = Cell::new(0);
+        let result = stop_gateway_process_with(
+            i32::MAX as u32,
+            |_| server::GatewayProcessProbe::Unknown,
+            |_, _| {
+                signals.set(signals.get() + 1);
+                Ok(())
+            },
+            |_| {},
+        );
+        result.expect_err("an unknown probe must not report a successful stop");
+        assert_eq!(signals.get(), 0, "unknown-before-stop must not dispatch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_probe_state_unknown_after_term_refuses_success_without_kill() {
+        use std::cell::Cell;
+
+        let probes = Cell::new(0);
+        let signals = Cell::new(0);
+        let result = stop_gateway_process_with(
+            i32::MAX as u32,
+            |_| {
+                let previous = probes.get();
+                probes.set(previous + 1);
+                // Running before TERM, then ambiguous on every later probe.
+                if previous == 0 {
+                    server::GatewayProcessProbe::Running
+                } else {
+                    server::GatewayProcessProbe::Unknown
+                }
+            },
+            |_, _| {
+                signals.set(signals.get() + 1);
+                Ok(())
+            },
+            |_| {},
+        );
+        result.expect_err("unknown after TERM must not report success");
+        assert_eq!(
+            signals.get(),
+            1,
+            "only the initial SIGTERM may be dispatched"
+        );
+        assert_eq!(probes.get(), 2, "the first post-TERM probe is unknown");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_probe_state_negative_bool_collapse_fails_stop_success_oracle() {
+        use std::cell::Cell;
+
+        // The old bool probe returned `false` for an unavailable probe, which
+        // `stop_gateway_process_with` treated as a successful stop. The
+        // tri-state path must fail instead of reporting success.
+        let old_bool_result = !server::GatewayProcessProbe::Unknown.is_running();
+        assert!(
+            old_bool_result,
+            "the compatibility bool still collapses unknown to not-running"
+        );
+
+        let signals = Cell::new(0);
+        let result = stop_gateway_process_with(
+            i32::MAX as u32,
+            |_| server::GatewayProcessProbe::Unknown,
+            |_, _| {
+                signals.set(signals.get() + 1);
+                Ok(())
+            },
+            |_| {},
+        );
+        assert!(
+            result.is_err(),
+            "collapsing unknown to not-running must fail the stop oracle"
+        );
         assert_eq!(signals.get(), 0);
     }
 
@@ -324,12 +419,15 @@ mod pid_domain_tests {
         let pid = child.0.id();
         let result = stop_gateway_process_with(
             pid,
-            server::process_is_running,
+            server::probe_gateway_process,
             |pid_t, signal| kill(Pid::from_raw(pid_t), signal).map_err(|error| error.to_string()),
             thread::sleep,
         );
         result.expect("stop exact private owned child");
         assert!(child.0.try_wait().expect("reap child").is_some());
-        assert!(!server::process_is_running(pid));
+        assert_eq!(
+            server::probe_gateway_process(pid),
+            server::GatewayProcessProbe::ConfirmedAbsent
+        );
     }
 }

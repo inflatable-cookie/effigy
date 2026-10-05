@@ -120,16 +120,28 @@ fn server_pid_domain_caller_pid_is_not_reported_as_gateway() {
 }
 
 #[cfg(unix)]
+fn ps_output(success: bool, stdout: &[u8], stderr: &[u8]) -> PsProbeOutput {
+    PsProbeOutput {
+        success,
+        stdout: stdout.to_vec(),
+        stderr: stderr.to_vec(),
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn server_pid_domain_invalid_values_do_not_dispatch_process_probes() {
     use std::cell::Cell;
 
     let dispatches = Cell::new(0);
     for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
-        assert!(!process_is_running_with(pid, |_| {
-            dispatches.set(dispatches.get() + 1);
-            Some(pid.to_string().into_bytes())
-        }));
+        assert_eq!(
+            probe_gateway_process_with(pid, |_| {
+                dispatches.set(dispatches.get() + 1);
+                Some(ps_output(true, format!(" {pid} S \n").as_bytes(), b""))
+            }),
+            GatewayProcessProbe::ConfirmedAbsent
+        );
     }
     assert_eq!(dispatches.get(), 0);
 }
@@ -137,17 +149,188 @@ fn server_pid_domain_invalid_values_do_not_dispatch_process_probes() {
 #[cfg(unix)]
 #[test]
 fn server_pid_domain_requires_one_exact_process_probe_row() {
-    assert!(process_is_running_with(i32::MAX as u32, |pid| {
-        Some(format!(" {pid} S \n").into_bytes())
-    }));
-    assert!(!process_is_running_with(42, |_| Some(Vec::new())));
-    assert!(!process_is_running_with(42, |_| Some(b"43\n".to_vec())));
-    assert!(!process_is_running_with(42, |_| Some(b"42 Z\n".to_vec())));
-    assert!(!process_is_running_with(42, |_| Some(b"42\n42\n".to_vec())));
-    assert!(!process_is_running_with(42, |_| Some(b"42\n43\n".to_vec())));
-    assert!(!process_is_running_with(42, |_| Some(
-        b"42 S extra\n".to_vec()
-    )));
+    assert_eq!(
+        probe_gateway_process_with(i32::MAX as u32, |pid| {
+            Some(ps_output(true, format!(" {pid} S \n").as_bytes(), b""))
+        }),
+        GatewayProcessProbe::Running
+    );
+    for stdout in [
+        &b"43\n"[..],
+        &b"42\n"[..],
+        &b"42\n42\n"[..],
+        &b"42\n43\n"[..],
+        &b"42 S extra\n"[..],
+    ] {
+        assert_eq!(
+            probe_gateway_process_with(42, |_| Some(ps_output(true, stdout, b""))),
+            GatewayProcessProbe::Unknown,
+            "stdout {stdout:?} must be unknown"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn server_probe_state_classifies_running_absent_zombie_and_unknown() {
+    // Running: exactly one non-zombie row for the requested PID.
+    assert_eq!(
+        probe_gateway_process_with(42, |_| Some(ps_output(true, b"42 S+\n", b""))),
+        GatewayProcessProbe::Running
+    );
+    // Confirmed absent: `ps`'s no-such-process result (non-zero, no output).
+    assert_eq!(
+        probe_gateway_process_with(42, |_| Some(ps_output(false, b"", b""))),
+        GatewayProcessProbe::ConfirmedAbsent
+    );
+    // Zombie: exact row, but already exited.
+    assert_eq!(
+        probe_gateway_process_with(42, |_| Some(ps_output(true, b"42 Z\n", b""))),
+        GatewayProcessProbe::ConfirmedAbsent
+    );
+    // Launch failure.
+    assert_eq!(
+        probe_gateway_process_with(42, |_| None),
+        GatewayProcessProbe::Unknown
+    );
+    // Non-zero `ps` with a diagnostic is not proof of absence.
+    assert_eq!(
+        probe_gateway_process_with(42, |_| Some(ps_output(
+            false,
+            b"",
+            b"ps: permission denied\n"
+        ))),
+        GatewayProcessProbe::Unknown
+    );
+    // Successful `ps` with empty or ambiguous rows is unknown, not absent.
+    for stdout in [
+        &b""[..],
+        &b"not-a-row\n"[..],
+        &b"42\n"[..],
+        &b"42 S\n42 S\n"[..],
+    ] {
+        assert_eq!(
+            probe_gateway_process_with(42, |_| Some(ps_output(true, stdout, b""))),
+            GatewayProcessProbe::Unknown,
+            "stdout {stdout:?} must be unknown"
+        );
+    }
+    assert!(GatewayProcessProbe::Unknown.is_unknown());
+    assert!(!GatewayProcessProbe::Unknown.is_running());
+    assert!(!GatewayProcessProbe::Unknown.is_confirmed_absent());
+}
+
+#[test]
+fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.13.1\n").unwrap();
+    let before_pid = std::fs::read(&config.pid_file_path).unwrap();
+    let before_version = std::fs::read(&version_path).unwrap();
+
+    let result = get_status_with_probe(&config, |_| GatewayProcessProbe::Unknown);
+
+    assert!(matches!(
+        result,
+        Err(GatewayError::ProcessStateUnknown { pid: 4242 })
+    ));
+    assert_eq!(std::fs::read(&config.pid_file_path).unwrap(), before_pid);
+    assert_eq!(std::fs::read(&version_path).unwrap(), before_version);
+}
+
+#[test]
+fn server_probe_state_status_confirmed_absent_clears_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.13.1").unwrap();
+
+    let result = get_status_with_probe(&config, |_| GatewayProcessProbe::ConfirmedAbsent);
+
+    assert!(matches!(result, Err(GatewayError::NotRunning)));
+    assert!(!config.pid_file_path.exists());
+    assert!(!version_path.exists());
+}
+
+#[test]
+fn server_probe_state_start_refuses_unknown_and_preserves_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    std::fs::write(&config.pid_file_path, "4242").unwrap();
+    let version_path = config.pid_file_path.with_extension("version");
+    std::fs::write(&version_path, "v0.13.1").unwrap();
+
+    let unknown = check_existing_gateway_pid(&config, |_| GatewayProcessProbe::Unknown);
+    assert!(matches!(
+        unknown,
+        Err(GatewayError::ProcessStateUnknown { pid: 4242 })
+    ));
+    assert!(config.pid_file_path.exists());
+    assert!(version_path.exists());
+
+    let running = check_existing_gateway_pid(&config, |_| GatewayProcessProbe::Running);
+    assert!(matches!(
+        running,
+        Err(GatewayError::AlreadyRunning { pid: 4242 })
+    ));
+    assert!(config.pid_file_path.exists());
+
+    check_existing_gateway_pid(&config, |_| GatewayProcessProbe::ConfirmedAbsent)
+        .expect("confirmed absence clears the stale record");
+    assert!(!config.pid_file_path.exists());
+    assert!(!version_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn server_probe_state_real_ps_confirms_private_child_then_absence() {
+    use std::process::{Child, Command};
+    use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
+    let mut owned = OwnedChild(
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private owned child"),
+    );
+    let pid = owned.0.id();
+
+    // Bounded readiness: the production probe must observe the private child.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            Instant::now() < deadline,
+            "private owned child was never observed running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    owned.0.kill().expect("terminate private owned child");
+    owned.0.wait().expect("reap private owned child");
+
+    // Bounded readiness: once reaped, the same probe must confirm absence.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe_gateway_process(pid) != GatewayProcessProbe::ConfirmedAbsent {
+        assert!(
+            Instant::now() < deadline,
+            "reaped private owned child was never observed absent"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[tokio::test]
