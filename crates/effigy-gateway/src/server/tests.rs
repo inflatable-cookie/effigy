@@ -74,6 +74,78 @@ fn nonexistent_process_is_not_running() {
     assert!(!process_is_running(99_999_999));
 }
 
+#[test]
+fn server_pid_domain_accepts_only_positive_non_init_pid_t_values() {
+    assert_eq!(checked_gateway_pid(0), None);
+    assert_eq!(checked_gateway_pid(1), None);
+    assert_eq!(checked_gateway_pid(i32::MAX as u32), Some(i32::MAX));
+    assert_eq!(checked_gateway_pid(i32::MAX as u32 + 1), None);
+    assert_eq!(checked_gateway_pid(u32::MAX), None);
+}
+
+#[test]
+fn read_pid_file_rejects_invalid_pid_domain_and_malformed_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_path = dir.path().join("gateway.pid");
+
+    for value in [
+        "0",
+        "1",
+        "2147483648",
+        "4294967295",
+        "4294967296",
+        "-1",
+        "not-a-pid",
+        "",
+    ] {
+        std::fs::write(&pid_path, value).unwrap();
+        assert!(matches!(
+            read_pid_file(&pid_path),
+            Err(GatewayError::NotRunning)
+        ));
+    }
+
+    std::fs::write(&pid_path, i32::MAX.to_string()).unwrap();
+    assert_eq!(read_pid_file(&pid_path).unwrap(), i32::MAX as u32);
+}
+
+#[test]
+fn server_pid_domain_caller_pid_is_not_reported_as_gateway() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    write_pid_file(&config.pid_file_path).unwrap();
+
+    assert!(matches!(get_status(&config), Err(GatewayError::NotRunning)));
+    assert!(config.pid_file_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn server_pid_domain_invalid_values_do_not_dispatch_process_probes() {
+    use std::cell::Cell;
+
+    let dispatches = Cell::new(0);
+    for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
+        assert!(!process_is_running_with(pid, |_| {
+            dispatches.set(dispatches.get() + 1);
+            Some(pid.to_string().into_bytes())
+        }));
+    }
+    assert_eq!(dispatches.get(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn server_pid_domain_requires_one_exact_process_probe_row() {
+    assert!(process_is_running_with(i32::MAX as u32, |pid| {
+        Some(format!(" {pid} \n").into_bytes())
+    }));
+    assert!(!process_is_running_with(42, |_| Some(Vec::new())));
+    assert!(!process_is_running_with(42, |_| Some(b"43\n".to_vec())));
+    assert!(!process_is_running_with(42, |_| Some(b"42\n42\n".to_vec())));
+    assert!(!process_is_running_with(42, |_| Some(b"42\n43\n".to_vec())));
+}
+
 #[tokio::test]
 async fn run_gateway_propagates_proxy_bind_failure() {
     let dir = tempfile::tempdir().unwrap();
