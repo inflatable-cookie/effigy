@@ -1299,7 +1299,10 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         let uid = uid.to_string();
         let gid = gid.to_string();
         let script = ownership_find_batch_script(paths, mount_boundaries, &uid, &gid);
-        let argv = vec!["sh", "-c", script.as_str(), "effigy-perm-find-batch"];
+        // Preserve the identity and scan roots as positional data for Compose runtime shims.
+        let mut argv = vec!["sh", "-c", script.as_str(), "effigy-perm-find-batch"];
+        argv.extend([uid.as_str(), gid.as_str()]);
+        argv.extend(paths.iter().map(String::as_str));
         let path_context = paths
             .iter()
             .map(|path| format!("`{path}`"))
