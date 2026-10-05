@@ -4,10 +4,11 @@ use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
+use std::time::Instant;
 
 use effigy_containers::{
     compose::{compose_args, compose_invocation},
-    exec::list_running_compose_containers_for_policy,
+    exec::list_running_compose_containers_for_policy_with_deadline,
     EffectiveContainerPolicy,
 };
 
@@ -42,15 +43,29 @@ pub(super) struct ColimaExecAdapters<'a> {
     pub(super) format_args: &'a FormatArgs,
 }
 
+/// One Colima direct-exec request: its output shape, label, optional stdin and
+/// the caller's absolute deadline (if any). Bundled so the deadline travels
+/// with the capture mode instead of widening the call signature.
+pub(super) struct ColimaDirectExecRequest<'a> {
+    pub(super) capture: bool,
+    pub(super) label: &'a str,
+    pub(super) stdin_file: Option<&'a Path>,
+    pub(super) deadline: Option<Instant>,
+}
+
 pub(super) fn run_colima_direct_exec(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     compose_exec_args: &[OsString],
-    capture: bool,
-    label: &str,
-    stdin_file: Option<&Path>,
+    request: ColimaDirectExecRequest<'_>,
     adapters: ColimaExecAdapters<'_>,
 ) -> Result<Output, RunnerError> {
+    let ColimaDirectExecRequest {
+        capture,
+        label,
+        stdin_file,
+        deadline,
+    } = request;
     let ColimaExecAdapters {
         parse_compose_exec_args,
         run_command_capture_allow_failure,
@@ -63,6 +78,7 @@ pub(super) fn run_colima_direct_exec(
         policy,
         &parsed,
         stdin_file.is_some() || !capture,
+        deadline,
         run_command_capture_allow_failure,
         format_args,
     )?;
@@ -123,6 +139,7 @@ fn resolve_colima_direct_exec_invocation(
     policy: &EffectiveContainerPolicy,
     parsed: &ParsedComposeExec,
     attach_stdin: bool,
+    deadline: Option<Instant>,
     run_command_capture_allow_failure: &CaptureCommand,
     format_args: &FormatArgs,
 ) -> Result<Vec<OsString>, RunnerError> {
@@ -130,6 +147,7 @@ fn resolve_colima_direct_exec_invocation(
         repo_root,
         policy,
         &parsed.service,
+        deadline,
         run_command_capture_allow_failure,
         format_args,
     )?;
@@ -168,11 +186,12 @@ pub(super) fn resolve_compose_service_container_id(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    deadline: Option<Instant>,
     run_command_capture_allow_failure: &CaptureCommand,
     format_args: &FormatArgs,
 ) -> Result<OsString, RunnerError> {
     if let Some(container_name) =
-        resolve_cached_running_service_container_name(repo_root, policy, service)?
+        resolve_cached_running_service_container_name(repo_root, policy, service, deadline)?
     {
         return Ok(OsString::from(container_name));
     }
@@ -232,6 +251,7 @@ fn resolve_cached_running_service_container_name(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    deadline: Option<Instant>,
 ) -> Result<Option<String>, RunnerError> {
     let cache_key = service_container_name_cache_key(repo_root, policy, service);
     if let Some(container_name) = service_container_name_cache()
@@ -243,7 +263,8 @@ fn resolve_cached_running_service_container_name(
         return Ok(Some(container_name));
     }
 
-    let Some(container_name) = resolve_running_service_container_name(repo_root, policy, service)?
+    let Some(container_name) =
+        resolve_running_service_container_name(repo_root, policy, service, deadline)?
     else {
         return Ok(None);
     };
@@ -276,18 +297,27 @@ fn resolve_running_service_container_name(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
+    deadline: Option<Instant>,
 ) -> Result<Option<String>, RunnerError> {
     // Test-only deterministic seam: the scripted doctor runtime answers the
     // service resolve so the behavior oracles spawn nothing. Production has no
     // scripted runtime installed and falls through to the real probe.
     #[cfg(test)]
-    if let Some(scripted) = crate::runner::scripted_doctor::intercept_service_name(policy) {
-        return scripted;
+    if let Some(scripted) = crate::runner::scripted_doctor::intercept_service_name(policy, deadline)
+    {
+        // Match production: a discovery failure is not fatal here, it falls
+        // through to the compose `ps -q` resolve below.
+        return match scripted {
+            Ok(name) => Ok(name),
+            Err(_) => Ok(None),
+        };
     }
-    let rows = match list_running_compose_containers_for_policy(repo_root, policy) {
-        Ok(rows) => rows,
-        Err(_) => return Ok(None),
-    };
+    let rows =
+        match list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline)
+        {
+            Ok(rows) => rows,
+            Err(_) => return Ok(None),
+        };
     Ok(select_running_service_container_name(
         rows, repo_root, policy, service,
     ))
@@ -358,6 +388,434 @@ fn should_suppress_colima_exec_stderr_line(line: &[u8]) -> bool {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+    use std::time::Duration;
+
+    // ------------------------------------------------------------------
+    // Deadline continuity (task effigy#093): private fresh-root fixtures with
+    // a fake `colima` on PATH. The uncached service discovery must share the
+    // caller's absolute deadline instead of granting itself a fresh budget;
+    // an expired deadline never spawns and a hang is reaped by its own
+    // recorded process group. No live runtime, VM or container is touched.
+    // ------------------------------------------------------------------
+
+    #[cfg(unix)]
+    fn deadline_fresh_root(label: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let temp = tempfile::Builder::new()
+            .prefix(&format!("effigy-deadline-continuity-{label}-"))
+            .tempdir()
+            .expect("tempdir");
+        let root = std::fs::canonicalize(temp.path()).expect("canonicalize fixture root");
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers]\ndefault = \"stack\"\n",
+        )
+        .expect("write manifest marker");
+        (temp, root)
+    }
+
+    #[cfg(unix)]
+    fn write_deadline_executable(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, body).expect("write fixture executable");
+        let mut permissions = std::fs::metadata(path).expect("stat").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("chmod fixture executable");
+    }
+
+    #[cfg(unix)]
+    fn install_deadline_fake_colima(root: &Path, script: &str) -> std::path::PathBuf {
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir fake runtime bin");
+        write_deadline_executable(&bin.join("colima"), script);
+        bin
+    }
+
+    #[cfg(unix)]
+    fn with_deadline_runtime_env(bin: &Path) -> crate::contract_test_support::EnvGuard {
+        let base = std::env::var("PATH").unwrap_or_default();
+        crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{base}", bin.display()))),
+            ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+        ])
+    }
+
+    #[cfg(unix)]
+    fn deadline_policy(root: &Path) -> EffectiveContainerPolicy {
+        let mut policy = crate::runner::test_support::effective_container_policy(
+            "stack",
+            "demo-stack",
+            "workspace",
+            root.join("docker-compose.yml"),
+        );
+        policy.repo_root = root.to_path_buf();
+        policy.workspace_user = Some("dev".to_owned());
+        policy
+    }
+
+    /// Fake runtime that hangs on the uncached discovery probe while a valid
+    /// `ps -q` answer stays available for the compose resolve that follows.
+    #[cfg(unix)]
+    fn discovery_hang_script(pgfile: &Path) -> String {
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf '%s\\n' \"$$\" > '{pg}'\n        sleep 300 &\n        printf '%s\\n' \"$!\" >> '{pg}'\n        wait\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            pg = pgfile.display()
+        )
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: i32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    /// Readiness proof: the fixture recorded the exact leader and descendant
+    /// PIDs for the phase it is hanging. An empty record means the intended
+    /// phase never spawned and any reap judgement would be vacuous.
+    #[cfg(unix)]
+    fn recorded_owned_pids(pgfile: &Path) -> Vec<i32> {
+        let text = std::fs::read_to_string(pgfile).unwrap_or_else(|error| {
+            panic!(
+                "fixture never recorded its own pids ({error}): the intended child never spawned"
+            )
+        });
+        let pids = text
+            .lines()
+            .filter_map(|line| line.trim().parse::<i32>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            !pids.is_empty(),
+            "fixture must record its own process group: {text:?}"
+        );
+        pids
+    }
+
+    #[cfg(unix)]
+    fn assert_owned_processes_gone(pgfile: &Path) {
+        let alive = recorded_owned_pids(pgfile)
+            .into_iter()
+            .filter(|pid| pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "owned discovery process group was not reaped: {alive:?} still alive"
+        );
+    }
+
+    #[cfg(unix)]
+    fn wait_for_owned_processes_gone(pgfile: &Path) {
+        let pids = recorded_owned_pids(pgfile);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while pids.iter().any(|pid| pid_alive(*pid)) {
+            assert!(
+                Instant::now() < deadline,
+                "owned discovery process group was not reaped: {pids:?} still alive"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Private RAII guard for the unbounded negative control. Signals only the
+    /// exact PIDs the fixture recorded plus its own direct child handle, never
+    /// a process pattern and never the test's own process group.
+    #[cfg(unix)]
+    struct DiscoveryFixtureGuard {
+        pgfile: std::path::PathBuf,
+        child: std::process::Child,
+    }
+
+    #[cfg(unix)]
+    impl DiscoveryFixtureGuard {
+        fn new(pgfile: std::path::PathBuf, child: std::process::Child) -> Self {
+            Self { pgfile, child }
+        }
+
+        fn wait_until_recorded(&self) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if std::fs::read_to_string(&self.pgfile)
+                    .map(|text| !text.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture never recorded its own pids: {}",
+                    self.pgfile.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn reap(&mut self) {
+            let pids = std::fs::read_to_string(&self.pgfile)
+                .ok()
+                .map(|text| {
+                    text.lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let signal = |pids: &[i32], signal| {
+                for pid in pids {
+                    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), signal);
+                }
+            };
+            signal(&pids, nix::sys::signal::Signal::SIGTERM);
+            let grace = Instant::now() + Duration::from_secs(2);
+            while pids.iter().any(|pid| pid_alive(*pid)) && Instant::now() < grace {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if pids.iter().any(|pid| pid_alive(*pid)) {
+                signal(&pids, nix::sys::signal::Signal::SIGKILL);
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            wait_for_owned_processes_gone(&self.pgfile);
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for DiscoveryFixtureGuard {
+        fn drop(&mut self) {
+            self.reap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uncached_discovery_hang_is_bounded_by_the_caller_deadline_and_reaps_its_group() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-hang");
+        let pgfile = root.join("discovery-process-group");
+        let bin = install_deadline_fake_colima(&root, &discovery_hang_script(&pgfile));
+        let _env = with_deadline_runtime_env(&bin);
+        let policy = deadline_policy(&root);
+        clear_service_container_name_cache();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
+            crate::runner::exec_command::transport::run_command_capture_until(
+                root_dir,
+                program,
+                args,
+                None,
+                Some(deadline),
+            )
+        };
+
+        let started = Instant::now();
+        let error = resolve_compose_service_container_id(
+            &root,
+            &policy,
+            "workspace",
+            Some(deadline),
+            &capture,
+            &|_| String::new(),
+        )
+        .expect_err("a hung discovery that consumes the shared deadline must fail closed");
+
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "uncached discovery must be bounded by the caller deadline, not wait out sleep 300"
+        );
+        wait_for_owned_processes_gone(&pgfile);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expired_discovery_deadline_does_not_spawn_either_probe() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-expired");
+        let marker = root.join("spawned");
+        let bin = install_deadline_fake_colima(
+            &root,
+            &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+        );
+        let _env = with_deadline_runtime_env(&bin);
+        let policy = deadline_policy(&root);
+        clear_service_container_name_cache();
+        let expired = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("expired instant");
+        let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
+            crate::runner::exec_command::transport::run_command_capture_until(
+                root_dir,
+                program,
+                args,
+                None,
+                Some(expired),
+            )
+        };
+
+        let error = resolve_compose_service_container_id(
+            &root,
+            &policy,
+            "workspace",
+            Some(expired),
+            &capture,
+            &|_| String::new(),
+        )
+        .expect_err("expired discovery deadline must fail closed");
+
+        assert!(error.to_string().contains("timed out"), "got {error}");
+        assert!(
+            !marker.exists(),
+            "an expired discovery deadline must not spawn the uncached probe or the ps resolve"
+        );
+    }
+
+    /// Negative control for the expired-no-spawn oracle: with no deadline
+    /// propagated the same fixture does spawn, so the oracle is non-vacuous.
+    #[cfg(unix)]
+    #[test]
+    fn expired_no_spawn_oracle_fails_when_the_discovery_deadline_is_not_propagated() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-propagation-control");
+        let marker = root.join("spawned");
+        let bin = install_deadline_fake_colima(
+            &root,
+            &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+        );
+        let _env = with_deadline_runtime_env(&bin);
+        let policy = deadline_policy(&root);
+        clear_service_container_name_cache();
+        let capture = |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
+            crate::runner::exec_command::transport::run_command_capture_until(
+                root_dir, program, args, None, None,
+            )
+        };
+
+        let _ = resolve_compose_service_container_id(
+            &root,
+            &policy,
+            "workspace",
+            None,
+            &capture,
+            &|_| String::new(),
+        );
+
+        assert!(
+            marker.exists(),
+            "without a propagated deadline the fixture must spawn, proving the no-spawn oracle is non-vacuous"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_hit_does_not_spawn_discovery() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-cache-hit");
+        let marker = root.join("spawned");
+        let bin = install_deadline_fake_colima(
+            &root,
+            &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+        );
+        let _env = with_deadline_runtime_env(&bin);
+        let policy = deadline_policy(&root);
+        let key = service_container_name_cache_key(&root, &policy, "workspace");
+        {
+            let mut cache = service_container_name_cache()
+                .lock()
+                .expect("service container name cache poisoned");
+            cache.remove(&key);
+        }
+        service_container_name_cache()
+            .lock()
+            .expect("service container name cache poisoned")
+            .insert(key.clone(), "cached-workspace-1".to_owned());
+
+        let resolved = resolve_cached_running_service_container_name(
+            &root,
+            &policy,
+            "workspace",
+            Some(Instant::now() + Duration::from_secs(5)),
+        )
+        .expect("cached resolution");
+
+        assert_eq!(resolved.as_deref(), Some("cached-workspace-1"));
+        assert!(
+            !marker.exists(),
+            "a cache hit must not spawn the discovery probe"
+        );
+        service_container_name_cache()
+            .lock()
+            .expect("service container name cache poisoned")
+            .remove(&key);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_discovery_output_is_parsed() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-parse");
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            root = root.display()
+        );
+        let bin = install_deadline_fake_colima(&root, &script);
+        let _env = with_deadline_runtime_env(&bin);
+        let policy = deadline_policy(&root);
+        clear_service_container_name_cache();
+
+        let resolved = resolve_running_service_container_name(
+            &root,
+            &policy,
+            "workspace",
+            Some(Instant::now() + Duration::from_secs(5)),
+        )
+        .expect("bounded real discovery")
+        .expect("a matching running service row must resolve");
+
+        assert_eq!(resolved, "demo-stack-workspace-1");
+    }
+
+    /// Negative control: with runtime deadline/reap disabled, the recorded
+    /// discovery hang stays alive, so the reap oracle used by the positive
+    /// proof must fail. The private guard then reaps exactly the recorded
+    /// leader and descendant, leaving no leaked process behind.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_reap_oracle_fails_when_the_runtime_deadline_is_disabled() {
+        let _lock = crate::contract_test_support::lock_test();
+        let (_temp, root) = deadline_fresh_root("discovery-reap-control");
+        let pgfile = root.join("discovery-process-group");
+        let bin = install_deadline_fake_colima(&root, &discovery_hang_script(&pgfile));
+        let fixture = bin.join("colima");
+        let child = std::process::Command::new(&fixture)
+            .args([
+                "nerdctl",
+                "--profile",
+                "effigy",
+                "--",
+                "ps",
+                "--format",
+                "{{.Names}}",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the discovery hang without runtime deadline");
+
+        let guard = DiscoveryFixtureGuard::new(pgfile.clone(), child);
+        guard.wait_until_recorded();
+        let recorded = recorded_owned_pids(&pgfile);
+        assert!(
+            recorded.iter().all(|pid| pid_alive(*pid)),
+            "deadline/reap disabled: the recorded discovery hang must still be alive: {recorded:?}"
+        );
+
+        let oracle = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_owned_processes_gone(&pgfile);
+        }));
+        assert!(
+            oracle.is_err(),
+            "the reap oracle must fail while the owned discovery hang is still alive"
+        );
+
+        drop(guard);
+        assert_owned_processes_gone(&pgfile);
+    }
 
     #[test]
     fn resolve_running_service_container_name_prefers_matching_project_service() {
@@ -482,8 +940,9 @@ mod tests {
             .expect("service container name cache poisoned")
             .insert(key.clone(), "demo-app-1".to_owned());
 
-        let resolved = resolve_cached_running_service_container_name(repo_root, &policy, "app")
-            .expect("cached container name");
+        let resolved =
+            resolve_cached_running_service_container_name(repo_root, &policy, "app", None)
+                .expect("cached container name");
         assert_eq!(resolved.as_deref(), Some("demo-app-1"));
 
         service_container_name_cache()
@@ -605,6 +1064,7 @@ mod tests {
             &policy,
             &parsed,
             true,
+            None,
             &|_, _, _| {
                 Ok(Output {
                     status: std::process::ExitStatus::from_raw(0),

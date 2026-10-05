@@ -482,9 +482,12 @@ pub(in crate::runner) fn intercept_liveness_ps(
 }
 
 /// Intercept the service-container-name resolve that the Colima direct-exec
-/// path performs before the first exec. Returns the resolved container.
+/// path performs before the first exec. Returns the resolved container. The
+/// caller's deadline is honored so the scripted boundary cannot claim a
+/// resolution that production would have refused once the budget expired.
 pub(in crate::runner) fn intercept_service_name(
     policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
 ) -> Option<Result<Option<String>, RunnerError>> {
     with_runtime(|runtime| {
         if runtime.is_passthrough(ScriptedPhase::ServiceResolve) {
@@ -506,7 +509,7 @@ pub(in crate::runner) fn intercept_service_name(
             user: None,
             mutating: false,
         };
-        Some(match runtime.run(request, None) {
+        Some(match runtime.run(request, deadline) {
             Ok(output) => {
                 let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
                 Ok((!name.is_empty()).then_some(name))

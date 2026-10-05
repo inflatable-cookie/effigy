@@ -634,8 +634,10 @@ sampled nested path. A sample on a mount stops its later nested probes; it
 does not walk the mount. Every preliminary liveness probe (Colima `status`,
 the primary service Colima/`compose ps` check, `colima ssh` socket preflight)
 and every batch child converts the same remaining doctor deadline once, just
-before it spawns, so none gets a fresh budget. An expired deadline never
-spawns a probe, and a hung probe is killed and reaped at the deadline. An
+before it spawns, so none gets a fresh budget. The Colima direct-exec path
+keeps that absolute deadline through uncached service discovery and the
+capture it supervises, so a slow spawn cannot rebase it and an already-expired
+deadline never spawns. A hung probe is killed and reaped at the deadline; an
 unavailable batch discards partial permission samples and reports verification
 incomplete with the sampled paths; it never reports clean or proves a
 permission fault. A bounded doctor run never restarts Colima.
