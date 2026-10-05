@@ -360,6 +360,9 @@ During v0.x, MINOR bumps may include breaking changes.
   background descendant may ignore SIGINT. The caller group is never
   targeted. Non-Unix hosts keep pid-only kill. Prove with
   `test:runner:timeout-descendants`.
+- `effigy container <NAME> retire` now fails before scope resolution or
+  runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
+  checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.
 - `fs::copy_if_missing(source, destination)` now publishes through the same
   atomic create-if-absent path as `fs::write_file_if_absent`: the source is
   streamed into a staged file on the destination filesystem and linked into

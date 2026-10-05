@@ -8208,6 +8208,45 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
 }
 
 #[test]
+fn cli_container_retire_named_environment_refuses_before_effects() {
+    let fixture = tempfile::tempdir().expect("private CLI fixture");
+    let root = fixture.path();
+    let refusal = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
+
+    let plain = run_cli_command(root, &["container", "web", "retire"]);
+    assert_eq!(plain.status.code(), Some(2));
+    let stderr = String::from_utf8(plain.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("Invalid command arguments"));
+    assert!(stderr.contains(refusal));
+    assert!(fs::read_dir(root)
+        .expect("read fixture after plain invocation")
+        .next()
+        .is_none());
+
+    let json = run_json_cli_command(
+        root,
+        &[
+            "container",
+            "web",
+            "retire",
+            "--scope",
+            "abcdef0123456789abcdef0123456789",
+            "--yes",
+        ],
+    );
+    assert_eq!(json.status.code(), Some(2));
+    let parsed = parse_stdout_json(&json);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["error"]["kind"], "CliParseError");
+    assert_eq!(parsed["error"]["message"], refusal);
+    assert!(fs::read_dir(root)
+        .expect("read fixture after JSON invocation")
+        .next()
+        .is_none());
+}
+
+#[test]
 fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
     let root = temp_workspace("container-reset-unrelated-secrets");
     write_container_fixture(&root, None, "./app:/workspace");

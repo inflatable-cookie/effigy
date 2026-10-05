@@ -421,6 +421,25 @@ fn parse_container_retire_is_supported() {
 }
 
 #[test]
+fn parse_container_retire_named_environment_is_rejected() {
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "retire".to_owned(),
+        "--scope".to_owned(),
+        "abcdef0123456789abcdef0123456789".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect_err("named retirement must be rejected");
+
+    assert_eq!(
+        error.to_string(),
+        "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope"
+    );
+}
+
+#[test]
 fn parse_container_eject_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),
