@@ -389,13 +389,28 @@ for an absent destination and readers must never observe a partial winner:
   destination directory during publication, and a process killed at the wrong
   moment can leave one behind. That file is not the destination payload.
 
+Use `fs::copy_if_missing(source, destination)` for the same create-if-absent
+publication when the payload already lives in a source file:
+
+- Source bytes are streamed into a staged file on the destination filesystem,
+  then published with the same atomic no-clobber link. The helper reports
+  `true` only when that complete copy is published.
+- The published file is an independent copy: later writes to `source` do not
+  change the destination. The helper does not hard-link the source inode.
+- Occupied destinations, including dangling symlinks, still lose without
+  replacement. Occupancy is decided before the source is opened, so a missing
+  or unreadable source does not turn an occupied destination into an error.
+  Filesystems without hard links fail instead of falling back to an
+  overwriting copy.
+
+`fs::copy(source, destination)` still replaces an existing destination.
 `fs::move_path(source, destination)` delegates to `std::fs::rename`. It
 atomically replaces whatever currently names `destination` and never checks that
 `destination` still matches an inode the caller read, so it is not an
 identity-checked conditional move. It fails across filesystems and on platforms
 that cannot rename over an existing destination. Use
-`write_file_if_absent(path, contents)` when an existing destination must make the
-operation fail instead of replacing it.
+`write_file_if_absent` or `copy_if_missing` when an existing destination must
+make the operation fail instead of replacing it.
 
 Helpers that mirror CLI reports return the same JSON payload as the CLI
 `--json` mode, converted into Rhai maps/arrays. Process-like helpers such as

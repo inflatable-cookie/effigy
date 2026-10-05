@@ -132,16 +132,7 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
               -> Result<bool, Box<EvalAltResult>> {
             let source = resolve_runtime_path(&file_context.cwd, source.as_str());
             let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
-            if destination.exists() {
-                return Ok(false);
-            }
-            if let Some(parent) = destination.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
-            }
-            std::fs::copy(&source, &destination)
-                .map_err(|error| rhai_runtime_error(failed_to_write_path(&destination, error)))?;
-            Ok(true)
+            copy_absent_file(&source, &destination)
         },
     );
     // `std::fs::rename` replaces whatever currently names the destination and
@@ -484,18 +475,68 @@ fn publish_absent_payload(destination: &Path, contents: &[u8]) -> Result<bool, B
         let _ = std::fs::remove_file(&staged);
         return Err(rhai_runtime_error(failed_to_write_path(&staged, error)));
     }
-    let published = match std::fs::hard_link(&staged, destination) {
+    publish_staged_no_clobber(&staged, destination)
+}
+
+/// Stream `source` into a staged file on the destination filesystem, then
+/// publish that complete independent copy with the same atomic no-clobber
+/// link as [`publish_absent_payload`].
+///
+/// The source inode is never linked to the destination: a later write to
+/// `source` cannot change a published copy. The copy streams rather than
+/// loading the payload into memory. Returns `Ok(true)` only when this call's
+/// complete copy is the published destination, and `Ok(false)` when the
+/// destination was already occupied (including by a symlink or directory).
+/// Occupancy is decided from the destination name before the source is opened,
+/// so a missing or unreadable source does not turn an occupied destination
+/// into an error. Filesystems without hard-link support fail with the
+/// underlying OS error rather than falling back to an overwriting copy.
+fn copy_absent_file(source: &Path, destination: &Path) -> Result<bool, Box<EvalAltResult>> {
+    // Occupied includes dangling symlinks (`exists()` would miss those). Any
+    // other lstat error, including ENOTDIR when a parent is a file, is not an
+    // occupied name; parent creation and publication still report it.
+    if std::fs::symlink_metadata(destination).is_ok() {
+        return Ok(false);
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+    }
+    let (staged, mut file) = create_staged_payload(destination)
+        .map_err(|error| rhai_runtime_error(failed_to_write_path(destination, error)))?;
+    use std::io::Write;
+    let copy_result = (|| -> std::io::Result<()> {
+        let mut source_file = std::fs::File::open(source)?;
+        let permissions = source_file.metadata()?.permissions();
+        std::io::copy(&mut source_file, &mut file)?;
+        file.flush()?;
+        file.set_permissions(permissions)?;
+        Ok(())
+    })();
+    drop(file);
+    if let Err(error) = copy_result {
+        let _ = std::fs::remove_file(&staged);
+        return Err(rhai_runtime_error(failed_to_read_path(source, error)));
+    }
+    publish_staged_no_clobber(&staged, destination)
+}
+
+fn publish_staged_no_clobber(
+    staged: &Path,
+    destination: &Path,
+) -> Result<bool, Box<EvalAltResult>> {
+    let published = match std::fs::hard_link(staged, destination) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
         Err(error) => {
-            let _ = std::fs::remove_file(&staged);
+            let _ = std::fs::remove_file(staged);
             return Err(rhai_runtime_error(failed_to_write_path(destination, error)));
         }
     };
     // The destination now names the complete payload; retire the staged name.
     // A leftover stage cannot make the destination partial, so a cleanup
     // failure here must not turn a successful publication into an error.
-    let _ = std::fs::remove_file(&staged);
+    let _ = std::fs::remove_file(staged);
     Ok(published)
 }
 
