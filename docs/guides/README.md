@@ -136,6 +136,8 @@ Use when:
 ### Release and distribute Effigy-managed software
 
 Read:
+- [`083-v0.14.0-consumer-migration.md`](083-v0.14.0-consumer-migration.md)
+  before upgrading an Effigy consumer from v0.13.1 to the proposed v0.14.0
 - [`051-release-orchestration.md`](051-release-orchestration.md) for the
   release cut workflow
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
@@ -270,6 +272,7 @@ Deprecated but still link-stable:
 ### Distribution and Adoption
 
 - [`047-agent-and-cross-repo-adoption.md`](047-agent-and-cross-repo-adoption.md)
+- [`083-v0.14.0-consumer-migration.md`](083-v0.14.0-consumer-migration.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md)

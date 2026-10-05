@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use super::colima_runtime::{
     default_runtime_profile, detect_container_backend, repair_colima_runtime,
-    run_runtime_command_capture_for_policy, run_runtime_command_capture_for_policy_with_timeout,
-    running_colima_profiles,
+    run_runtime_command_capture_for_policy,
+    run_runtime_command_capture_for_policy_with_absolute_deadline,
+    run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
 };
 use super::parse::{
     docker_failure_looks_like_colima_dns_outage,
@@ -375,8 +376,8 @@ fn capture_runtime_command(
 ) -> Result<Output, ContainerExecError> {
     if let Some(deadline) = deadline {
         let remaining = super::process::remaining_until_deadline(deadline, label)?;
-        return run_runtime_command_capture_for_policy_with_timeout(
-            repo_root, policy, args, label, remaining,
+        return run_runtime_command_capture_for_policy_with_absolute_deadline(
+            repo_root, policy, args, label, deadline, remaining,
         );
     }
     match timeout {

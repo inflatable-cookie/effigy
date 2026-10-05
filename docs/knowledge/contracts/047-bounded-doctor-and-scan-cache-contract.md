@@ -103,7 +103,10 @@ cache and timeout behavior.
 2. `EFFIGY_DOCTOR_TIMEOUT_MS` replaces that default. `0` means unbounded and
    must be visible in the report.
 3. One monotonic deadline is propagated through checks, per-file work, and
-   health execution. A phase cannot reset it.
+   health execution. A phase cannot reset it. Container work a health probe
+   performs keeps the same absolute deadline: uncached service discovery
+   shares the remaining budget, and a spawned capture is supervised against
+   the original deadline instead of a fresh one measured after spawn.
 4. Budget exhaustion returns non-zero, marks the report incomplete, identifies
    the phase, preserves completed evidence, and gives a useful retry action.
 5. A timed-out health task has its owned process tree terminated and reaped.

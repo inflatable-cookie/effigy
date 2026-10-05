@@ -11,7 +11,7 @@ use super::process::{
     error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
     run_command_capture_allow_failure_with_deadline,
     run_command_capture_allow_failure_with_timeout, run_command_capture_os,
-    run_command_capture_with_timeout,
+    run_command_capture_with_absolute_deadline, run_command_capture_with_timeout,
 };
 use crate::{
     colima::{
@@ -450,6 +450,36 @@ pub(super) fn run_runtime_command_capture_for_policy_with_timeout(
         &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
         label,
         timeout,
+    )
+}
+
+/// Absolute-deadline runtime capture. The caller's monotonic deadline is the
+/// single supervision origin; it is never converted to a fresh relative
+/// timeout after spawn, so a slow spawn cannot extend it.
+pub(super) fn run_runtime_command_capture_for_policy_with_absolute_deadline(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    docker_args: &[OsString],
+    label: &str,
+    deadline: Instant,
+    reported_timeout: Duration,
+) -> Result<Output, ContainerExecError> {
+    let detection = runtime_detection_for_policy(repo_root, policy);
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    run_command_capture_with_absolute_deadline(
+        repo_root,
+        &program,
+        &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
+        label,
+        deadline,
+        reported_timeout,
     )
 }
 
