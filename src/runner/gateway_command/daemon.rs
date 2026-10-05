@@ -148,9 +148,7 @@ fn stop_gateway_process_with(
     // PID-file reader and this function owns the signal boundary.
     checked_gateway_signal_pid(pid)?;
     if !process_is_running(pid) {
-        return Err(RunnerError::task_invocation(format!(
-            "gateway process {pid} is not running"
-        )));
+        return Ok(());
     }
 
     send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
@@ -283,7 +281,7 @@ mod pid_domain_tests {
 
     #[cfg(unix)]
     #[test]
-    fn gateway_pid_domain_refuses_unverified_process_without_signaling() {
+    fn gateway_pid_domain_already_stopped_target_is_idempotent() {
         use std::cell::Cell;
 
         let signals = Cell::new(0);
@@ -296,7 +294,7 @@ mod pid_domain_tests {
             },
             |_| {},
         );
-        assert!(result.is_err());
+        result.expect("already-stopped gateway target should be idempotent");
         assert_eq!(signals.get(), 0);
     }
 

@@ -138,12 +138,16 @@ fn server_pid_domain_invalid_values_do_not_dispatch_process_probes() {
 #[test]
 fn server_pid_domain_requires_one_exact_process_probe_row() {
     assert!(process_is_running_with(i32::MAX as u32, |pid| {
-        Some(format!(" {pid} \n").into_bytes())
+        Some(format!(" {pid} S \n").into_bytes())
     }));
     assert!(!process_is_running_with(42, |_| Some(Vec::new())));
     assert!(!process_is_running_with(42, |_| Some(b"43\n".to_vec())));
+    assert!(!process_is_running_with(42, |_| Some(b"42 Z\n".to_vec())));
     assert!(!process_is_running_with(42, |_| Some(b"42\n42\n".to_vec())));
     assert!(!process_is_running_with(42, |_| Some(b"42\n43\n".to_vec())));
+    assert!(!process_is_running_with(42, |_| Some(
+        b"42 S extra\n".to_vec()
+    )));
 }
 
 #[tokio::test]

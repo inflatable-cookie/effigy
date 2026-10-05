@@ -190,7 +190,7 @@ pub fn process_is_running(pid: u32) -> bool {
     process_is_running_with(pid, |pid_t| {
         let pid_text = pid_t.to_string();
         let output = std::process::Command::new("ps")
-            .args(["-p", pid_text.as_str(), "-o", "pid="])
+            .args(["-p", pid_text.as_str(), "-o", "pid=", "-o", "stat="])
             .output()
             .ok()?;
         output.status.success().then_some(output.stdout)
@@ -214,7 +214,19 @@ fn process_is_running_with(pid: u32, probe: impl FnOnce(i32) -> Option<Vec<u8>>)
     let Some(row) = rows.next() else {
         return false;
     };
-    rows.next().is_none() && row.parse::<i32>().ok() == Some(pid_t)
+    if rows.next().is_some() {
+        return false;
+    }
+
+    let mut fields = row.split_whitespace();
+    let Some(row_pid) = fields.next().and_then(|pid| pid.parse::<i32>().ok()) else {
+        return false;
+    };
+    let Some(state) = fields.next() else {
+        return false;
+    };
+
+    row_pid == pid_t && !state.starts_with('Z') && fields.next().is_none()
 }
 
 #[cfg(not(unix))]
