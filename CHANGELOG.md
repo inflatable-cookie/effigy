@@ -350,6 +350,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- `effigy container <NAME> retire` now fails before scope resolution or
+  runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
+  checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.
 - `fs::copy_if_missing(source, destination)` now publishes through the same
   atomic create-if-absent path as `fs::write_file_if_absent`: the source is
   streamed into a staged file on the destination filesystem and linked into
