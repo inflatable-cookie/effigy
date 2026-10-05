@@ -6,17 +6,32 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static CURRENT_SIGNAL_STATE: OnceLock<Mutex<Option<Arc<Mutex<SignalState>>>>> = OnceLock::new();
+static INSTALLED_SCOPE: Mutex<Option<InstalledScope>> = Mutex::new(None);
 
-/// Signal-forwarding scope for a process that owns task children. Signals are
-/// sent only to process groups started inside the scope.
-pub(super) struct OwnedChildrenScope {
+/// Process-wide install of the signal forwarder. Nested `OwnedChildrenScope`
+/// holders share one listener so parallel owned waits cannot replace each
+/// other's state. Last drop restores the previous observer and signal state.
+struct InstalledScope {
     previous_signal_state: Option<Arc<Mutex<SignalState>>>,
     previous_observer: Option<effigy_process::ProcessGroupObserver>,
     _signal_forwarder: SignalForwarder,
+    holders: usize,
 }
+
+/// Signal-forwarding scope for a process that owns task children. Signals are
+/// sent only to process groups started inside the scope. Nested and parallel
+/// enters share one install.
+pub(super) struct OwnedChildrenScope;
 
 impl OwnedChildrenScope {
     pub(super) fn enter() -> io::Result<Self> {
+        let mut installed = INSTALLED_SCOPE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(scope) = installed.as_mut() {
+            scope.holders += 1;
+            return Ok(Self);
+        }
         let signal_forwarder = SignalForwarder::install()?;
         let previous_signal_state =
             replace_current_signal_state(Some(signal_forwarder.state.clone()));
@@ -30,23 +45,46 @@ impl OwnedChildrenScope {
             }
         }) as effigy_process::ProcessGroupObserver;
         let previous_observer = effigy_process::replace_process_group_observer(Some(observer));
-        Ok(Self {
+        *installed = Some(InstalledScope {
             previous_signal_state,
             previous_observer,
             _signal_forwarder: signal_forwarder,
-        })
+            holders: 1,
+        });
+        Ok(Self)
     }
 }
 
 impl Drop for OwnedChildrenScope {
     fn drop(&mut self) {
-        effigy_process::replace_process_group_observer(self.previous_observer.take());
-        replace_current_signal_state(self.previous_signal_state.take());
+        let mut installed = INSTALLED_SCOPE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(scope) = installed.as_mut() else {
+            return;
+        };
+        scope.holders = scope.holders.saturating_sub(1);
+        if scope.holders == 0 {
+            if let Some(scope) = installed.take() {
+                effigy_process::replace_process_group_observer(scope.previous_observer);
+                replace_current_signal_state(scope.previous_signal_state);
+            }
+        }
     }
 }
 
 pub(super) fn signal_scope_active() -> bool {
     current_signal_state().is_some()
+}
+
+fn cancellation_observed() -> bool {
+    let Some(state) = current_signal_state() else {
+        return false;
+    };
+    let locked = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    !locked.cancellation_signals.is_empty()
 }
 
 pub(super) fn register_process_group(pid: u32) {
@@ -84,18 +122,22 @@ pub(super) enum OwnedChildOutcome {
 
 /// Poll until the child exits or `deadline` is reached. On timeout the owned
 /// group is stopped and the direct child is reaped. Drop also terminates an
-/// unfinished child so error paths cannot leak the tree.
+/// unfinished child so error paths cannot leak the tree. Acquires the
+/// process-wide signal scope so Ctrl+C/SIGTERM/SIGHUP still reach this group
+/// when no heavy-run scope is already active.
 pub(super) fn wait_for_owned_child(
     child: Child,
     deadline: Instant,
     poll: Duration,
 ) -> io::Result<OwnedChildOutcome> {
+    let _scope = OwnedChildrenScope::enter()?;
     OwnedChildSession::new(child).wait_until(deadline, poll)
 }
 
 /// Wait until the owned child exits. Drop still terminates the tree if this
-/// wait is abandoned.
+/// wait is abandoned. Acquires the signal scope the same way as the timed wait.
 pub(super) fn wait_for_owned_child_unbounded(child: Child) -> io::Result<std::process::ExitStatus> {
+    let _scope = OwnedChildrenScope::enter()?;
     OwnedChildSession::new(child).wait()
 }
 
@@ -124,6 +166,7 @@ impl OwnedChildSession {
                 .ok_or_else(|| io::Error::other("owned child session lost its process"))?;
             child.wait()?
         };
+        self.reap_group_after_cancellation();
         self.mark_finished();
         Ok(status)
     }
@@ -135,7 +178,16 @@ impl OwnedChildSession {
                     .child
                     .as_mut()
                     .ok_or_else(|| io::Error::other("owned child session lost its process"))?;
+                if cancellation_observed() {
+                    terminate_owned_child_tree(child);
+                    let status = child.wait()?;
+                    break OwnedChildOutcome::Exited(status);
+                }
                 if let Some(status) = child.try_wait()? {
+                    if cancellation_observed() {
+                        terminate_owned_child_tree(child);
+                        let _ = child.wait();
+                    }
                     break OwnedChildOutcome::Exited(status);
                 }
                 if Instant::now() >= deadline {
@@ -148,6 +200,18 @@ impl OwnedChildSession {
         };
         self.mark_finished();
         Ok(outcome)
+    }
+
+    fn reap_group_after_cancellation(&mut self) {
+        if !cancellation_observed() {
+            return;
+        }
+        if let Some(child) = self.child.as_mut() {
+            if process_group_is_live(self.pid as i32) != Some(false) {
+                terminate_owned_child_tree(child);
+                let _ = child.wait();
+            }
+        }
     }
 
     fn mark_finished(&mut self) {
@@ -395,7 +459,8 @@ fn forwarding_disabled_for_test() -> bool {
     FORWARDING_DISABLED_FOR_TEST.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Serializes timeout-descendant proofs with the group-cleanup negative seam.
+/// Serializes timeout-descendant proofs, interrupt proofs, and other tests
+/// that install the process-wide signal-forwarding scope.
 #[cfg(all(test, unix))]
 pub(super) fn hold_group_cleanup_test_lock() -> std::sync::MutexGuard<'static, ()> {
     GROUP_CLEANUP_TEST_LOCK
@@ -580,6 +645,17 @@ pub(super) mod timeout_descendant_proof {
                 alive.is_empty(),
                 "recorded owned leader/descendant still alive: {alive:?}"
             );
+        }
+
+        pub fn wait_until_signal_scope_active() {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !super::signal_scope_active() {
+                assert!(
+                    Instant::now() < deadline,
+                    "owned wait never entered a signal-forwarding scope"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
         }
 
         pub fn wait_until_owned_gone(&self, pids: &[i32]) {

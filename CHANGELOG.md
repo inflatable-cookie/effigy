@@ -353,9 +353,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - In-process run-array shell timeouts and managed lifecycle cleanup now stop
   the owned Unix process group on expiry and reap the direct child, so
   descendants cannot leak after a sequence `124` or a cleanup timeout,
-  including descendants that ignore SIGTERM (group SIGKILL after grace). The
-  caller group is never targeted. Non-Unix hosts keep pid-only kill. Prove
-  with `test:runner:timeout-descendants`.
+  including descendants that ignore SIGTERM (group SIGKILL after grace).
+  Isolated groups acquire the existing owned-children signal scope so Ctrl+C
+  still reaches them when no heavy-run scope is active; a recorded
+  cancellation then reaps the group (SIGTERM, then SIGKILL) because a
+  background descendant may ignore SIGINT. The caller group is never
+  targeted. Non-Unix hosts keep pid-only kill. Prove with
+  `test:runner:timeout-descendants`.
 - Container exec discovery and capture now keep the caller's absolute
   deadline. Colima service-name resolution shares the remaining budget
   instead of probing unbounded on a cache miss, and a spawned capture is

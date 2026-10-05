@@ -1307,6 +1307,80 @@ run = [{ task = "db:migrate" }]
 
     #[cfg(unix)]
     #[test]
+    fn timeout_descendants_sequence_interrupt_reaps_leader_and_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let cwd = fixture.cwd().to_path_buf();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(30_000))
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("sequence interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::panic::AssertUnwindSafe;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let _forwarding = crate::runner::owned_children::disable_forwarding_for_test();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-negative-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let cwd = fixture.cwd().to_path_buf();
+        let handle = thread::spawn(move || {
+            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(2_000))
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            assert!(
+                pids.iter()
+                    .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+                "forwarding disabled: a descendant must still be alive: {pids:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            fixture.assert_owned_gone(&pids);
+        }));
+        assert!(
+            oracle.is_err(),
+            "reap oracle must fail while interrupt forwarding is disabled"
+        );
+        fixture.assert_sibling_alive();
+        let _ = handle
+            .join()
+            .expect("sequence interrupt negative wait thread");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn timeout_descendants_sequence_group_cleanup_disabled_fails_reap_oracle() {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;

@@ -567,14 +567,10 @@ fn nested_queue_wait_comes_from_the_status_record_and_is_null_when_absent() {
 }
 
 /// Serializes the termination-proof tests that install the process-wide
-/// signal-forwarding scope. The scope swaps global signal state and the
-/// process-group observer, so concurrent scope entries would corrupt each
-/// other.
+/// signal-forwarding scope with timeout-descendant interrupt proofs.
 #[cfg(unix)]
 fn owned_children_test_serial() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    crate::runner::owned_children::hold_group_cleanup_test_lock()
 }
 
 /// Owns the two children a termination proof creates. `cleanup` reaps them

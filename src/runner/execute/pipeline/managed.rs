@@ -1633,6 +1633,74 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn timeout_descendants_managed_interrupt_reaps_leader_and_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            run_managed_lifecycle_cleanup_with_timeout(
+                &command,
+                Duration::from_secs(30),
+                Duration::from_millis(20),
+            )
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("managed interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_interrupt_with_active_scope_reaps_group() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let _scope = crate::runner::owned_children::OwnedChildrenScope::enter()
+            .expect("enter outer signal scope");
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-nested-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            run_managed_lifecycle_cleanup_with_timeout(
+                &command,
+                Duration::from_secs(30),
+                Duration::from_millis(20),
+            )
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("managed nested interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn timeout_descendants_managed_group_cleanup_disabled_fails_reap_oracle() {
         use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
         use std::panic::AssertUnwindSafe;

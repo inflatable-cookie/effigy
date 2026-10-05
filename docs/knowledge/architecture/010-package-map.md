@@ -133,7 +133,7 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/execute/*`](../../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption, and `effigy-execution` request/dispatch-plan consumption |
-| [`src/runner/owned_children.rs`](../../../src/runner/owned_children.rs) | heavy-run signal forwarding for registered child groups; Unix process-group spawn and timeout reap for in-process sequence shells and managed lifecycle cleanup |
+| [`src/runner/owned_children.rs`](../../../src/runner/owned_children.rs) | shared signal forwarding for registered child groups (heavy-run scope and isolated sequence/managed waits); Unix process-group spawn and timeout reap for in-process sequence shells and managed lifecycle cleanup |
 | [`src/runner/skill_command.rs`](../../../src/runner/skill_command.rs) | explicit external task-source resolution, isolated inventory/run preflight, host-only rejection, and source/target evidence rendering |
 | [`src/runner/exec_command/mod.rs`](../../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and container exec dispatch over runtime activation and transport adapters |
 | [`src/runner/exec_command/surface.rs`](../../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
