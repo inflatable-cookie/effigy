@@ -10,6 +10,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - GitHub Releases will include verified, unsigned SHA-256 sidecars for both
   macOS binaries starting with the next normally authorized release. The raw
   binaries keep their existing names.
+- Added a [v0.14.0 consumer migration checklist](docs/guides/083-v0.14.0-consumer-migration.md)
+  covering the breaking changes and compatibility updates from v0.13.1.
 - Unset or `EFFIGY_HOST_SCHEDULER=1` routes heavy tasks (`qa`, `ci`, `ci:fresh`,
   `admission = "heavy"`) and heavy QA groups through the host-run scheduler
   (Queue/Nucleus owns capacity and scheduling). `EFFIGY_HOST_SCHEDULER=0` is
