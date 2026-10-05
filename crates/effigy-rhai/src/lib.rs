@@ -102,7 +102,7 @@ impl std::fmt::Display for RhaiHostError {
 
 impl std::error::Error for RhaiHostError {}
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScriptContext {
     /// Working directory used by relative filesystem helpers.
     pub cwd: PathBuf,

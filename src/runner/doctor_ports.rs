@@ -135,11 +135,17 @@ fn run_manifest_task_subprocess_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. The closure calls
+    // `setpgid`, which is async-signal-safe, to place the not-yet-exec'd child
+    // in a new process group whose id is the child's own pid. The error path
+    // converts `nix::Error` (= `Errno`) with the allocation-free
+    // `io::Error::from` impl. That group is exactly what
+    // `effigy_process::terminate_process_tree(child.id())` targets on timeout
+    // (`kill(-pgid, ...)`), so the bounded kill path owns the whole tree.
     unsafe {
-        command.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        command
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     let mut child = command.spawn().map_err(|error| {
         DoctorError::task_invocation(format!("failed to start bounded health task: {error}"))

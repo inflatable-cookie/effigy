@@ -1855,3 +1855,17 @@ fn journal_root_is_created_private_and_unsafe_roots_are_refused() {
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(HostRunRoot::open_journal(&root, true).is_err());
 }
+
+#[test]
+fn host_run_root_debug_is_available_and_redacts_the_directory_descriptor() {
+    let fixture = make_fixture();
+    let (root, _authority) = HostRunRoot::open(&fixture.root_path).expect("trusted fixture root");
+    let rendered = format!("{root:?}");
+    assert!(rendered.contains("HostRunRoot"));
+    // The discovered path and owner uid are useful diagnostics.
+    assert!(rendered.contains(&fixture.root_path.display().to_string()));
+    assert!(rendered.contains("uid"));
+    // The raw directory descriptor is private state and must not leak.
+    assert!(rendered.contains("<directory fd redacted>"));
+    assert!(!rendered.contains("fd:"));
+}

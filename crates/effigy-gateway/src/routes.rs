@@ -149,6 +149,14 @@ impl Drop for RouteTableLock {
     }
 }
 
+impl std::fmt::Debug for RouteTableLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The newtype owns a lock file; the raw descriptor is an
+        // implementation detail and is redacted from diagnostics.
+        f.debug_struct("RouteTableLock").finish_non_exhaustive()
+    }
+}
+
 /// How a route was registered.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -349,6 +357,18 @@ impl LiveRouteTable {
     /// Path to the underlying file.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl std::fmt::Debug for LiveRouteTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Deliberately do not lock or traverse the live route table: a
+        // formatter must never block on the read-write lock or print live
+        // route contents.
+        f.debug_struct("LiveRouteTable")
+            .field("path", &self.path)
+            .field("table", &"<live route table>")
+            .finish()
     }
 }
 

@@ -272,6 +272,9 @@ pub(super) fn uninstall_resolver_if_needed(config: &GatewayConfig) -> Vec<String
 
 #[cfg(unix)]
 fn is_running_as_root() -> bool {
+    // SAFETY: `geteuid` is always defined on Unix, takes no arguments, reads
+    // only this process's effective credentials, and has no memory-safety
+    // preconditions.
     unsafe { nix::libc::geteuid() == 0 }
 }
 
@@ -285,6 +288,17 @@ fn gateway_requires_privileged_bind(config: &GatewayConfig) -> bool {
 
 #[cfg(unix)]
 fn process_signal_accessible(pid: u32) -> bool {
+    // SAFETY: `kill` takes only integer arguments, so this call has no
+    // memory-safety preconditions, and signal `0` delivers no signal; it is
+    // only the POSIX existence/permission probe. `pid_t` is the checked
+    // positive signed PID from `effigy_gateway::server::checked_gateway_pid`,
+    // which rejects 0, 1 and any `u32` above `i32::MAX`, so the probe cannot
+    // target a process group or the `kill(-1, ...)` broadcast.
+    //
+    // The numeric domain is fully checked; gateway identity is not. A reused
+    // PID can still match, and that residual identity limitation is unchanged
+    // by this wave. The unknown-probe lifecycle gap (an unverifiable probe
+    // collapsing to `false`) is owned by the separate bounded task 101.
     process_signal_accessible_with(pid, |pid_t| unsafe { nix::libc::kill(pid_t, 0) == 0 })
 }
 

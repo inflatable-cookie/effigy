@@ -376,3 +376,21 @@ fn load_script_args_from_env_decodes_json_array() {
         std::env::remove_var(EFFIGY_RHAI_ARGS_JSON);
     }
 }
+
+#[test]
+fn script_context_debug_is_available_for_diagnostics() {
+    // ScriptContext holds paths, a task name and a cancellation flag only; it
+    // carries no callback table or secret, so structural Debug is safe.
+    let context = ScriptContext {
+        cwd: PathBuf::from("canary-script-cwd"),
+        repo_root: PathBuf::from("canary-script-repo"),
+        task_name: "debug-surface".to_owned(),
+        stop_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let rendered = format!("{context:?}");
+    assert!(rendered.contains("ScriptContext"));
+    assert!(rendered.contains("cwd"));
+    assert!(rendered.contains("repo_root"));
+    assert!(rendered.contains("task_name: \"debug-surface\""));
+    assert!(rendered.contains("stop_requested"));
+}

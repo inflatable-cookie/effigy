@@ -71,3 +71,40 @@ target plus every still-supported release that exposes `service pack update`;
 capability is already present in released Effigy, with v0.13.0 recorded as its
 oldest supported version today. This assessment does not update version or
 catalog-pack files.
+
+### Unsafe-invariant and public-diagnostics reconciliation
+
+The strict post-v0.13.1 audit's reported unsafe-documentation and public
+`Debug` gaps were reconciled in a bounded repair wave. Every reported
+production `unsafe` block now carries a per-operation `SAFETY` comment that
+discharges its actual libc/FFI contract: descriptor ownership and lifetime,
+`MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
+the `fork`-to-`exec` `pre_exec` contract. All four reported `pre_exec` call
+sites (`doctor_ports.rs`, both `effigy-containers/src/exec/process.rs` spawn
+helpers, and `exec_command/transport.rs`) use the allocation-free
+`io::Error::from(nix::Error)` conversion so their `SAFETY` comments honestly
+discharge async-signal-safety. This documents and
+reconciles existing operations; it changes no trust, uid, mount, lock,
+cancellation, scheduling or protocol behavior. Public `Debug` was added only
+for the reported `HostRunRoot`, `ScriptContext`, `RouteTableLock` and
+`LiveRouteTable` types; descriptor state is redacted, `LiveRouteTable` does not
+lock or traverse live routes, and secret-bearing `TokenKeys` remains excluded.
+The `rust-toolchain.toml` comment now records the current pin only and claims
+no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
+Passing audit or CI does not assert that all Rust is safe or bug-free.
+
+The numeric PID domain of the gateway's `process_signal_accessible` probe and
+signal paths is now checked by the prerequisite gateway PID-domain repair:
+`read_pid_file` and `server::process_is_running` run
+`effigy_gateway::server::checked_gateway_pid`, which rejects PID 0, PID 1 and
+any `u32` above `i32::MAX` before dispatch, and Unix status requires one exact
+`ps` PID/stat row. The `kill(pid, 0)` SAFETY comment therefore discharges a
+checked positive signed PID rather than an unchecked cast. The residual
+limitation is gateway identity, not the numeric domain: the PID file does not
+establish process start identity, so PID reuse between a probe and a signal
+remains possible (`CHANGELOG.md`). An independent review also found that an
+unknown or absent probe result collapses to `false` and that a `false`
+stop-success can delete the status record; that distinct unknown-probe
+lifecycle gap is owned by the separate bounded task 101, and the remaining
+allocating-callback/selector lint gaps are owned by task 100, not by this
+unsafe-invariant wave.
