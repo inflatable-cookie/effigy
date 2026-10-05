@@ -79,9 +79,11 @@ The strict post-v0.13.1 audit's reported unsafe-documentation and public
 production `unsafe` block now carries a per-operation `SAFETY` comment that
 discharges its actual libc/FFI contract: descriptor ownership and lifetime,
 `MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
-the `fork`-to-`exec` `pre_exec` contract. The two reported `pre_exec` closures
-also use the allocation-free `io::Error::from(nix::Error)` conversion so their
-`SAFETY` comments honestly discharge async-signal-safety. This documents and
+the `fork`-to-`exec` `pre_exec` contract. All four reported `pre_exec` call
+sites (`doctor_ports.rs`, both `effigy-containers/src/exec/process.rs` spawn
+helpers, and `exec_command/transport.rs`) use the allocation-free
+`io::Error::from(nix::Error)` conversion so their `SAFETY` comments honestly
+discharge async-signal-safety. This documents and
 reconciles existing operations; it changes no trust, uid, mount, lock,
 cancellation, scheduling or protocol behavior. Public `Debug` was added only
 for the reported `HostRunRoot`, `ScriptContext`, `RouteTableLock` and
