@@ -76,10 +76,16 @@ fn run_process_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and places the child in a new process group whose id
+    // is the child's own pid; the error path uses the allocation-free
+    // `io::Error::from` conversion. `terminate_child_tree` signals
+    // `kill(-pid, ...)` for that same group when the shared deadline expires.
     unsafe {
         command.pre_exec(|| {
             nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
+                .map_err(std::io::Error::from)
         });
     }
     let mut child = command.spawn().map_err(|source| DepsError::ProcessSpawn {
