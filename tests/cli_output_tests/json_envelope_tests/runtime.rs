@@ -1,11 +1,10 @@
 use super::super::support::parse_stdout_json;
 use super::*;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::time::Instant;
-
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 
 const LOCK_HOLDER_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -14,7 +13,8 @@ struct HeldCliTask {
     task_pid_path: std::path::PathBuf,
     ready_path: std::path::PathBuf,
     release_path: std::path::PathBuf,
-    task_group_pid: Option<u32>,
+    task_pid: Option<u32>,
+    cli_group_pid: u32,
 }
 
 impl HeldCliTask {
@@ -33,22 +33,26 @@ impl HeldCliTask {
             .env("NO_COLOR", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Own a fresh group rooted at the exact CLI child so cleanup can safely
+        // stop the shell and any helper process it starts.
         #[cfg(unix)]
         command.process_group(0);
         let child = command.spawn().expect("spawn lock holder");
+        let cli_group_pid = child.id();
         Self {
             child: Some(child),
             task_pid_path,
             ready_path,
             release_path,
-            task_group_pid: None,
+            task_pid: None,
+            cli_group_pid,
         }
     }
 
     fn wait_until_ready(&mut self, lock_path: &Path, timeout: Duration) -> Result<u32, String> {
         let started = Instant::now();
         loop {
-            self.refresh_task_group_pid();
+            self.refresh_task_pid();
             if let Some(status) = self.try_wait()? {
                 let output = self.take_output()?;
                 return Err(format!(
@@ -59,11 +63,8 @@ impl HeldCliTask {
                 ));
             }
 
-            if let Some(task_pid) = self.task_group_pid {
-                if self.ready_path.exists()
-                    && lock_path.exists()
-                    && process_group_is_live(task_pid)?
-                {
+            if let Some(task_pid) = self.task_pid {
+                if self.ready_path.exists() && lock_path.exists() && process_is_live(task_pid)? {
                     return Ok(task_pid);
                 }
             }
@@ -87,7 +88,7 @@ impl HeldCliTask {
     }
 
     fn assert_holding(&mut self, lock_path: &Path, task_pid: u32) -> Result<(), String> {
-        self.refresh_task_group_pid();
+        self.refresh_task_pid();
         if !lock_path.exists() {
             return Err(format!("holder lock disappeared: {}", lock_path.display()));
         }
@@ -97,10 +98,8 @@ impl HeldCliTask {
                 self.ready_path.display()
             ));
         }
-        if self.task_group_pid != Some(task_pid) || !process_group_is_live(task_pid)? {
-            return Err(format!(
-                "task owner process group {task_pid} is no longer alive"
-            ));
+        if self.task_pid != Some(task_pid) || !process_is_live(task_pid)? {
+            return Err(format!("task owner process {task_pid} is no longer alive"));
         }
         if let Some(status) = self.try_wait()? {
             let output = self.take_output()?;
@@ -113,12 +112,9 @@ impl HeldCliTask {
     }
 
     fn release_and_reap(&mut self) -> Result<Output, String> {
-        if let Err(error) = fs::write(&self.release_path, "release\n") {
+        if let Err(error) = self.signal_release() {
             self.force_cleanup();
-            return Err(format!(
-                "could not release holder through {}: {error}",
-                self.release_path.display()
-            ));
+            return Err(error);
         }
 
         let deadline = Instant::now() + LOCK_HOLDER_EXIT_TIMEOUT;
@@ -126,14 +122,23 @@ impl HeldCliTask {
             match self.try_wait() {
                 Ok(Some(status)) => {
                     let output = self.take_output()?;
-                    if let Some(task_pid) = self.task_group_pid {
-                        if !wait_for_process_group_gone(task_pid, Duration::from_millis(300)) {
+                    if let Some(task_pid) = self.task_pid {
+                        if !wait_for_process_gone(task_pid, Duration::from_millis(300)) {
                             self.force_cleanup();
                             return Err(format!(
-                                "task process group {task_pid} remained after CLI exit: {}",
+                                "task process {task_pid} remained after CLI exit: {}",
                                 describe_output(&output, status)
                             ));
                         }
+                    }
+                    if !wait_for_process_group_gone(self.cli_group_pid, Duration::from_millis(300))
+                    {
+                        self.force_cleanup();
+                        return Err(format!(
+                            "owned CLI process group {} remained after holder exit: {}",
+                            self.cli_group_pid,
+                            describe_output(&output, status)
+                        ));
                     }
                     return Ok(output);
                 }
@@ -163,11 +168,20 @@ impl HeldCliTask {
         }
     }
 
-    fn refresh_task_group_pid(&mut self) {
+    fn signal_release(&mut self) -> Result<(), String> {
+        fs::write(&self.release_path, b"release\n").map_err(|error| {
+            format!(
+                "could not release task through its private file {}: {error}",
+                self.release_path.display()
+            )
+        })
+    }
+
+    fn refresh_task_pid(&mut self) {
         if let Ok(contents) = fs::read_to_string(&self.task_pid_path) {
             if let Ok(pid) = contents.trim().parse::<u32>() {
                 if pid > 0 {
-                    self.task_group_pid = Some(pid);
+                    self.task_pid = Some(pid);
                 }
             }
         }
@@ -191,11 +205,7 @@ impl HeldCliTask {
     }
 
     fn force_cleanup(&mut self) {
-        if let Some(task_pid) = self.task_group_pid {
-            if process_group_is_live(task_pid).unwrap_or(false) {
-                signal_process_group(task_pid, nix::sys::signal::Signal::SIGTERM);
-            }
-        }
+        signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGTERM);
 
         let grace_deadline = Instant::now() + Duration::from_secs(1);
         while self.child.as_mut().is_some_and(|child| {
@@ -214,22 +224,16 @@ impl HeldCliTask {
                 .map(|status| status.is_none())
                 .unwrap_or(true)
         }) {
-            if let Some(task_pid) = self.task_group_pid {
-                if process_group_is_live(task_pid).unwrap_or(false) {
-                    signal_process_group(task_pid, nix::sys::signal::Signal::SIGKILL);
-                }
-            }
+            signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
             if let Some(child) = self.child.as_mut() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
-        } else if let Some(task_pid) = self.task_group_pid {
-            if process_group_is_live(task_pid).unwrap_or(false) {
-                signal_process_group(task_pid, nix::sys::signal::Signal::SIGKILL);
-            }
         }
-        if let Some(task_pid) = self.task_group_pid {
-            let _ = wait_for_process_group_gone(task_pid, Duration::from_secs(2));
+        signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = wait_for_process_group_gone(self.cli_group_pid, Duration::from_secs(2));
+        if let Some(task_pid) = self.task_pid {
+            let _ = wait_for_process_gone(task_pid, Duration::from_secs(2));
         }
     }
 }
@@ -237,15 +241,11 @@ impl HeldCliTask {
 impl Drop for HeldCliTask {
     fn drop(&mut self) {
         if self.child.is_none() {
-            if let Some(task_pid) = self.task_group_pid {
-                if process_group_is_live(task_pid).unwrap_or(false) {
-                    signal_process_group(task_pid, nix::sys::signal::Signal::SIGKILL);
-                    let _ = wait_for_process_group_gone(task_pid, Duration::from_secs(2));
-                }
-            }
+            signal_process_group(self.cli_group_pid, nix::sys::signal::Signal::SIGKILL);
+            let _ = wait_for_process_group_gone(self.cli_group_pid, Duration::from_secs(2));
             return;
         }
-        let _ = fs::write(&self.release_path, "release\n");
+        let _ = self.signal_release();
         if self.release_and_reap().is_err() {
             self.force_cleanup();
         }
@@ -281,6 +281,23 @@ fn describe_output(output: &Output, status: ExitStatus) -> String {
     )
 }
 
+fn process_is_live(pid: u32) -> Result<bool, String> {
+    #[cfg(unix)]
+    {
+        use nix::errno::Errno;
+        match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) {
+            Ok(()) | Err(Errno::EPERM) => Ok(true),
+            Err(Errno::ESRCH) => Ok(false),
+            Err(error) => Err(format!("could not inspect owned process {pid}: {error}")),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        Ok(true)
+    }
+}
+
 fn process_group_is_live(pid: u32) -> Result<bool, String> {
     #[cfg(unix)]
     {
@@ -303,7 +320,9 @@ fn process_group_is_live(pid: u32) -> Result<bool, String> {
 fn signal_process_group(pid: u32, signal: nix::sys::signal::Signal) {
     #[cfg(unix)]
     {
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(-(pid as i32)), Some(signal));
+        if process_group_is_live(pid).unwrap_or(false) {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(-(pid as i32)), Some(signal));
+        }
     }
     #[cfg(not(unix))]
     let _ = (pid, signal);
@@ -313,6 +332,19 @@ fn wait_for_process_group_gone(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         if !process_group_is_live(pid).unwrap_or(true) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_process_gone(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !process_is_live(pid).unwrap_or(true) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -518,7 +550,7 @@ fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
         &root,
         "dev",
         &format!(
-            "printf '%s\\n' \"$$\" > {}; printf timeout-stdout; printf timeout-stderr >&2; sleep 10",
+            "printf '%s\\n' \"$$\" > {}; printf timeout-stdout; printf timeout-stderr >&2; exec sleep 10",
             shell_quote(&task_pid_path)
         ),
     );
@@ -527,7 +559,7 @@ fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
     let diagnostic = holder
         .wait_until_ready(
             &root.join(".effigy/locks/task-dev.lock"),
-            Duration::from_millis(100),
+            Duration::from_secs(5),
         )
         .expect_err("a task without readiness must time out");
     assert!(
@@ -540,12 +572,17 @@ fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
         holder.child.is_none(),
         "timeout path must reap the CLI child"
     );
-    if let Some(task_pid) = holder.task_group_pid {
+    if let Some(task_pid) = holder.task_pid {
         assert!(
-            wait_for_process_group_gone(task_pid, Duration::from_secs(3)),
-            "timed-out task group {task_pid} survived cleanup"
+            wait_for_process_gone(task_pid, Duration::from_secs(3)),
+            "timed-out task process {task_pid} survived cleanup"
         );
     }
+    assert!(
+        wait_for_process_group_gone(holder.cli_group_pid, Duration::from_secs(3)),
+        "timed-out owned process group {} survived cleanup",
+        holder.cli_group_pid
+    );
 }
 
 #[test]
@@ -565,6 +602,7 @@ fn cli_json_lock_conflict_holder_drop_releases_and_reaps_on_panic() {
         )
         .unwrap_or_else(|diagnostic| panic!("{diagnostic}"));
     let cli_pid = holder.child.as_ref().expect("child").id();
+    let cli_group_pid = holder.cli_group_pid;
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _holder = holder;
@@ -572,12 +610,16 @@ fn cli_json_lock_conflict_holder_drop_releases_and_reaps_on_panic() {
     }));
     assert!(panic.is_err());
     assert!(
-        wait_for_process_group_gone(task_pid, Duration::from_secs(3)),
-        "holder task group {task_pid} survived panic cleanup"
+        wait_for_process_gone(task_pid, Duration::from_secs(3)),
+        "holder task process {task_pid} survived panic cleanup"
     );
     assert!(
-        wait_for_process_group_gone(cli_pid, Duration::from_secs(3)),
-        "holder CLI group {cli_pid} survived panic cleanup"
+        wait_for_process_gone(cli_pid, Duration::from_secs(3)),
+        "holder CLI process {cli_pid} survived panic cleanup"
+    );
+    assert!(
+        wait_for_process_group_gone(cli_group_pid, Duration::from_secs(3)),
+        "holder process group {cli_group_pid} survived panic cleanup"
     );
 }
 
