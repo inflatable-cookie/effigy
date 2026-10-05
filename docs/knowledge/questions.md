@@ -3,7 +3,7 @@
 Consumer application wiring of scoped worker hosts remains on Queue lead
 `af3ab7c7-b631-4d4f-9da7-f2949ded82f3`.
 
-## Q-001 — Gateway PID identity for v0.14.0
+## Q-001 — Gateway PID identity
 
 Status: open
 Asked: 2026-10-05

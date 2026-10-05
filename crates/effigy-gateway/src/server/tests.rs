@@ -335,7 +335,8 @@ fn server_probe_state_real_ps_confirms_private_child_then_absence() {
 
 /// Recording-only: a live non-gateway PID in the PID file is treated as the
 /// gateway. The probe checks an exact `ps` row, not command, uid, boot id, or
-/// start identity. This test does not signal the child.
+/// start identity. The production path under test does not signal. Drop of
+/// this owned fixture may `Child::kill` that child only.
 #[cfg(unix)]
 #[test]
 fn server_probe_state_live_non_gateway_pid_is_reported_running() {

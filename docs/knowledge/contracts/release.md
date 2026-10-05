@@ -140,5 +140,5 @@ not the gateway that wrote it. Stale/foreign PID and probe-to-signal reuse
 remain current behavior. Current truth, the bounded sidecar proposal, and the
 unresolved ruling live in
 [architecture 020](../architecture/020-container-infrastructure-design.md#gateway-process-identity)
-and [Q-001](../questions.md#q-001-gateway-pid-identity-for-v0-14-0).
+and [Q-001](../questions.md#q-001-gateway-pid-identity).
 This release procedure does not accept that residual.

@@ -378,7 +378,7 @@ During v0.x, MINOR bumps may include breaking changes.
   live `ps` row is not proof the process is the gateway, so a leftover PID after
   crash or reboot, and PID reuse between a probe and a later signal, remain
   current behavior. That ownership gap is an unresolved v0.14.0 ruling
-  ([Q-001](docs/knowledge/questions.md#q-001-gateway-pid-identity-for-v0-14-0)),
+  ([Q-001](docs/knowledge/questions.md#q-001-gateway-pid-identity)),
   not an accepted residual. Prove with `test:gateway:probe-state`.
 - Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
   and values outside the positive signed PID domain before dispatch. Unix status
