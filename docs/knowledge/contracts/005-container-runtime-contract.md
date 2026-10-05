@@ -581,7 +581,11 @@ ps` check, and the SSH-agent socket preflight) and every metadata or numeric
 user batch converts the same remaining doctor deadline exactly once,
 immediately before spawning, so no subprocess gets a fresh budget of its own.
 An already-expired deadline never spawns a probe, and a hung probe is killed
-and reaped at that deadline (only its own recorded process group). An
+and reaped at that deadline (only its own recorded process group). The Colima
+direct-exec path keeps that absolute deadline through its uncached service
+discovery and the capture it supervises: discovery converts the remaining
+budget once, and a spawn that returns after the deadline has its owned process
+group terminated and reaped instead of being granted a fresh origin. An
 unavailable batch discards partial permission samples and reports verification
 incomplete with its sampled paths; it never reports a permission fault or
 clean ownership. A bounded doctor run never triggers a Colima runtime repair.

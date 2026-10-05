@@ -162,9 +162,12 @@ fn run_compose_exec_plan_with_deadline(
             &plan.repo_root,
             policy,
             &plan.args,
-            capture,
-            &plan.label,
-            stdin_file,
+            colima::ColimaDirectExecRequest {
+                capture,
+                label: &plan.label,
+                stdin_file,
+                deadline,
+            },
             colima::ColimaExecAdapters {
                 parse_compose_exec_args: &parse_compose_exec_args,
                 run_command_capture_allow_failure: &move |root, program, args| {
@@ -236,6 +239,7 @@ pub(in crate::runner) fn copy_file_into_service(
         repo_root,
         policy,
         service,
+        None,
         &run_command_capture_allow_failure,
         &format_args,
     )?;

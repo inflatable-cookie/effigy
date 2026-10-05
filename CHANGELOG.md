@@ -350,6 +350,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Container exec discovery and capture now keep the caller's absolute
+  deadline. Colima service-name resolution shares the remaining budget
+  instead of probing unbounded on a cache miss, and a spawned capture is
+  supervised against the original deadline rather than a fresh timeout
+  measured after spawn. An expired deadline never spawns, a slow spawn
+  cannot extend the budget, and a timed-out child is terminated and reaped
+  by its own process group. Cache hits and unbounded callers are unchanged.
 - Recursive workspace ownership scans now prune every declared child mount,
   including same-device nested binds and volumes. Nested host binds are checked
   as the numeric workspace user without owner-equality requirements or probe
