@@ -576,7 +576,7 @@ while the owned daemon may still be running; do not delete them merely because
 a listener is present.
 
 This assessment does not grant that acceptance. The live question is
-[Q-001](../questions.md#q-001-gateway-pid-identity).
+[Q-001](../questions.md#q-001--gateway-pid-identity).
 
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
