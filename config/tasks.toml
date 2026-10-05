@@ -236,6 +236,15 @@
 "test:rhai:storage-retirement" = "cargo test -p effigy-rhai --lib storage_retirement -- --nocapture"
 "check:rhai:storage-retirement" = "cargo check -p effigy-rhai -p effigy --lib --bin effigy"
 
+# Rhai copy_if_missing atomic publication (contract 050): concurrent winners,
+# occupied entries, independent copy, and failure cleanup. Compile the
+# touched crate's lib/tests, then lint all of its targets.
+"test:rhai:copy-if-missing" = "cargo test -p effigy-rhai --lib copy_if_missing -- --nocapture"
+"check:rhai:copy-if-missing" = [
+  "cargo check -p effigy-rhai --lib --tests --profile test",
+  "cargo clippy -p effigy-rhai --all-targets -- -D warnings",
+]
+
 # Trusted host-run protocol client (contract 010 Client protocol v1)
 "test:host-run:protocol" = "cargo test -p effigy-host-run --lib -- --nocapture"
 "test:host-run:idle-follow" = "cargo test -p effigy-host-run --lib attach_idle_follow -- --nocapture"
