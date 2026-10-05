@@ -778,3 +778,28 @@ stopped that bootstrap, preserving services, volumes, logs and worktree.
 refresh and real consumer acceptance before that blocker is resolved.
 No live ownership cleanup, stack restart, VM start or release was performed
 by this refresh. Historical admission state stayed unchanged.
+
+## Legacy nested-bind acceptance and local refresh — 2026-10-05
+
+Tom explicitly approved installation of the prepared `67748464` candidate and
+`effigy exec true` in `/Users/tom/Dev/legacy/sites/acowtancy`. The host binary,
+ARM64 Linux artifact and canonical installed skill were refreshed from exact
+source `677484647f6e0896ba016fc329c921f1251a096f`, after Queue milestone
+`1a053222-3931-42af-9e30-ef7abf30b714` passed setup, QA and teardown. Its
+settlement recorded no escaped descendants or containers; capacity released
+automatically at `2026-10-05T11:54:59.108Z`.
+
+Private host and native Linux checks passed version, light routing, whole JSON
+parsing, unavailable-scheduler exit 75 and explicit-zero exit 2 with no heavy
+task effects. The prior host binary passed the same rollback checks. Installed
+host routing checks passed. Backups, hashes and the acceptance receipt are at
+`~/.cache/effigy/rollbacks/runtime-67748464-mcbr1_7z/rollout-receipt.json`.
+
+On installed `v0.13.1+local.6774846`, the previously failing legacy
+`effigy exec true` exited 0. Read-only inspection confirmed that Composer cache
+remains a host bind from `/Users/tom/.effigy/shared/composer-cache` to
+`/home/dev/.cache/composer`; the resolved numeric user `501:20` sees it as
+readable and writable, with `501:20` ownership and mode 0755. The legacy route
+returned HTTP 200. This proves the reported launch failure is resolved on the
+existing running stack; it is not a fresh-stack bootstrap claim. No mount
+restructuring, manual chown/chmod, reseed, stack restart or VM restart occurred.
