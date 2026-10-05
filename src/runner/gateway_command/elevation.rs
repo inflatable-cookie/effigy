@@ -288,14 +288,17 @@ fn gateway_requires_privileged_bind(config: &GatewayConfig) -> bool {
 
 #[cfg(unix)]
 fn process_signal_accessible(pid: u32) -> bool {
-    // SAFETY: `kill` takes only integer arguments, so the call has no
-    // memory-safety preconditions. Signal `0` delivers no signal and performs
-    // only the POSIX existence/permission probe. `pid` is the `GatewayStatus`
-    // pid produced by `server::get_status`, whose sole caller path reaches
-    // here only after `process_is_running` ran `ps -p <pid>`; a pid that is
-    // `0` or greater than `i32::MAX` cannot name that live process, so the
-    // cast stays in the signed POSIX `pid_t` domain and cannot wrap into a
-    // process-group target.
+    // SAFETY: `kill` takes only integer arguments, so this call has no
+    // memory-safety preconditions, and signal `0` delivers no signal; it is
+    // only the POSIX existence/permission probe. The numeric domain of `pid`
+    // is *not* validated at this layer: `server::get_status` accepts any `u32`
+    // from the pid file (`read_pid_file`) and `server::process_is_running`
+    // only checks the exit status of `ps -p <pid>`. A value of `0` or one
+    // above `i32::MAX` would therefore select POSIX process-group or
+    // `kill(-1, 0)` semantics through this cast. That pre-existing
+    // authority/domain gap is unchanged by this documentation wave and is
+    // recorded as a remaining blocker for a separately approved bounded
+    // PID-domain repair; it does not make this call unsound.
     unsafe { nix::libc::kill(pid as i32, 0) == 0 }
 }
 

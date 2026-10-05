@@ -90,3 +90,13 @@ lock or traverse live routes, and secret-bearing `TokenKeys` remains excluded.
 The `rust-toolchain.toml` comment now records the current pin only and claims
 no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
 Passing audit or CI does not assert that all Rust is safe or bug-free.
+
+One reported `unsafe` operation, `process_signal_accessible`'s
+`kill(pid, 0)`, is memory-sound, but its numeric PID domain is not validated
+before the `u32`-to-`i32` cast: `read_pid_file` accepts any `u32` and
+`process_is_running` relies on the `ps` exit status. A value of `0` or above
+`i32::MAX` would select POSIX process-group or `kill(-1, ...)` semantics, and
+the same cast reaches `SIGTERM`/`SIGKILL` in the gateway shutdown path. This is
+a pre-existing authority/domain gap, not an unsound `unsafe` call. It is
+documented here and requires a separately approved bounded PID-domain repair;
+this documentation wave does not change that behavior.
