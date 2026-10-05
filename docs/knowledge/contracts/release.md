@@ -79,11 +79,31 @@ The strict post-v0.13.1 audit's reported unsafe-documentation and public
 production `unsafe` block now carries a per-operation `SAFETY` comment that
 discharges its actual libc/FFI contract: descriptor ownership and lifetime,
 `MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
-the `fork`-to-`exec` `pre_exec` contract. All four reported `pre_exec` call
-sites (`doctor_ports.rs`, both `effigy-containers/src/exec/process.rs` spawn
-helpers, and `exec_command/transport.rs`) use the allocation-free
-`io::Error::from(nix::Error)` conversion so their `SAFETY` comments honestly
-discharge async-signal-safety. This documents and
+the `fork`-to-`exec` `pre_exec` contract. Every `pre_exec` callback under
+`src/` and `crates/` now has an allocation-free error path and an adjacent
+`SAFETY` comment. The twelve audited callbacks are: nine production `setpgid`
+sites (`doctor_ports.rs`, `exec_command/transport.rs`, containers
+`spawn_capture_child`, both `effigy-process` spawn helpers,
+`effigy-scan` doctor inventory, `effigy-deps` bounded process, demo run,
+and `effigy-runtime` inherit spawn), two production `setsid` sites
+(`host_process.rs` best-effort ignore, gateway daemon `last_os_error`),
+and the test-only containers `spawn_stream_child` `setpgid` callback. The
+current tree has thirteen callbacks: those twelve plus the new test-only
+missing-binary proof
+(`effigy-process` `setpgid_pre_exec_preserves_missing_binary_launch_error`),
+which uses the same allocation-free `setpgid` conversion. `setpgid`
+failures now use `io::Error::from(nix::Error)`, which preserves errno and
+allocates nothing; a failed group setup still fails the spawn. The old
+direct mapper (`Error::other(error.to_string())`) returned `ErrorKind::Other`
+with a formatted message and no `raw_os_error` (private negative control).
+That is not the caller-visible `Command::spawn` error: on rustc 1.97.1 Unix,
+std's process layer transmits `raw_os_error().unwrap_or(EINVAL)`
+(`library/std/src/sys/process/unix/unix.rs`), so a pre-fix callback error
+without `raw_os_error` reached the parent as `EINVAL` /
+`ErrorKind::InvalidInput`. The new mapper preserves the true errno through
+that pipe. The `setsid` callbacks already
+avoided allocation (ignored result, or `last_os_error`) and were left
+behaviorally unchanged. This documents and
 reconciles existing operations; it changes no trust, uid, mount, lock,
 cancellation, scheduling or protocol behavior. Public `Debug` was added only
 for the reported `HostRunRoot`, `ScriptContext`, `RouteTableLock` and
@@ -92,6 +112,13 @@ lock or traverse live routes, and secret-bearing `TokenKeys` remains excluded.
 The `rust-toolchain.toml` comment now records the current pin only and claims
 no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
 Passing audit or CI does not assert that all Rust is safe or bug-free.
+Named containers test-lint sites that had been excluded from
+`effigy-containers --all-targets` (`healthcheck_timer` `cmp_owned`,
+`participation` `cmp_owned`, `generated_compose` redundant closure,
+`tests/compose.rs` needless borrow) keep their oracles and are linted
+all-target through `check:rust:postfork-safety`. Private errno, allocation,
+negative-control, argv, group-ownership, and launch-error proofs live under
+`test:rust:postfork-safety`.
 
 The numeric PID domain of the gateway's `process_signal_accessible` probe and
 signal paths is checked by the gateway PID-domain repair (099, `3991ecbc1`):
@@ -103,9 +130,9 @@ checked positive signed PID rather than an unchecked cast.
 
 The unknown-probe lifecycle gap is closed (101, `3dea18c91`): an unavailable
 or ambiguous `ps` is `Unknown`, never collapsed to stopped, and does not
-delete PID/version records or start a replacement. Allocating-callback and
-selector lint gaps remain owned by task 100, not by this unsafe-invariant
-wave.
+delete PID/version records or start a replacement. Post-fork callback
+conversion and named containers test-lint sites are closed by task 100
+(`test:rust:postfork-safety`), not by this unsafe-invariant wave.
 
 Gateway process ownership is a separate v0.14.0 disposition, not accepted by
 those repairs. The PID file is still decimal-only; an exact live `ps` row is

@@ -204,3 +204,59 @@ impl ProcessSupervisor {
         ids
     }
 }
+
+#[cfg(all(test, unix))]
+mod postfork_test_alloc {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    pub struct CountingAlloc;
+
+    thread_local! {
+        static COUNT: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    fn record() {
+        let _ = COUNT.try_with(|cell| {
+            if let Some(n) = cell.get() {
+                cell.set(Some(n.saturating_add(1)));
+            }
+        });
+    }
+
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record();
+            System.alloc(layout)
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record();
+            System.alloc_zeroed(layout)
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            System.dealloc(ptr, layout)
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record();
+            System.realloc(ptr, layout, new_size)
+        }
+    }
+
+    pub fn begin() {
+        let _ = COUNT.try_with(|cell| {
+            let _ = cell.get();
+            cell.set(Some(0));
+        });
+    }
+
+    pub fn take() -> usize {
+        COUNT.with(|cell| cell.replace(None).unwrap_or(0))
+    }
+}
+
+#[cfg(all(test, unix))]
+#[global_allocator]
+static POSTFORK_TEST_ALLOC: postfork_test_alloc::CountingAlloc = postfork_test_alloc::CountingAlloc;

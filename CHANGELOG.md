@@ -356,6 +356,17 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Remaining Unix `pre_exec` `setpgid` error paths now convert `nix::Error` with
+  the allocation-free `io::Error::from` mapping used by the earlier doctor,
+  exec-transport, and container spawn callbacks. A failed group setup cannot
+  allocate in the forked child. Spawn still fails closed. The old direct
+  mapper (`Error::other(error.to_string())`) returned `ErrorKind::Other` with
+  a formatted message and no `raw_os_error`. On rustc 1.97.1 Unix,
+  `Command::spawn` then surfaced that to the parent as `EINVAL` /
+  `ErrorKind::InvalidInput` through std's errno-pipe fallback
+  (`raw_os_error().unwrap_or(EINVAL)` in `sys/process/unix/unix.rs`). The
+  mapper now preserves the original errno, so the parent sees that errno
+  rather than the `EINVAL` fallback. Prove with `test:rust:postfork-safety`.
 - Gateway lifecycle now distinguishes a confirmed-absent PID from an
   unavailable or ambiguous process probe. A `ps` launch failure, a failed `ps`
   with a diagnostic, or malformed/mismatched/multiple rows is `Unknown`; status,

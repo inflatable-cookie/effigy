@@ -163,7 +163,7 @@ host_ports = ["41001:41001"]
         let mut policies = Vec::new();
         for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
             assert_linked_worktree_git_layout(&primary, checkout, name);
-            let policy = load_container_policy(&checkout, None).unwrap();
+            let policy = load_container_policy(checkout, None).unwrap();
             let compose = fs::read_to_string(&policy.compose_files[0]).unwrap();
             assert!(
                 compose.contains(&checkout.display().to_string()),

@@ -138,10 +138,13 @@ fn spawn_supervisor(
         .stderr(Stdio::null());
     // Detach into a new session so the supervisor outlives the
     // bring-up command.
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setsid` is
+    // async-signal-safe. Failure is ignored when the child is already a
+    // session leader, and the callback returns `Ok(())` without allocating,
+    // formatting, logging, or reading the environment.
     unsafe {
         child.pre_exec(|| {
-            // Best-effort detach. If setsid fails (already a session
-            // leader on some shells), fall through.
             let _ = nix::unistd::setsid();
             Ok(())
         });

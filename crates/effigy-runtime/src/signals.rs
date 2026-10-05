@@ -105,11 +105,15 @@ fn spawn_command_inherit_os(
         command.env(key, value);
     }
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and places the child in a new process group whose id
+    // is the child's own pid; the error path uses the allocation-free
+    // `io::Error::from` conversion. `terminate_inherited_child_graceful`
+    // signals `kill(-pid, ...)` for that same group.
     unsafe {
-        command.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        command
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     command
         .spawn()

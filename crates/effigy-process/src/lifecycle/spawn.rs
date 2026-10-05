@@ -65,11 +65,16 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setpgid` is
+    // async-signal-safe and places the child in a new process group whose id
+    // is the child's own pid; the error path uses the allocation-free
+    // `io::Error::from` conversion. `terminate_process_tree` signals
+    // `kill(-pid, ...)` for that same group, so shutdown owns the child and
+    // every descendant still in its group.
     unsafe {
-        process.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        process
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     with_local_node_bin_path(&mut process, &spec.cwd);
     for (key, value) in &spec.env {
@@ -89,11 +94,14 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
+    // SAFETY: same contract as `spawn_plain_shell`: `pre_exec` runs before
+    // `exec` where only async-signal-safe calls are permitted, `setpgid` is
+    // async-signal-safe, the error conversion allocates nothing, and the new
+    // child-owned process group is what `terminate_process_tree` targets with
+    // `kill(-pid, ...)`.
     unsafe {
-        process.pre_exec(|| {
-            setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        });
+        process
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
     with_local_node_bin_path(&mut process, &spec.cwd);
     if let Some((cols, rows)) = terminal_size {
@@ -205,5 +213,100 @@ mod tests {
         env.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "132".to_owned());
         env.insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "41".to_owned());
         assert_eq!(terminal_size_override_from_env_map(&env), Some((132, 41)));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod postfork_safety_tests {
+    use std::collections::BTreeMap;
+    use std::io::ErrorKind;
+    use std::os::unix::process::CommandExt;
+    use std::path::PathBuf;
+    use std::process::{Command as ProcessCommand, Stdio};
+
+    use nix::errno::Errno;
+    use nix::unistd::{getpgid, Pid};
+
+    use super::{setpgid, spawn_plain_shell};
+    use crate::ProcessSpec;
+
+    fn sample_spec(run: &str) -> ProcessSpec {
+        ProcessSpec {
+            name: "postfork-safety".to_owned(),
+            run: run.to_owned(),
+            cwd: PathBuf::from("/"),
+            start_after_ms: 0,
+            shutdown_on_exit: false,
+            pty: false,
+            env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn setpgid_error_conversion_preserves_errno_without_allocating() {
+        for errno in [Errno::EPERM, Errno::EINVAL, Errno::ESRCH] {
+            let nix_error = nix::Error::from(errno);
+            crate::postfork_test_alloc::begin();
+            let converted = std::io::Error::from(nix_error);
+            let allocations = crate::postfork_test_alloc::take();
+            assert_eq!(
+                allocations, 0,
+                "allocation-free mapper allocated {allocations} times for {errno}"
+            );
+            assert_eq!(converted.raw_os_error(), Some(errno as i32));
+        }
+    }
+
+    #[test]
+    fn allocating_setpgid_error_mapper_fails_the_allocation_oracle() {
+        let nix_error = nix::Error::from(Errno::EPERM);
+        crate::postfork_test_alloc::begin();
+        let converted = std::io::Error::other(nix_error.to_string());
+        let allocations = crate::postfork_test_alloc::take();
+        assert!(
+            allocations > 0,
+            "negative allocating mapper must be visible to the allocation oracle"
+        );
+        assert_eq!(converted.raw_os_error(), None);
+        assert_eq!(converted.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn spawn_plain_shell_runs_argv_and_owns_its_process_group() {
+        let output = spawn_plain_shell(&sample_spec("printf postfork-ok"))
+            .output()
+            .expect("printf through production setpgid pre_exec");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"postfork-ok");
+
+        let mut child = spawn_plain_shell(&sample_spec("exec cat"))
+            .spawn()
+            .expect("cat through production setpgid pre_exec");
+        let pid = Pid::from_raw(child.id() as i32);
+        let pgid = getpgid(Some(pid)).expect("child process group");
+        assert_eq!(pgid, pid);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn setpgid_pre_exec_preserves_missing_binary_launch_error() {
+        let mut command = ProcessCommand::new("/effigy-postfork-missing-binary");
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: same allocation-free `setpgid` conversion as production
+        // spawn; this private launch only proves the missing-binary exec
+        // error after that callback.
+        unsafe {
+            command.pre_exec(|| {
+                setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from)
+            });
+        }
+        let error = command
+            .spawn()
+            .expect_err("missing binary must fail to launch");
+        assert_eq!(error.kind(), ErrorKind::NotFound);
     }
 }
