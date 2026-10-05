@@ -386,6 +386,28 @@ idempotent. The numeric-domain and exact-row checks still do not prove gateway
 ownership, so PID reuse between a probe and a later signal remains a separate,
 unresolved release-disposition limitation.
 
+### Gateway process identity ruling
+
+Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
+start-identity sidecar and fail-closed legacy policy are implemented. He does
+not accept the current PID-only ownership risk and authorized the bounded fix.
+
+The correction must match the recorded PID, boot identity and precise process
+start identity before treating a process as the gateway or signaling it.
+Use Linux boot identity plus start ticks; on macOS retain both start seconds
+and microseconds. Missing or unreadable identity is unknown: preserve records,
+do not signal, and do not start a replacement. A numeric-only legacy record
+must not authorize a signal. Migration must confirm the exact owned daemon
+stopped/gone before removing its records.
+
+The legitimate unelevated reader must be able to read the trusted sidecar
+published by an elevated daemon. Private proofs must establish that read policy
+and live identity access; no new helper, elevation route or host-run contract
+change is authorized. A last identity check still races the signal syscall;
+implementation and release documentation must disclose that limit rather than
+claim atomic ownership. No live gateway migration or release publication is
+part of this authorization.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
