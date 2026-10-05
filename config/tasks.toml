@@ -86,6 +86,13 @@
   "cargo check -p effigy-containers --lib --tests",
 ]
 "test:gateway:registration-loopback" = "cargo test -p effigy gateway_registration::tests:: -- --nocapture"
+"test:gateway:pid-domain" = [
+  { id = "gateway-pid-domain", run = "cargo test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },
+]
+"check:gateway:pid-domain" = [
+  "cargo check -p effigy-gateway -p effigy --all-targets",
+  "cargo clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
+]
 "test:container:fake-runtime-lease-isolation" = [
   "cargo test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "cargo test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",

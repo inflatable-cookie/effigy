@@ -162,10 +162,20 @@ pub fn read_pid_file(path: &Path) -> Result<u32, GatewayError> {
         return Err(GatewayError::NotRunning);
     }
     let content = std::fs::read_to_string(path)?;
-    content
+    let pid = content
         .trim()
         .parse::<u32>()
-        .map_err(|_| GatewayError::NotRunning)
+        .map_err(|_| GatewayError::NotRunning)?;
+    checked_gateway_pid(pid).ok_or(GatewayError::NotRunning)?;
+    Ok(pid)
+}
+
+/// Convert a persisted gateway PID to the positive signed type used by Unix
+/// process APIs. PID 0 addresses a process group and PID 1 is outside Effigy's
+/// daemon ownership domain.
+pub fn checked_gateway_pid(pid: u32) -> Option<i32> {
+    let pid_t = i32::try_from(pid).ok()?;
+    (pid_t > 1).then_some(pid_t)
 }
 
 /// Remove the PID file.
@@ -177,24 +187,63 @@ pub fn remove_pid_file(path: &Path) {
 /// Check whether a process with the given PID is running.
 #[cfg(unix)]
 pub fn process_is_running(pid: u32) -> bool {
-    std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "pid="])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    process_is_running_with(pid, |pid_t| {
+        let pid_text = pid_t.to_string();
+        let output = std::process::Command::new("ps")
+            .args(["-p", pid_text.as_str(), "-o", "pid=", "-o", "stat="])
+            .output()
+            .ok()?;
+        output.status.success().then_some(output.stdout)
+    })
+}
+
+#[cfg(unix)]
+fn process_is_running_with(pid: u32, probe: impl FnOnce(i32) -> Option<Vec<u8>>) -> bool {
+    let Some(pid_t) = checked_gateway_pid(pid) else {
+        return false;
+    };
+    let Some(stdout) = probe(pid_t) else {
+        return false;
+    };
+
+    let output = String::from_utf8_lossy(&stdout);
+    let mut rows = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let Some(row) = rows.next() else {
+        return false;
+    };
+    if rows.next().is_some() {
+        return false;
+    }
+
+    let mut fields = row.split_whitespace();
+    let Some(row_pid) = fields.next().and_then(|pid| pid.parse::<i32>().ok()) else {
+        return false;
+    };
+    let Some(state) = fields.next() else {
+        return false;
+    };
+
+    row_pid == pid_t && !state.starts_with('Z') && fields.next().is_none()
 }
 
 #[cfg(not(unix))]
-pub fn process_is_running(_pid: u32) -> bool {
+pub fn process_is_running(pid: u32) -> bool {
     // On non-Unix, conservatively assume running.
-    true
+    checked_gateway_pid(pid).is_some()
 }
 
 /// Get the status of the gateway, if running.
 pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError> {
     let pid = read_pid_file(&config.pid_file_path)?;
+
+    // The command reading this PID file is not the detached daemon it owns.
+    // Treat a self-reference as unverifiable without probing or removing it.
+    if pid == std::process::id() {
+        return Err(GatewayError::NotRunning);
+    }
 
     if !process_is_running(pid) {
         remove_pid_file(&config.pid_file_path);

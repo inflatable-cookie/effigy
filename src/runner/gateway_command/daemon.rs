@@ -87,52 +87,96 @@ pub(super) fn wait_for_pid_file(config: &GatewayConfig) -> Result<(), RunnerErro
 }
 
 pub(super) fn stop_gateway_process(pid: u32) -> Result<(), RunnerError> {
-    terminate_gateway_process(pid)?;
-    for _ in 0..40 {
-        if !server::process_is_running(pid) {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-
     #[cfg(unix)]
     {
-        use nix::sys::signal::{kill, Signal};
-        use nix::unistd::Pid;
+        stop_gateway_process_with(
+            pid,
+            server::process_is_running,
+            |pid_t, signal| {
+                nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_t), signal)
+                    .map_err(|error| error.to_string())
+            },
+            thread::sleep,
+        )
+    }
 
-        kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        for _ in 0..20 {
-            if !server::process_is_running(pid) {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(50));
+    #[cfg(not(unix))]
+    {
+        checked_gateway_signal_pid(pid)?;
+        Err(RunnerError::task_invocation(
+            "`effigy gateway down` is not implemented on this host platform yet",
+        ))
+    }
+}
+
+fn checked_gateway_signal_pid(pid: u32) -> Result<i32, RunnerError> {
+    let Some(pid_t) = server::checked_gateway_pid(pid) else {
+        return Err(invalid_gateway_pid(pid));
+    };
+    if !gateway_signal_target_is_safe(pid_t) {
+        return Err(invalid_gateway_pid(pid));
+    }
+    Ok(pid_t)
+}
+
+fn gateway_signal_target_is_safe(pid_t: i32) -> bool {
+    pid_t > 1 && u32::try_from(pid_t).ok() != Some(std::process::id())
+}
+
+fn invalid_gateway_pid(pid: u32) -> RunnerError {
+    RunnerError::task_invocation(format!("invalid gateway PID {pid}"))
+}
+
+#[cfg(unix)]
+fn send_gateway_signal_with(
+    pid: u32,
+    signal: nix::sys::signal::Signal,
+    dispatch: impl FnOnce(i32, nix::sys::signal::Signal) -> Result<(), String>,
+) -> Result<(), RunnerError> {
+    let pid_t = checked_gateway_signal_pid(pid)?;
+    dispatch(pid_t, signal).map_err(RunnerError::task_invocation)
+}
+
+#[cfg(unix)]
+fn stop_gateway_process_with(
+    pid: u32,
+    mut process_is_running: impl FnMut(u32) -> bool,
+    mut dispatch: impl FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
+    mut wait: impl FnMut(Duration),
+) -> Result<(), RunnerError> {
+    // Validate before even the first liveness probe; callers may bypass the
+    // PID-file reader and this function owns the signal boundary.
+    checked_gateway_signal_pid(pid)?;
+    if !process_is_running(pid) {
+        return Ok(());
+    }
+
+    send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |pid_t, signal| {
+        dispatch(pid_t, signal)
+    })?;
+    for _ in 0..40 {
+        if !process_is_running(pid) {
+            return Ok(());
         }
+        wait(Duration::from_millis(50));
+    }
+
+    if !process_is_running(pid) {
+        return Ok(());
+    }
+    send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGKILL, |pid_t, signal| {
+        dispatch(pid_t, signal)
+    })?;
+    for _ in 0..20 {
+        if !process_is_running(pid) {
+            return Ok(());
+        }
+        wait(Duration::from_millis(50));
     }
 
     Err(RunnerError::task_invocation(format!(
         "gateway process {pid} did not stop after SIGTERM/SIGKILL"
     )))
-}
-
-fn terminate_gateway_process(pid: u32) -> Result<(), RunnerError> {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::{kill, Signal};
-        use nix::unistd::Pid;
-
-        kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        Err(RunnerError::task_invocation(
-            "`effigy gateway down` is not implemented on this host platform yet",
-        ))
-    }
 }
 
 pub(super) fn normalize_gateway_daemon_output(text: &str) -> String {
@@ -177,4 +221,115 @@ fn gateway_stderr_log_path(config: &GatewayConfig) -> PathBuf {
         .parent()
         .unwrap_or(config.pid_file_path.as_path())
         .join("gateway.stderr.log")
+}
+
+#[cfg(test)]
+mod pid_domain_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_rejects_invalid_targets_before_probe_or_signal() {
+        use std::cell::Cell;
+
+        let probes = Cell::new(0);
+        let signals = Cell::new(0);
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX, std::process::id()] {
+            let result = stop_gateway_process_with(
+                pid,
+                |_| {
+                    probes.set(probes.get() + 1);
+                    true
+                },
+                |_, _| {
+                    signals.set(signals.get() + 1);
+                    Ok(())
+                },
+                |_| {},
+            );
+            assert!(result.is_err(), "PID {pid} must be refused");
+        }
+        assert_eq!(probes.get(), 0);
+        assert_eq!(signals.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_rejects_invalid_direct_signal_dispatch() {
+        use std::cell::Cell;
+
+        let dispatches = Cell::new(0);
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX, std::process::id()] {
+            let result =
+                send_gateway_signal_with(pid, nix::sys::signal::Signal::SIGTERM, |_, _| {
+                    dispatches.set(dispatches.get() + 1);
+                    Ok(())
+                });
+            assert!(result.is_err(), "PID {pid} must be refused");
+        }
+        assert_eq!(dispatches.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_unchecked_cast_negative_control_fails_signal_oracle() {
+        let old_unchecked_target = u32::MAX as i32;
+        assert_eq!(old_unchecked_target, -1);
+        assert!(!gateway_signal_target_is_safe(old_unchecked_target));
+        assert!(checked_gateway_signal_pid(u32::MAX).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_already_stopped_target_is_idempotent() {
+        use std::cell::Cell;
+
+        let signals = Cell::new(0);
+        let result = stop_gateway_process_with(
+            i32::MAX as u32,
+            |_| false,
+            |_, _| {
+                signals.set(signals.get() + 1);
+                Ok(())
+            },
+            |_| {},
+        );
+        result.expect("already-stopped gateway target should be idempotent");
+        assert_eq!(signals.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_pid_domain_stops_exact_private_owned_child() {
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+        use std::process::{Child, Command};
+
+        struct OwnedChild(Child);
+
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                if self.0.try_wait().ok().flatten().is_none() {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+        }
+
+        let child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("start private owned child");
+        let mut child = OwnedChild(child);
+        let pid = child.0.id();
+        let result = stop_gateway_process_with(
+            pid,
+            server::process_is_running,
+            |pid_t, signal| kill(Pid::from_raw(pid_t), signal).map_err(|error| error.to_string()),
+            thread::sleep,
+        );
+        result.expect("stop exact private owned child");
+        assert!(child.0.try_wait().expect("reap child").is_some());
+        assert!(!server::process_is_running(pid));
+    }
 }

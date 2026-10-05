@@ -350,6 +350,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Gateway PID-file reads and direct probe/signal paths now reject PID 0, PID 1,
+  and values outside the positive signed PID domain before dispatch. Unix status
+  requires one exact PID row from `ps`; the PID file remains numeric and does
+  not establish process start identity, so PID reuse between a probe and signal
+  remains a documented limitation. Prove with `test:gateway:pid-domain`.
 - In-process run-array shell timeouts and managed lifecycle cleanup now stop
   the owned Unix process group on expiry and reap the direct child, so
   descendants cannot leak after a sequence `124` or a cleanup timeout,

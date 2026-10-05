@@ -367,6 +367,14 @@ be adopted simply because the daemon once trusted it. An untrusted update
 retains the previous good in-memory table and appears in gateway status and
 doctor output.
 
+The gateway PID file remains a decimal `u32`, but reads accept only values
+greater than 1 that fit the signed Unix PID type. Status probes require `ps`
+to return exactly that PID, and stop/elevation paths validate the target again
+before probing or signaling. This prevents PID 0 and out-of-range values from
+becoming process-group or broadcast targets. The file does not record process
+start identity: an exact PID probe confirms current liveness, but cannot rule
+out PID reuse between the probe and a later signal.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
