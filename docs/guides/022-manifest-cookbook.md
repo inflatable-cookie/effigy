@@ -477,7 +477,7 @@ Run-array step fields (in-process executor):
 - `task = "<selector>"` invoke another task by selector (catalog-prefixed selectors are accepted)
 - `rhai = "<path>"` run a file-backed Rhai script (see [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md))
 - `depends_on = ["<id>", ...]` block this step until the listed steps finish successfully
-- `timeout_ms = <n>` per-step timeout in milliseconds; the step is cancelled and reported as failed when exceeded
+- `timeout_ms = <n>` per-step timeout in milliseconds; the step is cancelled and reported as failed (exit `124`) when exceeded. On Unix the step runs in a new process group so expiry stops the leader and its descendants; non-Unix hosts kill only the direct child pid.
 - `retry = <n>` automatic retry count after a non-zero exit (in addition to the first attempt)
 - `retry_delay_ms = <n>` delay between retries in milliseconds; default `0`
 - `fail_fast = false` allow the array to keep running other independent branches when this step fails; default `true`

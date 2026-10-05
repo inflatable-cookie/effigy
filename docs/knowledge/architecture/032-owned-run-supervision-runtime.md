@@ -51,9 +51,11 @@ The design reuses what exists today and names the gap.
   its store and writers are retired. Existing history remains opaque and is
   not read or migrated.
 - `src/runner/execute/entry.rs` enters `OwnedChildrenScope` only for a validated
-  scheduler parent or recorded operator override. `process_run.rs` registers
-  each spawned group only inside that scope; this is graceful signal forwarding,
-  not a general run journal or stop surface.
+  scheduler parent or recorded operator override. Isolated sequence-timeout and
+  managed-cleanup waits acquire the same scope (nested/shared) so interrupt
+  still reaches those groups when no heavy-run scope is active.
+  `process_run.rs` registers each spawned group only inside that scope; this is
+  graceful signal forwarding, not a general run journal or stop surface.
 - `crates/effigy-managed` runs a supervisor process for a headless managed
   session, records `session.json`, and stops by pid plus descendant proof.
   That supervisor is the owner process itself.

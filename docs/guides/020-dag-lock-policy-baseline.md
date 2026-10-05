@@ -39,7 +39,10 @@ run = [
 ```
 
 Policy keys:
-- `timeout_ms`: hard timeout for a step (`124` timeout exit).
+- `timeout_ms`: hard timeout for a step (`124` timeout exit). On Unix the step
+  runs in a new process group; expiry stops that group and reaps the direct
+  child. The caller group is never signalled. Non-Unix hosts kill only the
+  direct child pid.
 - `retry`: retry attempts after the first failure.
 - `retry_delay_ms`: delay between retry attempts.
 - `fail_fast`: default `true`; set `false` to let sibling ready-steps continue in the current DAG level.

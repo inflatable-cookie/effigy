@@ -47,7 +47,6 @@ use effigy_manifest::TaskSelection;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::thread;
 use std::time::{Duration, Instant};
 
 const MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
@@ -606,32 +605,40 @@ fn build_managed_lifecycle_cleanup_command(
 
 fn run_managed_lifecycle_cleanup(command: &str) -> Result<(), RunnerError> {
     println!("{}", render_managed_lifecycle_cleanup_notice(command));
-    let mut child = Command::new("sh")
-        .arg("-lc")
-        .arg(command)
-        .spawn()
-        .map_err(RunnerError::Cwd)?;
-    let deadline = Instant::now() + Duration::from_secs(MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS);
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(RunnerError::Cwd)? {
-            break status;
+    run_managed_lifecycle_cleanup_with_timeout(
+        command,
+        Duration::from_secs(MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS),
+        Duration::from_millis(100),
+    )
+}
+
+fn run_managed_lifecycle_cleanup_with_timeout(
+    command: &str,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), RunnerError> {
+    let mut process = Command::new("sh");
+    process.arg("-lc").arg(command);
+    crate::runner::owned_children::configure_owned_process_group(&mut process);
+    let child = process.spawn().map_err(RunnerError::Cwd)?;
+    let deadline = Instant::now() + timeout;
+    match crate::runner::owned_children::wait_for_owned_child(child, deadline, poll)
+        .map_err(RunnerError::Cwd)?
+    {
+        crate::runner::owned_children::OwnedChildOutcome::Exited(status) if status.success() => {
+            Ok(())
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(RunnerError::task_invocation(format!(
+        crate::runner::owned_children::OwnedChildOutcome::Exited(status) => {
+            Err(RunnerError::task_invocation(format!(
+                "managed lifecycle cleanup failed: `{command}` exited with {status}"
+            )))
+        }
+        crate::runner::owned_children::OwnedChildOutcome::TimedOut => {
+            Err(RunnerError::task_invocation(format!(
                 "managed lifecycle cleanup timed out after {}s: `{command}`",
-                MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS
-            )));
+                timeout.as_secs()
+            )))
         }
-        thread::sleep(Duration::from_millis(100));
-    };
-    if status.success() {
-        Ok(())
-    } else {
-        Err(RunnerError::task_invocation(format!(
-            "managed lifecycle cleanup failed: `{command}` exited with {status}"
-        )))
     }
 }
 
@@ -1074,8 +1081,9 @@ mod tests {
         apply_schema_env_to_managed_role_processes, default_handoff_managed_shell_run,
         finish_managed_task, managed_dns_route_lines, managed_role_schema_env,
         managed_runtime_activation_plan, render_handoff_managed_standard_command,
-        render_managed_lifecycle_cleanup_notice, should_open_workspace_shell_for_non_managed_task,
-        ContainerExecutionBinding, ManagedProcessRole,
+        render_managed_lifecycle_cleanup_notice, run_managed_lifecycle_cleanup_with_timeout,
+        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
+        ManagedProcessRole,
     };
     use crate::runner::error::RunnerError;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
@@ -1536,5 +1544,192 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_success_and_nonzero_exit() {
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        run_managed_lifecycle_cleanup_with_timeout(
+            "true",
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_millis(20),
+        )
+        .expect("true must succeed");
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            "false",
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_millis(20),
+        )
+        .expect_err("false must fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("managed lifecycle cleanup failed"),
+            "got: {rendered}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_reaps_leader_and_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            &command,
+            Duration::from_millis(2_000),
+            Duration::from_millis(20),
+        )
+        .expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("timed out"),
+            "expected cleanup timeout, got: {rendered}"
+        );
+        fixture.assert_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_reaps_term_immune_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-term-immune-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command_ignoring_term();
+        let started = Instant::now();
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            &command,
+            Duration::from_millis(2_000),
+            Duration::from_millis(20),
+        )
+        .expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("timed out"),
+            "expected cleanup timeout, got: {rendered}"
+        );
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_interrupt_reaps_leader_and_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            run_managed_lifecycle_cleanup_with_timeout(
+                &command,
+                Duration::from_secs(30),
+                Duration::from_millis(20),
+            )
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("managed interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_interrupt_with_active_scope_reaps_group() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let _scope = crate::runner::owned_children::OwnedChildrenScope::enter()
+            .expect("enter outer signal scope");
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-interrupt-nested-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            run_managed_lifecycle_cleanup_with_timeout(
+                &command,
+                Duration::from_secs(30),
+                Duration::from_millis(20),
+            )
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("managed nested interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_managed_group_cleanup_disabled_fails_reap_oracle() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::panic::AssertUnwindSafe;
+        use std::time::Duration;
+
+        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-managed-timeout-negative-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let error = run_managed_lifecycle_cleanup_with_timeout(
+            &command,
+            Duration::from_millis(2_000),
+            Duration::from_millis(20),
+        )
+        .expect_err("pid-only timeout must still fail");
+        assert!(error.to_string().contains("timed out"), "got: {error}");
+        let pids = fixture.wait_for_recorded_pids();
+        assert!(
+            pids.iter()
+                .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+            "group cleanup disabled: a descendant must still be alive: {pids:?}"
+        );
+        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            fixture.assert_owned_gone(&pids);
+        }));
+        assert!(
+            oracle.is_err(),
+            "reap oracle must fail while group cleanup is disabled"
+        );
+        fixture.assert_sibling_alive();
     }
 }

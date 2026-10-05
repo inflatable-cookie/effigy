@@ -845,34 +845,7 @@ fn run_shell_step_once(
             process.env(key, secret.expose());
         }
     }
-    if let Some(timeout_ms) = timeout_ms {
-        return wait_for_shell_step_with_timeout(
-            process
-                .spawn()
-                .map_err(|error| RunnerError::TaskCommandLaunch {
-                    command: command.to_owned(),
-                    error,
-                })?,
-            command,
-            timeout_ms,
-        );
-    }
-
-    let status = process
-        .status()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: command.to_owned(),
-            error,
-        })?;
-    if status.success() {
-        return Ok(());
-    }
-    Err(RunnerError::TaskCommandFailure {
-        command: command.to_owned(),
-        code: status.code(),
-        stdout: String::new(),
-        stderr: String::new(),
-    })
+    finish_shell_process(process, command, timeout_ms)
 }
 
 fn run_shell_step_once_owned(
@@ -895,6 +868,18 @@ fn run_shell_step_once_owned(
             process.env(key, secret.expose());
         }
     }
+    finish_shell_process(process, command, timeout_ms)
+}
+
+fn finish_shell_process(
+    mut process: ProcessCommand,
+    command: &str,
+    timeout_ms: Option<u64>,
+) -> Result<(), RunnerError> {
+    let own_group = timeout_ms.is_some() || crate::runner::owned_children::signal_scope_active();
+    if own_group {
+        crate::runner::owned_children::configure_owned_process_group(&mut process);
+    }
     if let Some(timeout_ms) = timeout_ms {
         return wait_for_shell_step_with_timeout(
             process
@@ -908,12 +893,27 @@ fn run_shell_step_once_owned(
         );
     }
 
-    let status = process
-        .status()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: command.to_owned(),
-            error,
-        })?;
+    let status = if own_group {
+        let child = process
+            .spawn()
+            .map_err(|error| RunnerError::TaskCommandLaunch {
+                command: command.to_owned(),
+                error,
+            })?;
+        crate::runner::owned_children::wait_for_owned_child_unbounded(child).map_err(|error| {
+            RunnerError::TaskCommandLaunch {
+                command: command.to_owned(),
+                error,
+            }
+        })?
+    } else {
+        process
+            .status()
+            .map_err(|error| RunnerError::TaskCommandLaunch {
+                command: command.to_owned(),
+                error,
+            })?
+    };
     if status.success() {
         return Ok(());
     }
@@ -926,42 +926,39 @@ fn run_shell_step_once_owned(
 }
 
 fn wait_for_shell_step_with_timeout(
-    mut child: Child,
+    child: Child,
     command: &str,
     timeout_ms: u64,
 ) -> Result<(), RunnerError> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: command.to_owned(),
-                error,
-            })?
-        {
-            if status.success() {
-                return Ok(());
-            }
-            return Err(RunnerError::TaskCommandFailure {
+    match crate::runner::owned_children::wait_for_owned_child(
+        child,
+        deadline,
+        Duration::from_millis(10),
+    )
+    .map_err(|error| RunnerError::TaskCommandLaunch {
+        command: command.to_owned(),
+        error,
+    })? {
+        crate::runner::owned_children::OwnedChildOutcome::Exited(status) if status.success() => {
+            Ok(())
+        }
+        crate::runner::owned_children::OwnedChildOutcome::Exited(status) => {
+            Err(RunnerError::TaskCommandFailure {
                 command: command.to_owned(),
                 code: status.code(),
                 stdout: String::new(),
                 stderr: String::new(),
-            });
+            })
         }
-
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(RunnerError::TaskCommandFailure {
+        crate::runner::owned_children::OwnedChildOutcome::TimedOut => {
+            Err(RunnerError::TaskCommandFailure {
                 command: command.to_owned(),
                 code: Some(124),
                 stdout: String::new(),
                 stderr: String::new(),
-            });
+            })
         }
-
-        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -1058,6 +1055,7 @@ mod tests {
     use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
     use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
+    use effigy_env::secret::SecretString;
     use effigy_execution::{ExecutionDiscoveryPlan, ExecutionSurface};
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
@@ -1187,5 +1185,276 @@ run = [{ task = "db:migrate" }]
             }
             other => panic!("expected nested task action, got {:?}", other.kind()),
         }
+    }
+
+    #[cfg(unix)]
+    fn empty_step_env() -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_success_and_nonzero_exit() {
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let dir = tempfile::Builder::new()
+            .prefix("effigy-seq-exit-")
+            .tempdir()
+            .expect("tempdir");
+        super::run_shell_step_once("true", dir.path(), &empty_step_env(), None, None)
+            .expect("true must succeed");
+        let borrowed_fail =
+            super::run_shell_step_once("false", dir.path(), &empty_step_env(), None, None)
+                .expect_err("false must fail");
+        assert_eq!(borrowed_fail.task_exit_status(), Some(1));
+
+        let secret = SecretString::new("timeout-proof".to_owned());
+        let owned = vec![("EFFIGY_TIMEOUT_PROOF".to_owned(), secret)];
+        super::run_shell_step_once_owned(
+            "true",
+            dir.path(),
+            &empty_step_env(),
+            Some(owned.as_slice()),
+            None,
+        )
+        .expect("owned true must succeed");
+        let owned_fail = super::run_shell_step_once_owned(
+            "false",
+            dir.path(),
+            &empty_step_env(),
+            Some(owned.as_slice()),
+            None,
+        )
+        .expect_err("owned false must fail");
+        assert_eq!(owned_fail.task_exit_status(), Some(1));
+    }
+
+    #[cfg(unix)]
+    fn assert_sequence_timeout_reaps(
+        run: impl FnOnce(&std::path::Path, &str) -> Result<(), crate::runner::error::RunnerError>,
+    ) {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let started = Instant::now();
+        let error = run(fixture.cwd(), &command).expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        assert_eq!(error.task_exit_status(), Some(124), "{error}");
+        fixture.assert_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_borrowed_reaps_leader_and_descendant() {
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        assert_sequence_timeout_reaps(|cwd, command| {
+            super::run_shell_step_once(command, cwd, &empty_step_env(), None, Some(2_000))
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_owned_reaps_leader_and_descendant() {
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let secret = SecretString::new("timeout-proof".to_owned());
+        let owned = vec![("EFFIGY_TIMEOUT_PROOF".to_owned(), secret)];
+        assert_sequence_timeout_reaps(|cwd, command| {
+            super::run_shell_step_once_owned(
+                command,
+                cwd,
+                &empty_step_env(),
+                Some(owned.as_slice()),
+                Some(2_000),
+            )
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_reaps_term_immune_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-term-immune-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command_ignoring_term();
+        let started = Instant::now();
+        let error = super::run_shell_step_once(
+            &command,
+            fixture.cwd(),
+            &empty_step_env(),
+            None,
+            Some(2_000),
+        )
+        .expect_err("hang must time out");
+        let pids = fixture.wait_for_recorded_pids();
+        assert_eq!(error.task_exit_status(), Some(124), "{error}");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "timeout must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_interrupt_reaps_leader_and_descendant() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let cwd = fixture.cwd().to_path_buf();
+        let started = Instant::now();
+        let handle = thread::spawn(move || {
+            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(30_000))
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let _ = handle.join().expect("sequence interrupt wait thread");
+        fixture.wait_until_owned_gone(&pids);
+        fixture.assert_sibling_alive();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "interrupt must not wait out /bin/sleep 300"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_interrupt_without_forwarding_fails_reap_oracle() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::panic::AssertUnwindSafe;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let _forwarding = crate::runner::owned_children::disable_forwarding_for_test();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-interrupt-negative-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let cwd = fixture.cwd().to_path_buf();
+        let handle = thread::spawn(move || {
+            super::run_shell_step_once(&command, &cwd, &empty_step_env(), None, Some(2_000))
+        });
+        TimeoutDescendantFixture::wait_until_signal_scope_active();
+        let pids = fixture.wait_for_recorded_pids();
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            assert!(
+                pids.iter()
+                    .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+                "forwarding disabled: a descendant must still be alive: {pids:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            fixture.assert_owned_gone(&pids);
+        }));
+        assert!(
+            oracle.is_err(),
+            "reap oracle must fail while interrupt forwarding is disabled"
+        );
+        fixture.assert_sibling_alive();
+        let _ = handle
+            .join()
+            .expect("sequence interrupt negative wait thread");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_group_cleanup_disabled_fails_reap_oracle() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::panic::AssertUnwindSafe;
+
+        let _seam = crate::runner::owned_children::disable_group_cleanup_for_test();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-negative-");
+        fixture.spawn_unrelated_sibling();
+        let command = fixture.hang_command();
+        let error = super::run_shell_step_once(
+            &command,
+            fixture.cwd(),
+            &empty_step_env(),
+            None,
+            Some(2_000),
+        )
+        .expect_err("pid-only timeout must still return 124");
+        assert_eq!(error.task_exit_status(), Some(124), "{error}");
+        let pids = fixture.wait_for_recorded_pids();
+        assert!(
+            pids.iter()
+                .any(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+            "group cleanup disabled: a descendant must still be alive: {pids:?}"
+        );
+        let oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            fixture.assert_owned_gone(&pids);
+        }));
+        assert!(
+            oracle.is_err(),
+            "reap oracle must fail while group cleanup is disabled"
+        );
+        fixture.assert_sibling_alive();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_descendants_sequence_fixture_guard_reaps_on_failure() {
+        use crate::runner::owned_children::timeout_descendant_proof::TimeoutDescendantFixture;
+        use std::os::unix::process::CommandExt;
+        use std::panic::AssertUnwindSafe;
+        use std::process::{Command, Stdio};
+
+        let _lock = crate::runner::owned_children::hold_group_cleanup_test_lock();
+        let mut fixture = TimeoutDescendantFixture::new("effigy-seq-timeout-guard-");
+        let command = fixture.hang_command();
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(fixture.cwd())
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn hang without production reap");
+        fixture.adopt_direct_child(child);
+        let pids = fixture.wait_for_recorded_pids();
+        assert!(
+            pids.iter()
+                .all(|pid| TimeoutDescendantFixture::pid_alive(*pid)),
+            "fixture failure path starts with a live tree: {pids:?}"
+        );
+        let panicked = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            panic!("fixture failure");
+        }));
+        assert!(panicked.is_err());
+        drop(fixture);
+        let alive = pids
+            .iter()
+            .copied()
+            .filter(|pid| TimeoutDescendantFixture::pid_alive(*pid))
+            .collect::<Vec<_>>();
+        assert!(
+            alive.is_empty(),
+            "fixture RAII must reap recorded pids after failure: {alive:?}"
+        );
     }
 }

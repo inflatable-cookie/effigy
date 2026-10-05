@@ -350,6 +350,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- In-process run-array shell timeouts and managed lifecycle cleanup now stop
+  the owned Unix process group on expiry and reap the direct child, so
+  descendants cannot leak after a sequence `124` or a cleanup timeout,
+  including descendants that ignore SIGTERM (group SIGKILL after grace).
+  Isolated groups acquire the existing owned-children signal scope so Ctrl+C
+  still reaches them when no heavy-run scope is active; a recorded
+  cancellation then reaps the group (SIGTERM, then SIGKILL) because a
+  background descendant may ignore SIGINT. The caller group is never
+  targeted. Non-Unix hosts keep pid-only kill. Prove with
+  `test:runner:timeout-descendants`.
 - `effigy container <NAME> retire` now fails before scope resolution or
   runtime inventory, even with `--scope` or `--yes`. Unnamed retirement keeps
   checkout-wide selection, and `--scope <TOKEN>` keeps exact-record selection.

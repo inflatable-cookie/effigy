@@ -108,6 +108,15 @@
   "cargo check -p effigy --test cli_output_tests --profile test",
   "cargo clippy -p effigy --all-targets -- -D warnings",
 ]
+# In-process sequence and managed-cleanup timeout descendant reap. Private
+# tempfile fixtures only; exact recorded PIDs/groups; no process-name kills.
+"test:runner:timeout-descendants" = [
+  { id = "timeout-descendants", run = "cargo test -p effigy --lib timeout_descendants -- --nocapture", timeout_ms = 240000 },
+]
+"check:runner:timeout-descendants" = [
+  "cargo check -p effigy --all-targets --profile test",
+  "cargo clippy -p effigy --all-targets -- -D warnings",
+]
 "test:init:upstream-guidance" = "cargo test -p effigy --lib init_upstream_guidance -- --nocapture"
 "check:init:upstream-guidance" = "cargo check -p effigy-builtin -p effigy --lib --bin effigy --tests"
 "test:docs:skill-parity" = "cargo test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture"
