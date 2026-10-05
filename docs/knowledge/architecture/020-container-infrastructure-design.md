@@ -408,6 +408,18 @@ implementation and release documentation must disclose that limit rather than
 claim atomic ownership. No live gateway migration or release publication is
 part of this authorization.
 
+The macOS supported-reader constraint is now established: Apple's XNU
+`proc_info.c` applies `CHECK_SAME_USER` to `PROC_PIDTBSDINFO`; a cross-uid
+read requires `PRIV_GLOBAL_PROC_INFO`. The existing root-owned gateway is
+therefore unverifiable through this API by an ordinary operator client.
+A readable sidecar alone does not solve live identity access. See
+[Apple's process security policy](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c).
+Do not weaken the identity match or use deprecated `kern.proc` SPI to hide
+this support limit. A new elevated-reader route or changed daemon privilege
+model needs an explicit ruling in [Q-002](../questions.md#q-002--macos-gateway-cross-user-identity-access).
+The implementation is not approved to cross that boundary; Q-001 still blocks
+publication until the correction is implemented and verified.
+
 On macOS, gateway setup manages `/etc/resolver/` files for local domains.
 HTTPS uses mkcert-backed certificates after `effigy gateway setup-tls`.
 Plain HTTP redirects to HTTPS for TLS routes. `.test` names work
