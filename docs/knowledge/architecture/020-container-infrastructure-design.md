@@ -681,7 +681,7 @@ start anything.
 No new helper, install, standing privilege, live-operations authority or change
 to contract 010 is approved. The larger privilege model is not approved.
 This authorizes the bounded implementation, not a live gateway migration.
-Task 104 is merged and implements the sidecar plus fail-closed legacy policy.
+Task 104 is in main and implements the sidecar plus fail-closed legacy policy.
 Q-001's publication block remains until exact-candidate release assurance is
 complete. The final identity-check-to-signal TOCTOU and the unrun live
 cross-UID daemon proof remain documented limitations; this is not acceptance
