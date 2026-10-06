@@ -340,6 +340,9 @@ fn supervise_headless(
                 }
             }
             ProcessEventKind::Stdout | ProcessEventKind::Stderr => {}
+            ProcessEventKind::Starting
+            | ProcessEventKind::Started
+            | ProcessEventKind::StartupFailed => {}
         }
     }
     for ((process, _), redactor) in redactors {

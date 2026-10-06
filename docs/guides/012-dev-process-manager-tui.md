@@ -226,6 +226,15 @@ concurrent = [
 - `ready_message` is shown only after that ready state is reached.
 - `gateway = true` starts the gateway before the managed runtime when
   the task-owned container environment declares local DNS ownership.
+- The interactive TUI renders its first frame before starting managed child
+  processes. Tabs show waiting, starting, running, and failed startup states;
+  child output and key input continue to be handled while a configured
+  `start_after_ms` delay is pending.
+- Child startup still follows the configured order, and each
+  `start_after_ms` remains a delay before that entry is spawned. `Ctrl+C`
+  cancels pending startup and gracefully stops only children already owned by
+  the session. A child startup failure is shown in its tab and stops the
+  already-started session children before terminal restoration.
 - Non-shell tabs use input panel mode (`Tab` toggles command/insert; `Enter`
   sends input).
 - Shell tab uses direct terminal capture mode:

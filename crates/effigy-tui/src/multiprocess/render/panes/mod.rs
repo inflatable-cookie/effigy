@@ -6,6 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Frame;
 
+use super::super::state::ProcessStartupState;
 use crate::core::{InputMode, LogEntry, ProcessExitState};
 
 use super::header::panel_block;
@@ -27,6 +28,7 @@ pub(super) struct OutputPaneRenderArgs<'a> {
     pub(super) render_scroll_offset: usize,
     pub(super) scrollbar_total: usize,
     pub(super) active_process: &'a str,
+    pub(super) active_startup_state: ProcessStartupState,
     // Forwarded by callers; the previous render branched on this but the
     // two branches converged to identical output. Kept on the struct so
     // call sites compile unchanged; reintroduce a real consumer if the
@@ -55,6 +57,7 @@ pub(super) fn render_output_pane(
         render_scroll_offset,
         scrollbar_total,
         active_process,
+        active_startup_state,
         active_vt: _,
         process_name,
         shell_capture_mode,
@@ -87,6 +90,7 @@ pub(super) fn render_output_pane(
             spinner_tick,
             active_elapsed,
             active_restart_count,
+            active_startup_state,
         ))
         .block(panel)
         .style(shell_inactive_style)

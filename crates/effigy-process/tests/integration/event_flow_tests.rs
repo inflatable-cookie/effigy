@@ -22,6 +22,9 @@ fn supervisor_captures_output_and_exit_events() {
     for _ in 0..20 {
         if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(200)) {
             match event.kind {
+                ProcessEventKind::Starting
+                | ProcessEventKind::Started
+                | ProcessEventKind::StartupFailed => {}
                 ProcessEventKind::Stdout => {
                     if event.process == "alpha" && event.payload.contains("alpha-out") {
                         saw_alpha_out = true;

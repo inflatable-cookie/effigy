@@ -356,6 +356,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - Migrated repository planning and current technical knowledge to lean Northstar. Queue now owns task briefs, status, and outcomes; user guides retain their existing paths.
 
 ### Fixed
+- Managed TUI sessions now render startup feedback before sequential child
+  startup delays finish. Waiting, starting, running, and failed tabs remain
+  visible while child output and cancellation are handled; the configured
+  startup order and delays are preserved, and startup failure or early exit
+  restores terminal state and cleans up only recorded session children.
 - Remaining Unix `pre_exec` `setpgid` error paths now convert `nix::Error` with
   the allocation-free `io::Error::from` mapping used by the earlier doctor,
   exec-transport, and container spawn callbacks. A failed group setup cannot

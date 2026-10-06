@@ -22,3 +22,8 @@ vt100 = "0.16.2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+libc = "0.2"
+nix = { version = "0.31", default-features = false, features = ["term"] }
+tempfile = "3"

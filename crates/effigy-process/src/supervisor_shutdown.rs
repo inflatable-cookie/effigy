@@ -12,6 +12,7 @@ impl ProcessSupervisor {
     where
         F: FnMut(ShutdownProgress),
     {
+        self.cancel_startup();
         on_progress(ShutdownProgress::SendingTerm);
         let children = self.all_child_handles();
         for child in &children {

@@ -18,7 +18,11 @@ pub(super) fn run_event_loop(
             MAX_EVENTS_PER_TICK,
             runtime.vt_emulator_enabled,
         );
-        if runtime.state.shutdown_requested {
+        if runtime.state.shutdown_requested
+            && !runtime.state.startup_failed
+            && runtime.supervisor.startup_finished()
+            && startup_states_settled(runtime)
+        {
             break;
         }
         runtime.state.spinner_tick = runtime.state.spinner_tick.wrapping_add(1);
@@ -46,11 +50,18 @@ pub(super) fn run_event_loop(
                     scrollbar_total: active_view.scrollbar_total,
                     follow: active_view.is_follow,
                     active_process: &active_view.active_process,
+                    active_startup_state: runtime
+                        .state
+                        .startup_states
+                        .get(&active_view.active_process)
+                        .copied()
+                        .unwrap_or(super::state::ProcessStartupState::Running),
                     active_vt: active_view.active_vt,
                     input_line: &runtime.state.input_line,
                     input_mode: runtime.state.input_mode,
                     shell_capture_mode: runtime.state.shell_capture_mode,
                     exit_states: &runtime.state.exit_states,
+                    startup_states: &runtime.state.startup_states,
                     show_help: runtime.state.show_help,
                     show_options: runtime.state.show_options,
                     options_index: runtime.state.options_index,
@@ -64,6 +75,12 @@ pub(super) fn run_event_loop(
             )
         })?;
         runtime.diagnostics.record_frame();
+        if runtime.state.shutdown_requested
+            && (runtime.state.startup_failed
+                || (runtime.supervisor.startup_finished() && startup_states_settled(runtime)))
+        {
+            break;
+        }
 
         if !event::poll(INPUT_POLL_WAIT)? {
             continue;
@@ -88,4 +105,8 @@ pub(super) fn run_event_loop(
         }
     }
     Ok(())
+}
+
+fn startup_states_settled(runtime: &SessionRuntime) -> bool {
+    runtime.state.pending_startup == 0
 }

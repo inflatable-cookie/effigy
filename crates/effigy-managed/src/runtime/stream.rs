@@ -73,6 +73,9 @@ impl StreamState {
             }
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
             ProcessEventKind::Exit => self.record_exit(event, renderer)?,
+            ProcessEventKind::Starting
+            | ProcessEventKind::Started
+            | ProcessEventKind::StartupFailed => {}
         }
         Ok(())
     }

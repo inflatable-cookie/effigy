@@ -1294,9 +1294,12 @@ dependencies = [
  "effigy-demo",
  "effigy-process",
  "effigy-ui",
+ "libc",
+ "nix 0.31.3",
  "ratatui",
  "serde",
  "serde_json",
+ "tempfile",
  "vt100",
 ]
 

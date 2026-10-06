@@ -24,6 +24,7 @@ impl ProcessSupervisor {
     }
 
     pub fn terminate_all(&self) {
+        self.cancel_startup();
         let children = self.all_child_handles();
         for child in children {
             signal::send_kill(&mut crate::locks::lock_tolerant(&child));
@@ -40,9 +41,7 @@ impl ProcessSupervisor {
                 process: process.to_owned(),
             }
         })?;
-        if self.child_handle(process).is_some() {
-            self.terminate_child_graceful(process)?;
-        }
+        self.terminate_child_graceful(process)?;
         let mut restart_spec = spec;
         restart_spec.start_after_ms = 0;
         let replacement = lifecycle::spawn_process_instance(&restart_spec, &self.events_tx, false)?;

@@ -14,6 +14,10 @@ mod terminal;
 
 pub(super) use terminal::{init_terminal, TuiTerminal};
 
+pub(super) fn restore_terminal(terminal: &mut TuiTerminal) -> Result<(), std::io::Error> {
+    terminal::restore_terminal(terminal)
+}
+
 pub(super) fn shutdown_and_render_summary(
     terminal: &mut TuiTerminal,
     supervisor: &ProcessSupervisor,

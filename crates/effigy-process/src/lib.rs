@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 mod diagnostics;
@@ -83,8 +85,11 @@ pub struct ProcessSpec {
     pub env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessEventKind {
+    Starting,
+    Started,
+    StartupFailed,
     Stdout,
     Stderr,
     StdoutChunk,
@@ -150,6 +155,14 @@ pub struct ProcessSupervisor {
     specs: HashMap<String, ProcessSpec>,
     events_tx: Sender<ProcessEvent>,
     events_rx: Receiver<ProcessEvent>,
+    startup_worker: Option<StartupWorker>,
+}
+
+struct StartupWorker {
+    cancelled: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+    error: Arc<Mutex<Option<ProcessManagerError>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,11 +195,109 @@ impl ProcessSupervisor {
             specs: specs_map,
             events_tx,
             events_rx,
+            startup_worker: None,
         })
+    }
+
+    /// Starts managed children in the configured order without blocking the
+    /// caller during per-process start delays.
+    pub fn spawn_progressively(_repo_root: PathBuf, processes: Vec<ProcessSpec>) -> Self {
+        let (events_tx, events_rx) = mpsc::channel::<ProcessEvent>();
+        let process_map = Arc::new(Mutex::new(HashMap::new()));
+        let specs_map = processes
+            .iter()
+            .map(|spec| (spec.name.clone(), spec.clone()))
+            .collect::<HashMap<_, _>>();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = finished.clone();
+        let worker_process_map = process_map.clone();
+        let worker_events_tx = events_tx.clone();
+        let error = Arc::new(Mutex::new(None));
+        let worker_error = error.clone();
+        let handle = thread::spawn(move || {
+            for spec in processes {
+                if wait_for_start_delay(&worker_cancelled, spec.start_after_ms) {
+                    break;
+                }
+                if worker_cancelled.load(Ordering::Acquire) {
+                    break;
+                }
+                let _ = worker_events_tx.send(ProcessEvent {
+                    process: spec.name.clone(),
+                    kind: ProcessEventKind::Starting,
+                    payload: String::new(),
+                    chunk: None,
+                });
+                match lifecycle::spawn_process_instance(&spec, &worker_events_tx, false) {
+                    Ok(child) => {
+                        let child_pid = crate::locks::lock_tolerant(&child).id();
+                        crate::notify_process_group_started(child_pid);
+                        crate::locks::lock_tolerant(&worker_process_map)
+                            .insert(spec.name.clone(), child);
+                        let _ = worker_events_tx.send(ProcessEvent {
+                            process: spec.name,
+                            kind: ProcessEventKind::Started,
+                            payload: String::new(),
+                            chunk: None,
+                        });
+                    }
+                    Err(start_error) => {
+                        *crate::locks::lock_tolerant(&worker_error) = Some(start_error);
+                        let _ = worker_events_tx.send(ProcessEvent {
+                            process: spec.name,
+                            kind: ProcessEventKind::StartupFailed,
+                            payload: String::new(),
+                            chunk: None,
+                        });
+                        break;
+                    }
+                }
+            }
+            worker_finished.store(true, Ordering::Release);
+        });
+
+        Self {
+            processes: process_map,
+            specs: specs_map,
+            events_tx,
+            events_rx,
+            startup_worker: Some(StartupWorker {
+                cancelled,
+                finished,
+                handle: Mutex::new(Some(handle)),
+                error,
+            }),
+        }
     }
 
     pub fn next_event_timeout(&self, timeout: Duration) -> Option<ProcessEvent> {
         self.events_rx.recv_timeout(timeout).ok()
+    }
+
+    pub fn take_startup_error(&self) -> Option<ProcessManagerError> {
+        self.startup_worker
+            .as_ref()
+            .and_then(|worker| crate::locks::lock_tolerant(&worker.error).take())
+    }
+
+    pub fn startup_finished(&self) -> bool {
+        self.startup_worker
+            .as_ref()
+            .is_none_or(|worker| worker.finished.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn cancel_startup(&self) {
+        let Some(worker) = &self.startup_worker else {
+            return;
+        };
+        worker.cancelled.store(true, Ordering::Release);
+        let handle = crate::locks::lock_tolerant(&worker.handle).take();
+        if let Some(handle) = handle {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
     }
 
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
@@ -203,6 +314,33 @@ impl ProcessSupervisor {
         ids.sort_by(|left, right| left.0.cmp(&right.0));
         ids
     }
+}
+
+impl Drop for ProcessSupervisor {
+    fn drop(&mut self) {
+        self.cancel_startup();
+    }
+}
+
+fn wait_for_start_delay(cancelled: &AtomicBool, start_after_ms: u64) -> bool {
+    if cancelled.load(Ordering::Acquire) {
+        return true;
+    }
+    let delay = Duration::from_millis(start_after_ms);
+    let started_at = std::time::Instant::now();
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return true;
+        }
+        let Some(remaining) = delay.checked_sub(started_at.elapsed()) else {
+            break;
+        };
+        if remaining.is_zero() {
+            break;
+        }
+        thread::park_timeout(remaining);
+    }
+    cancelled.load(Ordering::Acquire)
 }
 
 #[cfg(all(test, unix))]

@@ -12,6 +12,16 @@
 "fmt:check" = "cargo fmt --all -- --check"
 "build:release" = "cargo build --release --bin effigy"
 
+# Managed TUI startup must render and remain cancellable while ordered child
+# startup delays are still pending. The PTY test follows the production path.
+"test:tui:startup-visibility" = [
+  { id = "tui-startup-visibility", run = "cargo test -p effigy-tui --lib multiprocess::startup_visibility::managed_tui_startup_visibility_production_pty -- --nocapture", timeout_ms = 240000 },
+]
+"check:tui:startup-visibility" = [
+  "cargo check -p effigy-process -p effigy-tui --all-targets --profile test",
+  "cargo clippy -p effigy-process -p effigy-tui --all-targets -- -D warnings",
+]
+
 # Release and distribution proofs
 "smoke:release" = { rhai = "scripts/check-release-smoke.rhai" }
 "release:linux:rehearse" = { rhai = "scripts/rehearse-linux-release-container.rhai" }
