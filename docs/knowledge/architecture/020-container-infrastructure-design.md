@@ -587,6 +587,17 @@ bounded portable fix does not claim atomic process targeting or add pidfd.
 
 ### Gateway process identity ruling
 
+Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users
+don't have the same problem." This approves the proposed one-time transition
+of his existing legacy gateway: use a verified previous binary to stop the
+confirmed daemon, confirm it is gone before reconciling only its PID/version
+records, then start the current gateway. Routes, certificates, containers and
+volumes are preserved. This is explicit authority for that host transition,
+not a general exception allowing numeric-only records to authorize signals.
+The consumer upgrade path must identify this legacy transition and provide
+a supported recovery flow even when installation replaced the old executable.
+Identity checks and fail-closed behavior remain required.
+
 Tom ruled on 2026-10-05: block v0.14.0 publication until a persisted
 start-identity sidecar and fail-closed legacy policy are implemented. He does
 not accept the current PID-only ownership risk and authorized the bounded fix.
