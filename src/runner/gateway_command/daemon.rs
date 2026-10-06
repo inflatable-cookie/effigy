@@ -360,6 +360,9 @@ mod pid_domain_tests {
     fn gateway_identity_stops_matched_term_resistant_owned_child() {
         use nix::sys::signal::{kill, Signal};
         use nix::unistd::Pid;
+        use std::io::{BufRead, BufReader};
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
         use std::process::{Child, Command};
         use std::time::Instant;
 
@@ -374,17 +377,110 @@ mod pid_domain_tests {
             }
         }
 
-        let child = Command::new("sh")
-            .args(["-c", "trap '' TERM; exec sleep 30"])
-            .spawn()
-            .expect("start private TERM-resistant child");
-        let mut child = OwnedChild(child);
-        let pid = child.0.id();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while server::probe_gateway_process(pid) != server::GatewayProcessProbe::Running {
-            assert!(Instant::now() < deadline, "child readiness timeout");
-            thread::sleep(Duration::from_millis(10));
+        fn spawn_private_child(script: &str) -> (OwnedChild, UnixStream) {
+            let (ready_reader, ready_writer) =
+                UnixStream::pair().expect("create private readiness socket");
+            let ready_fd = ready_writer.as_raw_fd();
+            let mut command = Command::new("sh");
+            command.args(["-c", script]);
+            // SAFETY: dup2 is async-signal-safe and only installs the child's
+            // private readiness socket at fd 3 before exec.
+            unsafe {
+                command.pre_exec(move || {
+                    if nix::libc::dup2(ready_fd, 3) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let child = OwnedChild(command.spawn().expect("start private gateway child"));
+            drop(ready_writer);
+            (child, ready_reader)
         }
+
+        fn await_term_resistance(
+            child: &mut OwnedChild,
+            ready_reader: &mut UnixStream,
+            timeout: Duration,
+        ) -> Result<(), String> {
+            let pid = child.0.id();
+            ready_reader
+                .set_read_timeout(Some(timeout))
+                .map_err(|error| format!("set TERM-resistance readiness timeout: {error}"))?;
+            let mut acknowledgment = String::new();
+            match BufReader::new(ready_reader).read_line(&mut acknowledgment) {
+                Ok(0) => {
+                    let exit_deadline = Instant::now() + timeout;
+                    loop {
+                        if let Some(status) = child
+                            .0
+                            .try_wait()
+                            .map_err(|error| format!("check child before readiness: {error}"))?
+                        {
+                            return Err(format!(
+                                "child exited with status {status} before TERM-resistance readiness"
+                            ));
+                        }
+                        if Instant::now() >= exit_deadline {
+                            return Err(
+                                "readiness channel closed before TERM-resistance acknowledgment; child did not exit"
+                                    .to_owned(),
+                            );
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    if let Some(status) = child.0.try_wait().map_err(|wait_error| {
+                        format!("check child at readiness timeout: {wait_error}")
+                    })? {
+                        return Err(format!(
+                            "child exited with status {status} before TERM-resistance readiness"
+                        ));
+                    }
+                    return Err(format!(
+                        "TERM-resistance readiness timed out after {timeout:?}"
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!("read TERM-resistance acknowledgment: {error}"));
+                }
+            }
+
+            let expected = format!("ARMED:{pid}\n");
+            if acknowledgment != expected {
+                return Err(format!(
+                    "invalid TERM-resistance acknowledgment {acknowledgment:?}; expected {expected:?}"
+                ));
+            }
+            if let Some(status) = child
+                .0
+                .try_wait()
+                .map_err(|error| format!("check child after readiness: {error}"))?
+            {
+                return Err(format!(
+                    "child exited with status {status} after TERM-resistance acknowledgment"
+                ));
+            }
+            if server::probe_gateway_process(pid) != server::GatewayProcessProbe::Running {
+                return Err(format!(
+                    "child {pid} acknowledged TERM resistance but is not running"
+                ));
+            }
+            Ok(())
+        }
+
+        let (mut child, mut readiness) =
+            spawn_private_child("trap '' TERM; printf 'ARMED:%s\\n' \"$$\" >&3; exec sleep 30");
+        let pid = child.0.id();
+        await_term_resistance(&mut child, &mut readiness, Duration::from_secs(5))
+            .expect("child must acknowledge TERM resistance before escalation proof");
         let mut signals = Vec::new();
         let result = stop_gateway_process_with_identity(
             pid,
@@ -402,6 +498,65 @@ mod pid_domain_tests {
         assert_eq!(
             server::probe_gateway_process(pid),
             server::GatewayProcessProbe::ConfirmedAbsent
+        );
+
+        // A running process without the post-trap acknowledgment cannot enter
+        // the escalation oracle. Its owned-child guard must still clean it up.
+        let (mut unarmed_child, mut unarmed_readiness) = spawn_private_child("exec sleep 30");
+        let unarmed_pid = unarmed_child.0.id();
+        let unarmed_result = await_term_resistance(
+            &mut unarmed_child,
+            &mut unarmed_readiness,
+            Duration::from_secs(1),
+        );
+        let mut unarmed_signals = Vec::new();
+        if unarmed_result.is_ok() {
+            let _ = stop_gateway_process_with_identity(
+                unarmed_pid,
+                server::probe_gateway_process,
+                || effigy_gateway::identity::GatewayIdentityProbe::Matched,
+                |pid_t, signal| {
+                    unarmed_signals.push(signal);
+                    kill(Pid::from_raw(pid_t), signal).map_err(|error| error.to_string())
+                },
+                thread::sleep,
+            );
+        }
+        assert!(
+            unarmed_result
+                .as_ref()
+                .is_err_and(|error| error.contains("readiness timed out")),
+            "running unarmed child must fail readiness: {unarmed_result:?}"
+        );
+        assert!(
+            unarmed_signals.is_empty(),
+            "unarmed child must not reach escalation"
+        );
+        drop(unarmed_child);
+        assert_eq!(
+            server::probe_gateway_process(unarmed_pid),
+            server::GatewayProcessProbe::ConfirmedAbsent,
+            "readiness failure must clean up and reap its exact owned child"
+        );
+
+        let (mut exited_child, mut exited_readiness) = spawn_private_child("exit 7");
+        let exited_pid = exited_child.0.id();
+        let exited_result = await_term_resistance(
+            &mut exited_child,
+            &mut exited_readiness,
+            Duration::from_secs(1),
+        );
+        assert!(
+            exited_result
+                .as_ref()
+                .is_err_and(|error| error.contains("exited with status")),
+            "early child exit must be reported before escalation: {exited_result:?}"
+        );
+        drop(exited_child);
+        assert_eq!(
+            server::probe_gateway_process(exited_pid),
+            server::GatewayProcessProbe::ConfirmedAbsent,
+            "early-exit readiness failure must reap its exact owned child"
         );
     }
 
