@@ -508,6 +508,18 @@ At that baseline, unknown identities already failed closed in host-run and in
 
 #### Implemented correction in task 104
 
+Known v0.14.0 upgrade/start defect: `trusted_directory_owner` currently
+accepts only a directory owned by root or the effective caller UID. During
+existing administrator elevation the effective UID is root, so a genuine
+ordinary-operator-owned gateway directory is rejected before startup with
+`gateway directory is unsafe`, even though the operator UID was forwarded.
+The root/operator trust boundary must be corrected and proved through the
+complete elevated caller chain; changing directory ownership or relaxing
+trust for every owner is not a supported workaround. A legacy gateway also
+needs the explicit transition below. A previously installed binary may have
+been overwritten, and using an older CLI for development may fail to parse
+newer linked manifests; a general CLI downgrade is not a recovery strategy.
+
 The decimal `gateway.pid` remains compatible. `gateway.identity` is a
 version-1 JSON sidecar containing `format_version`, the same `pid`,
 `boot_identity`, and a tagged platform start identity. Linux stores `/proc` stat
