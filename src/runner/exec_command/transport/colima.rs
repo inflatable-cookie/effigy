@@ -462,6 +462,101 @@ mod tests {
         )
     }
 
+    /// Phased variant of the hang fixture for the caller-deadline proof. The
+    /// first `ps --format` invocation answers instantly through the same
+    /// production capture path (readiness: PATH resolution, phase dispatch,
+    /// output capture and row selection), while the second and later
+    /// invocations hang with recorded PIDs. Every invocation logs its argv
+    /// first, and every probe invocation is counted and traced, so a failure
+    /// can tell no-spawn, early exit, wrong phase and unexpected argv apart
+    /// from a genuine hung child.
+    #[cfg(unix)]
+    fn discovery_phased_script(
+        pgfile: &Path,
+        counterfile: &Path,
+        tracefile: &Path,
+        root: &Path,
+    ) -> String {
+        format!(
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        if [ \"$n\" -ge 2 ]; then\n          printf 'hanging invocation %s\\n' \"$n\" >> '{trace}'\n          printf '%s\\n' \"$$\" > '{pg}'\n          sleep 300 &\n          printf '%s\\n' \"$!\" >> '{pg}'\n          wait\n        else\n          printf 'warming invocation %s\\n' \"$n\" >> '{trace}'\n          printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n          exit 0\n        fi\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            pg = pgfile.display(),
+            counter = counterfile.display(),
+            trace = tracefile.display(),
+            root = root.display(),
+        )
+    }
+
+    /// Render the fixture phase trace for a failure message. The trace is the
+    /// only post-mortem witness that distinguishes no-spawn, early exit and
+    /// wrong phase from a genuine hung child, since the tempdir is removed
+    /// when the test ends.
+    #[cfg(unix)]
+    fn fixture_trace_snippet(tracefile: &Path) -> String {
+        std::fs::read_to_string(tracefile)
+            .unwrap_or_else(|_| "(no fixture trace recorded)".to_owned())
+    }
+
+    /// Wait until the fixture has recorded both hang-phase PIDs — the probe
+    /// leader and its sleep descendant. This is a generous readiness wait,
+    /// not a bound proof: it tells a slow spawn or a partial (single-line)
+    /// record apart from the proven leader-plus-descendant phase before the
+    /// reap oracle judges anything.
+    #[cfg(unix)]
+    fn await_fixture_phase(pgfile: &Path, tracefile: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let pids = std::fs::read_to_string(pgfile)
+                .ok()
+                .map(|text| {
+                    text.lines()
+                        .filter_map(|line| line.trim().parse::<i32>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if pids.len() == 2 {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture never recorded both hang-phase PIDs (leader and descendant; no-spawn, early exit, partial record or wrong phase?); got {pids:?}; fixture trace:\n{}",
+                fixture_trace_snippet(tracefile)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Signal exactly the PIDs the fixture recorded, escalating TERM to KILL
+    /// after a short grace. Never a pattern and never the test's own group.
+    #[cfg(unix)]
+    fn signal_exact_pids(pids: &[i32], signal: nix::sys::signal::Signal) {
+        for pid in pids {
+            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), signal);
+        }
+    }
+
+    /// Reap exactly the recorded fixture leader and descendants. Used for
+    /// failure-path hygiene after the verdict is already decided; the passing
+    /// proof must show the production supervision reaped the group unaided.
+    #[cfg(unix)]
+    fn reap_exact_recorded_pids(pgfile: &Path) {
+        let pids = std::fs::read_to_string(pgfile)
+            .ok()
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| line.trim().parse::<i32>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        signal_exact_pids(&pids, nix::sys::signal::Signal::SIGTERM);
+        let grace = Instant::now() + Duration::from_secs(2);
+        while pids.iter().any(|pid| pid_alive(*pid)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if pids.iter().any(|pid| pid_alive(*pid)) {
+            signal_exact_pids(&pids, nix::sys::signal::Signal::SIGKILL);
+        }
+    }
+
     #[cfg(unix)]
     fn pid_alive(pid: i32) -> bool {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
@@ -513,6 +608,31 @@ mod tests {
         }
     }
 
+    /// RAII hygiene for the deadline-proof fixtures. Reaps exactly the
+    /// recorded fixture leader and descendants when the test scope ends —
+    /// including every early-assertion panic — so a failed proof never leaks
+    /// a partially recorded group. Never changes the verdict: it only
+    /// signals PIDs the fixture itself recorded, and signaling dead or
+    /// absent PIDs is a no-op.
+    #[cfg(unix)]
+    struct ProofGroupCleanup {
+        pgfile: std::path::PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl ProofGroupCleanup {
+        fn arm(pgfile: std::path::PathBuf) -> Self {
+            Self { pgfile }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for ProofGroupCleanup {
+        fn drop(&mut self) {
+            reap_exact_recorded_pids(&self.pgfile);
+        }
+    }
+
     /// Private RAII guard for the unbounded negative control. Signals only the
     /// exact PIDs the fixture recorded plus its own direct child handle, never
     /// a process pattern and never the test's own process group.
@@ -547,27 +667,7 @@ mod tests {
         }
 
         fn reap(&mut self) {
-            let pids = std::fs::read_to_string(&self.pgfile)
-                .ok()
-                .map(|text| {
-                    text.lines()
-                        .filter_map(|line| line.trim().parse::<i32>().ok())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let signal = |pids: &[i32], signal| {
-                for pid in pids {
-                    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), signal);
-                }
-            };
-            signal(&pids, nix::sys::signal::Signal::SIGTERM);
-            let grace = Instant::now() + Duration::from_secs(2);
-            while pids.iter().any(|pid| pid_alive(*pid)) && Instant::now() < grace {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            if pids.iter().any(|pid| pid_alive(*pid)) {
-                signal(&pids, nix::sys::signal::Signal::SIGKILL);
-            }
+            reap_exact_recorded_pids(&self.pgfile);
             let _ = self.child.kill();
             let _ = self.child.wait();
             wait_for_owned_processes_gone(&self.pgfile);
@@ -587,11 +687,65 @@ mod tests {
         let _lock = crate::contract_test_support::lock_test();
         let (_temp, root) = deadline_fresh_root("discovery-hang");
         let pgfile = root.join("discovery-process-group");
-        let bin = install_deadline_fake_colima(&root, &discovery_hang_script(&pgfile));
+        let counterfile = root.join("discovery-invocations");
+        let tracefile = root.join("discovery-trace");
+        let bin = install_deadline_fake_colima(
+            &root,
+            &discovery_phased_script(&pgfile, &counterfile, &tracefile, &root),
+        );
         let _env = with_deadline_runtime_env(&bin);
         let policy = deadline_policy(&root);
         clear_service_container_name_cache();
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Hygiene for every exit path: a failed assertion below must still
+        // reap the exact recorded fixture group instead of leaking it.
+        let _proof_cleanup = ProofGroupCleanup::arm(pgfile.clone());
+
+        // Readiness before the proof clock: a generous-budget call through
+        // the same production discovery path proves the fixture spawns on
+        // PATH, takes the intended phase and parses, and warms the spawn
+        // path. The proof call below still spawns under its own fixed 3s
+        // caller deadline — the invocation counter proves that spawn — so no
+        // production spawn leaves the caller budget and no production
+        // deadline, policy or reap behavior changes. The 30s warmup budget
+        // is a readiness backstop, not a proof bound.
+        let warmup_deadline = Instant::now() + Duration::from_secs(30);
+        let warmup_capture =
+            move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
+                crate::runner::exec_command::transport::run_command_capture_until(
+                    root_dir,
+                    program,
+                    args,
+                    None,
+                    Some(warmup_deadline),
+                )
+            };
+        let warmup = resolve_compose_service_container_id(
+            &root,
+            &policy,
+            "workspace",
+            Some(warmup_deadline),
+            &warmup_capture,
+            &|_| String::new(),
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "discovery warmup must resolve through the production path: {error}; fixture trace:\n{}",
+                fixture_trace_snippet(&tracefile)
+            )
+        });
+        assert_eq!(
+            warmup.to_string_lossy(),
+            "demo-stack-workspace-1",
+            "warmup must take the instant phase; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
+        clear_service_container_name_cache();
+
+        // The proof clock starts before the caller deadline is derived from
+        // it, so the lower bound below is exact: the hang must consume the
+        // full caller budget.
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(3);
         let capture = move |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
             crate::runner::exec_command::transport::run_command_capture_until(
                 root_dir,
@@ -602,23 +756,61 @@ mod tests {
             )
         };
 
-        let started = Instant::now();
-        let error = resolve_compose_service_container_id(
+        let error = match resolve_compose_service_container_id(
             &root,
             &policy,
             "workspace",
             Some(deadline),
             &capture,
             &|_| String::new(),
-        )
-        .expect_err("a hung discovery that consumes the shared deadline must fail closed");
+        ) {
+            Err(error) => error,
+            Ok(value) => panic!(
+                "a hung discovery that consumes the shared deadline must fail closed, resolved {value:?}; fixture trace:\n{}",
+                fixture_trace_snippet(&tracefile)
+            ),
+        };
 
-        assert!(error.to_string().contains("timed out"), "got {error}");
         assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "uncached discovery must be bounded by the caller deadline, not wait out sleep 300"
+            error.to_string().contains("timed out"),
+            "got {error}; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
         );
-        wait_for_owned_processes_gone(&pgfile);
+        // Two-sided deadline oracle: the hang must consume the full caller
+        // budget (an instant failure would prove nothing) and must return
+        // within supervision grace of it. A rebased budget — e.g. a fresh
+        // 10s grant after the fallback observes the expired deadline — would
+        // land near 13s and fail the 8s upper bound, far below sleep 300.
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(3),
+            "the hung probe must consume the full caller deadline instead of failing instantly; elapsed {elapsed:?}; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "uncached discovery must be bounded by the caller deadline, not wait out sleep 300; elapsed {elapsed:?}; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
+        // The expired follow-up resolve must not spawn: exactly the warmup
+        // and the hung probe may have invoked the fixture.
+        assert_eq!(
+            std::fs::read_to_string(&counterfile)
+                .unwrap_or_default()
+                .trim(),
+            "2",
+            "expired follow-up resolve must not spawn; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
+        await_fixture_phase(&pgfile, &tracefile);
+        // The reap verdict must come from the production supervision alone;
+        // scope-end hygiene above reaps only after a failure verdict.
+        let reap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wait_for_owned_processes_gone(&pgfile);
+        }));
+        if let Err(payload) = reap {
+            std::panic::resume_unwind(payload);
+        }
     }
 
     #[cfg(unix)]
@@ -748,14 +940,44 @@ mod tests {
     fn ordinary_discovery_output_is_parsed() {
         let _lock = crate::contract_test_support::lock_test();
         let (_temp, root) = deadline_fresh_root("discovery-parse");
+        let counterfile = root.join("discovery-invocations");
+        let tracefile = root.join("discovery-trace");
         let script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
-            root = root.display()
+            "#!/bin/sh\nprintf 'argv: %s\\n' \"$*\" >> '{trace}'\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --format\"*)\n        printf 'spawned %s\\n' \"$$\" >> '{trace}'\n        n=$(cat '{counter}' 2>/dev/null || echo 0)\n        n=$((n + 1))\n        printf '%s\\n' \"$n\" > '{counter}'\n        printf 'demo-stack-workspace-1\\tUp 2 minutes\\t\\tdemo-stack\\t{root}\\tworkspace\\t0\\n'\n        exit 0\n        ;;\n      *)\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            root = root.display(),
+            trace = tracefile.display(),
+            counter = counterfile.display()
         );
         let bin = install_deadline_fake_colima(&root, &script);
         let _env = with_deadline_runtime_env(&bin);
         let policy = deadline_policy(&root);
         clear_service_container_name_cache();
+
+        // Readiness before the proof clock, mirroring the hang proof: a
+        // generous-budget call warms the spawn path so the fixed 5s budget
+        // below measures the parse — not host spawn latency. Both calls use
+        // `resolve_running_service_container_name` directly, which never
+        // consults the service-name cache, so cache reuse cannot stand in
+        // for row parsing; the invocation counter below proves the second
+        // call really spawned.
+        let warmup = resolve_running_service_container_name(
+            &root,
+            &policy,
+            "workspace",
+            Some(Instant::now() + Duration::from_secs(30)),
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "discovery warmup must resolve through the production path: {error}; fixture trace:\n{}",
+                fixture_trace_snippet(&tracefile)
+            )
+        });
+        assert_eq!(
+            warmup.as_deref(),
+            Some("demo-stack-workspace-1"),
+            "fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
 
         let resolved = resolve_running_service_container_name(
             &root,
@@ -763,10 +985,30 @@ mod tests {
             "workspace",
             Some(Instant::now() + Duration::from_secs(5)),
         )
-        .expect("bounded real discovery")
-        .expect("a matching running service row must resolve");
+        .unwrap_or_else(|error| {
+            panic!(
+                "bounded real discovery failed: {error}; fixture trace:\n{}",
+                fixture_trace_snippet(&tracefile)
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "a matching running service row must resolve; fixture trace:\n{}",
+                fixture_trace_snippet(&tracefile)
+            )
+        });
 
         assert_eq!(resolved, "demo-stack-workspace-1");
+        // Both the warmup and the bounded proof call must have spawned the
+        // fixture through the production path: no cache stands between them.
+        assert_eq!(
+            std::fs::read_to_string(&counterfile)
+                .unwrap_or_default()
+                .trim(),
+            "2",
+            "both proof calls must invoke the fixture; fixture trace:\n{}",
+            fixture_trace_snippet(&tracefile)
+        );
     }
 
     /// Negative control: with runtime deadline/reap disabled, the recorded
